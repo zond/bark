@@ -3,13 +3,18 @@
 //! has started, so that the loader keeps it, and it feeds the watchdog
 //! the loader started for its trial, which runs on until the next reset
 //! (nRF52840 Product Specification, WDT: once started it cannot be
-//! stopped). The console build can also stage an image on the external
-//! flash (`console.rs`, `stage`).
+//! stopped). An image is staged on the external flash through the
+//! console (`console.rs`, `stage`) or the phone link ([`Phone`];
+//! `ble.rs`), and both commit and reboot through the same functions
+//! here ([`commit`], [`reboot`]), so that they check the same.
 
 use core::cell::RefCell;
 
-use bark_image::boot::{confirm, cut, Shared, Started};
+use bark_image::boot::{confirm, cut, swap_requested, Shared, StageError, Stager, Started};
 use bark_image::layout::{LOADER, PAGE};
+use bark_image::sign::{Key, SLOTS};
+use bark_image::{Header, HEADER_LEN};
+use bark_proto::BatteryLevels;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{peripherals, wdt, Peri};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -17,6 +22,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use embedded_storage::nor_flash::NorFlash;
+use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 
 /// This image's version, from `BARK_IMAGE_VERSION` at build time, 0
 /// without it. An image is staged only above the running one's. Kept
@@ -28,6 +34,14 @@ pub static BARK_IMAGE_VERSION: u32 = match option_env!("BARK_IMAGE_VERSION") {
     Some(v) => decimal(v),
     None => 0,
 };
+
+/// The keys an image to stage must be signed by one of, from
+/// `BARK_SIGNING_KEYS` at build time, or the bench key in an open build
+/// without it (`build.rs`). Kept under its own symbol so that
+/// `scripts/uf2.py` and `scripts/image.py` read them from the ELF.
+#[used]
+#[no_mangle]
+pub static BARK_SIGNING_KEYS: [Key; SLOTS] = include!(concat!(env!("OUT_DIR"), "/keys.rs"));
 
 /// What a bench image does instead of confirming itself, from
 /// `BARK_UPDATE_BENCH` at build time (roadmap Phase 2, the loader's rows).
@@ -94,6 +108,14 @@ pub fn flash(nvmc: Nvmc<'static>) -> &'static Flash {
 /// The external flash, where an image is staged.
 #[cfg(feature = "console")]
 pub type External = Shared<crate::ext_flash::Kept>;
+
+/// The console's stager: both flashes blocking, the CPU its own.
+#[cfg(feature = "console")]
+pub type ConsoleStager = Stager<
+    bark_image::boot::Blocking<'static, Nvmc<'static>>,
+    bark_image::boot::Blocking<'static, Nvmc<'static>>,
+    bark_image::boot::Blocking<'static, crate::ext_flash::Kept>,
+>;
 
 /// The external flash, once.
 #[cfg(feature = "console")]
@@ -189,3 +211,111 @@ pub async fn watchdog(dog: Peri<'static, peripherals::WDT>) {
         Timer::after(period / 2).await;
     }
 }
+
+/// Start staging the image `header` describes on `record`, `state` and
+/// `dfu`, if this image accepts it: above its own version and signed by
+/// one of its keys (`bark_image::sign`). The console's `stage` and the
+/// phone link's begin both come here. The hash is checked when the
+/// staging finishes ([`commit`]).
+pub async fn stage<R, S, D>(
+    record: R,
+    state: S,
+    dfu: D,
+    header: &[u8; HEADER_LEN],
+) -> Result<Stager<R, S, D>, StageError>
+where
+    R: AsyncNorFlash,
+    S: AsyncNorFlash,
+    D: AsyncNorFlash,
+{
+    Stager::begin(
+        record,
+        state,
+        dfu,
+        header,
+        BARK_IMAGE_VERSION,
+        &BARK_SIGNING_KEYS,
+    )
+    .await
+}
+
+/// What the node runs on, for the rule on a swap.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Power {
+    /// On external power, USB.
+    pub external: bool,
+    /// The battery's last reading, millivolts; 0 before one.
+    pub battery_mv: u16,
+}
+
+/// Whether a swap may start on `power`: on external power, or on a
+/// battery above the low level of spec "Sleepy nodes" (spec
+/// "Implementation notes"; roadmap D143).
+pub fn swap_allowed(power: Power) -> bool {
+    BatteryLevels::DESIGN.swap_allowed(power.external, power.battery_mv)
+}
+
+/// Why a commit was refused.
+#[derive(Clone, Copy, Debug)]
+pub enum Refused {
+    /// Nothing is being staged.
+    Nothing,
+    /// On battery at or below the low level ([`swap_allowed`]).
+    BatteryLow,
+    /// The staged image's own checks ([`Stager::finish`]).
+    Stage(StageError),
+}
+
+/// Check the image `staging` holds and ask the loader to swap it in at
+/// the next boot, on `power`. The console's `commit` and the phone
+/// link's both come here, so that every check applies to both. An image
+/// not yet whole, or refused for the battery, stays staged, to be
+/// finished or committed later; one its checks refuse is forgotten.
+pub async fn commit<R, S, D>(
+    staging: &mut Option<Stager<R, S, D>>,
+    power: Power,
+) -> Result<Header, Refused>
+where
+    R: AsyncNorFlash,
+    S: AsyncNorFlash,
+    D: AsyncNorFlash,
+{
+    let Some(s) = staging.as_ref() else {
+        return Err(Refused::Nothing);
+    };
+    if s.next() != s.header().length {
+        return Err(Refused::Stage(StageError::Incomplete { got: s.next() }));
+    }
+    if !swap_allowed(power) {
+        return Err(Refused::BatteryLow);
+    }
+    match staging.take() {
+        Some(s) => s.finish().await.map_err(Refused::Stage),
+        None => Err(Refused::Nothing),
+    }
+}
+
+/// Whether a reboot may go ahead on `power`: refused only when it would
+/// start a swap on a low battery ([`swap_allowed`]).
+pub fn reboot_allowed(flash: &Flash, power: Power) -> bool {
+    swap_requested(flash) != Ok(true) || swap_allowed(power)
+}
+
+/// How long [`reboot`] waits for the log to reach the host: the log's
+/// buffer at one 64-byte packet per 1 ms frame (USB 2.0 full speed, bulk).
+const LOG_DRAIN: Duration =
+    Duration::from_millis((crate::LOG_BUFFER / crate::USB_PACKET as usize) as u64);
+
+/// Reset the chip, to let the loader swap, once the log has reached the
+/// host.
+pub async fn reboot() -> ! {
+    log::info!("reboot");
+    Timer::after(LOG_DRAIN).await;
+    cortex_m::peripheral::SCB::sys_reset()
+}
+
+#[cfg(not(feature = "console"))]
+pub use phone::{note_power, Phone};
+
+#[cfg(not(feature = "console"))]
+mod phone;

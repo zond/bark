@@ -19,24 +19,28 @@
 use core::cell::RefCell;
 
 use embassy_boot::{
-    AlignedBuffer, BlockingFirmwareState, BootError, BootLoader, BootLoaderConfig,
+    AlignedBuffer, BlockingFirmwareState, BootError, BootLoader, BootLoaderConfig, FirmwareState,
     FirmwareUpdaterError, State,
 };
+use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_embedded_hal::flash::partition::BlockingPartition;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embedded_storage::nor_flash::{NorFlash, NorFlashErrorKind, ReadNorFlash};
+use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 use sha2::{Digest, Sha256};
 
 use crate::layout::external::DFU;
 use crate::layout::{Region, ACTIVE, PAGE, RECORD, STATE};
 use crate::record::{CHECKED, CHECKED_AT, HEADER_AT};
+use crate::sign::{self, Key, SignatureError, SLOTS};
 use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN, MAGIC};
 
 /// The flash, shared by the partitions that each see one region of it.
 pub type Shared<F> = Mutex<NoopRawMutex, RefCell<F>>;
 
-type Part<'a, F> = BlockingPartition<'a, NoopRawMutex, F>;
+/// One region of a shared blocking flash.
+pub type Part<'a, F> = BlockingPartition<'a, NoopRawMutex, F>;
 
 fn part<F: NorFlash>(flash: &Shared<F>, r: Region) -> Part<'_, F> {
     BlockingPartition::new(flash, r.start, r.len)
@@ -273,6 +277,9 @@ pub enum StageError {
         /// The header's.
         staged: u32,
     },
+    /// No signature in the header verifies under a key the running image
+    /// holds.
+    Signature(SignatureError),
     /// A swap is asked for or the running image is on trial: confirm or
     /// reboot first.
     Busy,
@@ -301,40 +308,74 @@ impl From<FlashError> for StageError {
     }
 }
 
-/// An image being written into [`DFU`] on the external flash, in order,
-/// a chunk at a time.
-pub struct Stager<'a, I: NorFlash, E: NorFlash> {
+/// A region of a blocking flash as staging takes it: its operations end
+/// before they return, so each future is ready at its first poll.
+pub type Blocking<'a, F> = BlockingAsync<Part<'a, F>>;
+
+/// The record, the state page and the staged slot on two blocking
+/// flashes, for [`Stager::begin`].
+pub fn blocking<'a, I: NorFlash, E: NorFlash>(
     internal: &'a Shared<I>,
     external: &'a Shared<E>,
+) -> (Blocking<'a, I>, Blocking<'a, I>, Blocking<'a, E>) {
+    (
+        BlockingAsync::new(part(internal, RECORD)),
+        BlockingAsync::new(part(internal, STATE)),
+        BlockingAsync::new(part(external, DFU)),
+    )
+}
+
+/// An image being written into [`DFU`], in order, a chunk at a time.
+///
+/// It takes its three regions as flashes that may wait, so that a
+/// firmware whose internal flash is written between radio events, and
+/// whose external flash leaves the processor free while it erases, stages
+/// with the same steps as one that blocks ([`blocking`]): `record` is
+/// [`RECORD`], `state` the loader's [`STATE`] page, `dfu` the staged slot,
+/// each addressed from its start.
+pub struct Stager<R, S, D> {
+    record: R,
+    state: S,
+    dfu: D,
     header: Header,
     next: u32,
 }
 
-impl<'a, I: NorFlash, E: NorFlash> Stager<'a, I, E> {
-    /// Start staging the image `header` describes, above the running
-    /// image's `running` version. Forgets any image staged before.
-    pub fn begin(
-        internal: &'a Shared<I>,
-        external: &'a Shared<E>,
-        header: &[u8; HEADER_LEN],
+impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
+    /// Start staging the image the header `bytes` describes, above the
+    /// running image's `running` version and signed by one of its
+    /// `keys`. Forgets any image staged before.
+    pub async fn begin(
+        mut record: R,
+        mut state: S,
+        dfu: D,
+        bytes: &[u8; HEADER_LEN],
         running: u32,
+        keys: &[Key; SLOTS],
     ) -> Result<Self, StageError> {
-        let header = Header::decode(header).map_err(StageError::Header)?;
+        let header = Header::decode(bytes).map_err(StageError::Header)?;
         if header.version <= running {
             return Err(StageError::Version {
                 running,
                 staged: header.version,
             });
         }
-        if state(internal)? == State::Swap {
+        // The signature covers the hash, which `finish` checks against
+        // the staged bytes, so a refusal here spares sending the image.
+        sign::verify(bytes, keys).map_err(StageError::Signature)?;
+        let mut word = AlignedBuffer([0u8; 4]);
+        let now = FirmwareState::new(&mut state, &mut word.0)
+            .get_state()
+            .await
+            .map_err(FlashError::from)?;
+        if now == State::Swap {
             return Err(StageError::Busy);
         }
-        part(internal, RECORD)
-            .erase(0, RECORD.len)
-            .map_err(flash_error)?;
+        record.erase(0, RECORD.len).await.map_err(flash_error)?;
         Ok(Stager {
-            internal,
-            external,
+            record,
+            state,
+            dfu,
             header,
             next: 0,
         })
@@ -352,7 +393,7 @@ impl<'a, I: NorFlash, E: NorFlash> Stager<'a, I, E> {
 
     /// Write the chunk at `offset`, erasing each sector as the image
     /// enters it.
-    pub fn write(&mut self, offset: u32, data: &[u8]) -> Result<u32, StageError> {
+    pub async fn write(&mut self, offset: u32, data: &[u8]) -> Result<u32, StageError> {
         if offset != self.next || offset + data.len() as u32 > self.header.length {
             return Err(StageError::Offset {
                 expected: self.next,
@@ -360,41 +401,59 @@ impl<'a, I: NorFlash, E: NorFlash> Stager<'a, I, E> {
         }
         let end = offset + data.len() as u32;
         let last = end == self.header.length;
-        if data.len() > CHUNK || (!last && !data.len().is_multiple_of(E::WRITE_SIZE)) {
+        if data.len() > CHUNK || (!last && !data.len().is_multiple_of(D::WRITE_SIZE)) {
             return Err(StageError::Chunk);
         }
-        let mut dfu = part(self.external, DFU);
         let first_new_page = offset.div_ceil(PAGE) * PAGE;
         for page in (first_new_page..end).step_by(PAGE as usize) {
-            dfu.erase(page, page + PAGE).map_err(flash_error)?;
+            self.dfu
+                .erase(page, page + PAGE)
+                .await
+                .map_err(flash_error)?;
         }
         // A flash that writes more than a byte at once has the image's
         // last write padded with the erased value, as the UF2 pads the
         // internal flash.
         let mut padded = [0xffu8; CHUNK];
         padded[..data.len()].copy_from_slice(data);
-        let len = data.len().next_multiple_of(E::WRITE_SIZE);
-        dfu.write(offset, &padded[..len]).map_err(flash_error)?;
+        let len = data.len().next_multiple_of(D::WRITE_SIZE);
+        self.dfu
+            .write(offset, &padded[..len])
+            .await
+            .map_err(flash_error)?;
         self.next = end;
         Ok(end)
     }
 
     /// Check the staged bytes against the header, record it for the
     /// loader and ask for the swap at the next boot.
-    pub fn finish(self) -> Result<Header, StageError> {
+    pub async fn finish(mut self) -> Result<Header, StageError> {
         if self.next != self.header.length {
             return Err(StageError::Incomplete { got: self.next });
         }
+        let mut digest = Sha256::new();
         let mut buf = [0u8; CHUNK];
-        if hash(self.external, DFU, self.header.length, &mut buf)? != self.header.hash {
+        let mut at = 0;
+        while at < self.header.length {
+            let n = buf.len().min((self.header.length - at) as usize);
+            self.dfu
+                .read(at, &mut buf[..n])
+                .await
+                .map_err(flash_error)?;
+            digest.update(&buf[..n]);
+            at += n as u32;
+        }
+        if <[u8; HASH_LEN]>::from(digest.finalize()) != self.header.hash {
             return Err(StageError::Hash);
         }
-        part(self.internal, RECORD)
+        self.record
             .write(HEADER_AT, &self.header.encode())
+            .await
             .map_err(flash_error)?;
         let mut word = AlignedBuffer([0u8; 4]);
-        BlockingFirmwareState::new(part(self.internal, STATE), &mut word.0)
+        FirmwareState::new(&mut self.state, &mut word.0)
             .mark_updated()
+            .await
             .map_err(FlashError::from)?;
         Ok(self.header)
     }

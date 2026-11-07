@@ -324,6 +324,9 @@ class Session extends ChangeNotifier {
 
   bool get connected => _link != null;
 
+  /// The link while connected, for the firmware update (`updater.dart`).
+  NodeLink? get link => _link;
+
   /// The node's address as a person gives it to others: the position of
   /// its address and its ID, once it has a place.
   Address? get address {

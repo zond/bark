@@ -405,20 +405,22 @@ async fn main(spawner: Spawner) {
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
             p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
         );
-        spawner.spawn(phone(ble_parts, p.RNG, mpsl).expect("spawned once"));
         // The node's flash: the stored state through the MPSL's timeslots
         // (`store.rs`), and the update's confirmation through the NVMC
         // driver directly, which runs once at boot before the BLE
         // controller starts (`ble::START`).
         let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
-        // SAFETY: a second handle on the NVMC, for `update::started` alone,
-        // which writes before the controller starts and so before anything
-        // writes through the MPSL: the core asks to store only once the
-        // node runs, after `update::started`.
+        // SAFETY: a second handle on the NVMC, which writes only in
+        // `update::started`, before the controller starts and so before
+        // anything writes through the MPSL: the core asks to store only
+        // once the node runs, after `update::started`. The phone link's
+        // update reads through it, which the NVMC serves as any read of
+        // flash.
         let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(unsafe {
             embassy_nrf::peripherals::NVMC::steal()
         }));
         let mpsl_flash = store::shared(mpsl_flash);
+        spawner.spawn(phone(ble_parts, p.RNG, mpsl, mpsl_flash, shared).expect("spawned once"));
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The bond with the paired phone, to the phone link, and its line
@@ -568,10 +570,12 @@ async fn phone(
     parts: nrf_sdc::Peripherals<'static>,
     rng: embassy_nrf::Peri<'static, peripherals::RNG>,
     mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
+    internal: &'static store::SharedFlash,
+    flash: &'static update::Flash,
 ) {
     ble::START.wait().await;
     match ble::controller(parts, rng, mpsl) {
-        Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
+        Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION, internal, flash).await,
         // An nRF errno, negated (`nrf_mpsl::Error`).
         Err(e) => log::error!("ble: controller {}", i32::from(e)),
     }

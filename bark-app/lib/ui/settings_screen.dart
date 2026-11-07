@@ -1,5 +1,5 @@
 // Settings: the node to connect to and the phone paired with it, the
-// fake node, the battery exemption
+// fake node, the node's firmware, the battery exemption
 // that keeps the link with the screen off, the person's name, their home
 // node, their backup words, and the node's map point.
 
@@ -13,6 +13,7 @@ import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
 import 'common.dart';
+import 'update_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final AppModel app;
@@ -182,6 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             NoticeCard(app),
             ..._connection(),
+            ..._firmware(),
             ..._battery(),
             _heading('My name'),
             ListTile(
@@ -310,6 +312,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('Stop looking'),
           ),
         ],
+      ),
+    ];
+  }
+
+  /// The connected node's firmware, and its update over the link.
+  List<Widget> _firmware() {
+    final n = app.session.node;
+    if (n == null) return [];
+    return [
+      _heading('Firmware'),
+      Text(
+        n.version < updateVersion
+            ? 'The node runs version ${n.image}, from before updates over '
+                  'Bluetooth: update it by USB once.'
+            : 'The node runs version ${n.image}.',
+      ),
+      const SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton(
+          onPressed: n.version < updateVersion
+              ? null
+              : () => Navigator.of(context)
+                    .push(MaterialPageRoute(builder: (_) => UpdateScreen(app))),
+          child: const Text('Update firmware'),
+        ),
       ),
     ];
   }

@@ -21,8 +21,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// change to the node's attribute table comes with a new version, as the
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
-/// and the database hash.
-pub const VERSION: u8 = 5;
+/// and the database hash, 6 Update and Image.
+pub const VERSION: u8 = 6;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -68,6 +68,12 @@ pub mod uuid {
     /// Neighbours: write a slot, read the neighbour table from it
     /// ([`crate::neighbours`]); from link version 4.
     pub const NEIGHBOURS: u128 = 0x28bc000a_a1b8_4893_9537_2ee3559d7644;
+    /// Update: begin, commit and reboot, and read where the update stands
+    /// ([`crate::update`]); from link version 6.
+    pub const UPDATE: u128 = 0x28bc000b_a1b8_4893_9537_2ee3559d7644;
+    /// Image: write the image's bytes, with or without a response
+    /// ([`crate::update::Piece`]); from link version 6.
+    pub const IMAGE: u128 = 0x28bc000c_a1b8_4893_9537_2ee3559d7644;
 }
 
 /// A UUID's bytes in the order BLE sends them, least significant first
@@ -105,6 +111,9 @@ pub mod att {
     /// moment; the app waits for [`crate::Status::ready`]. The first of
     /// the application error codes, 0x80 to 0x9F.
     pub const NOT_READY: u8 = 0x80;
+    /// The node refused a begin, a commit or a reboot of an update; Update
+    /// says why ([`crate::update::Refusal`]).
+    pub const REFUSED: u8 = 0x81;
 }
 
 /// Why a value was not taken.
@@ -615,10 +624,13 @@ const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
+const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));
+const _: () = assert!(update::Progress::LEN <= value_room(ATT_MTU));
 
 pub mod bond;
 pub mod home;
 pub mod neighbours;
+pub mod update;
 
 #[cfg(test)]
 mod tests;
