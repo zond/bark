@@ -296,7 +296,6 @@ pub fn json() -> String {
     let fetch = Fetch {
         sent: 1_000_500,
         address: f.away,
-        since: 5,
     };
     let nonce = core::array::from_fn(|i| 0x10 + i as u8);
     let payload = fetch.seal(&f.alice.mailbox, &nonce).unwrap();
@@ -305,22 +304,31 @@ pub fn json() -> String {
         &[
             ("sent", format!("{}", fetch.sent)),
             ("address", h(&fetch.address.encode())),
-            ("since", format!("{}", fetch.since)),
             ("nonce", h(&nonce)),
             ("payload", h(&payload)),
         ],
     ));
 
     // Her home node sends her item 6, the first text above, the first of
-    // the round.
+    // the round, with none unsent after it.
     let mut out = [0u8; MAX_PAYLOAD];
-    let n = seal::seal_reply(&f.alice.mailbox, fetch.sent, 1, 6, &box_payload, &mut out).unwrap();
+    let n = seal::seal_reply(
+        &f.alice.mailbox,
+        fetch.sent,
+        1,
+        6,
+        0,
+        &box_payload,
+        &mut out,
+    )
+    .unwrap();
     parts.push(entry(
         "reply",
         &[
             ("round", format!("{}", fetch.sent)),
             ("place", "1".into()),
             ("number", "6".into()),
+            ("remaining", "0".into()),
             ("nonce", h(&seal::reply_nonce(fetch.sent, 1))),
             ("item", h(&box_payload)),
             ("payload", h(&out[..n])),

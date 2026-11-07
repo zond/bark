@@ -33,9 +33,10 @@ const RECORDS: u32 = PAGE_LEN / RECORD_LEN as u32;
 const CHECK_AT: usize = STATE_LEN;
 const _: () = assert!(CHECK_AT + 4 <= RECORD_LEN);
 
-/// Ops queued at most. The mailbox queues at most two at a time, an erase
-/// and a write, and the driver does them before it hands the mailbox the
-/// next message, so this is room for a phone's write between.
+/// Ops queued at most. The mailbox queues at most three at a time: an
+/// erase and a slot's write, or a mark and the state's erase and write;
+/// the driver does them before it hands the mailbox the next message, so
+/// this is room for a phone's write between.
 pub const OPS: usize = 8;
 
 /// A region's flash, read when asked; offsets from its start.
@@ -68,7 +69,8 @@ pub enum Op {
         /// The page's first byte.
         offset: u32,
     },
-    /// Write `bytes[..len]` at `offset`, erased since it was last written.
+    /// Write `bytes[..len]` at `offset`: bytes erased since they were last
+    /// written, or a mark, which only clears bits.
     Write {
         /// The region.
         area: Area,
@@ -180,6 +182,31 @@ impl<R: Region> FlashRing<R> {
     fn slot_offset(slot: u32) -> u32 {
         PAGE_LEN * (slot / SLOTS_PER_PAGE) + (slot % SLOTS_PER_PAGE) * SLOT_LEN as u32
     }
+
+    /// What is queued for the ring's bytes from `at`, in order, over what
+    /// the flash holds in `out`.
+    fn queued_over(&self, at: u32, out: &mut [u8]) {
+        let end = at + out.len() as u32;
+        for op in self.ops.iter().flatten() {
+            match *op {
+                Op::Erase {
+                    area: Area::Ring,
+                    offset,
+                } if offset == at - at % PAGE_LEN => out.fill(0xff),
+                Op::Write {
+                    area: Area::Ring,
+                    offset,
+                    len,
+                    bytes,
+                } => {
+                    for i in offset.max(at)..(offset + u32::from(len)).min(end) {
+                        out[(i - at) as usize] &= bytes[(i - offset) as usize];
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 impl<R: Region> Ring for FlashRing<R> {
@@ -190,26 +217,15 @@ impl<R: Region> Ring for FlashRing<R> {
     fn read(&self, slot: u32, out: &mut [u8; SLOT_LEN]) {
         let at = Self::slot_offset(slot);
         self.ring.read(at, out);
-        // What is queued, in order, over what the flash holds.
-        for op in self.ops.iter().flatten() {
-            match *op {
-                Op::Erase {
-                    area: Area::Ring,
-                    offset,
-                } if offset == at - at % PAGE_LEN => *out = [0xff; SLOT_LEN],
-                Op::Write {
-                    area: Area::Ring,
-                    offset,
-                    len,
-                    bytes,
-                } if offset == at => {
-                    for (o, b) in out.iter_mut().zip(&bytes[..usize::from(len)]) {
-                        *o &= b;
-                    }
-                }
-                _ => {}
-            }
-        }
+        self.queued_over(at, out);
+    }
+
+    fn read_byte(&self, slot: u32, at: usize) -> u8 {
+        let at = Self::slot_offset(slot) + at as u32;
+        let mut b = [0u8; 1];
+        self.ring.read(at, &mut b);
+        self.queued_over(at, &mut b);
+        b[0]
     }
 
     fn write(&mut self, slot: u32, bytes: &[u8; SLOT_LEN]) {
@@ -218,6 +234,17 @@ impl<R: Region> Ring for FlashRing<R> {
             offset: Self::slot_offset(slot),
             len: SLOT_LEN as u16,
             bytes: *bytes,
+        });
+    }
+
+    fn clear(&mut self, slot: u32, at: usize) {
+        let mut bytes = [0xffu8; SLOT_LEN];
+        bytes[0] = 0;
+        self.push(Op::Write {
+            area: Area::Ring,
+            offset: Self::slot_offset(slot) + at as u32,
+            len: 1,
+            bytes,
         });
     }
 

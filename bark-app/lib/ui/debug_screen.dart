@@ -88,8 +88,7 @@ class DebugScreen extends StatelessWidget {
       _row('Identity', '${me.key.substring(0, 16)}…'),
       _row('Card address', '${me.home ?? 'none: no home'}'),
       _row('Home node', '${me.home ?? 'none'}'),
-      _row('Mailbox: have every item up to', '${me.since}'),
-      _row('Mailbox: items above that', '${me.above.toList()..sort()}'),
+      _row('Mailbox: unsent at home', '${me.remaining}'),
       _row('Fetch rounds', '${me.rounds}'),
       _row('Last sent', '${me.lastSent}'),
     ];

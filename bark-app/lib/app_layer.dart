@@ -25,7 +25,10 @@ const int tagLen = 16;
 const int keyLen = 32;
 const int boxOverhead = 1 + nonceLen + tagLen;
 const int introOverhead = 1 + keyLen + tagLen;
-const int replyOverhead = 1 + tagLen + numberLen;
+
+/// A reply's count of the items still unsent after its batch.
+const int remainingLen = 2;
+const int replyOverhead = 1 + tagLen + numberLen + remainingLen;
 
 /// The reply that says nothing is new: the format byte and the tag.
 const int nothingNewLen = 1 + tagLen;
@@ -180,14 +183,14 @@ Uint8List openIntro(Sodium s, Keys me, List<int> payload) {
 const int numberLen = 3;
 const int maxNumber = (1 << 24) - 1;
 
-/// A fetch: send every item after [since] to [address].
+/// A fetch: send the newest batch of the items not yet sent to
+/// [address].
 class Fetch {
   final int sent;
   final Address address;
-  final int since;
-  const Fetch(this.sent, this.address, this.since);
+  const Fetch(this.sent, this.address);
 
-  static const plainLen = 4 + Address.len + numberLen;
+  static const plainLen = 4 + Address.len;
   static const len = boxOverhead + plainLen;
 
   Uint8List seal(Sodium s, SecureKey key, Uint8List nonce) =>
@@ -195,11 +198,7 @@ class Fetch {
         formatByte(Form.fetch),
         ...nonce,
         ...s.crypto.secretBox.easy(
-          message: Uint8List.fromList([
-            ...be(sent, 4),
-            ...address.encode(),
-            ...be(since, numberLen),
-          ]),
+          message: Uint8List.fromList([...be(sent, 4), ...address.encode()]),
           nonce: nonce,
           key: key,
         ),
@@ -219,18 +218,18 @@ class Fetch {
     } on SodiumException {
       throw const BadPayload('does not open');
     }
-    final a = b.sublist(4, 4 + Address.len);
+    final a = b.sublist(4);
     return Fetch(
       fromBe(b.sublist(0, 4)),
       Address(Position.decode(a), a.sublist(Position.wireLen)),
-      fromBe(b.sublist(4 + Address.len)),
     );
   }
 }
 
-/// The most replies a round has, so the most places tried: every item
-/// of the board's ring (spec "Mailbox").
-const int maxReplies = 256;
+/// The most items a fetch is answered with, its batch, so the most places
+/// tried: what passes each relay on the way from its bucket as it stands
+/// (spec "Mailbox", Why a batch with a count).
+const int maxReplies = 32;
 
 /// A reply's nonce, never sent: the fetch's `sent`, the reply's place in
 /// the round (0 for nothing new), zeros.
@@ -255,28 +254,37 @@ Uint8List _sealReply(
   ),
 ]);
 
-/// Item [number] at [place] in [round], as the home node sends it.
+/// Item [number] at [place] in [round], with [remaining] items still
+/// unsent after the round's batch, as the home node sends it.
 Uint8List sealReply(
   Sodium s,
   SecureKey key,
   int round,
   int place,
   int number,
+  int remaining,
   List<int> item,
-) => _sealReply(s, key, round, place, [...be(number, numberLen), ...item]);
+) => _sealReply(s, key, round, place, [
+  ...be(number, numberLen),
+  ...be(remaining, remainingLen),
+  ...item,
+]);
 
 /// The reply that says the mailbox holds nothing the fetch of [round]
 /// asks for.
 Uint8List sealNothingNew(Sodium s, SecureKey key, int round) =>
     _sealReply(s, key, round, 0, const []);
 
-/// What a reply says: an item, its number and its place in the round,
-/// or nothing new when [item] is null.
+/// What a reply says: an item, its number, its place in the round and
+/// the items still unsent after the round's batch, or nothing new, and so
+/// none unsent, when [item] is null. An empty item is one the home could
+/// not send.
 class Opened {
   final int number;
   final int place;
+  final int remaining;
   final Uint8List? item;
-  const Opened(this.number, this.place, this.item);
+  const Opened(this.number, this.place, this.remaining, this.item);
   bool get nothingNew => item == null;
 }
 
@@ -298,16 +306,18 @@ Opened? openReply(Sodium s, SecureKey key, int round, List<int> payload) {
   }
 
   if (payload.length == nothingNewLen) {
-    return at(0) == null ? null : const Opened(0, 0, null);
+    return at(0) == null ? null : const Opened(0, 0, 0, null);
   }
   if (payload.length < replyOverhead) return null;
   for (var place = 1; place <= maxReplies; place++) {
     final p = at(place);
     if (p != null) {
+      const head = numberLen + remainingLen;
       return Opened(
         fromBe(p.sublist(0, numberLen)),
         place,
-        p.sublist(numberLen),
+        fromBe(p.sublist(numberLen, head)),
+        p.sublist(head),
       );
     }
   }

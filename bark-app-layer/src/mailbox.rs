@@ -7,23 +7,27 @@
 //!
 //! The node holds the mailbox key and cannot open the person's mail: it
 //! keeps every payload but a fetch, numbered, and answers a fetch once:
-//! the items it holds after the fetch's number, each sealed again under
-//! the key (`seal::seal_reply`), or one reply that says nothing is new
-//! (`seal::seal_nothing_new`). An item that arrives later waits for the
-//! next fetch.
+//! the newest batch of the items it has not sent, newest first, each
+//! sealed again under the key with the count of those still unsent after
+//! the batch (`seal::seal_reply`), or one reply that says nothing is new
+//! (`seal::seal_nothing_new`). An item handed over for a reply, or
+//! confirmed by the phone at the node, is marked sent in its slot and
+//! stays in the ring. An item that arrives later waits for the next
+//! fetch.
 
 use bark_proto::MsgId;
 
 use crate::keys::KEY_LEN;
 use crate::seal::{self, Fetch, Form, MAX_NUMBER, MAX_REPLIES};
-use crate::{be, Address, MAX_PAYLOAD};
+use crate::{be, Address, MAX_APP_PAYLOAD, MAX_PAYLOAD};
 
 /// Bytes of a slot: an erase page of 4096 holds 16.
 pub const SLOT_LEN: usize = 256;
 /// Slots in an erase page of 4096 bytes (`flash_ring::PAGE_LEN`).
 pub const SLOTS_PER_PAGE: u32 = 4096 / SLOT_LEN as u32;
 
-/// Where a slot's check sits: the last four bytes, over all before them.
+/// Where a slot's check sits: the last four bytes, over all before them
+/// but the mark, which is read as erased.
 const CHECK_AT: usize = SLOT_LEN - 4;
 /// Where a slot's payload starts: after its number (3) and length (1).
 const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
@@ -31,7 +35,11 @@ const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
 /// that the payload's place is the same in a slot written before it was
 /// kept, whose ID reads as `0xFFFF_FFFF`, the erased flash.
 const ID_AT: usize = CHECK_AT - 4;
-const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= ID_AT);
+/// The byte that marks an item sent: erased while it is not, cleared to
+/// 0 without an erase when it is, so that the item stays. A slot written
+/// before marks were kept reads as not sent.
+const MARK_AT: usize = ID_AT - 1;
+const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= MARK_AT);
 
 /// Bytes of the mailbox's kept state.
 pub const STATE_LEN: usize = 64;
@@ -47,6 +55,16 @@ pub trait Ring {
     fn read(&self, slot: u32, out: &mut [u8; SLOT_LEN]);
     /// Writes slot `slot`, erased since it was last written.
     fn write(&mut self, slot: u32, bytes: &[u8; SLOT_LEN]);
+    /// Clears byte `at` of slot `slot` to 0, without an erase: flash
+    /// clears bits in a written byte.
+    fn clear(&mut self, slot: u32, at: usize);
+    /// Byte `at` of slot `slot`; cheaper than the slot where the flash
+    /// is slow to read.
+    fn read_byte(&self, slot: u32, at: usize) -> u8 {
+        let mut b = [0u8; SLOT_LEN];
+        self.read(slot, &mut b);
+        b[at]
+    }
     /// Erases page `page`.
     fn erase(&mut self, page: u32);
     /// The state last kept, if any.
@@ -56,9 +74,19 @@ pub trait Ring {
 }
 
 fn fnv1a(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0x811c_9dc5, |h, &b| {
-        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-    })
+    fnv1a_on(0x811c_9dc5, bytes)
+}
+
+fn fnv1a_on(h: u32, bytes: &[u8]) -> u32 {
+    bytes
+        .iter()
+        .fold(h, |h, &b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193))
+}
+
+/// A slot's check, its mark read as erased.
+fn slot_check(b: &[u8; SLOT_LEN]) -> u32 {
+    let h = fnv1a_on(fnv1a(&b[..MARK_AT]), &[0xff]);
+    fnv1a_on(h, &b[MARK_AT + 1..CHECK_AT])
 }
 
 /// What a payload delivered to the home node was.
@@ -82,12 +110,17 @@ struct Reply {
     round: u32,
     /// Where they go.
     address: Address,
-    /// The round's first item, at place 1.
-    first: u32,
-    /// The next item to send.
+    /// The next item to look at, going down; the round has none below
+    /// `bottom`.
     next: u32,
-    /// The newest item when the fetch was taken, the round's last.
-    last: u32,
+    /// The batch's oldest item.
+    bottom: u32,
+    /// Replies with an item handed to the core: the last one's place.
+    handed: u32,
+    /// Items unsent after the batch when the fetch was taken.
+    remaining: u16,
+    /// An item given back, with its place, to send again.
+    again: Option<(u32, u32)>,
     /// A reply of the round has been handed to the core.
     answered: bool,
 }
@@ -98,6 +131,8 @@ struct InFlight {
     msg_id: MsgId,
     /// The item, or 0 for the reply that says nothing is new.
     number: u32,
+    /// Its place in the round.
+    place: u32,
 }
 
 /// A reply to offer: send `payload[..len]` to `address`.
@@ -123,6 +158,8 @@ pub struct Mailbox<R: Ring> {
     in_flight: Option<InFlight>,
     /// The highest number kept; 0 before any.
     newest: u32,
+    /// Items in the ring not marked sent.
+    unsent: u32,
     /// The highest number the phone at the node has confirmed reading;
     /// 0 before any (spec "Phone link", Receiving).
     read: u32,
@@ -138,17 +175,19 @@ impl<R: Ring> Mailbox<R> {
             reply: None,
             in_flight: None,
             newest: 0,
+            unsent: 0,
             read: 0,
         };
         // A whole slot counts only in its own place: one that is not, left
         // by a ring laid out otherwise before, would set the newest number
         // past slots that are not erased, and the next item written over
         // one of them would fail its check.
-        let slots = m.slots();
-        m.newest = (0..slots)
-            .filter_map(|s| m.slot(s).map(|(n, _)| n).filter(|&n| (n - 1) % slots == s))
-            .max()
-            .unwrap_or(0);
+        for s in 0..m.slots() {
+            if let Some((n, _, sent)) = m.slot(s).filter(|&(n, ..)| m.slot_of(n) == s) {
+                m.newest = m.newest.max(n);
+                m.unsent += u32::from(!sent);
+            }
+        }
         if let Some(s) = m.ring.state() {
             m.restore(&s);
         }
@@ -184,27 +223,69 @@ impl<R: Ring> Mailbox<R> {
                 .min(self.newest)
     }
 
-    /// The phone at the node has item `n`, and every one before it.
+    /// The phone at the node has item `n`, and every one before it. It
+    /// counts as sent, so that no fetch sends it again; the phone confirms
+    /// the oldest it has not, [`Mailbox::unread`], so those before it are
+    /// marked or gone.
     pub fn confirm_read(&mut self, n: u32) {
         if n > self.read && n <= self.newest {
+            self.mark(n);
             self.read = n;
             self.keep();
         }
+    }
+
+    /// Items in the ring not yet sent to a fetch or read by the phone at
+    /// the node.
+    pub fn unsent(&self) -> u32 {
+        self.unsent
     }
 
     fn slots(&self) -> u32 {
         self.ring.pages() * SLOTS_PER_PAGE
     }
 
-    /// The number and the payload's length in slot `s`, if it holds a
-    /// whole item.
-    fn slot(&self, s: u32) -> Option<(u32, usize)> {
+    fn slot_of(&self, n: u32) -> u32 {
+        (n - 1) % self.slots()
+    }
+
+    /// The lowest number the ring can still hold.
+    fn lowest(&self) -> u32 {
+        self.newest.saturating_sub(self.slots() - 1).max(1)
+    }
+
+    /// The number and the payload's length in slot `s`, and whether it is
+    /// marked sent, if it holds a whole item.
+    fn slot(&self, s: u32) -> Option<(u32, usize, bool)> {
         let mut b = [0u8; SLOT_LEN];
         self.ring.read(s, &mut b);
         let check = be(&b[CHECK_AT..]);
         let len = usize::from(b[seal::NUMBER_LEN]);
         let n = be(&b[..seal::NUMBER_LEN]);
-        (fnv1a(&b[..CHECK_AT]) == check && len <= MAX_PAYLOAD && n != 0).then_some((n, len))
+        (slot_check(&b) == check && len <= MAX_PAYLOAD && n != 0).then_some((
+            n,
+            len,
+            b[MARK_AT] != 0xff,
+        ))
+    }
+
+    /// Whether item `n` is in the ring and not marked sent. The mark is
+    /// read first: most slots a batch passes over are sent.
+    fn is_unsent(&self, n: u32) -> bool {
+        if n < self.lowest() || n > self.newest {
+            return false;
+        }
+        let s = self.slot_of(n);
+        self.ring.read_byte(s, MARK_AT) == 0xff
+            && self.slot(s).is_some_and(|(got, _, sent)| got == n && !sent)
+    }
+
+    /// Marks item `n` sent, if it is unsent.
+    fn mark(&mut self, n: u32) {
+        if self.is_unsent(n) {
+            self.ring.clear(self.slot_of(n), MARK_AT);
+            self.unsent = self.unsent.saturating_sub(1);
+        }
     }
 
     /// Whether the node is someone's home.
@@ -232,8 +313,7 @@ impl<R: Ring> Mailbox<R> {
 
     /// The oldest number the ring still holds, 0 when it holds none.
     pub fn oldest(&self) -> u32 {
-        let first = self.newest.saturating_sub(self.slots() - 1).max(1);
-        (first..=self.newest)
+        (self.lowest()..=self.newest)
             .find(|&n| self.item(n, &mut [0u8; MAX_PAYLOAD]).is_some())
             .unwrap_or(0)
     }
@@ -248,10 +328,10 @@ impl<R: Ring> Mailbox<R> {
         if n == 0 || n > self.newest {
             return None;
         }
-        let s = (n - 1) % self.slots();
+        let s = self.slot_of(n);
         let mut b = [0u8; SLOT_LEN];
         self.ring.read(s, &mut b);
-        let (got, len) = self.slot(s)?;
+        let (got, len, _) = self.slot(s)?;
         if got != n {
             return None;
         }
@@ -280,8 +360,13 @@ impl<R: Ring> Mailbox<R> {
             return Arrival::Refused;
         }
         let n = self.newest + 1;
-        let s = (n - 1) % self.slots();
+        let s = self.slot_of(n);
         if s.is_multiple_of(SLOTS_PER_PAGE) {
+            for o in s..s + SLOTS_PER_PAGE {
+                let gone = self.slot(o).filter(|&(k, ..)| self.slot_of(k) == o);
+                let lost = u32::from(gone.is_some_and(|(.., sent)| !sent));
+                self.unsent = self.unsent.saturating_sub(lost);
+            }
             self.ring.erase(s / SLOTS_PER_PAGE);
         }
         let mut b = [0xffu8; SLOT_LEN];
@@ -289,26 +374,35 @@ impl<R: Ring> Mailbox<R> {
         b[seal::NUMBER_LEN] = payload.len() as u8;
         b[PAYLOAD_AT..PAYLOAD_AT + payload.len()].copy_from_slice(payload);
         b[ID_AT..CHECK_AT].copy_from_slice(&msg_id.0.to_be_bytes());
-        let check = fnv1a(&b[..CHECK_AT]);
+        let check = slot_check(&b);
         b[CHECK_AT..].copy_from_slice(&check.to_be_bytes());
         self.ring.write(s, &b);
         self.newest = n;
+        self.unsent += 1;
         Arrival::Kept(n)
     }
 
     fn take(&mut self, f: Fetch) {
-        let last = self.newest;
-        // A ring larger than a round sends its newest MAX_REPLIES.
-        let first = (f.since + 1)
-            .max(self.oldest())
-            .max((last + 1).saturating_sub(MAX_REPLIES));
+        let lowest = self.lowest();
+        let mut count = 0;
+        let mut bottom = self.newest + 1;
+        let mut n = self.newest;
+        while count < MAX_REPLIES && n >= lowest {
+            if self.is_unsent(n) {
+                count += 1;
+                bottom = n;
+            }
+            n -= 1;
+        }
         self.last_fetch = f.sent;
         self.reply = Some(Reply {
             round: f.sent,
             address: f.address,
-            first,
-            next: first,
-            last,
+            next: self.newest,
+            bottom,
+            handed: 0,
+            remaining: u16::try_from(self.unsent.saturating_sub(count)).unwrap_or(u16::MAX),
+            again: None,
             answered: false,
         });
         self.in_flight = None;
@@ -316,49 +410,76 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
-    /// skips past items no longer in the ring or too long to seal, after
+    /// finds that the phone at the node has read the rest meanwhile, after
     /// which none is due.
     pub fn reply_due(&self) -> bool {
-        self.key.is_some() && self.reply.is_some_and(|r| r.next <= r.last || !r.answered)
+        self.key.is_some()
+            && self
+                .reply
+                .is_some_and(|r| r.again.is_some() || r.next >= r.bottom || !r.answered)
     }
 
     /// The next reply to hand the core, sealed into `out`, if one is due;
-    /// call it while `accepts_send` holds, and send what it gives. A round
-    /// with no item to send gets one reply that says nothing is new.
+    /// call it while `accepts_send` holds, and send what it gives. Its
+    /// item is marked sent as it is handed over. A round with no item to
+    /// send gets one reply that says nothing is new.
     pub fn next(&mut self, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         let key = self.key?;
         let mut r = self.reply?;
-        let mut item = [0u8; MAX_PAYLOAD];
         let mut sealed = None;
-        while sealed.is_none() && r.next <= r.last {
+        if let Some((n, place)) = r.again.take() {
+            sealed = self.seal_item(&key, &r, n, place, out);
+        }
+        while sealed.is_none() && r.next >= r.bottom {
             let n = r.next;
-            r.next += 1;
-            let Some(len) = self.item(n, &mut item) else {
-                continue;
-            };
-            let place = n - r.first + 1;
-            // An item longer than the app writes cannot come out.
-            sealed = seal::seal_reply(&key, r.round, place, n, &item[..len], out)
-                .ok()
-                .map(|m| (n, m));
+            r.next -= 1;
+            if self.is_unsent(n) {
+                sealed = self.seal_item(&key, &r, n, r.handed + 1, out);
+                r.handed += 1;
+                self.mark(n);
+            }
         }
         if sealed.is_none() && !r.answered {
             let nothing = seal::seal_nothing_new(&key, r.round);
             out[..nothing.len()].copy_from_slice(&nothing);
-            sealed = Some((0, nothing.len()));
+            sealed = Some((0, 0, nothing.len()));
         }
         // Kept with nothing to send too, so that no reply is due after.
         r.answered |= sealed.is_some();
         self.reply = Some(r);
-        let (number, len) = sealed?;
+        let (number, place, len) = sealed?;
         let msg_id = MsgId::of(r.address.position, r.address.node, &out[..len]);
-        self.in_flight = Some(InFlight { msg_id, number });
+        self.in_flight = Some(InFlight {
+            msg_id,
+            number,
+            place,
+        });
         Some(Outgoing {
             address: r.address,
             number,
             len,
             msg_id,
         })
+    }
+
+    /// Item `n` at `place` in `r`'s round, sealed into `out`: its number,
+    /// place and length; `None` once the ring has overwritten it, so that
+    /// a place never seals two plaintexts. One longer than the app writes
+    /// goes empty, so that its number still arrives.
+    fn seal_item(
+        &self,
+        key: &[u8; KEY_LEN],
+        r: &Reply,
+        n: u32,
+        place: u32,
+        out: &mut [u8; MAX_PAYLOAD],
+    ) -> Option<(u32, u32, usize)> {
+        let mut item = [0u8; MAX_PAYLOAD];
+        let len = self.item(n, &mut item)?;
+        let len = if len > MAX_APP_PAYLOAD { 0 } else { len };
+        seal::seal_reply(key, r.round, place, n, r.remaining, &item[..len], out)
+            .ok()
+            .map(|m| (n, place, m))
     }
 
     /// The core gave the message back: if it is the last reply, it goes
@@ -369,17 +490,17 @@ impl<R: Ring> Mailbox<R> {
                 if f.number == 0 {
                     r.answered = false;
                 } else {
-                    r.next = r.next.min(f.number);
+                    r.again = Some((f.number, f.place));
                 }
                 self.in_flight = None;
             }
         }
     }
 
-    /// The state: the key, the last fetch and where its replies go. The
-    /// next reply is not kept, to spare a write a reply: after a reboot
-    /// the round starts again from its first, and the requester drops
-    /// what it has.
+    /// The state: the key, the last fetch and what the phone at the node
+    /// has read. A round is not kept, to spare a write a reply: after a
+    /// reboot its items not yet handed over wait, unsent, for the next
+    /// fetch, and no place is sealed twice.
     fn keep(&mut self) {
         let mut s = [0u8; STATE_LEN];
         if let Some(k) = self.key {
@@ -387,12 +508,6 @@ impl<R: Ring> Mailbox<R> {
             s[1..33].copy_from_slice(&k);
         }
         s[33..37].copy_from_slice(&self.last_fetch.to_be_bytes());
-        if let Some(r) = self.reply {
-            s[37] = 1;
-            s[38..38 + Address::LEN].copy_from_slice(&r.address.encode());
-            s[51..54].copy_from_slice(&r.first.to_be_bytes()[1..]);
-            s[54..57].copy_from_slice(&r.last.to_be_bytes()[1..]);
-        }
         s[57..60].copy_from_slice(&self.read.to_be_bytes()[1..]);
         let check = fnv1a(&s[..STATE_LEN - 4]);
         s[STATE_LEN - 4..].copy_from_slice(&check.to_be_bytes());
@@ -410,19 +525,6 @@ impl<R: Ring> Mailbox<R> {
         }
         self.last_fetch = be(&s[33..37]);
         self.read = be(&s[57..60]).min(self.newest);
-        if s[37] == 1 {
-            if let Ok(address) = Address::decode(&s[38..]) {
-                let first = be(&s[51..54]);
-                self.reply = Some(Reply {
-                    round: self.last_fetch,
-                    address,
-                    first,
-                    next: first,
-                    last: be(&s[54..57]),
-                    answered: false,
-                });
-            }
-        }
     }
 }
 
@@ -465,6 +567,9 @@ impl<const SLOTS: usize> Ring for RamRing<SLOTS> {
         for (d, s) in self.slots[slot as usize].iter_mut().zip(bytes) {
             *d &= s;
         }
+    }
+    fn clear(&mut self, slot: u32, at: usize) {
+        self.slots[slot as usize][at] = 0;
     }
     fn erase(&mut self, page: u32) {
         let first = (page * SLOTS_PER_PAGE) as usize;

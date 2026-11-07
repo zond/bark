@@ -48,11 +48,9 @@ class Me extends ChangeNotifier {
   /// The app has asked the person to let it notify.
   bool askedToNotify = false;
 
-  /// The mailbox: the number up to which this phone has every item, the
-  /// numbers it has above that, and the rounds of its latest fetches,
-  /// newest first.
-  int since = 0;
-  final Set<int> above = {};
+  /// The mailbox: the items its home last said it has not sent, and the
+  /// rounds of its latest fetches, newest first.
+  int remaining = 0;
   final List<int> rounds = [];
 
   /// The rounds whose replies are still opened: a reply of the round
@@ -82,8 +80,8 @@ class Me extends ChangeNotifier {
       final backedUp = j['backedUp'] as bool;
       // Added after the format's first version: absent means not asked.
       final askedToNotify = j['askedToNotify'] as bool? ?? false;
-      final since = j['since'] as int;
-      final above = (j['above'] as List).cast<int>().toList();
+      // Added after the format's first version: absent means none told.
+      final remaining = j['remaining'] as int? ?? 0;
       final rounds = (j['rounds'] as List).cast<int>().toList();
       return () {
         this.keys = keys;
@@ -95,8 +93,7 @@ class Me extends ChangeNotifier {
         this.lastSent = lastSent;
         this.backedUp = backedUp;
         this.askedToNotify = askedToNotify;
-        this.since = since;
-        this.above.addAll(above);
+        this.remaining = remaining;
         this.rounds.addAll(rounds);
       };
     });
@@ -122,8 +119,7 @@ class Me extends ChangeNotifier {
     'lastSent': lastSent,
     'backedUp': backedUp,
     'askedToNotify': askedToNotify,
-    'since': since,
-    'above': above.toList(),
+    'remaining': remaining,
     'rounds': rounds,
   });
 
@@ -164,8 +160,7 @@ class Me extends ChangeNotifier {
   Future<void> restore(Uint8List seed) async {
     keys = Keys.fromSeed(sodium, seed);
     backedUp = true;
-    since = 0;
-    above.clear();
+    remaining = 0;
     rounds.clear();
     await _changed();
   }
@@ -201,18 +196,11 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// Item `n` of the mailbox has arrived, in a round whose first item was
-  /// `first`: the ring held nothing after the fetch's `since` below that,
-  /// and never will.
-  Future<void> gotItem(int n, {required int first}) async {
-    if (first - 1 > since) {
-      since = first - 1;
-      above.removeWhere((a) => a <= since);
-    }
-    if (n > since) above.add(n);
-    while (above.remove(since + 1)) {
-      since++;
-    }
+  /// A reply of the fetch of `round` has come: if it is the latest
+  /// fetch's, its count of the items the home has not sent is current.
+  Future<void> gotReply(int round, Opened o) async {
+    if (rounds.isEmpty || round != rounds.first) return;
+    remaining = o.remaining;
     await _changed();
   }
 }

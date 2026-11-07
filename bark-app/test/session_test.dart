@@ -538,7 +538,7 @@ void main() {
     });
   });
 
-  test('the mailbox: a fetch, and its replies in any order', () {
+  test('the mailbox: a backlog of 70 comes in batches, newest first', () {
     run((async, p, node) {
       final home = Address(Position.fromDegrees(50.5, 30.5), [
         9,
@@ -549,45 +549,57 @@ void main() {
         9,
       ]);
       p.me.setHome(home);
-      p.messenger.fetch(elsewhere);
-      async.flushMicrotasks();
-      final o = p.session.outbox.last;
-      expect(o.kind, OutKind.fetch);
-      expect(o.dst.toString(), home.toString());
-      final f = Fetch.open(sodium, p.me.keys.mailbox, o.payload);
-      expect(f.since, 0);
-      expect(f.address.toString(), elsewhere.toString());
-
-      // Since 0: the ring's first item here is 41, at place 1.
-      void item(int n, String text) {
-        final inner = fromFriend(node, p, 1000 + n, [TextRecord(text)]);
-        final reply = sealReply(
-          sodium,
-          p.me.keys.mailbox,
-          f.sent,
-          n,
-          40 + n,
-          inner,
-        );
-        p.messenger.receive(InboxMessage(100 + n, reply));
+      // The home's ring holds items 1 to 70, none sent; it answers as
+      // its mailbox does, and the replies come in any order.
+      final news = <String?>[];
+      var lastSent = 0;
+      for (final (top, bottom) in [(70, 39), (38, 7), (6, 1)]) {
+        p.messenger.fetch(elsewhere);
         async.flushMicrotasks();
+        final o = p.session.outbox.last;
+        expect(o.kind, OutKind.fetch);
+        expect(o.dst.toString(), home.toString());
+        final f = Fetch.open(sodium, p.me.keys.mailbox, o.payload);
+        expect(f.address.toString(), elsewhere.toString());
+        // Each a later round, so that the home takes it.
+        expect(f.sent, greaterThan(lastSent));
+        lastSent = f.sent;
+        for (var n = bottom; n <= top; n++) {
+          final inner = fromFriend(node, p, 1000 + n, [TextRecord('t$n')]);
+          final reply = sealReply(
+            sodium,
+            p.me.keys.mailbox,
+            f.sent,
+            top - n + 1,
+            n,
+            bottom - 1,
+            inner,
+          );
+          p.messenger.receive(InboxMessage(n, reply));
+          async.flushMicrotasks();
+        }
+        expect(o.acked, isTrue);
+        expect(p.me.remaining, bottom - 1);
+        news.add(p.session.fetchNews);
+        p.session.fetchNews = null;
       }
-
-      item(1, 'one');
-      expect(o.acked, isTrue);
-      expect(p.me.since, 41);
-      item(3, 'three');
-      expect(p.me.above, {43});
-      item(2, 'two');
-      expect(p.me.since, 43);
+      expect(news, [
+        '38 more at home: fetch again for them',
+        '6 more at home: fetch again for them',
+        null,
+      ]);
       final got = p.session.received.where((r) => r.mailbox).toList();
-      expect(got.map((r) => r.text), ['one', 'three', 'two']);
-      // The same item again, as after a lost reply, is not kept twice.
-      item(2, 'two');
-      expect(p.session.received.where((r) => r.mailbox).length, 3);
+      expect(got.length, 70);
+      // The same item again, read at home after its reply, is not kept
+      // twice.
+      p.messenger.receive(
+        InboxMessage(300, fromFriend(node, p, 1006, [TextRecord('t6')])),
+      );
+      async.flushMicrotasks();
+      expect(p.session.received.where((r) => r.body == 't6').length, 1);
       // A reply under another key opens for nobody.
       final other = Keys.fromSeed(sodium, List.filled(16, 7));
-      final stray = sealReply(sodium, other.mailbox, f.sent, 4, 44, [1, 2, 3]);
+      final stray = sealReply(sodium, other.mailbox, lastSent, 4, 74, 0, [1]);
       p.messenger.receive(InboxMessage(200, stray));
       async.flushMicrotasks();
       expect(p.session.received.last.from, isNull);
@@ -745,12 +757,12 @@ void main() {
       p.me.setHome(
         Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]),
       );
-      for (final (since, waited) in [(0, true), (1, false)]) {
+      for (final first in [true, false]) {
         p.messenger.fetch(elsewhere);
         async.elapse(FakeNode.fetchAnswerAfter + FakeNode.handOver);
         expect(p.session.fetchWaiting, isNull);
-        expect(p.me.since, 1, reason: 'after since $since');
-        expect(p.session.fetchNews, waited ? isNull : 'No new mail');
+        expect(p.session.fetchNews, first ? isNull : 'No new mail');
+        expect(p.me.remaining, 0);
       }
       expect(
         p.session.received

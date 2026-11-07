@@ -703,8 +703,11 @@ ring is full, and its state in a page inside, since it holds the mailbox
 key (`bark-image/src/layout.rs`; `bark_app_layer::flash_ring`,
 `src/mailbox.rs`). Its phone's Inbox reads
 from the ring, and a fetch from the person's phone elsewhere is answered
-with the items, sealed again, through the core's one application send
-slot, the phone's own message first (`src/node.rs`, `LinkApp::take`).
+with a batch of the items not yet sent, sealed again, through the core's
+one application send slot, the phone's own message first (`src/node.rs`,
+`LinkApp::take`). An item sent, or confirmed by the phone at home, is
+marked by clearing one byte of its slot, a write without an
+erase; it stays in the ring.
 
 The mailbox reads a slot when asked, about a millisecond on the
 external flash's bus, and never waits on a write: its writes and erases
@@ -717,7 +720,8 @@ to 12 ms; the mailbox's users all run in thread mode, so that wait
 masks no interrupt. At boot the mailbox opens once the radio has raised
 the rail: it reads all 1024 slots, 256 KiB, and logs how long that
 took, `mailbox: ... 1024 slots read in N ms`, which gives the bus's
-speed; about a second by its instructions. A message the core delivered
+speed; about a second by its instructions. The same read counts the
+items not yet sent. A message the core delivered
 is confirmed to the core only once its slot is written, so that a
 reboot meanwhile loses none: the core keeps it and delivers it again. A
 cut write leaves a slot that fails its check, and a cut state record
@@ -1092,7 +1096,11 @@ screen /dev/ttyACM0           # exit with C-a k
 cat /dev/ttyACM0
 ```
 
-Linux raises DTR when a tty is opened, so all three work. Your user needs to
+Linux raises DTR when a tty is opened, so all three work, and the kernel
+hands over bytes only while something holds the port open: whatever opens
+it first takes the waiting boot lines, so a `stty` run before the reader
+takes them into nothing. Set the line and read it in one open, as in
+`( stty 115200 raw -echo <&3; cat <&3 ) 3<>/dev/ttyACM0`. Your user needs to
 be in the `dialout` group (or `uucp`, depending on the distribution).
 
 Each line is `[seconds.millis LEVEL] message`, seconds since boot; command
