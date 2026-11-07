@@ -513,11 +513,43 @@ sector of the staged slot is erased twice, in staging and in the swap,
 three times with a swap back: the external flash's 100 000 (datasheet,
 "Features") last 33 000.
 
-**Staging is a bench tool** until the update has a transport (BLE, then
-the mesh). A console build takes an image over its serial port:
-`stage <header hex>`, `chunk <offset> <hex>` for up to 256 bytes at a
-time, in order, `commit`, which checks the hash, records the header and
-asks for the swap, and `reboot`. `scripts/image.py` packs and sends it:
+**Staging** takes two paths, the same steps on each
+(`bark_image::boot::Stager`): the phone link, in the node build, and the
+serial port, in a console build. Both commit through `update::commit`,
+which checks that every byte came, the battery (below), the hash, records
+the header and asks for the swap, and reboot through `update::reboot`, so
+that a check added there applies to both. `scripts/image.py pack` makes
+the image either takes; a release carries it as `bark-fw-<N>.img`.
+
+From the phone (spec "Phone link", Updates; roadmap D145): the app
+writes the header to Update, the image to Image in pieces of 240 bytes
+without a response, reads Update after every seven and goes on from the
+bytes the node holds, then commits and reboots (`bark-app/README.md`,
+"Updating a node"). The node stages through the MPSL's flash timeslots
+for the record and the state page, as the store writes, and through the
+external flash's driver with the executor free while the chip erases or
+programs, as the mailbox writes; the commit's hash reads 256 bytes at a
+time and lets the executor run between, about 3 s for the whole image.
+What is staged stays across connections until the node resets. The log
+has a line for each change, none for a piece:
+
+```
+update: receiving version=8 length=394112 from the phone
+update: link closed with 120960 bytes of version 8 held
+update: staged version=8, all 394112 bytes held; commit next
+update: committed version=8 length=394112: the loader swaps it in at the next boot
+update: reboot asked by the phone
+ble: disconnected 0x16
+reboot
+```
+
+and a refusal as `update: begin refused=Version { running: 8, staged: 8 }`,
+`update: commit refused=BatteryLow usb=false battery_mv=3702`, or the
+like.
+
+From a console build, over its serial port: `stage <header hex>`,
+`chunk <offset> <hex>` for up to 256 bytes at a time, in order,
+`commit` and `reboot`. `scripts/image.py` packs and sends it:
 
 ```
 BARK_IMAGE_VERSION=2 cargo build --release --features console
@@ -539,10 +571,13 @@ at most a copy). Every image logs the two protected regions as the ACL
 reads them back, `update: acl 0 start=0x0 len=0x5000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
-On battery at or below the low level of spec "Sleepy nodes" the console
-refuses `commit`, and `reboot` with a swap asked for, with
-`commit refused=BatteryLow battery_mv=... low_mv=3741` (spec
-"Implementation notes"); over its USB cable it is never on battery.
+On battery at or below the low level of spec "Sleepy nodes" a commit,
+and a reboot with a swap asked for, are refused
+(spec "Implementation notes"): the console says `commit refused=BatteryLow battery_mv=...
+low_mv=3741`, and over its USB cable it is never on battery; the phone
+link answers refused, battery, and the node keeps the image staged, to
+commit once it is on USB or charged. The node reads its battery as the
+core does, calibrated; the console, without a core, uncalibrated.
 
 **A bench loader**, built with `BARK_LOADER_BENCH=reset`, resets the
 chip once in each swap and once in each swap back, at a moment drawn
@@ -735,6 +770,19 @@ the phone is subscribed and saw another version, `ble: service changed:
 the phone saw version 4, this is 5` and, once the phone confirms,
 `ble: service changed confirmed`. It costs 4 KB of flash and 0.4 KB of
 static RAM (2026-11-07, `llvm-size`).
+
+Update and Image (link version 6) stage a new image from the phone
+(Updates, above). The BLE task serves them itself and keeps the staging
+across connections (`src/update/phone.rs`); it awaits each piece's
+writes before it takes the next request, so the pieces wait in the
+host's queue of 8 meanwhile, which the app's window of seven and its
+read fill. The pieces and the reads of Update are not logged as ATT
+requests, as the rest are, and a piece reads none of the values the
+node publishes. A reboot asked for answers, ends the link, waits for it
+to close, at most the 32 s of the longest supervision timeout, and
+resets. They cost 14.8 KB of flash and 1.4 KB of static RAM, the
+SHA-256 among it, which the node build did not have before
+(2026-11-07, `llvm-size`, an open build).
 
 ## Mailbox
 

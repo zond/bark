@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Pack bark-fw into an image to stage, and stage it over the serial console.
 
-A bench tool until the update has a transport: the console build takes
-the image in chunks (`stage`, `chunk`, `commit`, then `reboot`) and the
-loader swaps it in at the next boot (bark-fw/README.md, "Updates").
+The image is what the phone link stages too, and what a release carries
+as bark-fw-<N>.img; the console build takes it in chunks (`stage`,
+`chunk`, `commit`, then `reboot`), and the loader swaps it in at the
+next boot (bark-fw/README.md, "Updates").
 
     BARK_IMAGE_VERSION=2 cargo build --release
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw bark-fw.img
