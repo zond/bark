@@ -25,11 +25,16 @@
 //! tells it when the table has changed since, by the link version the
 //! bond records ([`tell_of_change`]; spec "Phone link", Changes to the
 //! table).
+//!
+//! The phone stages a new image through Update and Image, which this
+//! task serves itself, across its connections (`update::Phone`; spec
+//! "Phone link", Updates).
 
 use core::cell::RefCell;
 
 use bark_link::bond::Bond;
 use bark_link::neighbours;
+use bark_link::update::{Command, Piece, Progress, Refusal};
 use bark_link::{
     le_bytes, seconds_left, uuid, GivenBack, Malformed, Message, Node, Status, ATT_MTU,
 };
@@ -217,6 +222,10 @@ pub struct Link {
     pub home: [u8; bark_link::home::Home::LEN],
     #[characteristic(uuid = le_bytes(uuid::NEIGHBOURS), read, write, permissions(authenticated))]
     pub neighbours: heapless::Vec<u8, { neighbours::MAX_LEN }>,
+    #[characteristic(uuid = le_bytes(uuid::UPDATE), read, write, permissions(authenticated))]
+    pub update: heapless::Vec<u8, { Progress::LEN }>,
+    #[characteristic(uuid = le_bytes(uuid::IMAGE), write, write_without_response, permissions(authenticated))]
+    pub image: (),
 }
 
 /// What the MPSL takes.
@@ -745,8 +754,16 @@ pub static STORED_BOND: Signal<CriticalSectionRawMutex, Option<Bond>> = Signal::
 
 type Stack = trouble_host::Stack<'static, SoftdeviceController<'static>, DefaultPacketPool>;
 
-/// Run the host and the advertising, for ever.
-pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u32) {
+/// Run the host and the advertising, for ever. `internal` and `flash` are
+/// the internal flash, through the MPSL and read directly, for the
+/// update (`update::Phone`).
+pub async fn run(
+    controller: SoftdeviceController<'static>,
+    id: NodeId,
+    image: u32,
+    internal: &'static crate::store::SharedFlash,
+    flash: &'static crate::update::Flash,
+) {
     static RESOURCES: StaticCell<
         HostResources<DefaultPacketPool, CONNECTIONS, CHANNELS, ADV_SETS, BONDS>,
     > = StaticCell::new();
@@ -779,6 +796,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         image,
     };
     let _ = server.set(&server.link.node, &node.encode());
+    let mut update = crate::update::Phone::new(internal, flash);
 
     let host = async {
         loop {
@@ -790,7 +808,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
     let link = async {
         loop {
             match advertise(&mut peripheral, &server, name).await {
-                Ok(conn) => serve(&stack, &server, &gatt, &conn).await,
+                Ok(conn) => serve(&stack, &server, &gatt, &conn, &mut update).await,
                 Err(e) => {
                     log::error!("ble: advertising {}", StackError(&e));
                     embassy_time::Timer::after(ADV_RETRY).await;
@@ -875,6 +893,7 @@ async fn serve(
     server: &Server<'_>,
     gatt: &Gatt,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    update: &mut crate::update::Phone,
 ) {
     let changes = Cccd(
         gatt.service_changed
@@ -890,12 +909,12 @@ async fn serve(
     NOTIFY.reset();
     LINK.lock(|l| l.borrow_mut().neighbours_from = 0);
     let link = &server.link;
-    refresh(server, conn);
+    refresh(server, conn, update);
     loop {
         let event = match select(conn.next(), NOTIFY.wait()).await {
             Either::First(e) => e,
             Either::Second(n) => {
-                refresh(server, conn);
+                refresh(server, conn, update);
                 if n.status {
                     let _ = link.status.notify(conn, &status_now().encode(), true).await;
                 }
@@ -908,6 +927,7 @@ async fn serve(
         let event = match event {
             GattConnectionEvent::Disconnected { reason } => {
                 log::info!("ble: disconnected 0x{:02x}", u8::from(reason));
+                update.link_closed();
                 // A pairing cut short leaves no code on the screen.
                 crate::display::phone(phone_now(stack));
                 return;
@@ -969,25 +989,45 @@ async fn serve(
                 continue;
             }
         };
-        log_request(&event.payload().incoming());
+        // The update's pieces and its progress reads come many to a
+        // second; the update logs its own changes instead.
+        let incoming = event.payload().incoming();
+        let piece = written(&incoming) == Some(link.image.handle);
+        if !piece && read_of(&incoming) != Some(link.update.handle) {
+            log_request(&incoming);
+        }
         // The attribute server answers every kind of read from the values
         // it holds, a read by handle or by type, of one value or several:
         // they are brought up to date before each request is answered, but
         // for the later parts of a long read, which must read on in the
-        // value its first part began.
+        // value its first part began, and a piece, which reads nothing.
         let continued = matches!(
-            event.payload().incoming(),
+            incoming,
             AttClient::Request(AttReq::ReadBlob { offset, .. }) if offset > 0
         );
-        if !continued {
-            refresh(server, conn);
+        if !continued && !piece {
+            refresh(server, conn, update);
         }
         let mut wrote_changes = false;
+        let mut reboot = false;
         let reply = match event {
             GattEvent::Write(w) => {
                 let h = w.handle();
                 wrote_changes = h == changes.0;
-                let answer = if h == link.send.handle {
+                let answer = if h == link.image.handle {
+                    let taken = write_image(&w, update).await;
+                    // A write without response has no answer to refuse
+                    // with; the phone reads Update instead.
+                    match w.payload().incoming() {
+                        AttClient::Command(_) => Some(Ok(())),
+                        _ => Some(taken),
+                    }
+                } else if h == link.update.handle {
+                    let answer = write_update(&w, update).await;
+                    reboot = answer == Ok(true);
+                    let _ = conn.set(&link.update, &progress(update));
+                    Some(answer.map(|_| ()))
+                } else if h == link.send.handle {
                     Some(write_send(&w).await)
                 } else if h == link.inbox.handle {
                     Some(write_confirm(&w).await)
@@ -1018,6 +1058,45 @@ async fn serve(
         if wrote_changes {
             tell_of_change(gatt, &changes, conn, true).await;
         }
+        if reboot {
+            // Closed first, so that the phone has the answer and sees the
+            // node leave, not lose it.
+            conn.raw().disconnect();
+            let closed = async {
+                while !matches!(conn.next().await, GattConnectionEvent::Disconnected { .. }) {}
+            };
+            let _ = embassy_time::with_timeout(SUPERVISION_MAX, closed).await;
+            crate::update::reboot().await;
+        }
+    }
+}
+
+/// The longest supervision timeout a link has, 32 s (Bluetooth Core
+/// Vol 6 Part B §4.5.2): by then a link whose end the phone does not
+/// acknowledge has ended anyway.
+const SUPERVISION_MAX: embassy_time::Duration = embassy_time::Duration::from_secs(32);
+
+/// Update as the phone reads it.
+fn progress(update: &crate::update::Phone) -> heapless::Vec<u8, { Progress::LEN }> {
+    heapless::Vec::from_slice(&update.progress().encode()).expect("it fits")
+}
+
+/// The handle an ATT write writes, by request or command.
+fn written(att: &AttClient<'_>) -> Option<u16> {
+    match att {
+        AttClient::Request(AttReq::Write { handle, .. })
+        | AttClient::Command(AttCmd::Write { handle, .. }) => Some(*handle),
+        _ => None,
+    }
+}
+
+/// The handle an ATT read reads, whole or in part.
+fn read_of(att: &AttClient<'_>) -> Option<u16> {
+    match att {
+        AttClient::Request(AttReq::Read { handle } | AttReq::ReadBlob { handle, .. }) => {
+            Some(*handle)
+        }
+        _ => None,
     }
 }
 
@@ -1197,10 +1276,15 @@ fn log_request(att: &AttClient<'_>) {
 }
 
 /// Put what the node publishes now into the attribute server's values.
-fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>) {
+fn refresh(
+    server: &Server<'_>,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    update: &crate::update::Phone,
+) {
     let link = &server.link;
     let status = status_now().encode();
     for e in [
+        conn.set(&link.update, &progress(update)).err(),
         conn.set(&link.status, &status).err(),
         conn.set(&link.inbox, &inbox_now()).err(),
         conn.set(&link.given_back, &given_back_now()).err(),
@@ -1220,6 +1304,60 @@ fn malformed(m: Malformed) -> AttErrorCode {
 }
 
 const NOT_READY: AttErrorCode = AttErrorCode::new(bark_link::att::NOT_READY);
+const REFUSED: AttErrorCode = AttErrorCode::new(bark_link::att::REFUSED);
+
+/// Update, written: begin, commit or reboot (spec "Phone link", Updates);
+/// whether a reboot was asked for and may go ahead, or the refusal, which
+/// Update's read then says.
+async fn write_update(
+    w: &WriteEvent<'_, '_, DefaultPacketPool>,
+    update: &mut crate::update::Phone,
+) -> Result<bool, AttErrorCode> {
+    enum Asked {
+        Begin,
+        Commit,
+        Reboot,
+    }
+    let mut header = [0u8; bark_link::update::HEADER_LEN];
+    let asked = w.with_data(|offset, data| match offset {
+        0 => Ok(match Command::decode(data).map_err(malformed)? {
+            Command::Begin(h) => {
+                header.copy_from_slice(h);
+                Asked::Begin
+            }
+            Command::Commit => Asked::Commit,
+            Command::Reboot => Asked::Reboot,
+        }),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    let done: Result<bool, Refusal> = match asked {
+        Asked::Begin => update.begin(&header).await.map(|()| false),
+        Asked::Commit => update.commit().await.map(|()| false),
+        Asked::Reboot => update.reboot().map(|()| true),
+    };
+    done.map_err(|_| REFUSED)
+}
+
+/// Image, written: a piece, taken where the bytes held end; one written
+/// with a response elsewhere is answered 0x13.
+async fn write_image(
+    w: &WriteEvent<'_, '_, DefaultPacketPool>,
+    update: &mut crate::update::Phone,
+) -> Result<(), AttErrorCode> {
+    let mut bytes = [0u8; Piece::MAX_BYTES];
+    let (offset, len) = w.with_data(|offset, data| match offset {
+        0 => {
+            let p = Piece::decode(data).map_err(malformed)?;
+            bytes[..p.bytes.len()].copy_from_slice(p.bytes);
+            Ok((p.offset, p.bytes.len()))
+        }
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    match update.piece(offset, &bytes[..len]).await {
+        true => Ok(()),
+        false => Err(malformed(Malformed::Value)),
+    }
+}
 
 async fn write_send(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     let request = w.with_data(|offset, data| {

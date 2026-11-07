@@ -93,6 +93,9 @@ const NO_CHIP: Error = Error::Absent([0; 3]);
 #[cfg(not(feature = "console"))]
 pub use mailbox::{erase, program};
 
+#[cfg(not(feature = "console"))]
+pub use dfu::Dfu;
+
 /// What the mailbox's ring writes with.
 #[cfg(not(feature = "console"))]
 mod mailbox {
@@ -133,6 +136,79 @@ mod mailbox {
             waited += POLL_US;
         }
         with(|c| c.finish()).unwrap_or(Ok(()))
+    }
+}
+
+/// What the phone link's staging writes with.
+#[cfg(not(feature = "console"))]
+mod dfu {
+    use bark_image::ext_flash::{Error, PROGRAM_PAGE, SECTOR};
+    use bark_image::layout::external::DFU;
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
+
+    use super::{erase, program, with, NO_CHIP};
+
+    /// The staged slot, addressed from its start, as the update's staging
+    /// writes it (`bark_image::boot::Stager`): its erases and programs as
+    /// the mailbox's, the executor free while the chip works; and each
+    /// read, as the staged image is hashed, a chunk at a time with the
+    /// executor let run between, so that the hash of a whole slot, some
+    /// seconds on this bus, holds nothing up for longer than a chunk.
+    pub struct Dfu;
+
+    fn within(offset: u32, len: usize) -> Result<u32, Error> {
+        match offset.checked_add(len as u32) {
+            Some(end) if end <= DFU.len => Ok(DFU.start + offset),
+            _ => Err(Error::OutOfBounds),
+        }
+    }
+
+    impl ErrorType for Dfu {
+        type Error = Error;
+    }
+
+    impl ReadNorFlash for Dfu {
+        const READ_SIZE: usize = 1;
+
+        async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Error> {
+            let at = within(offset, bytes.len())?;
+            let read = with(|c| embedded_storage::nor_flash::ReadNorFlash::read(c, at, bytes))
+                .unwrap_or(Err(NO_CHIP));
+            embassy_futures::yield_now().await;
+            read
+        }
+
+        fn capacity(&self) -> usize {
+            DFU.len as usize
+        }
+    }
+
+    impl NorFlash for Dfu {
+        const WRITE_SIZE: usize = 1;
+        const ERASE_SIZE: usize = SECTOR as usize;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), Error> {
+            if !from.is_multiple_of(SECTOR) || !to.is_multiple_of(SECTOR) || from > to {
+                return Err(Error::NotAligned);
+            }
+            let start = within(from, (to - from) as usize)?;
+            for sector in (start..start + (to - from)).step_by(SECTOR as usize) {
+                erase(sector).await?;
+            }
+            Ok(())
+        }
+
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Error> {
+            let mut at = within(offset, bytes.len())?;
+            let mut rest = bytes;
+            while !rest.is_empty() {
+                let n = rest.len().min((PROGRAM_PAGE - at % PROGRAM_PAGE) as usize);
+                program(at, &rest[..n]).await?;
+                at += n as u32;
+                rest = &rest[n..];
+            }
+            Ok(())
+        }
     }
 }
 
