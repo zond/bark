@@ -161,7 +161,8 @@ bond), which needs no code of the app's own on the Android side.
 While it is not connected, the app looks for the node it is paired with
 and connects to it when it sees it, by the same path as a tap and without
 a code: from its start, and after a link drops, so that texts waiting go
-out as soon as the node is in reach. The first screen, and Settings under
+out as soon as the node is in reach. Bluetooth switched off ends the link
+as a drop does: Android does not report that end itself. The first screen, and Settings under
 the scan rows, say "Looking for bark-…", or that Bluetooth is off. A
 search round scans for four of the node's advertising intervals, 4.1 s,
 without a break, and a round starts every 15 s: Android refuses an app's

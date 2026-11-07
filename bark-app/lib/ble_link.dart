@@ -193,6 +193,7 @@ class BleLink implements NodeLink {
   final String deviceId;
   final _closed = Completer<void>();
   StreamSubscription<bool>? _connection;
+  StreamSubscription<AvailabilityState>? _adapter;
 
   BleLink._(this.deviceId);
 
@@ -227,6 +228,15 @@ class BleLink implements NodeLink {
     );
     link._connection = UniversalBle.connectionStream(deviceId).listen((up) {
       if (!up && !link._closed.isCompleted) link._closed.complete();
+    });
+    // Android reports no end of the link when its Bluetooth is switched
+    // off: the link stayed up for the app, whose writes then failed with
+    // characteristicNotFound until it was restarted (bench, 2026-11-07).
+    // The adapter's going off ends it here, as a drop, and the close lets
+    // Android forget the dead connection, so that the next connect makes
+    // a new one.
+    link._adapter = UniversalBle.availabilityStream.listen((a) {
+      if (a != AvailabilityState.poweredOn) unawaited(link._adapterOff());
     });
     final int mtu;
     try {
@@ -434,9 +444,18 @@ class BleLink implements NodeLink {
   @override
   Future<void> get closed => _closed.future;
 
+  Future<void> _adapterOff() async {
+    try {
+      await close();
+    } catch (_) {
+      // The link is closed for the app whatever Android answers.
+    }
+  }
+
   @override
   Future<void> close() async {
     unawaited(_connection?.cancel());
+    unawaited(_adapter?.cancel());
     try {
       await UniversalBle.disconnect(deviceId);
     } finally {
