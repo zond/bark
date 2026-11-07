@@ -3579,9 +3579,10 @@ all it lacks.
 3. A holder that hears a request for its image sends, on the channel
    named, pieces of the block named: 1.55 times as many as the request
    lacks, 99 for a whole block of 64, from a random piece on, or none if
-   more are still to go of that block there. It keeps four blocks asked for on a channel;
-   it sends one block's pieces until they are spent, then the lowest
-   block asked for. It sends on at most two channels. A holder that
+   more are still to go of that block there. It keeps the four highest
+   blocks asked for on a channel; it sends one block's pieces until they
+   are spent, then the highest block asked for. It sends on at most two
+   channels. A holder that
    hears a piece of the block it sends on its home channel from another
    holder holds back from that block there for two paces.
 4. A node that gathers hands its firmware every piece it has not
@@ -3589,23 +3590,25 @@ all it lacks.
    that have not decoded, and no other: 5 blocks, 320 pieces at most of
    the 352 the firmware's flash has room for (`bark-image/src/layout.rs`).
    When the firmware says the first block it lacks decoded, it asks for
-   the next it lacks, again a random time within a pace later. When the firmware says the block failed its
-   hash, it gathers it again. A node that has taken no piece for 10
+   the next it lacks, again a random time within a pace later. When the
+   firmware says a block failed its hash, it gathers it again. A node that has taken no piece for 10
    minutes asks again.
 5. A holder that hears a request for another image, of a lower
    version than its own, announces its own on the requester's channel.
 
-*Why a block until its pieces are spent, then the lowest.* The nodes on
-one channel take the same broadcast pieces but not all of them: some
+*Why a block until its pieces are spent, then the highest.* The nodes
+on one channel take the same broadcast pieces but not all of them: some
 lose more, and some begin later, a node that came onto the channel or
-turned relay. A block sent to its end serves those that asked for it;
-the lowest asked for next lets those behind catch up. A holder that
-followed each request at once would turn from block to block and finish
-none. *Why five blocks.* A node behind takes the pieces sent for the
+turned relay. A block sent to its end serves those that asked for it.
+The highest asked for next brings the nodes nearest to holding the
+image to hold it, and each serves two channels more; sent the lowest
+first, the nodes that keep beginning held every node at the first
+blocks. A holder that followed each request at once would turn from
+block to block and finish none. *Why five blocks.* A node behind takes the pieces sent for the
 nodes ahead of it, up to five blocks on, and has them when it gets
 there. *Why a random first piece.* A block asked for again is wanted
-by nodes that have some of its pieces, most likely the first ones sent. *Why 1.55
-times.* A holder cannot tell when every node on the channel has a
+by nodes that have some of its pieces, most likely the first ones sent.
+*Why 1.55 times.* A holder cannot tell when every node on the channel has a
 block, so a request buys what all the nodes that lack as much need: at
 a fifth of the frames lost, 74 nodes all have 64 distinct pieces after
 99 frames with 99 % odds, by the binomial distribution

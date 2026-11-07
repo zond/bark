@@ -127,18 +127,20 @@ struct Serving {
 }
 
 impl Serving {
-    /// The block it sends now: the one begun, else the lowest asked for.
+    /// The block it sends now: the one begun, else the highest asked for,
+    /// so that the nodes nearest to holding the image come to hold it
+    /// first and serve it in turn.
     fn current(&self) -> Option<Asked> {
         let asked = || self.asked.iter().flatten();
         self.started
             .and_then(|b| asked().find(|a| a.block == b))
-            .or_else(|| asked().min_by_key(|a| a.block))
+            .or_else(|| asked().max_by_key(|a| a.block))
             .copied()
     }
 
     /// A request for `block`: it buys `credit` pieces of it from now, or
     /// none if more are still to go,
-    /// from piece `start` on for a block not kept. A block lower than one
+    /// from piece `start` on for a block not kept. A block higher than one
     /// kept takes that one's place when all are taken.
     fn ask(&mut self, block: u8, credit: u8, start: u8) {
         if let Some(a) = self.asked.iter_mut().flatten().find(|a| a.block == block) {
@@ -152,13 +154,13 @@ impl Serving {
         });
         if let Some(free) = self.asked.iter_mut().find(|a| a.is_none()) {
             *free = new;
-        } else if let Some(highest) = self
+        } else if let Some(lowest) = self
             .asked
             .iter_mut()
-            .filter(|a| a.is_some_and(|a| a.block > block))
-            .max_by_key(|a| a.map(|a| a.block))
+            .filter(|a| a.is_some_and(|a| a.block < block))
+            .min_by_key(|a| a.map(|a| a.block))
         {
-            *highest = new;
+            *lowest = new;
         }
     }
 
