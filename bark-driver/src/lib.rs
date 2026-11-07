@@ -690,7 +690,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 resting = Some(c);
                 sniff = None;
             }
-            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => {
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) | Action::Serve(_) => {
                 assert!(
                     excursion.is_none(),
                     "second excursion outstanding (docs/core-interface.md §3 rule 1)"
@@ -703,6 +703,11 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Store(s) => app.store(&s),
             Action::Locate(until) => search = Some(until).filter(|&t| t > now),
             Action::Trace(t) => log::info!("{:?}", t),
+            // No image is offered to a policy yet, nor a piece kept: the
+            // decoder, the flash and the signature check come later
+            // (spec "Updates over the mesh"), and a core never told an
+            // image held asks for neither but these two, which go unanswered.
+            Action::Offered(_) | Action::StorePiece(_) => {}
         });
         let took = self.clock.now().since(now);
         self.stats.events += 1;
@@ -769,12 +774,24 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Event::TxDone
             }
+            // The core serves pieces only of an image the driver said it
+            // holds (`AppCommand::Holds`), which this driver never says
+            // yet; the frame goes as it is, its bytes zero.
+            Action::Serve(frame) => {
+                self.deaf();
+                if let Err(e) = self.radio.transmit(&frame, self.tx_dbm).await {
+                    self.failed(e);
+                }
+                Event::TxDone
+            }
             Action::Listen(_)
             | Action::Sniff(_)
             | Action::App(_)
             | Action::Store(_)
             | Action::Locate(_)
-            | Action::Trace(_) => {
+            | Action::Trace(_)
+            | Action::Offered(_)
+            | Action::StorePiece(_) => {
                 unreachable!("only excursions are kept")
             }
         };

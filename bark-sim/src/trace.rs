@@ -149,7 +149,7 @@ impl Tracer {
             Action::Locate(until) => {
                 let _ = write!(what, "locate to {:.3} s", until.as_micros() as f64 / 1e6);
             }
-            Action::Transmit(f) => {
+            Action::Transmit(f) | Action::Serve(f) => {
                 let _ = write!(
                     what,
                     "tx ch {} {}",
@@ -269,6 +269,12 @@ impl Tracer {
             }
             Action::Store(s) => {
                 let _ = write!(what, "store {s:?}");
+            }
+            Action::Offered(image) => {
+                let _ = write!(what, "offered image version {}", image.version);
+            }
+            Action::StorePiece(p) => {
+                let _ = write!(what, "store piece {} of block {}", p.index, p.block);
             }
             Action::Lbt(_) | Action::Rssi(_) => return,
         }

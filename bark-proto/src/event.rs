@@ -12,6 +12,7 @@ use crate::position::Position;
 use crate::radio::Channel;
 use crate::store::Stored;
 use crate::time::{Duration, Instant};
+use crate::update::{Image, Piece};
 
 /// Largest LoRa payload the SX126x carries, and so the largest frame the
 /// core will ever emit or accept.
@@ -143,6 +144,30 @@ pub enum AppCommand<'a> {
     Battery {
         /// Millivolts.
         millivolts: u16,
+    },
+    /// The image this node holds whole and has checked, the one it runs
+    /// or one staged after its signature passed: at boot and after each
+    /// change (spec "Updates over the mesh"). The node announces it and
+    /// serves its pieces, and wants only images above its version.
+    Holds(Image),
+    /// Gather `image`, from block `from` on, the blocks before it already
+    /// held: the driver's policy takes it, as an answer to
+    /// [`Action::Offered`] or at boot for one gathered in part before
+    /// (spec "Updates over the mesh").
+    Gather {
+        /// The image.
+        image: Image,
+        /// The first block missing.
+        from: u8,
+    },
+    /// The block the node gathers decoded from the pieces it was given
+    /// ([`Action::StorePiece`]): its hash checked, `ok`, and the node goes
+    /// on to the next; or not, and the node gathers it again.
+    Block {
+        /// The block.
+        index: u8,
+        /// It matched its hash.
+        ok: bool,
     },
 }
 
@@ -292,6 +317,20 @@ pub enum Action {
     /// A protocol event for logs and the simulator's metrics. Carries no
     /// obligation; a driver may ignore it (`docs/core-interface.md` §3).
     Trace(Trace),
+    /// A neighbour announced an image above the version this node holds:
+    /// if the driver's policy takes it, the driver answers
+    /// [`AppCommand::Gather`]; else nothing
+    /// (spec "Updates over the mesh").
+    Offered(Image),
+    /// Keep this piece of the block the node gathers, until the block
+    /// decodes; then answer [`AppCommand::Block`]. Never more than one
+    /// block's distinct pieces at a time (spec "Updates over the mesh").
+    StorePiece(Piece),
+    /// Transmit this piece frame as [`Action::Transmit`] does, after
+    /// writing into it, from [`crate::wire::PIECE_HEADER_LEN`] on, the
+    /// bytes of the piece its header names, of the image the node holds;
+    /// report `Event::TxDone` (spec "Updates over the mesh").
+    Serve(Frame),
 }
 
 /// A protocol event worth recording, emitted where it happens.

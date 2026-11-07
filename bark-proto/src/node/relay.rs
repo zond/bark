@@ -42,10 +42,12 @@ mod heartbeat;
 mod motion;
 mod power;
 mod sweep;
+mod update;
 
 use boot::random_channel;
 use heartbeat::Beacon;
 use sweep::Sweep;
+use update::Spread;
 
 use forward::{Forwarding, OwnMessage};
 use power::Battery;
@@ -80,12 +82,29 @@ enum Job {
     Heartbeat,
     HandOver,
     Reply,
+    Update,
 }
 
 /// The jobs in the order the scheduler serves them: an owed reply is
 /// worth nothing once its sender stops waiting; the heartbeat keeps its
-/// slot; a hand-over; the sweep's reading last.
-const JOBS: [Job; 4] = [Job::Reply, Job::Heartbeat, Job::HandOver, Job::Sweep];
+/// slot; a hand-over; the sweep's reading; an update frame last, unless
+/// it has waited behind enough hand-overs (`relay/update.rs`).
+const JOBS: [Job; 5] = [
+    Job::Reply,
+    Job::Heartbeat,
+    Job::HandOver,
+    Job::Sweep,
+    Job::Update,
+];
+
+/// The jobs when an update frame goes before the next hand-over.
+const JOBS_UPDATE_FIRST: [Job; 5] = [
+    Job::Reply,
+    Job::Heartbeat,
+    Job::Update,
+    Job::HandOver,
+    Job::Sweep,
+];
 
 /// The radio's side: the one excursion outstanding, what each job keeps
 /// between its excursions, and the airtime budget and the busy estimate
@@ -391,6 +410,8 @@ pub struct Node<const H: usize, const Q: usize> {
     forwarding: Forwarding,
     /// The application's message (`relay/forward.rs`).
     own: OwnMessage,
+    /// The images spreading over the mesh (`relay/update.rs`).
+    spread: Spread,
     /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
     /// A sleepy node's searches for a fix (`relay/gps.rs`).
@@ -457,6 +478,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             inbox: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             own: OwnMessage::NONE,
+            spread: Spread::new(channel),
             config,
             timers: Timers::UNSET,
             rng: Rng::new(0),
@@ -517,6 +539,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             inbox,
             delivered,
             own,
+            spread,
         } = self;
         *stored = config.stored;
         *id = node_id;
@@ -541,6 +564,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         inbox.reset(&config);
         *delivered = Delivered::new();
         *own = OwnMessage::NONE;
+        *spread = Spread::new(home.next());
         *timers = Timers::UNSET;
         *c = config;
         *r = rng;
@@ -866,7 +890,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         while self.radio.excursion.idle() {
             self.prepare(now, emit);
-            if !JOBS.iter().any(|&job| self.start_job(job, now, emit)) {
+            let jobs = if self.update_first() {
+                JOBS_UPDATE_FIRST
+            } else {
+                JOBS
+            };
+            if !jobs.iter().any(|&job| self.start_job(job, now, emit)) {
                 break;
             }
         }
@@ -883,6 +912,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             Job::HandOver => self.start_handover(now, emit),
             Job::Sweep => !self.awaiting_ack() && self.sweep_due(now) && self.start_sweep(emit),
+            Job::Update => !self.awaiting_ack() && self.start_update(now, emit),
         }
     }
 
@@ -923,6 +953,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             Job::Sweep => (free && !self.awaiting_ack() && self.sweeping())
                 .then_some(self.radio.sweep.next_at),
+            Job::Update => {
+                if !free || self.awaiting_ack() {
+                    return None;
+                }
+                self.update_ready_at()
+            }
         }
     }
 
@@ -951,6 +987,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
+            Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
             Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
                 // It chose this node as its next hop, from heartbeats it
                 // heard, and sends on this channel now: it hears us
@@ -990,6 +1027,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.gps_after_fix();
             }
             AppCommand::NoFix => self.no_fix(),
+            AppCommand::Holds(image) => self.holds_image(image, now),
+            AppCommand::Gather { image, from } => self.gather(image, from, now),
+            AppCommand::Block { index, ok } => self.block_done(index, ok, now),
             AppCommand::SetPosition { position } => {
                 // A sleepy node's position is no news, but a change of
                 // its carried flag is.
@@ -1008,7 +1048,10 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         let woke = core::cell::Cell::new(false);
         let away = core::cell::Cell::new(false);
         let mut wake = |a: Action| {
-            let excursion = matches!(a, Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_));
+            let excursion = matches!(
+                a,
+                Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) | Action::Serve(_)
+            );
             woke.set(woke.get() || excursion || matches!(a, Action::Listen(_)));
             away.set(away.get() || excursion);
             emit(a)
@@ -1039,18 +1082,20 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                 match self.radio.excursion.complete() {
                     Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                     Some(Job::HandOver) => self.handover_check(busy, now, emit),
+                    Some(Job::Update) => self.update_check(busy, now, emit),
                     // A reply goes without a check (spec "The ACK").
                     Some(Job::Sweep | Job::Reply) | None => {}
                 }
             }
             Event::RssiSample { channel, dbm } => match self.radio.excursion.complete() {
                 Some(Job::Sweep) => self.sweep_sample(channel, dbm, now),
-                Some(Job::Heartbeat | Job::HandOver | Job::Reply) | None => {}
+                Some(Job::Heartbeat | Job::HandOver | Job::Reply | Job::Update) | None => {}
             },
             Event::TxDone => match self.radio.excursion.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_done(now, true),
                 // Unless the hand-over was given up meanwhile (a displaced record).
                 Some(Job::HandOver) => {
+                    self.update_passed(now);
                     let timeout = self.config.ack_timeout;
                     if let Some((mut h, _)) = self.handover() {
                         if h.state() == State::Radio {

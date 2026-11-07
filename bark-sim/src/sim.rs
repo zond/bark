@@ -2535,7 +2535,11 @@ impl Sim {
         let traced = (!scripted && self.tracer.is_some()).then_some(a);
         if matches!(
             a,
-            Action::Listen(_) | Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
+            Action::Listen(_)
+                | Action::Lbt(_)
+                | Action::Rssi(_)
+                | Action::Transmit(_)
+                | Action::Serve(_)
         ) {
             // Any use of the radio ends a sniff (core-interface §3 rule 10).
             self.wake(node);
@@ -2554,7 +2558,9 @@ impl Sim {
             Action::Listen(c) => self.listen(node, c),
             Action::Lbt(c) => self.check(node, ExKind::Lbt, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
-            Action::Transmit(f) => {
+            // No node holds an image here: nothing is offered or kept.
+            Action::Offered(_) | Action::StorePiece(_) => {}
+            Action::Transmit(f) | Action::Serve(f) => {
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
                 self.metrics.boot_airtime.add(
