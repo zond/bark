@@ -17,6 +17,7 @@ import 'me.dart';
 import 'messenger.dart';
 import 'node_link.dart';
 import 'phone_notifier.dart';
+import 'releases.dart';
 import 'session.dart';
 import 'store.dart';
 import 'updater.dart';
@@ -48,6 +49,9 @@ class AppModel extends ChangeNotifier {
   final Notifier notifier;
   late final Alerts alerts;
 
+  /// The latest release, against this app and the connected node.
+  final Releases releases;
+
   AppModel({
     required this.sodium,
     required this.me,
@@ -55,7 +59,9 @@ class AppModel extends ChangeNotifier {
     required this.contacts,
     required this.now,
     this.notifier = const NoNotifier(),
-  }) {
+    Releases? releases,
+  }) : releases = releases ?? Releases(MemoryStore('release'), now: now) {
+    this.releases.noted = session.note;
     messenger = Messenger(sodium, me, contacts, session, now);
     alerts = Alerts(notifier, contacts);
     session.kept = (r) =>
@@ -65,9 +71,11 @@ class AppModel extends ChangeNotifier {
     session.addListener(_search);
     addListener(_link);
     addListener(_search);
-    // The countdowns move without a word from the node.
+    // The countdowns move without a word from the node, and the check for
+    // a release is due a day after the last.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       notifyListeners();
+      unawaited(this.releases.check());
     });
   }
 
@@ -82,6 +90,12 @@ class AppModel extends ChangeNotifier {
       contacts: Contacts(FileStore('contacts.json')),
       now: DateTime.now,
       notifier: await PhoneNotifier.start(),
+      releases: Releases(
+        FileStore('release.json'),
+        now: DateTime.now,
+        fetch: fetchLatest,
+        app: appVersion,
+      ),
     );
   }
 
@@ -92,11 +106,16 @@ class AppModel extends ChangeNotifier {
 
   /// Everything a screen redraws on.
   Listenable get changes =>
-      Listenable.merge([this, session, contacts, me, updater]);
+      Listenable.merge([this, session, contacts, me, updater, releases]);
 
   Future<void> load() async {
-    await Future.wait([me.load(), session.load(), contacts.load()]);
-    for (final s in [me.store, session.store, contacts.store]) {
+    await Future.wait([
+      me.load(),
+      session.load(),
+      contacts.load(),
+      releases.load(),
+    ]);
+    for (final s in [me.store, session.store, contacts.store, releases.store]) {
       if (s.fault != null) session.note(s.fault!);
     }
   }
@@ -561,6 +580,7 @@ class AppModel extends ChangeNotifier {
     session.removeListener(_search);
     fakeNode?.dispose();
     updater.dispose();
+    releases.dispose();
     session.dispose();
     contacts.dispose();
     me.dispose();

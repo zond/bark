@@ -1,5 +1,6 @@
 package org.bark.bark_app
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -33,13 +34,26 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BROWSER).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "open" -> try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
+                    result.success(null)
+                } catch (e: ActivityNotFoundException) {
+                    result.error("no-browser", e.message, null)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler(null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BROWSER).setMethodCallHandler(null)
     }
 
     private companion object {
         const val POWER = "org.bark.bark_app/power"
+        const val BROWSER = "org.bark.bark_app/browser"
     }
 }

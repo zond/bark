@@ -7,12 +7,16 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../link.dart';
+import '../releases.dart';
 import '../updater.dart';
 import 'common.dart';
 
 class UpdateScreen extends StatefulWidget {
   final AppModel app;
-  const UpdateScreen(this.app, {super.key});
+
+  /// A release whose image the screen downloads and chooses as it opens.
+  final Release? release;
+  const UpdateScreen(this.app, {this.release, super.key});
 
   @override
   State<UpdateScreen> createState() => _UpdateScreenState();
@@ -24,6 +28,17 @@ class _UpdateScreenState extends State<UpdateScreen> {
 
   /// A download or a file read under way.
   bool _getting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final r = widget.release;
+    // Not over an update under way, nor again for an image chosen.
+    final idle = u.phase == Phase.idle || u.phase == Phase.failed;
+    if (r != null && idle && u.image?.version != r.n) {
+      _get(() => downloadImage(r, app.releases.download));
+    }
+  }
 
   Future<void> _get(Future<(FirmwareImage, String)> Function() f) async {
     setState(() => _getting = true);

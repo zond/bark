@@ -91,6 +91,14 @@ class DebugScreen extends StatelessWidget {
       _row('Mailbox: unsent at home', '${me.remaining}'),
       _row('Fetch rounds', '${me.rounds}'),
       _row('Last sent', '${me.lastSent}'),
+      _row('App version', switch (app.releases.app) {
+        0 => 'development build',
+        final n => '$n',
+      }),
+      _row('Latest release', switch (app.releases.latest) {
+        null => 'not known',
+        final r => '${r.n}, checked ${app.releases.checked?.toLocal()}',
+      }),
     ];
   }
 
