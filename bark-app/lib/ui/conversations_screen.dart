@@ -9,6 +9,7 @@ import 'card_screen.dart';
 import 'common.dart';
 import 'contacts_screen.dart';
 import 'debug_screen.dart';
+import 'map_screen.dart';
 import 'settings_screen.dart';
 import 'thread_screen.dart';
 
@@ -39,6 +40,10 @@ class ConversationsScreen extends StatelessWidget {
               PopupMenuItem(
                 value: () => ContactsScreen(app),
                 child: const Text('Contacts'),
+              ),
+              PopupMenuItem(
+                value: () => MapScreen(app),
+                child: const Text('Map'),
               ),
               PopupMenuItem(
                 value: () => SettingsScreen(app),
