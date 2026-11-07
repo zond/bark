@@ -552,22 +552,38 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|(_, _, t)| t.max(self.spread.ready_at))
     }
 
-    /// The update frame that goes next and when the pace lets it: the
-    /// first announcement or request that wants to go by `now`, which the
-    /// pieces wait for, since a pace may hold it back on its channel; else
-    /// the frame the pace lets go soonest.
+    /// The update frame that goes next and when the pace lets it. An
+    /// announcement or a request goes when its time has come and its
+    /// channel's pace lets it; a piece goes when its channel's pace lets
+    /// it, but not before an announcement or a request whose time has come
+    /// by then, which it waits for. The answer does not depend on `now`
+    /// but through the times the frames want, so that the time it gives
+    /// is the time [`Node::start_update`] then finds.
     fn next_out(&self, now: Instant) -> Option<(Out, Channel, Instant)> {
-        let mut soonest: Option<(Out, Channel, Instant)> = None;
-        for (out, c, t) in self.wanted(now) {
-            let at = self.pace_allows(c, t.max(now));
-            if t <= now && !matches!(out, Out::Piece(_)) {
-                return Some((out, c, at));
-            }
-            if soonest.is_none_or(|s| at < s.2) {
-                soonest = Some((out, c, at));
-            }
+        let at = |c: Channel, t: Instant| self.pace_allows(c, t.max(now));
+        let first = self
+            .wanted(now)
+            .filter(|(o, _, _)| !matches!(o, Out::Piece(_)))
+            .map(|(o, c, t)| (o, c, at(c, t)))
+            .min_by_key(|x| x.2);
+        let piece = self
+            .wanted(now)
+            .filter(|(o, _, _)| matches!(o, Out::Piece(_)))
+            .map(|(o, c, t)| {
+                let mut when = at(c, t);
+                for (q, d, u) in self.wanted(now) {
+                    if !matches!(q, Out::Piece(_)) && u <= when {
+                        when = when.max(at(d, u));
+                    }
+                }
+                (o, c, when)
+            })
+            .min_by_key(|x| x.2);
+        match (first, piece) {
+            (Some(f), Some(p)) if p.2 < f.2 => Some(p),
+            (Some(f), _) => Some(f),
+            (None, p) => p,
         }
-        soonest
     }
 
     /// When the update job is next ready of its own accord: a time past
