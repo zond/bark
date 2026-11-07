@@ -8,9 +8,11 @@ description = "The T-Echo's flash layout, its external flash's driver, the firmw
 
 [features]
 default = ["boot"]
-# The swap and the staging on a flash (`boot`); the build scripts, which
-# need only the layout, leave it out.
-boot = ["dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-hal", "dep:embedded-storage", "dep:sha2"]
+# The swap and the staging on a flash (`boot`), which checks a header's
+# signatures (`verify`); the build scripts, which need only the layout
+# and the keys' format, leave them out.
+verify = ["dep:ed25519-compact"]
+boot = ["verify", "dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-hal", "dep:embedded-storage", "dep:sha2"]
 
 [dependencies]
 # The swap that survives a power cut, and the confirmation that keeps it.
@@ -22,3 +24,7 @@ embedded-storage = { version = "=0.3.2", optional = true }
 embedded-hal = { version = "=1.0.0", optional = true }
 # SHA-256 (FIPS 180-4) of a staged image.
 sha2 = { version = "=0.10.9", default-features = false, optional = true }
+# Ed25519 (RFC 8032) for a header's signatures: no dependencies, no
+# allocation; built for size, 17.4 KB of the node image where
+# ed25519-dalek 2.2.0 took 25.4 KB (roadmap D144).
+ed25519-compact = { version = "=2.6.0", default-features = false, features = ["opt_size"], optional = true }
