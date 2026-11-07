@@ -226,7 +226,11 @@ jobs:
             echo "keyAlias=$ALIAS"
           } > android/key.properties
 
-      - run: flutter build apk --release --build-name="$N" --build-number="$N"
+      # The app learns N from BARK_VERSION (lib/releases.dart, appVersion)
+      # rather than from the version code: a build from a checkout has
+      # pubspec.yaml's code 1 and no BARK_VERSION, which the app reads as
+      # 0, a development build that never asks to be updated.
+      - run: flutter build apk --release --build-name="$N" --build-number="$N" --dart-define=BARK_VERSION="$N"
 
       # Proved, not assumed: compare the APK's certificate with the
       # keystore's, and fail if they differ. An APK shipped under the wrong

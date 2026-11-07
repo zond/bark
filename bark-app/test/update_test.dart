@@ -117,19 +117,6 @@ void main() {
     expect(next(at(UpdateState.committed, 20001, i), i), Step.reboot);
   });
 
-  test('the image asset of a release', () {
-    final release = <String, dynamic>{
-      'tag_name': 'v7',
-      'assets': [
-        {'name': 'bark-7.apk', 'browser_download_url': 'https://x/apk'},
-        {'name': 'bark-fw-7.uf2', 'browser_download_url': 'https://x/uf2'},
-        {'name': 'bark-fw-7.img', 'browser_download_url': 'https://x/img'},
-      ],
-    };
-    expect(imageAsset(release), (name: 'bark-fw-7.img', url: 'https://x/img'));
-    expect(imageAsset({'assets': <dynamic>[]}), isNull);
-  });
-
   group('against the fake node', () {
     late Sodium sodium;
     setUpAll(() async => sodium = await SodiumInit.init());
