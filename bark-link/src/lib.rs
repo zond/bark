@@ -17,8 +17,12 @@
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
 
-/// The link version this crate speaks, in [`Node::version`].
-pub const VERSION: u8 = 4;
+/// The link version this crate speaks, in [`Node::version`]. Every
+/// change to the node's attribute table comes with a new version, as the
+/// node tells a bonded phone of a change by the version it last saw
+/// (spec "Phone link", Changes to the table); 5 added Service Changed
+/// and the database hash.
+pub const VERSION: u8 = 5;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,

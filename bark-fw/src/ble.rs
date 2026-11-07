@@ -20,6 +20,11 @@
 //! encrypted with an authenticated key, the node shows the passkey of a
 //! pairing on its screen, and it keeps one bond, in flash (`store.rs`),
 //! which a new pairing replaces.
+//!
+//! The paired phone keeps the attribute table it discovered; the node
+//! tells it when the table has changed since, by the link version the
+//! bond records ([`tell_of_change`]; spec "Phone link", Changes to the
+//! table).
 
 use core::cell::RefCell;
 
@@ -108,10 +113,82 @@ const _: () = assert!(ADV_INTERVAL.as_micros() / 625 == ADV_UNITS);
 /// A write's values are not kept: the node takes each as a request
 /// (`Request`), so Send and Map point have no storage.
 ///
-/// The GATT server: one service.
-#[gatt_server]
+/// The GATT server: the GAP and GATT services, which [`server`] builds,
+/// and the link's.
+#[gatt_server(attribute_table_size = GAP_GATT_ATTRIBUTES + Link::ATTRIBUTE_COUNT)]
 pub struct Server {
     pub link: Link,
+}
+
+/// Attributes of the GAP and GATT services: each service's declaration;
+/// the device name and appearance, a declaration and a value each; Service
+/// Changed, a declaration, a value and its descriptor; the database hash,
+/// a declaration and a value.
+const GAP_GATT_ATTRIBUTES: usize = 1 + 2 * 2 + 1 + 3 + 2;
+
+/// The GATT service's characteristics (Vol 3 Part G §7).
+struct Gatt {
+    /// Service Changed, indicated to a bonded phone whose table is old
+    /// ([`tell_of_change`]).
+    service_changed: Characteristic<[u8; 4]>,
+}
+
+/// Every handle, the range Service Changed names (Vol 3 Part G §7.1):
+/// the phone discovers the whole table again, which costs it a few round
+/// trips once per version.
+const ALL_HANDLES: [u8; 4] = {
+    let [a, b] = 0x0001u16.to_le_bytes();
+    let [c, d] = 0xffffu16.to_le_bytes();
+    [a, b, c, d]
+};
+
+/// A client characteristic configuration descriptor, whose value the
+/// server keeps for each client (Vol 3 Part G §3.3.3.3).
+struct Cccd(u16);
+
+impl AttributeHandle for Cccd {
+    type Value = [u8; 2];
+    fn handle(&self) -> u16 {
+        self.0
+    }
+}
+
+/// Build the attribute table: the GAP service, with `name`; the GATT
+/// service, with Service Changed (Vol 3 Part G §7.1) and the database
+/// hash (Bluetooth Core 5.1, Vol 3 Part G §7.3); and the link's
+/// service.
+///
+/// The host's own GAP builder leaves the GATT service empty, which tells
+/// a phone that the table never changes, so the phone would keep a table
+/// it cached for good. The hash lets a phone that reads it see a change
+/// without waiting for an indication.
+fn server(name: &str) -> (Server<'_>, Gatt) {
+    let mut table = AttributeTable::new();
+    let mut gap = table.add_service(Service::new(service::GAP));
+    gap.add_characteristic_ro(characteristic::DEVICE_NAME, name);
+    gap.add_characteristic_ro(characteristic::APPEARANCE, &appearance::UNKNOWN);
+    gap.build();
+    let mut gatt = table.add_service(Service::new(service::GATT));
+    let service_changed = gatt
+        .add_characteristic_small(
+            characteristic::SERVICE_CHANGED,
+            [CharacteristicProp::Indicate],
+            ALL_HANDLES,
+        )
+        .build();
+    // Readable by any link: discovery shows the same table to anyone.
+    static HASH: StaticCell<[u8; 16]> = StaticCell::new();
+    let hash = gatt
+        .add_characteristic_ro(characteristic::DATABASE_HASH, &[0u8; 16])
+        .build();
+    gatt.build();
+    let server = Server::new(table);
+    // The hash covers the hash's declaration but not its value (5.1,
+    // Vol 3 Part G §7.3.1), so it is taken once the table is whole.
+    let value = HASH.init(server.table().hash().to_le_bytes());
+    hash.set_ro(&server, value)
+        .unwrap_or_else(|e| panic!("the database hash: {}", HostError(&e)));
+    (server, Gatt { service_changed })
 }
 
 /// The service and its characteristics, each with room for its value's
@@ -681,10 +758,13 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
         .set_io_capabilities(IoCapabilities::DisplayOnly)
         .build();
     if let Some(b) = STORED_BOND.wait().await {
-        let b = information(&b);
-        KEPT.lock(|k| k.replace(Some(b.clone())));
-        match stack.add_bond_information(b) {
-            Ok(()) => log::info!("ble: bond kept"),
+        KEPT.lock(|k| k.replace(Some(b)));
+        match stack.add_bond_information(information(&b)) {
+            Ok(()) => log::info!(
+                "ble: bond kept, table seen at version {}, service changed {}",
+                b.seen,
+                b.service_changed
+            ),
             Err(e) => log::error!("ble: the kept bond {}", HostError(&e)),
         }
     }
@@ -692,13 +772,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
     let mut runner = stack.runner();
     let name = bark_link::name(id);
     let name = core::str::from_utf8(&name).expect("the name is ASCII");
-    let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
-        name,
-        appearance: &appearance::UNKNOWN,
-    }))
-    // Displayed, not `expect`ed: a `&str` error's `Debug` escapes it,
-    // which brings in Unicode tables, 6.7 KB of flash.
-    .unwrap_or_else(|e| panic!("the attribute table: {e}"));
+    let (server, gatt) = server(name);
     let node = Node {
         version: bark_link::VERSION,
         id,
@@ -716,7 +790,7 @@ pub async fn run(controller: SoftdeviceController<'static>, id: NodeId, image: u
     let link = async {
         loop {
             match advertise(&mut peripheral, &server, name).await {
-                Ok(conn) => serve(&stack, &server, &conn).await,
+                Ok(conn) => serve(&stack, &server, &gatt, &conn).await,
                 Err(e) => {
                     log::error!("ble: advertising {}", StackError(&e));
                     embassy_time::Timer::after(ADV_RETRY).await;
@@ -799,8 +873,14 @@ async fn advertise<'v, 's>(
 async fn serve(
     stack: &Stack,
     server: &Server<'_>,
+    gatt: &Gatt,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
 ) {
+    let changes = Cccd(
+        gatt.service_changed
+            .cccd_handle
+            .expect("Service Changed indicates"),
+    );
     // A pairing that does not bond is refused ([`settle`]); the phone asks
     // to bond, and so the node offers it.
     if let Err(e) = conn.raw().set_bondable(true) {
@@ -851,6 +931,7 @@ async fn serve(
             }
             GattConnectionEvent::Encrypted { security_level, .. } => {
                 log::info!("ble: encrypted {:?}", security_level);
+                tell_of_change(gatt, &changes, conn, false).await;
                 continue;
             }
             GattConnectionEvent::BondLost => {
@@ -901,9 +982,11 @@ async fn serve(
         if !continued {
             refresh(server, conn);
         }
+        let mut wrote_changes = false;
         let reply = match event {
             GattEvent::Write(w) => {
                 let h = w.handle();
+                wrote_changes = h == changes.0;
                 let answer = if h == link.send.handle {
                     Some(write_send(&w).await)
                 } else if h == link.inbox.handle {
@@ -932,6 +1015,73 @@ async fn serve(
         if let Ok(reply) = reply {
             reply.send().await;
         }
+        if wrote_changes {
+            tell_of_change(gatt, &changes, conn, true).await;
+        }
+    }
+}
+
+/// Bring the paired phone's attribute table up to date (spec
+/// "Phone link", Changes to the table): on its link, encrypted with the
+/// kept bond, keep its subscription to Service Changed with the bond, as
+/// a bonded client's is kept across connections (Vol 3 Part G
+/// §3.3.3.3), and while it is subscribed and the table it last saw is of
+/// another link version, indicate Service Changed over every handle; once
+/// the phone confirms, it has the table of this version. `written` is
+/// whether the phone has just written its subscription, which then
+/// stands as written; else the kept one is put back.
+async fn tell_of_change(
+    gatt: &Gatt,
+    changes: &Cccd,
+    conn: &GattConnection<'_, '_, DefaultPacketPool>,
+    written: bool,
+) {
+    let raw = conn.raw();
+    if raw.security_level().ok() != Some(SecurityLevel::EncryptedAuthenticated) {
+        return;
+    }
+    let Some(mut bond) = KEPT.lock(|k| *k.borrow()) else {
+        return;
+    };
+    if !information(&bond)
+        .identity
+        .match_identity(&raw.peer_identity())
+    {
+        return;
+    }
+    let before = bond;
+    let live = conn
+        .get(changes)
+        .is_ok_and(|v| CCCD::from(u16::from_le_bytes(v)).should_indicate());
+    bond.service_changed = live || (!written && bond.service_changed);
+    if bond.service_changed && !live {
+        let mut on = CCCD::default();
+        on.set_indicate(true);
+        if let Err(e) = conn.set(changes, &on.raw().to_le_bytes()) {
+            log::error!("ble: the kept subscription {}", HostError(&e));
+        }
+    }
+    if bond.service_changed && bond.seen != bark_link::VERSION {
+        log::info!(
+            "ble: service changed: the phone saw version {}, this is {}",
+            bond.seen,
+            bark_link::VERSION
+        );
+        match gatt
+            .service_changed
+            .indicate(conn, &ALL_HANDLES, false)
+            .await
+        {
+            Ok(()) => {
+                log::info!("ble: service changed confirmed");
+                bond.seen = bark_link::VERSION;
+            }
+            Err(e) => log::warn!("ble: service changed {}", HostError(&e)),
+        }
+    }
+    if bond != before {
+        KEPT.lock(|k| k.replace(Some(bond)));
+        crate::store::keep_bond(bond);
     }
 }
 
@@ -951,13 +1101,14 @@ fn settle(
     let new = bond.filter(|b| level == SecurityLevel::EncryptedAuthenticated && b.is_bonded);
     if let Some(b) = &new {
         log::info!("ble: paired; the bond replaces any before it");
-        KEPT.lock(|k| k.replace(Some(b.clone())));
-        crate::store::keep_bond(bond_of(b));
+        let b = bond_of(b);
+        KEPT.lock(|k| k.replace(Some(b)));
+        crate::store::keep_bond(b);
     } else if level != SecurityLevel::NoEncryption {
         log::warn!("ble: a pairing that is not authenticated or does not bond; closed");
         conn.raw().disconnect();
     }
-    let keep = KEPT.lock(|k| k.borrow().clone());
+    let keep = KEPT.lock(|k| *k.borrow()).map(|b| information(&b));
     let mut other: heapless::Vec<Identity, BONDS> = heapless::Vec::new();
     let mut held = false;
     stack.with_bond_information(|bonds| {
@@ -983,9 +1134,9 @@ fn settle(
     crate::display::phone(phone_now(stack));
 }
 
-/// The bond kept, which the host is to hold alone ([`settle`]).
-static KEPT: Mutex<CriticalSectionRawMutex, RefCell<Option<BondInformation>>> =
-    Mutex::new(RefCell::new(None));
+/// The bond kept, which the host is to hold alone ([`settle`]), as
+/// kept in flash.
+static KEPT: Mutex<CriticalSectionRawMutex, RefCell<Option<Bond>>> = Mutex::new(RefCell::new(None));
 
 /// The screen's phone line when no pairing runs.
 fn phone_now(stack: &Stack) -> Phone {
@@ -1008,7 +1159,8 @@ fn information(b: &Bond) -> BondInformation {
     )
 }
 
-/// The bond to keep of the host's.
+/// The bond to keep of a new pairing's: the phone discovers the table
+/// of this version as it pairs, and has not subscribed yet.
 fn bond_of(b: &BondInformation) -> Bond {
     let mut addr = [0u8; 6];
     addr.copy_from_slice(b.identity.addr.addr.raw());
@@ -1017,6 +1169,8 @@ fn bond_of(b: &BondInformation) -> Bond {
         addr,
         irk: b.identity.irk.map(|k| k.to_le_bytes()),
         ltk: b.ltk.to_le_bytes(),
+        seen: bark_link::VERSION,
+        service_changed: false,
     }
 }
 
