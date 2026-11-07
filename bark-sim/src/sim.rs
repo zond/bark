@@ -68,6 +68,11 @@ pub(crate) enum Ev {
     Held(u32, u32),
     /// Time-series sample.
     Sample,
+    /// The update's first relay is given the image
+    /// (spec "Updates over the mesh").
+    Update,
+    /// A row of the update's series.
+    UpdateSample,
     /// A walker ends its stop or its walk (walker index).
     Leg(u32),
     /// A walking node takes a GPS fix (node).
@@ -734,6 +739,8 @@ pub struct Sim {
     /// The nodes' batteries and the grid's outages, if any
     /// (`scenario::Battery`).
     pub(crate) battery: Option<crate::battery::BatteryModel>,
+    /// The update spreading, if the scenario has one (`update.rs`).
+    update: Option<crate::update::UpdateRun>,
     /// Every node's core.
     relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
@@ -1327,6 +1334,7 @@ impl Sim {
             external: (0..n as u32).map(|i| i < n_relays).collect(),
             power: None,
             battery: None,
+            update: None,
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1735,8 +1743,82 @@ impl Sim {
         if let Some(c) = self.cadence {
             self.push(Instant::ZERO + c, Ev::Sample);
         }
+        if let Some(u) = &sc.update {
+            self.update_setup(u, sc, placed)?;
+        }
         self.power_setup(&sc.power, sc.seed)?;
         self.battery_setup(&sc.battery, sc.seed)
+    }
+
+    /// The update's first relay, the time it is given the image, and the
+    /// series' first row (`update.rs`).
+    fn update_setup(
+        &mut self,
+        u: &crate::scenario::UpdateSpec,
+        sc: &Scenario,
+        placed: &[PlacedNode],
+    ) -> Result<(), String> {
+        let holder = match &u.holder {
+            Some(name) => resolve(placed, name)?,
+            None => {
+                let placed_relays: Vec<u32> = (0..self.n_relays)
+                    .filter(|&i| self.person_of[i as usize] == u32::MAX)
+                    .collect();
+                let n = self.xy.len() as f64;
+                let cx = self.xy.iter().map(|p| p.x).sum::<f64>() / n;
+                let cy = self.xy.iter().map(|p| p.y).sum::<f64>() / n;
+                let d = |i: &u32| {
+                    let p = self.xy[*i as usize];
+                    (p.x - cx).hypot(p.y - cy)
+                };
+                *placed_relays
+                    .iter()
+                    .min_by(|a, b| d(a).total_cmp(&d(b)))
+                    .ok_or("[update] needs a node placed as a relay")?
+            }
+        };
+        let at = Instant::ZERO + secs(u.at_s.unwrap_or_else(|| sc.settled_s()));
+        self.update = Some(crate::update::UpdateRun::new(
+            u.image_bytes,
+            holder,
+            at,
+            self.xy.len(),
+        ));
+        self.push(at, Ev::Update);
+        self.push(at, Ev::UpdateSample);
+        Ok(())
+    }
+
+    /// The update's series, and when each node came to hold the image.
+    pub fn update_csv(&self) -> Option<String> {
+        self.update.as_ref().map(|u| u.csv())
+    }
+
+    /// A row of the update's series.
+    fn update_sample(&mut self) {
+        let Some(mut u) = self.update.take() else {
+            return;
+        };
+        let nodes: Vec<(bool, bool)> = (0..self.relays.len())
+            .map(|i| {
+                let placed = (i as u32) < self.n_relays && self.person_of[i] == u32::MAX;
+                let alive = self.nodes[i].alive;
+                (alive && !self.relays[i].sleepy(), alive && placed)
+            })
+            .collect();
+        let busy = (0..self.relays.len())
+            .filter(|&i| nodes[i].0)
+            .map(|i| {
+                let r = &self.relays[i];
+                r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64
+            })
+            .collect();
+        u.sample(self.now, &nodes, busy);
+        self.update = Some(u);
+        self.push(
+            self.now + Duration::from_micros(crate::update::SAMPLE_US),
+            Ev::UpdateSample,
+        );
     }
 
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
@@ -1893,6 +1975,14 @@ impl Sim {
                     }
                 }
             }
+            Ev::Update => {
+                if let Some(u) = self.update.as_mut() {
+                    let (holder, image) = (u.holder, u.image);
+                    u.give(self.now);
+                    self.deliver(holder, Event::App(AppCommand::Holds(image)));
+                }
+            }
+            Ev::UpdateSample => self.update_sample(),
             Ev::Sample => {
                 self.metrics.sample(self.now.as_micros());
                 self.sample_load();
@@ -2133,6 +2223,15 @@ impl Sim {
             self.apply(node, a, false);
         }
         self.actions = buf;
+        // What the update's driver side owes the cores, after the event.
+        let owed = self
+            .update
+            .as_mut()
+            .map(|u| std::mem::take(&mut u.owed))
+            .unwrap_or_default();
+        for (n, cmd) in owed {
+            self.deliver(n, Event::App(cmd));
+        }
         self.gps_account(node);
         let st = &mut self.nodes[node as usize];
         if st.wake_at != wake {
@@ -2558,11 +2657,30 @@ impl Sim {
             Action::Listen(c) => self.listen(node, c),
             Action::Lbt(c) => self.check(node, ExKind::Lbt, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
-            // No node holds an image here: nothing is offered or kept.
-            Action::Offered(_) | Action::StorePiece(_) => {}
+            Action::Offered(image) => {
+                if let Some(u) = self.update.as_mut() {
+                    u.offered(node, image);
+                }
+            }
+            Action::StorePiece(p) => {
+                if let Some(u) = self.update.as_mut() {
+                    u.piece(node, p, self.now);
+                }
+            }
+            // The piece's bytes are the driver's; here there are none.
             Action::Transmit(f) | Action::Serve(f) => {
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
+                if let Some(u) = self.update.as_mut() {
+                    use bark_proto::wire::{Packet, Update};
+                    let kind = match Packet::decode(f.payload()) {
+                        Ok(Packet::Update(Update::Announce { .. })) => Some(0),
+                        Ok(Packet::Update(Update::Request { .. })) => Some(1),
+                        Ok(Packet::Update(Update::Piece { .. })) => Some(2),
+                        _ => None,
+                    };
+                    u.aired(kind, air);
+                }
                 self.metrics.boot_airtime.add(
                     self.now,
                     mark == TxMark::Burst,
