@@ -37,14 +37,12 @@ import re
 import select
 import subprocess
 import sys
-import termios
 import time
-import tty
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import bench  # noqa: E402  (beside this script: ports, the touch, the copy)
+import bench  # noqa: E402  (beside this script: ports, the raw open, the touch, the copy)
 import image  # noqa: E402  (beside this script: pack, stage)
 
 FW = bench.FW
@@ -142,7 +140,7 @@ def read_boot(port: str, log) -> list[str]:
     port goes, or BOOT_S passes."""
     for _ in range(100):
         try:
-            fd = os.open(port, os.O_RDONLY | os.O_NOCTTY)
+            fd = bench.open_raw(port)
             break
         except OSError:
             time.sleep(0.05)
@@ -152,7 +150,6 @@ def read_boot(port: str, log) -> list[str]:
     rest = b""
     end = time.monotonic() + BOOT_S
     try:
-        tty.setraw(fd, termios.TCSANOW)
         while time.monotonic() < end:
             if not select.select([fd], [], [], 0.5)[0]:
                 continue
