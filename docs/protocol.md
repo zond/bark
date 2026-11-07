@@ -3731,6 +3731,8 @@ low level ([sleepy nodes](#sleepy-nodes)) starts no swap to a new image;
 on external power nothing limits it (roadmap D143). A cell that gives
 out in the middle of a swap leaves the node with no image to run until
 it is charged, where without the swap it would run on asleep for days.
+A node stages only an image above its own version and signed by a key
+it was built with (roadmap D144).
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay

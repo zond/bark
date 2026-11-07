@@ -241,7 +241,9 @@ Stable Rust and the Cortex-M4F target:
 rustup target add thumbv7em-none-eabihf
 ```
 
-Python 3.9 or later for the scripts (standard library only). No probe, objcopy or
+Python 3.9 or later for the scripts, with the standard library alone but
+for signing an image, which takes the `cryptography` package
+(`apt install python3-cryptography`; Updates, below). No probe, objcopy or
 cargo-binutils is needed.
 
 ## Flash layout
@@ -301,7 +303,8 @@ firmware and the loader each use the rest.
 ## Build and package
 
 From `bark-fw/`, the firmware alone, for a board that already has the
-loader:
+loader (a protected build needs `BARK_SIGNING_KEYS`, an open one,
+`BARK_OPEN=1`, does not: Updates, Keys):
 
 ```
 cargo build --release && scripts/uf2.py target/thumbv7em-none-eabihf/release/bark-fw target/bark-fw.uf2
@@ -441,11 +444,10 @@ as `scripts/uf2.py` lays them:
 | 8–11 | version, little-endian, raised with every image |
 | 12–15 | the image's length in bytes, little-endian |
 | 16–47 | SHA-256 of the image (FIPS 180-4) |
-| 48–255 | zero: room for three signatures of 65 bytes, an Ed25519 signature (RFC 8032) and a byte naming its key |
+| 48–242 | three signatures of 65 bytes: a byte naming the key, 1 to 255, then an Ed25519 signature (RFC 8032) of bytes 0–47; all zero if empty |
+| 243–255 | zero |
 
-The header is not signed yet: signatures come with the key policy, and
-the running firmware will check them before it stages, never the loader
-(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time,
+The firmware's version is `BARK_IMAGE_VERSION` at build time,
 kept under its own symbol, from which `scripts/image.py`
 writes the header's; an image is staged only above the running one's
 version. Without the variable the version is 0: a bench build, flashed
@@ -454,6 +456,23 @@ staged over another, since `scripts/image.py` packs only a version
 above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
 swap.
+
+**Signatures.** The running firmware stages an image only if one of
+the header's signatures verifies under one of the up to three public
+keys it was built with, the one its byte names (roadmap D144;
+`bark-image/src/sign.rs`, checked with the `ed25519-compact` crate,
+2.6.0). The loader checks none (D79): no key sits in the one part
+that is never updated. A signature covers bytes 0–47, the hash
+standing for the image: the firmware hashes the staged bytes anyway, so
+it checks a signature over 48 bytes, not the image's 388 KB, and checks
+it as the staging starts, before a byte of the image has come; the hash
+once the last byte has. A header is refused with the reason:
+`Signature(Unsigned)`, `Signature(UnknownKey)` when no signature is by a
+key the firmware holds, or `Signature(Bad)`.
+
+The version and the signature together stop a captured image from
+being staged again: it is signed, but at or below the running version.
+A bench build, version 0, takes any signed version.
 
 **The loader**, at every boot:
 
@@ -515,20 +534,26 @@ three times with a swap back: the external flash's 100 000 (datasheet,
 
 **Staging is a bench tool** until the update has a transport (BLE, then
 the mesh). A console build takes an image over its serial port:
-`stage <header hex>`, `chunk <offset> <hex>` for up to 256 bytes at a
-time, in order, `commit`, which checks the hash, records the header and
-asks for the swap, and `reboot`. `scripts/image.py` packs and sends it:
+`stage <header hex>`, which checks the version and the signatures,
+`chunk <offset> <hex>` for up to 256 bytes at a time, in order,
+`commit`, which checks the hash, records the header and asks for the
+swap, and `reboot`. `scripts/image.py` packs, signs and sends it; an
+open build takes the bench key, below:
 
 ```
-BARK_IMAGE_VERSION=2 cargo build --release --features console
+BARK_OPEN=1 BARK_IMAGE_VERSION=2 cargo build --release --features console
 scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v2.img
-BARK_IMAGE_VERSION=1 cargo build --release --features console
+scripts/image.py sign target/v2.img keys/bench.pem --key-id 1
+BARK_OPEN=1 BARK_IMAGE_VERSION=1 cargo build --release --features console
 scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader target/thumbv7em-none-eabihf/release/bark-fw target/bark.uf2
 # copy target/bark.uf2 to the board, then:
 scripts/image.py stage target/v2.img /dev/ttyACM0 --reboot
 ```
 
 The log then shows `image version 2` and `update: version 2 confirmed`.
+`scripts/image.py check target/v2.img ELF` says whether the firmware
+built as ELF would stage the image, and `stage --running ELF` asks it
+first; `scripts/uf2.py` prints the keys a firmware holds.
 `BARK_UPDATE_BENCH` at build time makes the images that must be swapped
 back: `unconfirmed` runs and never confirms, `panic` panics where it
 would confirm, `hang` spins there with everything else stopped; and
@@ -559,6 +584,42 @@ of version 1 to the board through its bootloader, and runs 200 rounds:
 in turn a console image one version up, to confirm, and a `panic` image
 one version up, to be swapped back (roadmap Phase 2, "Resets in a
 swap").
+
+**Keys.** A firmware takes its public keys from `BARK_SIGNING_KEYS` at
+build time, up to three `id:hex` comma-separated, each id a byte from 1
+to 255 that names the key in a signature and each key 32 bytes
+(`build.rs`); they are kept under their own symbol, from which the
+scripts read them. A protected build fails without them. An open build
+without them takes the bench key, `keys/bench.pub`, whose private key
+is beside it in `keys/bench.pem` for every bench to sign with; a
+protected build fails if given it.
+
+The release key is made once with `scripts/image.py keygen`, which
+writes the private key, PEM, readable by its owner alone, and prints
+the public key. The private key is kept outside the repository, in the
+same folder as the app's release key and backed up the same way
+(README.md, "Releases"): a node can take an image only from a key it
+holds, so with the key lost, every node is updated by hand at its next
+visit. The release workflow signs with it from the secret
+`BARK_SIGNING_KEY` and builds with the repository variable
+`BARK_SIGNING_KEYS`:
+
+```
+scripts/image.py keygen bark-signing-1.pem   # in the folder of the app's key
+gh secret set BARK_SIGNING_KEY < bark-signing-1.pem
+gh variable set BARK_SIGNING_KEYS --body 1:<the public key it printed>
+```
+
+The workflow signs under the id the built firmware gives the key and
+fails if it holds no such key, so no release leaves the nodes unable to
+take the next one. To replace a key: make key 2, release once holding
+both, `1:<old>,2:<new>`, still signed with key 1, which the nodes hold;
+then set the secret to key 2 and the variable to `2:<new>`. Once every
+node runs a release holding key 2, key 1 signs nothing they take. A
+stolen key is replaced the same way, at once: until the nodes run a
+release without it, its holder can sign for them. A lost key cannot
+sign the release that brings in the next; a second key held from the
+start, kept apart, can.
 
 ## Display
 
