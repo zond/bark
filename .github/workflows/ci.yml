@@ -73,6 +73,11 @@ jobs:
   firmware:
     name: Firmware and loader (fmt, clippy)
     runs-on: ubuntu-latest
+    env:
+      # A protected build needs the keys an image to stage is signed by
+      # (bark-fw/README.md, "Updates"). The checks take one whose private
+      # key was never kept: nothing built here is installed.
+      BARK_SIGNING_KEYS: "1:5acbff910761cc34918f378bfcbfb899d3d395d8cfda332cf39b452bb54f70b2"
     steps:
       - uses: actions/checkout@v7
 

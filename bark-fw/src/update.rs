@@ -4,12 +4,17 @@
 //! the loader started for its trial, which runs on until the next reset
 //! (nRF52840 Product Specification, WDT: once started it cannot be
 //! stopped). The console build can also stage an image on the external
-//! flash (`console.rs`, `stage`).
+//! flash (`console.rs`, `stage`), if this image accepts it ([`stage`]).
 
 use core::cell::RefCell;
 
 use bark_image::boot::{confirm, cut, Shared, Started};
+#[cfg(feature = "console")]
+use bark_image::boot::{StageError, Stager};
 use bark_image::layout::{LOADER, PAGE};
+use bark_image::sign::{Key, SLOTS};
+#[cfg(feature = "console")]
+use bark_image::HEADER_LEN;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{peripherals, wdt, Peri};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -28,6 +33,14 @@ pub static BARK_IMAGE_VERSION: u32 = match option_env!("BARK_IMAGE_VERSION") {
     Some(v) => decimal(v),
     None => 0,
 };
+
+/// The keys an image to stage must be signed by one of, from
+/// `BARK_SIGNING_KEYS` at build time, or the bench key in an open build
+/// without it (`build.rs`). Kept under its own symbol so that
+/// `scripts/uf2.py` and `scripts/image.py` read them from the ELF.
+#[used]
+#[no_mangle]
+pub static BARK_SIGNING_KEYS: [Key; SLOTS] = include!(concat!(env!("OUT_DIR"), "/keys.rs"));
 
 /// What a bench image does instead of confirming itself, from
 /// `BARK_UPDATE_BENCH` at build time (roadmap Phase 2, the loader's rows).
@@ -100,6 +113,24 @@ pub type External = Shared<crate::ext_flash::Kept>;
 pub fn external() -> &'static External {
     static EXTERNAL: static_cell::StaticCell<External> = static_cell::StaticCell::new();
     EXTERNAL.init(Mutex::new(RefCell::new(crate::ext_flash::Kept)))
+}
+
+/// Start staging the image `header` describes, if this image accepts it:
+/// above its own version and signed by one of its keys
+/// (`bark_image::sign`). The hash is checked when the staging finishes.
+#[cfg(feature = "console")]
+pub fn stage(
+    flash: &'static Flash,
+    external: &'static External,
+    header: &[u8; HEADER_LEN],
+) -> Result<Stager<'static, Nvmc<'static>, crate::ext_flash::Kept>, StageError> {
+    Stager::begin(
+        flash,
+        external,
+        header,
+        BARK_IMAGE_VERSION,
+        &BARK_SIGNING_KEYS,
+    )
 }
 
 /// Set once the image has confirmed itself, for [`watchdog`].

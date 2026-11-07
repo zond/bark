@@ -166,7 +166,23 @@ fn board(a: &[u8]) -> Board {
     }
 }
 
-fn header_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
+/// The key the test images are signed with, and the one the running
+/// image holds.
+fn signer() -> ed25519_compact::KeyPair {
+    ed25519_compact::KeyPair::from_seed(ed25519_compact::Seed::new([7; 32]))
+}
+
+fn keys() -> [Key; SLOTS] {
+    let mut k = [Key::NONE; SLOTS];
+    k[0] = Key {
+        id: 1,
+        public: *signer().pk,
+    };
+    k
+}
+
+/// The header of `b`, unsigned.
+fn unsigned_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
     Header {
         version,
         length: b.len() as u32,
@@ -175,12 +191,28 @@ fn header_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
     .encode()
 }
 
+/// The header of `b`, signed in its first slot.
+fn header_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
+    let mut h = unsigned_for(b, version);
+    let at = sign::SIGNED_LEN;
+    h[at] = 1;
+    let signature = *signer().sk.sign(&h[..at], None);
+    h[at + 1..at + sign::SLOT_LEN].copy_from_slice(&signature);
+    h
+}
+
 fn stage_on<I: NorFlash, E: NorFlash>(
     internal: &Shared<I>,
     external: &Shared<E>,
     b: &[u8],
 ) -> Result<Header, StageError> {
-    let mut s = Stager::begin(internal, external, &header_for(b, RUNNING + 1), RUNNING)?;
+    let mut s = Stager::begin(
+        internal,
+        external,
+        &header_for(b, RUNNING + 1),
+        RUNNING,
+        &keys(),
+    )?;
     for (i, chunk) in b.chunks(CHUNK).enumerate() {
         s.write((i * CHUNK) as u32, chunk)?;
     }
@@ -365,13 +397,17 @@ fn staging_refuses_what_it_cannot_stage() {
     let (i, e) = (&board.internal, &board.external);
     let old = header_for(&b, RUNNING);
     assert_eq!(
-        Stager::begin(i, e, &old, RUNNING).err(),
+        Stager::begin(i, e, &old, RUNNING, &keys()).err(),
         Some(StageError::Version {
             running: RUNNING,
             staged: RUNNING
         })
     );
-    let mut s = Stager::begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
+    assert_eq!(
+        Stager::begin(i, e, &unsigned_for(&b, RUNNING + 1), RUNNING, &keys()).err(),
+        Some(StageError::Signature(SignatureError::Unsigned))
+    );
+    let mut s = Stager::begin(i, e, &header_for(&b, RUNNING + 1), RUNNING, &keys()).unwrap();
     assert_eq!(
         s.write(4, &b[4..8]),
         Err(StageError::Offset { expected: 0 })
@@ -383,7 +419,7 @@ fn staging_refuses_what_it_cannot_stage() {
         Some(StageError::Incomplete { got: CHUNK as u32 })
     );
     // A different image under the header.
-    let mut s = Stager::begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
+    let mut s = Stager::begin(i, e, &header_for(&b, RUNNING + 1), RUNNING, &keys()).unwrap();
     let other = image(3, b.len());
     for (n, chunk) in other.chunks(CHUNK).enumerate() {
         s.write((n * CHUNK) as u32, chunk).unwrap();
@@ -394,7 +430,14 @@ fn staging_refuses_what_it_cannot_stage() {
     stage(&board, &b).unwrap();
     assert_eq!(boot(&board), Ok(Boot::Trial));
     assert_eq!(
-        Stager::begin(i, e, &header_for(&a[..100], RUNNING + 2), RUNNING + 1).err(),
+        Stager::begin(
+            i,
+            e,
+            &header_for(&a[..100], RUNNING + 2),
+            RUNNING + 1,
+            &keys()
+        )
+        .err(),
         Some(StageError::Busy)
     );
 }
