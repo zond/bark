@@ -1,4 +1,5 @@
-// The first screen: one row a conversation, newest first.
+// The first screen: one row a conversation, newest first, under a bar for
+// each newer release of the app or the node's firmware.
 
 import 'package:flutter/material.dart';
 
@@ -12,6 +13,7 @@ import 'debug_screen.dart';
 import 'map_screen.dart';
 import 'settings_screen.dart';
 import 'thread_screen.dart';
+import 'update_screen.dart';
 
 class ConversationsScreen extends StatelessWidget {
   final AppModel app;
@@ -59,6 +61,7 @@ class ConversationsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          ..._releases(context),
           NoticeCard(app),
           if (!app.me.backedUp)
             Card(
@@ -92,6 +95,64 @@ class ConversationsScreen extends StatelessWidget {
       ),
     );
   });
+
+  /// A bar for a newer app, and one for a newer image than the connected
+  /// node runs; each says what a tap does and can be dismissed for that
+  /// version.
+  List<Widget> _releases(BuildContext context) {
+    final r = app.releases;
+    final a = r.newerApp;
+    final node = app.session.node;
+    final i = r.newerImage(node);
+    return [
+      if (a != null)
+        _bar(
+          context,
+          title: 'A newer app, version ${a.n}, is available',
+          subtitle:
+              'Tap to download it in the browser; Android asks before it '
+              'installs it over this one.',
+          onTap: () => app.notifier.openLink(a.apk!),
+          dismiss: () => r.dismissApp(a.n),
+        ),
+      if (i != null && node != null)
+        _bar(
+          context,
+          title:
+              'Your node runs version ${node.image}, version ${i.n} is '
+              'available',
+          subtitle: node.version < updateVersion
+              ? 'Its firmware is from before updates over Bluetooth: '
+                    'update it by USB once.'
+              : 'Tap to update it from this phone.',
+          onTap: node.version < updateVersion
+              ? null
+              : () => _open(context, UpdateScreen(app, release: i)),
+          dismiss: () => r.dismissImage(node, i.n),
+        ),
+    ];
+  }
+
+  Widget _bar(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required VoidCallback? onTap,
+    required VoidCallback dismiss,
+  }) => Card(
+    color: Theme.of(context).colorScheme.secondaryContainer,
+    child: ListTile(
+      leading: const Icon(Icons.system_update),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      onTap: onTap,
+      trailing: IconButton(
+        tooltip: 'Not for this version',
+        icon: const Icon(Icons.close),
+        onPressed: dismiss,
+      ),
+    ),
+  );
 
   Widget _connection(BuildContext context) {
     final s = app.session;

@@ -4,8 +4,6 @@
 // committed, and the reboot into it, until the node is back.
 
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -13,6 +11,7 @@ import 'package:flutter/foundation.dart';
 
 import 'link.dart';
 import 'node_link.dart';
+import 'releases.dart';
 import 'session.dart';
 
 /// Pieces written between two reads of Update: the node's host queues 8
@@ -296,48 +295,23 @@ class Updater extends ChangeNotifier {
   }
 }
 
-/// The repository whose releases carry the node's images.
-const releasesUrl = 'https://api.github.com/repos/zond/bark/releases/latest';
-
-/// The image asset of a release as GitHub's releases API gives it:
-/// `bark-fw-<N>.img`, its name and where to download it.
-({String name, String url})? imageAsset(Map<String, dynamic> release) {
-  final pattern = RegExp(r'^bark-fw-[1-9][0-9]*\.img$');
-  for (final a in (release['assets'] as List? ?? const [])) {
-    final m = a as Map<String, dynamic>;
-    final name = m['name'] as String? ?? '';
-    final url = m['browser_download_url'] as String?;
-    if (pattern.hasMatch(name) && url != null) return (name: name, url: url);
-  }
-  return null;
+/// The image of `r`, downloaded by `get` and checked, with its file name.
+Future<(FirmwareImage, String)> downloadImage(
+  Release r, [
+  Future<List<int>> Function(String url) get = httpGet,
+]) async {
+  final url = r.image;
+  if (url == null) throw StateError('release ${r.n} has no ${r.imageName}');
+  return (parseImage(Uint8List.fromList(await get(url))), r.imageName);
 }
 
-/// The latest release's image, downloaded and checked, with its asset's
+/// The latest release's image, downloaded and checked, with its file
 /// name.
 Future<(FirmwareImage, String)> latestRelease() async {
-  final client = HttpClient();
-  try {
-    Future<List<int>> get(String url, {bool json = false}) async {
-      final rq = await client.getUrl(Uri.parse(url));
-      // GitHub's API refuses a request without a user agent.
-      rq.headers.set(HttpHeaders.userAgentHeader, 'bark-app');
-      if (json) rq.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final rs = await rq.close();
-      if (rs.statusCode != HttpStatus.ok) {
-        throw HttpException('$url: HTTP ${rs.statusCode}');
-      }
-      return [for (final chunk in await rs.toList()) ...chunk];
-    }
-
-    final release = jsonDecode(
-      utf8.decode(await get(releasesUrl, json: true)),
-    ) as Map<String, dynamic>;
-    final a = imageAsset(release);
-    if (a == null) {
-      throw StateError('the latest release has no bark-fw-<N>.img');
-    }
-    return (parseImage(Uint8List.fromList(await get(a.url))), a.name);
-  } finally {
-    client.close();
+  final j = await fetchLatest();
+  final r = Release.parse(j);
+  if (r == null) {
+    throw StateError('the latest release, ${j['tag_name']}, is not v<N>');
   }
+  return downloadImage(r);
 }

@@ -49,6 +49,9 @@ abstract interface class Notifier {
 
   /// Opens the system's dialog to exempt the app.
   Future<void> askBatteryExempt();
+
+  /// Opens `url` in the browser.
+  Future<void> openLink(String url);
 }
 
 /// A text a notification shows: as far as it has come, and when its first
@@ -87,6 +90,8 @@ class NoNotifier implements Notifier {
   Future<bool?> batteryExempt() async => null;
   @override
   Future<void> askBatteryExempt() async {}
+  @override
+  Future<void> openLink(String url) async {}
 }
 
 /// Decides what to notify: each new text, unless its thread is in front
