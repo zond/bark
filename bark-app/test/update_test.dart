@@ -1,8 +1,8 @@
 // The firmware update over the link: Update's and Image's values, as
-// `bark-link`'s tests give them; an image file's checks; where a
-// transfer goes on from; and the whole update against the fake node,
-// with lost pieces, a lost link, a low battery and the reboot, its
-// answer lost to the link's end or not.
+// `bark-link`'s tests give them; an image file's checks and the name a
+// picked one is shown by; where a transfer goes on from; and the whole
+// update against the fake node, with lost pieces, a lost link, a low
+// battery and the reboot, its answer lost to the link's end or not.
 
 import 'dart:typed_data';
 
@@ -129,6 +129,13 @@ void main() {
     };
     expect(imageAsset(release), (name: 'bark-fw-7.img', url: 'https://x/img'));
     expect(imageAsset({'assets': <dynamic>[]}), isNull);
+  });
+
+  test('a picked image is shown by its name, with .img', () {
+    expect(pickedName('v2.img'), 'v2.img');
+    expect(pickedName('v2.bin'), 'v2.img');
+    expect(pickedName('bark-fw-2'), 'bark-fw-2.img');
+    expect(pickedName(''), 'a picked file');
   });
 
   group('against the fake node', () {

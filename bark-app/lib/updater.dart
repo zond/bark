@@ -319,6 +319,17 @@ class Updater extends ChangeNotifier {
   }
 }
 
+/// The name a picked image is shown by: `name`, as the file picker gives
+/// it, with the `.img` that images carry (`bark-fw/scripts/image.py`;
+/// a release's `bark-fw-<N>.img`). Android's picker gives a copy of the
+/// file, named with the extension of its type, `.bin` for one whose type
+/// Android does not know, as an image's.
+String pickedName(String name) {
+  final dot = name.lastIndexOf('.');
+  final base = dot > 0 ? name.substring(0, dot) : name;
+  return base.isEmpty ? 'a picked file' : '$base.img';
+}
+
 /// The repository whose releases carry the node's images.
 const releasesUrl = 'https://api.github.com/repos/zond/bark/releases/latest';
 

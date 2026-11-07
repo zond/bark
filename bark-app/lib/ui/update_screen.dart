@@ -40,7 +40,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
   Future<(FirmwareImage, String)> _pick() async {
     final f = await openFile();
     if (f == null) throw StateError('no file chosen');
-    return (parseImage(await f.readAsBytes()), f.name);
+    return (parseImage(await f.readAsBytes()), pickedName(f.name));
   }
 
   @override
