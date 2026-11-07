@@ -18,3 +18,9 @@ pub const CHECKED_AT: u32 = HEADER_LEN as u32;
 /// that a write a power cut stopped part way, which clears only some,
 /// reads as unchecked, and the image is checked again.
 pub const CHECKED: u32 = 0;
+
+/// Where a bench loader's words sit (`crate::boot::cut`): for the swap,
+/// then for the swap back, the moment it drew and where the copy was
+/// stopped, a word each. A loader built without the bench leaves them
+/// erased.
+pub const CUTS_AT: u32 = CHECKED_AT + 4;

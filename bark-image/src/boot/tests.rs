@@ -522,3 +522,5 @@ fn a_power_cut_in_a_confirmation_leaves_one_image_whole() {
         },
     );
 }
+
+mod cut;

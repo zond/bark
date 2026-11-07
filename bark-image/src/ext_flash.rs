@@ -256,6 +256,12 @@ impl<B: Bus> Chip<B> {
         true
     }
 
+    /// Wait `us` microseconds by the bus's clock, a program or erase
+    /// running on meanwhile.
+    pub fn pause_us(&mut self, us: u32) {
+        self.bus.delay_us(us);
+    }
+
     /// Wait for the last program or erase to end, then put the chip to
     /// sleep.
     pub fn finish(&mut self) -> Result<(), Error> {
