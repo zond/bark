@@ -173,6 +173,25 @@ def symbol_word(image: bytes, start: int, syms: dict[str, int], name: str) -> in
     return struct.unpack_from("<I", image, at - start)[0]
 
 
+# The keys a firmware takes a staged image's signature from: three of a
+# byte naming the key, 0 for none, then its Ed25519 public key
+# (bark-image/src/sign.rs, Key).
+KEY_SLOTS = 3
+KEY_LEN = 32
+
+
+def signing_keys(image: bytes, start: int, syms: dict[str, int]) -> list[tuple[int, bytes]]:
+    """The (id, public key) pairs the symbol BARK_SIGNING_KEYS holds in
+    `image`, which starts at `start`; none without the symbol."""
+    at = syms.get("BARK_SIGNING_KEYS")
+    size = KEY_SLOTS * (1 + KEY_LEN)
+    if at is None or not start <= at <= start + len(image) - size:
+        return []
+    raw = image[at - start : at - start + size]
+    slots = [raw[i : i + 1 + KEY_LEN] for i in range(0, size, 1 + KEY_LEN)]
+    return [(s[0], s[1:]) for s in slots if s[0] != 0]
+
+
 def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str]]:
     """The UF2, and a line for each region it writes."""
     syms = symbols(firmware_elf)
@@ -197,6 +216,8 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
         sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with an open firmware (BARK_OPEN=1)")
     payloads += blocks(start, firmware)
     lines.append(f"firmware: {len(firmware)} bytes at {start:#x}")
+    for key_id, public in signing_keys(firmware, start, syms):
+        lines.append(f"signing key {key_id}: {public.hex()}")
     if loader_elf is not None:
         written = {addr for addr, _ in payloads}
         erased = [a for a in range(WINDOW_START, SOFTDEVICE_END, UF2_PAYLOAD) if a not in written]
