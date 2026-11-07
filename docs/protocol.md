@@ -3177,9 +3177,9 @@ the slot to write next, 0 once the page reached the table's end; 64
 neighbours take five reads. The slot read from is 0 at each connection.
 A read starts with the node's noise floor in dBm, signed
 ([busy estimate](#busy-estimate)), the slot to write next, the bytes of
-each neighbour, 18 in this version, by which the app steps, and the node's own position, zero
-while it has none, which for a sleepy node is not its address
-([position](#position)). Each neighbour then gives its ID, its
+each neighbour, 18 in this version, by which the app steps, and the
+node's own position, zero while it has none, which for a sleepy node is
+not its address ([position](#position)). Each neighbour then gives its ID, its
 position, the averaged RSSI of its link (`rssi_ema`) in tenths of a
 dBm, signed, the whole seconds since it was last heard, at most 65 535,
 and its flags:
@@ -3203,13 +3203,15 @@ standard deviation, 4 dB, and the node sends through the neighbour only
 when no other is left; good from 6.9 dB, where a full frame gets
 through a fade of two, 8 dB, which comes one time in 44, the convention
 of the switching margin ([relay choice](#relay-choice)); fair between.
-From link version 4.
+The floor and the RSSI in tenths are there so that the app reads the
+margin as the node does. From link version 4.
 
 *Why pages from a slot.* The table holds 64 neighbours of 18 bytes, more
 than one value holds, and every value fits one PDU (MTU, above). A
-neighbour keeps its slot while it stays in the table, so a page that
-starts from a slot skips none that stays when another leaves between
-two reads, as one that started from a count would.
+neighbour keeps its slot while it stays in the table, so when one
+leaves between two reads the others stay where they were, and the next
+page skips none of them; counted from the first live one, they would
+shift down by one, and one would be skipped.
 
 **Versions.** A later link version may add characteristics and append
 fields to the values the node writes, Node, Status, Given back, and
