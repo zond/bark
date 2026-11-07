@@ -694,6 +694,15 @@ copy; and 1.8 KB of static RAM, which leaves the stack 35 KB. How much
 of it the P-256 arithmetic takes in the phone link's task is for the
 bench's `stack_used` to show (`docs/pairing-2026-11-06.md`).
 
+Neighbours (link version 4) gives the phone the neighbour table a page
+at a time. The node's task copies the live entries into a static by
+slot after each step (`src/node.rs`, `publish_neighbours`), and the BLE
+task builds the page the phone reads from that copy, each age counted
+from when the entry was last heard, so it reads nothing of the core.
+The copy starts zeroed, apart from `LINK`, so that it lies in `.bss`
+and not in flash. It costs 2.5 KB of flash and 2.9 KB of static RAM,
+taken from the stack (2026-11-07, `llvm-size`).
+
 ## Mailbox
 
 A node set as a person's home (spec "Mailbox"; Home on the phone link)

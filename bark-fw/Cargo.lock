@@ -112,6 +112,7 @@ name = "bark-link"
 version = "0.1.0"
 dependencies = [
  "bark-proto",
+ "libm",
 ]
 
 [[package]]
