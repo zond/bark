@@ -1,7 +1,8 @@
 // The firmware update over the link: Update's and Image's values, as
-// `bark-link`'s tests give them; an image file's checks; where a
-// transfer goes on from; and the whole update against the fake node,
-// with lost pieces, a lost link, a low battery and the reboot.
+// `bark-link`'s tests give them; an image file's checks and the name a
+// picked one is shown by; where a transfer goes on from; and the whole
+// update against the fake node, with lost pieces, a lost link, a low
+// battery and the reboot, its answer lost to the link's end or not.
 
 import 'dart:typed_data';
 
@@ -117,6 +118,13 @@ void main() {
     expect(next(at(UpdateState.committed, 20001, i), i), Step.reboot);
   });
 
+  test('a picked image is shown by its name, with .img', () {
+    expect(pickedName('v2.img'), 'v2.img');
+    expect(pickedName('v2.bin'), 'v2.img');
+    expect(pickedName('bark-fw-2'), 'bark-fw-2.img');
+    expect(pickedName(''), 'a picked file');
+  });
+
   group('against the fake node', () {
     late Sodium sodium;
     setUpAll(() async => sodium = await SodiumInit.init());
@@ -162,6 +170,23 @@ void main() {
         async.flushMicrotasks();
         expect(u.phase, Phase.done, reason: u.message);
         expect(s.node!.image, 2);
+      });
+    });
+
+    test('a reboot whose answer the link\'s end overtook', () {
+      run((async, s, node, u) {
+        u.choose(parseImage(imageFile(2, 5000)), 'file');
+        u.send();
+        async.flushMicrotasks();
+        expect(u.phase, Phase.committed, reason: u.message);
+        node.rebootAnswerLost = true;
+        u.reboot();
+        async.flushMicrotasks();
+        expect(u.phase, Phase.rebooting, reason: u.message);
+        async.elapse(FakeNode.swapTime);
+        s.attach(node.connect());
+        async.flushMicrotasks();
+        expect(u.phase, Phase.done, reason: u.message);
       });
     });
 

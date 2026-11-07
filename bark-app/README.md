@@ -161,7 +161,8 @@ bond), which needs no code of the app's own on the Android side.
 While it is not connected, the app looks for the node it is paired with
 and connects to it when it sees it, by the same path as a tap and without
 a code: from its start, and after a link drops, so that texts waiting go
-out as soon as the node is in reach. The first screen, and Settings under
+out as soon as the node is in reach. Bluetooth switched off ends the link
+as a drop does: Android does not report that end itself. The first screen, and Settings under
 the scan rows, say "Looking for bark-…", or that Bluetooth is off. A
 search round scans for four of the node's advertising intervals, 4.1 s,
 without a break, and a round starts every 15 s: Android refuses an app's
@@ -322,9 +323,12 @@ there the app commits: the node checks the image and answers, and the
 screen says it keeps it for its next boot, or why it refused, in words.
 A refusal for a low battery keeps the image on the node, and
 **Commit** tries again once the node is on USB. **Reboot into version
-N** then restarts the node, which swaps the image in, about a minute;
-the app looks for it and connects again by itself, and the screen says
-"The node runs version N", or the version it came back on if the new
+N** then restarts the node, which swaps the image in, about a minute.
+The node answers and ends the link, and Android may report the write
+failed when the end overtakes the answer; a link that ends after such a
+failure is the reboot, not an error. The app looks for the node and
+connects again by itself, and the screen says "The node runs version
+N", or the version it came back on if the new
 image did not start and the node swapped the old one back. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").

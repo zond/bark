@@ -23,6 +23,12 @@ const int window = 7;
 /// gives up: a node that takes no piece of 7 × 20.
 const int stalledWindows = 20;
 
+/// How long the app waits for the link's end after a reboot whose write
+/// failed: the longest supervision timeout, 32 s (Bluetooth Core
+/// Specification 5.0, Vol 6 Part B §4.5.2), by which a node that reset
+/// without ending the link has lost it anyway.
+const Duration rebootEnd = Duration(seconds: 32);
+
 /// An image in `file`, its hash checked.
 FirmwareImage parseImage(List<int> file) =>
     FirmwareImage.parse(file, (b) => sha256.convert(b).bytes);
@@ -249,11 +255,19 @@ class Updater extends ChangeNotifier {
   /// Asks the node to reboot into the image; the app connects again once
   /// it is back.
   Future<void> reboot() async {
+    if (_running) return;
+    _running = true;
     try {
       final link = _link();
       _before = session.node?.image;
       _down = false;
-      await link.writeUpdate(encodeReboot());
+      try {
+        await link.writeUpdate(encodeReboot());
+      } catch (e) {
+        if (e is AttException && e.code == AttError.refused) rethrow;
+        if (!await _ends(link)) rethrow;
+        session.note('Update: the reboot\'s answer was lost to its end, $e');
+      }
       session.note('Update: reboot asked');
       _set(
         Phase.rebooting,
@@ -264,8 +278,17 @@ class Updater extends ChangeNotifier {
       await _refused(e, Phase.committed);
     } catch (e) {
       _set(Phase.failed, 'Reboot failed: $e');
+    } finally {
+      _running = false;
     }
   }
+
+  /// Whether `link` ends within [rebootEnd]. The node answers a reboot
+  /// and then ends the link, and Android may report the write failed as
+  /// that end overtakes the answer, with its catch-all GATT error 133
+  /// (bench, 2026-11-07): a write that failed so is the reboot taken.
+  Future<bool> _ends(NodeLink link) =>
+      link.closed.then((_) => true).timeout(rebootEnd, onTimeout: () => false);
 
   void _onSession() {
     final n = session.node;
@@ -293,6 +316,17 @@ class Updater extends ChangeNotifier {
     session.removeListener(_onSession);
     super.dispose();
   }
+}
+
+/// The name a picked image is shown by: `name`, as the file picker gives
+/// it, with the `.img` that images carry (`bark-fw/scripts/image.py`;
+/// a release's `bark-fw-<N>.img`). Android's picker gives a copy of the
+/// file, named with the extension of its type, `.bin` for one whose type
+/// Android does not know, as an image's.
+String pickedName(String name) {
+  final dot = name.lastIndexOf('.');
+  final base = dot > 0 ? name.substring(0, dot) : name;
+  return base.isEmpty ? 'a picked file' : '$base.img';
 }
 
 /// The image of `r`, downloaded by `get` and checked, with its file name.
