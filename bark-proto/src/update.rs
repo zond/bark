@@ -117,9 +117,9 @@ pub const REQUEST_WAIT: Duration = Duration::from_secs(600);
 /// and on one other channel (spec "Updates over the mesh").
 pub const ANNOUNCE_EVERY: Duration = Duration::from_secs(3600);
 
-/// How long a node that holds the image holds back from a block on its
-/// home channel after it heard a piece of that block from another: two
-/// paces, the most between two pieces of a holder that keeps the pace.
+/// How long a node that holds the image sends no pieces on its home
+/// channel after it heard a piece of it there from another: two paces,
+/// the most between two pieces of a holder that keeps the pace.
 pub const HOLD_BACK: Duration = PACE.mul(2);
 
 /// A piece of a block the node gathers, for the driver to keep

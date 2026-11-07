@@ -224,9 +224,9 @@ pub(super) struct Spread {
     /// An announcement owed on a channel: to a node that asked for an
     /// older image.
     owed: Option<Channel>,
-    /// A block another holder sends on the home channel, and until when
-    /// this one holds back from it.
-    held_back: Option<(u8, Instant)>,
+    /// Until when it sends no pieces on its home channel, where another
+    /// holder sends them.
+    held_back: Option<Instant>,
     /// The frame under way, and its listen-before-talk checks.
     current: Option<(Out, Channel)>,
     busy_checks: u8,
@@ -368,12 +368,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     return;
                 }
                 if let Some(g) = s.gather.as_mut().filter(|g| g.image.id == image.id) {
-                    // The latest holder heard is the one it asks.
+                    // The latest holder heard is the one it asks, one at
+                    // home on its own channel first: holders there hear
+                    // each other and send one at a time.
+                    let mine = self.home;
                     if g.holder.is_none() {
                         g.ask = g.lacks();
                         g.ask_at = now + wait;
                     }
-                    g.holder = Some((from, home));
+                    if home == mine || g.holder.is_none_or(|(_, h)| h != mine) {
+                        g.holder = Some((from, home));
+                    }
                     return;
                 }
                 s.offered = Some((image, from, home));
@@ -428,15 +433,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 bytes,
             } => {
                 if s.own.is_some_and(|o| o.tag() == tag) {
-                    // Another holder sends this block here.
-                    let home = self.home;
-                    if s.serving
-                        .iter()
-                        .flatten()
-                        .any(|v| v.channel == home && v.current().is_some_and(|a| a.block == block))
-                    {
-                        s.held_back = Some((block, now + HOLD_BACK));
-                    }
+                    // Another holder sends here: one is enough for the
+                    // channel's nodes, and keeps it at the pace.
+                    s.held_back = Some(now + HOLD_BACK);
                 }
                 if usize::from(index) >= PIECES {
                     return;
@@ -505,9 +504,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         });
         let pieces = s.serving.iter().enumerate().filter_map(move |(i, v)| {
             let v = (*v)?;
-            let block = v.current()?.block;
+            v.current()?;
             let at = match s.held_back {
-                Some((b, until)) if v.channel == self.home && block == b => until.max(now),
+                Some(until) if v.channel == self.home => until.max(now),
                 _ => now,
             };
             Some((Out::Piece(i), v.channel, at))

@@ -3575,16 +3575,16 @@ all it lacks.
    holds asks its firmware whether its policy takes the image. If it
    does, the relay gathers it: it sends a request to the holder it
    heard announce last, a random time within a pace after the
-   announcement.
+   announcement, but keeps a holder at home on its own channel over
+   one that is not.
 3. A holder that hears a request for its image sends, on the channel
    named, pieces of the block named: 1.55 times as many as the request
    lacks, 99 for a whole block of 64, from a random piece on, or none if
    more are still to go of that block there. It keeps the four highest
    blocks asked for on a channel; it sends one block's pieces until they
    are spent, then the highest block asked for. It sends on at most two
-   channels. A holder that
-   hears a piece of the block it sends on its home channel from another
-   holder holds back from that block there for two paces.
+   channels. A holder that hears a piece of its image on its home
+   channel from another holder sends none there for two paces.
 4. A node that gathers hands its firmware every piece it has not
    handed before of the first block it lacks and of the four after it
    that have not decoded, and no other: 5 blocks, 320 pieces at most of
@@ -3606,7 +3606,12 @@ first, the nodes that keep beginning held every node at the first
 blocks. A holder that followed each request at once would turn from
 block to block and finish none. *Why five blocks.* A node behind takes the pieces sent for the
 nodes ahead of it, up to five blocks on, and has them when it gets
-there. *Why a random first piece.* A block asked for again is wanted
+there. *Why one holder a channel.* Every holder keeps its own pace, so a
+channel with several sending would carry their sum: in a district run
+the update's frames came to 7 % of each channel's time once 70 relays
+held the image. Holders at home on a channel hear each other there, and
+one sending is enough for every node on it; a node that keeps a holder
+of its own channel lets them. *Why a random first piece.* A block asked for again is wanted
 by nodes that have some of its pieces, most likely the first ones sent.
 *Why 1.55 times.* A holder cannot tell when every node on the channel has a
 block, so a request buys what all the nodes that lack as much need: at
