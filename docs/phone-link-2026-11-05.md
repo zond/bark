@@ -29,6 +29,7 @@ From the core's application interface (`core-interface.md` §4):
 | `Config::node_id`, the image version | Node |
 | the time of day and the phone's UTC offset, the firmware's, not the core's | Clock, from link version 2 (D130, `docs/gps-time-2026-11-05.md`) |
 | the mailbox, an application beside the link (`bark-app-layer`, spec "Mailbox") | Home, from link version 3; while the node is a home, Inbox and Status's count read its ring |
+| the neighbour table's live entries by slot, the noise floor, `Config::position`, `Node::anchor` | Neighbours, from link version 4 (D141) |
 
 `AppCommand::Fix`, `Power` and `Battery` come from the board, not the
 phone; there is no sleepy or carried setting (roadmap D71).

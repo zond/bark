@@ -508,13 +508,14 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen `PHONE PAIRED`.
-3. **Debug** shows link version 3, the node's clock (from its GPS if it
+3. **Debug** shows link version 4, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
-   address. Without one, set a map point in Settings: Status changes to
+   address, and **Map** draws it with the relays it hears, each line's
+   colour its link's quality. Without one, set a map point in Settings: Status changes to
    placed and map point. A text names the node's address only once it
    has one.
 5. With a second node and a second phone, make one phone's node its
