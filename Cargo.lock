@@ -47,6 +47,7 @@ dependencies = [
  "embassy-sync",
  "embedded-hal 1.0.0",
  "embedded-storage",
+ "embedded-storage-async",
  "sha2",
 ]
 

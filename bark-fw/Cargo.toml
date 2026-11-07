@@ -59,8 +59,10 @@ panic-persist = { version = "=0.3.0", features = ["utf8"] }
 lora-phy = { path = "vendor/lora-phy" }
 # The flash traits embassy-nrf's NVMC driver implements, for the stored
 # state (src/store.rs), and the partitions that share the NVMC between it
-# and the update (src/update.rs).
+# and the update (src/update.rs); their async forms, which the update's
+# staging takes (src/update.rs, src/ext_flash.rs).
 embedded-storage = "=0.3.2"
+embedded-storage-async = "=0.4.2"
 embassy-embedded-hal = "=0.6.0"
 # The phone link (roadmap D5, D117; protocol.md "Phone link"): Nordic's
 # SoftDevice Controller, peripheral-only, under the multiprotocol service

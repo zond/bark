@@ -10,7 +10,7 @@ description = "The T-Echo's flash layout, its external flash's driver, the firmw
 default = ["boot"]
 # The swap and the staging on a flash (`boot`); the build scripts, which
 # need only the layout, leave it out.
-boot = ["dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-hal", "dep:embedded-storage", "dep:sha2"]
+boot = ["dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-hal", "dep:embedded-storage", "dep:embedded-storage-async", "dep:sha2"]
 
 [dependencies]
 # The swap that survives a power cut, and the confirmation that keeps it.
@@ -18,6 +18,9 @@ embassy-boot = { version = "=0.7.0", optional = true }
 embassy-embedded-hal = { version = "=0.6.0", optional = true }
 embassy-sync = { version = "=0.8.0", optional = true }
 embedded-storage = { version = "=0.3.2", optional = true }
+# The same, for flashes that let the processor go on while they erase or
+# write (`boot::Stager`).
+embedded-storage-async = { version = "=0.4.2", optional = true }
 # The pins and the clock the external flash's bus is driven by.
 embedded-hal = { version = "=1.0.0", optional = true }
 # SHA-256 (FIPS 180-4) of a staged image.

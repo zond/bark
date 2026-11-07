@@ -70,17 +70,11 @@ use embassy_time::{Duration, Instant, Timer};
 use embassy_usb_logger::ReceiverHandler;
 
 use crate::clock::Clock;
-use crate::ext_flash::Kept;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
-use crate::update::{decimal, External, Flash, BARK_IMAGE_VERSION};
-use bark_image::boot::{swap_requested, Stager, CHUNK};
+use crate::update::{decimal, ConsoleStager, External, Flash, Power, Refused, BARK_IMAGE_VERSION};
+use bark_image::boot::{blocking, Stager, CHUNK};
 use bark_image::HEADER_LEN;
 use bark_proto::BatteryLevels;
-use embassy_nrf::nvmc::Nvmc;
-
-/// How long `reboot` waits for the log to reach the host: the 2 KiB log
-/// buffer at one 64-byte packet per 1 ms frame (USB 2.0 full speed, bulk).
-const LOG_DRAIN: Duration = Duration::from_millis(2048 / 64);
 
 /// Log target of command echo lines; the log formatter prints them bare,
 /// after a `>`.
@@ -582,7 +576,7 @@ pub struct Console<'a> {
     flash: &'static Flash,
     external: &'static External,
     /// The image being staged, between `stage` and `commit`.
-    staging: Option<Stager<'static, Nvmc<'static>, Kept>>,
+    staging: Option<ConsoleStager>,
     /// The survey, in a survey build.
     survey: Option<Survey>,
 }
@@ -960,7 +954,8 @@ impl<'a> Console<'a> {
                 let mut header = [0u8; HEADER_LEN];
                 decode_hex(hex, &mut header);
                 self.staging = None;
-                match Stager::begin(self.flash, self.external, &header, BARK_IMAGE_VERSION) {
+                let (record, state, dfu) = blocking(self.flash, self.external);
+                match Stager::begin(record, state, dfu, &header, BARK_IMAGE_VERSION).await {
                     Ok(s) => {
                         let h = s.header();
                         log::info!(
@@ -981,33 +976,32 @@ impl<'a> Console<'a> {
                 };
                 let mut bytes = [0u8; CHUNK];
                 let bytes = decode_hex(hex, &mut bytes);
-                match staging.write(offset, bytes) {
+                match staging.write(offset, bytes).await {
                     Ok(next) => log::info!("chunk next={}", next),
                     Err(e) => log::warn!("chunk refused={:?} next={}", e, staging.next()),
                 }
             }
             Command::Commit => {
-                // Kept, to commit once the board is plugged in.
-                if self.staging.is_some() && !self.swap_allowed("commit").await {
-                    return Ok(());
-                }
-                match self.staging.take().map(Stager::finish) {
-                    None => log::warn!("commit refused: no `stage` before it"),
-                    Some(Ok(h)) => log::info!(
+                let power = self.power().await;
+                match crate::update::commit(&mut self.staging, power).await {
+                    Ok(h) => log::info!(
                         "commit version={} length={}: the loader swaps it in at the next boot; `reboot`",
                         h.version,
                         h.length
                     ),
-                    Some(Err(e)) => log::warn!("commit refused={:?}", e),
+                    Err(Refused::Nothing) => log::warn!("commit refused: no `stage` before it"),
+                    // Kept, to commit once the board is plugged in.
+                    Err(Refused::BatteryLow) => low_battery("commit", power),
+                    Err(Refused::Stage(e)) => log::warn!("commit refused={:?}", e),
                 }
             }
             Command::Reboot => {
-                if swap_requested(self.flash) == Ok(true) && !self.swap_allowed("reboot").await {
+                let power = self.power().await;
+                if !crate::update::reboot_allowed(self.flash, power) {
+                    low_battery("reboot", power);
                     return Ok(());
                 }
-                log::info!("reboot");
-                Timer::after(LOG_DRAIN).await;
-                cortex_m::peripheral::SCB::sys_reset();
+                crate::update::reboot().await;
             }
         }
         Ok(())
@@ -1309,28 +1303,18 @@ impl<'a> Console<'a> {
         }
     }
 
-    /// Whether a swap may start now, the battery read: on battery at or
-    /// below the level a fixed relay turns sleepy at, the console refuses
-    /// `what` (spec "Implementation notes"). It has no core, so its
-    /// reading is uncalibrated.
-    async fn swap_allowed(&mut self, what: &str) -> bool {
+    /// What the board runs on now, the battery read. It has no core, so
+    /// its reading is uncalibrated.
+    async fn power(&mut self) -> Power {
         let external = crate::power::usb();
-        let mv = if external {
-            0
-        } else {
-            self.battery.read().await
-        };
-        let levels = BatteryLevels::DESIGN;
-        let allowed = levels.swap_allowed(external, mv);
-        if !allowed {
-            log::warn!(
-                "{} refused=BatteryLow battery_mv={} low_mv={}: no swap on battery at or below the low level; plug in",
-                what,
-                mv,
-                levels.low_mv
-            );
+        Power {
+            external,
+            battery_mv: if external {
+                0
+            } else {
+                self.battery.read().await
+            },
         }
-        allowed
     }
 
     async fn status(&mut self, reset: bool) {
@@ -1413,6 +1397,16 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={}",
 
 /// A frame heard. A survey frame is one short line, since a host logs
 /// thousands: its sender's power in place of the bytes.
+/// `what` refused on a low battery (spec "Implementation notes").
+fn low_battery(what: &str, power: Power) {
+    log::warn!(
+        "{} refused=BatteryLow battery_mv={} low_mv={}: no swap on battery at or below the low level; plug in",
+        what,
+        power.battery_mv,
+        BatteryLevels::DESIGN.low_mv
+    );
+}
+
 fn report_frame(
     ch: Channel,
     frame: &[u8],

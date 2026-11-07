@@ -175,16 +175,39 @@ fn header_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
     .encode()
 }
 
+/// The value of a future that does not wait: staging on blocking flashes
+/// ([`blocking`]) is done at its first poll.
+fn now<T>(f: impl core::future::Future<Output = T>) -> T {
+    let mut f = core::pin::pin!(f);
+    let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+    match f.as_mut().poll(&mut cx) {
+        core::task::Poll::Ready(v) => v,
+        core::task::Poll::Pending => panic!("a blocking flash waited"),
+    }
+}
+
+type BlockingStager<'a, I, E> = Stager<Blocking<'a, I>, Blocking<'a, I>, Blocking<'a, E>>;
+
+fn begin<'a, I: NorFlash, E: NorFlash>(
+    internal: &'a Shared<I>,
+    external: &'a Shared<E>,
+    header: &[u8; HEADER_LEN],
+    running: u32,
+) -> Result<BlockingStager<'a, I, E>, StageError> {
+    let (record, state, dfu) = blocking(internal, external);
+    now(Stager::begin(record, state, dfu, header, running))
+}
+
 fn stage_on<I: NorFlash, E: NorFlash>(
     internal: &Shared<I>,
     external: &Shared<E>,
     b: &[u8],
 ) -> Result<Header, StageError> {
-    let mut s = Stager::begin(internal, external, &header_for(b, RUNNING + 1), RUNNING)?;
+    let mut s = begin(internal, external, &header_for(b, RUNNING + 1), RUNNING)?;
     for (i, chunk) in b.chunks(CHUNK).enumerate() {
-        s.write((i * CHUNK) as u32, chunk)?;
+        now(s.write((i * CHUNK) as u32, chunk))?;
     }
-    s.finish()
+    now(s.finish())
 }
 
 fn stage(board: &Board, b: &[u8]) -> Result<Header, StageError> {
@@ -365,36 +388,36 @@ fn staging_refuses_what_it_cannot_stage() {
     let (i, e) = (&board.internal, &board.external);
     let old = header_for(&b, RUNNING);
     assert_eq!(
-        Stager::begin(i, e, &old, RUNNING).err(),
+        begin(i, e, &old, RUNNING).err(),
         Some(StageError::Version {
             running: RUNNING,
             staged: RUNNING
         })
     );
-    let mut s = Stager::begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
+    let mut s = begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
     assert_eq!(
-        s.write(4, &b[4..8]),
+        now(s.write(4, &b[4..8])),
         Err(StageError::Offset { expected: 0 })
     );
-    assert_eq!(s.write(0, &b[..CHUNK + 1]), Err(StageError::Chunk));
-    s.write(0, &b[..CHUNK]).unwrap();
+    assert_eq!(now(s.write(0, &b[..CHUNK + 1])), Err(StageError::Chunk));
+    now(s.write(0, &b[..CHUNK])).unwrap();
     assert_eq!(
-        s.finish().err(),
+        now(s.finish()).err(),
         Some(StageError::Incomplete { got: CHUNK as u32 })
     );
     // A different image under the header.
-    let mut s = Stager::begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
+    let mut s = begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
     let other = image(3, b.len());
     for (n, chunk) in other.chunks(CHUNK).enumerate() {
-        s.write((n * CHUNK) as u32, chunk).unwrap();
+        now(s.write((n * CHUNK) as u32, chunk)).unwrap();
     }
-    assert_eq!(s.finish().err(), Some(StageError::Hash));
+    assert_eq!(now(s.finish()).err(), Some(StageError::Hash));
     assert_eq!(boot(&board), Ok(Boot::Normal));
     // On trial, nothing is staged until the image confirms itself.
     stage(&board, &b).unwrap();
     assert_eq!(boot(&board), Ok(Boot::Trial));
     assert_eq!(
-        Stager::begin(i, e, &header_for(&a[..100], RUNNING + 2), RUNNING + 1).err(),
+        begin(i, e, &header_for(&a[..100], RUNNING + 2), RUNNING + 1).err(),
         Some(StageError::Busy)
     );
 }
