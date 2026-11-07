@@ -27,8 +27,6 @@ mod ext_flash;
 #[cfg(not(feature = "console"))]
 mod gps;
 #[cfg(not(feature = "console"))]
-mod lfclk;
-#[cfg(not(feature = "console"))]
 mod mailbox;
 #[cfg(not(feature = "console"))]
 mod node;
@@ -47,11 +45,12 @@ mod utc;
 #[cfg(feature = "console")]
 use core::fmt::Write as _;
 
+use bark_image::lfclk;
 use bark_proto::NodeId;
 use embassy_executor::Spawner;
 #[cfg(feature = "console")]
 use embassy_futures::join::join3;
-use embassy_nrf::config::{Config, HfclkSource};
+use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
 use embassy_time::Instant;
@@ -204,13 +203,21 @@ async fn main(spawner: Spawner) {
     // Specification, USBD chapter). The console starts it at boot, for its
     // stopwatch too (clock.rs); in the node build the MPSL owns the clock,
     // starts the crystal for its radio, and holds it while asked to, on
-    // USB (`on_usb_only`). The 32.768 kHz clock starts on the internal RC
-    // oscillator, which assumes nothing about a fitted crystal; the node
-    // build then tries the crystal (`lfclk.rs`), and the console keeps the
-    // RC oscillator.
+    // USB (`on_usb_only`).
     config.hfclk_source = match cfg!(feature = "console") {
         true => HfclkSource::ExternalXtal,
         false => HfclkSource::Internal,
+    };
+    // The 32.768 kHz clock starts on the internal RC oscillator, which
+    // assumes nothing about a fitted crystal; the node build then tries the
+    // crystal, and the console keeps the RC oscillator. But a watchdog the
+    // loader started holds the clock on its source until a reset
+    // (`bark_image::lfclk`), and init writes LFCLKSRC even while the clock
+    // runs, which the Product Specification does not allow (CLOCK, LFCLK);
+    // given the source the clock runs from, the write changes nothing.
+    config.lfclk_source = match lfclk::held() {
+        Some(lfclk::Source::Crystal) => LfclkSource::ExternalXtal,
+        Some(lfclk::Source::Rc) | None => LfclkSource::InternalRC,
     };
     #[cfg(not(feature = "console"))]
     {
@@ -230,11 +237,15 @@ async fn main(spawner: Spawner) {
     // Mutable for the seed's borrow of the generator in the node build.
     #[cfg_attr(feature = "console", allow(unused_mut))]
     let mut p = embassy_nrf::init(config);
-    // The 32.768 kHz clock's source, before the MPSL takes the clock.
+    // The 32.768 kHz clock's source, before the MPSL takes the clock. The
+    // embassy clock, on RTC1, stands still while the crystal starts, up to
+    // `lfclk::START_MS`, so the wait counts the CPU's cycles.
     #[cfg(not(feature = "console"))]
-    let lf_source = lfclk::probe();
+    let lf_found = lfclk::probe(&mut ext_flash::Cycles);
     #[cfg(not(feature = "console"))]
-    boot::note(|f| f.lfclk = Some(lf_source));
+    let lf_source = lf_found.source();
+    #[cfg(not(feature = "console"))]
+    boot::note(|f| f.lfclk = Some(lf_found));
     #[cfg(not(feature = "console"))]
     let mpsl = ble::mpsl(
         ble::MpslParts {
@@ -334,11 +345,18 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "console"))]
     boot::note(|f| f.protection = Some(protection));
     #[cfg(not(feature = "console"))]
-    match lf_source {
-        lfclk::Source::Crystal { started_ms } => {
+    match lf_found {
+        lfclk::Found::Crystal { started_ms } => {
             log::info!("lfclk: crystal, started in {} ms", started_ms)
         }
-        lfclk::Source::Rc => log::warn!("lfclk: no crystal started; RC oscillator, calibrated"),
+        lfclk::Found::Rc => log::warn!("lfclk: no crystal started; RC oscillator, calibrated"),
+        lfclk::Found::Held(lfclk::Source::Crystal) => {
+            log::info!("lfclk: crystal, already running")
+        }
+        // A loader that started the watchdog without starting the clock.
+        lfclk::Found::Held(lfclk::Source::Rc) => {
+            log::warn!("lfclk: RC oscillator, calibrated, already running")
+        }
     }
     if let Some(msg) = previous_panic {
         log::error!("previous boot panicked: {}", msg);

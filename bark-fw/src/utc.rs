@@ -14,10 +14,10 @@ use embassy_sync::blocking_mutex::Mutex;
 /// The 32.768 kHz clock's tolerance, ppm: the crystal's, as the MPSL is
 /// told it, ±250 ppm, since the fitted one's is not known; the RC
 /// oscillator's, calibrated, ±500 ppm (`ble.rs`, `mpsl`).
-pub fn ppm(source: crate::lfclk::Source) -> u32 {
+pub fn ppm(source: bark_image::lfclk::Source) -> u32 {
     match source {
-        crate::lfclk::Source::Crystal { .. } => 250,
-        crate::lfclk::Source::Rc => 500,
+        bark_image::lfclk::Source::Crystal => 250,
+        bark_image::lfclk::Source::Rc => 500,
     }
 }
 

@@ -239,9 +239,11 @@ pub struct MpslParts {
 }
 
 /// Start the MPSL, once, on the 32.768 kHz clock's source found at boot
-/// (`lfclk.rs`). On the crystal, its accuracy is taken as ±250 ppm, the
-/// tolerance the Product Specification requires of a crystal for a BLE
-/// stack (32.768 kHz crystal oscillator, fTOL,LFXO,BLE): the fitted
+/// (`bark_image::lfclk`): it starts the clock again on any other source,
+/// which a running watchdog's hold on the clock does not allow. On the
+/// crystal, its accuracy is taken as ±250 ppm, the tolerance the Product
+/// Specification requires of a crystal for a BLE stack (32.768 kHz
+/// crystal oscillator, fTOL,LFXO,BLE): the fitted
 /// crystal's own is not known, and a figure too small would narrow the
 /// windows in which the controller listens for the phone. On the RC
 /// oscillator, it is calibrated as often as the MPSL recommends, every 4 s
@@ -249,18 +251,18 @@ pub struct MpslParts {
 /// Specification, LFRC).
 pub fn mpsl(
     p: MpslParts,
-    source: crate::lfclk::Source,
+    source: bark_image::lfclk::Source,
 ) -> &'static MultiprotocolServiceLayer<'static> {
     static MPSL: StaticCell<MultiprotocolServiceLayer<'static>> = StaticCell::new();
     let lfclk = match source {
-        crate::lfclk::Source::Crystal { .. } => mpsl_raw::mpsl_clock_lfclk_cfg_t {
+        bark_image::lfclk::Source::Crystal => mpsl_raw::mpsl_clock_lfclk_cfg_t {
             source: mpsl_raw::MPSL_CLOCK_LF_SRC_XTAL as u8,
             rc_ctiv: 0,
             rc_temp_ctiv: 0,
             accuracy_ppm: mpsl_raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
             skip_wait_lfclk_started: mpsl_raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
         },
-        crate::lfclk::Source::Rc => mpsl_raw::mpsl_clock_lfclk_cfg_t {
+        bark_image::lfclk::Source::Rc => mpsl_raw::mpsl_clock_lfclk_cfg_t {
             source: mpsl_raw::MPSL_CLOCK_LF_SRC_RC as u8,
             rc_ctiv: mpsl_raw::MPSL_RECOMMENDED_RC_CTIV as u8,
             rc_temp_ctiv: mpsl_raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
