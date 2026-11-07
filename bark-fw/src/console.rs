@@ -32,6 +32,9 @@
 //! ```
 //!
 //! `scripts/image.py stage` sends an image through the last four.
+//! `commit`, and `reboot` with a swap asked for, are refused on battery at
+//! or below the low level of spec "Sleepy nodes", as spec
+//! "Implementation notes" says.
 //!
 //! Bench frames start with a heartbeat's first byte on channel 15, which no
 //! node sends and nodes reject (spec "Packet formats"): byte 0 is `0x8F`,
@@ -70,8 +73,9 @@ use crate::clock::Clock;
 use crate::ext_flash::Kept;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
 use crate::update::{decimal, External, Flash, BARK_IMAGE_VERSION};
-use bark_image::boot::{Stager, CHUNK};
+use bark_image::boot::{swap_requested, Stager, CHUNK};
 use bark_image::HEADER_LEN;
+use bark_proto::BatteryLevels;
 use embassy_nrf::nvmc::Nvmc;
 
 /// How long `reboot` waits for the log to reach the host: the 2 KiB log
@@ -982,16 +986,25 @@ impl<'a> Console<'a> {
                     Err(e) => log::warn!("chunk refused={:?} next={}", e, staging.next()),
                 }
             }
-            Command::Commit => match self.staging.take().map(Stager::finish) {
-                None => log::warn!("commit refused: no `stage` before it"),
-                Some(Ok(h)) => log::info!(
-                    "commit version={} length={}: the loader swaps it in at the next boot; `reboot`",
-                    h.version,
-                    h.length
-                ),
-                Some(Err(e)) => log::warn!("commit refused={:?}", e),
-            },
+            Command::Commit => {
+                // Kept, to commit once the board is plugged in.
+                if self.staging.is_some() && !self.swap_allowed("commit").await {
+                    return Ok(());
+                }
+                match self.staging.take().map(Stager::finish) {
+                    None => log::warn!("commit refused: no `stage` before it"),
+                    Some(Ok(h)) => log::info!(
+                        "commit version={} length={}: the loader swaps it in at the next boot; `reboot`",
+                        h.version,
+                        h.length
+                    ),
+                    Some(Err(e)) => log::warn!("commit refused={:?}", e),
+                }
+            }
             Command::Reboot => {
+                if swap_requested(self.flash) == Ok(true) && !self.swap_allowed("reboot").await {
+                    return Ok(());
+                }
                 log::info!("reboot");
                 Timer::after(LOG_DRAIN).await;
                 cortex_m::peripheral::SCB::sys_reset();
@@ -1294,6 +1307,30 @@ impl<'a> Console<'a> {
             );
             Timer::after(SURVEY_LINE_DRAIN).await;
         }
+    }
+
+    /// Whether a swap may start now, the battery read: on battery at or
+    /// below the level a fixed relay turns sleepy at, the console refuses
+    /// `what` (spec "Implementation notes"). It has no core, so its
+    /// reading is uncalibrated.
+    async fn swap_allowed(&mut self, what: &str) -> bool {
+        let external = crate::power::usb();
+        let mv = if external {
+            0
+        } else {
+            self.battery.read().await
+        };
+        let levels = BatteryLevels::DESIGN;
+        let allowed = levels.swap_allowed(external, mv);
+        if !allowed {
+            log::warn!(
+                "{} refused=BatteryLow battery_mv={} low_mv={}: no swap on battery at or below the low level; plug in",
+                what,
+                mv,
+                levels.low_mv
+            );
+        }
+        allowed
     }
 
     async fn status(&mut self, reset: bool) {

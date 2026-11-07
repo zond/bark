@@ -116,6 +116,17 @@ pub fn prepare<I: NorFlash, E: NorFlash>(
     external: Option<&Shared<E>>,
     page: &mut [u8; PAGE as usize],
 ) -> Result<Boot, FlashError> {
+    prepare_with(internal, external, page, |_| Ok(()))
+}
+
+/// [`prepare`], with `before_copy` run once the staged image has passed
+/// its check, just before embassy-boot copies (`cut`).
+fn prepare_with<I: NorFlash, E: NorFlash>(
+    internal: &Shared<I>,
+    external: Option<&Shared<E>>,
+    page: &mut [u8; PAGE as usize],
+    before_copy: impl FnOnce(&Shared<I>) -> Result<(), FlashError>,
+) -> Result<Boot, FlashError> {
     let before = state(internal)?;
     if before != State::Swap {
         return Ok(Boot::Normal);
@@ -128,6 +139,7 @@ pub fn prepare<I: NorFlash, E: NorFlash>(
     if let Err(why) = check(internal, external, page)? {
         return refuse(internal, why);
     }
+    before_copy(internal)?;
     let config = BootLoaderConfig {
         active: part(internal, ACTIVE),
         dfu: part(external, DFU),
@@ -387,6 +399,8 @@ impl<'a, I: NorFlash, E: NorFlash> Stager<'a, I, E> {
         Ok(self.header)
     }
 }
+
+pub mod cut;
 
 #[cfg(test)]
 mod tests;

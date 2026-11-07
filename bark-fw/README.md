@@ -539,6 +539,27 @@ at most a copy). Every image logs the two protected regions as the ACL
 reads them back, `update: acl 0 start=0x0 len=0x5000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
+On battery at or below the low level of spec "Sleepy nodes" the console
+refuses `commit`, and `reboot` with a swap asked for, with
+`commit refused=BatteryLow battery_mv=... low_mv=3741` (spec
+"Implementation notes"); over its USB cable it is never on battery.
+
+**A bench loader**, built with `BARK_LOADER_BENCH=reset`, resets the
+chip once in each swap and once in each swap back, at a moment drawn
+from the RNG evenly over the time the two flashes spend erasing and
+writing (`bark-image/src/boot/cut.rs`, roadmap D143). The operation the
+moment falls in is done only in part, as a power cut would leave it, the
+loader notes the moment and where it fell in the record and resets, and
+the next boot ends the swap. The firmware logs them at its start, as
+`update: bench reset in the swap at 20117355 us: internal erase of page
+117, 43.5 % through`. The build fails without `BARK_OPEN=1`, and
+`scripts/uf2.py` packs such a loader only with an open firmware.
+`scripts/swapbench.py ID 200` builds one, copies it with a console image
+of version 1 to the board through its bootloader, and runs 200 rounds:
+in turn a console image one version up, to confirm, and a `panic` image
+one version up, to be swapped back (roadmap Phase 2, "Resets in a
+swap").
+
 ## Display
 
 The 1.54" e-paper (200 × 200, SSD1681 controller, `src/display.rs`)

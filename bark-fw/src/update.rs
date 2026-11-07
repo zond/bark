@@ -8,7 +8,7 @@
 
 use core::cell::RefCell;
 
-use bark_image::boot::{confirm, Shared, Started};
+use bark_image::boot::{confirm, cut, Shared, Started};
 use bark_image::layout::{LOADER, PAGE};
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{peripherals, wdt, Peri};
@@ -153,6 +153,15 @@ pub fn started(flash: &Flash) {
         ),
         Ok(Started::Refused) => log::warn!("update: the loader refused the staged image"),
         Err(e) => log::error!("update: confirming failed: {:?}", e),
+    }
+    // What a bench loader noted in the record of the last update's resets;
+    // nothing from any other loader.
+    match cut::recorded(flash) {
+        Ok(cuts) => cuts
+            .iter()
+            .flatten()
+            .for_each(|c| log::info!("update: {}", c)),
+        Err(e) => log::error!("update: reading the record failed: {:?}", e),
     }
     CONFIRMED.signal(());
 }
