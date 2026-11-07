@@ -234,6 +234,10 @@ The bench list, with what each number is expected to be and where it goes. `bark
 
 Bring-up steps 4 and 5 (Phase 2) on four boards, three relays in a line and a sleepy node; then step 6, the BLE link of spec "Phone link" and a minimal app for it. The field test, step 7, needs more boards or RAK4631 EU433 relays (spec "Hardware", O12).
 
+To do after the updates over the phone link and the mesh (D144 to D146), decided 2026-11-07:
+
+- A status request and reply between neighbours, DATA `aux` 16 and 17 of the internal kinds (spec "Packet formats"): a node asks a neighbour, the neighbour answers with what its screen shows, placed, sleepy, anchored, carried, battery, the neighbours heard and strong, and its image version, about ten bytes; sent only when a user looks, so it costs the network nothing between looks, where the same in every heartbeat would cost every node every rotation. Firmware: the kinds in the core, the reply from the screen's state, and a way for the app to ask over the phone link. App: the map asks for each neighbour shown and draws the answer on it.
+
 ## Questions settled
 
 - **Q1 (D3), decided 2026-10-14.** The core does no I/O. An async node task would need a mini-executor in the simulator and makes 20k simulated nodes expensive. The contract is `docs/core-interface.md`.
