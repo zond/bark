@@ -530,6 +530,11 @@ class FakeNode implements NodeLink {
   /// For a test: the link is lost once this many pieces are written.
   int? closeAfterPieces;
 
+  /// For a test: the link's end at a reboot overtakes the answer, and
+  /// the write fails with Android's catch-all GATT error 133, as on the
+  /// bench.
+  bool rebootAnswerLost = false;
+
   /// Pieces the app has written, those lost among them.
   int get piecesWritten => _pieces;
 
@@ -606,6 +611,7 @@ class FakeNode implements NodeLink {
       case 2 when value.length == 1:
         if (_committed && lowBattery) _refuse(Refusal.battery);
         _reboot();
+        if (rebootAnswerLost) throw const AttException(0x85);
       case 0 || 1 || 2:
         throw const AttException(AttError.invalidLength);
       default:
