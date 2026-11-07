@@ -391,6 +391,39 @@ class BleLink implements NodeLink {
       NeighbourPage.decode(await _read(Uuids.neighbours));
 
   @override
+  Future<UpdateProgress> readUpdate() async =>
+      UpdateProgress.decode(await _read(Uuids.update));
+
+  /// A begin is longer than one write at the node's MTU, and Android
+  /// writes it as a long write (spec "Phone link", MTU).
+  @override
+  Future<void> writeUpdate(Uint8List value) => _write(Uuids.update, value);
+
+  @override
+  Future<void> writePiece(Uint8List value) => UniversalBle.write(
+    deviceId,
+    Uuids.service,
+    Uuids.image,
+    value,
+    withoutResponse: true,
+    timeout: attTimeout,
+  );
+
+  /// Android's high priority, an interval of 11.25 to 15 ms (spec
+  /// "Phone link", Updates); other platforms choose their own.
+  @override
+  Future<void> hurry() async {
+    try {
+      await UniversalBle.requestConnectionPriority(
+        deviceId,
+        BleConnectionPriority.highPerformance,
+      );
+    } on UniversalBleException {
+      // Not supported here: the transfer takes longer.
+    }
+  }
+
+  @override
   Stream<Status> get statusNotified =>
       _notified(Uuids.status).map(Status.decode);
 

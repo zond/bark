@@ -65,6 +65,22 @@ abstract class NodeLink {
   Future<void> setNeighboursFrom(int slot);
   Future<NeighbourPage> readNeighbours();
 
+  /// Link version 6 and later: where an update stands.
+  Future<UpdateProgress> readUpdate();
+
+  /// Begins, commits or reboots ([encodeBegin], [encodeCommit],
+  /// [encodeReboot]); throws [AttException] 0x81 when the node refuses,
+  /// and [readUpdate] says why.
+  Future<void> writeUpdate(Uint8List value);
+
+  /// A piece of the image ([encodePiece]), without a response: the node
+  /// takes it only where the bytes it holds end.
+  Future<void> writePiece(Uint8List value);
+
+  /// Asks for the shortest connection interval, for a transfer; where
+  /// the platform chooses the interval itself, nothing.
+  Future<void> hurry();
+
   Stream<Status> get statusNotified;
   Stream<GivenBack?> get givenBackNotified;
 

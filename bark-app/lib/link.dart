@@ -6,11 +6,15 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 5;
+const int linkVersion = 6;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
 const int attMtu = 247;
+
+/// The ATT MTU every connection starts with (Bluetooth Core
+/// Specification 5.0, Vol 3 Part F §3.2.8).
+const int defaultAttMtu = 23;
 
 /// The longest payload a DATA frame holds (spec "Packet formats").
 const int maxPayload = 227;
@@ -34,6 +38,10 @@ class Uuids {
 
   /// From link version 4.
   static const neighbours = '28bc000a-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 6.
+  static const update = '28bc000b-a1b8-4893-9537-2ee3559d7644';
+  static const image = '28bc000c-a1b8-4893-9537-2ee3559d7644';
 }
 
 /// ATT error codes the node answers a write with.
@@ -43,6 +51,10 @@ class AttError {
 
   /// The node takes no message now; wait for ready.
   static const notReady = 0x80;
+
+  /// The node refused an update's begin, commit or reboot; Update says
+  /// why.
+  static const refused = 0x81;
 }
 
 /// A value too short, or of a length it never has.
@@ -608,6 +620,158 @@ class NeighbourPage {
         for (var at = header; at < b.length; at += each)
           Neighbour.decode(b.sublist(at, at + each)),
       ],
+    );
+  }
+}
+
+/// The link version that has Update and Image.
+const int updateVersion = 6;
+
+/// A firmware image as `bark-fw/scripts/image.py pack` writes it: a
+/// header of 256 bytes, then the image (`bark-fw/README.md`, "Updates").
+class FirmwareImage {
+  static const headerLen = 256;
+  static const hashLen = 32;
+  static final _magic = 'bark'.codeUnits;
+  static const _format = 1;
+
+  final Uint8List header;
+  final Uint8List bytes;
+  final int version;
+  final Uint8List hash;
+
+  FirmwareImage._(this.header, this.bytes, this.version, this.hash);
+
+  int get length => bytes.length;
+
+  /// The image in `file`, if it is one: its header's magic and format,
+  /// and a length that is the file's. `sha256` hashes the image's
+  /// bytes, which must be the header's hash.
+  static FirmwareImage parse(
+    List<int> file,
+    List<int> Function(List<int>) sha256,
+  ) {
+    if (file.length <= headerLen) throw const Malformed('image: too short');
+    for (var i = 0; i < _magic.length; i++) {
+      if (file[i] != _magic[i]) throw const Malformed('image: not one');
+    }
+    if (file[4] != _format) throw const Malformed('image: format');
+    int le32(int at) =>
+        file[at] |
+        (file[at + 1] << 8) |
+        (file[at + 2] << 16) |
+        (file[at + 3] << 24);
+    final version = le32(8);
+    final length = le32(12);
+    if (length != file.length - headerLen) {
+      throw const Malformed('image: length');
+    }
+    final bytes = Uint8List.fromList(file.sublist(headerLen));
+    final hash = Uint8List.fromList(file.sublist(16, 16 + hashLen));
+    if (hex(sha256(bytes)) != hex(hash)) throw const Malformed('image: hash');
+    return FirmwareImage._(
+      Uint8List.fromList(file.sublist(0, headerLen)),
+      bytes,
+      version,
+      hash,
+    );
+  }
+}
+
+/// Update, write: begin with the image's header.
+Uint8List encodeBegin(List<int> header) {
+  if (header.length != FirmwareImage.headerLen) {
+    throw const Malformed('header');
+  }
+  return Uint8List.fromList([0, ...header]);
+}
+
+/// Update, write: commit the image held.
+Uint8List encodeCommit() => Uint8List.fromList([1]);
+
+/// Update, write: reboot, to let the loader swap.
+Uint8List encodeReboot() => Uint8List.fromList([2]);
+
+/// Bytes before the image's in a piece.
+const int pieceHeader = 4;
+
+/// The image's bytes one write carries at `mtu`: a write spends 3 bytes
+/// on its opcode and handle, and a piece 4 on its offset; 240 at the
+/// node's MTU of 247.
+int pieceBytes(int mtu) => mtu - 3 - pieceHeader;
+
+/// Image, write: the image's bytes from `offset`.
+Uint8List encodePiece(int offset, List<int> bytes) {
+  if (bytes.isEmpty || bytes.length > pieceBytes(attMtu)) {
+    throw const Malformed('piece');
+  }
+  return Uint8List.fromList([..._be32(offset), ...bytes]);
+}
+
+/// Where the node's update stands.
+enum UpdateState { idle, receiving, staged, committed }
+
+/// Why the node refused a begin, a commit or a reboot.
+enum Refusal {
+  header('the file is not an image this node reads'),
+  version('the image is not newer than the firmware the node runs'),
+  busy('the node has an image committed already: reboot it first'),
+  incomplete('the node does not hold every byte of the image'),
+  hash('the bytes the node holds are not the image\'s; send it again'),
+  battery(
+    'the node is on a low battery; it keeps the image, to commit once '
+    'it is on USB or charged',
+  ),
+  flash('the node\'s flash failed');
+
+  final String why;
+  const Refusal(this.why);
+}
+
+/// Update, read.
+class UpdateProgress {
+  static const len = 1 + 1 + 4 + 4 + FirmwareImage.hashLen;
+  final UpdateState state;
+  final Refusal? refused;
+
+  /// The image's bytes the node holds, in order: the next piece starts
+  /// here.
+  final int held;
+  final int version;
+  final Uint8List hash;
+
+  UpdateProgress(
+    this.state, {
+    this.refused,
+    this.held = 0,
+    this.version = 0,
+    List<int>? hash,
+  }) : hash = Uint8List.fromList(hash ?? List.filled(FirmwareImage.hashLen, 0));
+
+  /// Whether the node is staging, or has staged, `image`.
+  bool holds(FirmwareImage image) =>
+      state != UpdateState.idle && hex(hash) == hex(image.hash);
+
+  Uint8List encode() => Uint8List.fromList([
+    state.index,
+    refused == null ? 0 : refused!.index + 1,
+    ..._be32(held),
+    ..._be32(version),
+    ...hash,
+  ]);
+
+  static UpdateProgress decode(List<int> b) {
+    if (b.length < len ||
+        b[0] >= UpdateState.values.length ||
+        b[1] > Refusal.values.length) {
+      throw const Malformed('Update');
+    }
+    return UpdateProgress(
+      UpdateState.values[b[0]],
+      refused: b[1] == 0 ? null : Refusal.values[b[1] - 1],
+      held: _u32(b, 2),
+      version: _u32(b, 6),
+      hash: b.sublist(10, len),
     );
   }
 }

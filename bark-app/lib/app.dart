@@ -19,6 +19,7 @@ import 'node_link.dart';
 import 'phone_notifier.dart';
 import 'session.dart';
 import 'store.dart';
+import 'updater.dart';
 
 /// The steps of a connection before its link is attached.
 enum Linking {
@@ -86,8 +87,12 @@ class AppModel extends ChangeNotifier {
 
   late final Timer _ticker;
 
+  /// The firmware update of the connected node.
+  late final Updater updater = Updater(session, () => mtu ?? defaultAttMtu);
+
   /// Everything a screen redraws on.
-  Listenable get changes => Listenable.merge([this, session, contacts, me]);
+  Listenable get changes =>
+      Listenable.merge([this, session, contacts, me, updater]);
 
   Future<void> load() async {
     await Future.wait([me.load(), session.load(), contacts.load()]);
@@ -555,6 +560,7 @@ class AppModel extends ChangeNotifier {
     session.removeListener(_link);
     session.removeListener(_search);
     fakeNode?.dispose();
+    updater.dispose();
     session.dispose();
     contacts.dispose();
     me.dispose();
