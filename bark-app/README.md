@@ -329,6 +329,29 @@ image did not start and the node swapped the old one back. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").
 
+## Newer releases
+
+At start, and once a day while it runs, the app asks GitHub's releases
+API, without an account, for the repository's latest release `v<N>`
+(`lib/releases.dart`; `README.md`, "Releases"). When it carries an APK
+newer than the app, a bar at the top of the conversations says "A newer
+app, version N, is available"; a tap opens the APK's download in the
+browser, and Android asks before it installs it over the app. When the
+connected node runs a version below N, a bar says "Your node runs
+version M, version N is available"; a tap opens **Update firmware**
+with the release's image downloaded and chosen (Updating a node), and
+for a node from before link version 6 the bar says to update it by USB
+once. A bar's × hides it until a newer version, the node's for that
+node alone. The app learns its own version from the release workflow,
+which builds it with `--dart-define=BARK_VERSION=<N>`; a build without
+it is a development build, which Debug says, and which never asks for
+a newer app. A node of version 0, a bench build flashed by USB, gets no
+bar either: any signed image replaces it, and the bench updates it by
+USB. Without a network nothing shows, and the app asks again at its
+next start. The last answer, its time and the versions hidden are kept
+in `release.json`, so the bars show at once at the next start while the
+app asks again.
+
 ## The payload
 
 What the app sends is sealed with libsodium (the `sodium` package,
@@ -462,7 +485,8 @@ with the phone, against a notifier that writes down what it is asked;
 and drive the screens: a text to the fake friend, its echo, an
 acknowledgement, the backup words, a contact from a pasted or a scanned
 card, my card, the debug screen, the fetch button, the choice of where
-a text goes, a long text's parts, and the map, its markers, lines,
+a text goes, a long text's parts, the bars for a newer release against
+a fake fetch, and the map, its markers, lines,
 legend and a neighbour's details, over tiles that cannot be had. The Android side, the service and
 the boot receiver, cannot run on the host; it is kept small and tried on
 a phone (Trying it, With a node).
@@ -639,3 +663,19 @@ a phone (Trying it, With a node).
     again is refused, as not newer; an image packed and not signed is
     refused at once, before any piece, as not signed by a key the node
     holds, and the node logs `update: begin refused=Signature(Unsigned)`.
+14. Newer releases. While the repository has no release, or the phone is
+    offline, the conversations show no bar; Debug says "Latest release:
+    not known" and its log `Checking for a new release failed:` with
+    the reason, `HTTP 404` when there is no release. Release `v1`
+    shows nothing new either: no version but 0 is below 1, and version
+    0 never asks. From release N of 2 or more, with the app built and
+    installed from a checkout as
+    `flutter build apk --debug --dart-define=BARK_VERSION=1` and a node
+    flashed by USB from a build with `BARK_IMAGE_VERSION=1`: Debug says
+    app version 1 and "Latest release: N, checked" a moment ago; the
+    bar "A newer app, version N, is available" opens the APK in the
+    browser, and its × hides it, also after the app is closed and
+    opened again. Connected to the node, the bar "Your node runs
+    version 1, version N is available" opens **Update firmware** with
+    "Version N" chosen, and its × hides it for that node; another node
+    of version 1 still shows it. A node of version 0 shows none.
