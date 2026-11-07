@@ -1063,7 +1063,12 @@ async fn serve(
             // node leave, not lose it.
             conn.raw().disconnect();
             let closed = async {
-                while !matches!(conn.next().await, GattConnectionEvent::Disconnected { .. }) {}
+                loop {
+                    if let GattConnectionEvent::Disconnected { reason } = conn.next().await {
+                        log::info!("ble: disconnected 0x{:02x}", u8::from(reason));
+                        break;
+                    }
+                }
             };
             let _ = embassy_time::with_timeout(SUPERVISION_MAX, closed).await;
             crate::update::reboot().await;
