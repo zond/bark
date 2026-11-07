@@ -8,7 +8,9 @@
 //! | 1 | the phone's identity address type: 0 public, 1 random static (Vol 3 Part H §3.6.5) |
 //! | 2–7 | the identity address, least significant byte first, as the HCI carries it |
 //! | 8 | 1 if an identity resolving key follows, else 0 |
-//! | 9–15 | 0 |
+//! | 9 | the link version whose attribute table the phone last saw, 0 for none known |
+//! | 10 | 1 if the phone has asked for Service Changed indications, else 0 |
+//! | 11–15 | 0 |
 //! | 16–31 | the long-term key the pairing made, least significant byte first (Vol 3 Part H §2.3.5.6.5) |
 //! | 32–47 | the phone's identity resolving key, or 0 (Vol 3 Part H §3.6.4) |
 //! | 48–59 | 0 |
@@ -29,6 +31,14 @@ pub struct Bond {
     pub irk: Option<[u8; 16]>,
     /// The long-term key the link is encrypted with.
     pub ltk: [u8; 16],
+    /// The link version ([`crate::VERSION`]) whose attribute table the
+    /// phone last saw; 0 in a record from before this field, whose phone
+    /// saw a table with no way to tell it of a change.
+    pub seen: u8,
+    /// The phone's subscription to Service Changed, which a bonded
+    /// client's is kept across connections (Bluetooth Core Vol 3 Part G
+    /// §3.3.3.3).
+    pub service_changed: bool,
 }
 
 impl Bond {
@@ -49,6 +59,8 @@ impl Bond {
             r[8] = 1;
             r[32..48].copy_from_slice(&irk);
         }
+        r[9] = self.seen;
+        r[10] = u8::from(self.service_changed);
         r[16..32].copy_from_slice(&self.ltk);
         let check = [!r[0], !r[1], !r[2], !r[3]];
         r[60..].copy_from_slice(&check);
@@ -59,7 +71,7 @@ impl Bond {
     /// cut short.
     pub fn from_record(r: &[u8; Self::LEN]) -> Option<Bond> {
         let whole = r[0] == Self::TAG && (0..4).all(|i| r[60 + i] == !r[i]);
-        if !whole || r[8] > 1 {
+        if !whole || r[8] > 1 || r[10] > 1 {
             return None;
         }
         let mut addr = [0u8; 6];
@@ -76,6 +88,8 @@ impl Bond {
             addr,
             irk,
             ltk,
+            seen: r[9],
+            service_changed: r[10] == 1,
         })
     }
 }

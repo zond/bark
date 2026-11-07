@@ -445,7 +445,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 4,
+3. Menu, **Debug**: your identity and card address; link version 5,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -508,7 +508,7 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen `PHONE PAIRED`.
-3. **Debug** shows link version 4, the node's clock (from its GPS if it
+3. **Debug** shows link version 5, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
@@ -562,3 +562,11 @@ a phone (Trying it, With a node).
     `Found bark-…, connecting` and `Connected, MTU 247` among it.
     Opening the app shows the link as it stands. After **Disconnect**, a
     restart of the phone starts nothing.
+12. An update of the node's firmware to a new link version, with the
+    phone paired and the app updated first: connect again without
+    pairing. Debug shows the new version, and the inbox, the status and
+    the map read as before. Once Android has subscribed to Service
+    Changed, which the node's log shows as an `att write` to its
+    descriptor, the log shows `ble: service changed: the phone saw
+    version` with the old and the new version, then `ble: service
+    changed confirmed`; the next connection logs neither.

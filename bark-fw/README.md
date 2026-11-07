@@ -703,6 +703,18 @@ The copy starts zeroed, apart from `LINK`, so that it lies in `.bss`
 and not in flash. It costs 2.5 KB of flash and 2.9 KB of static RAM,
 taken from the stack (2026-11-07, `llvm-size`).
 
+The node builds the GAP and GATT services itself (`src/ble.rs`,
+`server`), as the host's builder leaves the GATT service empty: Service
+Changed and the database hash, which the host computes once the table is
+whole (spec "Phone link", Changes to the table). The bond's record keeps
+the link version the phone last saw and its subscription to Service
+Changed. At boot the log says `ble: bond kept, table seen at version 4,
+service changed false` or the like; on the bond's encrypted link, while
+the phone is subscribed and saw another version, `ble: service changed:
+the phone saw version 4, this is 5` and, once the phone confirms,
+`ble: service changed confirmed`. It costs 4 KB of flash and 0.4 KB of
+static RAM (2026-11-07, `llvm-size`).
+
 ## Mailbox
 
 A node set as a person's home (spec "Mailbox"; Home on the phone link)

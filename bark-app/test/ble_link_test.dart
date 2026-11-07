@@ -81,6 +81,12 @@ class RefusingNode extends UniversalBlePlatform {
       throw UnimplementedError('${invocation.memberName}');
 }
 
+/// The node's table as discovered: the Generic Attribute service with
+/// Service Changed, and no other.
+final _withServiceChanged = [
+  BleService('1801', [BleCharacteristic('2a05', [], [])]),
+];
+
 /// A node Android connects to only once a scan has seen it, as with a
 /// random static address and no bond; `advertises` false for one out of
 /// range.
@@ -88,10 +94,22 @@ class HiddenNode extends UniversalBlePlatform {
   final String id;
   final bool advertises;
 
+  /// Whether Android's kept table of the node is one from before
+  /// Service Changed, which only a discovery without the cache replaces.
+  final bool keptOld;
+
+  /// Each discovery's options, in order.
+  final List<DiscoverServicesPlatformConfig?> discoveries = [];
+
   /// How long the person takes to type the code.
   final Duration typing;
   bool scanned = false;
-  HiddenNode(this.id, {this.advertises = true, this.typing = Duration.zero});
+  HiddenNode(
+    this.id, {
+    this.advertises = true,
+    this.typing = Duration.zero,
+    this.keptOld = false,
+  });
 
   @override
   Future<void> startScan({
@@ -132,7 +150,11 @@ class HiddenNode extends UniversalBlePlatform {
     String deviceId,
     bool withDescriptors, {
     DiscoverServicesPlatformConfig? platformConfig,
-  }) async => [];
+  }) async {
+    discoveries.add(platformConfig);
+    final fresh = platformConfig?.android?.clearGattCache ?? false;
+    return keptOld && !fresh ? [] : _withServiceChanged;
+  }
 
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async => expectedMtu;
@@ -355,6 +377,31 @@ void main() {
       name: 'bark-7572482fc367',
     );
     expect(mtu, attMtu);
+    await link.close();
+  });
+
+  test(
+    'a table kept from before Service Changed is discovered again',
+    () async {
+      final node = HiddenNode(device, keptOld: true)..scanned = true;
+      UniversalBle.setInstance(node);
+      final (link, _) = await BleLink.connect(
+        device,
+        name: 'bark-7572482fc367',
+      );
+      expect(node.discoveries.map((c) => c?.android?.clearGattCache), [
+        null,
+        true,
+      ]);
+      await link.close();
+    },
+  );
+
+  test('a table with Service Changed is kept', () async {
+    final node = HiddenNode(device)..scanned = true;
+    UniversalBle.setInstance(node);
+    final (link, _) = await BleLink.connect(device, name: 'bark-7572482fc367');
+    expect(node.discoveries, hasLength(1));
     await link.close();
   });
 

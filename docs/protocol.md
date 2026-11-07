@@ -3068,7 +3068,7 @@ write is a write request, which the node answers; a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 4 in this specification; the node's ID, the
+**Node.** The link version, 5 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3223,6 +3223,36 @@ takes a new service UUID, so that an app that does not know it finds no
 node and asks the person to update it. An app that finds a version
 above its own tells the person the node's firmware is newer (roadmap
 D117).
+
+**Changes to the table.** Besides the service, the node's attribute
+table holds the GAP service, with the node's name and appearance, and
+the GATT service, with Service Changed, indicate only (Vol 3 Part G
+§7.1), and the database hash, readable on any link (Bluetooth Core
+Specification 5.1, Vol 3 Part G §7.3). Every change to the table comes
+with a new link version. The node keeps with the bond the link version
+whose table the phone last saw, and whether the phone has subscribed to
+Service Changed, as a bonded client's subscription is kept across
+connections (Vol 3 Part G §3.3.3.3). On a link encrypted with the bond,
+while the phone is subscribed and the version it saw is not the node's,
+the node indicates Service Changed over every handle, 0x0001 to 0xFFFF,
+and once the phone confirms, keeps the node's version as seen. A new
+pairing keeps the node's version, as the phone discovers the table as it
+pairs; a link without the bond is told nothing. The app discovers the
+table again, without Android's copy, when the table it finds has no
+Service Changed. From link version 5 (roadmap D142).
+
+*Why.* A phone keeps the table of a bonded node across connections and
+discovers it again only when the node says it changed (Vol 3 Part G
+§2.5.2); with an old table, its handles name other attributes, or none.
+Before version 5 the table had no Service Changed, so a phone had to
+forget the bond and pair again after an update that changed it, and the
+app's own check is what carries a phone across the update to version 5.
+The version says which table the phone saw, as the app already reads it
+and every change to the table takes one: a change to the table without
+a new version is not allowed. Every handle, because the phone then
+discovers the whole table, a few round trips once per version. The hash
+lets a phone that reads it as it connects find a change before the
+indication comes.
 
 **The payload.** The app owns it; this is its layout (roadmap D123 to
 D127). The reasons, and the alternatives a reader would ask about, are
@@ -3769,7 +3799,9 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 - Bluetooth Core Specification 5.0 (Bluetooth SIG, 2016): the ATT MTU,
   writes, reads and errors (Vol 3 Part F), the L2CAP header (Vol 3
   Part A), UUIDs (Vol 3 Part B), advertising and the link-layer packet
-  (Vol 6 Part B).
+  (Vol 6 Part B), attribute caching and Service Changed (Vol 3 Part G).
+  Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
+  hash (Vol 3 Part G §7.3).
 - libsodium documentation: "Public-key authenticated encryption"
   (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
   (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic

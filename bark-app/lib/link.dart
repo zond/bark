@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 4;
+const int linkVersion = 5;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
