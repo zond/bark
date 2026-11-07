@@ -31,7 +31,18 @@
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id hops
 //!            payload                                              = 28 + payload
+//! ANNOUNCE   first format from home version blocks last key image = 48
+//! REQUEST    first format to channel version tag block lacks      = 19
+//! PIECE      first format tag block index bytes                   = 255
 //! ```
+//!
+//! DATA's `aux` 13 to 63, above every home channel, names a frame from
+//! node to node, one value a kind: plain, one hop, not routed and not
+//! acknowledged unless its kind says so. 13 to 15 are the update's
+//! announcement, request and piece (spec "Updates over the mesh"); 16 to
+//! 63 are reserved, and a node rejects them. Such a frame keeps the first
+//! two bytes and lays out the rest for its kind: none of them has a hop,
+//! a destination or a count, and the piece needs every byte.
 //!
 //! An ACK answers every offer, taken, refused or seen: its first byte says
 //! which. A refusal is for this hop only (spec "Receiving DATA"); the
@@ -73,6 +84,7 @@ use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::update::{Image, ImageTag, TAG_LEN};
 
 /// The wire format this code speaks, and so sends and reads (spec
 /// "Packet formats", roadmap D77).
@@ -149,6 +161,47 @@ pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
 /// 255 − 28 = 227 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
+
+// The frames from node to node (spec "Packet formats").
+/// DATA `aux` of the update's announcement; the request and the piece
+/// follow it (spec "Updates over the mesh").
+pub const ANNOUNCE_AUX: u8 = 13;
+/// DATA `aux` of the update's request.
+pub const REQUEST_AUX: u8 = 14;
+/// DATA `aux` of the update's piece.
+pub const PIECE_AUX: u8 = 15;
+const _: () = assert!(Channel::new(ANNOUNCE_AUX).is_none());
+const BODY: usize = VERSION + FORMAT_LEN;
+const VERSION_LEN: usize = 4;
+const IMAGE_LEN: usize = 32;
+const ANNOUNCE_FROM: usize = BODY;
+const ANNOUNCE_HOME: usize = ANNOUNCE_FROM + ID_LEN;
+const ANNOUNCE_VERSION: usize = ANNOUNCE_HOME + 1;
+const ANNOUNCE_BLOCKS: usize = ANNOUNCE_VERSION + VERSION_LEN;
+const ANNOUNCE_LAST: usize = ANNOUNCE_BLOCKS + 1;
+const ANNOUNCE_KEY: usize = ANNOUNCE_LAST + 1;
+const ANNOUNCE_IMAGE: usize = ANNOUNCE_KEY + 1;
+/// ANNOUNCE length.
+pub const ANNOUNCE_LEN: usize = ANNOUNCE_IMAGE + IMAGE_LEN;
+const REQUEST_TO: usize = BODY;
+const REQUEST_CHANNEL: usize = REQUEST_TO + ID_LEN;
+const REQUEST_VERSION: usize = REQUEST_CHANNEL + 1;
+const REQUEST_TAG: usize = REQUEST_VERSION + VERSION_LEN;
+const REQUEST_BLOCK: usize = REQUEST_TAG + TAG_LEN;
+const REQUEST_LACKS: usize = REQUEST_BLOCK + 1;
+/// REQUEST length.
+pub const REQUEST_LEN: usize = REQUEST_LACKS + 1;
+const PIECE_TAG: usize = BODY;
+const PIECE_BLOCK: usize = PIECE_TAG + TAG_LEN;
+const PIECE_INDEX: usize = PIECE_BLOCK + 1;
+/// Where a piece's bytes start in its frame: the driver writes them there
+/// (`Action::Serve`).
+pub const PIECE_HEADER_LEN: usize = PIECE_INDEX + 1;
+/// A piece's bytes: what a full frame holds after the piece's header.
+pub const PIECE_BYTES: usize = MAX_FRAME - PIECE_HEADER_LEN;
+
+const _: () = assert!(ANNOUNCE_LEN == 48 && REQUEST_LEN == 19);
+const _: () = assert!(PIECE_HEADER_LEN == 8 && PIECE_BYTES == 247);
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
 const _: () = assert!(DATA_HEADER_LEN == 28);
@@ -261,6 +314,48 @@ impl Data<'_> {
     }
 }
 
+/// An update frame (spec "Updates over the mesh").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Update<'a> {
+    /// The newest image `from` holds whole; it listens on `home`.
+    Announce {
+        /// The holder.
+        from: NodeId,
+        /// Its home channel, where a request to it goes.
+        home: Channel,
+        /// The image.
+        image: Image,
+    },
+    /// Pieces of the image `tag`, `version`, from block `block` on, asked
+    /// of the holder `to`, to be sent on `channel`, where the asker
+    /// listens.
+    Request {
+        /// The holder asked.
+        to: NodeId,
+        /// The asker's home channel, where the pieces go.
+        channel: Channel,
+        /// The image's version, as its announcement gave it.
+        version: u32,
+        /// The image.
+        tag: ImageTag,
+        /// The first block the asker lacks; it lacks every block after.
+        block: u8,
+        /// The pieces of `block` it still lacks.
+        lacks: u8,
+    },
+    /// One coded piece of block `block` of the image `tag`.
+    Piece {
+        /// The image.
+        tag: ImageTag,
+        /// The block.
+        block: u8,
+        /// Which of the block's pieces, 0 to 254.
+        index: u8,
+        /// Its [`PIECE_BYTES`] bytes.
+        bytes: &'a [u8],
+    },
+}
+
 /// Any packet. Payloads borrow from the received frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Packet<'a> {
@@ -270,6 +365,8 @@ pub enum Packet<'a> {
     Ack(Ack),
     /// DATA.
     Data(Data<'a>),
+    /// An update frame.
+    Update(Update<'a>),
 }
 
 /// Why a frame did not decode.
@@ -288,12 +385,16 @@ pub enum DecodeError {
     Kind(u8),
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
+    /// A frame from node to node of a kind reserved for later, DATA `aux`
+    /// 16 to 63.
+    Reserved(u8),
 }
 
 /// Why a packet did not encode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodeError {
-    /// The payload is longer than [`MAX_PAYLOAD`].
+    /// The payload is longer than [`MAX_PAYLOAD`], or a piece's bytes are
+    /// not [`PIECE_BYTES`].
     PayloadTooLong,
 }
 
@@ -407,18 +508,70 @@ impl Packet<'_> {
                 put(buf, DATA_HEADER_LEN, d.payload);
                 Ok(DATA_HEADER_LEN + d.payload.len())
             }
+            Packet::Update(u) => {
+                buf[VERSION] = FORMAT;
+                match u {
+                    Update::Announce { from, home, image } => {
+                        buf[FIRST] = ANNOUNCE_AUX;
+                        put(buf, ANNOUNCE_FROM, &from.0);
+                        buf[ANNOUNCE_HOME] = home.index();
+                        put(buf, ANNOUNCE_VERSION, &image.version.to_be_bytes());
+                        buf[ANNOUNCE_BLOCKS] = image.blocks;
+                        buf[ANNOUNCE_LAST] = image.last;
+                        buf[ANNOUNCE_KEY] = image.key;
+                        put(buf, ANNOUNCE_IMAGE, &image.id);
+                        Ok(ANNOUNCE_LEN)
+                    }
+                    Update::Request {
+                        to,
+                        channel,
+                        version,
+                        tag,
+                        block,
+                        lacks,
+                    } => {
+                        buf[FIRST] = REQUEST_AUX;
+                        put(buf, REQUEST_TO, &to.0);
+                        buf[REQUEST_CHANNEL] = channel.index();
+                        put(buf, REQUEST_VERSION, &version.to_be_bytes());
+                        put(buf, REQUEST_TAG, &tag.0);
+                        buf[REQUEST_BLOCK] = *block;
+                        buf[REQUEST_LACKS] = *lacks;
+                        Ok(REQUEST_LEN)
+                    }
+                    Update::Piece {
+                        tag,
+                        block,
+                        index,
+                        bytes,
+                    } => {
+                        if bytes.len() != PIECE_BYTES {
+                            return Err(EncodeError::PayloadTooLong);
+                        }
+                        buf[FIRST] = PIECE_AUX;
+                        put(buf, PIECE_TAG, &tag.0);
+                        buf[PIECE_BLOCK] = *block;
+                        buf[PIECE_INDEX] = *index;
+                        put(buf, PIECE_HEADER_LEN, bytes);
+                        Ok(MAX_FRAME)
+                    }
+                }
+            }
         }
     }
 }
 
 impl Packet<'_> {
-    /// The node that sent the frame: every packet names it, a heartbeat
-    /// its sender, an ACK the answering node and a DATA `src_hop`.
-    pub fn sender(&self) -> NodeId {
+    /// The node that sent the frame, if it names it: a heartbeat its
+    /// sender, an ACK the answering node, a DATA `src_hop` and an
+    /// announcement its holder; a request and a piece do not.
+    pub fn sender(&self) -> Option<NodeId> {
         match self {
-            Packet::Heartbeat(h) => h.id,
-            Packet::Ack(a) => a.from,
-            Packet::Data(d) => d.src_hop,
+            Packet::Heartbeat(h) => Some(h.id),
+            Packet::Ack(a) => Some(a.from),
+            Packet::Data(d) => Some(d.src_hop),
+            Packet::Update(Update::Announce { from, .. }) => Some(*from),
+            Packet::Update(_) => None,
         }
     }
 }
@@ -466,6 +619,9 @@ impl<'a> Packet<'a> {
             }));
         }
         let aux = first & AUX_MASK;
+        if Channel::new(aux).is_none() {
+            return Self::decode_update(aux, b).map(Packet::Update);
+        }
         let payload = payload(b, DATA_HEADER_LEN)?;
         format(b)?;
         Ok(Packet::Data(Data {
@@ -477,6 +633,62 @@ impl<'a> Packet<'a> {
             hops: b[DATA_HOPS],
             payload,
         }))
+    }
+}
+
+impl<'a> Packet<'a> {
+    fn decode_update(aux: u8, b: &'a [u8]) -> Result<Update<'a>, DecodeError> {
+        if !(ANNOUNCE_AUX..=PIECE_AUX).contains(&aux) {
+            return Err(DecodeError::Reserved(aux));
+        }
+        if b.len() < BODY {
+            return Err(DecodeError::Short);
+        }
+        format(b)?;
+        let tag = |at: usize| {
+            let mut t = [0; TAG_LEN];
+            t.copy_from_slice(&b[at..at + TAG_LEN]);
+            ImageTag(t)
+        };
+        let version = |at: usize| u32::from_be_bytes(get4(b, at));
+        match aux {
+            ANNOUNCE_AUX => {
+                exact(b, ANNOUNCE_LEN)?;
+                let mut id = [0; IMAGE_LEN];
+                id.copy_from_slice(&b[ANNOUNCE_IMAGE..ANNOUNCE_LEN]);
+                Ok(Update::Announce {
+                    from: get_id(b, ANNOUNCE_FROM),
+                    home: channel(b[ANNOUNCE_HOME])?,
+                    image: Image {
+                        id,
+                        version: version(ANNOUNCE_VERSION),
+                        blocks: b[ANNOUNCE_BLOCKS],
+                        last: b[ANNOUNCE_LAST],
+                        key: b[ANNOUNCE_KEY],
+                    },
+                })
+            }
+            REQUEST_AUX => {
+                exact(b, REQUEST_LEN)?;
+                Ok(Update::Request {
+                    to: get_id(b, REQUEST_TO),
+                    channel: channel(b[REQUEST_CHANNEL])?,
+                    version: version(REQUEST_VERSION),
+                    tag: tag(REQUEST_TAG),
+                    block: b[REQUEST_BLOCK],
+                    lacks: b[REQUEST_LACKS],
+                })
+            }
+            _ => {
+                exact(b, MAX_FRAME)?;
+                Ok(Update::Piece {
+                    tag: tag(PIECE_TAG),
+                    block: b[PIECE_BLOCK],
+                    index: b[PIECE_INDEX],
+                    bytes: &b[PIECE_HEADER_LEN..],
+                })
+            }
+        }
     }
 }
 
@@ -518,12 +730,40 @@ mod tests {
             Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
             Packet::Data(d) => 28 + d.payload.len(),
+            Packet::Update(Update::Announce { .. }) => 48,
+            Packet::Update(Update::Request { .. }) => 19,
+            Packet::Update(Update::Piece { .. }) => 255,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
     }
 
     proptest! {
+        #[test]
+        fn update_frames_round_trip(
+            from in id(),
+            home in chan(),
+            version: u32,
+            blocks: u8,
+            last: u8,
+            key: u8,
+            image_id: [u8; 32],
+            tag: [u8; TAG_LEN],
+            block: u8,
+            index: u8,
+            bytes in proptest::collection::vec(any::<u8>(), PIECE_BYTES),
+        ) {
+            let image = Image { id: image_id, version, blocks, last, key };
+            let announce = Update::Announce { from, home, image };
+            round_trip(&Packet::Update(announce));
+            prop_assert_eq!(Packet::Update(announce).sender(), Some(from));
+            let tag = ImageTag(tag);
+            let request = Update::Request { to: from, channel: home, version, tag, block, lacks: index };
+            round_trip(&Packet::Update(request));
+            prop_assert_eq!(Packet::Update(request).sender(), None);
+            round_trip(&Packet::Update(Update::Piece { tag, block, index, bytes: &bytes }));
+        }
+
         #[test]
         fn heartbeat_round_trips(
             sleepy: bool,
@@ -538,7 +778,7 @@ mod tests {
             // Every heartbeat is read, whatever format its sender speaks.
             let hb = Heartbeat { sleepy, anchorless, carried, home, format, map_point, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
-            prop_assert_eq!(Packet::Heartbeat(hb).sender(), id);
+            prop_assert_eq!(Packet::Heartbeat(hb).sender(), Some(id));
             prop_assert_eq!(hb.position(position), position);
         }
 
@@ -554,7 +794,7 @@ mod tests {
             let wait = if refused { step } else { 0 };
             let ack = Ack { msg_id, from, to, refused, wait, seen };
             round_trip(&Packet::Ack(ack));
-            prop_assert_eq!(Packet::Ack(ack).sender(), from);
+            prop_assert_eq!(Packet::Ack(ack).sender(), Some(from));
             let flipped = Ack { refused: !refused, seen: false, ..ack };
             prop_assert!(ack.answers(&flipped));
             // A seen ACK with a wait is of no kind.
@@ -580,7 +820,7 @@ mod tests {
         ) {
             let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, payload: &payload };
             round_trip(&Packet::Data(d));
-            prop_assert_eq!(Packet::Data(d).sender(), src_hop);
+            prop_assert_eq!(Packet::Data(d).sender(), Some(src_hop));
             // The ID survives the trip: it depends only on fields every hop keeps.
             let mut buf = [0; MAX_FRAME];
             let len = Packet::Data(d).encode(&mut buf).unwrap();
@@ -676,13 +916,16 @@ mod tests {
 
         let mut data = [0u8; DATA_HEADER_LEN];
         data[VERSION] = FORMAT;
-        for (aux, why) in [
-            (13, "outside the plan"),
-            (0x10, "a high bit"),
-            (0x23, "a high bit"),
-        ] {
+        for aux in [16, 17, 0x23, AUX_MASK] {
             data[FIRST] = aux;
-            assert_eq!(Packet::decode(&data), Err(ChannelOutOfRange(aux)), "{why}");
+            assert_eq!(Packet::decode(&data), Err(Reserved(aux)), "reserved");
+        }
+        for aux in [ANNOUNCE_AUX, REQUEST_AUX, PIECE_AUX] {
+            data[FIRST] = aux;
+            assert!(
+                Packet::decode(&data).is_err(),
+                "an update frame of the wrong length"
+            );
         }
         data[FIRST] = 0;
         assert!(

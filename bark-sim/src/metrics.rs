@@ -712,6 +712,8 @@ pub struct TypeAirtime {
     /// Of `data_us`, DATA to the node it is addressed to: a delivery by
     /// its holder (spec "Delivery"), or the last hop to a relay.
     pub to_dst_us: u64,
+    /// The update's frames (spec "Updates over the mesh").
+    pub update_us: u64,
     /// Anything else: a scripted test signal.
     pub other_us: u64,
 }
@@ -737,6 +739,7 @@ impl TypeAirtime {
                 }
                 &mut self.data_us
             }
+            Some(Packet::Update(_)) => &mut self.update_us,
             None => &mut self.other_us,
         };
         *c += us;

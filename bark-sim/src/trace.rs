@@ -88,6 +88,7 @@ impl Tracer {
                     if a.refused { ", refused" } else { "" }
                 )
             }
+            Ok(Packet::Update(u)) => format!("UPDATE {u:?}"),
             Ok(Packet::Data(d)) => {
                 let src = n.node(d.src_hop);
                 format!(

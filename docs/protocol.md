@@ -30,6 +30,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | From GPS unless a fix fails the checks or the app sets a map point, and a sleepy node's anchor's while it has one; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
 | Time | No network time, and GPS time is not used |
+| Updates | A new firmware image passes from relay to relay as coded pieces, each relay's at most 1 % of a channel's time, asked for block by block; the node's firmware decides which images it takes ([updates over the mesh](#updates-over-the-mesh)) |
 
 ---
 
@@ -3520,6 +3521,155 @@ anchorless mode costs more ([sleepy nodes alone](#sleepy-nodes-alone)):
 its long beats, a relay's answers, and the long preamble on every DATA
 to it.
 
+## Updates over the mesh
+
+A node given a new firmware image, by a phone or over USB, passes it to
+the relays around it, and they to theirs, a piece at a time, at a pace
+that leaves the channels to the texts. The protocol carries the pieces;
+the code that makes them, the flash they wait in and the signature
+check are the node's firmware below it (`core-interface.md`,
+Application). A node's firmware chooses whose images it takes, so that
+a node of another implementation is never overwritten against its will.
+
+**The image.** An image is named by the SHA-256 of its signed header,
+32 bytes; a request and a piece carry the first 4. It travels in
+**blocks**: block 0 is the block table, the image's hash and the first
+8 bytes of each other block's hash, one piece; then the image itself, in
+blocks of 64 pieces of 247 bytes, the last block shorter. Each block is
+sent as up to 255 coded pieces, and any 64 distinct ones of a block, or
+as many as it has, give it back (a Reed-Solomon code over GF(2⁸), the
+firmware's). Today's node image, 387 540 bytes (built from main on
+2026-11-07 as `bark-fw/README.md`, "Build and package", says), is 1569
+pieces: the table and 25 blocks, 24 of 64 pieces and one of 33. The
+table is one piece up to 26 blocks of image, 411 KB, and a block of
+two pieces up to 57.
+
+*Why 4 bytes of the name.* Two images on the air at once in one place
+share their first 4 bytes with odds of 2⁻³²; nothing on the air is
+authenticated anyway ([what the protocol omits](#what-the-protocol-omits)),
+and a piece of the wrong image fails its block's hash and is gathered
+again. The announcement carries all 32, which the firmware checks the
+signed header against.
+
+**Frames.** Three, each one hop and unanswered
+([packet formats](#packet-formats)):
+
+- the **announcement**: the newest image a node holds whole, its
+  version, its blocks and the pieces of its last, which signer's key
+  signed it, the holder's ID and its home channel;
+- the **request**: to one holder, the image it names by its name and
+  version, the first block the asker lacks and how many of its pieces
+  it still lacks, and the asker's home channel, where the pieces go;
+- the **piece**: one coded piece of one block.
+
+A node gathers the blocks in order, so the first block it lacks names
+all it lacks.
+
+**Who sends what.**
+
+1. A node that holds an image whole announces it on its home channel
+   at a random moment within a pace of being given it, and then once an
+   hour, unless it heard the same announcement there within the hour;
+   and once an hour on one other channel, the next each hour.
+2. A relay that hears an announcement of a version above the one it
+   holds asks its firmware whether its policy takes the image. If it
+   does, the relay gathers it: it sends a request to the holder it
+   heard announce last, a random time within a pace after the
+   announcement.
+3. A holder that hears a request for its image sends, on the channel
+   named, pieces of the block named: 1.55 times as many as the request
+   lacks, 99 for a whole block of 64, from a random piece on, or none if
+   more are still to go of that block there. It keeps four blocks asked for on a channel;
+   it sends one block's pieces until they are spent, then the lowest
+   block asked for. It sends on at most two channels. A holder that
+   hears a piece of the block it sends on its home channel from another
+   holder holds back from that block there for two paces.
+4. A node that gathers hands its firmware every piece it has not
+   handed before of the first block it lacks and of the four after it
+   that have not decoded, and no other: 5 blocks, 320 pieces at most of
+   the 352 the firmware's flash has room for (`bark-image/src/layout.rs`).
+   When the firmware says the first block it lacks decoded, it asks for
+   the next it lacks, again a random time within a pace later. When the firmware says the block failed its
+   hash, it gathers it again. A node that has taken no piece for 10
+   minutes asks again.
+5. A holder that hears a request for another image, of a lower
+   version than its own, announces its own on the requester's channel.
+
+*Why a block until its pieces are spent, then the lowest.* The nodes on
+one channel take the same broadcast pieces but not all of them: some
+lose more, and some begin later, a node that came onto the channel or
+turned relay. A block sent to its end serves those that asked for it;
+the lowest asked for next lets those behind catch up. A holder that
+followed each request at once would turn from block to block and finish
+none. *Why five blocks.* A node behind takes the pieces sent for the
+nodes ahead of it, up to five blocks on, and has them when it gets
+there. *Why a random first piece.* A block asked for again is wanted
+by nodes that have some of its pieces, most likely the first ones sent. *Why 1.55
+times.* A holder cannot tell when every node on the channel has a
+block, so a request buys what all the nodes that lack as much need: at
+a fifth of the frames lost, 74 nodes all have 64 distinct pieces after
+99 frames with 99 % odds, by the binomial distribution
+(`mesh-update-2026-10-25.md`, "Relays"), the most that note's table
+asks for. A node that still lacks a few asks again after 10 minutes and
+is sent a few. *Why a random wait before a request.*
+Every node that heard the same announcement or the same last piece
+would ask in the same instant, and the requests would collide.
+*Why 10 minutes.* A holder that serves a node sends it a piece every
+pace; 43 paces without one mean the holder has stopped or moved on.
+
+**Pace and priority.** A node sends update frames at a fixed pace,
+busy or not: at most one on a channel in 13.86 s, a full frame's
+138.6 ms a hundred times over, so that one node's update frames take at
+most 1 % of a channel's time; and on at most two channels in any one
+pace. They wait behind the frames of the send queue
+([send queue](#send-queue)) and go after the sweep's readings, but at
+most 9 frames of the send queue go before an update frame that is due;
+then it goes before the next. Each is paid from the bucket as a forward
+is, leaving the reply reserve ([duty cycle cap](#duty-cycle-cap)), and
+listens before it talks as a heartbeat does ([heartbeat](#heartbeat)):
+up to three checks, and if every one is busy the frame waits its pace.
+
+*Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
+to 1.4 % of the time at the design rate of
+[capacity and sizing](#capacity-and-sizing), 2.0 to 2.8 % at twice it,
+and the network collapses at three times
+(`collapse-research-2026-10-16.md`,
+`bandwidth-research-2026-10-16.md`). One node's update frames at
+1 % add less than the design rate itself.
+
+*Why nine.* A node at its cap sends 9.83 full frames in one pace, its
+bucket's fill over 13.86 s ([duty cycle cap](#duty-cycle-cap)). With
+nine frames of the send queue let past, the update frame is the tenth:
+under full load the update takes a tenth of the node's airtime, a full
+frame about every 14 s, the same as the pace when the node is idle. A
+busy node's updates go as fast as an idle one's, and its texts lose a
+tenth of their airtime while it serves.
+
+*Why two channels.* A node that sends on another channel is deaf on its
+own for the frame, as for a heartbeat, and a hand-over to it fails.
+Two channels at 1 % each cost it about 2 % of its hand-overs.
+
+**What it costs.** While nobody gathers, each holder sends two
+announcements an hour, 32.3 ms each. While a channel gathers, its
+holder adds a piece every 13.86 s, 1 % of that channel's time, and its
+requesters a request each a block, 18.2 ms. A block of 64 pieces
+takes 99 paces, 22.9 minutes, to cross a hop, and today's image 2430,
+9.4 hours.
+
+**What a node keeps.** The image it holds; the one it gathers, the
+holder it asks, the first block it lacks, and the pieces handed to its
+firmware of that block and the four after it, a bit each; per channel
+it sends on, four blocks asked for, each with its next piece and the
+pieces still to send; and the last two channels it sent update frames
+on and when: 512 bytes beside the tables (`core-interface.md`,
+Memory).
+
+**Sleepy nodes** take no part yet: a sleepy node neither gathers nor
+serves, and takes an image when it is next a relay, on USB, or from a
+phone. What would reach them is a piece after an anchor's slot
+heartbeat on its home channel, for which its sleepy nodes stay awake
+([relay choice](#relay-choice)); it is not built.
+
 ---
 
 ## What the protocol omits
@@ -3580,7 +3730,7 @@ third byte holds its flags. Each field has one place.
 | first byte | packet | the low bits |
 |---|---|---|
 | `1000 cccc` | heartbeat | `cccc` the home channel, 0 to 12 |
-| `00aa aaaa` | DATA | `aux`, the sender's home channel, 0 to 12 |
+| `00aa aaaa` | DATA | `aux`: 0 to 12, a message, and the sender's home channel; 13 to 63, a frame from node to node of kind `aux` |
 | `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the code of the wait the refuser asks for, 1 to 63 ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
 
 The second byte is the **format version**. This specification is
@@ -3638,9 +3788,28 @@ so a map point is a position a person vouched for, where a fixed relay's
 first GPS fix could have been spoofed. Which checks may lean on that is
 for later; until then the bit is carried, kept and shown.
 
+**Frames from node to node.** A DATA whose `aux` is 13 to 63 is not a
+message: it is one hop, never routed, unencrypted and unanswered unless
+its kind says otherwise, and `aux` names its kind:
+
+| `aux` | kind |
+|---|---|
+| 13 | an update's announcement ([updates over the mesh](#updates-over-the-mesh)) |
+| 14 | an update's request |
+| 15 | an update's piece |
+| 16 to 63 | reserved for later kinds |
+
+Such a frame keeps the first two bytes and lays out the rest for its
+kind: none of these has a hop, a destination or a count, and the piece
+needs every byte. It has lost the sender's home channel that `aux`
+carries in a message, so a kind that expects an answer carries it in a
+byte of its own; the neighbour table has it too, from the sender's
+heartbeats ([neighbour table](#neighbour-table)).
+
 A node rejects a heartbeat whose first byte has bit 4 or 5 set or whose
 channel is 13 to 15, an ACK with the seen flag and a wait, a DATA whose
-`aux` is above 12, and a DATA or ACK in a format it does not speak. A
+`aux` is a reserved kind, and a DATA, ACK or frame from node to node in
+a format it does not speak. A
 heartbeat byte with channel 15,
 which no node sends, starts the bench frames of the firmware's
 measurement console (`bark-fw/README.md`).
@@ -3660,7 +3829,22 @@ DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
           hops(1) payload                                                   = 28 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK
+ANNOUNCE  first(1) format(1) from(6) home(1) version(4) blocks(1) last(1)
+          key(1) image(32)                                                  = 48
+          aux = 13; from = the holder, home = its home channel;
+          last = the pieces of the last block, 1 to 64;
+          image = the SHA-256 of the image's signed header
+REQUEST   first(1) format(1) to(6) channel(1) version(4) image(4) block(1)
+          lacks(1)                                                          = 19
+          aux = 14; to = the holder asked, channel = the asker's home;
+          image = the first 4 bytes of the image's name; block = the first
+          block the asker lacks; lacks = the pieces of it it has yet to take
+PIECE     first(1) format(1) image(4) block(1) index(1) piece(247)          = 255
+          aux = 15; index = which coded piece of the block, 0 to 254
 ```
+
+Multi-byte numbers in the update's frames, the version, are
+big-endian.
 
 *Why the wait in the first byte.* Every answer is then one packet, of
 one length and one airtime, 17.0 ms, and the reply reserve counts one

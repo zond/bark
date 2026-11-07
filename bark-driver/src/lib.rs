@@ -524,7 +524,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             } => {
                 if let Some(id) = R::DEAF_TO {
                     let bytes = &self.rx[..len as usize];
-                    if Packet::decode(bytes).is_ok_and(|p| p.sender() == id) {
+                    if Packet::decode(bytes).is_ok_and(|p| p.sender() == Some(id)) {
                         return Ok(());
                     }
                 }
