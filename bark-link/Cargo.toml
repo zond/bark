@@ -8,6 +8,7 @@ description = "The values of the bark phone link's BLE GATT service: one codec f
 
 [dependencies]
 bark-proto = { path = "../bark-proto" }
+libm = "0.2"
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }

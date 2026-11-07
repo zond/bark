@@ -146,11 +146,18 @@ pub const FADE_DEPTH_DB: f32 = 4.0;
 
 /// The packet RSSI, in dB above the noise floor, at which a frame of full
 /// length still arrives 99 times in 100 through a fade of
-/// [`FADE_DEPTH_DB`]: about 4.1 dB. The radio's packet RSSI is the power
-/// in the channel, signal plus noise (datasheet §13.5.3, RssiPkt), so the
-/// signal's level above the floor, 1.9 dB, reads higher.
+/// [`FADE_DEPTH_DB`]: about 4.1 dB ([`full_frame_rssi_through_db`]).
 pub fn full_frame_rssi_above_noise_db() -> f32 {
-    let signal = DEMOD_SNR_DB + FULL_FRAME_ABOVE_SENSITIVITY_DB + FADE_DEPTH_DB;
+    full_frame_rssi_through_db(FADE_DEPTH_DB)
+}
+
+/// The packet RSSI, in dB above the noise floor, at which a frame of full
+/// length still arrives 99 times in 100 through a fade of `fade_db`. The
+/// radio's packet RSSI is the power in the channel, signal plus noise
+/// (datasheet §13.5.3, RssiPkt), so the signal's level above the floor
+/// reads higher: at a fade of 4 dB, 1.9 dB reads 4.1 dB.
+pub fn full_frame_rssi_through_db(fade_db: f32) -> f32 {
+    let signal = DEMOD_SNR_DB + FULL_FRAME_ABOVE_SENSITIVITY_DB + fade_db;
     10.0 * libm::log10f(1.0 + libm::powf(10.0, signal / 10.0))
 }
 

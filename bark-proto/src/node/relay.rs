@@ -651,6 +651,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours.iter()
     }
 
+    /// The neighbour table with its slots and its rules: which entries
+    /// are live, demoted, banned.
+    pub fn neighbour_table(&self) -> &Neighbours {
+        &self.neighbours
+    }
+
     /// The busy estimates and noise floor.
     pub fn busy(&self) -> &BusyEstimator {
         &self.radio.busy

@@ -3056,6 +3056,8 @@ service and its characteristics:
 | | | write | utc(4) offset(2) | 6 |
 | Home | `28bc0009-…` | read | set(1) oldest(3) newest(3) | 7 |
 | | | write | 0 to clear; 1 then key(32) to set | 1, 33 |
+| Neighbours | `28bc000a-…` | read | floor(1) next(1) entry_len(1) own(7), then per neighbour id(6) position(7) rssi(2) age(2) flags(1) | 10–244 |
+| | | write | slot(1) | 1 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -3066,7 +3068,7 @@ write is a write request, which the node answers; a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 3 in this specification; the node's ID, the
+**Node.** The link version, 4 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3167,8 +3169,51 @@ would change between the phone's read and its confirmation.
 takes the zones' boundaries and rules, which the node has no room for
 and which change by law; the phone has them, set by its person.
 
+**Neighbours.** The node's neighbour table ([neighbour
+table](#neighbour-table)), for the app to draw the node and its links
+on a map. The app writes a slot of the table, 0 first, and a read gives
+the live neighbours in that slot and after it, as many as fit, 13, and
+the slot to write next, 0 once the page reached the table's end; 64
+neighbours take five reads. The slot read from is 0 at each connection.
+A read starts with the node's noise floor in dBm, signed
+([busy estimate](#busy-estimate)), the slot to write next, the bytes of
+each neighbour, 18 in this version, by which the app steps, and the node's own position, zero
+while it has none, which for a sleepy node is not its address
+([position](#position)). Each neighbour then gives its ID, its
+position, the averaged RSSI of its link (`rssi_ema`) in tenths of a
+dBm, signed, the whole seconds since it was last heard, at most 65 535,
+and its flags:
+
+| | |
+|---|---|
+| bit 0 | sleepy |
+| bit 1 | map point |
+| bit 2 | demoted |
+| bit 3 | banned ([bans](#bans)) |
+| bit 4 | this sleepy node's anchor, the relay it sends and receives through ([relay choice](#relay-choice)) |
+| bit 5 | carried |
+| bit 6 | its last heartbeat had the anchorless flag |
+| bit 7 | it has taken a message from this node, so it hears this node too |
+
+A link's **quality** is the margin of its averaged RSSI over the noise
+floor, reckoned as the node's margin is ([neighbour
+table](#neighbour-table)): fragile below that margin, 4.1 dB, where a
+full frame is lost more than one time in a hundred in a fade of one
+standard deviation, 4 dB, and the node sends through the neighbour only
+when no other is left; good from 6.9 dB, where a full frame gets
+through a fade of two, 8 dB, which comes one time in 44, the convention
+of the switching margin ([relay choice](#relay-choice)); fair between.
+From link version 4.
+
+*Why pages from a slot.* The table holds 64 neighbours of 18 bytes, more
+than one value holds, and every value fits one PDU (MTU, above). A
+neighbour keeps its slot while it stays in the table, so a page that
+starts from a slot skips none that stays when another leaves between
+two reads, as one that started from a count would.
+
 **Versions.** A later link version may add characteristics and append
-fields to the values the node writes, Node, Status, Given back; an app
+fields to the values the node writes, Node, Status, Given back, and
+each neighbour of Neighbours; an app
 reads the fields it knows and ignores the rest, as a node reads a
 heartbeat. The values the app writes change only with the version, and
 the app writes the form of the node's. A change to what a field means
