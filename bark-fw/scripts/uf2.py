@@ -164,6 +164,15 @@ def to_uf2(payloads: list[tuple[int, bytes]]) -> bytes:
     return bytes(out)
 
 
+def symbol_word(image: bytes, start: int, syms: dict[str, int], name: str) -> int:
+    """The word the symbol `name` holds in `image`, which starts at
+    `start`; 0 without the symbol."""
+    at = syms.get(name)
+    if at is None or not start <= at <= start + len(image) - 4:
+        return 0
+    return struct.unpack_from("<I", image, at - start)[0]
+
+
 def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str]]:
     """The UF2, and a line for each region it writes."""
     syms = symbols(firmware_elf)
@@ -174,6 +183,7 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
         if region(symbols(loader_elf), "__bark_loader") != (start, end):
             sys.exit("the loader and the firmware were built from different layouts")
         loader = flash_image(load_segments(loader_elf), start, end, "loader")
+        bench = symbol_word(loader, start, symbols(loader_elf), "BARK_LOADER_BENCH")
         payloads += blocks(start, loader)
         lines.append(f"loader:   {len(loader)} bytes at {start:#x}")
     for name, what in (("__bootloader_state", "state"), ("__bark_record", "record")):
@@ -182,6 +192,9 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
         lines.append(f"{what + ':':<9} {end - start} bytes at {start:#x}, erased")
     start, end = region(syms, "__bootloader_active")
     firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
+    if loader_elf is not None and bench and symbol_word(firmware, start, syms, "BARK_OPEN") != 1:
+        # The loader's reset is for the bench alone (roadmap D143).
+        sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with an open firmware (BARK_OPEN=1)")
     payloads += blocks(start, firmware)
     lines.append(f"firmware: {len(firmware)} bytes at {start:#x}")
     if loader_elf is not None:

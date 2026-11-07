@@ -16,6 +16,12 @@ pub const BUILD: Build = match option_env!("BARK_OPEN") {
     }
 };
 
+/// [`BUILD`] as `scripts/uf2.py` reads it from the ELF, 1 for open: it
+/// packs a bench loader only with an open image.
+#[used]
+#[no_mangle]
+pub static BARK_OPEN: u32 = matches!(BUILD, Build::Open) as u32;
+
 /// What the boot found and left, for the log.
 #[derive(Clone, Copy)]
 pub struct State {
