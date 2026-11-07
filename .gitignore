@@ -3,3 +3,4 @@
 # Agent worktrees
 .claude/worktrees/
 target/
+__pycache__/
