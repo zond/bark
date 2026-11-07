@@ -192,6 +192,16 @@ def signing_keys(image: bytes, start: int, syms: dict[str, int]) -> list[tuple[i
     return [(s[0], s[1:]) for s in slots if s[0] != 0]
 
 
+def check_keys(image: bytes, start: int, syms: dict[str, int]) -> None:
+    """Exit on a protected firmware that holds no signing key: it would
+    stage no image, so the node could be updated only by hand."""
+    if symbol_word(image, start, syms, "BARK_OPEN") != 1 and not signing_keys(image, start, syms):
+        sys.exit(
+            "a protected firmware without BARK_SIGNING_KEYS holds no key and accepts no staged image; "
+            'build it with BARK_SIGNING_KEYS, or open with BARK_OPEN=1 (bark-fw/README.md, "Updates", Keys)'
+        )
+
+
 def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str]]:
     """The UF2, and a line for each region it writes."""
     syms = symbols(firmware_elf)
@@ -211,6 +221,7 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
         lines.append(f"{what + ':':<9} {end - start} bytes at {start:#x}, erased")
     start, end = region(syms, "__bootloader_active")
     firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
+    check_keys(firmware, start, syms)
     if loader_elf is not None and bench and symbol_word(firmware, start, syms, "BARK_OPEN") != 1:
         # The loader's reset is for the bench alone (roadmap D143).
         sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with an open firmware (BARK_OPEN=1)")

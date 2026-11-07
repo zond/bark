@@ -109,8 +109,8 @@ rustup target add thumbv7em-none-eabihf
 ```
 
 The firmware is built protected, which needs in `BARK_SIGNING_KEYS`
-the public keys of whoever signs the images it will stage, or open, for
-the bench, with `BARK_OPEN=1` (`bark-fw/README.md`, "Read-out protection" and
+the public keys of whoever signs the images it will stage before
+`scripts/uf2.py` packs it, or open, for the bench, with `BARK_OPEN=1` (`bark-fw/README.md`, "Read-out protection" and
 "Updates").
 
 See `bark-fw/README.md` for packaging the UF2, with the loader, and

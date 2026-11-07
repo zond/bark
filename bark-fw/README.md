@@ -303,8 +303,8 @@ firmware and the loader each use the rest.
 ## Build and package
 
 From `bark-fw/`, the firmware alone, for a board that already has the
-loader (a protected build needs `BARK_SIGNING_KEYS`, an open one,
-`BARK_OPEN=1`, does not: Updates, Keys):
+loader (`scripts/uf2.py` packs a protected build only with
+`BARK_SIGNING_KEYS`, an open one, `BARK_OPEN=1`, without: Updates, Keys):
 
 ```
 cargo build --release && scripts/uf2.py target/thumbv7em-none-eabihf/release/bark-fw target/bark-fw.uf2
@@ -589,10 +589,13 @@ swap").
 build time, up to three `id:hex` comma-separated, each id a byte from 1
 to 255 that names the key in a signature and each key 32 bytes
 (`build.rs`); they are kept under their own symbol, from which the
-scripts read them. A protected build fails without them. An open build
-without them takes the bench key, `keys/bench.pub`, whose private key
-is beside it in `keys/bench.pem` for every bench to sign with; a
-protected build fails if given it.
+scripts read them. A protected build without them holds no key and
+stages no image: it builds, with a warning, so that the checks run
+without keys, but `scripts/uf2.py` and `scripts/image.py pack` refuse
+it, so no such image reaches a board. An open build without them takes
+the bench key, `keys/bench.pub`, whose private key is beside it in
+`keys/bench.pem` for every bench to sign with; a protected build fails
+if given it.
 
 The release key is made once with `scripts/image.py keygen`, which
 writes the private key, PEM, readable by its owner alone, and prints

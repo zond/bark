@@ -27,8 +27,9 @@ fn main() {
 /// up to three `id:hex`, comma-separated, each a byte from 1 to 255 that
 /// names the key in a signature's slot and its Ed25519 public key. An
 /// open build without the variable takes the bench key, `keys/bench.pub`.
-/// A protected build needs the variable, and refuses the bench key, whose
-/// private half is in the repository.
+/// A protected build without the variable holds no key, so stages no
+/// image, and `scripts/uf2.py` refuses to pack it; a protected build
+/// refuses the bench key, whose private half is in the repository.
 fn keys() -> String {
     use bark_image::sign::{KEY_LEN, SLOTS};
     println!("cargo:rerun-if-env-changed=BARK_SIGNING_KEYS");
@@ -41,15 +42,18 @@ fn keys() -> String {
     let list = match env::var("BARK_SIGNING_KEYS") {
         Ok(v) if !v.trim().is_empty() => v,
         _ if open => bench.to_string(),
-        _ => panic!(
-            "a protected build (without BARK_OPEN=1) needs BARK_SIGNING_KEYS, \
-             id:hex[,id:hex...]: the keys an image to stage must be signed by \
-             (bark-fw/README.md, \"Updates\")"
-        ),
+        _ => {
+            println!(
+                "cargo:warning=a protected firmware without BARK_SIGNING_KEYS holds \
+                 no key and accepts no staged image; scripts/uf2.py will not pack it \
+                 (bark-fw/README.md, \"Updates\", Keys)"
+            );
+            String::new()
+        }
     };
     let bench_public = bench.split_once(':').expect("keys/bench.pub is id:hex").1;
     let mut keys = Vec::new();
-    for entry in list.split(',').map(str::trim) {
+    for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
         let (id, public) = entry
             .split_once(':')
             .unwrap_or_else(|| panic!("BARK_SIGNING_KEYS: {entry:?} is not id:hex"));

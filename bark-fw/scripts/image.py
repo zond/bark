@@ -81,6 +81,7 @@ def pack(elf: bytes) -> tuple[bytes, int]:
     syms = uf2.symbols(elf)
     start, end = uf2.region(syms, "__bootloader_active")
     image = uf2.flash_image(uf2.load_segments(elf), start, end, "firmware")
+    uf2.check_keys(image, start, syms)
     at = syms.get("BARK_IMAGE_VERSION")
     if at is None or not start <= at < start + len(image) - 4:
         sys.exit("the ELF has no BARK_IMAGE_VERSION in its image")
