@@ -241,6 +241,14 @@ def stage(path: str, port: str, reboot: bool, running: str | None = None) -> int
             sys.exit(got)
         return got
 
+    # The console's line may hold bytes the host's tty echoed back while a
+    # port was opened before raw mode took hold (README, "Log"). A bare
+    # line end closes that line, which the console answers with a warning,
+    # and `status`, answered after it, marks where its answers end: what
+    # came before is dropped, so `stage` starts a clean line and its answer
+    # is the next one read.
+    os.write(fd, b"\r\n")
+    send("status", ("status id=",))
     print(send("stage " + head.hex(), ("stage", "refused")))
     for at in range(0, len(image), CHUNK):
         send(f"chunk {at} {image[at:at + CHUNK].hex()}", ("chunk",))

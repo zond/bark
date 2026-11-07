@@ -1264,8 +1264,12 @@ Linux raises DTR when a tty is opened, so all three work, and the kernel
 hands over bytes only while something holds the port open: whatever opens
 it first takes the waiting boot lines, so a `stty` run before the reader
 takes them into nothing. Set the line and read it in one open, as in
-`( stty 115200 raw -echo <&3; cat <&3 ) 3<>/dev/ttyACM0`. Your user needs to
-be in the `dialout` group (or `uucp`, depending on the distribution).
+`( stty 115200 raw -echo <&3; cat <&3 ) 3<>/dev/ttyACM0`. Until `-echo`
+takes hold, the kernel echoes what the board sends back into its console,
+so a port opened just as the board boots can leave stray text on the
+console's line: type a bare Enter before the first command.
+`scripts/image.py stage` does so itself. Your user needs to be in the
+`dialout` group (or `uucp`, depending on the distribution).
 
 Each line is `[seconds.millis LEVEL] message`, seconds since boot; command
 echoes are `> command`.
