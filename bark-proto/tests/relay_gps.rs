@@ -181,8 +181,10 @@ fn a_low_battery_s_flush_keeps_the_gps_at_rest() {
     );
     h.run_for(GRACE + secs(10));
     assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.gps_tracks());
-    // Out of reach, its sleepy node's message waits at the relay.
+    // Out of reach of both, its sleepy node's message waits at the relay;
+    // in O's reach, O would send it the message at once (spec "Next hop").
     h.unlink(r, s);
+    h.unlink(o, s);
     let (dst_pos, dst_id) = (h.nodes[s].core.address(), h.nodes[s].core.id());
     let text = b"held when the battery goes low";
     h.command(

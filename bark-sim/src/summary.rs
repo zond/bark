@@ -995,6 +995,15 @@ impl Summary {
                 "DATA to sleepy nodes that could not hear it: from the anchor {} within 5 s of the node stopping listening, {} later; from others {}, {}",
                 m.to_deaf[0][0], m.to_deaf[0][1], m.to_deaf[1][0], m.to_deaf[1][1]
             );
+            let [a, o] = m.long_to_node;
+            let _ = writeln!(
+                s,
+                "DATA with the long preamble to the sleepy node it is for: from the anchor {} frames, {:.1} s; from others {}, {:.1} s",
+                a[0],
+                a[1] as f64 / 1e6,
+                o[0],
+                o[1] as f64 / 1e6
+            );
             let w = |r: &[u64; FIRST_TRIES]| r.map(|x| x.to_string()).join(" ");
             let _ = writeln!(
                 s,

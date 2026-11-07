@@ -95,7 +95,8 @@
 //! A sleepy node's beat fills the table like any heartbeat, the entry
 //! marked sleepy: between its windows it receives duty-cycled, so it is
 //! sent to with the long preamble. One with an anchor is a next hop only
-//! as a last resort ([`Neighbour::last_resort`], spec "Next hop"), and
+//! as a last resort ([`Neighbour::last_resort`], spec "Next hop"), but for
+//! a message addressed to it while the relay spares the long frame, and
 //! its entry expires after two beat periods, since its beats come once a
 //! period and only on its anchor's channel. As a newcomer to a full table
 //! it takes only a free slot: eviction makes way for a node that is a
@@ -217,6 +218,10 @@ pub struct Neighbour {
     /// When the line of senders this relay refused for it ends
     /// ([`Neighbours::place_in_line`]).
     pub line_end: Instant,
+    /// Of a sleepy one with an anchor, whether a hand-over to it with the
+    /// long preamble went unanswered since it was last heard: it is not
+    /// sent to at once again until it beats (spec "Next hop").
+    pub unanswered: bool,
 }
 
 impl Neighbour {
@@ -528,6 +533,7 @@ impl Neighbours {
                 };
                 n.anchorless = hb.anchorless;
                 n.answered = 0;
+                n.unanswered = false;
                 n.last_heard = now;
                 n.rssi = average(n.rssi, rssi);
             }
@@ -558,6 +564,7 @@ impl Neighbours {
             told: 0,
             taken_at: Instant::ZERO,
             line_end: Instant::ZERO,
+            unanswered: false,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -664,6 +671,7 @@ impl Neighbours {
     pub fn answered(&mut self, id: NodeId, now: Instant) {
         if let Some(n) = self.entry_mut(id) {
             n.fail_count = 0;
+            n.unanswered = false;
             n.last_heard = n.last_heard.max(now);
         }
     }
@@ -790,6 +798,14 @@ impl Neighbours {
         }
         n.banned_until = n.banned_until.max(now + hold(n.fail_count));
         Some(n.fail_count >= params.demote_after)
+    }
+
+    /// A hand-over to the sleepy `id` with the long preamble went
+    /// unanswered ([`Neighbour::unanswered`]).
+    pub fn unanswered(&mut self, id: NodeId) {
+        if let Some(n) = self.entry_mut(id) {
+            n.unanswered = true;
+        }
     }
 
     /// Remove the entry of `id`, if any.

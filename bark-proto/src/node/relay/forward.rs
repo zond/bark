@@ -312,6 +312,12 @@ fn data_frame(d: &Data<'_>, channel: Channel, preamble: u16) -> Frame {
     mac::frame(&Packet::Data(*d), channel, preamble)
 }
 
+/// A full DATA frame with the long preamble, 372.8 ms
+/// (spec "Duty-cycled receive and the long preamble"): what a relay must
+/// spare to send a message at once to a sleepy node, whose length the
+/// routing does not know (spec "Next hop").
+const LONG_FRAME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
+
 /// The preamble a DATA to `n` needs: the long one to a sleepy node, which
 /// receives duty-cycled between its windows (spec "Sleepy nodes").
 fn preamble(n: &Neighbour) -> u16 {
@@ -793,6 +799,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 && now.since(n.last_heard) >= heartbeat_interval(n.id, &self.config))
     }
 
+    /// Whether the sleepy neighbour `n` with an anchor, a message's
+    /// destination, is sent the message now with the long preamble
+    /// rather than reached through its anchor (spec "Next hop"): it has
+    /// not left such a hand-over unanswered since it was last heard, and
+    /// this node's bucket spares a full long frame ([`Self::spares_long`]).
+    fn reach_now(&self, n: &Neighbour, now: Instant) -> bool {
+        !n.unanswered && self.spares_long(LONG_FRAME, None, now)
+    }
+
     /// Whether `n` is among the neighbours to choose from, `others_open`
     /// telling whether any that is no last resort is open: a last resort
     /// only where none is, banned or not (spec "Next hop"). A message
@@ -815,7 +830,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The next hop for the message of `record` to node and position `dst`
     /// (spec "Next hop"), from the state as it is at `now`: the addressed
     /// node itself if it is a live neighbour not in the tried set, a stale
-    /// carried one too, a sleepy one with an anchor only as a last resort;
+    /// carried one too, a sleepy one with an anchor only while this relay
+    /// spares the long frame ([`Self::reach_now`]), else as a last resort;
     /// otherwise the live neighbour nearest the position
     /// that is not in the tried set, ties broken by ID; a demoted one only
     /// when no other with margin is left, and one without margin only when
@@ -856,8 +872,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let target = self.plane.point(dst);
         // Only a carried node itself can end the search for it, and a
         // frame to it costs little against a search through the city:
-        // first even when stale. A sleepy node with an anchor is reached
-        // through its anchor's queue and window (roadmap D116a).
+        // first even when stale (roadmap D116a). A sleepy node with an
+        // anchor is first only while this relay spares the long frame;
+        // otherwise its anchor delivers it (roadmap D134).
         let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.
@@ -871,7 +888,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .filter(|(slot, n)| {
                 first.is_none_or(|a| n.id == a)
                     && (first.is_some()
-                        || (addressed(n) && !n.last_resort())
+                        || (addressed(n) && (!n.last_resort() || self.reach_now(n, now)))
                         || self.tier(n, others, now))
                     && !tried(record, passed, *slot)
                     && Some(n.id) != parent
@@ -2239,6 +2256,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let id = out.msg_id().unwrap_or_default();
         let data = Packet::decode(out.frame.payload());
         if let (Ok(Packet::Data(d)), true) = (data, !out.kind.delivers()) {
+            if out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS && d.dst_hop == d.dst_id {
+                // Not again at once before it beats: its anchor delivers
+                // it (spec "Next hop").
+                self.neighbours.unanswered(d.dst_hop);
+            }
             if counted {
                 self.count_failure(d.dst_hop, now, emit);
                 let own_at_anchor = self.sleepy() && d.hops == 0;

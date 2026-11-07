@@ -251,6 +251,14 @@ impl Sim {
                 self.to_sleepy.insert(tx_key, to);
                 if !short {
                     self.note_long_try(d.msg_id().0, src);
+                    let r = self.relay(n);
+                    let anchor = r.anchor().map(|a| a.id).filter(|_| r.sleepy());
+                    if anchor.is_some() && d.dst_hop == d.dst_id {
+                        let by = usize::from(anchor != Some(d.src_hop));
+                        let l = &mut self.metrics.sleep.long_to_node[by];
+                        l[0] += 1;
+                        l[1] += air;
+                    }
                 }
                 if deaf && self.now >= self.settle {
                     let anchor = self.relay(n).anchor().map(|a| a.id);

@@ -1602,7 +1602,9 @@ closer relay ([channel at boot](#channel-at-boot)).
 A message whose destination is the sending node's own address is
 delivered there without entering the search. Otherwise the destination
 position decides who holds it: a relay that hears the sleepy node but
-does not own the position routes the message on like any other.
+does not own the position routes the message as any other, which sends
+it to the node at once where the relay spares the long frame
+([next hop](#next-hop)).
 
 *Why not the heard table.* A sleepy node that has just moved to another
 anchor stays in the old relay's heard table for a delivery TTL
@@ -1672,9 +1674,23 @@ dropped ([return to parent](#return-to-parent)):
   for its own heartbeat interval ([heartbeat](#heartbeat)).
 
 A stale carried relay is no last resort for a message addressed to it:
-it is first all the same. A sleepy neighbour with an anchor stays one,
-even for a message addressed to it. An anchorless neighbour is a
-candidate like any other, sent to with the long preamble. The first hop
+it is first all the same. A sleepy neighbour with an anchor is first for
+a message addressed to it while the relay **spares the long frame**,
+and it is sent the message at once with the long preamble:
+
+- the relay's bucket holds a full DATA frame with the long preamble,
+  372.8 ms, beyond everything else it has to send: its send queue, the
+  messages of its delivery queue at the ordinary preamble, and the
+  reply reserve ([duty cycle cap](#duty-cycle-cap));
+- no such hand-over to the node has gone unanswered since it was last
+  heard.
+
+Otherwise it stays a last resort, and the message goes on toward its
+address, its anchor's position, where the anchor delivers it
+([delivery](#delivery)). A hand-over to it unanswered in all its
+attempts counts as any failed hand-over, and its message is routed
+again at once. An anchorless neighbour is a candidate like any other,
+sent to with the long preamble. The first hop
 of a sleepy node's own message is its anchor while the anchor is live
 ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
 
@@ -1682,7 +1698,8 @@ of a sleepy node's own message is its anchor while the anchor is live
 through a node that sleeps. Where a relay is in reach, it is the hop;
 the last resort is for a pocket with no relay in that direction, where a
 sleepy node that has anchored is the way out for the anchorless ones
-behind it (roadmap D58).
+behind it (roadmap D58). A message addressed to it does not go through
+it but ends there, which is the case below.
 
 *Why a carried relay goes stale.* It walks: in its interval, at most
 15 s, 21 m at 1.4 m/s (`node.rs` `WALKING_SPEED_M_S`), within the 50 m a
@@ -1745,12 +1762,24 @@ neighbour table, which it ranks anyway. A stale walker costs three
 frames unanswered at most, against hundreds of hand-overs that only it
 can end. A sleepy node with an anchor is not lost that way: its address
 is its anchor's position, and the anchor, which owns that position,
-sends it the message in its window with the ordinary preamble
-([delivery](#delivery)). Sent to by every relay that hears it, the
-message would cost the long preamble each time instead. The rule holds
-at the owner of the position too, which would otherwise queue the
-message for the node's beat on its own channel, up to a rotation away
-([delivery](#delivery); roadmap D116a).
+sends it the message ([delivery](#delivery)). The relay that hears it
+saves the hops to the anchor and, where the anchor cannot spare the
+long frame, the wait for the node's beat, a mean of 225 s
+([beats](#beats)). Where relays hear one another's sleepy nodes it
+also saves the texts that a search through them lost. The long frame
+costs 2.7 times a full frame's air, so a relay sends it only from air
+it has spare, as the anchor does. A condition on the node's channel as
+well, the move threshold of [channel moves](#channel-moves), was
+measured and is not used: it refused mostly on the channel where an
+anchor serves its own nodes, and held their texts for the beat (roadmap
+D134). One unanswered hand-over says the node is out of that relay's
+reach, and its anchor, which hears its beats, is left to deliver.
+
+The rule holds at the owner of the position too, which would otherwise
+queue the message for the node's beat on its own channel, up to a
+rotation away, but for a sleepy node with an anchor: the owner delivers
+to it from its delivery queue, with the same bucket condition
+([delivery](#delivery); roadmap D116a, D134).
 
 A candidate may already have the message by another path; the relay
 cannot know, since its neighbours listen on other channels. If the
@@ -2515,7 +2544,8 @@ anchor's, where the anchor and any other node on that channel hear it:
 a **beat**. The heartbeat has the sleepy bit
 ([packet formats](#packet-formats)): reach the sender cheaply in its
 window after its beat, which its holder does, or at any time with the
-long preamble, a last resort ([next hop](#next-hop)).
+long preamble, which a relay holding a message for it does when it
+spares the long frame ([next hop](#next-hop)).
 
 Each beat comes a random half to one **beat period** after the last,
 P = 300 s. At the mean interval of 225 s a node beats 16 times an hour,
