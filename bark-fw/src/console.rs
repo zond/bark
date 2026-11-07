@@ -25,7 +25,7 @@
 //! ping <k>                   send a ping on k, wait home for the pong
 //! status [reset]             uptime, battery, settings, counters
 //! survey [n]                 the survey build's noise log, the last n minutes
-//! stage <header hex>         start staging an image (`bark_image::Header`)
+//! stage <header hex>         start staging a signed image (`bark_image::Header`)
 //! chunk <offset> <hex>       write up to 256 bytes of it, in order
 //! commit                     check it and ask the loader to swap it in
 //! reboot                     reset, to let the loader swap
@@ -71,8 +71,8 @@ use embassy_usb_logger::ReceiverHandler;
 
 use crate::clock::Clock;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
-use crate::update::{decimal, ConsoleStager, External, Flash, Power, Refused, BARK_IMAGE_VERSION};
-use bark_image::boot::{blocking, Stager, CHUNK};
+use crate::update::{decimal, ConsoleStager, External, Flash, Power, Refused};
+use bark_image::boot::{blocking, CHUNK};
 use bark_image::HEADER_LEN;
 use bark_proto::BatteryLevels;
 
@@ -955,7 +955,7 @@ impl<'a> Console<'a> {
                 decode_hex(hex, &mut header);
                 self.staging = None;
                 let (record, state, dfu) = blocking(self.flash, self.external);
-                match Stager::begin(record, state, dfu, &header, BARK_IMAGE_VERSION).await {
+                match crate::update::stage(record, state, dfu, &header).await {
                     Ok(s) => {
                         let h = s.header();
                         log::info!(

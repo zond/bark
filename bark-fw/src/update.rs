@@ -12,7 +12,8 @@ use core::cell::RefCell;
 
 use bark_image::boot::{confirm, cut, swap_requested, Shared, StageError, Stager, Started};
 use bark_image::layout::{LOADER, PAGE};
-use bark_image::Header;
+use bark_image::sign::{Key, SLOTS};
+use bark_image::{Header, HEADER_LEN};
 use bark_proto::BatteryLevels;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::{peripherals, wdt, Peri};
@@ -33,6 +34,14 @@ pub static BARK_IMAGE_VERSION: u32 = match option_env!("BARK_IMAGE_VERSION") {
     Some(v) => decimal(v),
     None => 0,
 };
+
+/// The keys an image to stage must be signed by one of, from
+/// `BARK_SIGNING_KEYS` at build time, or the bench key in an open build
+/// without it (`build.rs`). Kept under its own symbol so that
+/// `scripts/uf2.py` and `scripts/image.py` read them from the ELF.
+#[used]
+#[no_mangle]
+pub static BARK_SIGNING_KEYS: [Key; SLOTS] = include!(concat!(env!("OUT_DIR"), "/keys.rs"));
 
 /// What a bench image does instead of confirming itself, from
 /// `BARK_UPDATE_BENCH` at build time (roadmap Phase 2, the loader's rows).
@@ -201,6 +210,33 @@ pub async fn watchdog(dog: Peri<'static, peripherals::WDT>) {
         handle.pet();
         Timer::after(period / 2).await;
     }
+}
+
+/// Start staging the image `header` describes on `record`, `state` and
+/// `dfu`, if this image accepts it: above its own version and signed by
+/// one of its keys (`bark_image::sign`). The console's `stage` and the
+/// phone link's begin both come here. The hash is checked when the
+/// staging finishes ([`commit`]).
+pub async fn stage<R, S, D>(
+    record: R,
+    state: S,
+    dfu: D,
+    header: &[u8; HEADER_LEN],
+) -> Result<Stager<R, S, D>, StageError>
+where
+    R: AsyncNorFlash,
+    S: AsyncNorFlash,
+    D: AsyncNorFlash,
+{
+    Stager::begin(
+        record,
+        state,
+        dfu,
+        header,
+        BARK_IMAGE_VERSION,
+        &BARK_SIGNING_KEYS,
+    )
+    .await
 }
 
 /// What the node runs on, for the rule on a swap.

@@ -19,7 +19,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embedded_storage::nor_flash::ReadNorFlash;
 
-use super::{Power, Refused, BARK_IMAGE_VERSION};
+use super::{Power, Refused};
 use crate::ext_flash::Dfu;
 use crate::store::SharedFlash;
 
@@ -102,7 +102,7 @@ impl Phone {
         self.staging = None;
         let internal = self.internal;
         let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
-        let begun = Stager::begin(part(RECORD), part(STATE), Dfu, header, BARK_IMAGE_VERSION).await;
+        let begun = super::stage(part(RECORD), part(STATE), Dfu, header).await;
         match begun {
             Ok(s) => {
                 log::info!(
@@ -223,6 +223,7 @@ fn refusal(e: Refused) -> Refusal {
         Refused::Stage(e) => match e {
             StageError::Header(_) => Refusal::Header,
             StageError::Version { .. } => Refusal::Version,
+            StageError::Signature(_) => Refusal::Signature,
             StageError::Busy => Refusal::Busy,
             StageError::Offset { .. } | StageError::Chunk | StageError::Incomplete { .. } => {
                 Refusal::Incomplete

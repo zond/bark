@@ -158,6 +158,9 @@ pub enum Refusal {
     Battery = 6,
     /// The flash failed; what was staged is forgotten.
     Flash = 7,
+    /// No signature in the header verifies under a key the node holds
+    /// (`bark-fw/README.md`, "Updates").
+    Signature = 8,
 }
 
 /// Update, read: where the update stands.
@@ -223,6 +226,7 @@ impl Progress {
             5 => Some(Refusal::Hash),
             6 => Some(Refusal::Battery),
             7 => Some(Refusal::Flash),
+            8 => Some(Refusal::Signature),
             _ => return Err(Malformed::Value),
         };
         let u32_at = |at: usize| u32::from_be_bytes(b[at..at + 4].try_into().expect("four bytes"));
@@ -292,7 +296,7 @@ mod tests {
         bad[0] = 4;
         assert_eq!(Progress::decode(&bad), Err(Malformed::Value));
         let mut bad = v;
-        bad[1] = 8;
+        bad[1] = 9;
         assert_eq!(Progress::decode(&bad), Err(Malformed::Value));
         assert_eq!(
             Progress::decode(&Progress::IDLE.encode()),

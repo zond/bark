@@ -3224,7 +3224,8 @@ the node's loader swaps in at its next boot (roadmap D79;
 the street. The image is a header of 256 bytes, which holds its
 version, its length and its SHA-256, and then its bytes. The app writes
 0 and the header to Update to begin: the node forgets any image staged
-before, and takes the header if its version is above the node's own and
+before, and takes the header if its version is above the node's own,
+a signature in it verifies under a key the node holds (roadmap D144), and
 no swap is asked for already. Then the app writes the image to Image in
 pieces, each its offset in the image and as many bytes as one write
 carries, 240 at the MTU of 247, without a response; the node writes each
@@ -3251,6 +3252,7 @@ answered with the ATT error 0x81, refused, and Update says why:
 | 5, hash | the bytes do not hash to the header's hash, and are forgotten |
 | 6, battery | on battery at or below the low level ([implementation notes](#implementation-notes)); the image stays staged, to commit on external power |
 | 7, flash | the flash failed, and the image is forgotten |
+| 8, signature | no signature in the header verifies under a key the node holds |
 
 What is staged lasts across connections until the node resets. From
 link version 6 (roadmap D145).
@@ -3798,6 +3800,8 @@ low level ([sleepy nodes](#sleepy-nodes)) starts no swap to a new image;
 on external power nothing limits it (roadmap D143). A cell that gives
 out in the middle of a swap leaves the node with no image to run until
 it is charged, where without the swap it would run on asleep for days.
+A node stages only an image above its own version and signed by a key
+it was built with (roadmap D144).
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay

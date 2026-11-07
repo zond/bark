@@ -304,8 +304,11 @@ A node out of reach, on a roof, is updated from the phone over the link
 **Firmware**, says the version the connected node runs; **Update
 firmware** opens a screen that takes the image from **Latest release**,
 the `bark-fw-<N>.img` of the repository's latest GitHub release,
-fetched through GitHub's releases API without an account, or from
-**Pick a file**, an image `bark-fw/scripts/image.py pack` made. The app
+fetched through GitHub's releases API without an account and signed
+by the release, or from **Pick a file**, an image
+`bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
+node refuses an image no key of its own signed (`bark-fw/README.md`,
+"Updates"). The app
 checks the file's header and hash before it offers it, and shows its
 version, and says so when it is not newer than the node's: the node
 would refuse it. **Send to the node** sends it with a progress bar, in
@@ -531,7 +534,8 @@ a phone (Trying it, With a node).
 14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
 15. **Settings**, under **Firmware**: the fake runs version 1. **Update
-    firmware**, **Latest release** (or **Pick a file** with any image):
+    firmware**, **Latest release** (or **Pick a file** with a signed
+    image; the fake refuses one whose header names no key):
     the image's version and size. **Send to the node**: the bar fills at
     once, the fake has no radio to wait for; then "The node checked
     version N". **Reboot into version N**: the link closes, and the
@@ -616,7 +620,9 @@ a phone (Trying it, With a node).
     the bench, and copy it to the phone:
     `BARK_OPEN=1 BARK_IMAGE_VERSION=N+1 cargo build --release &&
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
-    target/vN+1.img`. In **Settings**, **Firmware** says version N.
+    target/vN+1.img`, then sign it with the bench key, which an open
+    build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
+    --key-id 1`. In **Settings**, **Firmware** says version N.
     **Update firmware**, **Pick a file**, the image: "Version N+1".
     **Send to the node**: the node logs `update: receiving version=N+1`
     and then nothing while the bar fills, about 20 s; half way, switch
@@ -630,4 +636,6 @@ a phone (Trying it, With a node).
     a minute later the log's banner says `image version N+1` and
     `update: version N+1 confirmed`, the app connects again, and the
     screen says "The node runs version N+1". Sending the same file
-    again is refused, as not newer.
+    again is refused, as not newer; an image packed and not signed is
+    refused at once, before any piece, as not signed by a key the node
+    holds, and the node logs `update: begin refused=Signature(Unsigned)`.

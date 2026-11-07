@@ -1,7 +1,8 @@
 //! What the T-Echo firmware and its loader must agree on: the flash
 //! layout ([`layout`]), the external flash's driver (`ext_flash`), the
 //! header a staged image travels with ([`Header`]) and the record of it
-//! the loader checks ([`record`]); and the firmware's choice of read-out
+//! the loader checks ([`record`]) and the signatures the firmware checks
+//! (`sign`); and the firmware's choice of read-out
 //! protection ([`protect`]), here to be tested on the host.
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
@@ -20,6 +21,7 @@ pub mod ext_flash;
 pub mod layout;
 pub mod protect;
 pub mod record;
+pub mod sign;
 
 /// Seconds a new image has to confirm itself before the watchdog resets
 /// the node and the loader swaps the previous image back: the 10 minutes
@@ -29,10 +31,9 @@ pub mod record;
 /// the longest time the confirmation will need, not the time it needs now.
 pub const TRIAL_SECONDS: u32 = 600;
 
-/// Bytes of a header, which leave room for what the key policy adds: up
-/// to three signatures, each an Ed25519 signature of 64 bytes (RFC 8032)
-/// with a byte naming the key, 195 bytes after the 48 of format 1 (the
-/// note, "Keys" and "Frames").
+/// Bytes of a header: 48 of fields, then three signatures, each an
+/// Ed25519 signature of 64 bytes (RFC 8032) with a byte naming the key
+/// (`sign`; the note, "Keys" and "Frames").
 pub const HEADER_LEN: usize = 256;
 
 /// The first bytes of every header.
@@ -44,7 +45,7 @@ pub const FORMAT: u8 = 1;
 /// The bytes of [`Header::hash`]: SHA-256 (FIPS 180-4).
 pub const HASH_LEN: usize = 32;
 
-/// What travels in front of an image to be staged, unsigned for now.
+/// What travels in front of an image to be staged.
 ///
 /// ```text
 /// 0   magic "bark"
@@ -53,8 +54,12 @@ pub const HASH_LEN: usize = 32;
 /// 8   version, u32 little-endian, raised with every image
 /// 12  length of the image in bytes, u32 little-endian
 /// 16  SHA-256 of the image's bytes
-/// 48  208 bytes, zero: room for the signatures
+/// 48  3 slots of 65 bytes, each a byte naming a key, then an Ed25519
+///     signature (RFC 8032) of bytes 0..48 by that key; zero if empty
+/// 243 13 bytes, zero
 /// ```
+///
+/// [`Header`] holds bytes 0..48; `sign` reads the slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
     /// The image's version: an image is staged only above the running one's.

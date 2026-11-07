@@ -722,7 +722,11 @@ enum Refusal {
     'the node is on a low battery; it keeps the image, to commit once '
     'it is on USB or charged',
   ),
-  flash('the node\'s flash failed');
+  flash('the node\'s flash failed'),
+  signature(
+    'the image is not signed by a key the node holds: an image built '
+    'here is signed with `image.py sign`, a release\'s is signed already',
+  );
 
   final String why;
   const Refusal(this.why);

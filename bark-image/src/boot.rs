@@ -33,6 +33,7 @@ use sha2::{Digest, Sha256};
 use crate::layout::external::DFU;
 use crate::layout::{Region, ACTIVE, PAGE, RECORD, STATE};
 use crate::record::{CHECKED, CHECKED_AT, HEADER_AT};
+use crate::sign::{self, Key, SignatureError, SLOTS};
 use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN, MAGIC};
 
 /// The flash, shared by the partitions that each see one region of it.
@@ -276,6 +277,9 @@ pub enum StageError {
         /// The header's.
         staged: u32,
     },
+    /// No signature in the header verifies under a key the running image
+    /// holds.
+    Signature(SignatureError),
     /// A swap is asked for or the running image is on trial: confirm or
     /// reboot first.
     Busy,
@@ -338,22 +342,27 @@ pub struct Stager<R, S, D> {
 }
 
 impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
-    /// Start staging the image `header` describes, above the running
-    /// image's `running` version. Forgets any image staged before.
+    /// Start staging the image the header `bytes` describes, above the
+    /// running image's `running` version and signed by one of its
+    /// `keys`. Forgets any image staged before.
     pub async fn begin(
         mut record: R,
         mut state: S,
         dfu: D,
-        header: &[u8; HEADER_LEN],
+        bytes: &[u8; HEADER_LEN],
         running: u32,
+        keys: &[Key; SLOTS],
     ) -> Result<Self, StageError> {
-        let header = Header::decode(header).map_err(StageError::Header)?;
+        let header = Header::decode(bytes).map_err(StageError::Header)?;
         if header.version <= running {
             return Err(StageError::Version {
                 running,
                 staged: header.version,
             });
         }
+        // The signature covers the hash, which `finish` checks against
+        // the staged bytes, so a refusal here spares sending the image.
+        sign::verify(bytes, keys).map_err(StageError::Signature)?;
         let mut word = AlignedBuffer([0u8; 4]);
         let now = FirmwareState::new(&mut state, &mut word.0)
             .get_state()

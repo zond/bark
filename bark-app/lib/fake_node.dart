@@ -584,6 +584,11 @@ class FakeNode implements NodeLink {
           _refuse(Refusal.header);
         }
         if (_le32(h, 8) <= image) _refuse(Refusal.version);
+        // A node verifies each slot's Ed25519 signature; the fake takes a
+        // header with any slot naming a key as signed.
+        if (![for (var s = 0; s < 3; s++) h[48 + 65 * s]].any((k) => k != 0)) {
+          _refuse(Refusal.signature);
+        }
         _staging = h;
         _refused = null;
       case 1 when value.length == 1:

@@ -166,7 +166,33 @@ fn board(a: &[u8]) -> Board {
     }
 }
 
+/// The key the test images are signed with, and the one the running
+/// image holds.
+fn signer() -> ed25519_compact::KeyPair {
+    ed25519_compact::KeyPair::from_seed(ed25519_compact::Seed::new([7; 32]))
+}
+
+fn keys() -> [Key; SLOTS] {
+    let mut k = [Key::NONE; SLOTS];
+    k[0] = Key {
+        id: 1,
+        public: *signer().pk,
+    };
+    k
+}
+
+/// The header of `b`, signed in its first slot.
 fn header_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
+    let mut h = unsigned_for(b, version);
+    let at = sign::SIGNED_LEN;
+    h[at] = 1;
+    let signature = *signer().sk.sign(&h[..at], None);
+    h[at + 1..at + sign::SLOT_LEN].copy_from_slice(&signature);
+    h
+}
+
+/// The header of `b`, unsigned.
+fn unsigned_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
     Header {
         version,
         length: b.len() as u32,
@@ -195,7 +221,7 @@ fn begin<'a, I: NorFlash, E: NorFlash>(
     running: u32,
 ) -> Result<BlockingStager<'a, I, E>, StageError> {
     let (record, state, dfu) = blocking(internal, external);
-    now(Stager::begin(record, state, dfu, header, running))
+    now(Stager::begin(record, state, dfu, header, running, &keys()))
 }
 
 fn stage_on<I: NorFlash, E: NorFlash>(
@@ -393,6 +419,10 @@ fn staging_refuses_what_it_cannot_stage() {
             running: RUNNING,
             staged: RUNNING
         })
+    );
+    assert_eq!(
+        begin(i, e, &unsigned_for(&b, RUNNING + 1), RUNNING).err(),
+        Some(StageError::Signature(SignatureError::Unsigned))
     );
     let mut s = begin(i, e, &header_for(&b, RUNNING + 1), RUNNING).unwrap();
     assert_eq!(

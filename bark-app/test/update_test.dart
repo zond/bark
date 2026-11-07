@@ -16,8 +16,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 
 /// An image file as `image.py pack` writes it: version `version`, of
-/// `len` bytes that differ from place to place.
-Uint8List imageFile(int version, int len, {int seed = 1}) {
+/// `len` bytes that differ from place to place, and a signature slot that
+/// names key 1 unless `unsigned`.
+Uint8List imageFile(
+  int version,
+  int len, {
+  int seed = 1,
+  bool unsigned = false,
+}) {
   var x = seed * 2654435761 | 1;
   final bytes = [
     for (var i = 0; i < len; i++)
@@ -33,6 +39,7 @@ Uint8List imageFile(int version, int len, {int seed = 1}) {
     ...le32(version),
     ...le32(len),
     ...sha256.convert(bytes).bytes,
+    if (!unsigned) ...[1, ...List.filled(64, 0x5a)],
   ];
   return Uint8List.fromList([
     ...header,
@@ -78,7 +85,7 @@ void main() {
       throwsA(isA<Malformed>()),
     );
     expect(
-      () => UpdateProgress.decode([1, 8, ...v.sublist(2)]),
+      () => UpdateProgress.decode([1, 9, ...v.sublist(2)]),
       throwsA(isA<Malformed>()),
     );
   });
@@ -202,6 +209,17 @@ void main() {
         u.commit();
         async.flushMicrotasks();
         expect(u.phase, Phase.committed, reason: u.message);
+      });
+    });
+
+    test('an unsigned image is refused at the begin', () {
+      run((async, s, node, u) {
+        u.choose(parseImage(imageFile(2, 5000, unsigned: true)), 'file');
+        u.send();
+        async.flushMicrotasks();
+        expect(u.phase, Phase.failed);
+        expect(u.message, contains(Refusal.signature.why));
+        expect(node.piecesWritten, 0);
       });
     });
 
