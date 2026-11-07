@@ -350,6 +350,14 @@ class BleLink implements NodeLink {
   Future<NodeHome> readHome() async => NodeHome.decode(await _read(Uuids.home));
 
   @override
+  Future<void> setNeighboursFrom(int slot) =>
+      _write(Uuids.neighbours, encodeNeighboursFrom(slot));
+
+  @override
+  Future<NeighbourPage> readNeighbours() async =>
+      NeighbourPage.decode(await _read(Uuids.neighbours));
+
+  @override
   Stream<Status> get statusNotified =>
       _notified(Uuids.status).map(Status.decode);
 

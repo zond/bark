@@ -101,6 +101,24 @@ is a prototype for the bench, not the app people will carry.
   words (show them, or restore an identity from them), and the node's
   map point: set from typed degrees or the phone's location, or
   cleared.
+- **Map**, from the menu. The connected node and every neighbour it
+  knows on an OpenStreetMap street map, a line from the node to each
+  coloured by the link's quality: green good, amber fair, red fragile,
+  by the margin of the link's averaged RSSI over the node's noise floor
+  (spec "Phone link", Neighbours), dashed while the node avoids it,
+  demoted or banned. A legend says the bands in dB. A relay is a tower,
+  a sleepy node a battery, a carried one a walker, in its link's colour;
+  the node itself is a target. Tapping one shows its name, RSSI,
+  margin, quality, when it was last heard, how far it is from the node,
+  and its flags. The map reads Neighbours when it opens, at every
+  status the node gives, and when the refresh button is pressed. The
+  node is drawn at its own position, not its address, so a sleepy node
+  is not drawn on its anchor; a node without a place has its
+  neighbours drawn with no lines. Tiles come from the network and are
+  kept on the phone for a year, so an area seen once draws again
+  without internet; without either, the markers and lines are drawn on
+  a blank background and a line says why. A node before link version
+  4 cannot tell its neighbours, and the screen says to update it.
 - **Debug**, from the menu. Your identity, card address, home node and
   mailbox state; Node, what Home reads, every Status field, the last
   Given back value, each sent and received message's kind, `sent`, ID
@@ -265,7 +283,11 @@ of their own: they start with two first messages to you in the inbox,
 with their card, and answer each text you send them with a sealed
 "Echo: " of it 5 s later; a text in parts once every part has come,
 split again, its last part first and the others 5 s after, so that
-the missing ones show. Their card names a home, `bark-fa4e00000002`,
+the missing ones show. Around it stand five neighbours, by slot as a
+table holds them, with gaps: one of each link quality over a noise
+floor of −118 dBm, a sleepy one on a map point, a demoted one and a
+banned one, within about 700 m of its fix; a test may add more to
+read the table across pages. Their card names a home, `bark-fa4e00000002`,
 and they write from a node of their own away from it,
 `bark-fa4e00000003`, which moves about 110 m north between their
 messages. It runs on while the app is disconnected, as
@@ -343,6 +365,7 @@ licences compatible with the repository's GPL-3:
 | `qr_flutter` 4.1.0, with `qr` | draws the code | BSD-3-Clause |
 | `qr_code_scanner_plus` 2.3.2 | scans it with the camera | BSD-2-Clause; on Android it uses the ZXing libraries, Apache-2.0 |
 | `flutter_local_notifications` 22.3.3 | the texts' notifications and the permission to notify | BSD-3-Clause |
+| `flutter_map` 8.3.2, with `latlong2` 0.10.1 | the map, its OpenStreetMap tiles and their cache on the phone | BSD-3-Clause; `latlong2` Apache-2.0; the packages they bring MIT or BSD; the tiles' data © OpenStreetMap contributors, ODbL, which the map names on screen |
 
 The common `mobile_scanner` is not used: on Android it decodes with
 Google's ML Kit, which is not free software.
@@ -395,14 +418,17 @@ and with a first message read after a box, delayed or forged; the
 fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
-to the home, and refuse a node that does not keep it; group texts into
+to the home, and refuse a node that does not keep it; read the fake
+node's neighbours, in one page and across several, and not from a node
+before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
 choose where a text goes; decide what notifies, and when the app starts
 with the phone, against a notifier that writes down what it is asked;
 and drive the screens: a text to the fake friend, its echo, an
 acknowledgement, the backup words, a contact from a pasted or a scanned
 card, my card, the debug screen, the fetch button, the choice of where
-a text goes, and a long text's parts. The Android side, the service and
+a text goes, a long text's parts, and the map, its markers, lines,
+legend and a neighbour's details, over tiles that cannot be had. The Android side, the service and
 the boot receiver, cannot run on the host; it is kept small and tried on
 a phone (Trying it, With a node).
 
@@ -419,7 +445,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 3,
+3. Menu, **Debug**: your identity and card address; link version 4,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -464,7 +490,13 @@ a phone (Trying it, With a node).
     again, disconnect, press **No home node**: the app says the old home
     still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
-13. Disconnect, close the app, open it again: the conversations, the
+13. Menu, **Map**: the fake node in Kyiv and its five neighbours,
+    three green lines, one amber and one red; the red one and a green
+    one dashed. Tap the red
+    one: `bark-fa4e00000103`, fragile, 3.0 dB over the floor, demoted.
+    With the phone offline and the area never seen, a line says the
+    street map is missing and the nodes are drawn on blank.
+14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
 
 ### With a node
@@ -476,13 +508,14 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen `PHONE PAIRED`.
-3. **Debug** shows link version 3, the node's clock (from its GPS if it
+3. **Debug** shows link version 4, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
-   address. Without one, set a map point in Settings: Status changes to
+   address, and **Map** draws it with the relays it hears, each line's
+   colour its link's quality. Without one, set a map point in Settings: Status changes to
    placed and map point. A text names the node's address only once it
    has one.
 5. With a second node and a second phone, make one phone's node its

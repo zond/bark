@@ -60,6 +60,11 @@ abstract class NodeLink {
   Future<void> setHome(List<int>? key);
   Future<NodeHome> readHome();
 
+  /// Link version 4 and later: the next read of Neighbours starts at
+  /// `slot`.
+  Future<void> setNeighboursFrom(int slot);
+  Future<NeighbourPage> readNeighbours();
+
   Stream<Status> get statusNotified;
   Stream<GivenBack?> get givenBackNotified;
 

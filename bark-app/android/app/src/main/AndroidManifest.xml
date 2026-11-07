@@ -28,6 +28,8 @@
     <!-- Asking to be exempt from battery optimisation, which some phones
          need to keep the service running for hours. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Internet: the map's street tiles, kept once fetched. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.bluetooth_le"
         android:required="true" />
     <uses-feature android:name="android.hardware.camera"

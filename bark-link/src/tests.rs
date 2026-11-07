@@ -75,6 +75,31 @@ proptest! {
     }
 
     #[test]
+    fn neighbours_round_trip(
+        floor_dbm: i8, next: u8, own in pos(),
+        page in proptest::collection::vec((id(), pos(), any::<i16>(), any::<u16>(), any::<u8>()), 0..=neighbours::PER_PAGE),
+    ) {
+        let h = neighbours::Header { floor_dbm, next, own };
+        let page: std::vec::Vec<_> = page
+            .into_iter()
+            .map(|(id, position, rssi_ddbm, age_s, f)| {
+                let bit = |b: u8| f & (1 << b) != 0;
+                neighbours::Neighbour {
+                    id, position, rssi_ddbm, age_s,
+                    sleepy: bit(0), map_point: bit(1), demoted: bit(2), banned: bit(3),
+                    anchor: bit(4), carried: bit(5), anchorless: bit(6), proven: bit(7),
+                }
+            })
+            .collect();
+        let mut b = [0; neighbours::MAX_LEN];
+        let n = neighbours::encode(&h, &page, &mut b);
+        prop_assert_eq!(n, neighbours::HEADER + page.len() * neighbours::ENTRY);
+        let (got, read) = neighbours::decode(&b[..n]).unwrap();
+        prop_assert_eq!(got, h);
+        prop_assert_eq!(read.collect::<std::vec::Vec<_>>(), page);
+    }
+
+    #[test]
     fn map_point_round_trips(p in pos()) {
         let mut b = [0; MapPoint::MAX_LEN];
         for m in [MapPoint::Clear, MapPoint::Set(p)] {
@@ -135,7 +160,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [3, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [4, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -173,6 +198,8 @@ fn uuids_are_one_base_counted() {
         uuid::GIVEN_BACK,
         uuid::MAP_POINT,
         uuid::CLOCK,
+        uuid::HOME,
+        uuid::NEIGHBOURS,
     ];
     for (i, u) in all.into_iter().enumerate() {
         assert_eq!(u & !(0xffff << 96), uuid::SERVICE & !(0xffff << 96));

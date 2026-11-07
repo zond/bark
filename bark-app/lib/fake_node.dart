@@ -5,7 +5,8 @@
 // to them, sealed as a real phone would. The fake friend has a home and
 // writes from a node away from it, which moves between their messages.
 // Somewhere away is the person's home node, whose mailbox answers a
-// fetch as the spec's "Mailbox" says.
+// fetch as the spec's "Mailbox" says. Around it stand a few neighbours,
+// one of each link quality and of each kind a map draws apart.
 
 import 'dart:async';
 import 'dart:math';
@@ -77,6 +78,53 @@ class FakeNode implements NodeLink {
 
   /// Relays the fake hears, spread over its first rotation.
   static const relaysHeard = 3;
+
+  /// The fake's noise floor, the spec's figure (spec "Physical layer").
+  static const floorDbm = -118;
+
+  /// The neighbour table by slot, as the node keeps it, each with its
+  /// age at the fake's start; a test may add more. The slots leave gaps,
+  /// as a table does once some have left.
+  final Map<int, Neighbour> neighbours = {
+    0: _neighbour(1, 300, 0, -700, 4, proven: true),
+    3: _neighbour(2, -150, 400, -1125, 9),
+    7: _neighbour(3, -500, -250, -1150, 2, demoted: true),
+    12: _neighbour(4, 80, -120, -950, 40, sleepy: true, mapPoint: true),
+    21: _neighbour(5, -60, 650, -1080, 6, banned: true),
+  };
+
+  /// Neighbour `n`, `bark-fa4e000001nn`, `north` and `east` metres from
+  /// the fake's GPS fix.
+  static Neighbour _neighbour(
+    int n,
+    double north,
+    double east,
+    int rssiDdbm,
+    int ageS, {
+    bool proven = false,
+    bool demoted = false,
+    bool sleepy = false,
+    bool mapPoint = false,
+    bool banned = false,
+  }) {
+    // Metres per degree on the WGS-84 sphere of the mean radius, 6371 km.
+    const perDeg = 6371000 * pi / 180;
+    final lat = gps.latDeg + north / perDeg;
+    final lon = gps.lonDeg + east / (perDeg * cos(gps.latDeg * pi / 180));
+    return Neighbour(
+      [0xfa, 0x4e, 0, 0, 1, n],
+      Position.fromDegrees(lat, lon),
+      rssiDdbm: rssiDdbm,
+      ageS: ageS,
+      proven: proven,
+      demoted: demoted,
+      sleepy: sleepy,
+      mapPoint: mapPoint,
+      banned: banned,
+    );
+  }
+
+  int _neighboursFrom = 0;
 
   /// The shortest wait a refusal tells, one ban (spec "Bans").
   static const ban = Duration(milliseconds: 1580);
@@ -441,6 +489,27 @@ class FakeNode implements NodeLink {
 
   @override
   Future<NodeHome> readHome() => _answer(() => NodeHome(homeKey != null, 0, 0));
+
+  @override
+  Future<void> setNeighboursFrom(int slot) => _answer(() {
+    _neighboursFrom = slot & 0xff;
+  });
+
+  /// A page as the node builds it; ages run on from those in the table
+  /// and start again every heartbeat interval, 10 s.
+  @override
+  Future<NeighbourPage> readNeighbours() => _answer(() {
+    final slots = neighbours.keys.where((k) => k >= _neighboursFrom).toList()
+      ..sort();
+    final next = slots.length > NeighbourPage.perPage
+        ? slots[NeighbourPage.perPage]
+        : 0;
+    final up = now().difference(_boot).inSeconds % 10;
+    return NeighbourPage(floorDbm, next, _mapPoint ?? _fix, [
+      for (final s in slots.take(NeighbourPage.perPage))
+        neighbours[s]!.withAge(neighbours[s]!.ageS + up),
+    ]);
+  });
 
   @override
   Stream<Status> get statusNotified => _status.stream;

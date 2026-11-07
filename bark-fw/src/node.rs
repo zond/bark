@@ -323,6 +323,43 @@ fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
     }
 }
 
+/// Publish the neighbour table of `core` as the phone reads it (spec
+/// "Phone link", Neighbours).
+fn publish_neighbours(core: &Role, now: Instant) {
+    use bark_link::neighbours::{ddbm, Neighbour};
+    let table = core.neighbour_table();
+    let anchor = core.anchor().map(|a| a.id);
+    let floor = core.busy().noise_floor_dbm();
+    crate::ble::publish_neighbours(|t| {
+        t.floor_dbm = floor.clamp(i8::MIN.into(), i8::MAX.into()) as i8;
+        t.own = match core.placed() {
+            true => core.config().position,
+            false => Position::default(),
+        };
+        t.slots = [crate::ble::Slot::EMPTY; bark_proto::tables::neighbours::NEIGHBOURS];
+        for (slot, n) in table.live(now) {
+            t.slots[slot] = crate::ble::Slot {
+                live: true,
+                neighbour: Neighbour {
+                    id: n.id,
+                    position: n.position,
+                    rssi_ddbm: ddbm(n.rssi),
+                    age_s: 0,
+                    sleepy: n.sleepy,
+                    map_point: n.map_point,
+                    demoted: table.is_demoted(n, now),
+                    banned: table.is_banned(n, now),
+                    anchor: Some(n.id) == anchor,
+                    carried: n.carried,
+                    anchorless: n.anchorless,
+                    proven: n.taken_at > Instant::ZERO,
+                },
+                heard: n.last_heard,
+            };
+        }
+    });
+}
+
 /// Publish a home's inbox, its ring's oldest unread item, with `status`.
 fn publish_home(mut status: Status) {
     let mut item = [0u8; MAX_PAYLOAD];
@@ -489,6 +526,7 @@ pub async fn run<'a>(
         let core_inbox = (status.inbox, head);
         driver.app_mut().core_inbox = core_inbox;
         let core = &driver.core().0;
+        publish_neighbours(core, now);
         crate::display::publish(screen(core, now, driver.app().battery_mv));
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.

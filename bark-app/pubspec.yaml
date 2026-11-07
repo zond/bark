@@ -39,6 +39,8 @@ dependencies:
   crypto: 3.0.8
   characters: 1.4.1
   flutter_local_notifications: 22.3.3
+  flutter_map: 8.3.2
+  latlong2: 0.10.1
   universal_ble: 3.2.0
 
   # The following adds the Cupertino Icons font to your application.

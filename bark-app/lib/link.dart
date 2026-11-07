@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 3;
+const int linkVersion = 4;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -31,6 +31,9 @@ class Uuids {
 
   /// From link version 3 (spec "Mailbox").
   static const home = '28bc0009-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 4.
+  static const neighbours = '28bc000a-a1b8-4893-9537-2ee3559d7644';
 }
 
 /// ATT error codes the node answers a write with.
@@ -438,4 +441,173 @@ class NodeHome {
       : oldest == 0
       ? 'a home, its mailbox empty'
       : 'a home, items $oldest to $newest';
+}
+
+/// The link version that has Neighbours.
+const int neighboursVersion = 4;
+
+/// Neighbours, write: read the table from this slot on.
+Uint8List encodeNeighboursFrom(int slot) => Uint8List.fromList([slot & 0xff]);
+
+/// How well a link carries a full-length frame (spec "Phone link",
+/// Neighbours).
+enum Quality { fragile, fair, good }
+
+/// The margins over the noise floor, dB, from which a link is fair and
+/// good: a full frame through a fade of one and of two standard
+/// deviations, as `bark-link` `neighbours` derives them.
+const double fairAboveFloorDb = 4.08;
+const double goodAboveFloorDb = 6.92;
+
+/// One neighbour of the node, as Neighbours gives it.
+class Neighbour {
+  static const len = nodeIdLen + Position.wireLen + 2 + 2 + 1;
+  final Uint8List id;
+  final Position position;
+
+  /// The averaged RSSI of its link, tenths of a dBm.
+  final int rssiDdbm;
+
+  /// Seconds since it was last heard.
+  final int ageS;
+  final bool sleepy;
+  final bool mapPoint;
+  final bool demoted;
+  final bool banned;
+
+  /// This sleepy node's anchor, the relay it sends and receives through.
+  final bool anchor;
+  final bool carried;
+  final bool anchorless;
+
+  /// It has taken a message from this node, so it hears this node too.
+  final bool proven;
+
+  Neighbour(
+    List<int> id,
+    this.position, {
+    required this.rssiDdbm,
+    required this.ageS,
+    this.sleepy = false,
+    this.mapPoint = false,
+    this.demoted = false,
+    this.banned = false,
+    this.anchor = false,
+    this.carried = false,
+    this.anchorless = false,
+    this.proven = false,
+  }) : id = Uint8List.fromList(id);
+
+  double get rssiDbm => rssiDdbm / 10;
+
+  Neighbour withAge(int ageS) => Neighbour(
+    id,
+    position,
+    rssiDdbm: rssiDdbm,
+    ageS: ageS,
+    sleepy: sleepy,
+    mapPoint: mapPoint,
+    demoted: demoted,
+    banned: banned,
+    anchor: anchor,
+    carried: carried,
+    anchorless: anchorless,
+    proven: proven,
+  );
+
+  int get _flags => [
+    sleepy,
+    mapPoint,
+    demoted,
+    banned,
+    anchor,
+    carried,
+    anchorless,
+    proven,
+  ].indexed.fold(0, (f, e) => f | ((e.$2 ? 1 : 0) << e.$1));
+
+  List<int> encode() => [
+    ...id,
+    ...position.encode(),
+    ..._be16(rssiDdbm & 0xffff),
+    ..._be16(ageS),
+    _flags,
+  ];
+
+  static Neighbour decode(List<int> b) {
+    bool flag(int bit) => b[nodeIdLen + Position.wireLen + 4] & (1 << bit) != 0;
+    final r = _u16(b, nodeIdLen + Position.wireLen);
+    return Neighbour(
+      b.sublist(0, nodeIdLen),
+      Position.decode(b.sublist(nodeIdLen)),
+      rssiDdbm: r >= 0x8000 ? r - 0x10000 : r,
+      ageS: _u16(b, nodeIdLen + Position.wireLen + 2),
+      sleepy: flag(0),
+      mapPoint: flag(1),
+      demoted: flag(2),
+      banned: flag(3),
+      anchor: flag(4),
+      carried: flag(5),
+      anchorless: flag(6),
+      proven: flag(7),
+    );
+  }
+
+  /// The link's quality at a node whose noise floor is `floorDbm`.
+  Quality quality(int floorDbm) {
+    final margin = rssiDbm - floorDbm;
+    if (margin >= goodAboveFloorDb) return Quality.good;
+    if (margin >= fairAboveFloorDb) return Quality.fair;
+    return Quality.fragile;
+  }
+}
+
+/// Neighbours, read: one page of the table.
+class NeighbourPage {
+  static const header = 1 + 1 + 1 + Position.wireLen;
+
+  /// Neighbours in a full page, as many as fit one PDU at [attMtu].
+  static const perPage = (attMtu - 3 - header) ~/ Neighbour.len;
+
+  /// The node's noise floor, dBm.
+  final int floorDbm;
+
+  /// The slot to write for the next page; 0 at the table's end.
+  final int next;
+
+  /// The node's own position; zero while it has none.
+  final Position own;
+  final List<Neighbour> neighbours;
+
+  const NeighbourPage(this.floorDbm, this.next, this.own, this.neighbours);
+
+  Uint8List encode() {
+    if (neighbours.length > perPage) throw const Malformed('Neighbours');
+    return Uint8List.fromList([
+      floorDbm & 0xff,
+      next,
+      Neighbour.len,
+      ...own.encode(),
+      for (final n in neighbours) ...n.encode(),
+    ]);
+  }
+
+  /// Each neighbour is as long as the value says, so that the fields a
+  /// later version appends are skipped.
+  static NeighbourPage decode(List<int> b) {
+    if (b.length < header) throw const Malformed('Neighbours');
+    final each = b[2];
+    if (each < Neighbour.len || (b.length - header) % each != 0) {
+      throw const Malformed('Neighbours');
+    }
+    return NeighbourPage(
+      b[0] >= 0x80 ? b[0] - 0x100 : b[0],
+      b[1],
+      Position.decode(b.sublist(3)),
+      [
+        for (var at = header; at < b.length; at += each)
+          Neighbour.decode(b.sublist(at, at + each)),
+      ],
+    );
+  }
 }

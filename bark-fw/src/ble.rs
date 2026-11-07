@@ -24,9 +24,11 @@
 use core::cell::RefCell;
 
 use bark_link::bond::Bond;
+use bark_link::neighbours;
 use bark_link::{
     le_bytes, seconds_left, uuid, GivenBack, Malformed, Message, Node, Status, ATT_MTU,
 };
+use bark_proto::tables::neighbours::NEIGHBOURS;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
 use bark_screen::Phone;
@@ -136,6 +138,8 @@ pub struct Link {
     pub clock: [u8; bark_link::NodeTime::LEN],
     #[characteristic(uuid = le_bytes(uuid::HOME), read, write, permissions(authenticated))]
     pub home: [u8; bark_link::home::Home::LEN],
+    #[characteristic(uuid = le_bytes(uuid::NEIGHBOURS), read, write, permissions(authenticated))]
+    pub neighbours: heapless::Vec<u8, { neighbours::MAX_LEN }>,
 }
 
 /// What the MPSL takes.
@@ -299,6 +303,9 @@ pub struct State {
     /// The message last given back and the end of its wait, until the node
     /// takes another.
     pub given_back: Option<(MsgId, Instant)>,
+    /// The slot the phone reads the table from (spec "Phone link",
+    /// Neighbours); 0 at each connection.
+    neighbours_from: u8,
     /// The phone's request, until the node answers it.
     pub request: Option<Request>,
     /// The node's answer, until the step that gave it has published what
@@ -310,6 +317,58 @@ pub struct State {
     flags: Option<u8>,
 }
 
+/// The neighbour table as the phone reads it, by slot.
+pub struct Table {
+    /// The node's noise floor, dBm.
+    pub floor_dbm: i8,
+    /// The node's own position; zero while it has no place.
+    pub own: Position,
+    /// Each slot's neighbour, if [`Slot::live`].
+    pub slots: [Slot; NEIGHBOURS],
+}
+
+/// The neighbour table as the last step left it, apart from [`LINK`],
+/// which has fields that are not zero at the start: all zeros, it takes
+/// no flash.
+static TABLE: Mutex<CriticalSectionRawMutex, RefCell<Table>> = Mutex::new(RefCell::new(Table {
+    floor_dbm: 0,
+    own: Position { lat: 0, lon: 0 },
+    slots: [Slot::EMPTY; NEIGHBOURS],
+}));
+
+/// A slot of the neighbour table; all zeros is an empty one.
+#[derive(Clone, Copy)]
+pub struct Slot {
+    /// A live neighbour is in the slot.
+    pub live: bool,
+    /// The neighbour, but its age.
+    pub neighbour: neighbours::Neighbour,
+    /// When it was last heard, which its age is read against.
+    pub heard: Instant,
+}
+
+impl Slot {
+    /// An empty slot.
+    pub const EMPTY: Slot = Slot {
+        live: false,
+        neighbour: neighbours::Neighbour {
+            id: NodeId([0; NodeId::LEN]),
+            position: Position { lat: 0, lon: 0 },
+            rssi_ddbm: 0,
+            age_s: 0,
+            sleepy: false,
+            map_point: false,
+            demoted: false,
+            banned: false,
+            anchor: false,
+            carried: false,
+            anchorless: false,
+            proven: false,
+        },
+        heard: Instant::ZERO,
+    };
+}
+
 /// The state both sides share.
 pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(RefCell::new(State {
     status: Status::EMPTY,
@@ -317,6 +376,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     inbox: None,
     ring_head: None,
     given_back: None,
+    neighbours_from: 0,
     request: None,
     answer: None,
     told: Status::EMPTY,
@@ -421,6 +481,11 @@ fn publish_inbox(status: Status, inbox: Option<(MsgId, &[u8])>) {
             given_back: false,
         });
     }
+}
+
+/// The node's side: the neighbour table after a step, which `fill` writes.
+pub fn publish_neighbours(fill: impl FnOnce(&mut Table)) {
+    TABLE.lock(|t| fill(&mut t.borrow_mut()));
 }
 
 /// The node's side: the first rotation's end, from `AppEvent::Boot`.
@@ -542,6 +607,44 @@ fn clock_now() -> [u8; bark_link::NodeTime::LEN] {
         },
     }
     .encode()
+}
+
+/// The page of the neighbour table the phone reads now: the live
+/// neighbours from the slot it wrote on, as many as fit.
+fn neighbours_now() -> heapless::Vec<u8, { neighbours::MAX_LEN }> {
+    let mut page = [neighbours::Neighbour::default(); neighbours::PER_PAGE];
+    let mut len = 0;
+    let from = LINK.lock(|l| l.borrow().neighbours_from);
+    let header = TABLE.lock(|t| {
+        let t = t.borrow();
+        let mut next = 0;
+        let live = t
+            .slots
+            .iter()
+            .enumerate()
+            .skip(usize::from(from))
+            .filter(|(_, s)| s.live);
+        for (slot, s) in live {
+            if len == page.len() {
+                next = slot as u8;
+                break;
+            }
+            let age_s = now().since(s.heard).as_micros() / 1_000_000;
+            page[len] = neighbours::Neighbour {
+                age_s: age_s.min(u64::from(u16::MAX)) as u16,
+                ..s.neighbour
+            };
+            len += 1;
+        }
+        neighbours::Header {
+            floor_dbm: t.floor_dbm,
+            next,
+            own: t.own,
+        }
+    });
+    let mut b = [0; neighbours::MAX_LEN];
+    let n = neighbours::encode(&header, &page[..len], &mut b);
+    heapless::Vec::from_slice(&b[..n]).expect("it fits")
 }
 
 fn inbox_now() -> heapless::Vec<u8, { Message::MAX_LEN }> {
@@ -705,6 +808,7 @@ async fn serve(
     }
     // What changed while no phone was connected is read, not notified.
     NOTIFY.reset();
+    LINK.lock(|l| l.borrow_mut().neighbours_from = 0);
     let link = &server.link;
     refresh(server, conn);
     loop {
@@ -810,6 +914,8 @@ async fn serve(
                     Some(write_clock(&w).await)
                 } else if h == link.home.handle {
                     Some(write_home(&w))
+                } else if h == link.neighbours.handle {
+                    Some(write_neighbours(&w))
                 } else {
                     // Not a request: the server takes it by its own rules,
                     // a subscription's descriptor above all.
@@ -946,6 +1052,7 @@ fn refresh(server: &Server<'_>, conn: &GattConnection<'_, '_, DefaultPacketPool>
         conn.set(&link.given_back, &given_back_now()).err(),
         conn.set(&link.clock, &clock_now()).err(),
         conn.set(&link.home, &home_now().encode()).err(),
+        conn.set(&link.neighbours, &neighbours_now()).err(),
     ]
     .into_iter()
     .flatten()
@@ -1034,6 +1141,16 @@ fn write_home(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorC
         "ble: home {}",
         if key.is_some() { "set" } else { "cleared" }
     );
+    Ok(())
+}
+
+/// Neighbours, written: the next read starts at this slot.
+fn write_neighbours(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+    let from = w.with_data(|offset, data| match offset {
+        0 => neighbours::decode_from(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    LINK.lock(|l| l.borrow_mut().neighbours_from = from);
     Ok(())
 }
 

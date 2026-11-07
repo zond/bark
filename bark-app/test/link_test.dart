@@ -104,7 +104,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [3, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [4, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
@@ -176,6 +176,51 @@ void main() {
       throwsA(isA<Malformed>()),
     );
     expect(() => NodeHome.decode([1]), throwsA(isA<Malformed>()));
+  });
+
+  // bark-link/src/neighbours.rs, tests `vectors`, `a_page_fills_one_pdu`,
+  // `reads_ignore_what_a_later_version_appends`, `quality_follows_the_margin`.
+  test('neighbours', () {
+    expect(NeighbourPage.perPage, 13);
+    expect(NeighbourPage.header + 13 * Neighbour.len, 244);
+    expect(encodeNeighboursFrom(7), [7]);
+    final n = Neighbour(
+      to,
+      kyiv,
+      rssiDdbm: -1105,
+      ageS: 300,
+      sleepy: true,
+      anchor: true,
+      proven: true,
+    );
+    final b = NeighbourPage(-118, 20, kyiv, [n]).encode();
+    expect(b, [
+      0x8a, 20, 18, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, //
+      1, 2, 3, 4, 5, 6, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, //
+      0xfb, 0xaf, 0x01, 0x2c, 0x91,
+    ]);
+    final p = NeighbourPage.decode(b);
+    expect((p.floorDbm, p.next, p.own), (-118, 20, kyiv));
+    final d = p.neighbours.single;
+    expect(d.id, to);
+    expect((d.position, d.rssiDdbm, d.ageS), (kyiv, -1105, 300));
+    expect((d.sleepy, d.anchor, d.proven, d.banned), (true, true, true, false));
+    // A later version's neighbour, three bytes longer, read the same.
+    final longer = [...b.sublist(0, 2), 21, ...b.sublist(3), 0xaa, 0xaa, 0xaa];
+    expect(NeighbourPage.decode(longer).neighbours.single.rssiDdbm, -1105);
+    expect(
+      () => NeighbourPage.decode(b.sublist(0, 27)),
+      throwsA(isA<Malformed>()),
+    );
+    expect(
+      () => NeighbourPage.decode(b.sublist(0, 9)),
+      throwsA(isA<Malformed>()),
+    );
+    Quality q(int r) => Neighbour(to, kyiv, rssiDdbm: r, ageS: 0).quality(-118);
+    expect(q(-1140), Quality.fragile);
+    expect(q(-1139), Quality.fair);
+    expect(q(-1112), Quality.fair);
+    expect(q(-1110), Quality.good);
   });
 
   test('a bonded phone\'s read the node refuses for want of its bond', () {
