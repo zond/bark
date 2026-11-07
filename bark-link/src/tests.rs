@@ -308,19 +308,46 @@ fn the_empty_status_is_the_default() {
 
 proptest! {
     #[test]
-    fn a_bond_round_trips(kind in 0u8..2, addr: [u8; 6], irk: Option<[u8; 16]>, ltk: [u8; 16]) {
-        let b = bond::Bond { kind, addr, irk, ltk };
+    fn a_bond_round_trips(
+        kind in 0u8..2,
+        addr: [u8; 6],
+        irk: Option<[u8; 16]>,
+        ltk: [u8; 16],
+        seen: u8,
+        service_changed: bool,
+    ) {
+        let b = bond::Bond { kind, addr, irk, ltk, seen, service_changed };
         prop_assert_eq!(bond::Bond::from_record(&b.record()), Some(b));
     }
 
     #[test]
     fn a_bond_cut_short_is_none(addr: [u8; 6], ltk: [u8; 16], words in 0usize..16) {
-        let b = bond::Bond { kind: 1, addr, irk: None, ltk };
+        let b = bond::Bond { kind: 1, addr, irk: None, ltk, seen: VERSION, service_changed: true };
         let mut r = b.record();
         // Flash erased to ones past the last word written.
         r[words * 4..].fill(0xff);
         prop_assert_eq!(bond::Bond::from_record(&r), None);
     }
+}
+
+/// A record written before the bond kept the seen version and the
+/// subscription has zeros there: a phone that saw no version and has not
+/// subscribed.
+#[test]
+fn an_older_bond_saw_no_version() {
+    let b = bond::Bond {
+        kind: 1,
+        addr: [1; 6],
+        irk: None,
+        ltk: [2; 16],
+        seen: 0,
+        service_changed: false,
+    };
+    let mut r = b.record();
+    assert_eq!(r[9..16], [0; 7]);
+    assert_eq!(bond::Bond::from_record(&r), Some(b));
+    r[10] = 2;
+    assert_eq!(bond::Bond::from_record(&r), None);
 }
 
 #[test]
