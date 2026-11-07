@@ -237,6 +237,15 @@ class Received {
   );
 }
 
+/// The node's neighbour table: its noise floor, its own position, zero
+/// while it has none, its neighbours, and when it was read.
+typedef NeighbourTable = ({
+  int floorDbm,
+  Position own,
+  List<Neighbour> list,
+  DateTime at,
+});
+
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
 
@@ -280,6 +289,15 @@ class Session extends ChangeNotifier {
 
   /// The node's Home as last read, from link version 3.
   NodeHome? nodeHome;
+
+  /// The node's neighbour table as last read, from link version 4.
+  NeighbourTable? neighbours;
+  Future<NeighbourTable>? _readingNeighbours;
+  final _statusSeen = StreamController<Status>.broadcast();
+
+  /// Each status the node gives, read or notified: when what it knows
+  /// may have changed.
+  Stream<Status> get statusSeen => _statusSeen.stream;
   DateTime? _statusAt;
 
   /// The last thing worth telling the person.
@@ -485,6 +503,36 @@ class Session extends ChangeNotifier {
     return nodeHome!;
   }
 
+  /// Reads the node's neighbour table, page by page (spec "Phone link",
+  /// Neighbours); a read asked for while one runs gets that one.
+  Future<NeighbourTable> readNeighbours() => _readingNeighbours ??=
+      _readNeighbours().whenComplete(() => _readingNeighbours = null);
+
+  Future<NeighbourTable> _readNeighbours() async {
+    final link = _link;
+    final n = node;
+    if (link == null || n == null) throw StateError('not connected');
+    if (n.version < neighboursVersion) {
+      throw StateError('no Neighbours before link version $neighboursVersion');
+    }
+    final list = <Neighbour>[];
+    var slot = 0;
+    NeighbourPage page;
+    do {
+      await link.setNeighboursFrom(slot);
+      page = await link.readNeighbours();
+      list.addAll(page.neighbours);
+      // 0 ends the table. Slots only grow, so a node that named one
+      // already read would otherwise loop.
+      if (page.next <= slot) break;
+      slot = page.next;
+    } while (true);
+    final t = (floorDbm: page.floorDbm, own: page.own, list: list, at: now());
+    if (_link == link) neighbours = t;
+    note('Neighbours: ${list.length}, noise floor ${t.floorDbm} dBm');
+    return t;
+  }
+
   /// Gives the node the phone's time and UTC offset, silently: a node
   /// without them only shows no time.
   Future<void> _setClock(NodeLink link) async {
@@ -515,6 +563,7 @@ class Session extends ChangeNotifier {
     givenBack = null;
     nodeTime = null;
     nodeHome = null;
+    neighbours = null;
     note('Disconnected');
   }
 
@@ -525,6 +574,7 @@ class Session extends ChangeNotifier {
     );
     status = s;
     _statusAt = now();
+    _statusSeen.add(s);
     notifyListeners();
     if (s.inbox > 0) _drain();
     _pump();
@@ -755,6 +805,7 @@ class Session extends ChangeNotifier {
     for (final s in _subs) {
       s.cancel();
     }
+    _statusSeen.close();
     super.dispose();
   }
 }
