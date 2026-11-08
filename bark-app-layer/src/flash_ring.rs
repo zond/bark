@@ -36,8 +36,8 @@ const _: () = assert!(CHECK_AT + 4 <= RECORD_LEN);
 /// Ops queued at most. The mailbox queues at most three at a time: an
 /// erase and a slot's write, or a mark and the state's erase and write;
 /// the driver does them before it hands the mailbox the next message, so
-/// this is room for a phone's write between.
-pub const OPS: usize = 8;
+/// twice that is room for a phone's confirmation, three more, between.
+pub const OPS: usize = 2 * 3;
 
 /// A region's flash, read when asked; offsets from its start.
 pub trait Region {

@@ -86,6 +86,14 @@ abstract class NodeLink {
   Future<bool> readPublic();
   Future<void> setPublic(bool public);
 
+  /// Link version 8 and later, on a guest's link: Guest, after which
+  /// [readGuest] gives the oldest item with the phone's tag.
+  Future<void> setGuestAfter(int number);
+
+  /// Inbox as a guest's link gives it, in the Guest form; a guest does
+  /// not confirm (spec "Phone link", Public).
+  Future<GuestItem?> readGuest();
+
   /// Asks for the shortest connection interval, for a transfer; where
   /// the platform chooses the interval itself, nothing.
   Future<void> hurry();

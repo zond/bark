@@ -3059,7 +3059,7 @@ service and its characteristics:
 | Node | `28bc0002-…` | read | version(1) id(6) image(4) | 11 |
 | Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) | 14 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
-| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none | 0, 4–231 |
+| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
 | | | write | msg_id(4) | 4 |
 | Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
 | Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
@@ -3074,6 +3074,7 @@ service and its characteristics:
 | Image | `28bc000c-…` | write, write without response | offset(4) bytes(1–240) | 5–244 |
 | Recipient | `28bc000d-…` | write | tag(1) | 1 |
 | Public | `28bc000e-…` | read, write | public(1) | 1 |
+| Guest | `28bc000f-…` | write | number(3) | 3 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -3085,7 +3086,7 @@ which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 7 in this specification; the node's ID, the
+**Node.** The link version, 8 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3355,42 +3356,48 @@ On a public node:
   attribute has: an app finds the public nodes in reach in a scan,
   without connecting. The scan response is as before. The node
   advertises while it has a link free.
-- *Node, Status, Send, Inbox, Given back and Recipient* take any link,
-  encrypted or not, and so do the subscriptions to Status and Given
-  back; Map point, Clock, Home, Neighbours, Update, Image and
+- *Node, Status, Send, Inbox, Given back, Recipient and Guest* take
+  any link, encrypted or not, and so do the subscriptions to Status and
+  Given back; Map point, Clock, Home, Neighbours, Update, Image and
   Public stay the paired phone's, as on any node.
-- *It takes 3 links at once*, the owner's and two guests'. Made
-  private again, it closes its guests' links.
-- *Each phone writes its recipient tag at the node to Recipient* as it
-  connects (The payload, below), and the node hands each message it
-  receives for its application by the tag in the payload's second
-  byte: to every guest connected whose tag it is, and to the owner,
-  when it is the owner's tag, or when the bond holds none yet; on a
-  node nobody has paired with nothing is the owner's. The
-  paired phone's tag is kept with the bond, so the owner's messages are
-  placed while the owner is away. The owner's inbox is the ring, as a
-  home's ([mailbox](#mailbox)), whether or not the node is a home: the
-  ring keeps what the owner has not read across guests and reboots,
-  and never refuses. A message for a guest waits in the node's inbox
-  until that guest confirms it (Receiving): a guest's Inbox reads it,
-  and Status's count, as the guest reads it, is 1 while one waits for
-  it, else 0. Messages behind it wait for it, as the inbox is one queue
-  and a guest connected reads at once. A message the node cannot place,
-  for no phone connected and not the owner's, it takes and drops: the
-  network has delivered it, as one to a carried node's old address is.
-  So a reply that arrives after its guest's link has ended is lost; the
-  owner's is kept. A message given back to a guest whose link has ended
-  is dropped too.
+- *It takes 2 links*, the owner's and one guest's, and keeps no state
+  for a guest beyond its link. A guest's link is short: the guest
+  connects, writes its recipient tag at the node to Recipient (The
+  payload, below), sends what it has, reads what waits for it, and
+  leaves, so that any number of guests share the one link in turn. The
+  node ends a guest's link 30 s after it began, the ATT transaction's
+  timeout (Vol 3 Part F §3.3.3), longer than a guest's errand; a phone
+  that is not the owner's and writes Recipient while another guest's
+  link is up is closed at once, as the other link is the owner's to
+  take. Made private again, the node closes the guest's link.
+- *Every message for the node's application goes into the ring*, the
+  one a home keeps ([mailbox](#mailbox)), whether or not the node is a
+  home, with the recipient tag it carries in the payload's second
+  byte. The owner's, those with the owner's tag, kept with the bond, or
+  every one while the bond holds none yet, are the owner's inbox, read
+  through Inbox as a home's are; on a node nobody has paired with none
+  is. The rest are the guests': each is written as sent, so no fetch of
+  the owner's sends it and the owner's counts pass over it, and it
+  leaves the ring only as the ring wraps, as the owner's do. A guest
+  reads its own through Inbox, after the number of the last item it
+  took, which it writes to Guest, 0 at first: a read gives the oldest
+  item after it with the guest's tag, its number, the message ID it
+  arrived with and the payload, or nothing; a number above the newest
+  item's, from before the ring began again, counts as 0. The guest keeps the number,
+  for each node; it confirms nothing, as reading takes nothing from the
+  ring, and a write to Inbox on its link is answered 0x13. A guest that was away reads
+  what came meanwhile, as long as the ring holds it.
 - *Phones take turns at the one message the node holds for them*
   (Sending; [receiving DATA](#receiving-data)), and the turn is Ready:
   the node sets it, while it takes a message, for one phone at a time.
-  The turn goes to the next phone connected, in the order of their
-  links, when the node takes the message of the phone that has it, when
-  that phone's link ends, or when that phone has had Ready for a ban
-  without writing ([bans](#bans): 1.58 s, the shortest wait the
-  protocol tells). A Send from a phone whose turn it is not is answered
-  0x80, not ready, as on any node; an app writes only while Ready is set,
-  so only one that does not keep to that meets it.
+  The turn goes to the other phone connected when the node takes the
+  message of the phone that has it, when that phone's link ends, or
+  when that phone has had Ready for a ban without writing
+  ([bans](#bans): 1.58 s, the shortest wait the protocol tells). A Send
+  from a phone whose turn it is not is answered 0x80, not ready, as on
+  any node; an app writes only while Ready is set, so only one that does
+  not keep to that meets it. A message given back to a guest whose link
+  has ended is dropped: the guest's app still holds it, as taken.
 
 *Why the public node's UUID, not a flag beside the service's.* The 10
 bytes the advertisement has left beside the flags and the service's
@@ -3402,25 +3409,28 @@ takes 19 bytes. A second UUID costs no byte, and both phone systems
 filter a scan by service UUID in the controller, where a flag would be
 read only by the app.
 
-*Why 3.* A link costs 5.6 KB of static RAM, measured: the controller's
-2.4 KB by `sdc.h`'s formulas, the host's 1.2 KB, and the task that
-serves it, 1.9 KB. All of it comes out of the stack, which with 3 links
-keeps 17.9 KB against the 11.8 KB of the deepest poll of any task, the
-phone link's set-up, by the disassembly, which does not follow calls
-through pointers; the 6 KB between are for those and the interrupts. A
-fourth link would leave 12.4 KB, less than the 14.2 KB that set-up then
-takes (roadmap D150).
+*Why one guest's link, and short.* The radio stack's RAM per link is
+the cost, 5.6 KB of static RAM measured: the controller's 2.4 KB by
+`sdc.h`'s formulas, the host's 1.2 KB, and the task that serves it,
+1.9 KB, all of it out of the stack, which must keep 24 KiB, the most the
+boards have used and a margin (`bark-fw/README.md`, "Tasks and the
+stack"). With 2 links it keeps 24.1 KiB; a third left 14.6 KiB, and two
+boards with it faulted at boot (roadmap D150). A link held open buys a
+guest nothing the ring does not: the ring already holds mail for a phone
+that is away, as it does the owner's, so a guest needs a link only for
+its errand.
 
-*Why every guest whose tag it is, and the owner's too.* A tag is one
-byte (The payload, below), so two phones at a node may share one; each
-then reads the other's message too, fails to open it and drops it,
-which costs a read. Handed to one of them, the other would lose it.
+*Why the ring, by tag.* The tag says whose a message is without opening
+it, and the ring keeps it in flash until it wraps whether its phone is
+there or not, across reboots; the guest's number says what it has read,
+so the node keeps nothing per guest. The core's inbox, one queue for
+the application, would hold every message behind one for a guest who
+is away.
 
-*Why the tag, and not a guest's inbox per link.* The node's inbox is
-the core's, one queue for its application ([receiving
-DATA](#receiving-data)); what the node cannot place it must not keep,
-or a guest's mail would fill the room of those who are there. The tag
-tells the node at once whose a message is without opening it.
+*Why Inbox, with a number written to Guest.* A guest's mail is its
+inbox, read as the owner's is; it carries the item's number, which the
+guest writes back to read on. A readable value of its own would cost
+its room in RAM again, 235 B, which the stack's floor does not leave.
 
 *Why the turn is Ready.* One message at a time is the node's rule for
 its application ([receiving DATA](#receiving-data)), and Ready is
@@ -3468,8 +3478,8 @@ destination's node ID to 16 bytes, its shortest output, keyed with the
 recipient's identity; in the clear. A boxed payload or an introduction
 carries its recipient's tag at the node it is sent to, a fetch the
 requester's at its home node, and a reply the one the fetch asks for. A
-public node hands a payload to the phones whose tag it carries (Public,
-above); every other node and every app ignores it.
+public node keeps a payload in its ring for the phone whose tag it
+carries (Public, above); every other node and every app ignores it.
 
 *Why keyed with the identity, over the node.* Only someone who holds
 the recipient's card can make the tag, and it differs from node to
@@ -3478,12 +3488,12 @@ node, which their destination address already groups by node.
 
 *Why one byte.* A phone handed a payload that is not its own fails to
 open it and drops it (Public, above), so a wrong match costs a read
-and a failed open, not a message. The phones that can match at once are
-those on one node, at most two guests and the owner, so a payload for
-one of them matches another with odds of at most 2 in 256, 0.8 %, and
-one for nobody there is taken by a guest as often; a second byte would
-make that rarer at a byte on every message, and would tie a person's
-payloads at a node together more surely. A boxed payload names no sender: the receiver tries the key of
+and a failed open, not a message. A node's ring holds the mail of its
+owner and of its guests, read by tag: the owner's inbox passes over a guest's item unless the
+tags match, and a guest reads, beside its own, the items of anyone whose
+tag at the node is the same, each other person's with odds of 1 in 256,
+0.4 %; a second byte would make that rarer at a byte on every message,
+and would tie a person's payloads at a node together more surely. A boxed payload names no sender: the receiver tries the key of
 each contact, `crypto_box_beforenm` of each made once, until one opens
 it. An introduction carries the sender's card; its sender is shown as
 unverified until a boxed payload from that identity opens. It is used
@@ -3597,7 +3607,9 @@ so it cannot read the messages it keeps (roadmap D128;
 
 **The ring.** The home node keeps every payload delivered to its node ID
 but a fetch in a ring of slots in flash, numbered from 1, and erases the
-oldest page when the ring is full; an item leaves the ring only so. The
+oldest page when the ring is full; an item leaves the ring only so. A
+public node keeps its guests' payloads there too, written as sent
+([phone link](#phone-link), Public). The
 board's ring holds 1024 items (roadmap D139). A slot's mark says that
 its item has been sent; it is cleared without an erase, so the item
 stays. Its phone link's inbox reads from the ring, and an item the phone

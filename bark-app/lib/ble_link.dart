@@ -459,6 +459,14 @@ class BleLink implements NodeLink {
       _write(Uuids.public, encodePublic(public));
 
   @override
+  Future<void> setGuestAfter(int number) =>
+      _write(Uuids.guest, encodeAfter(number));
+
+  @override
+  Future<GuestItem?> readGuest() async =>
+      GuestItem.decode(await _read(Uuids.inbox));
+
+  @override
   Future<UpdateProgress> readUpdate() async =>
       UpdateProgress.decode(await _read(Uuids.update));
 

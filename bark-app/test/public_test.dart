@@ -1,9 +1,11 @@
 // A public node (spec "Phone link", Public), against the fake: the owner
 // writes its recipient tag and sets Public; a guest's link takes nothing
 // that needs the bond, and the app's guest touches nothing of it; the
-// node hands each phone only the messages with its tag, keeps the
-// owner's, and drops what it can place with nobody; and phones take
-// turns at the one message it holds, the turn being Ready.
+// owner's messages go to its inbox and the rest to the ring, which a
+// guest reads by its tag after the number it keeps for the node, across
+// links and restarts, reading taking nothing; one guest's link at a time,
+// ended after 30 s; and the owner and a guest take turns at the one
+// message it holds, the turn being Ready.
 
 import 'dart:typed_data';
 
@@ -91,6 +93,8 @@ void main() {
       ]) {
         expect(closed(), refused(AttError.insufficientAuthentication));
       }
+      // A guest's items stay in the ring: no confirming.
+      expect(g.confirm(1), refused(AttError.valueNotAllowed));
       async.flushMicrotasks();
     });
   });
@@ -119,13 +123,10 @@ void main() {
     });
   });
 
-  test('each phone gets the messages with its tag; the owner\'s are kept '
-      'while it is away; what is no one\'s is dropped', () {
+  test('the owner\'s messages go to its inbox, the rest to the ring; a '
+      'guest reads its tag\'s after its number, which it keeps for the node '
+      'across links and restarts; reading takes nothing', () {
     run((async, owner, guest, node) {
-      node.public = true;
-      final g = node.connectGuest();
-      guest.session.attach(g, guest: true);
-      async.flushMicrotasks();
       final nobody = {for (var t = 0; t < 256; t++) t}
           .difference({tagOf(owner), tagOf(guest)})
           .first;
@@ -134,30 +135,83 @@ void main() {
       node.deliver(payloadFor(nobody, 3));
       node.deliver(payloadFor(tagOf(guest), 4));
       async.flushMicrotasks();
-      expect(guest.session.received.map((r) => r.payload[2]), [1, 4]);
       expect(owner.session.received.last.payload[2], 2);
-      expect(node.dropped, 1);
-      // The owner away, its message waits; the guest gone, its own is
-      // dropped.
-      owner.session.disconnect();
+      expect(node.ring.map((i) => i.message.payload[2]), [1, 3, 4]);
+      List<int> got(Phone p) => [
+        for (final r in p.session.received) r.payload[2],
+      ];
+      final key = hex(FakeNode.id);
+
+      guest.session.attach(node.connectGuest(), guest: true);
+      async.flushMicrotasks();
+      expect(got(guest), [1, 4]);
+      expect(guest.session.guestRead, isTrue);
+      // Items 3 and 6 by number: the fake friend's first two took 1 and
+      // 2, the owner's 4, and reading took nothing from the ring.
+      expect(guest.session.guestAfter[key], node.ring.last.number);
+      expect(node.ring, hasLength(3));
       guest.session.disconnect();
       async.flushMicrotasks();
-      node.deliver(payloadFor(tagOf(owner), 5));
-      node.deliver(payloadFor(tagOf(guest), 6));
-      expect(node.dropped, 2);
-      owner.session.attach(node.connect());
+
+      // Away, a new one comes; the restarted app reads only it.
+      node.deliver(payloadFor(tagOf(guest), 5));
+      final again = guest.again(sodium, () => start.add(async.elapsed));
       async.flushMicrotasks();
-      expect(owner.session.received.last.payload[2], 5);
+      expect(again.session.guestAfter[key], guest.session.guestAfter[key]);
+      again.session.attach(node.connectGuest(), guest: true);
+      async.flushMicrotasks();
+      expect(got(again), [1, 4, 5]);
+      again.session.disconnect();
+      async.flushMicrotasks();
+      again.session.dispose();
     });
   });
 
-  test('the turn is Ready: one phone at a time, in link order; it passes '
-      'when the node takes its message, after a ban unused, or when its '
-      'link ends', () {
+  test('a ring restarted: a number above its newest reads from the start', () {
     run((async, owner, guest, node) {
-      node.public = true;
-      final g1 = node.connectGuest(), g2 = node.connectGuest();
-      final links = <NodeLink>[node, g1, g2];
+      final key = hex(FakeNode.id);
+      guest.session.guestAfter[key] = 50;
+      node.restartRing();
+      node.deliver(payloadFor(tagOf(guest), 1));
+      expect(node.ring.single.number, 1);
+      guest.session.attach(node.connectGuest(), guest: true);
+      async.flushMicrotasks();
+      expect([for (final r in guest.session.received) r.payload[2]], [1]);
+      expect(guest.session.guestAfter[key], 1);
+      expect(guest.session.guestRead, isTrue);
+    });
+  });
+
+  test('one guest\'s link at a time: a second is closed at its Recipient; '
+      'a guest\'s link ends after 30 s', () {
+    run((async, owner, guest, node) {
+      final first = node.connectGuest();
+      guest.session.attach(first, guest: true);
+      async.flushMicrotasks();
+      final other = Phone(sodium, () => start.add(async.elapsed));
+      async.flushMicrotasks();
+      final second = node.connectGuest();
+      var closed = false;
+      second.closed.then((_) => closed = true);
+      other.session.attach(second, guest: true);
+      async.flushMicrotasks();
+      expect(closed, isTrue);
+      expect(other.session.connected, isFalse);
+      expect(guest.session.connected, isTrue);
+      expect(node.guests, [first]);
+      async.elapse(FakeNode.guestLinkTime);
+      expect(guest.session.connected, isFalse);
+      expect(node.guests, isEmpty);
+      other.session.dispose();
+    });
+  });
+
+  test('the turn is Ready: the owner\'s or the guest\'s; it passes when the '
+      'node takes its message, after a ban unused, or when its link '
+      'ends', () {
+    run((async, owner, guest, node) {
+      final g = node.connectGuest();
+      final links = <NodeLink>[node, g];
       List<bool?> ready() {
         final r = List<bool?>.filled(links.length, null);
         for (final (i, l) in links.indexed) {
@@ -169,29 +223,31 @@ void main() {
 
       Uint8List send(int n) => encodeSend(there, payloadFor(tagOf(owner), n));
       // The owner's link came first: its turn.
-      expect(ready(), [true, false, false]);
+      expect(ready(), [true, false]);
       // Out of turn: not ready.
       Object? failed;
-      g1.send(send(1)).then<void>((_) {}, onError: (Object e) => failed = e);
+      g.send(send(1)).then<void>((_) {}, onError: (Object e) => failed = e);
       async.flushMicrotasks();
       expect(failed, isA<AttException>().having((e) => e.code, 'code', 0x80));
-      // The owner sits on it for a ban: the next link's turn.
+      // The owner sits on it for a ban: the guest's turn.
       async.elapse(FakeNode.ban);
-      expect(ready(), [false, true, false]);
+      expect(ready(), [false, true]);
       // Taken: the turn passes, and Ready comes back once the node takes
       // a message again.
       var taken = false;
-      g1.send(send(2)).then((_) => taken = true);
+      g.send(send(2)).then((_) => taken = true);
       async.flushMicrotasks();
       expect(taken, isTrue);
-      expect(ready(), [false, false, false]);
+      expect(ready(), [false, false]);
       async.elapse(FakeNode.handOver);
-      expect(ready(), [false, false, true]);
-      // Its link ends: the turn goes on, round to the owner's.
-      g2.close();
+      expect(ready(), [true, false]);
+      // The owner sits on it again, and the guest's link ends: back.
+      async.elapse(FakeNode.ban);
+      expect(ready(), [false, true]);
+      g.close();
       links.removeLast();
       async.flushMicrotasks();
-      expect(ready(), [true, false]);
+      expect(ready(), [true]);
     });
   });
 }

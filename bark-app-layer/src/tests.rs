@@ -653,6 +653,78 @@ mod mailbox {
         assert_eq!(m.arrive(MsgId(4), b"c"), Arrival::NotHome);
     }
 
+    /// A payload of the format's version for the recipient tag `tag`.
+    fn tagged(tag: u8, i: u8) -> Vec<u8> {
+        std::vec![seal::Form::Boxed.format(), tag, i, i, i]
+    }
+
+    #[test]
+    fn a_public_node_keeps_guests_mail_by_tag_apart_from_the_owner_s() {
+        use crate::mailbox::Owner;
+        let mut m = Mailbox::new(RamRing::<32>::new());
+        m.set_public(true);
+        m.set_key(Some(fixture().alice.mailbox));
+        m.set_owner(Owner::Tag(1));
+        for (i, tag) in [(1u8, 1u8), (2, 5), (3, 6), (4, 1), (5, 5)] {
+            assert_eq!(
+                m.arrive(MsgId(i.into()), &tagged(tag, i)),
+                Arrival::Kept(i.into())
+            );
+        }
+        // The owner's inbox: items 1 and 4 alone.
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.unread_count(), 2);
+        assert_eq!(m.unread(&mut out).map(|u| u.0), Some(1));
+        m.confirm_read(1);
+        assert_eq!(m.unread(&mut out).map(|u| u.0), Some(4));
+        assert_eq!(m.unread_count(), 1);
+        // A guest reads its own after the number it keeps, and reading
+        // takes nothing.
+        assert_eq!(m.for_tag(5, 0, &mut out).map(|u| u.0), Some(2));
+        assert_eq!(&out[..5], &tagged(5, 2)[..]);
+        assert_eq!(m.for_tag(5, 2, &mut out).map(|u| u.0), Some(5));
+        assert_eq!(m.for_tag(5, 5, &mut out), None);
+        assert_eq!(m.for_tag(5, 0, &mut out).map(|u| u.0), Some(2));
+        assert_eq!(m.for_tag(6, 0, &mut out).map(|u| u.0), Some(3));
+        assert_eq!(m.for_tag(9, 0, &mut out), None);
+        // A number from before the ring began again reads as 0.
+        assert_eq!(m.for_tag(5, 900, &mut out).map(|u| u.0), Some(2));
+        // A fetch sends the owner's alone: the guests' are written sent.
+        assert_eq!(m.unsent(), 1);
+        let f = fetch(&fixture().alice.mailbox, 50);
+        assert_eq!(m.arrive(MsgId(9), &f), Arrival::Fetch);
+        assert_eq!(numbers(&drain(&mut m, 50)), [4]);
+    }
+
+    #[test]
+    fn a_node_nobody_owns_keeps_everything_for_guests() {
+        use crate::mailbox::Owner;
+        let mut m = Mailbox::new(RamRing::<32>::new());
+        m.set_public(true);
+        m.set_owner(Owner::Nobody);
+        assert_eq!(m.arrive(MsgId(1), &tagged(3, 1)), Arrival::Kept(1));
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!((m.unread_count(), m.unread(&mut out)), (0, None));
+        assert_eq!(m.for_tag(3, 0, &mut out).map(|u| u.0), Some(1));
+    }
+
+    #[test]
+    fn a_guest_s_item_leaves_only_as_the_ring_wraps() {
+        use crate::mailbox::Owner;
+        // Two pages of 16.
+        let mut m = Mailbox::new(RamRing::<32>::new());
+        m.set_public(true);
+        m.set_owner(Owner::Nobody);
+        for i in 1..=32u8 {
+            m.arrive(MsgId(i.into()), &tagged(7, i));
+        }
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.for_tag(7, 0, &mut out).map(|u| u.0), Some(1));
+        m.arrive(MsgId(33), &tagged(7, 33));
+        // The page of 1 to 16 made room.
+        assert_eq!(m.for_tag(7, 0, &mut out).map(|u| u.0), Some(17));
+    }
+
     fn numbers(got: &[Got]) -> Vec<u32> {
         got.iter()
             .map(|g| match g {
@@ -1219,6 +1291,53 @@ mod flash_ring {
         assert!(cuts > 1000, "{cuts}");
         let m = flash.open();
         assert_eq!((m.newest(), m.unread_count()), (40, 10));
+    }
+
+    /// A guest's item cut short by a power cut is not read; written whole,
+    /// it is read after the reboot, by the number the guest keeps.
+    #[test]
+    fn a_cut_between_a_guest_s_write_and_its_read() {
+        use crate::mailbox::Owner;
+        let payload = std::vec![crate::seal::Form::Boxed.format(), 5, 1, 2, 3];
+        let mut ops = Vec::new();
+        {
+            let view = Flash::erased();
+            let mut m = view.open();
+            m.set_public(true);
+            m.set_owner(Owner::Nobody);
+            assert_eq!(m.arrive(MsgId(1), &payload), Arrival::Kept(1));
+            ops.extend(take_ops(&mut m));
+        }
+        let write = ops.iter().position(|o| {
+            matches!(
+                o,
+                Op::Write {
+                    area: Area::Ring,
+                    ..
+                }
+            )
+        });
+        let write = write.expect("the slot's write");
+        let mut b = [0u8; MAX_PAYLOAD];
+        for cut in (0..ops[write].data().len()).step_by(8) {
+            let mut f = Flash::erased();
+            for op in &ops[..write] {
+                f.apply(op, None);
+            }
+            f.apply(&ops[write], Some(cut));
+            assert_eq!(f.open().for_tag(5, 0, &mut b), None, "cut {cut}");
+        }
+        let mut f = Flash::erased();
+        for op in &ops {
+            f.apply(op, None);
+        }
+        let m = f.open();
+        assert_eq!(
+            m.for_tag(5, 0, &mut b).map(|u| (u.0, u.1)),
+            Some((1, MsgId(1)))
+        );
+        assert_eq!(&b[..payload.len()], &payload[..]);
+        assert_eq!(m.for_tag(5, 1, &mut b), None);
     }
 
     /// A mark is a write of one byte over a written slot: it is kept

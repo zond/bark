@@ -69,6 +69,20 @@ FoundNode? chooseNode(
   return best;
 }
 
+/// How often the app reads a public node's ring for the person's mail
+/// while it has nothing to send, short of the paired node: a minute, the
+/// span the spec takes for a person on foot to stay within a relay's reach
+/// ("Where a text goes", Why a minute), which a sender's app takes as how
+/// long a reply should go to where the person wrote from; a reply that
+/// came there is thus read within about as long as it was aimed there.
+/// Four of the search's rounds of 15 s, so it costs the phone no scan
+/// more within Android's five in 30 s. The node pays for it in its one
+/// guest link: an errand of a few seconds, say 5, a minute takes a
+/// twelfth of the link, so a few phones in reach seldom meet there, and
+/// one that does is closed and tries next round. Mail waits in the ring
+/// meanwhile, so a longer interval delays it and loses nothing.
+const Duration guestCheck = Duration(minutes: 1);
+
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
   final Me me;
@@ -408,11 +422,49 @@ class AppModel extends ChangeNotifier {
     await _connectGuest(n);
   }
 
-  Future<void> _connectGuest(FoundNode n) => _open(n.deviceId, () async {
-    await _searchStopped();
-    await stopScan();
-    return BleLink.connect(n.deviceId, name: n.name, guest: true);
-  }, guest: true);
+  /// A guest's errand at `n`: connect without pairing, write the tag and
+  /// read the ring's items for the person ([Session.attach]), send what
+  /// waits while Ready comes, and leave, as the node shares its one guest
+  /// link among every guest in reach (spec "Phone link", Public).
+  Future<void> _connectGuest(FoundNode n) async {
+    await _open(n.deviceId, () async {
+      await _searchStopped();
+      await stopScan();
+      return BleLink.connect(n.deviceId, name: n.name, guest: true);
+    }, guest: true);
+    if (!session.connected || !session.guest) return;
+    if (session.guestRead) _guestChecked[n.name] = now();
+    await _sent();
+    if (session.connected && session.guest) await session.disconnect();
+  }
+
+  /// Completes once nothing waits to be offered to the node, or the link
+  /// has ended: the node ends a guest's after 30 s, or at once when
+  /// another guest has it, and the next round tries again.
+  Future<void> _sent() async {
+    final done = Completer<void>();
+    void check() {
+      if (!done.isCompleted && (!session.connected || !session.toSend)) {
+        done.complete();
+      }
+    }
+
+    session.addListener(check);
+    check();
+    await done.future;
+    session.removeListener(check);
+  }
+
+  /// When each public node was last read through, by name.
+  final Map<String, DateTime> _guestChecked = {};
+
+  /// Whether a public node is due a guest's errand: something waits to be
+  /// sent, or its ring has not been read for [guestCheck].
+  bool _guestDue(FoundNode n) {
+    if (session.toSend) return true;
+    final at = _guestChecked[n.name];
+    return at == null || now().difference(at) >= guestCheck;
+  }
 
   Future<void> _connect(FoundNode n, {bool again = false}) async {
     final s = session;
@@ -532,12 +584,10 @@ class AppModel extends ChangeNotifier {
   String? get pairedNode => session.pairingLost ? null : session.pairedWith;
 
   /// Whether the search runs: not once the person stopped it, nor with the
-  /// fake node in use; while not connected, and while connected as a
-  /// guest with a paired node to move to.
+  /// fake node in use, nor on the paired node.
   bool get searchOn {
     if (!_searchStarted || fake || session.stopped) return false;
-    if (!session.connected) return true;
-    return session.guest && pairedNode != null;
+    return !session.connected || session.guest;
   }
 
   /// The paired node while the search runs; null without one, when it
@@ -620,7 +670,7 @@ class AppModel extends ChangeNotifier {
             : null;
         if (n != null && n.name == paired) {
           await _connectFound(n);
-        } else if (n != null) {
+        } else if (n != null && _guestDue(n)) {
           await _connectPublic(n);
         }
         if (!_awake()) break;
@@ -663,7 +713,10 @@ class AppModel extends ChangeNotifier {
   /// Connects to the public node the search found, as a guest; a failure
   /// waits for the next round, which takes the strongest again.
   Future<void> _connectPublic(FoundNode n) async {
-    session.note('Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting');
+    session.note(
+      'Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting '
+      '${session.toSend ? 'to send' : 'for mail'}',
+    );
     try {
       await _connectGuest(n);
     } catch (e) {

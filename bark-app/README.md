@@ -29,7 +29,8 @@ is a prototype for the bench, not the app people will carry.
 - **Conversations**, the first screen. One row a conversation, newest
   first, with the last text and, for a sent one, its state. A line at
   the top says whether a node is connected, "Connected to bark-… as a
-  guest" on a public node that is not yours, and, when none is, which
+  guest" during an errand at a public node that is not yours, and, when
+  none is, which
   node the phone is paired with or that it is no longer yours (next
   section); tapping it opens Settings.
   The pen button starts a conversation from the contacts. With a home
@@ -171,29 +172,55 @@ another UUID in place of the service's, and a private one the
 service's, so a scan tells them apart without connecting; the app takes
 a node as public unless its advertisement says it is private. A guest
 connects without pairing and touches only what a guest may: Node,
-Status, Send, Inbox, Given back and Recipient. It does not set the
+Status, Send, Inbox, Given back, Recipient and Guest. It does not set the
 clock, read Home or Public, set the map point, read the neighbours or
 update the firmware, and Settings and the map hide those: Android may
 start a pairing by itself when the node refuses a read for want of the
 bond. On every connection to a node of link version 7 or later, the
 owner's or a guest's, the app first writes the person's recipient tag
-at that node to Recipient, before it reads the inbox: a public node
-hands each phone only the messages that carry its tag, and keeps the
-owner's for when the owner comes back. The phones on a public node take
+at that node to Recipient. A public node keeps every message that is
+not its owner's in its ring, with the tag it carries, whether or not
+its guest is there, until the ring wraps; it keeps nothing for a guest
+beyond its link.
+
+**A guest's errand.** A public node takes one guest's link at a time
+beside its owner's and ends it after 30 s, so a guest does not stay. It
+connects, writes its tag, and reads its mail: it writes to Guest the
+number of the last item it took from that node, 0 the first time, and
+reads Inbox, which on a guest's link gives the oldest item after it
+with the guest's tag, its number, message ID and payload, or nothing.
+It keeps the item, writes its number, and reads again, until nothing
+comes. Reading takes nothing from the ring. The app keeps the last
+number for each node, by node ID, with the queue, so after a restart,
+or a week away, it reads only what came since, as long as the ring
+holds it; a node whose ring has restarted reads a number above its
+newest as 0, so the app takes whatever number comes. Then it sends what
+waits while Ready comes, one message each
+time the node takes one, and leaves. The phones on a public node take
 turns at the one message it holds, and the turn is Ready: the node sets
 it for one phone at a time, so the app's queue waits for Ready as on
-any node. A reply that reaches a public node after its
-guest has left is lost, so a guest's conversations work best while it
-stays.
+any node. A phone that connects while another guest has the link is
+closed as it writes its tag; the next round tries again.
+
+The app goes on an errand at a public node when it has something to
+send, at the next round, and otherwise once a minute (`guestCheck`): a
+minute is how long the spec takes a person on foot to stay within a
+relay's reach (Where a text goes), and a sender's app sends a reply to
+where the person wrote from for that long, so a reply that came is read
+within about as long as it was aimed there. It is four of the search's
+rounds, so it costs no scan more within Android's five in 30 s; and an
+errand of a few seconds a minute takes about a twelfth of the node's
+one guest link, so a few phones in reach seldom meet there. Mail waits
+in the ring meanwhile, so the interval delays it and loses none.
 
 While it is not connected, the app looks for the node it is paired with
 and connects to it when it sees it, and, when it is not paired with a
 node, it is no longer its own, or the paired node is not heard in a
-round, joins the public node heard strongest as a guest, by the best
-RSSI each node had over the round. The paired node always comes first:
-while connected as a guest the app goes on looking for it and moves to
-it once it hears it. When a guest link drops, the next round takes the
-strongest public node again, so the phone moves to a nearer one. The
+round, goes on its errands at the public node heard strongest, by the
+best RSSI each node had over the round. The paired node always comes
+first, and the app moves to it once it hears it. Each errand takes the
+strongest public node of its round, so the phone moves to a nearer one
+as it walks. The
 app never joins as a guest the node that is no longer its own: Android
 still holds the old bond and would encrypt the link with it, which the
 node ends.
@@ -217,8 +244,7 @@ Scan and Pair again. A phone's Bluetooth scanning without a break draws
 in the order of 10 mA (an estimate, not measured here), so the search
 costs about 3 mAh an hour, under a tenth of a percent of a phone's
 battery. The app stops looking while it is connected to its paired
-node, while it is a guest with no paired node to move to, or Bluetooth
-is off; after "This node is no longer yours" it looks for public nodes
+node or Bluetooth is off; after "This node is no longer yours" it looks for public nodes
 alone (the person decides with **Pair again**); and it stops after the
 person presses **Disconnect** or **Stop looking** in Settings, until
 they tap a node. That stop is kept with the
@@ -349,16 +375,18 @@ messages. It runs on while the app is disconnected, as
 a node does. It counts as paired with the phone; a test can have it
 pair with another phone (`FakeNode.pairElsewhere`), and the app then
 finds it no longer yours, as with a node. Public, as it starts, until
-the switch or a test makes it private, it takes up to three guests' links beside its owner's: a
-guest's link answers 0x05, insufficient authentication, to every value
-that needs the bond; it hands each message to the guests whose tag it
-carries and to the owner when it is the owner's tag or it has none yet,
-keeps the owner's while the owner is away, and drops what it can hand
-to nobody. Its turns are Ready: set for one phone at a time, in the
+the switch or a test makes it private, it takes one guest's link beside
+its owner's, closes a second guest's as it writes its tag, and ends a
+guest's after 30 s; a guest's link answers 0x05, insufficient
+authentication, to every value that needs the bond, and 0x13 to a write
+to Inbox. It keeps a message in the owner's inbox when it carries the
+owner's tag, or the owner has written none yet, and the rest in a ring
+of 1024 by number, which a guest reads by its tag after the number it
+writes to Guest; a test can make a node nobody has paired with
+(`owned`), whose messages all go to the ring. Its turns are Ready: set for one phone at a time, in the
 order of their links, passing on when the node takes that phone's
 message, when its link ends, or after a ban unused; a Send out of turn
-is answered 0x80, not ready. A guest keeps its own
-inbox in the fake, where the node keeps one queue.
+is answered 0x80, not ready.
 
 ## Updating a node
 
@@ -553,11 +581,13 @@ or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; make the fake
 public, join it as a guest that writes its tag and touches nothing
-closed, and hand each phone only the messages with its tag, with the
-turn as Ready;
-choose the paired node, else the strongest public node, and move to a
-public node when the paired one is not heard, back when it is, and to
-the strongest again after a guest link drops; read the fake
+closed, read a guest's ring items by its tag after the number it keeps
+for the node, across links and restarts, close a second guest, end a
+guest's link after 30 s, and take turns as Ready;
+choose the paired node, else the strongest public node; go on a
+guest's errand (connect, tag, read, send, leave) when something waits
+to be sent and otherwise once a minute, try again after being closed for
+another guest, and move to the paired node once it is heard; read the fake
 node's neighbours, in one page and across several, and not from a node
 before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
@@ -585,7 +615,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 7,
+3. Menu, **Debug**: your identity and card address; link version 8,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -657,7 +687,7 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen `PHONE PAIRED`.
-3. **Debug** shows link version 7, the node's clock (from its GPS if it
+3. **Debug** shows link version 8, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
@@ -761,17 +791,18 @@ a phone (Trying it, With a node).
     version 1, version N is available" opens **Update firmware** with
     "Version N" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
-15. A public node, on link version 7, with two phones. On the owner's
+15. A public node, on link version 8, with two phones. On the owner's
     phone, connected, **Settings**, **Public: serve phones without
     pairing** is on from the start, and the node's screen says `PHONE
     PUBLIC`; turned off, it says `PHONE PAIRED`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its RSSI; or, with no paired node of
-    its own in reach, the second phone joins it by itself within a
-    round, and its first screen says "Connected to bark-… as a guest".
-    No pairing dialog shows, at the connect or later. Its Debug shows
-    the link as a guest's, and its log `Recipient: tag …` before the
-    inbox is read; Settings shows no Public switch, firmware, home
-    buttons or map point. A text between the two phones' contacts
-    reaches each, and neither sees the other's. Taken near its own
+    its own in reach, the second phone goes on an errand there within a
+    round, its first screen saying "Connected to bark-… as a guest" for
+    a few seconds, then again once a minute. No pairing dialog shows,
+    at the connect or later. Its log shows `Recipient: tag …`, a
+    `Guest: item …` line for each item read, and `Disconnected`.
+    A text between the two phones' contacts reaches each, and neither
+    sees the other's; a text sent to the second phone while it is away
+    from the node is read at its next errand there. Taken near its own
     paired node, the guest phone moves to it within a round.

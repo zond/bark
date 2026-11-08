@@ -893,32 +893,37 @@ Recipient and Public (link version 7) serve guests on a public node
 paired phone writes 0 to Public, private; the bond's record keeps that
 in its byte 14, so a node never paired, and a bond kept before, is
 public, and it keeps the paired phone's recipient tag, which it writes
-to Recipient at every connection. The host takes 3 links at once, each
-served by a task of its own (`slot`), so that its future lies in static
-storage and the stack holds one poll at a time; one slot advertises at a
-time, and on a node that is not public only while no link is up. Node,
-Status, Send, Inbox, Given back and Recipient have no permission in the
-attribute table, as the host cannot tell a public node from another, and
-`allowed` refuses them on a link that is not the bond's while the node
-is not public, as the host refused them before. The node's loop places
-each message for its application by its tag (`src/node.rs`, `Placing`):
-the ring keeps the owner's, as a home's, the guests whose tag it carries
-read it from the core's inbox, and it is confirmed to the core once both
-are done; one for nobody is confirmed at once, dropped. Whose turn it
-is at the one message the node holds, and so whose Ready is set, is
-`Turn` in `src/ble.rs`. The
+to Recipient at every connection. The host takes 2 links, the owner's
+and one guest's at a time, each served by a task of its own (`slot`),
+so that its future lies in static storage and the stack holds one poll
+at a time; one slot advertises at a time, and on a node that is not
+public only while no link is up. A guest's link ends 30 s after it
+began, and a second guest's as soon as it writes Recipient while one is
+up. Node, Status, Send, Inbox, Given back, Recipient and Guest have no
+permission in the attribute table, as the host cannot tell a public node
+from another, and `allowed` refuses them on a link that is not the
+bond's while the node is not public, as the host refused them before.
+The node's loop puts every message for its application on a public
+node into the ring (`src/node.rs`, `Placing`), a guest's written as
+sent, and confirms it to the core once it is written; the mailbox tells
+the owner's from the guests' by tag (`bark_app_layer::mailbox::Owner`),
+and a guest's read of Inbox asks the node for the oldest item after the
+number it wrote to Guest (`for_tag`). Whose turn it is at the one
+message the node holds, and so whose Ready is set, is `Turn` in
+`src/ble.rs`. The
 console's `status` ends in `public=true` or `public=false`, read from
 the bond in the stored-state page.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
 5a slot 1 owner false` as a phone writes its tag, `ble: public false`,
-`public: id=... tag=Some(5a) owner=false guests=0b010` for each message
-placed on a public node, and `ble: confirm id=... ok=true (guest 1)`.
+`public: id=... tag=Some(5a) kept` for each message kept on a public
+node, `ble: a second guest in slot 1, closed`, and `ble: the guest in
+slot 1 closed after its time`.
 
-They cost 9.3 KB of flash and 11.9 KB of static RAM, 5.6 KB a link
-beyond the first, which leaves the stack 17.9 KB; the deepest poll of
-any task, the phone link's set-up, is 11.8 KB by the disassembly
-(2026-11-08, `llvm-size`, `llvm-objdump`).
+A link beyond the first costs 5.6 KB of static RAM, taken from the
+stack; a third, as first built, left the stack under its floor once the
+mesh spread's tables came, and two boards faulted at boot (Tasks and the
+stack, below).
 
 ## Mailbox
 
@@ -999,6 +1004,37 @@ the stack's high-water mark should fall from the 37.0 KB painted
 (`stack_used`) to about 11 KB, the phone link's chain and the executor's
 200 B, with the interrupts' frames above it, of the 41.7 KB the stack
 has.
+
+**The floor.** The stack is the RAM static memory leaves, and nothing
+else bounds it: an image whose statics grow past it faults at boot, as
+two boards did on 2026-11-08, with 14.6 KiB left, after the public
+node's links and the mesh spread's tables came together. The most a
+node image has used is what the boards painted (`stack_used`) over a
+day, 2026-11-08: 16 564 B on version 4 (`42dd68f`), 15 412 B on version
+0, against a deepest poll of 9.5 KiB by the disassembly, which does not
+follow calls through pointers or count the interrupts. So the stack
+keeps at least 24 KiB: the measured 16.2 KiB and 6 KiB for what an image
+since may add, 22.2 KiB, rounded up. `scripts/uf2.py` refuses to pack an
+image that leaves less, from its `__sheap` and `_stack_start`, and
+`uf2.py --stack` only checks, which CI runs on the release build. A
+measurement above it raises the floor.
+
+To get there, the phone link keeps no copy of what the node holds: a
+read of Neighbours or of Inbox asks the node, which writes the page or
+the message into one buffer as the phone reads it (`ble::READ`), where
+the link kept the whole neighbour table, 2.6 KB, and two messages; the
+host keeps no room for L2CAP's connection-oriented channels, which the
+node never opens; the update's header is kept once, not in every link's
+task; and the mailbox queues 6 flash ops, twice the 3 a message or a
+confirmation takes, not 8.
+
+| node image, release, open, version 6 | data + bss | stack |
+|---|---|---|
+| merged with 3 links (`4fdcf58`) | 246 136 B | 14 984 B |
+| 2 links | 240 520 B | 20 576 B |
+| 2 links, no copies (above) | 236 280 B | 24 832 B |
+| one guest's link, its mail in the ring | 236 472 B | 24 640 B |
+| console | 16 264 B | 244 840 B |
 
 ## Radio power
 
