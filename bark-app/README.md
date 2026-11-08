@@ -33,6 +33,9 @@ is a prototype for the bench, not the app people will carry.
   none is, which
   node the phone is paired with or that it is no longer yours (next
   section); tapping it opens Settings.
+  A row swiped aside either way archives its conversation, with
+  **Undo**; a line at the bottom then counts the archived ones, "2
+  archived", and leads to Archived.
   The pen button starts a conversation from the contacts. With a home
   node, the inbox button in the bar, **Fetch my mail**, sends a fetch to
   it, which the app does only when asked, and says "Fetching your
@@ -82,12 +85,26 @@ is a prototype for the bench, not the app people will carry.
   have made it. A contact without a home who
   has not written yet cannot be written to: a line says so where the
   field would be. The menu renames the contact,
-  sends them your card, or removes them. The bar has **Fetch my mail**
+  sends them your card, archives the conversation or the contact (both
+  leave the thread, with **Undo**), or removes them; a removed
+  contact's thread has only **Archive conversation**. The bar has **Fetch my mail**
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
 - **Contacts**, from the menu. Adding one: scan their card with the
   camera, or paste it, and give a name. An address alone is not
-  enough: a text is sealed to the identity on the card.
+  enough: a text is sealed to the identity on the card. A row swiped
+  aside archives the contact and its conversation, with **Undo**, and a
+  line at the bottom counts the archived contacts.
+- **Archived**, from the menu or the line at the bottom of either list.
+  The archived conversations, then the archived contacts, each with an
+  unarchive button. Unarchiving either brings back both: a person whose
+  conversation is back is one you talk to again. A conversation opens
+  read-only, with no field, acknowledge buttons or menu, and
+  **Unarchive** at the bottom. An archived contact is still known: its
+  card and keys are kept, its messages open, and **Send my card** still
+  goes to it. A new text from an archived conversation brings it, and
+  its contact, back to the first screen, with the usual notification;
+  an acknowledgement or a card does not.
 - **My card**, the QR button. Your identity, the card as a QR code for
   another phone to scan, **Scan their card** to add theirs as in
   Contacts, and the home's address and the card as text to copy and
@@ -275,8 +292,9 @@ A carried or sleepy home keeps the position the person has for it: a
 carried node's position follows its GPS fix every second, and a sleepy
 node's is its anchor's.
 
-The queue and the received texts, the contacts, and the person (seed,
-name, home, the last `sent`, the mailbox's state) are kept in three
+The queue and the received texts, the contacts and what is archived,
+and the person (seed, name, home, the last `sent`, the mailbox's
+state) are kept in three
 files in the app's private storage, so they survive a restart. The
 seed is kept there in the clear: anyone who can read the app's storage
 has the identity. Each file names the version of its format, 1 if it
@@ -284,7 +302,8 @@ names none; a file of another version, or one with any part that does
 not read, is renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 `-2`, `-3` and on added if that name is taken, so no file set aside is
 ever overwritten; the debug screen's log says so, and the app starts that
-file empty (for the person, with a new identity).
+file empty (for the person, with a new identity). A contacts file from
+before archiving names nothing archived and reads as such.
 
 ## Notifications and the background link
 
