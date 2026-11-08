@@ -77,6 +77,8 @@ pub struct UpdateRun {
     listened: std::collections::HashSet<(u8, u8, u32)>,
     /// Pieces stored by sleepy nodes.
     pub stored_sleepy: u64,
+    /// Anchors' home heartbeats, by whether the slot opened after them.
+    opens: std::collections::BTreeMap<(bool, &'static str), u64>,
 }
 
 impl UpdateRun {
@@ -114,6 +116,7 @@ impl UpdateRun {
             fates: std::collections::BTreeMap::new(),
             listened: std::collections::HashSet::new(),
             stored_sleepy: 0,
+            opens: std::collections::BTreeMap::new(),
         }
     }
 
@@ -167,6 +170,14 @@ impl UpdateRun {
                 self.listened.insert((block, index, node));
             }
         }
+    }
+
+    /// Whether an anchor opened the slot after a home heartbeat, or why not.
+    /// Counted apart for the first 15 hours, while the relays gather, and
+    /// after.
+    pub fn slot_open_fate(&mut self, why: &'static str, now: Instant) {
+        let early = now.since(self.at).as_micros() < 15 * 3_600_000_000;
+        *self.opens.entry((early, why)).or_default() += 1;
     }
 
     /// What became of a piece due after a slot heartbeat.
@@ -337,6 +348,25 @@ impl UpdateRun {
             "; pieces stored by sleepy nodes {}",
             self.stored_sleepy
         );
+        for (early, when) in [(true, "first 15 h"), (false, "after")] {
+            let all: u64 = self
+                .opens
+                .iter()
+                .filter(|(k, _)| k.0 == early)
+                .map(|(_, n)| n)
+                .sum();
+            let _ = write!(out, "# anchors' home heartbeats, {when}: {all}");
+            for ((e, k), n) in &self.opens {
+                if *e == early {
+                    let _ = write!(
+                        out,
+                        ", {k} {n} ({:.1} %)",
+                        100.0 * *n as f64 / all.max(1) as f64
+                    );
+                }
+            }
+            out.push('\n');
+        }
         let all: u64 = self.slots.values().sum();
         let _ = write!(out, "# pieces due after a slot heartbeat: {all}");
         for (k, n) in &self.slots {

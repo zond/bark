@@ -2629,6 +2629,46 @@ impl Sim {
         }
     }
 
+    /// Whether relay `a`, an anchor of the sleepy nodes `own`, opens the
+    /// slot after its heartbeat on its home channel, and if not, why, by
+    /// the simulator's truth against its table.
+    fn slot_opens(&self, a: u32, own: &[u32], u: &crate::update::UpdateRun) -> &'static str {
+        let r = &self.relays[a as usize];
+        let image = u.image;
+        let whole = r.image().is_some();
+        let holds = |b: u8| whole || u.has.contains(&(a, b));
+        if !whole && !(0..image.blocks).any(holds) {
+            return "anchor holds no block";
+        }
+        let me = r.id();
+        let lacking = own.iter().any(|&s| {
+            let c = &self.relays[s as usize];
+            self.nodes[s as usize].alive
+                && c.anchor().is_some_and(|x| x.id == me)
+                && c.gathering().is_some()
+                && (0..image.blocks).any(|b| holds(b) && !u.has.contains(&(s, b)))
+        });
+        if !lacking {
+            return "no sleepy node of its own lacks a block it holds";
+        }
+        let local = self.clocks[a as usize].local(self.now);
+        let table_says = r
+            .neighbour_table()
+            .live(local)
+            .map(|(_, n)| n)
+            .filter(|n| n.sleepy && n.home == r.home())
+            .filter_map(|n| n.update)
+            .filter(|x| x.gathers(image.tag()))
+            .any(|x| {
+                (x.complete..image.blocks)
+                    .any(|b| holds(b) && (b > x.complete || x.have < image.pieces(b)))
+            });
+        if !table_says {
+            return "its table's sleepy sections show nothing lacking";
+        }
+        "opens"
+    }
+
     /// A node hears the beat of a sleepy node that came back into reach,
     /// and is its anchor, or any node if it has none: the network knows the
     /// sleepy node is back.
@@ -2711,12 +2751,24 @@ impl Sim {
             Action::Transmit(f) | Action::Serve(f) => {
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
+                let home_beat = f.channel == self.relays[node as usize].home()
+                    && matches!(
+                        bark_proto::wire::Packet::decode(f.payload()),
+                        Ok(bark_proto::wire::Packet::Heartbeat(_))
+                    );
+                let open = match (home_beat, self.update.as_ref(), self.sleepers.get(&node)) {
+                    (true, Some(u), Some(own)) => Some(self.slot_opens(node, own, u)),
+                    _ => None,
+                };
                 if let Some(u) = self.update.as_mut() {
                     use bark_proto::wire::{Packet, Update, HEARTBEAT_LEN};
                     let home = self.relays[node as usize].home();
                     let decoded = Packet::decode(f.payload());
                     if matches!(decoded, Ok(Packet::Heartbeat(_))) && f.channel == home {
                         u.home_beat(node, self.now);
+                        if let Some(why) = open {
+                            u.slot_open_fate(why, self.now);
+                        }
                     }
                     match decoded {
                         // A heartbeat's section: what it adds to the frame.
