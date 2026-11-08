@@ -251,13 +251,15 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   keeps no answer.
 - `Action::StorePiece(piece)`: keep this piece. The core hands only pieces of the
   first block the node lacks and of the four after it, each once, so the driver holds
-  at most five blocks' distinct pieces, 320 of the 352 its flash has room for. When a
+  at most five blocks' distinct pieces, its five lanes of 64 (`bark-image`,
+  `pieces.rs`). When a
   block's pieces decode it answers `AppCommand::Block { index, ok }`, `ok` if the block
   matched its hash; the core then takes no more of it, or takes its pieces again.
   Once every block has decoded the driver checks the image and says `Holds`.
 - `Action::Serve(frame)`: transmit this piece frame as `Transmit`, after writing into
   it, from `wire::PIECE_HEADER_LEN` on, the bytes of the piece its header names, of
-  the image the driver said it holds; completes with `TxDone`. The driver holds the
+  the image the driver said it holds or of the one it gathers, a block it said
+  decoded and passed; completes with `TxDone`. The driver holds the
   bytes, so the core needs no copy of a piece to send one, and a coded piece is
   made only when it goes.
 
@@ -320,18 +322,18 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-188 128 B (183.7 KiB): the tables and, in under 1 KiB around them, the
+188 176 B (183.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 512 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 169 112 B (165.1 KiB), without the heard table and the delivery
+of the update, 560 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 169 160 B (165.2 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
 relay, Embassy, the USB log and the phone link with its BLE stack, was 217 504 B
-(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 512 B since
-(`docs/mesh-update-2026-11-07.md`) is 218 016 B and leaves 43 104 B, 42.1 KiB, for
+(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 552 B since
+(`docs/mesh-update-2026-11-07.md`) is 218 056 B and leaves 43 064 B, 42.1 KiB, for
 the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by

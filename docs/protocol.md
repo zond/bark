@@ -3799,7 +3799,7 @@ it, a bit each; per channel it sends on, the image, whether only sleepy
 nodes asked, and four blocks asked for, each with its next piece and
 the pieces still to send; the last two channels it sent update frames
 on and when; and the times of its announcements and of the frame after
-its slot heartbeat: 552 bytes beside the tables (`core-interface.md`,
+its slot heartbeat: 560 bytes beside the tables (`core-interface.md`,
 Memory).
 
 ---
