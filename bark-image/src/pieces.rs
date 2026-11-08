@@ -7,8 +7,12 @@
 //! the bytes of the firmware's slot (`bark-fw/README.md`, "Updates"), in
 //! blocks of [`DATA`] pieces of [`PIECE`] bytes, the last block shorter
 //! and its last piece padded. Block 0 is the block table: the image's name,
-//! the SHA-256 of its header, then the first 8 bytes of the SHA-256 of each
-//! other block's pieces, padded with zeros to whole pieces.
+//! then the first 8 bytes of the SHA-256 of each other block's pieces,
+//! padded with zeros to whole pieces. The name is the SHA-256 of the
+//! header's first [`SIGNED_LEN`] bytes, the part its signatures cover
+//! (`crate::sign`): the same image signed again with another key keeps
+//! its name, so the mesh sees one image, whichever of its signatures a
+//! holder has.
 //!
 //! **Where it goes**, in [`PIECES`]' 22 sectors:
 //!
@@ -34,7 +38,8 @@
 //! eight from one read of each piece the lane holds ([`crate::code`]).
 //! The first time it is checked: block 0 must begin with the image's name,
 //! any other block hash to its entry in the table, and block 1, which
-//! begins with the header, have a header that hashes to the name. A block
+//! begins with the header, have a header whose signed bytes hash to the
+//! name; its signatures are checked once the image is whole. A block
 //! that fails is erased from its lane and gathered again
 //! ([`Poll::Failed`]). The second time it is written, and its byte in the
 //! head cleared ([`Poll::Decoded`]); then its lane is erased. Nothing
@@ -81,6 +86,7 @@ use crate::code::{mul_add, At, Points, CODED, DATA, PIECE};
 use crate::ext_flash::{self, Bus, Chip, PROGRAM_PAGE};
 use crate::layout::external::{DFU, PIECES, SECTOR};
 use crate::layout::ACTIVE;
+use crate::sign::SIGNED_LEN;
 use crate::{HASH_LEN, HEADER_LEN};
 
 /// A NOR flash that erases and programs while the processor goes on: the
@@ -205,7 +211,7 @@ fn crc32(bytes: &[u8]) -> u32 {
 /// An image to gather, as its announcement describes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
-    /// SHA-256 of its header.
+    /// SHA-256 of its header's signed bytes.
     pub name: [u8; HASH_LEN],
     /// Its blocks, the table among them.
     pub blocks: u8,
@@ -889,8 +895,8 @@ impl Store {
                 table[..count * PIECE].copy_from_slice(d.out[..count].as_flattened());
             } else {
                 if d.block == 1 && d.group == 0 {
-                    let header = &d.out.as_flattened()[..HEADER_LEN];
-                    d.header_ok = <[u8; HASH_LEN]>::from(Sha256::digest(header)) == image.name;
+                    let signed = &d.out.as_flattened()[..SIGNED_LEN];
+                    d.header_ok = <[u8; HASH_LEN]>::from(Sha256::digest(signed)) == image.name;
                 }
                 d.sha.update(d.out[..count].as_flattened());
             }

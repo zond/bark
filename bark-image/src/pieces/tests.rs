@@ -148,13 +148,19 @@ fn sha(bytes: &[u8]) -> [u8; HASH_LEN] {
 }
 
 /// An image of a random header and `firmware` random bytes, named `name`
-/// or by its header's hash.
-fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>) -> Built {
+/// or by the hash of its header's signed bytes; `resigned`, its signature
+/// slots changed after it was named.
+fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>, resigned: bool) -> Built {
     let mut rng = Rng(seed);
     let mut stream: Vec<u8> = (0..HEADER_LEN + firmware)
         .map(|_| rng.next() as u8)
         .collect();
-    let name = name.unwrap_or_else(|| sha(&stream[..HEADER_LEN]));
+    let name = name.unwrap_or_else(|| sha(&stream[..SIGNED_LEN]));
+    if resigned {
+        for b in &mut stream[SIGNED_LEN..HEADER_LEN] {
+            *b ^= 0x5a;
+        }
+    }
     stream.resize(stream.len().next_multiple_of(PIECE), 0);
     let pieces: Vec<[u8; PIECE]> = stream
         .chunks(PIECE)
@@ -187,7 +193,7 @@ fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>) -> Built {
 
 /// Table and two blocks, of 64 pieces and of 5.
 fn small() -> Built {
-    build(69 * PIECE - HEADER_LEN - 100, 1, None)
+    build(69 * PIECE - HEADER_LEN - 100, 1, None, false)
 }
 
 /// Hands pieces to the store as holders would: each block's from a
@@ -318,7 +324,7 @@ fn an_image_is_gathered() {
 #[test]
 fn a_larger_image_is_gathered_through_its_lanes_again() {
     // Eight blocks of image: the lanes of the first are used again.
-    let built = build(7 * DATA * PIECE + 3000, 3, None);
+    let built = build(7 * DATA * PIECE + 3000, 3, None, false);
     assert_eq!(built.image.blocks, 9);
     let (_, feeder) = gathered(&built, 4);
     assert_eq!(feeder.events.len(), 9);
@@ -326,7 +332,7 @@ fn a_larger_image_is_gathered_through_its_lanes_again() {
 
 #[test]
 fn the_largest_image_is_gathered() {
-    let built = build(ACTIVE.len as usize, 5, None);
+    let built = build(ACTIVE.len as usize, 5, None, false);
     assert_eq!(usize::from(built.image.blocks), MAX_BLOCKS);
     gathered(&built, 6);
     let mut too_large = built.image;
@@ -397,9 +403,10 @@ fn a_false_table_is_gathered_again() {
 }
 
 #[test]
-fn a_header_that_is_not_the_name_fails_its_block() {
-    // The table names the image, the header hashes to something else.
-    let built = build(3000, 10, Some([7; HASH_LEN]));
+fn a_header_whose_signed_bytes_are_not_the_name_fails_its_block() {
+    // The table names the image, the header's signed bytes hash to
+    // something else.
+    let built = build(3000, 10, Some([7; HASH_LEN]), false);
     let mut flash = Ram::new();
     let mut store = Store::open(&mut flash).unwrap();
     store.begin(built.image);
@@ -421,8 +428,19 @@ fn a_header_that_is_not_the_name_fails_its_block() {
 }
 
 #[test]
+fn an_image_signed_again_keeps_its_name() {
+    // Other signature slots, the same signed bytes: the same name, and
+    // the block passes; the signatures are checked at install.
+    let first = build(3000, 19, None, false);
+    let again = build(3000, 19, None, true);
+    assert_eq!(first.image, again.image);
+    assert_ne!(first.stream, again.stream);
+    gathered(&again, 20);
+}
+
+#[test]
 fn only_the_five_blocks_from_the_first_lacked_are_taken() {
-    let built = build(9 * DATA * PIECE, 12, None);
+    let built = build(9 * DATA * PIECE, 12, None, false);
     let mut flash = Ram::new();
     let mut store = Store::open(&mut flash).unwrap();
     let piece = [0u8; PIECE];
@@ -452,7 +470,7 @@ fn only_the_five_blocks_from_the_first_lacked_are_taken() {
 fn a_new_image_clears_the_old_and_forget_clears_the_head() {
     let old = small();
     let (mut flash, _) = gathered(&old, 14);
-    let new = build(5000, 15, None);
+    let new = build(5000, 15, None, false);
     let mut store = Store::open(&mut flash).unwrap();
     assert_eq!(store.begin(new.image), Begin::Started);
     let mut feeder = Feeder::new(&new, 16);
@@ -466,7 +484,7 @@ fn a_new_image_clears_the_old_and_forget_clears_the_head() {
 
 #[test]
 fn an_image_is_gathered_through_the_driver() {
-    let built = build(2 * DATA * PIECE, 17, None);
+    let built = build(2 * DATA * PIECE, 17, None, false);
     let mut chip = fake::chip();
     let mut store = Store::open(&mut chip).unwrap();
     store.begin(built.image);
