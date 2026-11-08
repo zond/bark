@@ -194,11 +194,11 @@ enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Power {
     External,
-    /// On battery since then: in its grace, or relaying on while it is
-    /// fixed with battery levels.
+    /// On battery and fixed since then: in its grace, or relaying on
+    /// with battery levels.
     Battery(Instant),
-    /// Its grace over or its battery low, since then: it flushes its
-    /// delivery queue, and then turns sleepy.
+    /// Its grace over, its battery low or carried on battery, since then:
+    /// it flushes its delivery queue, and then turns sleepy.
     Leaving(Instant),
 }
 

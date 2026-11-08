@@ -17,7 +17,8 @@
 //! at boot, and when the heartbeats of its fixed relay neighbours change
 //! over a worst-case rotation more than fading explains. A search that
 //! finds a far fix keeps the GPS running until the node is carried or a
-//! fix is near again. A relay's search has no back-off.
+//! fix is near again. A relay's search has no back-off. A carried node on
+//! battery is sleepy (`relay/power.rs`), and searches as one.
 //!
 //! [`Config::grace`]: crate::Config::grace
 

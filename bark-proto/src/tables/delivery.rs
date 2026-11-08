@@ -76,6 +76,9 @@ pub struct Queued {
     /// is not sleepy since the last hand-over of its messages to it went
     /// unanswered: it goes to it there directly (spec "Delivery").
     pub relay_home: Option<Channel>,
+    /// The count it arrived with, which it goes on from if the node turns
+    /// sleepy before it is delivered (spec "Hop count", "Sleepy nodes").
+    pub hops: u8,
     len: u8,
     payload: [u8; MAX_PAYLOAD],
 }
@@ -99,6 +102,7 @@ impl Queued {
             enqueued: now,
             flushed: false,
             relay_home: None,
+            hops: 0,
             len: payload.len() as u8,
             payload: [0; MAX_PAYLOAD],
         };
@@ -135,7 +139,8 @@ pub enum Pushed {
 }
 
 /// The delivery queue, in arrival order, of up to `N` messages: a
-/// sleepy node keeps none (spec "Sleepy nodes").
+/// sleepy node keeps only what it held when it turned sleepy, until the
+/// send queue takes it (spec "Sleepy nodes").
 ///
 /// Its few fields first, then the items: an event reads the first and
 /// seldom the items ([`crate::Node`]'s layout).
@@ -156,6 +161,7 @@ impl<const N: usize> DeliveryQueue<N> {
             enqueued: Instant::ZERO,
             flushed: false,
             relay_home: None,
+            hops: 0,
             len: 0,
             payload: [0; MAX_PAYLOAD],
         };

@@ -13,7 +13,7 @@ use crate::metrics::PowerMetrics;
 use crate::rng::{Purpose, Stream};
 use crate::sim::{key, Ev, Sim};
 use bark_proto::wire::Packet;
-use bark_proto::{AppCommand, Delivery, DropReason, Event, Frame, MsgId, NodeId};
+use bark_proto::{AppCommand, Delivery, Event, Frame, MsgId, NodeId};
 use std::collections::HashMap;
 
 /// The switching nodes and what is followed of them.
@@ -26,9 +26,10 @@ pub(crate) struct PowerModel {
     switches: Vec<bool>,
     /// Switching node by its ID's key.
     index: HashMap<u64, u32>,
-    /// The texts held at the end of a grace after the settle time, and
-    /// their fate so far, an index of `PowerMetrics::held`.
-    held: HashMap<u32, Option<usize>>,
+    /// The texts held at a turn to leaving after the settle time: the
+    /// node that held them, and their fate so far, an index of
+    /// `PowerMetrics::held`.
+    held: HashMap<u32, (u32, Option<usize>)>,
     /// Per node, the anchor it had after its last event.
     anchors: Vec<Option<NodeId>>,
 }
@@ -193,7 +194,7 @@ impl Sim {
                     p.turns.push((s, node, sleepy));
                 }
             }
-            T::GraceEnded if after => {
+            T::GraceEnded | T::CarriedOnBattery if after => {
                 let held: Vec<u32> = self
                     .relay(node)
                     .delivery_queue()
@@ -201,10 +202,14 @@ impl Sim {
                     .collect();
                 let m = self.power.as_mut().expect("checked");
                 for id in held {
-                    m.held.entry(id).or_insert(None);
+                    m.held.entry(id).or_insert((node, None));
                 }
                 if let Some(p) = self.metrics.research.power.as_mut() {
-                    p.graces += 1;
+                    if *t == T::GraceEnded {
+                        p.graces += 1;
+                    } else {
+                        p.carried += 1;
+                    }
                 }
             }
             T::Delivered { msg_id, by, .. } => {
@@ -215,16 +220,32 @@ impl Sim {
                 };
                 self.power_fate(msg_id, fate);
             }
-            T::Dropped {
-                msg_id,
-                reason: DropReason::Unplugged,
-            } => self.power_fate(msg_id, 3),
+            // A relay that leaves with its flush done turns sleepy in the
+            // same call, so what it hands on was held when it left, though
+            // its queue was empty by the time the trace was read.
+            T::HandedOn { msg_id } => {
+                if after {
+                    let m = self.power.as_mut().expect("checked");
+                    m.held.entry(msg_id.0).or_insert((node, None));
+                }
+                self.power_fate(msg_id, 3)
+            }
+            T::Dropped { msg_id, .. } => {
+                let by_holder = self
+                    .power
+                    .as_ref()
+                    .and_then(|m| m.held.get(&msg_id.0))
+                    .is_some_and(|&(holder, _)| holder == node);
+                if by_holder {
+                    self.power_fate(msg_id, 4);
+                }
+            }
             _ => {}
         }
     }
 
     fn power_fate(&mut self, msg_id: MsgId, fate: usize) {
-        if let Some(f) = self.power.as_mut().and_then(|m| m.held.get_mut(&msg_id.0)) {
+        if let Some((_, f)) = self.power.as_mut().and_then(|m| m.held.get_mut(&msg_id.0)) {
             f.get_or_insert(fate);
         }
     }
@@ -244,13 +265,13 @@ impl Sim {
         }
     }
 
-    /// The fates of the texts held at the end of a grace
+    /// The fates of the texts held at a turn to leaving
     /// (`PowerMetrics::held`).
-    pub(crate) fn power_held(&self) -> [u64; 5] {
-        let mut held = [0; 5];
+    pub(crate) fn power_held(&self) -> [u64; 6] {
+        let mut held = [0; 6];
         if let Some(m) = &self.power {
-            for f in m.held.values() {
-                held[f.unwrap_or(4)] += 1;
+            for (_, f) in m.held.values() {
+                held[f.unwrap_or(5)] += 1;
             }
         }
         held

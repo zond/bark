@@ -1244,7 +1244,7 @@ impl Summary {
             let h = p.held;
             let _ = writeln!(
                 s,
-                "power: {} nodes switch ({} with their walks); {} changes reported; turns to sleepy {}, to relay {}; after the settle time USB back within the grace {}, during the flush {}; graces ended {}",
+                "power: {} nodes switch ({} with their walks); {} changes reported; turns to sleepy {}, to relay {}; after the settle time USB back within the grace {}, during the flush {}; graces ended {}, carried on battery {}",
                 p.switchers.len(),
                 walking,
                 p.changes.len(),
@@ -1252,12 +1252,13 @@ impl Summary {
                 p.turns.len() - to_sleepy,
                 p.back[0],
                 p.back[1],
-                p.graces
+                p.graces,
+                p.carried
             );
             let _ = writeln!(
                 s,
-                "held at the end of a grace: by the flush {}, at a beat {}, to the node as a relay {}, dropped at the turn {}, otherwise {}; heartbeats for a change {} ({:.1} s); anchors left for one that turned sleepy {}",
-                h[0], h[1], h[2], h[3], h[4],
+                "held when a relay left: by the flush {}, at a beat {}, to the node as a relay {}, handed on at the turn {}, dropped by the node that held it {}, otherwise {}; heartbeats for a change {} ({:.1} s); anchors left for one that turned sleepy {}",
+                h[0], h[1], h[2], h[3], h[4], h[5],
                 p.changed.0, p.changed.1,
                 p.anchors_left
             );
