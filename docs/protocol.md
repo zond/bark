@@ -63,9 +63,8 @@ setting: it follows two properties the node measures of itself, each on
 its own, and its heartbeat publishes each as a flag
 ([packet formats](#packet-formats); roadmap D70, D71, D72).
 
-- **Sleepy**: it is on battery, past a grace of an hour if it is
-  carried, and with its battery low if it is a fixed relay
-  ([sleepy nodes](#sleepy-nodes)). On external power, USB on a
+- **Sleepy**: it is on battery, unless it is a fixed relay whose
+  battery is not low ([sleepy nodes](#sleepy-nodes)). On external power, USB on a
   windowsill or a solar box on a roof, a node is not sleepy. Sleepy
   decides how the node uses its radio: it beats rarely instead of
   heartbeating, listens only in a window after each beat, receives
@@ -611,7 +610,8 @@ until the node is carried or a fix is near again.
 
 *Why it runs through the grace.* A person who unplugs a node and walks
 off with it does so then, and the 72 s of far fixes that make it
-carried need the GPS running. A relay on battery past the grace is one
+carried need the GPS running; carried on battery, it is sleepy then,
+and takes fixes as a sleepy node does ([beats](#beats)). A relay on battery past the grace is one
 left where it stands, in an outage (roadmap D81), and the L76K's 29 mA
 beside the radio's 6.4 mA would take its battery to the low level in 19
 hours instead of 106.
@@ -813,9 +813,10 @@ next slot they wake for.
 *Why a heartbeat at a change.* Its neighbours on that channel then
 address it anew at once instead of a rotation later, and an old anchor
 that holds mail for a node turned relay hears it as a relay and hands
-the mail over. The flags change seldom: the sleepy flag is set only
-after an hour's grace on battery, and the carried flag is cleared only
-after four hours still.
+the mail over. The flags change seldom: the sleepy flag only as a
+carried node goes on or off its charger or a fixed relay's battery runs
+low or recovers, and the carried flag is cleared only after four hours
+still.
 
 *Why not at each fix.* A carried relay's slots carry its position every
 T (roadmap D71); a sleepy node, carried or not, is a last resort to its
@@ -2343,13 +2344,14 @@ plugged in is a relay at once:
   node's home channel until then, its own, and hands over what it holds
   for the node.
 
-A relay unplugged changes nothing for a **grace** of one hour: it
+A fixed relay unplugged changes nothing for a **grace** of one hour: it
 relays, owns and holds mail as before, and power back within the grace
-is as if nothing happened. After the grace a carried relay turns sleepy;
-a fixed one relays on until its **battery is low**. A relay on battery
-whose battery is low turns sleepy, grace or not. A node its battery
-turned sleepy relays again when its battery is high while it is fixed,
-and any node on external power. A fixed relay that reboots on battery is
+is as if nothing happened. After the grace it relays on until its
+**battery is low**. A carried relay has no grace: unplugged, it turns
+sleepy at once, and so does a relay on battery that turns carried. A
+relay on battery whose battery is low turns sleepy, grace or not. A
+node its battery turned sleepy relays again when its battery is high
+while it is fixed, and any node on external power. A fixed relay that reboots on battery is
 a relay, its grace counted from the boot
 ([implementation notes](#implementation-notes)).
 
@@ -2373,9 +2375,12 @@ fixed relay draws about 6.4 mA (5.8 mA listening, 32 mA for its
 airtime), so 80 % of the 850 mAh cell lasts it four days; the fifth
 left keeps it asleep for twelve and a half more at 0.56 mA ([delivery](#delivery)).
 
-*Why a carried relay keeps the grace.* A node in a pocket is its
-owner's, and nobody anchors to it ([nodes](#nodes)); relaying, it would
-be flat in days.
+*Why a carried relay has no grace.* A fixed relay relays on for the
+sleepy nodes that anchor to it. A node in a pocket holds no mail and
+nobody anchors to it ([nodes](#nodes)), so relaying on would keep
+little for anyone, and an hour of it would cost the node 0.68 % of its
+850 mAh battery, listening at 5.8 mA instead of sleeping, each time it
+leaves its charger (roadmap D152).
 
 *Why those levels.* At 20 % a relay has relayed through four fifths of
 its cell and keeps the rest for its owner. The curve is flat there,
@@ -2402,16 +2407,13 @@ percent of the cell at the most a board draws, below a reading's noise,
 and a reading costs a sample of microseconds.
 
 *Why an hour.* A charger moved across the room then costs nobody
-anything. The grace costs the node an hour of listening at 5.8 mA,
-0.68 % of the 850 mAh battery ([hardware](#hardware)). A shorter one
-would turn a node sleepy at every brief unplug, and each turn moves its
-sleepy nodes, and their addresses, to other anchors.
+anything, and a node taken off its charger to be carried away is seen
+carried within it ([position](#position)).
 
 When it is to turn sleepy the node takes no more mail, owning nothing
 by position, and flushes its delivery queue, listening all the time until
-each message has had its attempt, or for a delivery TTL at most; a relay
-that turned carried in its grace has flushed already, at its first far
-fix.
+each message has had its attempt, or for a delivery TTL at most; a
+carried relay has flushed already, at its first far fix.
 
 *Why a TTL at most.* The flush goes through the duty budget as any
 delivery, and where the channels are full it could wait for hours with

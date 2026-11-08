@@ -117,9 +117,10 @@ pub struct Config {
     /// roadmap D70). Long, so that a node that stops for a while does not
     /// take mail it would strand when it moves on.
     pub fixed_after: Duration,
-    /// How long a relay whose external power has gone keeps relaying,
-    /// holding and owning, before it flushes its delivery queue and turns
-    /// sleepy (spec "Sleepy nodes", roadmap D71). Listening draws
+    /// How long a fixed relay whose external power has gone keeps
+    /// relaying, holding and owning, before it flushes its delivery queue
+    /// and turns sleepy (spec "Sleepy nodes", roadmap D71); a carried one
+    /// has none (roadmap D152). Listening draws
     /// [`crate::sniff::RX_CURRENT_UA`], 5.8 mA, so an hour of it is 0.68 %
     /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
     /// would turn a node sleepy at every brief unplug. A fixed relay that
@@ -129,8 +130,8 @@ pub struct Config {
     /// The battery levels between which a fixed relay on battery relays
     /// past its grace, its readings calibrated (`relay/power.rs`, spec
     /// "Sleepy nodes"). `None` for a driver that reports no
-    /// battery, as the simulator's scenarios without batteries: every
-    /// relay then turns sleepy at its grace's end, since a fixed one would
+    /// battery, as the simulator's scenarios without batteries: a fixed
+    /// relay then turns sleepy at its grace's end, since it would
     /// otherwise relay until its battery browns out.
     pub battery: Option<BatteryLevels>,
 }

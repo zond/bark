@@ -37,7 +37,7 @@
 //! and after the windows' (`Kind::Direct`): a message for a node heard as
 //! one that is not sleepy goes to it with the ordinary preamble, done on
 //! its ACK; and once this node's last fix is far (`relay/motion.rs`), or
-//! its grace on battery is over (`relay/power.rs`), each message goes once
+//! it is leaving to turn sleepy (`relay/power.rs`), each message goes once
 //! with the long preamble, one attempt, and stays queued if unanswered
 //! (spec "Delivery").
 //!
@@ -229,7 +229,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.queue.iter().any(|o| o.kind == Kind::Direct) {
             return Ok(());
         }
-        // At a first far fix, or once its grace on battery is over.
+        // At a first far fix, or once it is leaving to turn sleepy.
         let far = self.far() || self.leaving();
         let queued = |q: &Queued| self.queue.iter().any(|o| o.msg_id() == Some(q.msg_id));
         let Some(q) = self

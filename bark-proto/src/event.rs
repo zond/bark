@@ -534,9 +534,12 @@ pub enum Trace {
     /// burst gap apart, goes out (spec "Heartbeat"): the frame of the
     /// `Action::Transmit` that follows.
     Burst,
-    /// A relay's grace on battery ended: it holds no more mail, and
+    /// A fixed relay's grace on battery ended: it holds no more mail, and
     /// flushes what it holds before it turns sleepy (spec "Delivery").
     GraceEnded,
+    /// A relay on battery is carried: it holds no more mail, and flushes
+    /// what it holds before it turns sleepy (spec "Sleepy nodes").
+    CarriedOnBattery,
     /// A relay on battery reached its low battery level: it holds no more
     /// mail, and flushes what it holds before it turns sleepy.
     BatteryLow,

@@ -200,11 +200,12 @@ a resting relay asks at boot and at its radio's sign of motion (spec "Position",
 D82).
 
 `gps_tracks()` says whether the GPS is to run all the time now: a relay's on external
-power, for its grace on battery, while it follows a far fix and while it is carried, never
-with a map point; a sleepy node's never. The driver reads it after every `handle` call, as
+power, for a fixed relay's grace on battery, while it follows a far fix and while it is
+carried, never with a map point; a sleepy node's never, a carried node's on battery among
+them. The driver reads it after every `handle` call, as
 it reads `next_wakeup`, runs the receiver while it holds and keeps it in standby when it
 does not, but for a search under way, and hands each fix as `AppCommand::Fix`. The end of
-a relay's grace on battery is a wakeup of its own.
+a fixed relay's grace on battery is a wakeup of its own.
 
 `AppCommand::Power` says whether external power, USB, is present. The driver sends it
 right after the boot wakeup and at every change, and may repeat it. On external power
@@ -219,8 +220,9 @@ cell down. The core calibrates the readings at a rested full charge and keeps th
 its stored state, and compares them with `Config::battery`'s levels (spec "Sleepy nodes"):
 a fixed relay on battery relays until a reading at or below the low level, and a node its
 battery turned sleepy relays again at the high level. A driver whose board reads no
-battery builds the core with `Config::battery` `None`, and the core then turns every relay
-sleepy at its grace's end, since a fixed one would otherwise relay until it browns out.
+battery builds the core with `Config::battery` `None`, and the core then turns a fixed
+relay sleepy at its grace's end, since it would otherwise relay until it browns out. A
+carried relay has no grace with or without levels: on battery it turns sleepy at once.
 
 A message for this node's application waits in its inbox, oldest first, until the
 application confirms it (spec "Phone link"; roadmap D122). The core announces each with

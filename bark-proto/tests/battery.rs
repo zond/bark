@@ -1,7 +1,8 @@
 //! A fixed relay on battery relays until its battery is low (spec
 //! "Nodes", `relay/power.rs`): the low level turns it sleepy, the high
-//! level or external power makes it a relay again, a carried relay keeps
-//! its grace, and a fixed relay that reboots on battery relays on.
+//! level or external power makes it a relay again, a carried relay on
+//! battery has no grace, and a fixed relay that reboots on battery relays
+//! on.
 
 mod common;
 
@@ -111,31 +112,35 @@ fn a_reading_on_external_power_is_not_taken() {
     assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.leaving());
 }
 
-/// A carried relay on battery keeps its grace whatever its battery: its
-/// owner's node is not to run flat relaying in a pocket. One carried
-/// after its grace is over leaves at once.
+/// A relay on battery that turns carried leaves at once whatever its
+/// battery, within its grace or past it: its owner's node is not to run
+/// flat relaying in a pocket (roadmap D152).
 #[test]
-fn a_carried_relay_keeps_its_grace() {
-    let r = 0;
-    let mut h = pair(41);
-    power(&mut h, r, false);
-    battery(&mut h, r, LEVELS.high_mv + 300);
-    h.run_for(secs(GRACE + 60));
-    assert!(!h.nodes[r].core.sleepy());
-    for k in 0..=8 {
-        let east = 300.0 + 10.0 * k as f64;
-        h.command(
-            r,
-            AppCommand::Fix {
-                position: pos(east),
-            },
-        );
-        h.run_for(secs(10));
+fn a_relay_carried_on_battery_leaves_at_once() {
+    for within in [true, false] {
+        let r = 0;
+        let mut h = pair(41);
+        power(&mut h, r, false);
+        battery(&mut h, r, LEVELS.high_mv + 300);
+        let wait = if within { 60 } else { GRACE + 60 };
+        h.run_for(secs(wait));
+        assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.leaving());
+        let mut east = 300.0;
+        while !h.nodes[r].core.carried() {
+            h.command(
+                r,
+                AppCommand::Fix {
+                    position: pos(east),
+                },
+            );
+            east += 10.0;
+            h.run_for(secs(10));
+        }
+        assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
+        assert_eq!(traced(&h, r, Trace::CarriedOnBattery), 1, "{within}");
+        assert_eq!(traced(&h, r, Trace::GraceEnded), 0);
+        assert_eq!(traced(&h, r, Trace::BatteryLow), 0);
     }
-    assert!(h.nodes[r].core.carried());
-    assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
-    assert_eq!(traced(&h, r, Trace::GraceEnded), 1);
-    assert_eq!(traced(&h, r, Trace::BatteryLow), 0);
 }
 
 /// Reboot node `r` on battery with `stored`, as its driver would.
