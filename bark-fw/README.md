@@ -723,7 +723,7 @@ its value flush right. Top to bottom:
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
-| phone | `PHONE NONE`, `PHONE PAIRED` or `PHONE PUBLIC`; while a phone pairs, `PAIR CODE 012345`, drawn at once | the phone link (Phone link, below) |
+| phone | `PHONE PUBLIC`, or `PHONE PAIRED` once its owner has made it private; while a phone pairs, `PAIR CODE 012345`, drawn at once | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -815,8 +815,9 @@ sleep mode 1. The front light (P1.11) stays off.
 
 ## Phone link
 
-The link (`src/ble.rs`, spec "Phone link") is open only to the paired
-phone (roadmap D135), unless its owner has made the node public (below). Every characteristic of the service needs a link
+The link (`src/ble.rs`, spec "Phone link") is the paired phone's
+(roadmap D135), and on a public node, as every node is unless its owner
+makes it private, also its guests' (below). Every characteristic of the service needs a link
 encrypted with an authenticated key; any other connection's read, write
 or subscription gets ATT's insufficient authentication, and an Android
 phone then pairs: it shows a dialog for a code, and the node draws a
@@ -828,8 +829,8 @@ identity resolving key and the long-term key, as a 64-byte record of two
 slots of the stored-state page (`src/store.rs`, `bark_link::bond`), and
 forgets any other: one phone at a time, and a new pairing replaces the
 last. A pairing that is not authenticated or does not bond leaves the
-bond as it was and its link is closed. The screen says `PHONE PAIRED`
-from then on, at boot too, and `PHONE NONE` on a node that never paired.
+bond as it was and its link is closed. The screen says `PHONE PUBLIC`,
+at boot too, or `PHONE PAIRED` on a node its owner has made private.
 The controller is built with LE privacy, as the host puts the bonded
 phone in its resolving list.
 
@@ -887,9 +888,11 @@ resets. They cost 14.8 KB of flash and 1.4 KB of static RAM, the
 SHA-256 among it, which the node build did not have before
 (2026-11-07, `llvm-size`, an open build).
 
-Recipient and Public (link version 7) make a node public
-(spec "Phone link", Public; roadmap D150). The paired phone writes Public; the bond's
-record keeps it, and the paired phone's recipient tag, which it writes
+Recipient and Public (link version 7) serve guests on a public node
+(spec "Phone link", Public; roadmap D150). A node is public unless the
+paired phone writes 0 to Public, private; the bond's record keeps that
+in its byte 14, so a node never paired, and a bond kept before, is
+public, and it keeps the paired phone's recipient tag, which it writes
 to Recipient at every connection. The host takes 3 links at once, each
 served by a task of its own (`slot`), so that its future lies in static
 storage and the stack holds one poll at a time; one slot advertises at a
@@ -908,7 +911,7 @@ console's `status` ends in `public=true` or `public=false`, read from
 the bond in the stored-state page.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
-5a slot 1 owner false` as a phone writes its tag, `ble: public true`,
+5a slot 1 owner false` as a phone writes its tag, `ble: public false`,
 `public: id=... tag=Some(5a) owner=false guests=0b010` for each message
 placed on a public node, and `ble: confirm id=... ok=true (guest 1)`.
 

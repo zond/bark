@@ -650,8 +650,8 @@ impl Recipient {
 }
 
 /// Public, read and write: 1 when the node serves phones that have not
-/// paired with it, 0 when only the paired phone (spec "Phone link",
-/// Public).
+/// paired with it, as it does unless its owner says otherwise; 0 when
+/// the owner has made it private, its alone (spec "Phone link", Public).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Public(pub bool);
 

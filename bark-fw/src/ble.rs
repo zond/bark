@@ -459,10 +459,11 @@ pub struct State {
     took: Option<(MsgId, From, u32)>,
     /// The phone whose turn it is ([`Turn`]).
     turn: Turn,
-    /// The node is public, and the paired phone's recipient tag, as the
-    /// bond keeps them.
+    /// The node is public, as it is unless the bond says private; and the
+    /// owner's recipient tag: `None` without a bond, `Some(None)` while
+    /// the bond keeps none.
     public: bool,
-    owner_tag: Option<u8>,
+    owner_tag: Option<Option<u8>>,
     /// The phone's request, until the node answers it.
     pub request: Option<(From, Request)>,
     /// The node's answer, until the step that gave it has published what
@@ -611,7 +612,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
         slot: None,
         since: None,
     },
-    public: false,
+    public: true,
     owner_tag: None,
     request: None,
     answer: None,
@@ -781,9 +782,14 @@ pub fn public() -> bool {
 
 /// Whether `tag` is the paired phone's, as the bond keeps it; any is,
 /// while the bond keeps none, so that nothing of the owner's is lost
-/// before its phone has written one.
+/// before its phone has written one; none is on a node nobody has paired
+/// with, which has no owner.
 pub fn owner_tag_is(tag: Option<u8>) -> bool {
-    LINK.lock(|l| l.borrow().owner_tag.is_none_or(|t| Some(t) == tag))
+    LINK.lock(|l| {
+        l.borrow()
+            .owner_tag
+            .is_some_and(|o| o.is_none_or(|t| Some(t) == tag))
+    })
 }
 
 /// The slots of the guests connected whose recipient tag is `tag`.
@@ -1086,10 +1092,10 @@ pub async fn run(
         KEPT.lock(|k| k.replace(Some(b)));
         match stack.add_bond_information(information(&b)) {
             Ok(()) => log::info!(
-                "ble: bond kept, table seen at version {}, service changed {}, public {}",
+                "ble: bond kept, table seen at version {}, service changed {}, private {}",
                 b.seen,
                 b.service_changed,
-                b.public
+                b.private
             ),
             Err(e) => log::error!("ble: the kept bond {}", HostError(&e)),
         }
@@ -1195,11 +1201,11 @@ fn links() -> usize {
 /// owner's recipient tag, for the links, the mailbox and the screen.
 fn follow_bond() {
     let bond = KEPT.lock(|k| *k.borrow());
-    let public = bond.is_some_and(|b| b.public);
+    let public = bark_link::bond::public(bond.as_ref());
     LINK.lock(|l| {
         let mut l = l.borrow_mut();
         l.public = public;
-        l.owner_tag = bond.and_then(|b| b.owner);
+        l.owner_tag = bond.map(|b| b.owner);
     });
     crate::mailbox::with(|m| m.set_public(public));
 }
@@ -1438,7 +1444,7 @@ async fn serve(
                     update.lock().await.link_closed();
                 }
                 // A pairing cut short leaves no code on the screen.
-                crate::display::phone(phone_now(stack));
+                crate::display::phone(phone_now());
                 return;
             }
             GattConnectionEvent::PassKeyDisplay(key) => {
@@ -1712,8 +1718,8 @@ fn settle(
     let new = bond.filter(|b| level == SecurityLevel::EncryptedAuthenticated && b.is_bonded);
     if let Some(b) = &new {
         log::info!("ble: paired; the bond replaces any before it");
-        let public = KEPT.lock(|k| k.borrow().is_some_and(|b| b.public));
-        keep(bond_of(b, public));
+        let private = KEPT.lock(|k| k.borrow().is_some_and(|b| b.private));
+        keep(bond_of(b, private));
     } else if level != SecurityLevel::NoEncryption {
         log::warn!("ble: a pairing that is not authenticated or does not bond; closed");
         conn.raw().disconnect();
@@ -1741,20 +1747,18 @@ fn settle(
             log::error!("ble: the kept bond {}", HostError(&e));
         }
     }
-    crate::display::phone(phone_now(stack));
+    crate::display::phone(phone_now());
 }
 
 /// The bond kept, which the host is to hold alone ([`settle`]), as
 /// kept in flash.
 static KEPT: Mutex<CriticalSectionRawMutex, RefCell<Option<Bond>>> = Mutex::new(RefCell::new(None));
 
-/// The screen's phone line when no pairing runs.
-fn phone_now(stack: &Stack) -> Phone {
-    if public() {
-        return Phone::Public;
-    }
-    match stack.with_bond_information(|b| b.is_empty()) {
-        true => Phone::None,
+/// The screen's phone line when no pairing runs: public, or paired with
+/// the phone whose owner made it private, as only a bonded node can be.
+fn phone_now() -> Phone {
+    match public() {
+        true => Phone::Public,
         false => Phone::Paired,
     }
 }
@@ -1774,8 +1778,8 @@ fn information(b: &Bond) -> BondInformation {
 
 /// The bond to keep of a new pairing's: the phone discovers the table
 /// of this version as it pairs, and has not subscribed yet; the node stays
-/// `public` or not, and the new phone's tag comes once it writes it.
-fn bond_of(b: &BondInformation, public: bool) -> Bond {
+/// `private` or not, and the new phone's tag comes once it writes it.
+fn bond_of(b: &BondInformation, private: bool) -> Bond {
     let mut addr = [0u8; 6];
     addr.copy_from_slice(b.identity.addr.addr.raw());
     Bond {
@@ -1785,7 +1789,7 @@ fn bond_of(b: &BondInformation, public: bool) -> Bond {
         ltk: b.ltk.to_le_bytes(),
         seen: bark_link::VERSION,
         service_changed: false,
-        public,
+        private,
         owner: None,
     }
 }
@@ -1993,9 +1997,10 @@ fn write_recipient(
     Ok(())
 }
 
-/// Public, written by the paired phone: the node serves guests, or no
-/// longer, at once and across reboots; turned off, its guests' links
-/// close (spec "Phone link", Public).
+/// Public, written by the paired phone: 0 makes the node private, the
+/// owner's alone, and 1 public again, as it is by default, at once and
+/// across reboots; made private, its guests' links close
+/// (spec "Phone link", Public).
 fn write_public(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     let set = w.with_data(|offset, data| match offset {
         0 => bark_link::Public::decode(data).map_err(malformed),
@@ -2005,8 +2010,11 @@ fn write_public(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErro
         // Only a bonded link writes it, and it is the bond's.
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
     };
-    if b.public != set.0 {
-        keep(Bond { public: set.0, ..b });
+    if b.private == set.0 {
+        keep(Bond {
+            private: !set.0,
+            ..b
+        });
         log::info!("ble: public {}", set.0);
         ADVERTISE.signal(());
         crate::mailbox::FOR_CORE.signal(());
