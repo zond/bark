@@ -603,6 +603,36 @@ pieces are the same pace's.
     1.28 % without the update; texts delivered 99.8 %, latency p50 /
     p90 1.0 / 16.2 s, as without.
 
+18. **Where the slot pieces go.** The count of item 17 took the pieces
+    a sleepy node lacked by its anchor's table, which holds the node's
+    section as last told. By the simulator's truth instead, for each
+    slot piece and each sleepy node of that anchor (`bark-sim`,
+    `slot_fate`), over the first 36 hours on `715fb4f`: 67.1 % were
+    heard by a node that lacked the block, 0.6 % lost while it
+    listened, 19.0 % carried a block the node held already, 7.9 % found
+    it out of reach, 3.3 % found it not listening because its anchor's
+    section as it last heard it showed nothing more, 0.9 % went after
+    the node had changed anchor and 0.7 % after it missed the slot
+    heartbeat. No three in four went missing; the earlier count was
+    the table's.
+
+    A sleepy node keeps every block and takes one piece a rotation, so
+    it finishes blocks out of order, while its section counts only the
+    blocks held from the first: its anchor sends blocks it holds
+    already. The slot piece then followed the channel's sweep, driven
+    by the relays there too; it now has a sweep of its own by the
+    sleepy nodes' sections alone (`8edc0fb`). Over 96 hours that gained
+    a block: 73 of 945 sleepy nodes held the image at 90 hours against
+    64, and those gathering lacked block 3.7 on average against 2.7;
+    50 % was not reached (86 of 946 at 96 hours). The pieces of blocks
+    already held grew to 27.8 %, as the nodes held more blocks out of
+    order. Each sleepy node stored about 890 pieces in the 96 hours,
+    about half the image's; and its anchor sent a slot piece in only
+    about 45 % of its rotations, which is not explained yet. The relays
+    held the image 50 / 90 / 100 % after 13.5 / 14.3 / 31.5 hours; the
+    channels were busy 1.68 %; texts delivered 99.8 %, latency p50 /
+    p90 1.0 / 16.3 s.
+
 
 ## What is left
 
