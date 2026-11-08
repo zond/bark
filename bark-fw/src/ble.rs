@@ -1724,12 +1724,19 @@ fn settle(
 /// kept in flash.
 static KEPT: Mutex<CriticalSectionRawMutex, RefCell<Option<Bond>>> = Mutex::new(RefCell::new(None));
 
-/// The screen's phone line when no pairing runs: public, or paired with
-/// the phone whose owner made it private, as only a bonded node can be.
+/// The screen's phone line when no pairing runs: what the kept bond says.
 fn phone_now() -> Phone {
-    match public() {
-        true => Phone::Public,
-        false => Phone::Paired,
+    KEPT.lock(|k| phone_of(k.borrow().as_ref()))
+}
+
+/// The screen's phone line for a node with the bond `bond`, or none:
+/// unpaired, its owner's alone, or its owner's and public
+/// (spec "Phone link", Pairing).
+pub fn phone_of(bond: Option<&Bond>) -> Phone {
+    match bond {
+        None => Phone::Unpaired,
+        Some(b) if b.private => Phone::Private,
+        Some(_) => Phone::Public,
     }
 }
 
@@ -2031,10 +2038,7 @@ fn write_public(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErro
             close_guests: !set.0,
             ..Notify::default()
         });
-        crate::display::phone(match set.0 {
-            true => Phone::Public,
-            false => Phone::Paired,
-        });
+        crate::display::phone(phone_now());
     }
     Ok(())
 }

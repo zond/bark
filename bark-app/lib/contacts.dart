@@ -48,6 +48,10 @@ class Contact {
   final int? heardSent;
   final DateTime? heardAt;
 
+  /// Put away by the person, with its conversation: kept, so that its
+  /// messages still open, but out of the contacts list.
+  final bool archived;
+
   Contact(
     this.card,
     this.chosen, {
@@ -57,6 +61,7 @@ class Contact {
     this.wroteFrom,
     this.heardSent,
     this.heardAt,
+    this.archived = false,
   });
 
   /// How long where they wrote from is taken as where they are: in a
@@ -95,6 +100,7 @@ class Contact {
     Address? wroteFrom,
     int? heardSent,
     DateTime? heardAt,
+    bool? archived,
   }) => Contact(
     card ?? this.card,
     name ?? chosen,
@@ -104,6 +110,7 @@ class Contact {
     wroteFrom: wroteFrom ?? this.wroteFrom,
     heardSent: heardSent ?? this.heardSent,
     heardAt: heardAt ?? this.heardAt,
+    archived: archived ?? this.archived,
   );
 
   /// After a message from them, written at `sent` with `address` in its
@@ -129,6 +136,7 @@ class Contact {
     'wroteFrom': wroteFrom?.toString(),
     'heardSent': heardSent,
     'heardAt': heardAt?.toIso8601String(),
+    'archived': archived,
   };
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
@@ -149,6 +157,8 @@ class Contact {
     heardAt: j['heardAt'] == null
         ? null
         : DateTime.parse(j['heardAt'] as String),
+    // Absent in a file from before archiving: nothing was archived.
+    archived: j['archived'] as bool? ?? false,
   );
 }
 
@@ -160,6 +170,43 @@ class Contacts extends ChangeNotifier {
 
   Contact? byKey(String? key) => list.where((c) => c.key == key).firstOrNull;
 
+  /// The contacts the person has not archived.
+  Iterable<Contact> get active => list.where((c) => !c.archived);
+
+  /// The identities whose conversation is archived: a removed contact's
+  /// too, so it is kept apart from the contacts. An archived contact's is
+  /// always among them.
+  final Set<String> archived = {};
+
+  bool isArchived(String key) => archived.contains(key);
+
+  /// Hides the conversation with `key` from the first screen.
+  Future<void> archiveConversation(String key) async {
+    if (!archived.add(key)) return;
+    notifyListeners();
+    await _save();
+  }
+
+  /// Hides `c` from the contacts and its conversation from the first
+  /// screen.
+  Future<void> archiveContact(Contact c) async {
+    archived.add(c.key);
+    await put(c.copyWith(archived: true));
+  }
+
+  /// Brings back the conversation with `key` and its contact: a contact
+  /// whose conversation is back is one the person talks to again.
+  Future<void> unarchive(String key) async {
+    final c = byKey(key);
+    final had = archived.remove(key);
+    if (c != null && c.archived) {
+      await put(c.copyWith(archived: false));
+    } else if (had) {
+      notifyListeners();
+      await _save();
+    }
+  }
+
   /// The version of `contacts.json`'s format: 2 since the cards it holds
   /// are of card version 2.
   static const version = 2;
@@ -167,18 +214,24 @@ class Contacts extends ChangeNotifier {
   Future<void> load() async {
     final l = await store.load(
       version,
-      (j) => [
-        for (final e in j['contacts'] as List)
-          Contact.fromJson(e as Map<String, dynamic>),
-      ],
+      (j) => (
+        [
+          for (final e in j['contacts'] as List)
+            Contact.fromJson(e as Map<String, dynamic>),
+        ],
+        // Absent in a file from before archiving: nothing was archived.
+        [for (final k in j['archived'] as List? ?? []) k as String],
+      ),
     );
     if (l == null) return;
-    list.addAll(l);
+    list.addAll(l.$1);
+    archived.addAll(l.$2);
     notifyListeners();
   }
 
   Future<void> _save() => store.save(version, {
     'contacts': [for (final c in list) c.toJson()],
+    'archived': [...archived],
   });
 
   /// Adds a contact, or replaces the one with the same identity.
@@ -196,7 +249,8 @@ class Contacts extends ChangeNotifier {
 
   /// Adds the contact of a card scanned or pasted, named `name` if that
   /// is not empty; a known one keeps its name, and its card unless this
-  /// one is as new or newer.
+  /// one is as new or newer. An archived one comes back: adding it again
+  /// is asking for it back.
   Future<Contact> add(PersonCard card, {String name = ''}) async {
     final known = byKey(card.key);
     final c =
@@ -207,7 +261,8 @@ class Contacts extends ChangeNotifier {
                   ))
             .copyWith(name: name.isEmpty ? null : name);
     await put(c);
-    return c;
+    await unarchive(c.key);
+    return byKey(c.key)!;
   }
 
   Future<void> remove(Contact c) async {

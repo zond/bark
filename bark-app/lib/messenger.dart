@@ -373,6 +373,10 @@ class Messenger {
             (x) => x.from == from && x.sent == h.sent,
           );
           if (!dup) {
+            // A new text brings an archived conversation back before it
+            // is told, so the person finds it where the notification
+            // leads.
+            await contacts.unarchive(from);
             await session.addReceived(
               Received(
                 m.msgId,

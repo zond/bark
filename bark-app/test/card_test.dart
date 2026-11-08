@@ -1,6 +1,7 @@
 // The card is shown only once the person has a name; a scanned card
 // without one, as an older app may send, still makes a contact, listed
-// by the start of its identity until a name comes.
+// by the start of its identity until a name comes; and an archived
+// contact's card scanned again brings it back.
 
 import 'dart:convert';
 
@@ -42,6 +43,18 @@ void main() {
     await cs.add(PersonCard(id, null, 3, 'Olena K'));
     expect(cs.list.single.name, 'Aunt');
     expect(cs.list.single.card.name, 'Olena K');
+  });
+
+  test('scanning an archived contact\'s card brings it back', () async {
+    final cs = Contacts(MemoryStore());
+    final card = PersonCard(List.filled(32, 0xab), null, 1, 'Olena');
+    await cs.archiveContact(await cs.add(card));
+    expect(cs.active, isEmpty);
+    expect(cs.isArchived(card.key), isTrue);
+    final back = await cs.add(card);
+    expect(back.archived, isFalse);
+    expect(cs.active.single.key, card.key);
+    expect(cs.isArchived(card.key), isFalse);
   });
 
   test('a contact saved as "Unnamed" before reads as nameless', () async {

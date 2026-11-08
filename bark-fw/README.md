@@ -723,7 +723,7 @@ its value flush right. Top to bottom:
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
-| phone | `PHONE PUBLIC`, or `PHONE PAIRED` once its owner has made it private; while a phone pairs, `PAIR CODE 012345`, drawn at once | the phone link (Phone link, below) |
+| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then `PHONE PUBLIC` or, once its owner has made it theirs alone, `PHONE PRIVATE`; while a phone pairs, `PAIR CODE 012345` | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -761,13 +761,26 @@ so a stale one would lie. The node redraws at least once an hour on
 battery and every ten minutes on USB; an uptime that has not moved
 after that long means the node is not running.
 
-*When it redraws.* At boot, once the node's loop has run (at most 5 s),
-then when a fact it shows changes, but not within 5 minutes of the
-last refresh on battery or a minute on USB, and at least once an hour on
-battery and every ten minutes on USB. A press of the user button
-(P1.10, `src/button.rs`) redraws it at once, a bench aid that leaves
-that schedule as it was. The cost on battery: a full
-refresh holds BUSY high for 2 s (the board's label). The panel's
+*When it redraws.* At boot, once the node's loop has run (at most 5 s).
+After that, a new pairing code is drawn at once, since a person stands
+at the node to type it while the phone waits (spec "Phone link",
+Pairing). Any other change a person acts on at once is drawn one
+refresh after it, 2 s (the board's label): the header (the role, or
+`STARTING` ending), the rest of the phone's line, and the power, USB or
+battery. Changes within those 2 s, such as the power and the role of a
+sleepy node when the cable goes in, are drawn in one picture, and a change undone
+within them is not drawn. Any other change, of the neighbour counts or
+the battery's level, is drawn no sooner than 5 minutes after the last
+picture on battery and a minute after it on USB, and the screen is drawn
+at least once an hour on battery and every ten minutes on USB. Every
+picture restarts those times, since it shows everything as it then is.
+Each picture is drawn to its end before the next is considered, so none
+starts while a refresh runs. A press of the user button (P1.10,
+`src/button.rs`) redraws at once, a bench aid that leaves the schedule
+as it was. `bark_screen::schedule` decides, tested on the host.
+
+The cost on battery: a full refresh holds BUSY high for 2 s (the
+board's label). The panel's
 current during a refresh is not in the repository's notes, nor its
 datasheet; taking 10 mA, an assumption to be replaced by a measurement
 with `scripts/measure.md`, a refresh is 20 mAs, 5.6 µAh,
@@ -777,7 +790,18 @@ on average, a tenth of a sleepy node's 0.65 mA
 (`docs/battery-role-2026-10-25.md`); with the hourly redraw alone,
 0.006 mA, under 1 %. So 5 minutes is the floor at which the display
 costs a sleepy node at most a tenth of its battery life, and the
-hourly redraw is the price of knowing the node runs. On USB the
+hourly redraw is the price of knowing the node runs. A change drawn
+early adds a picture, and such changes are rare: the power changes
+when a person plugs the node in or unplugs it; the role when the node
+turns relay or sleepy, finds its place, or takes or gives up an anchor,
+each of which the spec keeps from switching to and fro (the hour's
+grace in spec "Sleepy nodes", four hours still before the carried flag
+clears in "Heartbeat", a node that hears no relay keeping its anchor in
+"Relay choice"); and the phone's line when a person pairs the
+node or makes it public. Ten a day cost 10 × 5.6 µAh = 56 µAh a day,
+0.0023 mA on average, under 0.4 % of a sleepy node's 0.65 mA; and since
+the gap restarts from such a picture, a scheduled picture it already
+shows is not drawn as well. On USB the
 energy is the charger's; a minute keeps the picture current enough.
 Between refreshes the controller is in deep sleep, holding the picture
 and drawing nothing measurable; each refresh wakes it with a hardware
@@ -829,8 +853,9 @@ identity resolving key and the long-term key, as a 64-byte record of two
 slots of the stored-state page (`src/store.rs`, `bark_link::bond`), and
 forgets any other: one phone at a time, and a new pairing replaces the
 last. A pairing that is not authenticated or does not bond leaves the
-bond as it was and its link is closed. The screen says `PHONE PUBLIC`,
-at boot too, or `PHONE PAIRED` on a node its owner has made private.
+bond as it was and its link is closed. The screen says `PHONE UNPAIRED`
+until a phone has paired, then `PHONE PUBLIC`, or `PHONE PRIVATE` on a
+node its owner has made private.
 The controller is built with LE privacy, as the host puts the bonded
 phone in its resolving list.
 

@@ -10,6 +10,8 @@
 
 use core::fmt::{self, Write};
 
+pub mod schedule;
+
 /// The panel's width and height, pixels; its RAM is `HEIGHT` rows of
 /// `WIDTH / 8` bytes, the leftmost pixel in a byte's top bit, 1 white
 /// (SSD1681 datasheet, Write RAM).
@@ -271,12 +273,12 @@ pub struct State {
 /// The phone link as the screen says it (spec "Phone link", Pairing).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phone {
-    /// No phone is paired.
+    /// No phone has paired; the node is public all the same.
     #[default]
-    None,
-    /// One phone is paired.
-    Paired,
-    /// The node is public: it serves phones that have not paired too.
+    Unpaired,
+    /// An owner has paired, and the node is theirs alone.
+    Private,
+    /// An owner has paired, and the node serves guests too.
     Public,
     /// A phone is pairing: the six-digit code to type into it.
     Code(u32),
@@ -334,15 +336,7 @@ pub fn lines(
         y += line_height(SCALE) + gap;
     };
     put(
-        plain(
-            match (state.sleepy, state.anchored, state.placed, state.carried) {
-                (true, true, _, _) => format_args!("SLEEPY ANCHORED"),
-                (true, false, _, _) => format_args!("SLEEPY NO ANCHOR"),
-                (false, _, false, _) => format_args!("RELAY NO PLACE"),
-                (false, _, true, true) => format_args!("CARRIED RELAY"),
-                (false, _, true, false) => format_args!("FIXED RELAY"),
-            },
-        ),
+        plain(format_args!("{}", role(state))),
         if state.starting { 0 } else { GAP },
     );
     if state.starting {
@@ -352,8 +346,8 @@ pub fn lines(
     put(row(fixed.image, format_args!("V{}", fixed.version)), 0);
     put(
         match state.phone {
-            Phone::None => row("PHONE", format_args!("NONE")),
-            Phone::Paired => row("PHONE", format_args!("PAIRED")),
+            Phone::Unpaired => row("PHONE", format_args!("UNPAIRED")),
+            Phone::Private => row("PHONE", format_args!("PRIVATE")),
             Phone::Public => row("PHONE", format_args!("PUBLIC")),
             Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
         },
@@ -387,6 +381,17 @@ pub fn lines(
         put(row("TIME", format_args!("{}", c)), 0);
     }
     out
+}
+
+/// What the node is, the header's first line.
+pub fn role(state: &State) -> &'static str {
+    match (state.sleepy, state.anchored, state.placed, state.carried) {
+        (true, true, _, _) => "SLEEPY ANCHORED",
+        (true, false, _, _) => "SLEEPY NO ANCHOR",
+        (false, _, false, _) => "RELAY NO PLACE",
+        (false, _, true, true) => "CARRIED RELAY",
+        (false, _, true, false) => "FIXED RELAY",
+    }
 }
 
 /// `args` at the left, the rest of the line blank.
