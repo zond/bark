@@ -39,6 +39,36 @@ enum Linking {
   attaching,
 }
 
+/// Ranks a node heard without an RSSI below every RSSI a controller
+/// reports, −127 dBm and up (Bluetooth Core Specification 5.0, Vol 4
+/// Part E §7.7.65.2).
+const int _noRssi = -128;
+
+/// The node a round of the search connects to, of those it `heard`: the
+/// `paired` node whenever it was heard, as it serves the person whole;
+/// else, while no link is up, the public node heard strongest, the
+/// likeliest to hold a link; never the node `lost`, whose bond the phone
+/// still holds and which ends a link encrypted with it (spec "Phone
+/// link", The replaced phone); else none.
+FoundNode? chooseNode(
+  Iterable<FoundNode> heard, {
+  String? paired,
+  String? lost,
+  bool linked = false,
+}) {
+  final own = heard.where((n) => n.name == paired).firstOrNull;
+  if (paired != null && own != null) return own;
+  if (linked) return null;
+  FoundNode? best;
+  for (final n in heard) {
+    if (!n.public || n.name == lost) continue;
+    if ((n.rssi ?? _noRssi) > (best?.rssi ?? _noRssi) || best == null) {
+      best = n;
+    }
+  }
+  return best;
+}
+
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
   final Me me;
@@ -180,14 +210,15 @@ class AppModel extends ChangeNotifier {
   /// without anyone opening the app.
   void _link() {
     final n = session.node;
-    final paired = searchFor;
     final Held? h = n != null && !fake
         ? (
-            title: 'Connected to ${nodeName(n.id)}',
+            title: session.guest
+                ? 'Connected to ${nodeName(n.id)} as a guest'
+                : 'Connected to ${nodeName(n.id)}',
             body: 'Texts arrive while the screen is off',
           )
-        : paired != null
-        ? _looking(paired, bluetooth: bluetoothOn)
+        : searchOn
+        ? _looking(searchFor ?? 'a public node', bluetooth: bluetoothOn)
         : null;
     unawaited(alerts.hold(h).catchError(_unnotified));
     final p = session.pairedWith;
@@ -345,6 +376,20 @@ class AppModel extends ChangeNotifier {
     await _connect(n, again: again);
   }
 
+  /// The person connects to `n`, a public node, as a guest: without
+  /// pairing, so that it stays its owner's. It ends a search round, as
+  /// [connect] does.
+  Future<void> connectGuest(FoundNode n) async {
+    if (connecting || connectedTo(n.deviceId)) return;
+    await _connectGuest(n);
+  }
+
+  Future<void> _connectGuest(FoundNode n) => _open(n.deviceId, () async {
+    await _searchStopped();
+    await stopScan();
+    return BleLink.connect(n.deviceId, name: n.name, guest: true);
+  }, guest: true);
+
   Future<void> _connect(FoundNode n, {bool again = false}) async {
     final s = session;
     await _open(n.deviceId, () async {
@@ -389,13 +434,15 @@ class AppModel extends ChangeNotifier {
   }
 
   /// Connects by `open` and attaches the link, which ends a stop of the
-  /// search the person made; the node holds this phone's bond then. A
-  /// node that no longer does is kept as lost, with `again` to pair with
-  /// it anew, and [NotOurs] goes on to the caller.
+  /// search the person made. Unless the link is a `guest`'s, the node
+  /// holds this phone's bond then and is kept as the paired node; one
+  /// that no longer does is kept as lost, with `again` to pair with it
+  /// anew, and [NotOurs] goes on to the caller.
   Future<void> _open(
     String device,
     Future<(NodeLink, int)> Function() open, {
-    required Future<void> Function() again,
+    Future<void> Function()? again,
+    bool guest = false,
   }) async {
     _phase(Linking.connecting);
     pairAgain = null;
@@ -407,7 +454,7 @@ class AppModel extends ChangeNotifier {
       _phase(Linking.attaching);
       mtu = m;
       session.note('Connected, MTU $m');
-      if (await session.attach(link)) {
+      if (await session.attach(link, guest: guest) && !guest) {
         await session.setPaired(nodeName(session.node!.id));
       }
     } on NotOurs catch (e) {
@@ -456,26 +503,32 @@ class AppModel extends ChangeNotifier {
   /// is told once.
   String? _searchFailed;
 
-  /// The node the app searches for while it is not connected: the paired
-  /// node, unless it is no longer this phone's (then the person decides,
-  /// with Pair again), the person stopped the search, or the fake node
-  /// is in use.
-  String? get searchFor {
-    final p = session.pairedWith;
-    if (!_searchStarted || fake || session.stopped || session.connected) {
-      return null;
-    }
-    if (p == null || session.pairingLost) return null;
-    return p;
+  /// The paired node, unless it is no longer this phone's: then the
+  /// person decides, with Pair again.
+  String? get pairedNode => session.pairingLost ? null : session.pairedWith;
+
+  /// Whether the search runs: not once the person stopped it, nor with the
+  /// fake node in use; while not connected, and while connected as a
+  /// guest with a paired node to move to.
+  bool get searchOn {
+    if (!_searchStarted || fake || session.stopped) return false;
+    if (!session.connected) return true;
+    return session.guest && pairedNode != null;
   }
 
-  /// The node the search is scanning for now: not while Bluetooth is
-  /// off, a connection is being made, or the person scans.
-  String? get lookingFor =>
-      bluetoothOn && !connecting && !scanning ? searchFor : null;
+  /// The paired node while the search runs; null without one, when it
+  /// looks for public nodes alone.
+  String? get searchFor => searchOn ? pairedNode : null;
 
-  /// Starts the search for the paired node, which then runs whenever it
-  /// should: at start, and after a link drops.
+  /// Whether the search scans now: not while Bluetooth is off, a
+  /// connection is being made, or the person scans.
+  bool get lookingNow => searchOn && bluetoothOn && !connecting && !scanning;
+
+  /// The paired node the search is scanning for now.
+  String? get lookingFor => lookingNow ? pairedNode : null;
+
+  /// Starts the search, which then runs whenever it should: at start, and
+  /// after a link drops.
   void startSearch() {
     if (_searchStarted) return;
     _searchStarted = true;
@@ -489,7 +542,7 @@ class AppModel extends ChangeNotifier {
   /// Starts the search's rounds when it should run, and ends a scan or
   /// wait when it should not.
   void _search() {
-    if (lookingFor == null) {
+    if (!lookingNow) {
       if (!_wake.isCompleted) _wake.complete();
       return;
     }
@@ -499,20 +552,31 @@ class AppModel extends ChangeNotifier {
     unawaited(_rounds());
   }
 
+  /// Each round scans, then connects to the node [chooseNode] picks from
+  /// what it heard: the paired node, or the strongest public node.
   Future<void> _rounds() async {
     try {
-      while (true) {
-        final name = _awake();
-        if (name == null) break;
+      while (_awake()) {
         final start = now();
-        final round = _look(name);
+        final paired = pairedNode;
+        final round = _listen(paired);
         _round = round;
-        final n = await round;
+        final heard = await round;
         _round = null;
-        if (n != null && lookingFor == name) {
+        final n = lookingNow
+            ? chooseNode(
+                heard.values,
+                paired: pairedNode,
+                lost: session.pairingLost ? session.pairedWith : null,
+                linked: session.connected,
+              )
+            : null;
+        if (n != null && n.name == paired) {
           await _connectFound(n);
+        } else if (n != null) {
+          await _connectPublic(n);
         }
-        if (_awake() == null) break;
+        if (!_awake()) break;
         final left = lookRound - now().difference(start);
         if (left > Duration.zero) {
           final t = Timer(left, () {
@@ -527,24 +591,36 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  /// [lookingFor], with a new [_wake] when the search goes on: the last
+  /// [lookingNow], with a new [_wake] when the search goes on: the last
   /// may have ended a scan or wait for a change that has passed.
-  String? _awake() {
-    final name = lookingFor;
-    if (name != null && _wake.isCompleted) _wake = Completer<void>();
-    return name;
+  bool _awake() {
+    final on = lookingNow;
+    if (on && _wake.isCompleted) _wake = Completer<void>();
+    return on;
   }
 
-  Future<FoundNode?> _look(String name) async {
+  Future<Map<String, FoundNode>> _listen(String? paired) async {
+    final what = paired ?? 'a public node';
     try {
-      final n = await look(name, stop: _wake.future);
+      final heard = await listen(until: paired, stop: _wake.future);
       _searchFailed = null;
-      return n;
+      return heard;
     } catch (e) {
-      final f = 'Looking for $name failed: $e';
+      final f = 'Looking for $what failed: $e';
       if (f != _searchFailed) session.note(f);
       _searchFailed = f;
-      return null;
+      return const {};
+    }
+  }
+
+  /// Connects to the public node the search found, as a guest; a failure
+  /// waits for the next round, which takes the strongest again.
+  Future<void> _connectPublic(FoundNode n) async {
+    session.note('Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting');
+    try {
+      await _connectGuest(n);
+    } catch (e) {
+      session.note('Connecting to ${n.name} failed: $e');
     }
   }
 

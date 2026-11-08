@@ -9,7 +9,7 @@
 // phone has paired with since, and pairing with it again; and a long
 // text, counted in parts as it is written, sent in one bubble and
 // received as far as it has come; and a first message marked in a
-// verified thread.
+// verified thread; and the owner's Public switch, and a guest's view.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -22,6 +22,7 @@ import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
+import 'package:bark_app/ui/settings_screen.dart';
 import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -320,10 +321,13 @@ void main() {
     await t.runAsync(() => app.contacts.put(olena));
     await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
 
-    // A box without an address holds 158 bytes of text, a part 157.
-    await t.enterText(find.byType(TextField), 'a' * 158);
+    // A box without an address holds 156 bytes of text, a part 155.
+    await t.enterText(find.byType(TextField), 'a' * 156);
     await t.pump();
     expect(find.textContaining('parts'), findsNothing);
+    await t.enterText(find.byType(TextField), 'a' * 157);
+    await t.pump();
+    expect(find.text('2 parts'), findsOneWidget);
     final long = List.filled(40, 'word').join(' ');
     await t.enterText(find.byType(TextField), long);
     await t.pump();
@@ -625,6 +629,45 @@ void main() {
     expect(app.session.connected, isTrue);
     expect(app.session.pairingLost, isFalse);
     expect(find.textContaining('Connected and paired'), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the owner\'s Public switch; a guest\'s line, without the '
+      'owner\'s settings', (t) async {
+    final app = await model(t);
+    app.setFake(true);
+    await app.connectFake();
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    const public = 'Public: serve phones without pairing';
+    expect(find.text(public), findsOneWidget);
+    await t.tap(find.text(public));
+    await t.runAsync(() => Future<void>.delayed(Duration.zero));
+    await t.pump();
+    expect(app.fakeNode!.public, isTrue);
+    expect(app.session.nodePublic, isTrue);
+
+    // Another phone's view: connected as a guest.
+    await app.session.disconnect();
+    await app.session.attach(app.fakeNode!.connectGuest(), guest: true);
+    await t.pump();
+    expect(find.text(public), findsNothing);
+    expect(find.textContaining('Connected as a guest'), findsOneWidget);
+    expect(find.text('Update firmware'), findsNothing);
+    expect(find.text('Make this node my home'), findsNothing);
+    expect(find.text('Map point'), findsNothing);
+    await t.pumpWidget(BarkApp(app));
+    await t.pump();
+    expect(
+      find.text(
+        'Connected to bark-fa4e00000001 as a guest: a public node, not yours',
+      ),
+      findsOneWidget,
+    );
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

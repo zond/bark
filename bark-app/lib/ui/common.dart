@@ -214,11 +214,11 @@ Future<String?> askText(BuildContext context, String label, String initial) {
   );
 }
 
-/// The search for the paired node, while it scans or waits for
-/// Bluetooth; null when there is none.
+/// The search for the paired node, or a public node, while it scans or
+/// waits for Bluetooth; null when there is none.
 String? lookingLine(AppModel app) {
-  final n = app.searchFor;
-  if (n == null || app.connecting) return null;
+  if (!app.searchOn || app.connecting) return null;
+  final n = app.searchFor ?? 'a public node';
   if (!app.bluetoothOn) return 'Bluetooth is off: turn it on to reach $n.';
   return app.scanning ? null : 'Looking for $n…';
 }

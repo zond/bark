@@ -8,12 +8,41 @@ import 'package:universal_ble/universal_ble.dart';
 import 'link.dart';
 import 'node_link.dart';
 
-/// A node seen in a scan.
+/// A node seen in a scan; [public] when it advertised the public node's
+/// UUID, so that it serves phones that have not paired with it (spec
+/// "Phone link", Public).
 class FoundNode {
   final String deviceId;
   final String name;
   final int? rssi;
-  const FoundNode(this.deviceId, this.name, this.rssi);
+  final bool public;
+  const FoundNode(this.deviceId, this.name, this.rssi, {this.public = false});
+
+  /// A scan result, named by its device where Android gives no name yet:
+  /// the name is in the scan response, which may come after the
+  /// advertisement.
+  factory FoundNode.of(BleDevice d) {
+    final name = d.name ?? '';
+    return FoundNode(
+      d.deviceId,
+      name.isEmpty ? d.deviceId : name,
+      d.rssi,
+      public: d.services.any((u) => u.toLowerCase() == Uuids.publicNode),
+    );
+  }
+
+  /// This node and `n`, the same device heard again: its name once one
+  /// came, and the stronger RSSI, as a fade takes some advertisements
+  /// down and none up.
+  FoundNode heardAgain(FoundNode n) => FoundNode(
+    deviceId,
+    name == deviceId ? n.name : name,
+    switch ((rssi, n.rssi)) {
+      (final a?, final b?) => a > b ? a : b,
+      (final a, final b) => a ?? b,
+    },
+    public: public || n.public,
+  );
 }
 
 /// The ATT transaction timeout (Bluetooth Core Specification 5.0, Vol 3
@@ -21,17 +50,15 @@ class FoundNode {
 /// so a write may wait longer than the plugin's default.
 const Duration attTimeout = Duration(seconds: 30);
 
-/// Scans for nodes by the service UUID; each result goes to `found`.
+/// Scans for nodes by the service UUID and the public node's; each result
+/// goes to `found`.
 Future<void> startScan(void Function(FoundNode) found) async {
-  UniversalBle.onScanResult = (d) {
-    final name = d.name ?? '';
-    found(FoundNode(d.deviceId, name.isEmpty ? d.deviceId : name, d.rssi));
-  };
+  UniversalBle.onScanResult = (d) => found(FoundNode.of(d));
   await _scanForNodes();
 }
 
 Future<void> _scanForNodes({AndroidScanMode? mode}) => UniversalBle.startScan(
-  scanFilter: ScanFilter(withServices: [Uuids.service]),
+  scanFilter: ScanFilter(withServices: [Uuids.service, Uuids.publicNode]),
   // The node advertises with legacy advertising PDUs (spec "Phone link").
   platformConfig: PlatformConfig(
     android: AndroidOptions(legacy: true, scanMode: mode),
@@ -58,13 +85,14 @@ Future<bool> seen(String deviceId, {Duration wait = seenWait}) async {
   return await _scanUntil((d) => d.deviceId.toUpperCase() == id, wait) != null;
 }
 
-/// How long a round of the search for the paired node scans: four of
-/// its advertising intervals of 1022.5 ms (spec "Phone link", Finding the
-/// node). The scan listens without a break ([AndroidScanMode.lowLatency]),
-/// so with the screen on it hears nearly every advertisement in reach;
-/// the extra intervals cover a scan's start and an advertisement lost.
-/// With the screen off Android listens less, and a later round makes up
-/// for a miss.
+/// How long a round of the search scans: four of a node's advertising
+/// intervals of 1022.5 ms (spec "Phone link", Finding the node). The scan
+/// listens without a break ([AndroidScanMode.lowLatency]), so with the
+/// screen on it hears nearly every advertisement in reach; the extra
+/// intervals cover a scan's start and an advertisement lost. With the
+/// screen off Android listens less, and a later round makes up for a
+/// miss. Short of the paired node, a round listens all of it, so that it
+/// weighs each public node by the best of its four advertisements.
 const Duration lookScan = Duration(microseconds: 4 * 1022500);
 
 /// How often a round of the search starts. Android refuses an app's
@@ -73,16 +101,25 @@ const Duration lookScan = Duration(microseconds: 4 * 1022500);
 /// three for the person's own Scan and Pair again.
 const Duration lookRound = Duration(seconds: 15);
 
-/// Scans for the node called `name` for [lookScan], or until `stop`
-/// completes; the node, or null if it was not seen.
-Future<FoundNode?> look(String name, {Future<void>? stop}) async {
-  final d = await _scanUntil(
-    (d) => d.name == name,
+/// Scans for [lookScan], or until the node called `until` is heard or
+/// `stop` completes: the nodes heard, by device, each at the best RSSI it
+/// was heard with.
+Future<Map<String, FoundNode>> listen({
+  String? until,
+  Future<void>? stop,
+}) async {
+  final heard = <String, FoundNode>{};
+  await _scanUntil(
+    (d) {
+      final n = FoundNode.of(d);
+      heard.update(d.deviceId, (was) => was.heardAgain(n), ifAbsent: () => n);
+      return until != null && n.name == until;
+    },
     lookScan,
     mode: AndroidScanMode.lowLatency,
     stop: stop,
   );
-  return d == null ? null : FoundNode(d.deviceId, name, d.rssi);
+  return heard;
 }
 
 /// Scans until a device `match`es, at most `wait` or until `stop`
@@ -202,6 +239,10 @@ class BleLink implements NodeLink {
   /// the person for the code on the node's screen, and `paired` once the
   /// bond is made; returns the MTU agreed.
   ///
+  /// As a `guest` of a public node it neither pairs nor reads to check a
+  /// bond: Android may start a pairing by itself on a read the node
+  /// refuses for want of one, and the node is not the person's.
+  ///
   /// Throws [NotOurs] for a node, `name`, that no longer holds the
   /// phone's bond: one that ends the link it took before the app has
   /// read it while the phone holds a bond for it, as the node does when
@@ -213,6 +254,7 @@ class BleLink implements NodeLink {
   static Future<(BleLink, int)> connect(
     String deviceId, {
     required String name,
+    bool guest = false,
     bool hadBond = false,
     void Function()? pairing,
     void Function()? paired,
@@ -244,9 +286,12 @@ class BleLink implements NodeLink {
       mtu = await UniversalBle.requestMtu(deviceId, attMtu);
     } catch (e) {
       await link.close();
-      if (await setUpRefused(deviceId, hadBond: hadBond)) throw NotOurs(name);
+      if (!guest && await setUpRefused(deviceId, hadBond: hadBond)) {
+        throw NotOurs(name);
+      }
       rethrow;
     }
+    if (guest) return (link, mtu);
     try {
       if (await UniversalBle.isPaired(deviceId) ?? false) {
         await link._probe(name);
@@ -399,6 +444,17 @@ class BleLink implements NodeLink {
   @override
   Future<NeighbourPage> readNeighbours() async =>
       NeighbourPage.decode(await _read(Uuids.neighbours));
+
+  @override
+  Future<void> setRecipient(int tag) =>
+      _write(Uuids.recipient, encodeRecipient(tag));
+
+  @override
+  Future<bool> readPublic() async => decodePublic(await _read(Uuids.public));
+
+  @override
+  Future<void> setPublic(bool public) =>
+      _write(Uuids.public, encodePublic(public));
 
   @override
   Future<UpdateProgress> readUpdate() async =>

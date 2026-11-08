@@ -135,6 +135,9 @@ class Updater extends ChangeNotifier {
     final l = session.link;
     final n = session.node;
     if (l == null || n == null) throw StateError('not connected');
+    if (session.guest) {
+      throw StateError('only the phone paired with the node updates it');
+    }
     if (n.version < updateVersion) {
       throw StateError(
         'the node speaks link version ${n.version}, before updates over '

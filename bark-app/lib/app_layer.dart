@@ -13,8 +13,9 @@ import 'package:sodium/sodium.dart';
 import 'link.dart';
 import 'words.dart';
 
-/// The format's version, a payload's first byte's high four bits.
-const int formatVersion = 1;
+/// The format's version, a payload's first byte's high four bits: 2
+/// since the recipient tag.
+const int formatVersion = 2;
 
 /// The longest payload the app writes, so that a mailbox can send it on
 /// with [replyOverhead] more.
@@ -23,15 +24,40 @@ const int maxAppPayload = maxPayload - replyOverhead;
 const int nonceLen = 24;
 const int tagLen = 16;
 const int keyLen = 32;
-const int boxOverhead = 1 + nonceLen + tagLen;
-const int introOverhead = 1 + keyLen + tagLen;
+
+/// Bytes before a form's own: the format byte and the recipient tag.
+const int headLen = 2;
+const int boxOverhead = headLen + nonceLen + tagLen;
+const int introOverhead = headLen + keyLen + tagLen;
 
 /// A reply's count of the items still unsent after its batch.
 const int remainingLen = 2;
-const int replyOverhead = 1 + tagLen + numberLen + remainingLen;
+const int replyOverhead = headLen + tagLen + numberLen + remainingLen;
 
-/// The reply that says nothing is new: the format byte and the tag.
-const int nothingNewLen = 1 + tagLen;
+/// The reply that says nothing is new: the format byte, the recipient
+/// tag and the tag.
+const int nothingNewLen = headLen + tagLen;
+
+/// `crypto_generichash`'s shortest output, of which the recipient tag is
+/// the first byte.
+const int _tagHashLen = 16;
+
+/// The recipient tag of `identity` at the node `nodeId`: the first byte
+/// of `crypto_generichash` of the node ID keyed with the identity (spec
+/// "Phone link", Recipient tag). A public node hands a payload to the
+/// phones whose tag it carries.
+int recipientTag(Sodium s, List<int> identity, List<int> nodeId) {
+  final key = SecureKey.fromList(s, Uint8List.fromList(identity));
+  try {
+    return s.crypto.genericHash(
+      message: Uint8List.fromList(nodeId),
+      outLen: _tagHashLen,
+      key: key,
+    )[0];
+  } finally {
+    key.dispose();
+  }
+}
 
 /// `sent` counts seconds from 2026-01-01 00:00 UTC.
 final DateTime sentEpoch = DateTime.utc(2026);
@@ -123,13 +149,20 @@ Form? formOf(List<int> p) {
   return f < Form.values.length ? Form.values[f] : null;
 }
 
-/// A boxed payload: to a contact, under the pair's key.
-Uint8List sealBox(PrecalculatedBox pair, Uint8List nonce, List<int> plain) {
+/// A boxed payload: to a contact, under the pair's key, with their
+/// `recipient` tag at the node it goes to.
+Uint8List sealBox(
+  PrecalculatedBox pair,
+  int recipient,
+  Uint8List nonce,
+  List<int> plain,
+) {
   if (boxOverhead + plain.length > maxAppPayload) {
     throw const BadPayload('too long');
   }
   return Uint8List.fromList([
     formatByte(Form.boxed),
+    recipient,
     ...nonce,
     ...pair.easy(message: Uint8List.fromList(plain), nonce: nonce),
   ]);
@@ -143,21 +176,23 @@ Uint8List openBox(PrecalculatedBox pair, List<int> payload) {
   }
   try {
     return pair.openEasy(
-      cipherText: Uint8List.fromList(payload.sublist(1 + nonceLen)),
-      nonce: Uint8List.fromList(payload.sublist(1, 1 + nonceLen)),
+      cipherText: Uint8List.fromList(payload.sublist(headLen + nonceLen)),
+      nonce: Uint8List.fromList(payload.sublist(headLen, headLen + nonceLen)),
     );
   } on SodiumException {
     throw const BadPayload('does not open');
   }
 }
 
-/// A first message to `to`, in a sealed box.
-Uint8List sealIntro(Sodium s, List<int> to, List<int> plain) {
+/// A first message to `to`, in a sealed box, with their `recipient` tag
+/// at the node it goes to.
+Uint8List sealIntro(Sodium s, List<int> to, int recipient, List<int> plain) {
   if (introOverhead + plain.length > maxAppPayload) {
     throw const BadPayload('too long');
   }
   return Uint8List.fromList([
     formatByte(Form.introduction),
+    recipient,
     ...s.crypto.box.seal(
       message: Uint8List.fromList(plain),
       publicKey: Uint8List.fromList(to),
@@ -171,7 +206,7 @@ Uint8List openIntro(Sodium s, Keys me, List<int> payload) {
   }
   try {
     return s.crypto.box.sealOpen(
-      cipherText: Uint8List.fromList(payload.sublist(1)),
+      cipherText: Uint8List.fromList(payload.sublist(headLen)),
       publicKey: me.identity,
       secretKey: me.pair.secretKey,
     );
@@ -184,21 +219,30 @@ const int numberLen = 3;
 const int maxNumber = (1 << 24) - 1;
 
 /// A fetch: send the newest batch of the items not yet sent to
-/// [address].
+/// [address], for the requester's [recipient] tag at that address's node,
+/// which the home cannot make as it does not know the identity.
 class Fetch {
   final int sent;
   final Address address;
-  const Fetch(this.sent, this.address);
+  final int recipient;
+  const Fetch(this.sent, this.address, this.recipient);
 
-  static const plainLen = 4 + Address.len;
+  static const plainLen = 4 + Address.len + 1;
   static const len = boxOverhead + plainLen;
 
-  Uint8List seal(Sodium s, SecureKey key, Uint8List nonce) =>
+  /// The fetch as a payload under the mailbox key, for `home`, the
+  /// requester's recipient tag at its home node.
+  Uint8List seal(Sodium s, SecureKey key, int home, Uint8List nonce) =>
       Uint8List.fromList([
         formatByte(Form.fetch),
+        home,
         ...nonce,
         ...s.crypto.secretBox.easy(
-          message: Uint8List.fromList([...be(sent, 4), ...address.encode()]),
+          message: Uint8List.fromList([
+            ...be(sent, 4),
+            ...address.encode(),
+            recipient,
+          ]),
           nonce: nonce,
           key: key,
         ),
@@ -211,17 +255,18 @@ class Fetch {
     final Uint8List b;
     try {
       b = s.crypto.secretBox.openEasy(
-        cipherText: Uint8List.fromList(payload.sublist(1 + nonceLen)),
-        nonce: Uint8List.fromList(payload.sublist(1, 1 + nonceLen)),
+        cipherText: Uint8List.fromList(payload.sublist(headLen + nonceLen)),
+        nonce: Uint8List.fromList(payload.sublist(headLen, headLen + nonceLen)),
         key: key,
       );
     } on SodiumException {
       throw const BadPayload('does not open');
     }
-    final a = b.sublist(4);
+    final a = b.sublist(4, 4 + Address.len);
     return Fetch(
       fromBe(b.sublist(0, 4)),
       Address(Position.decode(a), a.sublist(Position.wireLen)),
+      b[4 + Address.len],
     );
   }
 }
@@ -242,11 +287,13 @@ Uint8List replyNonce(int round, int place) => Uint8List.fromList([
 Uint8List _sealReply(
   Sodium s,
   SecureKey key,
+  int recipient,
   int round,
   int place,
   List<int> plain,
 ) => Uint8List.fromList([
   formatByte(Form.reply),
+  recipient,
   ...s.crypto.secretBox.easy(
     message: Uint8List.fromList(plain),
     nonce: replyNonce(round, place),
@@ -255,25 +302,27 @@ Uint8List _sealReply(
 ]);
 
 /// Item [number] at [place] in [round], with [remaining] items still
-/// unsent after the round's batch, as the home node sends it.
+/// unsent after the round's batch, as the home node sends it for the
+/// fetch's [recipient] tag.
 Uint8List sealReply(
   Sodium s,
   SecureKey key,
+  int recipient,
   int round,
   int place,
   int number,
   int remaining,
   List<int> item,
-) => _sealReply(s, key, round, place, [
+) => _sealReply(s, key, recipient, round, place, [
   ...be(number, numberLen),
   ...be(remaining, remainingLen),
   ...item,
 ]);
 
 /// The reply that says the mailbox holds nothing the fetch of [round]
-/// asks for.
-Uint8List sealNothingNew(Sodium s, SecureKey key, int round) =>
-    _sealReply(s, key, round, 0, const []);
+/// asks for, for its [recipient] tag.
+Uint8List sealNothingNew(Sodium s, SecureKey key, int recipient, int round) =>
+    _sealReply(s, key, recipient, round, 0, const []);
 
 /// What a reply says: an item, its number, its place in the round and
 /// the items still unsent after the round's batch, or nothing new, and so
@@ -296,7 +345,7 @@ Opened? openReply(Sodium s, SecureKey key, int round, List<int> payload) {
   Uint8List? at(int place) {
     try {
       return s.crypto.secretBox.openEasy(
-        cipherText: Uint8List.fromList(payload.sublist(1)),
+        cipherText: Uint8List.fromList(payload.sublist(headLen)),
         nonce: replyNonce(round, place),
         key: key,
       );

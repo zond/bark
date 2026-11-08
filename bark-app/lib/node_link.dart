@@ -77,6 +77,15 @@ abstract class NodeLink {
   /// takes it only where the bytes it holds end.
   Future<void> writePiece(Uint8List value);
 
+  /// Link version 7 and later: the phone's recipient tag at this node,
+  /// by which a public node hands it its messages.
+  Future<void> setRecipient(int tag);
+
+  /// Link version 7 and later, the paired phone's alone: whether the node
+  /// serves phones that have not paired.
+  Future<bool> readPublic();
+  Future<void> setPublic(bool public);
+
   /// Asks for the shortest connection interval, for a transfer; where
   /// the platform chooses the interval itself, nothing.
   Future<void> hurry();

@@ -21,11 +21,15 @@ void main() {
   Uint8List h(Map<String, dynamic> m, String k) => parseHex(m[k] as String)!;
   late Sodium s;
   late Keys alice, bob;
+  late Address home, away;
   setUpAll(() async {
     s = await SodiumInit.init();
     alice = Keys.fromSeed(s, h(at('alice'), 'seed'));
     bob = Keys.fromSeed(s, h(at('bob'), 'seed'));
+    home = PersonCard.parse(at('card')['text'] as String).home!;
+    away = Address.parse(at('fetch')['address'] as String)!;
   });
+  int tag(Keys k, Address at) => recipientTag(s, k.identity, at.id);
 
   test('the word list is the Rust one', () {
     final rust = File('../bark-app-layer/src/words.txt').readAsLinesSync();
@@ -45,6 +49,21 @@ void main() {
     p[11] = p[11] == 'zoo' ? 'abandon' : 'zoo';
     expect(seedOfPhrase(p.join(' ')), isNull);
     expect(seedOfPhrase(p.sublist(1).join(' ')), isNull);
+  });
+
+  test('the recipient tag is the Rust one, keyed and per node', () {
+    for (final (name, k) in [('alice', alice), ('bob', bob)]) {
+      final m = at(name);
+      expect(tag(k, home), m['recipient_home']);
+      expect(tag(k, away), m['recipient_away']);
+    }
+    // libsodium's generichash keyed with the identity, its first byte.
+    final key = SecureKey.fromList(s, alice.identity);
+    expect(
+      tag(alice, away),
+      s.crypto.genericHash(message: away.id, outLen: 16, key: key)[0],
+    );
+    key.dispose();
   });
 
   test('the card, its bytes and its text, with a home and without', () {
@@ -79,7 +98,10 @@ void main() {
       publicKey: bob.identity,
       secretKey: alice.pair.secretKey,
     );
-    expect(hex(sealBox(ab, h(m, 'nonce'), plain)), m['payload']);
+    final payload = sealBox(ab, tag(bob, home), h(m, 'nonce'), plain);
+    expect(hex(payload), m['payload']);
+    expect(payload[0], 0x20);
+    expect(payload[1], at('bob')['recipient_home']);
     final ba = s.crypto.box.precalculate(
       publicKey: alice.identity,
       secretKey: bob.pair.secretKey,
@@ -99,6 +121,7 @@ void main() {
       );
       final plain = openBox(ab, h(m, 'payload'));
       expect(hex(plain), m['plaintext']);
+      expect(h(m, 'payload')[1], at('alice')['recipient_away']);
       final (hd, rs) = readPlain(plain);
       expect(hd.greater, greater(bob.identity, alice.identity));
       expect((rs.first as AckRecord).sent, m['acknowledges']);
@@ -134,18 +157,27 @@ void main() {
     final card = PersonCard.decode((rs.first as CardRecord).card);
     expect(card.identity, alice.identity);
     expect((rs.last as TextRecord).text, m['text']);
-    final mine = sealIntro(s, bob.identity, plain);
+    expect(h(m, 'payload')[1], at('bob')['recipient_home']);
+    final mine = sealIntro(s, bob.identity, tag(bob, home), plain);
+    expect(mine[1], tag(bob, home));
     expect(openIntro(s, bob, mine), plain);
     expect(() => openIntro(s, alice, mine), throwsA(isA<BadPayload>()));
   });
 
   test('a fetch: made and opened', () {
     final m = at('fetch');
-    final f = Fetch(m['sent'] as int, Address.parse(m['address'] as String)!);
-    expect(hex(f.seal(s, alice.mailbox, h(m, 'nonce'))), m['payload']);
+    final f = Fetch(m['sent'] as int, away, tag(alice, away));
+    expect(f.recipient, m['recipient']);
+    final homeTag = tag(alice, home);
+    expect(homeTag, m['home']);
+    expect(hex(f.seal(s, alice.mailbox, homeTag, h(m, 'nonce'))), m['payload']);
     expect(h(m, 'payload').length, Fetch.len);
+    expect(Fetch.len, 60);
     final g = Fetch.open(s, alice.mailbox, h(m, 'payload'));
-    expect((g.sent, g.address.toString()), (f.sent, f.address.toString()));
+    expect(
+      (g.sent, g.address.toString(), g.recipient),
+      (f.sent, f.address.toString(), f.recipient),
+    );
     expect(
       () => Fetch.open(s, bob.mailbox, h(m, 'payload')),
       throwsA(isA<BadPayload>()),
@@ -159,10 +191,13 @@ void main() {
     final n = m['number'] as int;
     final left = m['remaining'] as int;
     expect(hex(replyNonce(round, place)), m['nonce']);
+    // The reply carries the tag the fetch asked for.
+    final to = at('fetch')['recipient'] as int;
     expect(
-      hex(sealReply(s, alice.mailbox, round, place, n, left, h(m, 'item'))),
+      hex(sealReply(s, alice.mailbox, to, round, place, n, left, h(m, 'item'))),
       m['payload'],
     );
+    expect(h(m, 'payload')[1], to);
     final o = openReply(s, alice.mailbox, round, h(m, 'payload'))!;
     expect(
       (o.number, o.place, o.remaining, hex(o.item!)),
@@ -174,11 +209,14 @@ void main() {
 
   test('a reply opens at every place of a batch, and tells what remains', () {
     for (final place in [1, maxReplies]) {
-      final p = sealReply(s, alice.mailbox, 7, place, 5, 1000, [1, 2]);
+      final p = sealReply(s, alice.mailbox, 9, 7, place, 5, 1000, [1, 2]);
       final o = openReply(s, alice.mailbox, 7, p)!;
       expect((o.number, o.place, o.remaining), (5, place, 1000));
     }
-    final beyond = sealReply(s, alice.mailbox, 7, maxReplies + 1, 5, 0, [1, 2]);
+    final beyond = sealReply(s, alice.mailbox, 9, 7, maxReplies + 1, 5, 0, [
+      1,
+      2,
+    ]);
     expect(openReply(s, alice.mailbox, 7, beyond), isNull);
   });
 
@@ -186,8 +224,10 @@ void main() {
     final m = at('nothing_new');
     final round = m['round'] as int;
     expect(hex(replyNonce(round, 0)), m['nonce']);
-    expect(hex(sealNothingNew(s, alice.mailbox, round)), m['payload']);
+    final to = at('fetch')['recipient'] as int;
+    expect(hex(sealNothingNew(s, alice.mailbox, to, round)), m['payload']);
     expect(h(m, 'payload').length, nothingNewLen);
+    expect(nothingNewLen, 18);
     expect(
       openReply(s, alice.mailbox, round, h(m, 'payload'))!.nothingNew,
       isTrue,
@@ -208,6 +248,7 @@ void main() {
     // The room of a whole text in a box without an address, as the Rust
     // side has it: one byte more than a part's.
     expect(room + 1, maxAppPayload - boxOverhead - 5 - 1);
+    expect((maxAppPayload, room + 1), (204, 156));
     expect(splitText(m['text'] as String, room + 1), [
       for (final p in parts) p['text'],
     ]);
@@ -228,7 +269,10 @@ void main() {
         TextRecord(p['text'] as String, i + 1, parts.length),
       ]);
       expect(hex(plain), p['plaintext']);
-      expect(hex(sealBox(ab, h(p, 'nonce'), plain)), p['payload']);
+      expect(
+        hex(sealBox(ab, tag(bob, home), h(p, 'nonce'), plain)),
+        p['payload'],
+      );
       final (got, rs) = readPlain(openBox(ba, h(p, 'payload')));
       final t = rs.single as TextRecord;
       expect(

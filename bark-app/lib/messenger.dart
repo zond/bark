@@ -25,6 +25,7 @@ class Messenger {
     session.reader = receive;
     session.homeKey = (n) =>
         isHome(n.id) ? me.keys.mailbox.extractBytes() : null;
+    session.recipient = (n) => recipientTag(sodium, me.identity, n.id);
   }
 
   /// Whether the node of `id` is the person's home: a home is known by its
@@ -46,13 +47,15 @@ class Messenger {
     ),
   );
 
-  /// Seals `records` to `c`: boxed once `c` holds the person's card, else
-  /// a first message with it. Being verified cannot choose: only a box
-  /// verifies, so two people waiting for it would never send one. The
-  /// header names the node the person writes from, the one connected or
-  /// the last, until `c` has answered a message that named it. Returns the payload and its `sent`.
+  /// Seals `records` to `c` at `dst`: boxed once `c` holds the person's
+  /// card, else a first message with it. Being verified cannot choose:
+  /// only a box verifies, so two people waiting for it would never send
+  /// one. The header names the node the person writes from, the one
+  /// connected or the last, until `c` has answered a message that named
+  /// it. Returns the payload and its `sent`.
   Future<(Uint8List, int)> _seal(
     Contact c,
+    Address dst,
     List<Record> records, {
     int? sent,
   }) async {
@@ -71,13 +74,15 @@ class Messenger {
     if (withAddress) {
       await contacts.put(c.copyWith(sentMine: here.toString()));
     }
+    final to = recipientTag(sodium, c.card.identity, dst.id);
     if (!c.hasMine) {
       final plain = writePlain(header, [CardRecord(card.encode()), ...records]);
-      return (sealIntro(sodium, c.card.identity, plain), sent);
+      return (sealIntro(sodium, c.card.identity, to, plain), sent);
     }
     return (
       sealBox(
         _pair(c.card.identity),
+        to,
         sodium.randombytes.buf(nonceLen),
         writePlain(header, records),
       ),
@@ -114,13 +119,14 @@ class Messenger {
     final n = parts.length;
     if (n > maxParts) throw BadPayload('too long: $n parts, $maxParts at most');
     final first = await me.nextSents(n);
+    final dst = c.addressOf(t);
     for (final (i, part) in parts.indexed) {
-      final (p, sent) = await _seal(c, [
+      final (p, sent) = await _seal(c, dst, [
         TextRecord(part, i + 1, n),
       ], sent: first + i);
       await session.queue(
         Outgoing(
-          c.addressOf(t),
+          dst,
           p,
           at: now(),
           kind: OutKind.text,
@@ -147,9 +153,10 @@ class Messenger {
         if (x != null && x.sent != null && !x.acked) x,
     ];
     final each = _recordRoom(c) ~/ (1 + 4);
+    final dst = c.addressOf(t);
     for (var i = 0; i < open.length; i += each) {
       final some = open.sublist(i, min(i + each, open.length));
-      final (p, sent) = await _seal(c, [
+      final (p, sent) = await _seal(c, dst, [
         for (final x in some) AckRecord(x.sent!),
       ]);
       for (final x in some) {
@@ -157,7 +164,7 @@ class Messenger {
       }
       await session.queue(
         Outgoing(
-          c.addressOf(t),
+          dst,
           p,
           at: now(),
           kind: OutKind.ack,
@@ -173,10 +180,11 @@ class Messenger {
   Future<void> sendCard(Contact c) async {
     final t = c.unasked(now());
     if (t == null) return;
-    final (p, sent) = await _seal(c, [CardRecord(me.card.encode())]);
+    final dst = c.addressOf(t);
+    final (p, sent) = await _seal(c, dst, [CardRecord(me.card.encode())]);
     await session.queue(
       Outgoing(
-        c.addressOf(t),
+        dst,
         p,
         at: now(),
         kind: OutKind.card,
@@ -199,13 +207,19 @@ class Messenger {
   }
 
   /// Asks the home node for the newest batch of the items it has not
-  /// sent, to be sent to `here`.
+  /// sent, to be sent to `here`: the fetch carries the person's tag at the
+  /// home, and inside, for the replies, their tag at `here`.
   Future<void> fetch(Address here) async {
     final home = me.home;
     if (home == null) return;
     final sent = await me.nextSent();
-    final f = Fetch(sent, here);
-    final p = f.seal(sodium, me.keys.mailbox, sodium.randombytes.buf(nonceLen));
+    final f = Fetch(sent, here, recipientTag(sodium, me.identity, here.id));
+    final p = f.seal(
+      sodium,
+      me.keys.mailbox,
+      recipientTag(sodium, me.identity, home.id),
+      sodium.randombytes.buf(nonceLen),
+    );
     await me.fetched(sent);
     await session.queue(
       Outgoing(home, p, at: now(), kind: OutKind.fetch, sent: sent),

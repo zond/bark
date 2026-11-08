@@ -141,6 +141,7 @@ class DebugScreen extends StatelessWidget {
       _row('Name', nodeName(n.id)),
       _row('Node ID', hex(n.id)),
       _row('MTU', '${app.mtu ?? '?'}'),
+      _row('Link', s.guest ? 'a guest\'s' : 'the paired phone\'s'),
       _row('Link version', '${n.version}'),
       _row('Firmware image', '${n.image}'),
       _row(
@@ -152,6 +153,13 @@ class DebugScreen extends StatelessWidget {
                 final t => describeTime(t),
               },
       ),
+      _row('Public', switch (s.nodePublic) {
+        null when s.guest => 'yes, as a guest finds it',
+        null when n.version < publicVersion =>
+          'none before link version $publicVersion',
+        null => 'not read',
+        final p => p ? 'yes' : 'no',
+      }),
       _row(
         'Home',
         n.version < homeVersion

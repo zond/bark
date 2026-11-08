@@ -104,7 +104,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [6, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [7, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
@@ -221,6 +221,22 @@ void main() {
     expect(q(-1139), Quality.fair);
     expect(q(-1112), Quality.fair);
     expect(q(-1110), Quality.good);
+  });
+
+  test('recipient and public', () {
+    expect(encodeRecipient(0xcf), [0xcf]);
+    expect(() => encodeRecipient(256), throwsA(isA<Malformed>()));
+    expect(encodePublic(true), [1]);
+    expect(encodePublic(false), [0]);
+    expect(decodePublic([1]), isTrue);
+    expect(decodePublic([0]), isFalse);
+    for (final b in [
+      <int>[],
+      [2],
+      [1, 0],
+    ]) {
+      expect(() => decodePublic(b), throwsA(isA<Malformed>()));
+    }
   });
 
   test('a bonded phone\'s read the node refuses for want of its bond', () {
