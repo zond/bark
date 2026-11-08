@@ -137,12 +137,17 @@ pub mod external {
     /// The chip's end, 16 Mbit (datasheet, "Features").
     pub const END: u32 = 2 * 1024 * 1024;
 
-    /// Sectors for coded pieces: 352 pieces of 256 bytes, five and a half
-    /// blocks of 64, more than a node gathers at once
-    /// (`docs/mesh-update-2026-10-25.md`, "The code"): the five blocks it
-    /// gathers, a sector of what it has gathered, and one spare
-    /// (`crate::pieces`).
-    const PIECES_SECTORS: u32 = 22;
+    /// Blocks of an image the mesh carries, the table's among them: a
+    /// lane of four sectors, 64 pieces of 256 bytes, for each, since a
+    /// node keeps the pieces of every block it lacks (`crate::pieces`,
+    /// roadmap D150). 48 lanes and the head are what the chip has room
+    /// for beside the staged image and the mailbox, with about 108 KiB to
+    /// spare: an image of 47 blocks, 743 KB packed, today's 28.
+    pub const PIECE_LANES: u32 = 48;
+
+    /// Sectors for coded pieces: a head of what has been gathered, then a
+    /// lane of four sectors for each block (`crate::pieces`).
+    const PIECES_SECTORS: u32 = 1 + PIECE_LANES * 4;
 
     /// Sectors for the mailbox's ring: 64 of 16 items of 256 bytes, 1024
     /// items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`,
@@ -226,6 +231,8 @@ const _: () = {
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(external::DFU.len == ACTIVE.len + external::SECTOR);
     assert!(external::MAILBOX.end() <= external::END);
+    // About 108 KiB stay free.
+    assert!(external::FREE.len >= 27 * external::SECTOR);
     assert!(PROTECT_LOW.len.is_multiple_of(PAGE) && PROTECT_LOW.len <= FLASH_END / 2);
     assert!(PROTECT_HIGH.start.is_multiple_of(PAGE) && PROTECT_HIGH.len <= FLASH_END / 2);
     // embassy-boot keeps two progress words a page for the swap and two for
@@ -333,21 +340,21 @@ mod tests {
             external::PIECES,
             Region {
                 start: 0xE4000,
-                len: 22 * PAGE
+                len: 193 * PAGE
             }
         );
         assert_eq!(
             external::MAILBOX,
             Region {
-                start: 0xFA000,
+                start: 0x1A5000,
                 len: 64 * PAGE
             }
         );
         assert_eq!(
             external::FREE,
             Region {
-                start: 0x13A000,
-                len: 198 * PAGE
+                start: 0x1E5000,
+                len: 27 * PAGE
             }
         );
     }

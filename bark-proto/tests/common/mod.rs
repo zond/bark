@@ -101,6 +101,29 @@ pub struct SimNode<C: Core> {
     /// When the radio received duty-cycled (`Action::Sniff`, rule 10):
     /// from, until. It hears then only frames with the long preamble.
     pub sniffed: Vec<(Instant, Instant)>,
+    /// The update's driver side, if the node takes part: its policy takes
+    /// every image offered, and a block decodes at its pieces.
+    pub updates: Option<Updates>,
+}
+
+/// A driver's side of the update without bytes
+/// (spec "Updates over the mesh"): what it was offered, the pieces it kept, and when it came to
+/// hold the image.
+#[derive(Default)]
+pub struct Updates {
+    /// Distinct pieces that decode block `b`.
+    pub needs: Vec<usize>,
+    pub offered: Vec<(Instant, bark_proto::update::Image)>,
+    pub pieces: Vec<(Instant, bark_proto::update::Piece)>,
+    pub gathering: Option<bark_proto::update::Image>,
+    /// Pieces kept of each block, and the blocks decoded.
+    pub kept: HashMap<u8, usize>,
+    pub decoded: usize,
+    pub holds_at: Option<Instant>,
+    /// A block whose first decoding fails its hash.
+    pub fail_once: Option<u8>,
+    /// When each block passed.
+    pub passed: Vec<Option<Instant>>,
 }
 
 /// Decides whether a frame is lost: `(now, from, to, bytes)`.
@@ -124,9 +147,11 @@ pub struct Harness<C: Core> {
 
 impl<C: Core> Harness<C> {
     pub fn new(cores: Vec<C>) -> Self {
-        let nodes = cores
-            .into_iter()
-            .map(|core| SimNode {
+        // A loop, not an iterator chain: each adapter's frame holds a core
+        // in a debug build, and ten of them are a test thread's stack.
+        let mut nodes = Vec::with_capacity(cores.len());
+        for core in cores {
+            nodes.push(SimNode {
                 core,
                 alive: true,
                 resting: None,
@@ -147,8 +172,9 @@ impl<C: Core> Harness<C> {
                 sent: Vec::new(),
                 received: Vec::new(),
                 sniffed: Vec::new(),
-            })
-            .collect();
+                updates: None,
+            });
+        }
         Harness {
             now: Instant::ZERO,
             nodes,
@@ -444,6 +470,11 @@ impl<C: Core> Harness<C> {
             .max()
     }
 
+    /// Hand core `i` a command from its driver now.
+    pub fn deliver_app(&mut self, i: usize, cmd: AppCommand<'_>) {
+        self.deliver(i, Event::App(cmd));
+    }
+
     /// Hand `ev` to core `i`, then wake it again while it asks for a time
     /// already reached. A core that keeps asking for the present is stuck.
     fn deliver(&mut self, i: usize, ev: Event<'_>) {
@@ -465,8 +496,15 @@ impl<C: Core> Harness<C> {
         let now = self.now;
         let mut actions = Vec::new();
         self.nodes[i].core.handle(ev, now, &mut |a| actions.push(a));
+        let mut answers = Vec::new();
         for a in actions {
+            if let Some(u) = self.nodes[i].updates.as_mut() {
+                answers.extend(u.answer(now, &a).into_iter().flatten().flatten());
+            }
             self.apply(i, a);
+        }
+        for cmd in answers {
+            self.handle(i, Event::App(cmd));
         }
         // The application reads every message at once and confirms it,
         // as the simulator's does, so the inbox never fills.
@@ -484,6 +522,7 @@ impl<C: Core> Harness<C> {
                 | Action::Lbt(_)
                 | Action::Rssi(_)
                 | Action::Transmit(_)
+                | Action::Serve(_)
                 | Action::Sniff(_)
         ) {
             // Any use of the radio ends a sniff, and so does a new one.
@@ -508,7 +547,8 @@ impl<C: Core> Harness<C> {
             Action::Store(s) => self.nodes[i].stored = Some(s),
             Action::Locate(until) => self.nodes[i].located.push((now, until)),
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
-            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => {
+            Action::Offered(_) | Action::StorePiece(_) => {}
+            Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) | Action::Serve(_) => {
                 let n = &self.nodes[i];
                 assert!(
                     n.ex.is_none() && n.held.is_none(),
@@ -531,7 +571,7 @@ impl<C: Core> Harness<C> {
             Action::Lbt(c) => (Kind::Lbt, c, RETUNE + CAD + RETUNE, true),
             Action::Rssi(c) if resting == Some(c) => (Kind::Rssi, c, RSSI, false),
             Action::Rssi(c) => (Kind::Rssi, c, RETUNE + RSSI + RETUNE, true),
-            Action::Transmit(f) => {
+            Action::Transmit(f) | Action::Serve(f) => {
                 assert!(
                     f.preamble_symbols >= MIN_PREAMBLE_SYMBOLS,
                     "core {i}: short preamble (rule 4)"
@@ -591,6 +631,57 @@ impl<C: Core> Harness<C> {
             spent <= BUDGET.as_micros(),
             "core {i} exceeds the duty cycle: {spent} µs in an hour"
         );
+    }
+}
+
+impl Updates {
+    /// What the driver tells the core after `a`.
+    fn answer(&mut self, now: Instant, a: &Action) -> Option<[Option<AppCommand<'static>>; 2]> {
+        match *a {
+            Action::Offered(image) => {
+                self.offered.push((now, image));
+                self.gathering = Some(image);
+                self.kept.clear();
+                self.decoded = 0;
+                Some([Some(AppCommand::Gather { image, from: 0 }), None])
+            }
+            Action::StorePiece(p) => {
+                self.pieces.push((now, p));
+                let image = self.gathering?;
+                let kept = self.kept.entry(p.block).or_default();
+                *kept += 1;
+                if *kept != self.needs[usize::from(p.block)] {
+                    return None;
+                }
+                if self.fail_once == Some(p.block) {
+                    self.fail_once = None;
+                    self.kept.remove(&p.block);
+                    return Some([
+                        Some(AppCommand::Block {
+                            index: p.block,
+                            ok: false,
+                        }),
+                        None,
+                    ]);
+                }
+                if self.passed.len() < self.needs.len() {
+                    self.passed.resize(self.needs.len(), None);
+                }
+                self.passed[usize::from(p.block)] = Some(now);
+                self.decoded += 1;
+                let block = AppCommand::Block {
+                    index: p.block,
+                    ok: true,
+                };
+                // The last block decoded: the image is checked and held.
+                let last = self.decoded == usize::from(image.blocks);
+                if last {
+                    self.holds_at = Some(now);
+                }
+                Some([Some(block), last.then_some(AppCommand::Holds(image))])
+            }
+            _ => None,
+        }
     }
 }
 

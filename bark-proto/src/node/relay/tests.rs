@@ -33,8 +33,13 @@ fn sizes() {
     let relay = core::mem::size_of::<Relay>();
     let tables = crate::tables::sizes::tables();
     let kept = 2 * core::mem::size_of::<Option<Stored>>();
-    std::println!("Relay {relay} B, tables {tables} B, kept {kept} B");
-    assert!(relay <= tables + 1024 + kept, "{relay}");
+    // What it keeps of the images spreading
+    // (spec "Updates over the mesh"): small beside the tables, most of it
+    // a bit for each piece of each of the 48 blocks an image can have.
+    let spread = core::mem::size_of::<update::Spread>();
+    std::println!("Relay {relay} B, tables {tables} B, kept {kept} B, spread {spread} B");
+    assert!(spread <= 2048, "{spread}");
+    assert!(relay <= tables + 1024 + kept + spread, "{relay}");
     // It fits the board's RAM: 255 KiB for the application
     // (bark-image/src/layout.rs), less the firmware's other static memory,
     // the BLE stack, Embassy and the USB log, 29 896 B as measured

@@ -705,6 +705,37 @@ impl Default for Gps {
     }
 }
 
+/// A firmware image that spreads over the mesh from one relay (spec
+/// "Updates over the mesh"). The simulator's driver side keeps no bytes:
+/// a block decodes when the node has been handed as many distinct pieces
+/// as it is made of.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdateSpec {
+    /// When the relay is given the image, seconds; `None` for the time the
+    /// run has settled ([`Scenario::settled_s`]).
+    pub at_s: Option<f64>,
+    /// The image's length in bytes as it travels, packed behind its
+    /// 256-byte header (`bark-image`, `pieces.rs`): the node image built
+    /// from main `ea1141f` on 2026-11-08 (`cargo build --release` in
+    /// `bark-fw/`, as `bark-fw/README.md`, "Build and package"), 420 552 B,
+    /// and the header, 420 808 B.
+    pub image_bytes: u32,
+    /// The relay given the image: the one placed as a relay nearest the
+    /// centre of the nodes, or the named node.
+    pub holder: Option<String>,
+}
+
+impl Default for UpdateSpec {
+    fn default() -> Self {
+        UpdateSpec {
+            at_s: None,
+            image_bytes: 420_808,
+            holder: None,
+        }
+    }
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -735,6 +766,9 @@ pub struct Scenario {
     pub power: Power,
     /// The nodes' batteries and the grid's outages.
     pub battery: Battery,
+    /// A firmware image given to one relay, to spread over the mesh;
+    /// `None` for none.
+    pub update: Option<UpdateSpec>,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -785,6 +819,7 @@ impl Default for Scenario {
             gps: Gps::default(),
             power: Power::default(),
             battery: Battery::default(),
+            update: None,
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

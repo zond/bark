@@ -161,6 +161,9 @@ pub struct Neighbour {
     /// Whether its position is a map point a person set, by its last
     /// heartbeat (spec "Neighbour table"); shown, used by no rule yet.
     pub map_point: bool,
+    /// What the last heartbeat that carried a section said of its images
+    /// (spec "Updates over the mesh").
+    pub update: Option<crate::update::Section>,
     /// When its last heartbeat was heard.
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
@@ -430,6 +433,15 @@ impl Neighbours {
         self.slots().find(|(_, n)| n.id == id).map(|(i, _)| i)
     }
 
+    /// A heartbeat of `id` carried `section`.
+    pub fn section_heard(&mut self, id: NodeId, section: crate::update::Section) {
+        if let Some(i) = self.slot_of(id) {
+            if let Some(n) = &mut self.slots[i] {
+                n.update = Some(section);
+            }
+        }
+    }
+
     /// The entry for `id`.
     pub fn get(&self, id: NodeId) -> Option<&Neighbour> {
         self.slot(self.slot_of(id)?)
@@ -546,6 +558,7 @@ impl Neighbours {
             home: hb.home,
             format: hb.format,
             map_point: hb.map_point,
+            update: None,
             last_heard: now,
             demoted_at: Instant::ZERO,
             banned_until: Instant::ZERO,

@@ -47,13 +47,14 @@ kept of the core's state before the reboot, if anything, in `Config::stored` (§
 
 The driver owns one half-duplex LoRa radio that is either listening on a channel or away on
 an **excursion**: a listen-before-talk (`Action::Lbt`), a signal strength reading
-(`Action::Rssi`) or a transmission (`Action::Transmit`). `Action::Listen(c)` is not an excursion: it sets the resting channel,
+(`Action::Rssi`) or a transmission (`Action::Transmit`, or `Action::Serve` for an
+update's piece, §4). `Action::Listen(c)` is not an excursion: it sets the resting channel,
 takes effect at once, and the radio listens on `c` whenever no excursion is in progress.
 
 Rules:
 
-1. **One excursion outstanding.** After emitting `Lbt`, `Rssi` or `Transmit` the core waits
-   for its completion event (`LbtDone`, `RssiSample`, `TxDone`) before emitting another.
+1. **One excursion outstanding.** After emitting `Lbt`, `Rssi`, `Transmit` or `Serve` the core
+   waits for its completion event (`LbtDone`, `RssiSample`, `TxDone`) before emitting another.
    A driver may treat a violation as a bug and panic.
 2. **Every excursion completes with exactly one event**, then the radio is listening on the
    resting channel again. The driver pays the retune, settle, CAD, RSSI and airtime costs and
@@ -118,8 +119,10 @@ Every node has the same application interface: the readiness query
 `AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power` and
 `AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
-`Action::Store` and `Config::stored`, and the GPS: the request `Action::Locate` and
-the queries `gps_tracks` and `fix_in_reach`.
+`Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
+the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
+`AppCommand::Holds`, `AppCommand::Gather` and `AppCommand::Block` and the actions
+`Action::Offered`, `Action::StorePiece` and `Action::Serve`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
 at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
@@ -232,6 +235,34 @@ the application's confirmations, and its map point set and clear, as
 `bark_driver::Request`s when the application is ready. The core never inspects a
 payload (spec "Phone link": the app owns identity and encryption).
 
+**The update** (spec "Updates over the mesh"). The core carries an image's pieces
+and decides what to send and when; their bytes, the code that makes them, the flash
+they wait in, the policy and the signature check are the driver's. In the simulator
+the pieces carry no bytes and a block decodes when its count of distinct pieces is in.
+
+- `AppCommand::Holds(image)`: the image the node holds whole and has checked, the one
+  it runs or one staged after its signature passed, with its name, version, block
+  count, the pieces of its last block and its key; at boot and after each change. The
+  core tells it in its heartbeats' section and serves it.
+- `Action::Offered(image)`: a neighbour's heartbeat named an image above the version the
+  node runs and the one it gathers; once for each image. The driver answers
+  `AppCommand::Gather { image, from }` if its policy takes it, `from` the first block it
+  lacks, 0 unless it gathered some before a reboot, which it may also say at boot
+  unasked; else it answers nothing. The keys and the signatures stay out of the core,
+  which keeps no answer.
+- `Action::StorePiece(piece)`: keep this piece. The core hands pieces of every block
+  the node lacks, each once, of an image of at most 48 blocks, so the driver holds at
+  most a lane of 64 a block, 48 lanes (`bark-image`, `pieces.rs`). When a
+  block's pieces decode it answers `AppCommand::Block { index, ok }`, `ok` if the block
+  matched its hash; the core then takes no more of it, or takes its pieces again.
+  Once every block has decoded the driver checks the image and says `Holds`.
+- `Action::Serve(frame)`: transmit this piece frame as `Transmit`, after writing into
+  it, from `wire::PIECE_HEADER_LEN` on, the bytes of the piece its header names, of
+  the image the driver said it holds or of the one it gathers, a block it said
+  decoded and passed; completes with `TxDone`. The driver holds the
+  bytes, so the core needs no copy of a piece to send one, and a coded piece is
+  made only when it goes.
+
 `AppEvent::Boot { relays, ends }` tells the application how the node's first rotation goes
 (spec "Channel at boot", "Phone link"): at boot, with no relay known and when the rotation
 ends; each time the node learns a relay in it, with the relays it knows; and once at its
@@ -265,6 +296,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
 | GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
+| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | none yet: `Offered` and `StorePiece` go unanswered and `Holds` is never said, so the core never serves; the decoder, the flash and the signature check come later (`bark-driver/src/lib.rs`) |
 | Inbox (§4) | the application reads and confirms each message at once | the phone link reads the oldest and confirms it when the phone writes its ID back (`bark-fw/src/ble.rs`, spec "Phone link") |
 
 ## 6. Memory
@@ -274,7 +306,7 @@ test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 104 B | 6.5 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 128 B | 8.0 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
@@ -282,7 +314,7 @@ test in `tables/mod.rs`:
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **182.2 KiB** |
+| **All** | | **183.7 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -290,16 +322,18 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-187 608 B (183.2 KiB): the tables and, in under 1 KiB around them, the
+191 008 B (186.5 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
-and its stored state as handed back and as last kept, 72 B; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 168 592 B (164.6 KiB), without the heard table and the delivery
+and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
+of the update, 1 856 B (spec "Updates over the mesh"), with 24 B of each neighbour's entry for its heartbeats' section; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 171 992 B (168.0 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
-relay, Embassy, the USB log and the phone link with its BLE stack, is 217 504 B
-(`docs/phone-link-2026-11-05.md`, "Does it fit"), which leaves 43 616 B, 42.6 KiB, for
+relay, Embassy, the USB log and the phone link with its BLE stack, was 217 504 B
+(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 3 384 B since
+(`docs/mesh-update-2026-11-07.md`) is 220 888 B and leaves 40 232 B, 39.3 KiB, for
 the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
@@ -345,6 +379,10 @@ action at a time, and the core never allocates.
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
   - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
     header; the decoder rejects anything longer.
+  - A DATA's `aux` 15 is the update's piece, and 13, 14 and 16 to 63 are rejected
+    (spec "Packet formats"); a piece is always a full frame, 247 bytes after its 8-byte
+    header. A heartbeat of 30 bytes or more carries the update's section in bytes 13 to
+    29, its versions big-endian (`wire::decode_section`).
   - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit
     the seen flag (roadmap D76, D90). With bit 6 clear, the top bit marks a heartbeat,
     whose low four bits hold its channel, 0 to 12, and the two between are zero; the

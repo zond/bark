@@ -31,7 +31,19 @@
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id hops
 //!            payload                                              = 28 + payload
+//! HEARTBEAT  + section: runs version tag key blocks last complete
+//!            have                                                 = 30
+//! PIECE      first format tag block index bytes                   = 255
 //! ```
+//!
+//! DATA's `aux` 13 to 63, above every home channel, names a frame from
+//! node to node, one value a kind: plain, one hop, not routed and not
+//! acknowledged unless its kind says so. 15 is the update's piece (spec
+//! "Updates over the mesh"); 13, 14 and 16 to 63 are reserved, and a node
+//! rejects them. A heartbeat may carry an update section after its first
+//! 13 bytes, which a node that knows none ignores. Such a frame keeps the first
+//! two bytes and lays out the rest for its kind: none of them has a hop,
+//! a destination or a count, and the piece needs every byte.
 //!
 //! An ACK answers every offer, taken, refused or seen: its first byte says
 //! which. A refusal is for this hop only (spec "Receiving DATA"); the
@@ -73,6 +85,7 @@ use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::update::{Image, ImageTag, Section, SECTION_LEN, TAG_LEN};
 
 /// The wire format this code speaks, and so sends and reads (spec
 /// "Packet formats", roadmap D77).
@@ -149,6 +162,22 @@ pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
 /// Largest application payload: [`MAX_FRAME`] less the DATA header,
 /// 255 − 28 = 227 bytes.
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
+
+// The frames from node to node (spec "Packet formats").
+/// DATA `aux` of the update's piece (spec "Updates over the mesh").
+pub const PIECE_AUX: u8 = 15;
+const _: () = assert!(Channel::new(PIECE_AUX).is_none());
+const BODY: usize = VERSION + FORMAT_LEN;
+const PIECE_TAG: usize = BODY;
+const PIECE_BLOCK: usize = PIECE_TAG + TAG_LEN;
+const PIECE_INDEX: usize = PIECE_BLOCK + 1;
+/// Where a piece's bytes start in its frame: the driver writes them there
+/// (`Action::Serve`).
+pub const PIECE_HEADER_LEN: usize = PIECE_INDEX + 1;
+/// A piece's bytes: what a full frame holds after the piece's header.
+pub const PIECE_BYTES: usize = MAX_FRAME - PIECE_HEADER_LEN;
+
+const _: () = assert!(PIECE_HEADER_LEN == 8 && PIECE_BYTES == 247);
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
 const _: () = assert!(DATA_HEADER_LEN == 28);
@@ -261,6 +290,61 @@ impl Data<'_> {
     }
 }
 
+/// An update frame (spec "Updates over the mesh").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Update<'a> {
+    /// One coded piece of block `block` of the image `tag`.
+    Piece {
+        /// The image.
+        tag: ImageTag,
+        /// The block.
+        block: u8,
+        /// Which of the block's pieces, 0 to 254.
+        index: u8,
+        /// Its [`PIECE_BYTES`] bytes.
+        bytes: &'a [u8],
+    },
+}
+
+/// Encode `s` as a heartbeat's section, into the [`SECTION_LEN`] bytes
+/// after its first [`HEARTBEAT_LEN`]: multi-byte numbers big-endian.
+pub fn encode_section(s: &Section, b: &mut [u8; SECTION_LEN]) {
+    b[0..4].copy_from_slice(&s.runs.to_be_bytes());
+    match s.image {
+        Some(i) => {
+            b[4..8].copy_from_slice(&i.version.to_be_bytes());
+            b[8..12].copy_from_slice(&i.name.0);
+            b[12] = i.key;
+            b[13] = i.blocks;
+            b[14] = i.last;
+        }
+        None => b[4..15].fill(0),
+    }
+    b[15] = s.complete;
+    b[16] = s.have;
+}
+
+/// A heartbeat's section, if `heartbeat` carries one after its first
+/// [`HEARTBEAT_LEN`] bytes; a version of 0 names no image.
+pub fn decode_section(heartbeat: &[u8]) -> Option<Section> {
+    let b = heartbeat.get(HEARTBEAT_LEN..HEARTBEAT_LEN + SECTION_LEN)?;
+    let word = |at: usize| u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+    let version = word(4);
+    let image = (version != 0).then(|| Image {
+        name: ImageTag([b[8], b[9], b[10], b[11]]),
+        version,
+        key: b[12],
+        blocks: b[13],
+        last: b[14],
+    });
+    Some(Section {
+        runs: word(0),
+        image,
+        complete: b[15],
+        have: b[16],
+    })
+}
+
 /// Any packet. Payloads borrow from the received frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Packet<'a> {
@@ -270,6 +354,8 @@ pub enum Packet<'a> {
     Ack(Ack),
     /// DATA.
     Data(Data<'a>),
+    /// An update frame.
+    Update(Update<'a>),
 }
 
 /// Why a frame did not decode.
@@ -288,12 +374,16 @@ pub enum DecodeError {
     Kind(u8),
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
+    /// A frame from node to node of a kind reserved for later, DATA `aux`
+    /// 16 to 63.
+    Reserved(u8),
 }
 
 /// Why a packet did not encode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EncodeError {
-    /// The payload is longer than [`MAX_PAYLOAD`].
+    /// The payload is longer than [`MAX_PAYLOAD`], or a piece's bytes are
+    /// not [`PIECE_BYTES`].
     PayloadTooLong,
 }
 
@@ -407,18 +497,41 @@ impl Packet<'_> {
                 put(buf, DATA_HEADER_LEN, d.payload);
                 Ok(DATA_HEADER_LEN + d.payload.len())
             }
+            Packet::Update(u) => {
+                buf[VERSION] = FORMAT;
+                match u {
+                    Update::Piece {
+                        tag,
+                        block,
+                        index,
+                        bytes,
+                    } => {
+                        if bytes.len() != PIECE_BYTES {
+                            return Err(EncodeError::PayloadTooLong);
+                        }
+                        buf[FIRST] = PIECE_AUX;
+                        put(buf, PIECE_TAG, &tag.0);
+                        buf[PIECE_BLOCK] = *block;
+                        buf[PIECE_INDEX] = *index;
+                        put(buf, PIECE_HEADER_LEN, bytes);
+                        Ok(MAX_FRAME)
+                    }
+                }
+            }
         }
     }
 }
 
 impl Packet<'_> {
-    /// The node that sent the frame: every packet names it, a heartbeat
-    /// its sender, an ACK the answering node and a DATA `src_hop`.
-    pub fn sender(&self) -> NodeId {
+    /// The node that sent the frame, if it names it: a heartbeat its
+    /// sender, an ACK the answering node and a DATA `src_hop`; a piece
+    /// does not.
+    pub fn sender(&self) -> Option<NodeId> {
         match self {
-            Packet::Heartbeat(h) => h.id,
-            Packet::Ack(a) => a.from,
-            Packet::Data(d) => d.src_hop,
+            Packet::Heartbeat(h) => Some(h.id),
+            Packet::Ack(a) => Some(a.from),
+            Packet::Data(d) => Some(d.src_hop),
+            Packet::Update(_) => None,
         }
     }
 }
@@ -466,6 +579,9 @@ impl<'a> Packet<'a> {
             }));
         }
         let aux = first & AUX_MASK;
+        if Channel::new(aux).is_none() {
+            return Self::decode_update(aux, b).map(Packet::Update);
+        }
         let payload = payload(b, DATA_HEADER_LEN)?;
         format(b)?;
         Ok(Packet::Data(Data {
@@ -477,6 +593,30 @@ impl<'a> Packet<'a> {
             hops: b[DATA_HOPS],
             payload,
         }))
+    }
+}
+
+impl<'a> Packet<'a> {
+    fn decode_update(aux: u8, b: &'a [u8]) -> Result<Update<'a>, DecodeError> {
+        if aux != PIECE_AUX {
+            return Err(DecodeError::Reserved(aux));
+        }
+        if b.len() < BODY {
+            return Err(DecodeError::Short);
+        }
+        format(b)?;
+        let tag = |at: usize| {
+            let mut t = [0; TAG_LEN];
+            t.copy_from_slice(&b[at..at + TAG_LEN]);
+            ImageTag(t)
+        };
+        exact(b, MAX_FRAME)?;
+        Ok(Update::Piece {
+            tag: tag(PIECE_TAG),
+            block: b[PIECE_BLOCK],
+            index: b[PIECE_INDEX],
+            bytes: &b[PIECE_HEADER_LEN..],
+        })
     }
 }
 
@@ -518,12 +658,41 @@ mod tests {
             Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
             Packet::Data(d) => 28 + d.payload.len(),
+            Packet::Update(Update::Piece { .. }) => 255,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
     }
 
     proptest! {
+        #[test]
+        fn update_frames_round_trip(
+            runs: u32,
+            version in 1u32..,
+            blocks: u8,
+            last: u8,
+            key: u8,
+            complete: u8,
+            have: u8,
+            tag: [u8; TAG_LEN],
+            block: u8,
+            index: u8,
+            bytes in proptest::collection::vec(any::<u8>(), PIECE_BYTES),
+        ) {
+            let tag = ImageTag(tag);
+            let piece = Packet::Update(Update::Piece { tag, block, index, bytes: &bytes });
+            round_trip(&piece);
+            prop_assert_eq!(piece.sender(), None);
+            let image = Image { name: tag, version, blocks, last, key };
+            for image in [Some(image), None] {
+                let section = Section { runs, image, complete, have };
+                let mut hb = [0u8; HEARTBEAT_LEN + SECTION_LEN];
+                encode_section(&section, (&mut hb[HEARTBEAT_LEN..]).try_into().unwrap());
+                prop_assert_eq!(decode_section(&hb), Some(section));
+                prop_assert_eq!(decode_section(&hb[..HEARTBEAT_LEN + 3]), None);
+            }
+        }
+
         #[test]
         fn heartbeat_round_trips(
             sleepy: bool,
@@ -538,7 +707,7 @@ mod tests {
             // Every heartbeat is read, whatever format its sender speaks.
             let hb = Heartbeat { sleepy, anchorless, carried, home, format, map_point, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
-            prop_assert_eq!(Packet::Heartbeat(hb).sender(), id);
+            prop_assert_eq!(Packet::Heartbeat(hb).sender(), Some(id));
             prop_assert_eq!(hb.position(position), position);
         }
 
@@ -554,7 +723,7 @@ mod tests {
             let wait = if refused { step } else { 0 };
             let ack = Ack { msg_id, from, to, refused, wait, seen };
             round_trip(&Packet::Ack(ack));
-            prop_assert_eq!(Packet::Ack(ack).sender(), from);
+            prop_assert_eq!(Packet::Ack(ack).sender(), Some(from));
             let flipped = Ack { refused: !refused, seen: false, ..ack };
             prop_assert!(ack.answers(&flipped));
             // A seen ACK with a wait is of no kind.
@@ -580,7 +749,7 @@ mod tests {
         ) {
             let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, payload: &payload };
             round_trip(&Packet::Data(d));
-            prop_assert_eq!(Packet::Data(d).sender(), src_hop);
+            prop_assert_eq!(Packet::Data(d).sender(), Some(src_hop));
             // The ID survives the trip: it depends only on fields every hop keeps.
             let mut buf = [0; MAX_FRAME];
             let len = Packet::Data(d).encode(&mut buf).unwrap();
@@ -676,14 +845,15 @@ mod tests {
 
         let mut data = [0u8; DATA_HEADER_LEN];
         data[VERSION] = FORMAT;
-        for (aux, why) in [
-            (13, "outside the plan"),
-            (0x10, "a high bit"),
-            (0x23, "a high bit"),
-        ] {
+        for aux in [13, 14, 16, 17, 0x23, AUX_MASK] {
             data[FIRST] = aux;
-            assert_eq!(Packet::decode(&data), Err(ChannelOutOfRange(aux)), "{why}");
+            assert_eq!(Packet::decode(&data), Err(Reserved(aux)), "reserved");
         }
+        data[FIRST] = PIECE_AUX;
+        assert!(
+            Packet::decode(&data).is_err(),
+            "a piece of the wrong length"
+        );
         data[FIRST] = 0;
         assert!(
             Packet::decode(&data).is_ok(),

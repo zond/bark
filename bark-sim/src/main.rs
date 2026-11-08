@@ -1,6 +1,6 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
 //! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
-//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--tables] [--margin FILE]`. Prints a short table; writes the JSON summary, the CSV
+//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--tables] [--margin FILE]`. Prints a short table; writes the JSON summary, the CSV
 //! time series, the per-message CSV, the per-node event trace, the links
 //! between relays and the per-minute series of every relay when asked;
 //! `--tables` adds what the neighbour tables hold to the JSON summary;
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--battery FILE] [--tables] [--margin FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--tables] [--margin FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -30,6 +30,7 @@ fn run() -> Result<(), String> {
     let (mut seed, mut duration, mut json, mut csv, mut trace) = (None, None, None, None, None);
     let (mut messages, mut links, mut series, mut minutes) = (None, None, None, None);
     let mut battery = None;
+    let mut update = None;
     let mut tables = false;
     let mut margin = None;
     while let Some(a) = args.next() {
@@ -60,6 +61,7 @@ fn run() -> Result<(), String> {
             "--series" => series = Some(PathBuf::from(val("--series")?)),
             "--message-minutes" => minutes = Some(PathBuf::from(val("--message-minutes")?)),
             "--battery" => battery = Some(PathBuf::from(val("--battery")?)),
+            "--update" => update = Some(PathBuf::from(val("--update")?)),
             "--tables" => tables = true,
             "--margin" => margin = Some(PathBuf::from(val("--margin")?)),
             "-h" | "--help" => {
@@ -123,6 +125,9 @@ fn run() -> Result<(), String> {
         std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let (Some(p), Some(s)) = (battery, sim.battery_csv()) {
+        std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    if let (Some(p), Some(s)) = (update, sim.update_csv()) {
         std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let (Some(p), Some(s)) = (series, sim.series()) {

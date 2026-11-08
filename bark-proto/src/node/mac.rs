@@ -72,6 +72,12 @@ impl<O: Copy + PartialEq> Excursion<O> {
         self.start(owner, Step::Tx, Action::Transmit(frame), emit);
     }
 
+    /// Transmit the piece frame `frame` for `owner`, its bytes the
+    /// driver's (`Action::Serve`).
+    pub(crate) fn serve(&mut self, owner: O, frame: Frame, emit: &mut dyn FnMut(Action)) {
+        self.start(owner, Step::Tx, Action::Serve(frame), emit);
+    }
+
     /// A second excursion while the first is outstanding is a core bug.
     fn start(&mut self, owner: O, step: Step, action: Action, emit: &mut dyn FnMut(Action)) {
         debug_assert!(self.out.is_none(), "second excursion outstanding");

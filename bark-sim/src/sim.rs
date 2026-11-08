@@ -68,6 +68,11 @@ pub(crate) enum Ev {
     Held(u32, u32),
     /// Time-series sample.
     Sample,
+    /// The update's first relay is given the image
+    /// (spec "Updates over the mesh").
+    Update,
+    /// A row of the update's series.
+    UpdateSample,
     /// A walker ends its stop or its walk (walker index).
     Leg(u32),
     /// A walking node takes a GPS fix (node).
@@ -734,6 +739,8 @@ pub struct Sim {
     /// The nodes' batteries and the grid's outages, if any
     /// (`scenario::Battery`).
     pub(crate) battery: Option<crate::battery::BatteryModel>,
+    /// The update spreading, if the scenario has one (`update.rs`).
+    update: Option<crate::update::UpdateRun>,
     /// Every node's core.
     relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
@@ -1327,6 +1334,7 @@ impl Sim {
             external: (0..n as u32).map(|i| i < n_relays).collect(),
             power: None,
             battery: None,
+            update: None,
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1735,8 +1743,86 @@ impl Sim {
         if let Some(c) = self.cadence {
             self.push(Instant::ZERO + c, Ev::Sample);
         }
+        if let Some(u) = &sc.update {
+            self.update_setup(u, sc, placed)?;
+        }
         self.power_setup(&sc.power, sc.seed)?;
         self.battery_setup(&sc.battery, sc.seed)
+    }
+
+    /// The update's first relay, the time it is given the image, and the
+    /// series' first row (`update.rs`).
+    fn update_setup(
+        &mut self,
+        u: &crate::scenario::UpdateSpec,
+        sc: &Scenario,
+        placed: &[PlacedNode],
+    ) -> Result<(), String> {
+        let holder = match &u.holder {
+            Some(name) => resolve(placed, name)?,
+            None => {
+                let placed_relays: Vec<u32> = (0..self.n_relays)
+                    .filter(|&i| self.person_of[i as usize] == u32::MAX)
+                    .collect();
+                let n = self.xy.len() as f64;
+                let cx = self.xy.iter().map(|p| p.x).sum::<f64>() / n;
+                let cy = self.xy.iter().map(|p| p.y).sum::<f64>() / n;
+                let d = |i: &u32| {
+                    let p = self.xy[*i as usize];
+                    (p.x - cx).hypot(p.y - cy)
+                };
+                *placed_relays
+                    .iter()
+                    .min_by(|a, b| d(a).total_cmp(&d(b)))
+                    .ok_or("[update] needs a node placed as a relay")?
+            }
+        };
+        let at = Instant::ZERO + secs(u.at_s.unwrap_or_else(|| sc.settled_s()));
+        self.update = Some(crate::update::UpdateRun::new(
+            u.image_bytes,
+            holder,
+            at,
+            self.xy.len(),
+        ));
+        self.push(at, Ev::Update);
+        self.push(at, Ev::UpdateSample);
+        Ok(())
+    }
+
+    /// The update's series, and when each node came to hold the image.
+    pub fn update_csv(&self) -> Option<String> {
+        self.update.as_ref().map(|u| u.csv())
+    }
+
+    /// A row of the update's series.
+    fn update_sample(&mut self) {
+        let Some(mut u) = self.update.take() else {
+            return;
+        };
+        let nodes: Vec<(bool, bool)> = (0..self.relays.len())
+            .map(|i| {
+                let placed = (i as u32) < self.n_relays && self.person_of[i] == u32::MAX;
+                let alive = self.nodes[i].alive;
+                (alive && !self.relays[i].sleepy(), alive && placed)
+            })
+            .collect();
+        let busy = (0..self.relays.len())
+            .filter(|&i| nodes[i].0)
+            .map(|i| {
+                let r = &self.relays[i];
+                r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64
+            })
+            .collect();
+        let gathering: Vec<u8> = (0..self.relays.len())
+            .filter(|&i| self.nodes[i].alive)
+            .filter_map(|i| self.relays[i].gathering().map(|g| g.1))
+            .collect();
+        u.sample(self.now, &nodes, &gathering, busy);
+        self.update = Some(u);
+        self.push(
+            self.now + Duration::from_micros(crate::update::SAMPLE_US),
+            Ev::UpdateSample,
+        );
     }
 
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
@@ -1893,6 +1979,14 @@ impl Sim {
                     }
                 }
             }
+            Ev::Update => {
+                if let Some(u) = self.update.as_mut() {
+                    let (holder, image) = (u.holder, u.image);
+                    u.give(self.now);
+                    self.deliver(holder, Event::App(AppCommand::Holds(image)));
+                }
+            }
+            Ev::UpdateSample => self.update_sample(),
             Ev::Sample => {
                 self.metrics.sample(self.now.as_micros());
                 self.sample_load();
@@ -2083,6 +2177,12 @@ impl Sim {
                 _ => None,
             };
         }
+        if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
+            use bark_proto::wire::{Packet, Update};
+            if let Ok(Packet::Update(Update::Piece { block, index, .. })) = Packet::decode(bytes) {
+                u.piece_heard(node, block, index);
+            }
+        }
         let clock = self.clocks[node as usize];
         let rx = self.rx_data.filter(|r| r.0 == node);
         if let Some((at, id, _, _)) = rx {
@@ -2133,6 +2233,15 @@ impl Sim {
             self.apply(node, a, false);
         }
         self.actions = buf;
+        // What the update's driver side owes the cores, after the event.
+        let owed = self
+            .update
+            .as_mut()
+            .map(|u| std::mem::take(&mut u.owed))
+            .unwrap_or_default();
+        for (n, cmd) in owed {
+            self.deliver(n, Event::App(cmd));
+        }
         self.gps_account(node);
         let st = &mut self.nodes[node as usize];
         if st.wake_at != wake {
@@ -2535,7 +2644,11 @@ impl Sim {
         let traced = (!scripted && self.tracer.is_some()).then_some(a);
         if matches!(
             a,
-            Action::Listen(_) | Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_)
+            Action::Listen(_)
+                | Action::Lbt(_)
+                | Action::Rssi(_)
+                | Action::Transmit(_)
+                | Action::Serve(_)
         ) {
             // Any use of the radio ends a sniff (core-interface §3 rule 10).
             self.wake(node);
@@ -2554,9 +2667,75 @@ impl Sim {
             Action::Listen(c) => self.listen(node, c),
             Action::Lbt(c) => self.check(node, ExKind::Lbt, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
-            Action::Transmit(f) => {
+            Action::Offered(image) => {
+                if let Some(u) = self.update.as_mut() {
+                    u.offered(node, image);
+                }
+            }
+            Action::StorePiece(p) => {
+                if let Some(u) = self.update.as_mut() {
+                    u.piece(node, p, self.now);
+                }
+            }
+            // The piece's bytes are the driver's; here there are none.
+            Action::Transmit(f) | Action::Serve(f) => {
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
+                if let Some(u) = self.update.as_mut() {
+                    use bark_proto::wire::{Packet, Update, HEARTBEAT_LEN};
+                    let home = self.relays[node as usize].home();
+                    let decoded = Packet::decode(f.payload());
+                    if matches!(decoded, Ok(Packet::Heartbeat(_))) && f.channel == home {
+                        u.home_beat(node, self.now);
+                    }
+                    match decoded {
+                        // A heartbeat's section: what it adds to the frame.
+                        Ok(Packet::Heartbeat(_)) if usize::from(f.len) > HEARTBEAT_LEN => {
+                            let bare =
+                                time_on_air(HEARTBEAT_LEN as u8, f.preamble_symbols).as_micros();
+                            u.aired(Some(0), air - bare);
+                            u.aired(None, bare);
+                        }
+                        Ok(Packet::Update(Update::Piece { block, index, .. })) => {
+                            u.aired(Some(2), air);
+                            let image = u.image;
+                            let table = self.relays[node as usize].neighbour_table();
+                            let (relays, sleepy) = (&self.relay_index, &self.sleepy_index);
+                            let me = self.relays[node as usize].id();
+                            let cores = &self.relays;
+                            // A sleepy node listens only for its anchor's
+                            // piece right after the anchor's slot heartbeat.
+                            let slot = u.after_home_beat(node, self.now);
+                            let targets = table
+                                .live(self.clocks[node as usize].local(self.now))
+                                .map(|(_, n)| n)
+                                .filter(|n| n.home == f.channel)
+                                .filter(|n| {
+                                    n.update.is_some_and(|s| {
+                                        s.gathers(image.tag())
+                                            && (s.complete < block
+                                                || s.complete == block
+                                                    && s.have < image.pieces(block))
+                                    })
+                                })
+                                .filter_map(|n| {
+                                    let i = relays.get(&key(n.id)).or(sleepy.get(&key(n.id)));
+                                    i.map(|&i| (i, n.sleepy))
+                                })
+                                .filter(|&(i, sleepy)| {
+                                    !sleepy
+                                        || slot
+                                            && cores[i as usize]
+                                                .anchor()
+                                                .is_some_and(|a| a.id == me)
+                                })
+                                .collect::<Vec<_>>();
+                            let foreign = f.channel != home;
+                            u.piece_sent(node, foreign, self.now, block, index, targets);
+                        }
+                        _ => u.aired(None, air),
+                    }
+                }
                 self.metrics.boot_airtime.add(
                     self.now,
                     mark == TxMark::Burst,

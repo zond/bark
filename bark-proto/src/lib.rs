@@ -25,6 +25,7 @@ pub mod sniff;
 pub mod store;
 pub mod tables;
 pub mod time;
+pub mod update;
 pub mod wire;
 
 pub use event::{
