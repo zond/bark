@@ -107,6 +107,7 @@ fn run() -> Result<(), String> {
     let ran = t0.elapsed() - built;
     let summary = sim.summary();
     print!("{}", summary.table());
+    print!("{}", sim.places_report());
     println!(
         "wall time: build {:.2} s, run {:.2} s",
         built.as_secs_f64(),
