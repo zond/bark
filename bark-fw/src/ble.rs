@@ -994,10 +994,11 @@ pub async fn run(
         KEPT.lock(|k| k.replace(Some(b)));
         match stack.add_bond_information(information(&b)) {
             Ok(()) => log::info!(
-                "ble: bond kept, table seen at version {}, service changed {}, private {}",
+                "ble: bond kept, table seen at version {}, service changed {}, private {}, {}",
                 b.seen,
                 b.service_changed,
-                b.private
+                b.private,
+                Whose(&b)
             ),
             Err(e) => log::error!("ble: the kept bond {}", HostError(&e)),
         }
@@ -1198,9 +1199,18 @@ async fn advertise<'v, 's>(
     );
     let conn = advertiser.accept().await?;
     let p = conn.params();
+    // Whether the kept bond's identity, by its address or its IRK, is this
+    // peer's: a bonded phone that is not is refused its key by the host,
+    // and its link ends at once (spec "Phone link", The replaced phone).
+    let peer = conn.peer_address();
+    let bonded = KEPT.lock(|k| {
+        k.borrow()
+            .map(|b| information(&b).identity.match_address(&peer))
+    });
     log::info!(
-        "ble: connected peer={:?} interval_us={} latency={} timeout_ms={}",
-        conn.peer_address(),
+        "ble: connected peer={:?} the bond's={:?} interval_us={} latency={} timeout_ms={}",
+        peer,
+        bonded,
         p.conn_interval.as_micros(),
         p.peripheral_latency,
         p.supervision_timeout.as_millis()
@@ -1687,7 +1697,10 @@ fn settle(
 ) {
     let new = bond.filter(|b| level == SecurityLevel::EncryptedAuthenticated && b.is_bonded);
     if let Some(b) = &new {
-        log::info!("ble: paired; the bond replaces any before it");
+        log::info!(
+            "ble: paired; the bond replaces any before it, {}",
+            Whose(&bond_of(b, false))
+        );
         let private = KEPT.lock(|k| k.borrow().is_some_and(|b| b.private));
         keep(bond_of(b, private));
     } else if level != SecurityLevel::NoEncryption {
@@ -1737,6 +1750,27 @@ pub fn phone_of(bond: Option<&Bond>) -> Phone {
         None => Phone::Unpaired,
         Some(b) if b.private => Phone::Private,
         Some(_) => Phone::Public,
+    }
+}
+
+/// Whose a bond is, for the log: the identity address's kind and bytes,
+/// most significant first as phones show them, and a fingerprint of its
+/// IRK, the first byte of its sum, so that two logs tell whether the bond
+/// is the same phone's.
+struct Whose<'a>(&'a Bond);
+
+impl core::fmt::Display for Whose<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let a = self.0.addr;
+        write!(
+            f,
+            "phone kind={} addr={:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} irk=",
+            self.0.kind, a[5], a[4], a[3], a[2], a[1], a[0]
+        )?;
+        match self.0.irk {
+            Some(k) => write!(f, "{:02x}", k.iter().fold(0u8, |s, b| s.wrapping_add(*b))),
+            None => f.write_str("none"),
+        }
     }
 }
 
