@@ -630,6 +630,35 @@ in turn a console image one version up, to confirm, and a `panic` image
 one version up, to be swapped back (roadmap Phase 2, "Resets in a
 swap").
 
+The same loader stops a phase at a chosen moment instead, when the
+record names one: the console's `cut swap N` or `cut back N`, after
+`commit` and before `reboot`, writes it, and `none` stops nothing, where
+the loader would otherwise draw. N is the index of an operation in the
+phase's erases and writes on both flashes at the boot that starts the
+phase, each page of an erase one: the swap's 1 363, the record's word
+that notes the image checked and then six a page, a copy out to the
+external flash and a copy in, each an erase, a write and a progress word
+in the state page; the swap back's 1 365, six a page, then the state
+page's word that marks the progress invalid, its erase and its word
+(`bark_image::boot::cut::operations`). The host test that cuts the power
+at every operation counts the same way, and its test
+`a_chosen_moment_falls_in_the_operation_the_power_cut_of_its_index_takes`
+checks, for every N of both phases, that the loader stops the operation
+that test's cut N takes. The loader does that operation half way, as the
+host test's cut does, and logs it as `update: bench reset in the swap at
+operation 4: internal erase of page 232, 50.0 % through`; where it fell,
+written before the reset, keeps the next boot from stopping it again.
+`scripts/cutbench.py ID` copies the bench loader and version 1 as
+`swapbench.py` does, then walks 19 moments once each
+(`scripts/cutbench.py --list` prints them): around each progress word of
+each phase's first and last pair of copies, the operation before it and
+the one after, and the operations outside the copies. A moment in the
+swap takes a console image one version up, which must confirm; one in
+the swap back a `panic` image, which must leave the previous version
+back. A round also fails unless the log names the operation expected,
+its flash, erase or write, and page, and the other phase's moment as not
+reached (roadmap Phase 2, "Resets at chosen moments of a swap").
+
 **Keys.** A firmware takes its public keys from `BARK_SIGNING_KEYS` at
 build time, up to three `id:hex` comma-separated, each id a byte from 1
 to 255 that names the key in a signature and each key 32 bytes
@@ -991,6 +1020,7 @@ retune times.
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
 | `reboot` | reset, after the log has reached the host | |
+| `cut <swap\|back> <op\|none>` | an open build's alone: where a bench loader stops the swap just committed, or its swap back, an operation's index or none (Updates) | the command, or why it is refused |
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its
