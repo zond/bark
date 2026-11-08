@@ -212,6 +212,23 @@ class FakeNodes extends UniversalBlePlatform {
   /// Bluetooth is on.
   bool on = true;
 
+  /// Android lets the app use Bluetooth; the person's answer when asked.
+  bool allowed = true;
+  bool allows = true;
+  int asked = 0;
+
+  @override
+  Future<bool> hasPermissions({bool withAndroidFineLocation = false}) async =>
+      allowed;
+
+  @override
+  Future<void> requestPermissions({
+    bool withAndroidFineLocation = false,
+  }) async {
+    asked++;
+    allowed = allows;
+  }
+
   /// The person switches Bluetooth off or on. Off, every link is gone,
   /// and Android tells the app of the adapter only, not of the links: a
   /// read or write then finds no characteristic (bench, 2026-11-07).
@@ -735,6 +752,7 @@ void main() {
       void Function(FakeAsync, AppModel, FakeNodes) body, {
       bool withPaired = false,
       bool pairedInReach = false,
+      bool allowed = true,
     }) {
       fakeAsync((async) {
         DateTime now() => start.add(async.elapsed);
@@ -760,6 +778,7 @@ void main() {
           bonds: {if (withPaired) paired},
         );
         ble.rssi.addAll({weak: -70, strong: -50, shut: -40, paired: -90});
+        ble.allowed = allowed;
         if (withPaired && !pairedInReach) ble.inReach.remove(paired);
         UniversalBle.setInstance(ble);
         if (withPaired) app.session.setPaired(nodeName(FakeNode.id));
@@ -871,6 +890,26 @@ void main() {
         async.elapse(const Duration(minutes: 1));
         expect(ble.scans, scans);
         expect(app.searchOn, isFalse);
+      });
+    });
+
+    test('before Bluetooth is allowed nothing runs and nothing shows; the '
+        'person\'s Scan asks, and the search runs from then', () {
+      run(allowed: false, (async, app, ble) {
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.scans, 0);
+        expect(app.lookingNow, isFalse);
+        expect(app.held, isNull);
+        expect(lookingLine(app), isNull);
+        app.scan();
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.asked, 1);
+        expect(app.bluetoothAllowed, isTrue);
+        expect(app.held?.title, 'Looking for a public node');
+        app.stopScan();
+        async.elapse(round);
+        expect((app.session.guest, app.linkDevice), (true, strong));
+        expect(app.held?.title, 'Connected to bark-0ce400000004 as a guest');
       });
     });
   });

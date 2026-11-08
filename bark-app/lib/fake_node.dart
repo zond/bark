@@ -378,7 +378,7 @@ class FakeNode implements NodeLink {
     final left = firstRotation - now().difference(_boot);
     final g = p is FakeGuest ? p : null;
     return Status(
-      ready: _ready && (_line.isEmpty || _line.first == p),
+      ready: _ready && (!public || _turn == p),
       externalPower: true,
       sleepy: sleepy,
       carried: carried,
@@ -442,6 +442,10 @@ class FakeNode implements NodeLink {
     if (value.length < Address.len || value.length > Address.len + maxPayload) {
       throw const AttException(AttError.invalidLength);
     }
+    // On a public node the turn is Ready: a phone whose turn it is not
+    // is answered not ready, as when the node takes none.
+    if (public && _turn != p) throw const AttException(AttError.notReady);
+    _turnGen++;
     final phone = _phoneOf(p);
     final dst = Address(
       Position.decode(value),
@@ -449,18 +453,6 @@ class FakeNode implements NodeLink {
     );
     final payload = value.sublist(Address.len);
     final id = msgId(dst, payload);
-    // On a public node, a phone whose turn it is not is answered as the
-    // node's gate answers: taken, and given back with its place in line.
-    final other =
-        (_holder != null && _holder != p) ||
-        (_line.isNotEmpty && _line.first != p);
-    if (public && other) {
-      if (!_line.contains(p)) _line.add(p);
-      final place = ban * (_line.indexOf(p) + 1);
-      final held = _readyAt.difference(now());
-      _giveBack(phone, id, place > held ? place : held);
-      return;
-    }
     _writes++;
     if (!_ready || _writes % notReadyEvery == 0) {
       // As when the bucket empties between the status the app read and
@@ -474,12 +466,11 @@ class FakeNode implements NodeLink {
     }
     _taken++;
     _ready = false;
-    _holder = p;
-    _line.remove(p);
     if (phone.givenBack != null) {
       phone.givenBack = null;
       if (phone.connected) phone.given.add(null);
     }
+    _passTurn();
     _notify();
     if (_taken % givenBackEvery == 0) {
       _after(handOver, () => _giveBack(phone, id, givenBackWait));
@@ -501,29 +492,63 @@ class FakeNode implements NodeLink {
     if (phone.connected) phone.given.add(_givenBackNow(phone));
   }
 
-  /// The phone whose message the node holds, until a hop takes it or it
-  /// is given back; null while it holds none.
-  Object? _holder;
+  /// The phones connected, in the order of their links: the owner's link,
+  /// this fake, and the guests'.
+  final List<Object> _links = [];
 
-  /// The phones given back for want of their turn, in order: the first
-  /// has the turn once the node takes a message.
-  final List<Object> _line = [];
-  DateTime _readyAt = DateTime.utc(0);
+  /// The phone whose turn it is on a public node, for which alone Ready is
+  /// set; null with no phone connected.
+  Object? _turn;
 
-  /// Takes messages again after `d`; the turn comes to the first in line,
-  /// who leaves it a ban later if it has not sent, so that a phone whose
-  /// person gave up holds nobody up.
+  /// Counts the turn's changes and its holder's writes, so that a check a
+  /// ban later sees whether the holder sat on it.
+  int _turnGen = 0;
+
+  /// Gives the turn to the next phone connected after the one that has
+  /// it, in the order of their links, and starts its ban.
+  void _passTurn() {
+    final at = _turn == null ? -1 : _links.indexOf(_turn!);
+    _turn = _links.isEmpty ? null : _links[(at + 1) % _links.length];
+    _turnGen++;
+    _idleCheck();
+  }
+
+  /// A phone that has had Ready for a ban without writing passes the
+  /// turn on, so that one with nothing to send holds nobody up; alone, it
+  /// would pass it to itself.
+  void _idleCheck() {
+    if (!public || !_ready || _turn == null || _links.length < 2) return;
+    final gen = _turnGen;
+    _after(ban, () {
+      if (_ready && _turnGen == gen) _passTurn();
+    });
+  }
+
+  void _joined(Object p) {
+    _links.add(p);
+    _turn ??= p;
+    _turnGen++;
+    _idleCheck();
+  }
+
+  void _gone(Object p) {
+    final had = _turn == p;
+    final at = _links.indexOf(p);
+    _links.remove(p);
+    if (!had) return;
+    // The next in order now stands where the one gone stood.
+    _turn = _links.isEmpty ? null : _links[at % _links.length];
+    _turnGen++;
+    _idleCheck();
+  }
+
+  /// Takes messages again after `d`; Ready comes back for the phone
+  /// whose turn it is.
   void _freeAfter(Duration d) {
-    _readyAt = now().add(d);
     _after(d, () {
       _ready = true;
-      _holder = null;
-      final first = _line.firstOrNull;
-      if (first != null) {
-        _after(ban, () {
-          if (_ready && _line.firstOrNull == first) _line.removeAt(0);
-        });
-      }
+      _turnGen++;
+      _idleCheck();
     });
   }
 
@@ -750,7 +775,14 @@ class FakeNode implements NodeLink {
 
   /// Whether it serves phones that have not paired, kept across
   /// connections and pairings as with the bond.
-  bool public = false;
+  bool get public => _public;
+  bool _public = false;
+  set public(bool v) {
+    _public = v;
+    _turnGen++;
+    _idleCheck();
+    _notify();
+  }
 
   /// The paired phone's recipient tag, kept with the bond; null until it
   /// writes one.
@@ -799,15 +831,14 @@ class FakeNode implements NodeLink {
     if (guests.length >= maxGuests) throw StateError('no link free');
     final g = FakeGuest._(this);
     guests.add(g);
+    _joined(g);
     return g;
   }
 
-  /// A guest's link ended: what waited for it, and its place in line, go;
-  /// a message of its the node holds still holds the place until a hop
-  /// takes it.
+  /// A guest's link ended: what waited for it goes, and its turn passes.
   void _left(FakeGuest g) {
     guests.remove(g);
-    _line.remove(g);
+    _gone(g);
     dropped += g._inbox.length;
     g._inbox.clear();
   }
@@ -834,6 +865,7 @@ class FakeNode implements NodeLink {
     if (back != null && now().isBefore(back)) {
       throw StateError('${nodeName(nodeId)} is swapping in its new image');
     }
+    if (!_owner.connected) _joined(this);
     _owner.connected = true;
     _closed = Completer<void>();
     return this;
@@ -844,8 +876,8 @@ class FakeNode implements NodeLink {
 
   @override
   Future<void> close() async {
+    if (_owner.connected) _gone(this);
     _owner.connected = false;
-    _line.remove(this);
     if (!_closed.isCompleted) _closed.complete();
   }
 

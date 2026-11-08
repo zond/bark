@@ -3,7 +3,7 @@
 // that needs the bond, and the app's guest touches nothing of it; the
 // node hands each phone only the messages with its tag, keeps the
 // owner's, and drops what it can place with nobody; and phones take
-// turns at the one message it holds.
+// turns at the one message it holds, the turn being Ready.
 
 import 'dart:typed_data';
 
@@ -149,32 +149,47 @@ void main() {
     });
   });
 
-  test('a guest whose turn it is not is given back with its place, then '
-      'has the turn alone', () {
+  test('the turn is Ready: one phone at a time, in link order; it passes '
+      'when the node takes its message, after a ban unused, or when its '
+      'link ends', () {
     run((async, owner, guest, node) {
       node.public = true;
-      final g = node.connectGuest();
+      final g1 = node.connectGuest(), g2 = node.connectGuest();
+      final links = <NodeLink>[node, g1, g2];
+      List<bool?> ready() {
+        final r = List<bool?>.filled(links.length, null);
+        for (final (i, l) in links.indexed) {
+          l.readStatus().then((s) => r[i] = s.ready);
+        }
+        async.flushMicrotasks();
+        return r;
+      }
+
       Uint8List send(int n) => encodeSend(there, payloadFor(tagOf(owner), n));
-      // The owner's message is the node's until its first hop takes it.
-      owner.session.link!.send(send(1));
+      // The owner's link came first: its turn.
+      expect(ready(), [true, false, false]);
+      // Out of turn: not ready.
+      Object? failed;
+      g1.send(send(1)).then<void>((_) {}, onError: (Object e) => failed = e);
       async.flushMicrotasks();
-      GivenBack? back;
-      g.send(send(2)).then((_) => g.readGivenBack()).then((b) => back = b);
-      async.flushMicrotasks();
-      expect(back?.msgId, msgId(there, payloadFor(tagOf(owner), 2)));
-      expect(back?.waitS, (FakeNode.ban.inMilliseconds / 1000).ceil());
-      // Once the node takes a message again, the turn is the guest's.
-      async.elapse(FakeNode.handOver);
-      Status? mine, theirs;
-      g.readStatus().then((s) => mine = s);
-      node.readStatus().then((s) => theirs = s);
-      async.flushMicrotasks();
-      expect((mine?.ready, theirs?.ready), (true, false));
-      // A ban later, unused, it passes.
+      expect(failed, isA<AttException>().having((e) => e.code, 'code', 0x80));
+      // The owner sits on it for a ban: the next link's turn.
       async.elapse(FakeNode.ban);
-      node.readStatus().then((s) => theirs = s);
+      expect(ready(), [false, true, false]);
+      // Taken: the turn passes, and Ready comes back once the node takes
+      // a message again.
+      var taken = false;
+      g1.send(send(2)).then((_) => taken = true);
       async.flushMicrotasks();
-      expect(theirs?.ready, isTrue);
+      expect(taken, isTrue);
+      expect(ready(), [false, false, false]);
+      async.elapse(FakeNode.handOver);
+      expect(ready(), [false, false, true]);
+      // Its link ends: the turn goes on, round to the owner's.
+      g2.close();
+      links.removeLast();
+      async.flushMicrotasks();
+      expect(ready(), [true, false]);
     });
   });
 }

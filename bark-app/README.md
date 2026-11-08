@@ -177,9 +177,10 @@ bond. On every connection to a node of link version 7 or later, the
 owner's or a guest's, the app first writes the person's recipient tag
 at that node to Recipient, before it reads the inbox: a public node
 hands each phone only the messages that carry its tag, and keeps the
-owner's for when the owner comes back. A guest's message for which
-another phone has the turn comes back as given back, with a wait, as a
-refusal on the way does. A reply that reaches a public node after its
+owner's for when the owner comes back. The phones on a public node take
+turns at the one message it holds, and the turn is Ready: the node sets
+it for one phone at a time, so the app's queue waits for Ready as on
+any node. A reply that reaches a public node after its
 guest has left is lost, so a guest's conversations work best while it
 stays.
 
@@ -197,7 +198,12 @@ node ends.
 
 The paired node is connected by the same path as a tap and without
 a code; the search runs from the app's start, and after a link drops,
-so that texts waiting go out as soon as a node is in reach. Bluetooth switched off ends the link
+so that texts waiting go out as soon as a node is in reach. It runs
+only once Android allows the app Bluetooth: a fresh install scans
+nothing and shows no notification until the person presses **Scan** in
+Settings, which asks for it. The app checks again when it comes to the
+front and when Bluetooth is switched on or off, in case the person
+allowed it in Android's settings. Bluetooth switched off ends the link
 as a drop does: Android does not report that end itself. The first screen, and Settings under
 the scan rows, say "Looking for bark-…" or "Looking for a public node…",
 or that Bluetooth is off. A
@@ -267,7 +273,8 @@ background, and the search with it, and queued texts are to go out as
 soon as the node is in reach, not when the person next opens the app.
 While it looks for a public node alone, or is a guest, the notification
 says so: "Looking for a public node", "Connected to bark-… as a
-guest".
+guest". Before Bluetooth is allowed there is no search, and no
+notification.
 The service goes on from connected to looking and back, changing only its
 notification, as Android 12 and later restrict starting a service from
 the background. It stops, and its notification goes, when the app neither
@@ -345,9 +352,10 @@ guest's link answers 0x05, insufficient authentication, to every value
 that needs the bond; it hands each message to the guests whose tag it
 carries and to the owner when it is the owner's tag or it has none yet,
 keeps the owner's while the owner is away, and drops what it can hand
-to nobody; and a phone that sends while another holds the node's one
-message is given it back with a wait of its place in line, a ban a
-place, and then has the turn alone, for a ban. A guest keeps its own
+to nobody. Its turns are Ready: set for one phone at a time, in the
+order of their links, passing on when the node takes that phone's
+message, when its link ends, or after a ban unused; a Send out of turn
+is answered 0x80, not ready. A guest keeps its own
 inbox in the fake, where the node keeps one queue.
 
 ## Updating a node
@@ -540,7 +548,8 @@ or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
 to the home, and refuse a node that does not keep it; make the fake
 public, join it as a guest that writes its tag and touches nothing
-closed, and hand each phone only the messages with its tag, in turns;
+closed, and hand each phone only the messages with its tag, with the
+turn as Ready;
 choose the paired node, else the strongest public node, and move to a
 public node when the paired one is not heard, back when it is, and to
 the strongest again after a guest link drops; read the fake

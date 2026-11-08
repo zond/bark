@@ -90,7 +90,9 @@ class AppModel extends ChangeNotifier {
     required this.now,
     this.notifier = const NoNotifier(),
     Releases? releases,
-  }) : releases = releases ?? Releases(MemoryStore('release'), now: now) {
+    Future<bool> Function()? bluetoothAllowed,
+  }) : releases = releases ?? Releases(MemoryStore('release'), now: now),
+       _bluetoothAllowed = bluetoothAllowed ?? UniversalBle.hasPermissions {
     this.releases.noted = session.note;
     messenger = Messenger(sodium, me, contacts, session, now);
     alerts = Alerts(notifier, contacts);
@@ -209,23 +211,31 @@ class AppModel extends ChangeNotifier {
   /// a phone that held a link when it was switched off takes it up again
   /// without anyone opening the app.
   void _link() {
-    final n = session.node;
-    final Held? h = n != null && !fake
-        ? (
-            title: session.guest
-                ? 'Connected to ${nodeName(n.id)} as a guest'
-                : 'Connected to ${nodeName(n.id)}',
-            body: 'Texts arrive while the screen is off',
-          )
-        : searchOn
-        ? _looking(searchFor ?? 'a public node', bluetooth: bluetoothOn)
-        : null;
-    unawaited(alerts.hold(h).catchError(_unnotified));
+    unawaited(alerts.hold(held).catchError(_unnotified));
     final p = session.pairedWith;
     final boot = p == null || session.pairingLost || session.stopped
         ? null
         : _looking(p, bluetooth: true);
     unawaited(alerts.atBoot(boot).catchError(_unnotified));
+  }
+
+  /// What the link's notification says: the node connected, or the
+  /// search, only once Bluetooth is allowed, so that an app not yet given
+  /// it shows nothing. Between rounds, while Bluetooth is off and while
+  /// connecting it stays: Android 12 and later refuse to start the service
+  /// again from the background.
+  Held? get held {
+    final n = session.node;
+    if (n != null && !fake) {
+      return (
+        title: session.guest
+            ? 'Connected to ${nodeName(n.id)} as a guest'
+            : 'Connected to ${nodeName(n.id)}',
+        body: 'Texts arrive while the screen is off',
+      );
+    }
+    if (!searchOn || !bluetoothAllowed) return null;
+    return _looking(searchFor ?? 'a public node', bluetooth: bluetoothOn);
   }
 
   static Held _looking(String node, {required bool bluetooth}) => (
@@ -339,7 +349,17 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Scans for nodes, after asking for Bluetooth if it is not allowed
+  /// yet: the person's tap is where the app asks, and the search runs
+  /// from then on.
   Future<void> scan() async {
+    if (!bluetoothAllowed) {
+      try {
+        await UniversalBle.requestPermissions();
+      } finally {
+        await checkBluetooth();
+      }
+    }
     found.clear();
     scanning = true;
     notifyListeners();
@@ -520,9 +540,30 @@ class AppModel extends ChangeNotifier {
   /// looks for public nodes alone.
   String? get searchFor => searchOn ? pairedNode : null;
 
-  /// Whether the search scans now: not while Bluetooth is off, a
-  /// connection is being made, or the person scans.
-  bool get lookingNow => searchOn && bluetoothOn && !connecting && !scanning;
+  /// Whether the search scans now: not before Bluetooth is allowed, nor
+  /// while it is off, a connection is being made, or the person scans.
+  bool get lookingNow =>
+      searchOn && bluetoothAllowed && bluetoothOn && !connecting && !scanning;
+
+  /// Whether Android lets the app use Bluetooth, as last checked: a fresh
+  /// install has not been allowed yet, and its search would only fail.
+  bool bluetoothAllowed = false;
+  final Future<bool> Function() _bluetoothAllowed;
+
+  /// Checks whether Bluetooth is allowed: at start, when the app comes to
+  /// the front and when Bluetooth's state changes, as the person may have
+  /// allowed it in Android's settings meanwhile.
+  Future<void> checkBluetooth() async {
+    bool a;
+    try {
+      a = await _bluetoothAllowed();
+    } catch (_) {
+      a = false;
+    }
+    if (a == bluetoothAllowed) return;
+    bluetoothAllowed = a;
+    notifyListeners();
+  }
 
   /// The paired node the search is scanning for now.
   String? get lookingFor => lookingNow ? pairedNode : null;
@@ -535,7 +576,9 @@ class AppModel extends ChangeNotifier {
     _availability = UniversalBle.availabilityStream.listen((a) {
       bluetoothOn = a == AvailabilityState.poweredOn;
       notifyListeners();
+      unawaited(checkBluetooth());
     });
+    unawaited(checkBluetooth());
     notifyListeners();
   }
 
