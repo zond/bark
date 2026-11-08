@@ -3640,12 +3640,13 @@ first 13 bytes ([packet formats](#packet-formats)): the version the
 node runs; the newest image it holds or gathers, by its version, the
 first 4 bytes of its name, the signer's key, its blocks and the pieces
 of its last; how many of its blocks the node holds from the first; and
-how many pieces it holds of the block after those. Its heartbeats carry
-it every time while it gathers, or while it hears a neighbour whose
-section says it gathers; else every heartbeat of one rotation an hour,
-so that every channel hears it, and from the moment it is given an
-image or starts to gather. A sleepy node's beats carry it by the same
-rule. A node keeps each neighbour's last section in its neighbour table
+how many pieces it holds of the block after those. A relay's heartbeats
+carry it for the rotation after any of the first three changes, the
+version it runs, its newest image or its blocks held, so that every
+channel hears the change, and for one rotation an hour; the count of
+pieces goes as it stands when sent. A sleepy node's beats carry it for
+one beat after a change and one an hour: its anchor hears every beat.
+A node keeps each neighbour's last section in its neighbour table
 ([neighbour table](#neighbour-table)), as it keeps the rest of what the
 neighbour's heartbeats say.
 
@@ -3677,10 +3678,14 @@ bytes and 14.4 ms.
 3. A relay **helps** a channel where a neighbour's section says it
    gathers the image the relay gathers or holds and lacks a block the
    relay holds: it **streams** there, one piece a pace (below), from the
-   blocks it holds. On a channel other than its home it streams only
-   the blocks past those a relay at home there holds, by that relay's
-   section. It streams on at most two channels: its home, then
-   those with the most neighbours lacking. It stops on a channel when no
+   blocks it holds. On its home channel it streams to every gatherer
+   at home there. On another channel it streams only the blocks past
+   those a relay at home there holds, by that relay's section, and to a
+   gatherer only if it is the best holder it hears for it: no relay it
+   hears that is not at home there, holds more than the gatherer and is
+   no farther from it has more blocks from the first, or as many and a
+   lower ID. It streams on at most two channels: its home, then those
+   with the most neighbours lacking. It stops on a channel when no
    neighbour there lacks a block it streams there.
 4. A stream **sweeps** the blocks in order. Of the block at hand it
    sends fresh pieces, each block's index climbing from a random start
@@ -3729,13 +3734,20 @@ channel with several streaming would carry their sum: in a district run
 with no such rule the update's frames came to 7 % of each channel's
 time once 70 relays held the image. Helpers at home on a channel hear
 each other there and each takes its share, so the channel carries one
-piece a pace whatever their number. *Why the relays at home on a channel
-serve it first.* A node hears pieces only on its home channel, so it
-can share the pace only there; streams from elsewhere would add up
-unheard. In the district at the design rate over an update's first 6
-hours, leaving a channel's blocks to the relays at home there cut the pieces' airtime from 92 400 s
-to 69 000 s and the channels' busy share from 4.2 to 3.5 %, the relays
-as far along (`mesh-update-2026-11-07.md`). *Why share and not leave the
+piece a pace whatever their number. *Why the
+sweep on a channel belongs to the relays at home there.* A relay hears
+only its home channel, so only the relays at home on a channel can
+share its pace; pieces from elsewhere would add up unheard. A stream
+from another channel seeds a channel until a relay at home there has
+caught up, and the chain then runs within each channel. Of the relays
+elsewhere only the best holder near a gatherer streams to it, since
+they cannot hear each other's pieces there; a relay stands back only
+for one that is no farther from the gatherer, which reaches it as well.
+In the district at the design rate over an update's first 6
+hours, leaving a channel's blocks to the relays at home there cut the
+pieces' airtime from 92 400 s to 69 000 s and the channels' busy share
+from 4.2 to 3.5 %, and the best holder's rule to 56 900 s and 3.2 %,
+the relays a little behind (`mesh-update-2026-11-07.md`). *Why share and not leave the
 channel to one.* Every helper keeps streaming, each from the blocks it
 holds, so a neighbour that lacks a block one helper does not hold still
 has it from another, and the channel loses nothing when a helper goes.
@@ -3777,9 +3789,12 @@ Two channels at 1 % each cost it about 2 % of its hand-overs.
 rotation of its heartbeats an hour, 8.96 ms more on each of 13: over a
 domain's 270 relays ([capacity and sizing](#capacity-and-sizing)),
 270 × 13 × 8.96 ms an hour over 13 channels, 0.07 % of each channel's
-time. While one runs, every relay's heartbeats carry it, and the
-heartbeats take 270 × 23.36 ms / (10 s × 13) = 4.9 % of each channel's
-time, against 3.0 % without. A channel that gathers adds a piece a
+time. While one runs, a relay's count of blocks grows at most once in
+64 paces, 14.8 minutes, the fewest pieces of a block at the pace: at
+most 4.1 rotations an hour more, 5.1 in all, 0.34 % of each channel's
+time, so the heartbeats take at most 3.3 % against 3.0 % without. Were
+the section in every heartbeat while an update runs, they would take
+270 × 23.36 ms / (10 s × 13) = 4.9 %. A channel that gathers adds a piece a
 pace, 1 % of its time, however many help. Today's image takes a sweep
 of 2 853 paces from a helper that holds it to a neighbour that holds
 none, 11.0 hours, at the margin of rule 4.
@@ -3809,8 +3824,9 @@ the margin of rule 4, 103 hours, 4.3 days, and as many
 listens of 143.6 ms, 410 s, at the 5.8 mA of listening
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
 0.66 mAh, 0.08 % of the 850 mAh battery
-([hardware](#hardware)). Its beats while it gathers carry the section,
-8.96 ms more on each of 16 an hour ([beats](#beats)), 143 ms an hour.
+([hardware](#hardware)). Its beats carry the section once for each
+block it completes, 28 times, and once an hour, 8.96 ms more each on
+the 230 ms an hour of its beats ([beats](#beats)).
 The pieces it hears in its windows shorten its time. The nodes of an
 anchor gather together, so a district's sleepy nodes take days, not
 days for each.
