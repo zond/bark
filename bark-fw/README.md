@@ -762,10 +762,11 @@ battery and every ten minutes on USB; an uptime that has not moved
 after that long means the node is not running.
 
 *When it redraws.* At boot, once the node's loop has run (at most 5 s).
-After that, a change a person acts on at once is drawn one refresh
-after it, 2 s (the board's label): the header (the role, or `STARTING`
-ending), the phone's line, above all a pairing code, typed while the
-phone waits (spec "Phone link", Pairing), and the power, USB or
+After that, a new pairing code is drawn at once, since a person stands
+at the node to type it while the phone waits (spec "Phone link",
+Pairing). Any other change a person acts on at once is drawn one
+refresh after it, 2 s (the board's label): the header (the role, or
+`STARTING` ending), the rest of the phone's line, and the power, USB or
 battery. Changes within those 2 s, such as the power and the role of a
 sleepy node when the cable goes in, are drawn in one picture, and a change undone
 within them is not drawn. Any other change, of the neighbour counts or
@@ -844,8 +845,7 @@ makes it private, also its guests' (below). Every characteristic of the service 
 encrypted with an authenticated key; any other connection's read, write
 or subscription gets ATT's insufficient authentication, and an Android
 phone then pairs: it shows a dialog for a code, and the node draws a
-random six-digit one on its screen within one refresh (Display), as
-`PAIR CODE`. The host,
+random six-digit one on its screen at once, as `PAIR CODE`. The host,
 TrouBLE (a copy, `vendor/README.md`), runs LE Secure Connections with
 the node displaying and the phone typing. When the pairing completes and
 bonds, the node keeps the bond, the phone's identity address, its

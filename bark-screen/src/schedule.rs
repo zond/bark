@@ -1,10 +1,11 @@
-//! When the screen is drawn (`bark-fw/README.md`, Display): a change a
-//! person acts on at once, about one refresh after it; any other change
+//! When the screen is drawn (`bark-fw/README.md`, Display): a new
+//! pairing code at once; any other change a person acts on at once,
+//! about one refresh after it; any other change
 //! no sooner than a gap after the last picture; and a picture at least
 //! once a stale time, so that its uptime says the node runs. Times are
 //! milliseconds since boot.
 
-use crate::{role, Battery, State};
+use crate::{role, Battery, Phone, State};
 
 /// A full refresh as the board's label gives it, 2 s (`bark-fw`,
 /// `board::Eink`). Changes a person acts on that come within one are
@@ -56,6 +57,11 @@ impl Schedule {
         let Some((shown, at)) = self.shown else {
             return now;
         };
+        // A person stands at the node to type a new pairing code into
+        // the waiting phone: it waits for nothing.
+        if matches!(state.phone, Phone::Code(_)) && state.phone != shown.phone {
+            return now;
+        }
         // Counted from the first such change, so that a stream of them
         // cannot hold the picture back; forgotten when the state goes
         // back to the picture's.

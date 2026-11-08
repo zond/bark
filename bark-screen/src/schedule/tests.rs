@@ -73,10 +73,6 @@ fn the_role_phone_and_power_one_refresh_after() {
             ..battery()
         },
         State {
-            phone: Phone::Code(123_456),
-            ..battery()
-        },
-        State {
             phone: Phone::Public,
             ..battery()
         },
@@ -86,6 +82,34 @@ fn the_role_phone_and_power_one_refresh_after() {
         let mut s = shown(battery(), 1_000);
         assert_eq!(s.due(&c, 5_000), 5_000 + REFRESH_MS, "{c:?}");
     }
+}
+
+#[test]
+fn a_pairing_code_at_once() {
+    let code = State {
+        phone: Phone::Code(123_456),
+        ..battery()
+    };
+    let mut s = shown(battery(), 1_000);
+    assert_eq!(s.due(&code, 5_000), 5_000);
+    // Even within another change's refresh.
+    let mut s = shown(battery(), 1_000);
+    s.due(&usb(), 5_000);
+    let code_on_usb = State {
+        phone: Phone::Code(1),
+        ..usb()
+    };
+    assert_eq!(s.due(&code_on_usb, 6_000), 6_000);
+    // A new code too; the same code once drawn waits like anything else.
+    s.drawn(code_on_usb, 8_000);
+    assert_eq!(s.due(&code_on_usb, 9_000), 8_000 + USB_STALE_MS);
+    let next = State {
+        phone: Phone::Code(2),
+        ..usb()
+    };
+    assert_eq!(s.due(&next, 9_000), 9_000);
+    // The pairing's end waits one refresh.
+    assert_eq!(s.due(&usb(), 9_000), 9_000 + REFRESH_MS);
 }
 
 #[test]
@@ -114,13 +138,13 @@ fn quick_changes_drawn_once() {
     // A second change within the refresh joins the first's picture.
     assert_eq!(s.due(&paired, 6_000), 5_000 + REFRESH_MS);
     // And a stream of them does not hold it back.
-    let code = State {
-        phone: Phone::Code(1),
+    let public = State {
+        phone: Phone::Public,
         ..off
     };
-    assert_eq!(s.due(&code, 6_900), 5_000 + REFRESH_MS);
-    s.drawn(code, 8_000);
-    assert_eq!(s.due(&code, 8_000), 8_000 + USB_STALE_MS);
+    assert_eq!(s.due(&public, 6_900), 5_000 + REFRESH_MS);
+    s.drawn(public, 8_000);
+    assert_eq!(s.due(&public, 8_000), 8_000 + USB_STALE_MS);
 }
 
 #[test]

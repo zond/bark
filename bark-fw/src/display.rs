@@ -327,8 +327,8 @@ pub fn phone_at_boot(phone: bark_screen::Phone) {
     PHONE.lock(|p| p.set(phone));
 }
 
-/// The phone link's side: its line, drawn about one refresh after it
-/// changes (`bark_screen::schedule::urgent`).
+/// The phone link's side: its line, a new pairing code drawn at once and
+/// any other change about one refresh after it (`bark_screen::schedule`).
 #[cfg(not(feature = "console"))]
 pub fn phone(phone: bark_screen::Phone) {
     if PHONE.lock(|p| p.replace(phone)) != phone {
@@ -350,8 +350,8 @@ pub fn publish(state: State) {
 const FIRST_STATE: Duration = Duration::from_secs(5);
 
 /// Draw the node's screen at boot, and again as `bark_screen::schedule`
-/// says: a change of the header, the phone's line or the power about one
-/// refresh after it, any other change no sooner than a gap after the last
+/// says: a new pairing code at once, a change of the header, the phone's
+/// line or the power about one refresh after it, any other change no sooner than a gap after the last
 /// picture, and a picture at least once a stale time. A press of the
 /// button ([`redraw`]) draws at once and leaves that schedule as it was.
 /// Each picture is drawn to its end before the next is considered, so
