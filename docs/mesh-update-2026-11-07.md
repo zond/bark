@@ -633,6 +633,42 @@ pieces are the same pace's.
     channels were busy 1.68 %; texts delivered 99.8 %, latency p50 /
     p90 1.0 / 16.3 s.
 
+19. **Why anchors open the slot in under half their rotations.** At
+    each home heartbeat of an anchor of sleepy nodes, by the
+    simulator's truth against the anchor's table (`slot_opens`), over
+    36 hours on `8edc0fb`: in the first 15 hours, while the relays
+    gather, the slot opened after 42.9 %; in 48.6 % one of the anchor's
+    sleepy nodes lacked a block the anchor held but its table's sleepy
+    sections showed nothing lacking; in 8.3 % none of its sleepy nodes
+    lacked a block it held; in 0.2 % it held no block. After 15 hours:
+    45.3 % opened, 53.5 % the table showed nothing lacking, 1.2 % none
+    lacked. Of the slots opened, 99.9 % sent their piece; the bucket
+    and listen-before-talk held 0.1 %. So the anchor's table is the
+    cause: a sleepy node's section rides one beat after a change and
+    one an hour, and an entry that expired and came back, or was
+    first heard from a beat without one, has no section until the
+    next. Which of these weighs most is not separated.
+
+    The relays' last holder came at 31.5 hours on `8edc0fb` against
+    21.7 on `715fb4f`: one relay lacked the image from 21.7 to 31.4
+    hours, and 6 of the last 8 relays to hold it finished 2 to 10 hours
+    later than in the run before. The only change between the two is
+    the slot piece's sweep: it used to follow the channel's sweep and so
+    also served the relays behind on the anchor's channel, and now
+    serves the sleepy nodes alone. The 50 % and 90 % times did not
+    change (13.5 / 14.3 hours against 13.8 / 14.5).
+
+**Known limits, accepted by the user on 2026-11-08.** Sleepy nodes
+update slowly: one piece a rotation of their anchor is a floor of 2 133
+rotations for today's image at the margin, 77 hours, 3.2 days (spec
+"Updates over the mesh", What it costs a sleepy node); about a fifth to
+a quarter of the slot pieces carry blocks the node already holds, since
+it finishes blocks out of order and its section counts them only from
+the first; and anchors open the slot in under half their rotations,
+since their tables' sleepy sections are stale or missing (19). The
+section carries no bitmap of the blocks held, and a slot carries one
+piece.
+
 
 ## What is left
 
