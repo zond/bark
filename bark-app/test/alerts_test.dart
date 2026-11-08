@@ -3,8 +3,9 @@
 // person, an acknowledgement or a card; the link's notification with a
 // Bluetooth link only; starting with the phone while the paired node is this
 // phone's and the person has not stopped looking; the permission asked
-// once, at the first connection; the battery exemption in Settings; and a
-// tapped notification's thread.
+// once, at the first connection; the battery exemption in Settings; a
+// tapped notification's thread; and a new text bringing an archived
+// conversation back.
 
 import 'dart:async';
 
@@ -208,6 +209,36 @@ void main() {
       async.flushMicrotasks();
       expect(app.session.received.last.from, isNull);
       expect(n.log, isEmpty);
+    });
+  });
+
+  test('a new text brings an archived conversation back and notifies; an '
+      'acknowledgement does not', () {
+    run((async, app, n) {
+      final f = friend(app);
+      app.alerts.opened(f);
+      app.alerts.closed(f);
+      final c = app.contacts.byKey(f)!;
+      app.contacts.archiveContact(c);
+      async.flushMicrotasks();
+      n.log.clear();
+      app.messenger.sendText(app.contacts.byKey(f)!, 'a');
+      async.elapse(const Duration(seconds: 6));
+      // The echo is a text: back, with its notification.
+      expect(app.contacts.isArchived(f), isFalse);
+      expect(app.contacts.byKey(f)!.archived, isFalse);
+      expect(n.log.last, 'Fake friend: Echo: a');
+
+      app.contacts.archiveConversation(f);
+      async.flushMicrotasks();
+      final a = app.session.outbox.first;
+      app.messenger.receive(fromFriend(app, 1, [AckRecord(a.sent)]));
+      async.flushMicrotasks();
+      expect(app.contacts.isArchived(f), isTrue);
+      app.messenger.receive(fromFriend(app, 2, [const TextRecord('back')]));
+      async.flushMicrotasks();
+      expect(app.contacts.isArchived(f), isFalse);
+      expect(n.log.last, 'Fake friend: Echo: a | back');
     });
   });
 
