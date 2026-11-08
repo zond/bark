@@ -1,6 +1,7 @@
 // Update firmware: an image from the latest release or a file, sent to
 // the connected node with its progress, the node's verdict, the reboot,
-// and the node back on the new version (`updater.dart`).
+// and the node back on the new version (`updater.dart`, which holds what
+// is shown when).
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -63,6 +64,9 @@ class _UpdateScreenState extends State<UpdateScreen> {
     final s = app.session;
     final node = s.node;
     final image = u.image;
+    final latest = u.latest;
+    final noLatest = u.noLatest;
+    final updated = u.updated;
     final busy =
         u.phase == Phase.sending ||
         u.phase == Phase.committing ||
@@ -77,7 +81,8 @@ class _UpdateScreenState extends State<UpdateScreen> {
             Text(
               node == null
                   ? 'Not connected to a node.'
-                  : '${nodeName(node.id)} runs version ${node.image}.',
+                  : '${nodeName(node.id)} runs version ${node.image}'
+                        '${updated == null ? '' : _from(updated)}.',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 16),
@@ -85,9 +90,11 @@ class _UpdateScreenState extends State<UpdateScreen> {
               spacing: 8,
               children: [
                 FilledButton(
-                  onPressed: _getting || busy
+                  onPressed: _getting || busy || latest == null
                       ? null
-                      : () => _get(latestRelease),
+                      : () => _get(
+                          () => downloadImage(latest, app.releases.download),
+                        ),
                   child: const Text('Latest release'),
                 ),
                 OutlinedButton(
@@ -104,15 +111,23 @@ class _UpdateScreenState extends State<UpdateScreen> {
                   ),
               ],
             ),
-            if (image != null) ..._image(image, node?.image),
+            if (noLatest != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(noLatest),
+              ),
+            if (u.showsImage) ..._image(image!),
           ],
         ),
       ),
     );
   });
 
-  List<Widget> _image(FirmwareImage image, int? running) {
-    final newer = running == null || image.version > running;
+  String _from(Updated u) =>
+      ', updated from version ${u.from} ${ago(app.now().difference(u.at))}';
+
+  List<Widget> _image(FirmwareImage image) {
+    final newer = u.newer;
     final fraction = image.length == 0 ? 0.0 : u.held / image.length;
     return [
       const SizedBox(height: 16),
@@ -180,7 +195,8 @@ class _UpdateScreenState extends State<UpdateScreen> {
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
       ],
-      Phase.done => [const Text('Done.')],
+      // Not shown: [Updater.showsImage].
+      Phase.done => [],
     };
   }
 }
