@@ -3844,8 +3844,9 @@ pieces handed to its firmware of every block, a bit each, 48 × 32
 bytes; per channel, the block its sweep is at, the pieces of it sent
 and the pieces to send; each block's next piece; the last two channels
 it sent pieces on and when; the times of the last 8 pieces it heard
-from others on its home channel; and when its section is next due:
-1 840 bytes beside the tables, and 24 bytes in each neighbour's
+from others on its home channel; and what its section last told,
+the heartbeats of its rotation left and when the hour's is due:
+1 856 bytes beside the tables, and 24 bytes in each neighbour's
 entry for its section (`core-interface.md`, Memory).
 
 ---

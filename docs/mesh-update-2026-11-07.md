@@ -6,7 +6,9 @@
 D146 the decision. Spec references are to `protocol.md` by section
 name. Built: the frames, the core's side and the simulator's driver
 side, without bytes; on 2026-11-08 the chain and the sleepy side
-("The chain and the sleepy side", below). Not built: the firmware's
+("The chain and the sleepy side", below), then heartbeat sections in
+place of the announcement and the request, a sweep and a shared pace
+("Heartbeat sections and a sweep", below, roadmap D150). Not built: the firmware's
 side of the transport (the policy, the signature check and the
 install, and the driver's answers; the code and the pieces store are
 `bark-image`'s `code.rs` and `pieces.rs`, roadmap D149).
@@ -380,6 +382,181 @@ pieces in 27 blocks, the last of 40, and its table of 248 bytes is two
 pieces; 28 blocks in all. The runs above used the 387 796 B packed
 of 2026-11-07.
 
+## Heartbeat sections and a sweep (2026-11-08)
+
+The user changed the shape on 2026-11-08, in three steps the same day:
+the holder streams and every block is kept (roadmap D150's store); then
+the announcement and the request go, and the heartbeat tells instead;
+then the stream sweeps the blocks in order, and the senders on a
+channel share the pace instead of one keeping it.
+
+**What changed** (spec "Updates over the mesh", "Packet formats"):
+
+- A heartbeat may carry a 17-byte section after its first 13: the
+  version the node runs, the newest image it holds or gathers (version,
+  first 4 bytes of the name, key, blocks, the last block's pieces), the
+  blocks it holds from the first and the pieces it holds of the next.
+  A relay's heartbeats carry it for the rotation after the version it
+  runs, its newest image or its blocks held change, and one rotation an
+  hour; a sleepy node's beats for one beat after a change and one an
+  hour. The neighbour table
+  keeps each neighbour's (24 B an entry, 104 → 128 B). The announcement
+  and the request are gone, and `aux` 13 and 14 are free.
+- The brief asked for 15 bytes. The core needs the image's blocks and
+  its last block's pieces before the first piece, to know how many
+  pieces give back each block and to set up the firmware's lanes, so
+  the section is 17 bytes: 30 bytes and 23.36 ms a heartbeat, one block
+  of symbols, 1.28 ms, more than 15 would take.
+- A relay streams where a neighbour's section lacks a block it holds,
+  on at most two channels, its home first. On another channel it
+  streams only the blocks past those a relay at home there holds, and
+  to a gatherer only if it is the best holder it hears for it (below,
+  11 and 14). The stream sweeps the blocks
+  in order: of each, what the neighbour there furthest behind on it
+  lacks, over 1 less the measured loss, then the next block a neighbour
+  lacks, and from the first again while any lacks something.
+- On its home channel a sender that heard k pieces from others since
+  its last there sends its next k + 1 paces after its last.
+- A sleepy node's beats carry its section; its anchor's frame after
+  each slot heartbeat is the next piece of its stream on that channel,
+  and the node listens for it while its anchor's section says it holds
+  a block the node lacks. The 38.6 ms listen for an hourly announcement
+  is gone: the slot heartbeat it wakes for carries the anchor's
+  section.
+- The core keeps 1 856 B (`Spread`); the `Relay` is 191 008 B.
+
+**How it was tuned.**
+
+10. **The loss margin, first.** The simulator counts, for each piece
+    sent, the neighbours of its sender whose section said they lacked
+    it, and how many of them heard it (`bark-sim/src/update.rs`,
+    `piece_sent`, `piece_heard`). In the district at the design rate
+    over the first 6 hours of an update, with every relay streaming on
+    two channels and the section in every heartbeat, relays missed
+    40.4 % of the pieces sent to them (921 421 of 1 545 703 heard).
+    The margin was set to 40 % for the steps below, then measured again
+    (15).
+11. **Streams from elsewhere.** A node hears pieces only on its home
+    channel, so it can share the pace only there. On the second channel
+    it streams on, every relay sent a piece a pace unheard by the
+    others: in the first 6 hours pieces were 55 % of all the district's
+    airtime, 92 400 s, and the channels were busy 4.2 % of the time on
+    average, where the network collapses at 3 to 4 %
+    (`collapse-research-2026-10-16.md`). With the relays at home on a
+    channel serving its blocks first, and the others only the blocks
+    past those, the pieces took 69 000 s and the channels 3.5 %, the
+    relays as far along (first block lacked 4.9 against 4.6 on average
+    at 5.25 h). That run had the 40 % margin and the one before 20 %,
+    so the cut is if anything larger than it shows.
+12. **Spin.** The core asked to be woken for a slot frame held back by
+    a listen-before-talk wait, and for a channel whose only neighbour
+    there held a block's pieces but had not yet said it decoded it; the
+    test medium's harness caught both as a wakeup that never moved on.
+13. **The first sweep began at block 1.** A sweep's state started at
+    block 0 with nothing to send, so the first block chosen was the
+    one after it; it now starts before the first.
+
+14. **The best holder for a foreign channel.** As the user put it: a
+    relay hears only its home channel, so only the relays at home on a
+    channel can share its pace, and the sweep there is theirs. Elsewhere
+    a relay streams to a gatherer only if it is the best holder it
+    hears for it, the most blocks from the first, then the lowest ID.
+    Taken as it stands, the rule stalled a chain in the tests: a relay
+    stood back for a better holder that did not reach the gatherer
+    behind it. The relay now stands back only for a better holder no
+    farther from the gatherer than itself, by the positions in its
+    table. In the 6-hour run the pieces took 56 900 s and the channels
+    3.15 %, the relays a little behind (first block lacked 3.8 on
+    average at 5.25 h). Foreign senders still overlap: of the pieces
+    from another channel than the sender's home to a relay that lacked
+    them, 64.0 % came within a pace of one from another such sender to
+    the same relay. Two holders that each think the other is out of
+    the gatherer's reach both send.
+15. **Sections on change.** A relay's section rides the rotation after
+    what it tells changes, and one an hour; the count of pieces of the
+    next block goes as it stands, and the margin covers it being
+    stale. The sections' airtime in 6 hours fell from 22 430 s to
+    1 505 s, the channels from 3.15 to 2.80 %, and the relays went
+    faster (first block lacked 5.4 on average at 5.25 h, the furthest
+    11), the air freed carrying more pieces. Relays then missed 20.5 %
+    of the pieces sent to them that they lacked (499 902 of 628 456
+    heard), and sleepy nodes 12.8 % of the pieces their anchor sent
+    right after its slot heartbeat (22 064 of 25 299), the only ones
+    they listen for. `PIECE_LOSS_PERCENT` is 20: a sweep sends 1.25
+    times what the furthest behind lacks, 2 133 paces, 8.2 hours, for
+    today's image. With no loss the neighbours' sections end each block
+    early, and the test medium's hop takes about as many paces as the
+    image has pieces. Foreign senders overlapped on 47.6 % of their
+    pieces.
+16. **A gate on measured occupancy**, no piece on a channel whose busy
+    estimate is above 2 %, was built and dropped the same day at the
+    user's word: even a saturated mesh must update, so pieces yield to
+    texts only by the bucket's reply reserve, their place last among
+    the radio jobs after nine frames of the send queue, and
+    listen-before-talk with a pace's wait.
+
+The 6-hour runs, the district at the design rate, seed 1:
+
+| | pieces' airtime | of all airtime | sections' airtime | channels busy, mean | texts delivered | first block lacked, mean / most at 5.25 h |
+|---|---|---|---|---|---|---|
+| every relay on two channels (10) | 92 400 s | 55 % | 22 400 s | 4.2 % | 99.0 % | 4.6 / 8 |
+| a channel's blocks to its own (11) | 69 000 s | 48 % | 22 400 s | 3.5 % | 99.2 % | 4.9 / 10 |
+| the best holder (14) | 56 900 s | 43 % | 22 400 s | 3.15 % | 99.1 % | 3.8 / 9 |
+| sections on change (15) | 60 600 s | 53 % | 1 500 s | 2.80 % | 99.0 % | 5.4 / 11 |
+
+Texts delivered here are of all originated in the 6 hours, the last
+minutes' still in flight counted as not delivered.
+
+**Results.** The district at the design rate, seed 1, 36 hours, on
+`d78ecaa`, with the update and without it, the image packed at
+420 808 B (28 blocks):
+
+```
+bark-sim district-x1-update.toml --duration-s 129600 --update z36.upd.csv \
+    --messages z36.msgs.csv
+bark-sim district-x1.toml --duration-s 129600 --messages b36.msgs.csv
+```
+
+Relays that hold the image, from the moment the first relay was given
+it: 50 % after 13.3 hours, 90 % after 14.5 hours, all 1 083 after 28.2
+hours; the 27 placed as relays all after 13.2 hours. The sweeps keep
+the relays in step, so they finish nearly together: at 12.3 hours the
+gathering relays lacked block 12 on average, and an hour later 932 of
+1 078 held the whole image. The last ones are people's nodes that
+turned relay late.
+
+| | without | with the update |
+|---|---|---|
+| channel busy, mean over the run (summary `channels`) | 1.28 % | 2.13 % |
+| the busiest channel | 1.6 % | 2.5 % |
+| the pieces' airtime, and their share of all | | 228 400 s, 42 % |
+| the sections' airtime | | 6 430 s |
+| texts delivered, 0–12 / 12–24 / 24–36 h | 99.64 / 99.83 / 99.75 % | 99.57 / 99.79 / 99.68 % |
+| latency p50 / p90 / p99, 0–12 h | 1.0 / 16.6 / 740 s | 1.2 / 16.9 / 773 s |
+| latency p50 / p90 / p99, 24–36 h | 1.0 / 16.1 / 608 s | 1.0 / 16.1 / 598 s |
+| refused at the gate | 0 | 0 |
+| texts whose application waited for its node | 43 | 49 |
+| the busiest node's airtime | 0.88 % | 1.31 % |
+
+Over the whole run relays missed 18.1 % of the pieces sent to them that
+they lacked, sleepy nodes 9.7 % of their anchor's pieces after its
+slot, and 63.4 % of the pieces from another channel than the sender's
+home came within a pace of one from another such sender to the same
+relay.
+
+*Sleepy nodes.* Of about 945, 5 to 12 held the image at a time after
+the relays were done, and those that gathered lacked block 1.75 on
+average after 34 hours: about two blocks, where one piece a rotation of
+its anchor would have given each about seven since the relays finished.
+Their anchors sent few pieces after their slot heartbeats: 217 000
+went in 36 hours to nodes that lacked them, about 230 a node. The
+likely cause is the shared pace: an anchor that heard k other pieces
+on its home channel since its last waits k + 1 paces, and the slot
+piece goes only if the pace allows it at that moment, so on a channel
+with several anchors each sends after only some of its slot
+heartbeats. Not yet measured further.
+
+
 ## What is left
 
 - **The firmware's side**: the driver's answers to the update's
@@ -387,10 +564,10 @@ of 2026-11-07.
   policy (keys, the version, given up images), the signature check, the
   install through the loader, and `Holds` at boot. The firmware's driver
   answers none of the update's actions yet.
-- **The chain's cost.** About a thousand partial holders put 0.77
-  points on every channel; a rule that keeps one sender in a place
-  without silencing a chain behind a sender on the same channel is not
-  found yet (the variants above).
-- **Runs**: the district to its end and the city. A run of the district
-  slows as holders multiply, since every piece reaches every node on its
-  channel; 36 simulated hours took an hour of wall clock. More seeds.
+- **Foreign senders.** Two thirds of the pieces from another channel
+  than the sender's home still overlap with another such sender's; a
+  holder cannot tell whether a better one reaches the gatherer.
+- **Sleepy nodes.** Their anchors send few pieces after the slot
+  heartbeat once the pace is shared ("Heartbeat sections and a sweep",
+  Results).
+- **Runs**: the city, twice the design rate, more seeds.
