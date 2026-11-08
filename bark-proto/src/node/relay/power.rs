@@ -25,10 +25,12 @@
 //! mail, as a carried node does, and flushes its delivery queue as a node
 //! does at its first far fix (`relay/delivery.rs`), listening all the
 //! time until each message has had its attempt, or for a delivery TTL at
-//! most; then it turns sleepy. A sleepy node holds nothing: what the
-//! flush did not deliver is dropped, and it chooses an anchor among the
-//! relays it knows as a booting sleepy node does. A carried node flushed
-//! at its first far fix already.
+//! most; then it turns sleepy. It chooses an anchor among the relays it
+//! knows as a booting sleepy node does, and holds mail for nobody: what
+//! the flush did not deliver it hands on toward its address
+//! (`relay/forward.rs` `hand_on`), never dropping it, since a turn is no
+//! end spec "Overload waits" lists. A carried node flushed at its first
+//! far fix already.
 //!
 //! With [`Config::battery`] a fixed relay relays on past its grace until
 //! its battery reads at or below the low level (`AppCommand::Battery`),
@@ -52,7 +54,7 @@
 //! [`Config::battery`]: crate::Config::battery
 
 use super::{Mode, Node, Power, Sleep, Stage};
-use crate::event::{Action, AppEvent, DropReason, Trace};
+use crate::event::{Action, AppEvent, Trace};
 use crate::node::{
     heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
     BATTERY_REST, BATTERY_SCALE_ONE,
@@ -271,6 +273,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Mode::Sleepy(s) => {
                 if s.by_battery && !self.battery.low && !self.motion.carried {
                     self.turn_relay(Power::Battery(now), now, emit);
+                } else if !self.delivery.is_empty() {
+                    // Room came in the send queue, as a hand-over ended.
+                    self.hand_on(now, emit);
                 }
                 return;
             }
@@ -338,13 +343,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.mode = Mode::Sleepy(Sleep::new(self.battery.low));
         self.gps_sleepy();
-        for q in self.delivery.iter() {
-            emit(Action::Trace(Trace::Dropped {
-                msg_id: q.msg_id,
-                reason: DropReason::Unplugged,
-            }));
-        }
-        self.delivery.clear();
         self.heard.clear();
         let held = self.queue.iter().position(Outgoing::held);
         if let Some(h) = held.and_then(|i| self.queue.remove(i)) {
@@ -373,6 +371,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // Its first beat, at once on the same channel, says it.
             self.radio.beacon.change = None;
         }
+        // An accepted message ends only as spec "Overload waits" lists,
+        // and a turn is none of those: what it held goes on.
+        self.hand_on(now, emit);
     }
 
     /// Forget whatever a sleepy node listens for: its windows, the watch

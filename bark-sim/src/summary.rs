@@ -1257,8 +1257,8 @@ impl Summary {
             );
             let _ = writeln!(
                 s,
-                "held when a relay left: by the flush {}, at a beat {}, to the node as a relay {}, dropped at the turn {}, otherwise {}; heartbeats for a change {} ({:.1} s); anchors left for one that turned sleepy {}",
-                h[0], h[1], h[2], h[3], h[4],
+                "held when a relay left: by the flush {}, at a beat {}, to the node as a relay {}, handed on at the turn {}, dropped by the node that held it {}, otherwise {}; heartbeats for a change {} ({:.1} s); anchors left for one that turned sleepy {}",
+                h[0], h[1], h[2], h[3], h[4], h[5],
                 p.changed.0, p.changed.1,
                 p.anchors_left
             );

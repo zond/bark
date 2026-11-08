@@ -214,9 +214,6 @@ pub enum DropReason {
     /// application, which may offer it again after that wait
     /// (spec "A sleepy node's own message", "Receiving DATA").
     Pushback,
-    /// Held for a sleepy node by a node that turned sleepy itself, which
-    /// holds nothing (spec "Delivery queue").
-    Unplugged,
     /// Received, and the ACK that takes it could not go out: not taken,
     /// since a take is final only when its ACK has gone, and the sender's
     /// retry brings it again (spec "The ACK"). Refused.
@@ -582,6 +579,13 @@ pub enum Trace {
         msg_id: MsgId,
         /// The node.
         node: NodeId,
+    },
+    /// A message the node held for another, left when it turned sleepy,
+    /// went into its send queue as a forward toward its address (spec
+    /// "Sleepy nodes").
+    HandedOn {
+        /// The message.
+        msg_id: MsgId,
     },
     /// A delivery left the send queue to wait in the delivery queue for
     /// its node's next beat (spec "Delivery queue").

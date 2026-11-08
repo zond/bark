@@ -573,10 +573,6 @@ pub struct DropCounts {
     /// A sleepy node's own message given back to its application with a
     /// wait (spec "A sleepy node's own message").
     pub pushback: u64,
-    /// Held for a sleepy node by a node that turned sleepy (spec
-    /// "Delivery queue"); left out where none was.
-    #[serde(skip_serializing_if = "is_zero")]
-    pub unplugged: u64,
     /// Received and not taken because the ACK that takes it could not go
     /// out (spec "The ACK", roadmap D93); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
@@ -606,14 +602,13 @@ impl DropCounts {
             DropReason::DeliveryFull => &mut self.delivery_full,
             DropReason::PayloadTooLong => &mut self.payload_too_long,
             DropReason::Pushback => &mut self.pushback,
-            DropReason::Unplugged => &mut self.unplugged,
             DropReason::Unanswered => &mut self.unanswered,
         };
         *c += 1;
     }
 
     /// Every counter with its name, as in the JSON output.
-    pub fn fields(&self) -> [(&'static str, u64); 15] {
+    pub fn fields(&self) -> [(&'static str, u64); 14] {
         [
             ("no_route", self.no_route),
             ("hop_cap", self.hop_cap),
@@ -628,7 +623,6 @@ impl DropCounts {
             ("delivery_full", self.delivery_full),
             ("payload_too_long", self.payload_too_long),
             ("pushback", self.pushback),
-            ("unplugged", self.unplugged),
             ("unanswered", self.unanswered),
         ]
     }
@@ -656,7 +650,6 @@ impl DropCounts {
             &mut out.delivery_full,
             &mut out.payload_too_long,
             &mut out.pushback,
-            &mut out.unplugged,
             &mut out.unanswered,
         ]
         .into_iter()
@@ -1093,10 +1086,12 @@ pub struct PowerMetrics {
     /// battery, with no grace (roadmap D152).
     pub carried: u64,
     /// The texts a relay held when it left, at the end of its grace or
-    /// carried on battery, after the settle time, by how they went: by the flush, at a beat of their node in its
-    /// window or outside it, to their node as a relay, dropped at the turn
-    /// to sleepy, none of these.
-    pub held: [u64; 5],
+    /// carried on battery, after the settle time, by how they went first:
+    /// by the flush, at a beat of their node in its window or outside it,
+    /// to their node as a relay, handed on toward their address at the
+    /// turn to sleepy (roadmap D152), dropped by the node that held them,
+    /// none of these.
+    pub held: [u64; 6],
     /// Heartbeats for a change of flags or map point after the settle
     /// time: how many, and their airtime.
     pub changed: (u64, f64),

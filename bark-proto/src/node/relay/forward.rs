@@ -1330,10 +1330,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.own.id == Some(id) {
             self.set_own(None);
         }
-        let Some(q) = Queued::new(id, d.dst_pos, node, payload, now) else {
+        let Some(mut q) = Queued::new(id, d.dst_pos, node, payload, now) else {
             self.drop_msg(id, DropReason::PayloadTooLong, emit);
             return;
         };
+        q.hops = d.hops;
         if node == self.me() {
             self.delivered.insert(id, now);
             // The inbox keeps it until the application confirms it, by the
@@ -1367,6 +1368,58 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         emit(Action::Trace(Trace::Queued { msg_id: id, node }));
         self.deliver_now(node, now);
+    }
+
+    /// A node that turned sleepy holds mail for nobody: what its delivery
+    /// queue still holds goes into its send queue, oldest first, as
+    /// forwards from here toward their addresses, admitted as any forward
+    /// received with their count; what finds no room waits for it here
+    /// (spec "Sleepy nodes"). Each starts a search here, with no parent,
+    /// so that a copy that comes back is searched on and not taken for
+    /// delivered.
+    pub(super) fn hand_on(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        loop {
+            let Some(q) = self.delivery.iter().next() else {
+                return;
+            };
+            let (id, hops) = (q.msg_id, q.hops);
+            if hops == MAX_HOPS {
+                self.delivery.remove(id);
+                self.drop_msg(id, DropReason::HopCap, emit);
+                continue;
+            }
+            let d = Data {
+                sender_home: self.home,
+                dst_hop: NodeId::NONE,
+                src_hop: self.me(),
+                dst_pos: q.dst_pos,
+                dst_id: q.node,
+                hops: hops + 1,
+                payload: q.payload(),
+            };
+            let frame = data_frame(&d, self.home, self.forward_preamble());
+            let air = mac::airtime(&frame);
+            let Ok(place) = self.admit(air, Duration::ZERO, hops, false, now) else {
+                return;
+            };
+            self.records.forget(id);
+            // The table outnumbers what a node holds (`tables/records.rs`).
+            let Some(at) = self.record_place() else {
+                return;
+            };
+            self.records.put(at, Record::new(id, None, hops, now));
+            let out = Outgoing {
+                place,
+                since: now,
+                ..Outgoing::new(frame, Kind::Forward)
+            };
+            if self.queue.push(out).is_err() {
+                return;
+            }
+            self.delivery.remove(id);
+            self.forwarding.feed_due = true;
+            emit(Action::Trace(Trace::HandedOn { msg_id: id }));
+        }
     }
 
     // --- The relay's own application (spec "Routing") ---
@@ -1712,9 +1765,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         }
         let alone = self.neighbours.live(now).next().is_none();
-        if self.sleepy() && self.own.id == Some(id) && alone {
-            // Until it hears a neighbour again, routed every fade (spec
-            // "A sleepy node's own message").
+        if self.sleepy() && record.parent().is_none() && alone {
+            // Its own message, or one it held when it turned sleepy:
+            // until it hears a neighbour again, routed every fade
+            // (spec "A sleepy node's own message", "Sleepy nodes").
             return Routed::Wait(now + self.config.fade_retry);
         }
         match record.parent() {

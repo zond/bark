@@ -172,6 +172,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn feed(&mut self, retry: bool, now: Instant) {
         self.forwarding.feed_due = false;
         self.timers.feed_at = None;
+        if self.sleepy() {
+            // What it held waits to be handed on (`relay/power.rs`).
+            return;
+        }
         let mut i = 0;
         // The windows first: their nodes listen only briefly.
         loop {

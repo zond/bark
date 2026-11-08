@@ -5,9 +5,7 @@
 mod common;
 
 use bark_proto::wire::Packet;
-use bark_proto::{
-    AppCommand, AppEvent, Config, Delivery, DropReason, Instant, MsgId, Position, Relay, Trace,
-};
+use bark_proto::{AppCommand, AppEvent, Config, Delivery, Instant, MsgId, Position, Relay, Trace};
 use common::{secs, Harness};
 
 /// A position `east` metres from a point in Kyiv.
@@ -64,6 +62,14 @@ fn delivered_at(h: &Harness<Relay>, i: usize, id: MsgId) -> Option<Instant> {
         AppEvent::Message { msg_id, .. } if *msg_id == id => Some(*t),
         _ => None,
     })
+}
+
+/// Whether node `i` dropped message `id`.
+fn dropped(h: &Harness<Relay>, i: usize, id: MsgId) -> bool {
+    h.nodes[i]
+        .traces
+        .iter()
+        .any(|(_, t)| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
 }
 
 /// Whether node `i`'s last heartbeat had the sleepy flag.
@@ -219,8 +225,9 @@ fn a_relay_unplugged_relays_through_its_grace() {
 
 /// After its grace a relay takes no more mail and flushes what it holds,
 /// each message once with the long preamble; then it turns sleepy, holding
-/// nothing: what the flush did not deliver is dropped with a trace. It
-/// anchors to a relay it knows, and its own sleepy node leaves it for
+/// nothing of its own: what the flush did not deliver goes on toward its
+/// address from there, and reaches its node through the relay it hears.
+/// It anchors to a relay it knows, and its own sleepy node leaves it for
 /// another (spec "Relay choice").
 #[test]
 fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
@@ -246,10 +253,9 @@ fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
         assert_eq!(traced(&h, r, Trace::Role { sleepy: true }), 1);
         assert_eq!(h.nodes[r].core.delivery_queue().count(), 0);
         if lost {
-            assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
-                t,
-                Trace::Dropped { msg_id, reason: DropReason::Unplugged } if *msg_id == id
-            )));
+            assert_eq!(traced(&h, r, Trace::HandedOn { msg_id: id }), 1);
+            assert!(h.run_until(h.now + secs(600), |h| delivered_at(h, s, id).is_some()));
+            assert!(!dropped(&h, r, id));
         } else {
             assert_eq!(
                 delivered_by(&h, r, id),
@@ -315,10 +321,12 @@ fn a_relay_carried_in_its_grace_turns_sleepy_at_once() {
             _ => None,
         });
     assert!(last.is_some_and(|hb| hb.sleepy && hb.carried), "{last:?}");
-    assert!(h.nodes[r].traces.iter().any(|(_, t)| matches!(
-        t,
-        Trace::Dropped { msg_id, reason: DropReason::Unplugged } if *msg_id == id
-    )));
+    // What the far fix's flush did not deliver went on toward its address.
+    // There S's anchor, R, has walked off, and O hears no beat of S's on
+    // R's channel: the search ends at its origin, O, as
+    // spec "Return to parent" ends one; R drops nothing.
+    assert_eq!(traced(&h, r, Trace::HandedOn { msg_id: id }), 1);
+    assert!(!dropped(&h, r, id));
 }
 
 /// A carried relay unplugged has no grace: it takes no more mail and

@@ -3238,3 +3238,77 @@ fn neighbour_counts_tell_heard_strong_and_proven() {
     let counts = r.neighbour_counts(now);
     assert_eq!((counts.heard, counts.strong, counts.both_ways), (3, 2, 1));
 }
+
+/// A node that turns sleepy hands what it held on into its send queue as
+/// forwards, admitted as any forward with its count; one that finds no
+/// room waits in the delivery queue until room comes, never dropped
+/// (spec "Sleepy nodes"). It goes on with no parent and not arrived, so
+/// a copy that comes back is searched on.
+#[test]
+fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
+    use crate::ids::MsgId;
+    use crate::tables::delivery::Queued;
+    use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
+    use crate::wire::{Data, Packet};
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    now = Instant::ZERO + Duration::from_secs(10);
+    let node = NodeId([7; 6]);
+    let dst = r.config.position;
+    // Held with count 0, its node's own: no hop place takes it.
+    let id = MsgId::of(dst, node, b"held");
+    let mut record = crate::tables::records::Record::new(id, None, 0, now);
+    record.set_arrived();
+    let at = r.record_place().unwrap();
+    r.records.put(at, record);
+    r.delivery
+        .push(Queued::new(id, dst, node, b"held", now).unwrap());
+    // The regular room full of others' forwards.
+    for k in 0..SEND_QUEUE {
+        let payload = [k as u8];
+        let d = Data {
+            sender_home: r.home,
+            dst_hop: NodeId::NONE,
+            src_hop: r.me(),
+            dst_pos: dst,
+            dst_id: NodeId([9; 6]),
+            hops: 1,
+            payload: &payload,
+        };
+        let frame = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
+        r.queue.push(Outgoing::new(frame, Kind::Forward)).unwrap();
+    }
+    r.mode = Mode::Sleepy(Sleep::new(false));
+    let mut traces = Vec::new();
+    let mut emit = |a: Action| {
+        if let Action::Trace(t) = a {
+            traces.push(t);
+        }
+    };
+    r.hand_on(now, &mut emit);
+    assert_eq!(r.delivery.len(), 1, "it waits for room");
+    assert_eq!(r.queue.len(), SEND_QUEUE);
+    r.queue.remove(0);
+    r.hand_on(now, &mut emit);
+    assert!(r.delivery.is_empty());
+    let out = r.queue.iter().last().unwrap();
+    assert_eq!(
+        (out.kind, out.place, out.msg_id()),
+        (Kind::Forward, 0, Some(id))
+    );
+    assert!(matches!(Packet::decode(out.frame.payload()), Ok(Packet::Data(d)) if d.hops == 1));
+    let record = r.records.get(id).unwrap();
+    assert!(!record.arrived() && record.parent().is_none());
+    assert!(traces.contains(&Trace::HandedOn { msg_id: id }));
+    assert!(!traces.iter().any(|t| matches!(t, Trace::Dropped { .. })));
+}

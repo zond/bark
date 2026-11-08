@@ -2325,7 +2325,8 @@ preamble ([heard table](#heard-table),
 table and the send queue, and forwards what it is given at once, with
 the long preamble to a sleepy neighbour and the short one to any other.
 Everything else it does as any node. A carried relay keeps its mailbox
-but takes no new mail into it.
+but takes no new mail into it. A node that turns sleepy hands on what
+its mailbox still holds (plugged in and unplugged, below).
 
 For a node that has gone dark the network keeps, for the delivery TTL,
 the node in its holder's table and the messages waiting for it, which
@@ -2420,13 +2421,26 @@ delivery, and where the channels are full it could wait for hours with
 the node listening at full current. A TTL is what the network promises a
 node it cannot reach.
 
-Then it is sleepy, and stays carried or fixed as it was. It holds
-nothing, so what the flush did not deliver is dropped, and it takes the
+Then it is sleepy, and stays carried or fixed as it was. It takes the
 strongest relay it knows as its anchor and listens a rotation, as at a
 first choice ([relay choice](#relay-choice)), or is anchorless with
-none. Its sleepy
-nodes hear no more slot heartbeats of it, and leave it as an anchor
-heard sleepy.
+none. Its sleepy nodes hear no more slot heartbeats of it, and leave it
+as an anchor heard sleepy. What the flush did not deliver it **hands
+on**: each message goes into its send queue, oldest first, as a forward
+from here toward its address, with the count it arrived with
+([hop count](#hop-count)), admitted as any forward received with that
+count ([send queue](#send-queue)), and routed as any other
+([next hop](#next-hop)), through its anchor where that is its only
+neighbour; and a message that finds no room waits in the delivery queue
+until a hand-over ends and makes some. Its search starts here, as at an
+origin: with no neighbour at all it waits for one, as the node's own
+message does ([a sleepy node's own message](#a-sleepy-nodes-own-message)).
+Nothing the node held is dropped at the turn.
+
+*Why hand it on.* A message ends only as
+[overload waits](#overload-waits) lists (roadmap D31), and a node that walks off or runs low is none of those.
+Its address is still where the network can find the message's node: the
+relay that owns it now, or the node itself as a neighbour, takes it on.
 
 ### Relay choice
 
@@ -2693,7 +2707,9 @@ table does no harm (above).
 
 ### Delivery queue
 
-Kept by nodes that are not sleepy, up to 41 messages per node. A message
+Kept by nodes that are not sleepy, up to 41 messages per node; a node
+that turns sleepy keeps what it held only until it hands it on
+([sleepy nodes](#sleepy-nodes)). A message
 queued the delivery TTL ago or longer is **stale**: it stays, and goes at
 its node's next beat as any other, until a message arrives at a full
 queue; then the oldest stale message makes way for it. When the queue is
