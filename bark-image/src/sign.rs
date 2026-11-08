@@ -197,32 +197,86 @@ mod tests {
         }
     }
 
-    /// The bench key's public key, `bark-fw/keys/bench.pub`, and its
-    /// signature of [`header`] as `scripts/image.py sign` makes it: the
-    /// script and the firmware agree.
-    #[test]
-    fn a_signature_from_the_script_verifies() {
-        let hex = |s: &str, out: &mut [u8]| {
-            for (i, b) in out.iter_mut().enumerate() {
-                *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap();
-            }
-        };
-        let mut bench = Key::NONE;
-        bench.id = 1;
-        hex(
-            "71bd2f005d6b0bc8ce9c04c9e6cd089f9ccee6f837ca413d20fe85fdc0225313",
-            &mut bench.public,
-        );
+    fn hex(s: &str, out: &mut [u8]) {
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap();
+        }
+    }
+
+    /// The keys a firmware built from `bark-fw/keys/` holds, as `build.rs`
+    /// takes them: the project's, and the bench key in an open build.
+    fn built(open: bool) -> [Key; SLOTS] {
+        let project = include_str!("../../bark-fw/keys/project.pub");
+        let bench = include_str!("../../bark-fw/keys/bench.pub");
+        let mut held = [Key::NONE; SLOTS];
+        let lines = project.lines().chain(bench.lines().filter(|_| open));
+        for (k, line) in held.iter_mut().zip(lines.filter(|l| !l.trim().is_empty())) {
+            let (id, public) = line.trim().split_once(':').unwrap();
+            k.id = id.parse().unwrap();
+            hex(public, &mut k.public);
+        }
+        held
+    }
+
+    /// A header signed by the bench key as `scripts/image.py sign` signs:
+    /// the script and the firmware agree.
+    fn bench_signed() -> [u8; HEADER_LEN] {
         let mut h = header();
-        h[SIGNED_LEN] = 1;
+        h[SIGNED_LEN] = 255;
         hex(
             "2440a85feda31b832383d539ed36e67a91cd0b75c57df61a38829278da3d8523\
              5886b3a397da3512671993bc28bdb0780650ae3384681e163ea9550795c90604",
             &mut h[SIGNED_LEN + 1..SIGNED_LEN + SLOT_LEN],
         );
-        assert_eq!(verify(&h, &keys(&[bench])), Ok(1));
+        h
+    }
+
+    /// The header of the release v7's `bark-fw-7.img`, signed by the
+    /// project's key 1 in the release workflow.
+    fn release_signed() -> [u8; HEADER_LEN] {
+        let mut h = [0; HEADER_LEN];
+        hex(
+            "6261726b010000000700000038bd0600898ba1317fa7e5e564f2230e\
+             329d0dfcbc6d80c248bc312b1e63264c9ff36939",
+            &mut h[..SIGNED_LEN],
+        );
+        h[SIGNED_LEN] = 1;
+        hex(
+            "64bc9ed9fe50e5de724f4b1e6a332d8623473fb783f904837cf5ba801a1ea557\
+             15a175194776d74f072bff35902332edcdd262a3b628f89f31868b186e841108",
+            &mut h[SIGNED_LEN + 1..SIGNED_LEN + SLOT_LEN],
+        );
+        h
+    }
+
+    #[test]
+    fn a_signature_from_the_script_verifies() {
+        let mut h = bench_signed();
+        assert_eq!(verify(&h, &built(true)), Ok(255));
         h[8] ^= 1;
-        assert_eq!(verify(&h, &keys(&[bench])), Err(SignatureError::Bad));
+        assert_eq!(verify(&h, &built(true)), Err(SignatureError::Bad));
+    }
+
+    /// Roadmap D154: a node of any build takes the project's release.
+    #[test]
+    fn a_release_is_taken_by_an_open_build_and_a_protected_one() {
+        assert_eq!(verify(&release_signed(), &built(true)), Ok(1));
+        assert_eq!(verify(&release_signed(), &built(false)), Ok(1));
+    }
+
+    #[test]
+    fn a_protected_build_refuses_the_bench_key() {
+        assert_eq!(
+            verify(&bench_signed(), &built(false)),
+            Err(SignatureError::UnknownKey)
+        );
+    }
+
+    #[test]
+    fn an_open_build_holds_the_project_keys_and_the_bench_key() {
+        let ids = built(true).map(|k| k.id);
+        assert_eq!(ids, [1, 2, 255]);
+        assert_eq!(built(false).map(|k| k.id), [1, 2, NONE]);
     }
 
     #[test]
