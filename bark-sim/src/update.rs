@@ -146,11 +146,13 @@ impl UpdateRun {
     }
 
     /// Whether a frame of `node` at `now` is the one right after its slot
-    /// heartbeat: its check and its start, within 20 ms.
+    /// heartbeat: within the heartbeat's airtime with its section, 23.36
+    /// ms, and the piece's check and start, under 5 ms, with a margin, 40
+    /// ms from the heartbeat's start.
     pub fn after_home_beat(&self, node: u32, now: Instant) -> bool {
         self.home_beats
             .get(&node)
-            .is_some_and(|&t| now.since(t).as_micros() < 20_000)
+            .is_some_and(|&t| now.since(t).as_micros() < 40_000)
     }
 
     /// Relay `sender` sent piece `index` of `block` at `now`, from
