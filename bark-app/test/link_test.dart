@@ -104,7 +104,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [7, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [8, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
@@ -221,6 +221,18 @@ void main() {
     expect(q(-1139), Quality.fair);
     expect(q(-1112), Quality.fair);
     expect(q(-1110), Quality.good);
+  });
+
+  test('a guest item, and after in three bytes', () {
+    expect(encodeAfter(0x010203), [1, 2, 3]);
+    expect(() => encodeAfter(1 << 24), throwsA(isA<Malformed>()));
+    final b = [0, 0, 7, 1, 2, 3, 4, ...'hi'.codeUnits];
+    final g = GuestItem.decode(b)!;
+    expect((g.number, g.message.msgId), (7, 0x01020304));
+    expect(g.message.payload, 'hi'.codeUnits);
+    expect(g.encode(), b);
+    expect(GuestItem.decode([]), isNull);
+    expect(() => GuestItem.decode(b.sublist(0, 6)), throwsA(isA<Malformed>()));
   });
 
   test('recipient and public', () {

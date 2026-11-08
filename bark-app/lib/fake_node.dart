@@ -388,7 +388,7 @@ class FakeNode implements NodeLink {
       relays: _relays,
       bootLeftS: _ceilS(left),
       address: _mapPoint ?? _fix,
-      inbox: g == null ? _inbox.length : min(1, g._inbox.length),
+      inbox: g == null ? _inbox.length : 0,
     );
   }
 
@@ -653,6 +653,15 @@ class FakeNode implements NodeLink {
 
   int get _length => _le32(_staging!, 12);
 
+  /// Guest is a guest's; the owner's link reads its mail through Inbox,
+  /// in its own form.
+  @override
+  Future<void> setGuestAfter(int number) => _answer(() {});
+
+  @override
+  Future<GuestItem?> readGuest() async =>
+      throw StateError('the paired phone\'s Inbox gives its own form');
+
   @override
   Future<UpdateProgress> readUpdate() => _answer(() {
     final h = _staging;
@@ -780,6 +789,12 @@ class FakeNode implements NodeLink {
   bool _public = true;
   set public(bool v) {
     _public = v;
+    // Made private, it closes the guest's link.
+    if (!v) {
+      for (final g in [...guests]) {
+        g.close();
+      }
+    }
     _turnGen++;
     _idleCheck();
     _notify();
@@ -789,15 +804,33 @@ class FakeNode implements NodeLink {
   /// writes one.
   int? ownerTag;
 
-  /// The guests' links up now.
+  /// Whether any phone has paired with it; a test's stranger's node has
+  /// no owner, and all its mail is the guests'.
+  bool owned = true;
+
+  /// The guests' links up now: one, and for a moment a second, which
+  /// the node closes once it writes Recipient.
   final List<FakeGuest> guests = [];
 
-  /// The guests it takes at once beside its owner, as the firmware plans;
-  /// the app does not count on the number.
-  static const maxGuests = 3;
+  /// The guests it serves at once beside its owner (spec "Phone link",
+  /// Public).
+  static const maxGuests = 1;
 
-  /// Messages it took for its phones and could place with none.
-  int dropped = 0;
+  /// How long it keeps a guest's link: the ATT transaction's timeout,
+  /// 30 s (spec "Phone link", Public).
+  static const guestLinkTime = Duration(seconds: 30);
+
+  /// The guests' items of its ring, oldest first, as the node keeps them
+  /// in flash: on a public node every message not the owner's.
+  final List<GuestItem> ring = [];
+
+  /// The items its ring holds, as a home's (spec "Mailbox", The ring);
+  /// the oldest leaves for a new one.
+  static const ringItems = 1024;
+
+  /// The last number an item took; the owner's take numbers too, so the
+  /// guests' run with gaps, as in the node's ring.
+  int _number = 0;
 
   /// A message the network delivered for its phones, as a test makes one.
   void deliver(Uint8List payload) {
@@ -805,43 +838,54 @@ class FakeNode implements NodeLink {
     _notify();
   }
 
-  /// Hands a message to its phones: on a public node to every guest whose
-  /// tag it carries, and to the owner when it is the owner's tag or the
-  /// node holds none; what it can hand to nobody it drops.
+  /// Keeps a message for its phones: the owner's in the owner's inbox,
+  /// those with the owner's tag or every one while the bond holds none;
+  /// on a public node the rest in the ring, by number, for the guests to
+  /// read by their tags, and all of them on a node nobody has paired with.
   void _place(InboxMessage m) {
-    if (!public) {
+    _number++;
+    final tag = m.payload.length > 1 ? m.payload[1] : null;
+    final owners = owned && (ownerTag == null || ownerTag == tag);
+    if (!public || owners) {
       _inbox.add(m);
       return;
     }
-    final tag = m.payload.length > 1 ? m.payload[1] : null;
-    var placed = false;
-    for (final g in guests.where((g) => g.tag != null && g.tag == tag)) {
-      g._inbox.add(m);
-      placed = true;
-    }
-    if (ownerTag == null || ownerTag == tag) {
-      _inbox.add(m);
-      placed = true;
-    }
-    if (!placed) dropped++;
+    ring.add(GuestItem(_number, m));
+    if (ring.length > ringItems) ring.removeAt(0);
+  }
+
+  /// The oldest item of the ring after `after` with the tag `tag`; a
+  /// number above the newest is read as 0, as the ring has restarted
+  /// since the guest wrote it.
+  GuestItem? _guestItem(int? tag, int after) {
+    final from = after > _number ? 0 : after;
+    return ring
+        .where((i) => i.number > from && i.message.payload[1] == tag)
+        .firstOrNull;
+  }
+
+  /// Its ring starts again from nothing, numbers from 1, as a node's
+  /// erased flash does.
+  void restartRing() {
+    ring.clear();
+    _number = 0;
   }
 
   /// A phone that has not paired connects; on a node that is not public
-  /// every value it touches is refused for want of the bond.
+  /// every value it touches is refused for want of the bond. Its link
+  /// ends after [guestLinkTime].
   FakeGuest connectGuest() {
-    if (guests.length >= maxGuests) throw StateError('no link free');
     final g = FakeGuest._(this);
     guests.add(g);
     _joined(g);
+    _timers.add(Timer(guestLinkTime, g.close));
     return g;
   }
 
-  /// A guest's link ended: what waited for it goes, and its turn passes.
+  /// A guest's link ended: its turn passes.
   void _left(FakeGuest g) {
     guests.remove(g);
     _gone(g);
-    dropped += g._inbox.length;
-    g._inbox.clear();
   }
 
   /// The phone the app runs on holds the fake's bond; false once
@@ -911,8 +955,9 @@ class FakeGuest implements NodeLink {
   final _Phone _phone = _Phone()..connected = true;
   final _closed = Completer<void>();
 
-  /// What waits for this guest; it reads one at a time.
-  final List<InboxMessage> _inbox = [];
+  /// The number of the last item it took, as written to Guest; 0 at each
+  /// connection.
+  int _after = 0;
 
   /// The tag it wrote to Recipient.
   int? tag;
@@ -946,27 +991,39 @@ class FakeGuest implements NodeLink {
   @override
   Future<GivenBack?> readGivenBack() => _open(() => node._givenBackNow(_phone));
 
+  /// A guest's Inbox gives the Guest form, [readGuest].
   @override
-  Future<InboxMessage?> readInbox() =>
-      _open(() => _inbox.isEmpty ? null : _inbox.first);
+  Future<InboxMessage?> readInbox() async =>
+      throw StateError('a guest\'s Inbox gives items in the Guest form');
 
+  /// A guest's items stay in the ring: a write to Inbox is not allowed.
   @override
-  Future<void> confirm(int id) => _open(() {
-    if (_inbox.isEmpty || _inbox.first.msgId != id) {
-      throw const AttException(AttError.valueNotAllowed);
-    }
-    _inbox.removeAt(0);
-    node._notify();
-  });
+  Future<void> confirm(int id) =>
+      _open(() => throw const AttException(AttError.valueNotAllowed));
 
   @override
   Future<void> send(Uint8List value) => _open(() => node._send(this, value));
 
+  /// A second guest that writes Recipient while another's link is up is
+  /// closed at once: the other link is the owner's to take.
   @override
   Future<void> setRecipient(int tag) => _open(() {
     encodeRecipient(tag);
+    if (node.guests.length > FakeNode.maxGuests) {
+      close();
+      throw StateError('closed: another guest has the link');
+    }
     this.tag = tag;
   });
+
+  @override
+  Future<void> setGuestAfter(int number) => _open(() {
+    encodeAfter(number);
+    _after = number;
+  });
+
+  @override
+  Future<GuestItem?> readGuest() => _open(() => node._guestItem(tag, _after));
 
   @override
   Future<void> setMapPoint(Position? p) => _bonded();

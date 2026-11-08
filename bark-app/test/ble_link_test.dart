@@ -12,7 +12,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:bark_app/app_layer.dart' show recipientTag;
+import 'package:bark_app/app_layer.dart' show Form, formatByte, recipientTag;
 import 'package:bark_app/app.dart';
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/contacts.dart';
@@ -341,9 +341,20 @@ class FakeNodes extends UniversalBlePlatform {
         details: '133',
       );
     }
-    _links[deviceId] = bonds.contains(deviceId) || !n.public
+    final link = bonds.contains(deviceId) || !n.public
         ? n.connect()
         : n.connectGuest();
+    _links[deviceId] = link;
+    // A guest's link the node ends, at its 30 s or for another guest,
+    // ends for Android too.
+    if (link is FakeGuest) {
+      link.closed.then((_) {
+        if (_links[deviceId] != link) return;
+        _links.remove(deviceId);
+        _up.remove(deviceId);
+        updateConnection(deviceId, false);
+      });
+    }
     return expectedMtu;
   }
 
@@ -383,6 +394,9 @@ class FakeNodes extends UniversalBlePlatform {
       Uuids.node => (await n.readNode()).encode(),
       Uuids.status => (await n.readStatus()).encode(),
       Uuids.givenBack => (await n.readGivenBack())?.encode() ?? Uint8List(0),
+      // A guest's Inbox gives its items in the Guest form.
+      Uuids.inbox when n is FakeGuest =>
+        (await n.readGuest())?.encode() ?? Uint8List(0),
       Uuids.inbox => (await n.readInbox())?.encode() ?? Uint8List(0),
       Uuids.clock => (await n.readClock()).encode(),
       Uuids.home => (await n.readHome()).encode(),
@@ -410,6 +424,10 @@ class FakeNodes extends UniversalBlePlatform {
         await n.setRecipient(value.single);
       case Uuids.public:
         await n.setPublic(value.single == 1);
+      case Uuids.guest:
+        await n.setGuestAfter((value[0] << 16) | (value[1] << 8) | value[2]);
+      case Uuids.send:
+        await n.send(value);
       case Uuids.inbox:
         await n.confirm(ByteData.sublistView(value).getUint32(0));
       case Uuids.update:
@@ -784,8 +802,8 @@ void main() {
         final ble = FakeNodes(
           {
             if (withPaired) paired: FakeNode(now: now, sodium: sodium, app: id),
-            weak: other(weakId)..public = true,
-            strong: other(strongId)..public = true,
+            weak: other(weakId)..owned = false,
+            strong: other(strongId)..owned = false,
             shut: other([0x0c, 0xe4, 0, 0, 0, 5])..public = false,
           },
           bonds: {if (withPaired) paired},
@@ -806,66 +824,103 @@ void main() {
       });
     }
 
-    /// A round's scan and a connect.
+    /// A round's scan and an errand.
     const round = Duration(seconds: 5);
 
-    test('without a paired node: the strongest, as a guest, its tag '
-        'written', () {
+    /// A payload for this phone at `node`, which opens for nobody.
+    Uint8List mail(AppModel app, List<int> node, int n) => Uint8List.fromList([
+      formatByte(Form.boxed),
+      recipientTag(sodium, app.me.identity, node),
+      n,
+      ...List.filled(40, 0),
+    ]);
+
+    test('without a paired node: an errand at the strongest, its tag '
+        'written, its mail read, and gone; again a minute later', () {
       run((async, app, ble) {
+        final node = ble.nodes[strong]!;
+        node.deliver(mail(app, strongId, 1));
+        node.deliver(mail(app, strongId, 2));
         async.elapse(const Duration(seconds: 1));
         expect(lookingLine(app), 'Looking for a public node…');
         async.elapse(round);
         final s = app.session;
-        expect((s.connected, s.guest, app.linkDevice), (true, true, strong));
         expect(ble.connects, [strong]);
-        // No pairing, and nothing the guest may not touch.
+        expect(s.connected, isFalse);
+        expect([for (final r in s.received) r.payload[2]], [1, 2]);
+        expect(s.guestAfter[hex(strongId)], node.ring.last.number);
+        // Connect, tag, read, leave; no pairing, and nothing the guest may
+        // not touch.
+        final log = [for (final l in s.log) l.text];
+        int at(String t) => log.indexWhere((l) => l.startsWith(t));
+        expect(at('Recipient: tag') < at('Guest: item'), isTrue);
+        expect(at('Guest: item') < at('Disconnected'), isTrue);
         expect(ble.bonds, isEmpty);
         expect(s.pairedWith, isNull);
-        expect((s.nodeTime, s.nodeHome, s.nodePublic), (null, null, null));
-        expect(s.log.where((l) => l.text.contains('0x5')), isEmpty);
-        final guest = ble.linkTo(strong)! as FakeGuest;
-        expect(guest.tag, recipientTag(sodium, app.me.identity, strongId));
-        // The two first messages the fake makes are its owner's: none
-        // carries this phone's tag here.
-        expect(s.received, isEmpty);
-        // With no paired node to move to, it stops scanning.
-        final scans = ble.scans;
-        async.elapse(const Duration(minutes: 1));
-        expect(ble.scans, scans);
-        expect(app.linkDevice, strong);
+        expect(log.where((l) => l.contains('0x5')), isEmpty);
+        // Nothing to send: not before a minute is up, four rounds.
+        async.elapse(const Duration(seconds: 45));
+        expect(ble.connects, [strong]);
+        node.deliver(mail(app, strongId, 3));
+        async.elapse(const Duration(seconds: 15));
+        expect(ble.connects, [strong, strong]);
+        expect([for (final r in s.received) r.payload[2]], [1, 2, 3]);
       });
     });
 
-    test('a guest link that drops: the next round takes the strongest '
-        'again', () {
+    test('something to send: an errand at the next round, which sends it '
+        'and leaves', () {
       run((async, app, ble) {
         async.elapse(round);
-        expect(app.linkDevice, strong);
-        ble.rssi[weak] = -45;
-        ble.drop(strong);
-        async.elapse(round);
-        expect(app.session.guest, isTrue);
-        expect(app.linkDevice, weak);
-        expect(ble.connects, [strong, weak]);
+        expect(ble.connects, [strong]);
+        final s = app.session;
+        final dst = Address(Position.fromDegrees(50, 30), [9, 9, 9, 9, 9, 9]);
+        final o = Outgoing(
+          dst,
+          mail(app, [9, 9, 9, 9, 9, 9], 7),
+          at: start,
+          kind: OutKind.text,
+          sent: 1,
+        );
+        s.queue(o);
+        async.elapse(lookRound);
+        expect(ble.connects, [strong, strong]);
+        expect(o.state, OutState.taken);
+        expect(s.connected, isFalse);
       });
     });
 
-    test('the paired node not heard: a public node, then the paired node '
-        'once heard', () {
+    test('closed at once for another guest: busy, the next round tries '
+        'again', () {
+      run((async, app, ble) {
+        final node = ble.nodes[strong]!;
+        final other = node.connectGuest();
+        node.deliver(mail(app, strongId, 1));
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        expect(app.session.connected, isFalse);
+        expect(app.session.received, isEmpty);
+        other.close();
+        async.elapse(lookRound);
+        expect(ble.connects, [strong, strong]);
+        expect([for (final r in app.session.received) r.payload[2]], [1]);
+      });
+    });
+
+    test('the paired node not heard: errands at a public node, then the '
+        'paired node once heard', () {
       run(withPaired: true, (async, app, ble) {
         async.elapse(round);
-        expect((app.session.guest, app.linkDevice), (true, strong));
+        expect(ble.connects, [strong]);
         // Still a round every 15 s, for the paired node: two scans in
         // 30 s, within Android's five.
         final scans = ble.scans;
         async.elapse(const Duration(seconds: 30));
         expect(ble.scans - scans, 2);
-        expect(app.linkDevice, strong);
         ble.inReach.add(paired);
         async.elapse(lookRound);
         expect((app.session.guest, app.linkDevice), (false, paired));
         expect(app.session.connected, isTrue);
-        expect(ble.nodes[strong]!.guests, isEmpty);
         expect(ble.connects, [strong, paired]);
         // On its paired node the search stops.
         final after = ble.scans;
@@ -890,13 +945,14 @@ void main() {
     test('the person\'s stop ends it; the fake node wins', () {
       run((async, app, ble) {
         async.elapse(round);
-        expect(app.session.guest, isTrue);
-        app.disconnect();
+        expect(ble.connects, [strong]);
+        app.stopLooking();
         async.elapse(const Duration(seconds: 1));
         final scans = ble.scans;
-        async.elapse(const Duration(minutes: 1));
+        async.elapse(const Duration(minutes: 2));
         expect(app.session.connected, isFalse);
         expect(ble.scans, scans);
+        expect(ble.connects, [strong]);
         expect(lookingLine(app), isNull);
         app.setFake(true);
         app.session.setStopped(false);
@@ -921,8 +977,8 @@ void main() {
         expect(app.held?.title, 'Looking for a public node');
         app.stopScan();
         async.elapse(round);
-        expect((app.session.guest, app.linkDevice), (true, strong));
-        expect(app.held?.title, 'Connected to bark-0ce400000004 as a guest');
+        expect(ble.connects, [strong]);
+        expect(app.held?.title, 'Looking for a public node');
       });
     });
   });

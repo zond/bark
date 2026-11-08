@@ -385,6 +385,11 @@ class Session extends ChangeNotifier {
         pairedWith: j['pairedWith'] as String?,
         pairingLost: j['pairingLost'] as bool? ?? false,
         stopped: j['stopped'] as bool? ?? false,
+        guestAfter: {
+          for (final e
+              in (j['guestAfter'] as Map<String, dynamic>? ?? {}).entries)
+            e.key: e.value as int,
+        },
       ),
     );
     if (j == null) return;
@@ -393,6 +398,7 @@ class Session extends ChangeNotifier {
     pairedWith = j.pairedWith;
     pairingLost = j.pairingLost;
     stopped = j.stopped;
+    guestAfter.addAll(j.guestAfter);
     notifyListeners();
   }
 
@@ -402,6 +408,7 @@ class Session extends ChangeNotifier {
     'pairedWith': pairedWith,
     'pairingLost': pairingLost,
     'stopped': stopped,
+    'guestAfter': guestAfter,
   });
 
   /// The node `name` holds this phone's bond, or no longer does.
@@ -468,6 +475,7 @@ class Session extends ChangeNotifier {
     node = n;
     _link = link;
     this.guest = guest;
+    guestRead = false;
     notice = null;
     note(
       'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}'
@@ -485,12 +493,62 @@ class Session extends ChangeNotifier {
     } catch (e) {
       _tell('Reading the node failed: $e');
     }
-    if (guest) return true;
+    if (guest) {
+      guestRead = n.version >= guestVersion && await _readGuest(link, n);
+      return true;
+    }
     if (n.version >= clockVersion) await _setClock(link);
     if (n.version >= homeVersion) await _keepHome(link, n);
     if (n.version >= publicVersion) await _readPublic(link);
     return true;
   }
+
+  /// Whether the guest link read every item that waits for the person at
+  /// its node.
+  bool guestRead = false;
+
+  /// The number of the last item taken from each public node's ring, by
+  /// node ID in hex: the node keeps nothing for a guest, so the phone
+  /// keeps where it is (spec "Phone link", Public).
+  final Map<String, int> guestAfter = {};
+
+  /// Reads the items that wait for the person in the node's ring, oldest
+  /// first, each after the last taken; the number goes on after each kept,
+  /// so one lost with the link is read again, and kept once. Whether it
+  /// read all.
+  Future<bool> _readGuest(NodeLink link, NodeInfo n) async {
+    final key = hex(n.id);
+    try {
+      while (_link == link) {
+        final after = guestAfter[key] ?? 0;
+        await link.setGuestAfter(after);
+        final item = await link.readGuest();
+        if (item == null) return true;
+        // Any other number is taken: a node whose ring restarted reads a
+        // number above its newest as 0. The one just written again would
+        // be read in a loop.
+        if (item.number == after) {
+          note('Guest: item ${item.number} again');
+          return false;
+        }
+        note(
+          'Guest: item ${item.number}, ${msgIdHex(item.message.msgId)}, '
+          '${item.message.payload.length} bytes',
+        );
+        await _keep(item.message);
+        guestAfter[key] = item.number;
+        await save();
+      }
+    } catch (e) {
+      note('Guest: $e');
+    }
+    return false;
+  }
+
+  /// Messages wait to be offered to the node, or one is being written.
+  bool get toSend => outbox.any(
+    (o) => o.state == OutState.queued || o.state == OutState.writing,
+  );
 
   /// Writes the person's recipient tag at the node: a public node hands a
   /// phone only the messages that carry its tag, and keeps the paired
@@ -637,7 +695,8 @@ class Session extends ChangeNotifier {
     _statusAt = now();
     _statusSeen.add(s);
     notifyListeners();
-    if (s.inbox > 0) _drain();
+    // A guest's mail is the ring's, read through Guest.
+    if (s.inbox > 0 && !guest) _drain();
     _pump();
   }
 

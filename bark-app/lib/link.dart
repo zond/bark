@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 7;
+const int linkVersion = 8;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -46,6 +46,10 @@ class Uuids {
   /// From link version 7.
   static const recipient = '28bc000d-a1b8-4893-9537-2ee3559d7644';
   static const public = '28bc000e-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 8, write only: a guest reads its items through
+  /// [inbox].
+  static const guest = '28bc000f-a1b8-4893-9537-2ee3559d7644';
 
   /// What a public node advertises in place of [service], which no
   /// attribute has (spec "Phone link", Public).
@@ -806,4 +810,44 @@ Uint8List encodePublic(bool public) => Uint8List.fromList([public ? 1 : 0]);
 bool decodePublic(List<int> b) {
   if (b.length != 1 || b[0] > 1) throw const Malformed('Public');
   return b[0] == 1;
+}
+
+/// The link version that has Guest.
+const int guestVersion = 8;
+
+/// Bytes of an item's number in the ring.
+const int itemNumberLen = 3;
+
+/// The largest number an item takes.
+const int maxItemNumber = (1 << (8 * itemNumberLen)) - 1;
+
+/// Guest, write: the number of the last item the guest took; the next
+/// read gives the oldest item after it with the guest's recipient tag.
+Uint8List encodeAfter(int number) {
+  if (number < 0 || number > maxItemNumber) throw const Malformed('number');
+  return Uint8List.fromList(_be32(number).sublist(1));
+}
+
+/// Inbox, read on a guest's link: an item of the node's ring for the
+/// guest, its number, the message ID it arrived with and its payload;
+/// null when none waits after the number written to Guest.
+class GuestItem {
+  static const header = itemNumberLen + 4;
+  final int number;
+  final InboxMessage message;
+  GuestItem(this.number, this.message);
+
+  Uint8List encode() =>
+      Uint8List.fromList([...encodeAfter(number), ...message.encode()]);
+
+  static GuestItem? decode(List<int> b) {
+    if (b.isEmpty) return null;
+    if (b.length < header || b.length > header + maxPayload) {
+      throw const Malformed('Guest');
+    }
+    return GuestItem(
+      (b[0] << 16) | (b[1] << 8) | b[2],
+      InboxMessage(_u32(b, itemNumberLen), b.sublist(header)),
+    );
+  }
 }
