@@ -217,6 +217,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         mac::frame(&Packet::Heartbeat(hb), channel, preamble)
     }
 
+    /// The heartbeat in progress as it goes at `now`: with the update's
+    /// section after its first 13 bytes when it carries one (spec
+    /// "Updates over the mesh").
+    pub(super) fn heartbeat_frame_at(&self, now: Instant) -> Frame {
+        let mut f = self.heartbeat_frame();
+        if let Some(section) = self.heartbeat_section(now) {
+            let at = usize::from(f.len);
+            let mut b = [0u8; crate::update::SECTION_LEN];
+            crate::wire::encode_section(&section, &mut b);
+            f.bytes[at..at + b.len()].copy_from_slice(&b);
+            f.len += b.len() as u8;
+        }
+        f
+    }
+
     /// Check the budget before the channel: there is no point listening for
     /// a slot the budget will not let us use. Nothing else transmits
     /// between this check and the transmission, and the bucket only fills
@@ -256,7 +271,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return false;
             }
         }
-        let f = self.heartbeat_frame();
+        let f = self.heartbeat_frame_at(now);
         let airtime = mac::airtime(&f);
         if !self.radio.budget.would_allow(airtime, now) {
             let until = self
@@ -294,7 +309,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        let f = self.heartbeat_frame();
+        let f = self.heartbeat_frame_at(now);
         if busy {
             self.radio.beacon.busy_checks += 1;
             if self.radio.beacon.busy_checks >= self.config.lbt_attempts {
@@ -319,6 +334,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => {}
         }
         self.radio.budget.record(mac::airtime(&f), now);
+        if usize::from(f.len) > HEARTBEAT_LEN {
+            self.section_sent(now);
+        }
         self.radio.excursion.transmit(Job::Heartbeat, f, emit);
     }
 

@@ -31,18 +31,17 @@
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id hops
 //!            payload                                              = 28 + payload
-//! ANNOUNCE   first format from home version blocks last held key
-//!            image                                                = 49
-//! REQUEST    first format to channel version tag block            = 18
-//!            (channel's top bit: the asker sleeps)
+//! HEARTBEAT  + section: runs version tag key blocks last complete
+//!            have                                                 = 30
 //! PIECE      first format tag block index bytes                   = 255
 //! ```
 //!
 //! DATA's `aux` 13 to 63, above every home channel, names a frame from
 //! node to node, one value a kind: plain, one hop, not routed and not
-//! acknowledged unless its kind says so. 13 to 15 are the update's
-//! announcement, request and piece (spec "Updates over the mesh"); 16 to
-//! 63 are reserved, and a node rejects them. Such a frame keeps the first
+//! acknowledged unless its kind says so. 15 is the update's piece (spec
+//! "Updates over the mesh"); 13, 14 and 16 to 63 are reserved, and a node
+//! rejects them. A heartbeat may carry an update section after its first
+//! 13 bytes, which a node that knows none ignores. Such a frame keeps the first
 //! two bytes and lays out the rest for its kind: none of them has a hop,
 //! a destination or a count, and the piece needs every byte.
 //!
@@ -86,7 +85,7 @@ use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
-use crate::update::{Image, ImageTag, TAG_LEN};
+use crate::update::{Image, ImageTag, Section, SECTION_LEN, TAG_LEN};
 
 /// The wire format this code speaks, and so sends and reads (spec
 /// "Packet formats", roadmap D77).
@@ -165,34 +164,10 @@ pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
 pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 
 // The frames from node to node (spec "Packet formats").
-/// DATA `aux` of the update's announcement; the request and the piece
-/// follow it (spec "Updates over the mesh").
-pub const ANNOUNCE_AUX: u8 = 13;
-/// DATA `aux` of the update's request.
-pub const REQUEST_AUX: u8 = 14;
-/// DATA `aux` of the update's piece.
+/// DATA `aux` of the update's piece (spec "Updates over the mesh").
 pub const PIECE_AUX: u8 = 15;
-const _: () = assert!(Channel::new(ANNOUNCE_AUX).is_none());
+const _: () = assert!(Channel::new(PIECE_AUX).is_none());
 const BODY: usize = VERSION + FORMAT_LEN;
-const VERSION_LEN: usize = 4;
-const IMAGE_LEN: usize = 32;
-const ANNOUNCE_FROM: usize = BODY;
-const ANNOUNCE_HOME: usize = ANNOUNCE_FROM + ID_LEN;
-const ANNOUNCE_VERSION: usize = ANNOUNCE_HOME + 1;
-const ANNOUNCE_BLOCKS: usize = ANNOUNCE_VERSION + VERSION_LEN;
-const ANNOUNCE_LAST: usize = ANNOUNCE_BLOCKS + 1;
-const ANNOUNCE_HELD: usize = ANNOUNCE_LAST + 1;
-const ANNOUNCE_KEY: usize = ANNOUNCE_HELD + 1;
-const ANNOUNCE_IMAGE: usize = ANNOUNCE_KEY + 1;
-/// ANNOUNCE length.
-pub const ANNOUNCE_LEN: usize = ANNOUNCE_IMAGE + IMAGE_LEN;
-const REQUEST_TO: usize = BODY;
-const REQUEST_CHANNEL: usize = REQUEST_TO + ID_LEN;
-const REQUEST_VERSION: usize = REQUEST_CHANNEL + 1;
-const REQUEST_TAG: usize = REQUEST_VERSION + VERSION_LEN;
-const REQUEST_BLOCK: usize = REQUEST_TAG + TAG_LEN;
-/// REQUEST length.
-pub const REQUEST_LEN: usize = REQUEST_BLOCK + 1;
 const PIECE_TAG: usize = BODY;
 const PIECE_BLOCK: usize = PIECE_TAG + TAG_LEN;
 const PIECE_INDEX: usize = PIECE_BLOCK + 1;
@@ -202,9 +177,6 @@ pub const PIECE_HEADER_LEN: usize = PIECE_INDEX + 1;
 /// A piece's bytes: what a full frame holds after the piece's header.
 pub const PIECE_BYTES: usize = MAX_FRAME - PIECE_HEADER_LEN;
 
-const _: () = assert!(ANNOUNCE_LEN == 49 && REQUEST_LEN == 18);
-// A request's channel byte: the channel below, the asker's sleep on top.
-const REQUEST_SLEEPS: u8 = 0x80;
 const _: () = assert!(PIECE_HEADER_LEN == 8 && PIECE_BYTES == 247);
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
@@ -321,37 +293,6 @@ impl Data<'_> {
 /// An update frame (spec "Updates over the mesh").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Update<'a> {
-    /// The newest image `from` holds, its first `held` blocks or whole;
-    /// it listens on `home`.
-    Announce {
-        /// The holder.
-        from: NodeId,
-        /// Its home channel, where a request to it goes.
-        home: Channel,
-        /// The image.
-        image: Image,
-        /// The blocks it holds, from the first: `image.blocks` when whole.
-        held: u8,
-    },
-    /// Pieces of the image `tag`, `version`, from block `block` on, asked
-    /// of the holder `to`, to be sent on `channel`, where the asker
-    /// listens.
-    Request {
-        /// The holder asked.
-        to: NodeId,
-        /// The asker's home channel, where the pieces go.
-        channel: Channel,
-        /// The asker is sleepy: it listens only after its anchor's slot
-        /// heartbeat and in its windows.
-        sleeps: bool,
-        /// The image's version, as its announcement gave it.
-        version: u32,
-        /// The image.
-        tag: ImageTag,
-        /// The first block the asker lacks: it gathers from this block
-        /// up.
-        block: u8,
-    },
     /// One coded piece of block `block` of the image `tag`.
     Piece {
         /// The image.
@@ -363,6 +304,45 @@ pub enum Update<'a> {
         /// Its [`PIECE_BYTES`] bytes.
         bytes: &'a [u8],
     },
+}
+
+/// Encode `s` as a heartbeat's section, into the [`SECTION_LEN`] bytes
+/// after its first [`HEARTBEAT_LEN`]: multi-byte numbers big-endian.
+pub fn encode_section(s: &Section, b: &mut [u8; SECTION_LEN]) {
+    b[0..4].copy_from_slice(&s.runs.to_be_bytes());
+    match s.image {
+        Some(i) => {
+            b[4..8].copy_from_slice(&i.version.to_be_bytes());
+            b[8..12].copy_from_slice(&i.name.0);
+            b[12] = i.key;
+            b[13] = i.blocks;
+            b[14] = i.last;
+        }
+        None => b[4..15].fill(0),
+    }
+    b[15] = s.complete;
+    b[16] = s.have;
+}
+
+/// A heartbeat's section, if `heartbeat` carries one after its first
+/// [`HEARTBEAT_LEN`] bytes; a version of 0 names no image.
+pub fn decode_section(heartbeat: &[u8]) -> Option<Section> {
+    let b = heartbeat.get(HEARTBEAT_LEN..HEARTBEAT_LEN + SECTION_LEN)?;
+    let word = |at: usize| u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+    let version = word(4);
+    let image = (version != 0).then(|| Image {
+        name: ImageTag([b[8], b[9], b[10], b[11]]),
+        version,
+        key: b[12],
+        blocks: b[13],
+        last: b[14],
+    });
+    Some(Section {
+        runs: word(0),
+        image,
+        complete: b[15],
+        have: b[16],
+    })
 }
 
 /// Any packet. Payloads borrow from the received frame.
@@ -520,40 +500,6 @@ impl Packet<'_> {
             Packet::Update(u) => {
                 buf[VERSION] = FORMAT;
                 match u {
-                    Update::Announce {
-                        from,
-                        home,
-                        image,
-                        held,
-                    } => {
-                        buf[FIRST] = ANNOUNCE_AUX;
-                        put(buf, ANNOUNCE_FROM, &from.0);
-                        buf[ANNOUNCE_HOME] = home.index();
-                        put(buf, ANNOUNCE_VERSION, &image.version.to_be_bytes());
-                        buf[ANNOUNCE_BLOCKS] = image.blocks;
-                        buf[ANNOUNCE_LAST] = image.last;
-                        buf[ANNOUNCE_HELD] = *held;
-                        buf[ANNOUNCE_KEY] = image.key;
-                        put(buf, ANNOUNCE_IMAGE, &image.id);
-                        Ok(ANNOUNCE_LEN)
-                    }
-                    Update::Request {
-                        to,
-                        channel,
-                        sleeps,
-                        version,
-                        tag,
-                        block,
-                    } => {
-                        buf[FIRST] = REQUEST_AUX;
-                        put(buf, REQUEST_TO, &to.0);
-                        let sleeps = if *sleeps { REQUEST_SLEEPS } else { 0 };
-                        buf[REQUEST_CHANNEL] = channel.index() | sleeps;
-                        put(buf, REQUEST_VERSION, &version.to_be_bytes());
-                        put(buf, REQUEST_TAG, &tag.0);
-                        buf[REQUEST_BLOCK] = *block;
-                        Ok(REQUEST_LEN)
-                    }
                     Update::Piece {
                         tag,
                         block,
@@ -578,14 +524,13 @@ impl Packet<'_> {
 
 impl Packet<'_> {
     /// The node that sent the frame, if it names it: a heartbeat its
-    /// sender, an ACK the answering node, a DATA `src_hop` and an
-    /// announcement its holder; a request and a piece do not.
+    /// sender, an ACK the answering node and a DATA `src_hop`; a piece
+    /// does not.
     pub fn sender(&self) -> Option<NodeId> {
         match self {
             Packet::Heartbeat(h) => Some(h.id),
             Packet::Ack(a) => Some(a.from),
             Packet::Data(d) => Some(d.src_hop),
-            Packet::Update(Update::Announce { from, .. }) => Some(*from),
             Packet::Update(_) => None,
         }
     }
@@ -653,7 +598,7 @@ impl<'a> Packet<'a> {
 
 impl<'a> Packet<'a> {
     fn decode_update(aux: u8, b: &'a [u8]) -> Result<Update<'a>, DecodeError> {
-        if !(ANNOUNCE_AUX..=PIECE_AUX).contains(&aux) {
+        if aux != PIECE_AUX {
             return Err(DecodeError::Reserved(aux));
         }
         if b.len() < BODY {
@@ -665,46 +610,13 @@ impl<'a> Packet<'a> {
             t.copy_from_slice(&b[at..at + TAG_LEN]);
             ImageTag(t)
         };
-        let version = |at: usize| u32::from_be_bytes(get4(b, at));
-        match aux {
-            ANNOUNCE_AUX => {
-                exact(b, ANNOUNCE_LEN)?;
-                let mut id = [0; IMAGE_LEN];
-                id.copy_from_slice(&b[ANNOUNCE_IMAGE..ANNOUNCE_LEN]);
-                Ok(Update::Announce {
-                    from: get_id(b, ANNOUNCE_FROM),
-                    home: channel(b[ANNOUNCE_HOME])?,
-                    image: Image {
-                        id,
-                        version: version(ANNOUNCE_VERSION),
-                        blocks: b[ANNOUNCE_BLOCKS],
-                        last: b[ANNOUNCE_LAST],
-                        key: b[ANNOUNCE_KEY],
-                    },
-                    held: b[ANNOUNCE_HELD],
-                })
-            }
-            REQUEST_AUX => {
-                exact(b, REQUEST_LEN)?;
-                Ok(Update::Request {
-                    to: get_id(b, REQUEST_TO),
-                    channel: channel(b[REQUEST_CHANNEL] & !REQUEST_SLEEPS)?,
-                    sleeps: b[REQUEST_CHANNEL] & REQUEST_SLEEPS != 0,
-                    version: version(REQUEST_VERSION),
-                    tag: tag(REQUEST_TAG),
-                    block: b[REQUEST_BLOCK],
-                })
-            }
-            _ => {
-                exact(b, MAX_FRAME)?;
-                Ok(Update::Piece {
-                    tag: tag(PIECE_TAG),
-                    block: b[PIECE_BLOCK],
-                    index: b[PIECE_INDEX],
-                    bytes: &b[PIECE_HEADER_LEN..],
-                })
-            }
-        }
+        exact(b, MAX_FRAME)?;
+        Ok(Update::Piece {
+            tag: tag(PIECE_TAG),
+            block: b[PIECE_BLOCK],
+            index: b[PIECE_INDEX],
+            bytes: &b[PIECE_HEADER_LEN..],
+        })
     }
 }
 
@@ -746,8 +658,6 @@ mod tests {
             Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
             Packet::Data(d) => 28 + d.payload.len(),
-            Packet::Update(Update::Announce { .. }) => 49,
-            Packet::Update(Update::Request { .. }) => 18,
             Packet::Update(Update::Piece { .. }) => 255,
         };
         assert_eq!(len, expected);
@@ -757,27 +667,30 @@ mod tests {
     proptest! {
         #[test]
         fn update_frames_round_trip(
-            from in id(),
-            home in chan(),
-            version: u32,
+            runs: u32,
+            version in 1u32..,
             blocks: u8,
             last: u8,
             key: u8,
-            image_id: [u8; 32],
+            complete: u8,
+            have: u8,
             tag: [u8; TAG_LEN],
             block: u8,
             index: u8,
             bytes in proptest::collection::vec(any::<u8>(), PIECE_BYTES),
         ) {
-            let image = Image { id: image_id, version, blocks, last, key };
-            let announce = Update::Announce { from, home, image, held: index };
-            round_trip(&Packet::Update(announce));
-            prop_assert_eq!(Packet::Update(announce).sender(), Some(from));
             let tag = ImageTag(tag);
-            let request = Update::Request { to: from, channel: home, sleeps: block % 2 == 0, version, tag, block };
-            round_trip(&Packet::Update(request));
-            prop_assert_eq!(Packet::Update(request).sender(), None);
-            round_trip(&Packet::Update(Update::Piece { tag, block, index, bytes: &bytes }));
+            let piece = Packet::Update(Update::Piece { tag, block, index, bytes: &bytes });
+            round_trip(&piece);
+            prop_assert_eq!(piece.sender(), None);
+            let image = Image { name: tag, version, blocks, last, key };
+            for image in [Some(image), None] {
+                let section = Section { runs, image, complete, have };
+                let mut hb = [0u8; HEARTBEAT_LEN + SECTION_LEN];
+                encode_section(&section, (&mut hb[HEARTBEAT_LEN..]).try_into().unwrap());
+                prop_assert_eq!(decode_section(&hb), Some(section));
+                prop_assert_eq!(decode_section(&hb[..HEARTBEAT_LEN + 3]), None);
+            }
         }
 
         #[test]
@@ -932,17 +845,15 @@ mod tests {
 
         let mut data = [0u8; DATA_HEADER_LEN];
         data[VERSION] = FORMAT;
-        for aux in [16, 17, 0x23, AUX_MASK] {
+        for aux in [13, 14, 16, 17, 0x23, AUX_MASK] {
             data[FIRST] = aux;
             assert_eq!(Packet::decode(&data), Err(Reserved(aux)), "reserved");
         }
-        for aux in [ANNOUNCE_AUX, REQUEST_AUX, PIECE_AUX] {
-            data[FIRST] = aux;
-            assert!(
-                Packet::decode(&data).is_err(),
-                "an update frame of the wrong length"
-            );
-        }
+        data[FIRST] = PIECE_AUX;
+        assert!(
+            Packet::decode(&data).is_err(),
+            "a piece of the wrong length"
+        );
         data[FIRST] = 0;
         assert!(
             Packet::decode(&data).is_ok(),

@@ -478,7 +478,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             inbox: DeliveryQueue::from_config(&config),
             delivered: Delivered::new(),
             own: OwnMessage::NONE,
-            spread: Spread::new(channel),
+            spread: Spread::new(),
             config,
             timers: Timers::UNSET,
             rng: Rng::new(0),
@@ -564,7 +564,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         inbox.reset(&config);
         *delivered = Delivered::new();
         *own = OwnMessage::NONE;
-        *spread = Spread::new(home.next());
+        *spread = Spread::new();
         *timers = Timers::UNSET;
         *c = config;
         *r = rng;
@@ -985,7 +985,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => {}
         }
         match decoded {
-            Ok(Packet::Heartbeat(hb)) => self.heard(hb, rssi, now, emit),
+            Ok(Packet::Heartbeat(hb)) => {
+                self.heard(hb, rssi, now, emit);
+                if let Some(section) = crate::wire::decode_section(bytes) {
+                    self.section_heard(hb.id, section, emit);
+                }
+            }
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
             Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
@@ -1029,7 +1034,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::NoFix => self.no_fix(),
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
-            AppCommand::Block { index, ok } => self.block_done(index, ok, now),
+            AppCommand::Block { index, ok } => self.block_done(index, ok),
             AppCommand::SetPosition { position } => {
                 // A sleepy node's position is no news, but a change of
                 // its carried flag is.

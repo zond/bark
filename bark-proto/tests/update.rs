@@ -4,7 +4,7 @@
 
 mod common;
 
-use bark_proto::update::{Image, PACE, SERVED_CHANNELS};
+use bark_proto::update::{sweep_pieces, Image, ImageTag, PACE, SERVED_CHANNELS};
 use bark_proto::wire::{Packet, Update};
 use bark_proto::{AppCommand, Config, Instant, Position, Relay};
 use common::{at, secs, Harness, Updates};
@@ -41,7 +41,7 @@ fn relay_on(east: f64, seed: u64, home: u8) -> Relay {
 
 /// An image of three blocks: the table, a whole block and a short one.
 const IMAGE: Image = Image {
-    id: [7; 32],
+    name: ImageTag([7; 4]),
     version: 2,
     blocks: 3,
     last: 7,
@@ -82,9 +82,7 @@ fn update_frames(h: &Harness<Relay>, i: usize) -> Vec<(Instant, bark_proto::Chan
                 *t,
                 f.channel,
                 match u {
-                    Update::Announce { .. } => 0,
-                    Update::Request { .. } => 1,
-                    Update::Piece { .. } => 2,
+                    Update::Piece { block, .. } => block,
                 },
             )),
             _ => None,
@@ -115,6 +113,10 @@ fn every_relay_comes_to_hold_the_image() {
     // The 72 pieces at most one a pace on a channel: at least 71 paces.
     let took = h.now.since(start);
     assert!(took >= PACE.mul(71), "faster than the pace: {took:?}");
+    // Each learned of the image from a heartbeat's section.
+    for i in 1..4 {
+        assert!(h.nodes[i].sent.iter().any(|(_, f)| f.len > 13));
+    }
 }
 
 #[test]
@@ -147,59 +149,59 @@ fn update_frames_keep_the_pace() {
 }
 
 #[test]
-fn a_node_that_holds_nothing_new_asks_for_nothing() {
+fn a_node_that_holds_the_image_is_offered_nothing_and_two_holders_share_the_pace() {
     let mut h = mesh(3);
     // Node 1 holds the same image already: it is offered nothing.
     h.deliver_app(1, AppCommand::Holds(IMAGE));
     let start = h.now;
     h.run_until(start + secs(2 * 3600), |_| false);
     assert!(h.nodes[1].updates.as_ref().unwrap().offered.is_empty());
-    assert!(update_frames(&h, 1).iter().all(|f| f.2 != 1));
-    // Node 2 gathers it, from whichever announced last.
+    // Node 2 gathers it from both.
     assert!(h.nodes[2].updates.as_ref().unwrap().holds_at.is_some());
-    // One announcement on the home channel in the hour does for both
-    // holders: the one that hears the other's holds its own back.
-    let announced = |i| {
-        update_frames(&h, i)
-            .iter()
-            .filter(|f| f.2 == 0 && f.1 == h.nodes[i].core.home())
-            .count()
-    };
-    assert_eq!(announced(0).min(announced(1)), 0);
+    // The two holders share one piece a pace on node 2's channel: together
+    // they send at most a pace's worth, and a little over for the moment
+    // each takes to hear the other.
+    let home = h.nodes[2].core.home();
+    let done = h.nodes[2].updates.as_ref().unwrap().holds_at.unwrap();
+    let pieces = (0..2)
+        .flat_map(|i| update_frames(&h, i))
+        .filter(|f| f.1 == home && f.0 < done)
+        .count() as u64;
+    let paces = done.since(start).as_micros() / PACE.as_micros();
+    assert!(
+        pieces <= paces + paces / 4 + 2,
+        "{pieces} pieces in {paces} paces"
+    );
 }
 
-/// Today's image: the table and 25 blocks, the last of 33 pieces, and the
-/// pieces each block is made of.
+/// Today's image: the table of two pieces and 27 blocks, the last of 40
+/// pieces, and the pieces each block is made of.
 fn todays_image() -> (Image, Vec<usize>) {
     let image = Image {
-        id: [9; 32],
+        name: ImageTag([9; 4]),
         version: 3,
-        blocks: 26,
-        last: 33,
+        blocks: 28,
+        last: 40,
         key: 0,
     };
-    let mut needs = vec![1];
-    needs.extend(std::iter::repeat_n(64, 24));
-    needs.push(33);
+    let mut needs = vec![2];
+    needs.extend(std::iter::repeat_n(64, 26));
+    needs.push(40);
     (image, needs)
 }
 
-/// Today's image, the table and 25 blocks, the last of 33 pieces, crosses
-/// one hop without loss in about what a request buys for every block,
-/// 2430 pieces at the pace, 9.4 hours, within a tenth; and to a node on
-/// another channel too within twelve hours.
+/// Today's image crosses one hop without loss within one sweep: each
+/// block's pieces at the pace at least, and no more than the loss margin,
+/// since the neighbours' sections say when a block is done; and to the
+/// other nodes too within twelve hours.
 #[test]
-fn todays_image_crosses_a_hop_in_about_its_pieces_paces() {
-    let image = Image {
-        id: [9; 32],
-        version: 3,
-        blocks: 26,
-        last: 33,
-        key: 0,
-    };
-    let mut needs = vec![1];
-    needs.extend(std::iter::repeat_n(64, 24));
-    needs.push(33);
+fn todays_image_crosses_a_hop_in_about_one_sweep() {
+    let (image, needs) = todays_image();
+    let pieces: u64 = needs.iter().map(|&k| k as u64).sum();
+    let sweep: u64 = needs
+        .iter()
+        .map(|&k| u64::from(sweep_pieces(k as u8)))
+        .sum();
     let n = 4;
     let mut h = Harness::new(
         (0..n)
@@ -230,14 +232,16 @@ fn todays_image_crosses_a_hop_in_about_its_pieces_paces() {
         .min()
         .unwrap();
     let paces = first.since(start).as_micros() / PACE.as_micros();
-    assert!((2190..2670).contains(&paces), "{paces} paces");
+    assert!(
+        (pieces..=sweep).contains(&paces),
+        "{paces} paces, {pieces} pieces, a sweep {sweep}"
+    );
 }
 
-/// A line of three relays on one channel, the last out of the first's
-/// reach: the middle
-/// one serves the blocks it has decoded before it holds the whole image,
-/// so the last gathers block by block one behind it
-/// (spec "Updates over the mesh").
+/// A line of three relays, each at home on its own channel, the last out
+/// of the first's reach: the middle one serves the blocks it has decoded
+/// before it holds the whole image, so the last gathers block by block
+/// behind it (spec "Updates over the mesh").
 #[test]
 fn a_relay_serves_the_blocks_it_holds_before_the_whole_image() {
     let mut h = Harness::new(
@@ -268,20 +272,20 @@ fn a_relay_serves_the_blocks_it_holds_before_the_whole_image() {
         first_piece < middle,
         "the last relay took its first piece only once the middle held the whole image"
     );
-    // The middle announced what it held as it grew: one block, then two.
-    let held: Vec<u8> = h.nodes[1]
+    // The middle's heartbeats said what it held as it grew.
+    let complete: Vec<u8> = h.nodes[1]
         .sent
         .iter()
-        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
-            Ok(Packet::Update(Update::Announce { held, .. })) => Some(held),
-            _ => None,
-        })
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+        .filter_map(|(_, f)| bark_proto::wire::decode_section(f.payload()))
+        .map(|s| s.complete)
         .collect();
-    assert!(held.starts_with(&[1, 2]), "{held:?}");
+    assert!(complete.windows(2).all(|w| w[0] <= w[1]), "{complete:?}");
+    assert!(complete.iter().any(|&c| c > 0 && c < 28), "{complete:?}");
 }
 
 /// A block that fails its hash is gathered again, and a node serves and
-/// announces only the blocks that passed.
+/// counts only the blocks that passed.
 #[test]
 fn a_block_that_fails_its_hash_is_gathered_again_and_not_served() {
     let mut h = Harness::new(
@@ -327,7 +331,7 @@ fn a_block_that_fails_its_hash_is_gathered_again_and_not_served() {
     }));
 }
 
-/// A sleepy node gathers from its anchor: it asks it, the anchor sends
+/// A sleepy node gathers from its anchor: its beats say what it lacks, the anchor sends
 /// after its slot heartbeat on its home channel, and the node listens for
 /// that frame (spec "Updates over the mesh").
 #[test]
@@ -371,12 +375,12 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         done,
         "the sleepy node does not hold the image within twelve hours"
     );
-    // Its requests said it sleeps, and every piece it took came right
+    // Its beats carried its section, and every piece it took came right
     // after one of its anchor's heartbeats on its channel.
-    assert!(h.nodes[1].sent.iter().any(|(_, f)| matches!(
-        Packet::decode(f.payload()),
-        Ok(Packet::Update(Update::Request { sleeps: true, .. }))
-    )));
+    assert!(h.nodes[1].sent.iter().any(|(_, f)| {
+        matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_)))
+            && bark_proto::wire::decode_section(f.payload()).is_some()
+    }));
     let home = h.nodes[0].core.home();
     let beats: Vec<Instant> = h.nodes[0]
         .sent

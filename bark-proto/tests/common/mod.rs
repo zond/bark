@@ -147,9 +147,11 @@ pub struct Harness<C: Core> {
 
 impl<C: Core> Harness<C> {
     pub fn new(cores: Vec<C>) -> Self {
-        let nodes = cores
-            .into_iter()
-            .map(|core| SimNode {
+        // A loop, not an iterator chain: each adapter's frame holds a core
+        // in a debug build, and ten of them are a test thread's stack.
+        let mut nodes = Vec::with_capacity(cores.len());
+        for core in cores {
+            nodes.push(SimNode {
                 core,
                 alive: true,
                 resting: None,
@@ -171,8 +173,8 @@ impl<C: Core> Harness<C> {
                 received: Vec::new(),
                 sniffed: Vec::new(),
                 updates: None,
-            })
-            .collect();
+            });
+        }
         Harness {
             now: Instant::ZERO,
             nodes,
