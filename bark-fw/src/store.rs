@@ -34,35 +34,46 @@
 //! leaves the second word erased, which is no complement of the first.
 //!
 //! And it keeps the bond with the paired phone (`ble.rs`), a record of
-//! two slots (`bark_link::bond`).
+//! two slots (`bark_link::bond`), with the public setting; the console
+//! reads it to say whether the node is public ([`scan`]).
 
 use bark_image::layout::STORE;
 use bark_link::bond::Bond;
 use bark_proto::store::{Stored, RECORD_LEN};
+#[cfg(not(feature = "console"))]
 use embassy_futures::select::{select3, Either3};
+#[cfg(not(feature = "console"))]
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(not(feature = "console"))]
 use embassy_sync::signal::Signal;
 
 /// The state, the offset and the bond to keep next, the latest of each.
+#[cfg(not(feature = "console"))]
 static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
+#[cfg(not(feature = "console"))]
 static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
+#[cfg(not(feature = "console"))]
 static BOND: Signal<CriticalSectionRawMutex, Bond> = Signal::new();
 
+#[cfg(not(feature = "console"))]
 /// The node's side: keep `stored`, in place of the state kept before.
 pub fn keep(stored: Stored) {
     STORED.signal(stored);
 }
 
+#[cfg(not(feature = "console"))]
 /// The node's side: keep the UTC offset, in place of the one kept before.
 pub fn keep_offset(offset_min: i16) {
     OFFSET.signal(offset_min);
 }
 
+#[cfg(not(feature = "console"))]
 /// The phone link's side: keep `bond`, in place of the bond kept before.
 pub fn keep_bond(bond: Bond) {
     BOND.signal(bond);
 }
 
+#[cfg(not(feature = "console"))]
 /// Write what the node and the phone link hand, for ever.
 #[embassy_executor::task]
 pub async fn run(mut flash: Flash) -> ! {
@@ -75,10 +86,12 @@ pub async fn run(mut flash: Flash) -> ! {
     }
 }
 
+#[cfg(not(feature = "console"))]
 /// The MPSL's flash, shared by the store and the mailbox.
 pub type SharedFlash =
     embassy_sync::mutex::Mutex<CriticalSectionRawMutex, nrf_mpsl::Flash<'static>>;
 
+#[cfg(not(feature = "console"))]
 /// The shared flash, once.
 pub fn shared(flash: nrf_mpsl::Flash<'static>) -> &'static SharedFlash {
     static FLASH: static_cell::StaticCell<SharedFlash> = static_cell::StaticCell::new();
@@ -91,6 +104,7 @@ const SLOTS: u32 = STORE.len / RECORD_LEN as u32;
 /// The first byte of an offset's record.
 const ZONE: u8 = 0x80;
 
+#[cfg(not(feature = "console"))]
 fn zone_record(offset_min: i16) -> [u8; RECORD_LEN] {
     let [hi, lo] = offset_min.to_be_bytes();
     let word = [ZONE, hi, lo, 0];
@@ -109,15 +123,53 @@ fn zone(r: &[u8; RECORD_LEN]) -> Option<i16> {
 const BOND_SLOTS: u32 = (Bond::LEN / RECORD_LEN) as u32;
 const _: () = assert!(Bond::LEN == 2 * RECORD_LEN);
 
-/// What the page holds last of each kind.
+/// What the page holds last of each kind. The console reads the bond
+/// alone.
 #[derive(Clone, Copy, Default)]
+#[cfg_attr(feature = "console", allow(dead_code))]
 pub struct Kept {
     pub stored: Option<Stored>,
     pub offset_min: Option<i16>,
     pub bond: Option<Bond>,
 }
 
+/// The page as `read` reads it, the bytes at an address of the flash:
+/// its next erased slot, and the last whole record of each kind it holds.
+pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (u32, Kept) {
+    let mut kept = Kept::default();
+    let mut slot = 0;
+    while slot < SLOTS {
+        let mut r = [0u8; Bond::LEN];
+        let at = STORE.start + slot * RECORD_LEN as u32;
+        let both = slot + BOND_SLOTS <= SLOTS;
+        let len = if both { Bond::LEN } else { RECORD_LEN };
+        if !read(at, &mut r[..len]) {
+            break;
+        }
+        let (first, second) = r.split_at(RECORD_LEN);
+        if first.iter().all(|&b| b == 0xff) {
+            return (slot, kept);
+        }
+        let first: &[u8; RECORD_LEN] = first.try_into().expect("a slot");
+        if first[0] == Bond::TAG {
+            kept.bond = Bond::from_record(&r).or(kept.bond);
+            // A bond cut short in its second slot leaves it erased: the
+            // next record goes there.
+            if !both || second.iter().all(|&b| b == 0xff) {
+                return (slot + 1, kept);
+            }
+            slot += BOND_SLOTS;
+            continue;
+        }
+        kept.stored = Stored::from_record(first).or(kept.stored);
+        kept.offset_min = zone(first).or(kept.offset_min);
+        slot += 1;
+    }
+    (SLOTS, kept)
+}
+
 /// The page of flash and the next erased slot in it.
+#[cfg(not(feature = "console"))]
 pub struct Flash {
     flash: &'static SharedFlash,
     next: u32,
@@ -125,44 +177,14 @@ pub struct Flash {
     kept: Kept,
 }
 
+#[cfg(not(feature = "console"))]
 impl Flash {
     /// The page, and the last whole record of each kind it holds.
     pub fn open(flash: &'static SharedFlash) -> (Flash, Kept) {
-        let mut kept = Kept::default();
         let mut f = flash
             .try_lock()
             .expect("nothing writes before the store opens");
-        let mut next = SLOTS;
-        let mut slot = 0;
-        while slot < SLOTS {
-            let mut r = [0u8; Bond::LEN];
-            let at = STORE.start + slot * RECORD_LEN as u32;
-            let both = slot + BOND_SLOTS <= SLOTS;
-            let len = if both { Bond::LEN } else { RECORD_LEN };
-            if f.read(at, &mut r[..len]).is_err() {
-                break;
-            }
-            let (first, second) = r.split_at(RECORD_LEN);
-            if first.iter().all(|&b| b == 0xff) {
-                next = slot;
-                break;
-            }
-            let first: &[u8; RECORD_LEN] = first.try_into().expect("a slot");
-            if first[0] == Bond::TAG {
-                kept.bond = Bond::from_record(&r).or(kept.bond);
-                // A bond cut short in its second slot leaves it erased:
-                // the next record goes there.
-                if !both || second.iter().all(|&b| b == 0xff) {
-                    next = slot + 1;
-                    break;
-                }
-                slot += BOND_SLOTS;
-                continue;
-            }
-            kept.stored = Stored::from_record(first).or(kept.stored);
-            kept.offset_min = zone(first).or(kept.offset_min);
-            slot += 1;
-        }
+        let (next, kept) = scan(|at, r| f.read(at, r).is_ok());
         drop(f);
         (Flash { flash, next, kept }, kept)
     }

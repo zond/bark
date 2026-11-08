@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 6;
+const int linkVersion = 7;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -42,10 +42,20 @@ class Uuids {
   /// From link version 6.
   static const update = '28bc000b-a1b8-4893-9537-2ee3559d7644';
   static const image = '28bc000c-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 7.
+  static const recipient = '28bc000d-a1b8-4893-9537-2ee3559d7644';
+  static const public = '28bc000e-a1b8-4893-9537-2ee3559d7644';
+
+  /// What a public node advertises in place of [service], which no
+  /// attribute has (spec "Phone link", Public).
+  static const publicNode = '28bc1001-a1b8-4893-9537-2ee3559d7644';
 }
 
 /// ATT error codes the node answers a write with.
 class AttError {
+  /// A characteristic that needs the bond, on a link without it.
+  static const insufficientAuthentication = 0x05;
   static const invalidLength = 0x0D;
   static const valueNotAllowed = 0x13;
 
@@ -778,4 +788,22 @@ class UpdateProgress {
       hash: b.sublist(10, len),
     );
   }
+}
+
+/// The link version that has Recipient and Public.
+const int publicVersion = 7;
+
+/// Recipient, write: the phone's recipient tag at this node.
+Uint8List encodeRecipient(int tag) {
+  if (tag < 0 || tag > 0xff) throw const Malformed('recipient tag');
+  return Uint8List.fromList([tag]);
+}
+
+/// Public, write: whether the node serves phones that have not paired.
+Uint8List encodePublic(bool public) => Uint8List.fromList([public ? 1 : 0]);
+
+/// Public, read.
+bool decodePublic(List<int> b) {
+  if (b.length != 1 || b[0] > 1) throw const Malformed('Public');
+  return b[0] == 1;
 }

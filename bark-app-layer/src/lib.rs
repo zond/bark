@@ -31,8 +31,9 @@ mod vectors;
 
 use bark_proto::{NodeId, Position};
 
-/// The format's version, the high four bits of a payload's first byte.
-pub const VERSION: u8 = 1;
+/// The format's version, the high four bits of a payload's first byte:
+/// 2 since the recipient tag (spec "Phone link", The payload).
+pub const VERSION: u8 = 2;
 
 /// The longest payload the network carries (spec "Packet formats").
 pub const MAX_PAYLOAD: usize = bark_proto::wire::MAX_PAYLOAD;

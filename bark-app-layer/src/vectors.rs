@@ -69,10 +69,12 @@ fn text_record<'a>(s: &str, buf: &'a mut [u8; MAX_PAYLOAD]) -> Record<'a> {
     }
 }
 
-fn boxed(from: &Keys, to: &Keys, nonce: [u8; 24], plain: &[u8]) -> Vec<u8> {
+/// A box from `from` to `to`, who is at the node `at`.
+fn boxed(from: &Keys, to: &Keys, at: NodeId, nonce: [u8; 24], plain: &[u8]) -> Vec<u8> {
     let pair = seal::pair(&PublicKey::from(to.identity.0), &from.secret_key());
     let mut out = [0u8; MAX_PAYLOAD];
-    let n = seal::seal_box(&pair, &nonce, plain, &mut out).unwrap();
+    let recipient = seal::recipient(&to.identity, at);
+    let n = seal::seal_box(&pair, recipient, &nonce, plain, &mut out).unwrap();
     out[..n].to_vec()
 }
 
@@ -108,6 +110,14 @@ pub fn json() -> String {
                 ("secret", h(&k.secret)),
                 ("identity", h(&k.identity.0)),
                 ("mailbox", h(&k.mailbox)),
+                (
+                    "recipient_home",
+                    format!("{}", seal::recipient(&k.identity, f.home.node)),
+                ),
+                (
+                    "recipient_away",
+                    format!("{}", seal::recipient(&k.identity, f.away.node)),
+                ),
             ],
         ));
     }
@@ -153,7 +163,7 @@ pub fn json() -> String {
     };
     let p = plaintext(&header, &[text_record(words, &mut tb)]);
     let nonce = core::array::from_fn(|i| 0x40 + i as u8);
-    let payload = boxed(&f.alice, &f.bob, nonce, &p);
+    let payload = boxed(&f.alice, &f.bob, f.home.node, nonce, &p);
     parts.push(entry(
         "box_1251",
         &[
@@ -192,7 +202,10 @@ pub fn json() -> String {
             ("acknowledges", "1000000".into()),
             ("plaintext", h(&p)),
             ("nonce", h(&nonce)),
-            ("payload", h(&boxed(&f.bob, &f.alice, nonce, &p))),
+            (
+                "payload",
+                h(&boxed(&f.bob, &f.alice, f.away.node, nonce, &p)),
+            ),
         ],
     ));
 
@@ -211,7 +224,10 @@ pub fn json() -> String {
             ("acknowledges", "1000000".into()),
             ("plaintext", h(&p)),
             ("nonce", h(&nonce)),
-            ("payload", h(&boxed(&f.bob, &f.alice, nonce, &p))),
+            (
+                "payload",
+                h(&boxed(&f.bob, &f.alice, f.away.node, nonce, &p)),
+            ),
         ],
     ));
 
@@ -251,7 +267,7 @@ pub fn json() -> String {
             header.sent,
             h(&p),
             h(&nonce),
-            h(&boxed(&f.alice, &f.bob, nonce, &p))
+            h(&boxed(&f.alice, &f.bob, f.home.node, nonce, &p))
         ));
     }
     fields.push(("room", format!("{room}")));
@@ -276,6 +292,7 @@ pub fn json() -> String {
     let mut out = [0u8; MAX_PAYLOAD];
     let n = seal::seal_intro(
         &PublicKey::from(f.bob.identity.0),
+        seal::recipient(&f.bob.identity, f.home.node),
         &SecretKey::from(ephemeral),
         &p,
         &mut out,
@@ -296,14 +313,18 @@ pub fn json() -> String {
     let fetch = Fetch {
         sent: 1_000_500,
         address: f.away,
+        recipient: seal::recipient(&f.alice.identity, f.away.node),
     };
     let nonce = core::array::from_fn(|i| 0x10 + i as u8);
-    let payload = fetch.seal(&f.alice.mailbox, &nonce).unwrap();
+    let home = seal::recipient(&f.alice.identity, f.home.node);
+    let payload = fetch.seal(&f.alice.mailbox, home, &nonce).unwrap();
     parts.push(entry(
         "fetch",
         &[
             ("sent", format!("{}", fetch.sent)),
             ("address", h(&fetch.address.encode())),
+            ("recipient", format!("{}", fetch.recipient)),
+            ("home", format!("{home}")),
             ("nonce", h(&nonce)),
             ("payload", h(&payload)),
         ],
@@ -314,6 +335,7 @@ pub fn json() -> String {
     let mut out = [0u8; MAX_PAYLOAD];
     let n = seal::seal_reply(
         &f.alice.mailbox,
+        fetch.recipient,
         fetch.sent,
         1,
         6,
@@ -344,7 +366,11 @@ pub fn json() -> String {
             ("nonce", h(&seal::reply_nonce(round, 0))),
             (
                 "payload",
-                h(&seal::seal_nothing_new(&f.alice.mailbox, round)),
+                h(&seal::seal_nothing_new(
+                    &f.alice.mailbox,
+                    fetch.recipient,
+                    round,
+                )),
             ),
         ],
     ));

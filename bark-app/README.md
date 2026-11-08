@@ -28,7 +28,8 @@ is a prototype for the bench, not the app people will carry.
 
 - **Conversations**, the first screen. One row a conversation, newest
   first, with the last text and, for a sent one, its state. A line at
-  the top says whether a node is connected, and, when none is, which
+  the top says whether a node is connected, "Connected to bark-… as a
+  guest" on a public node that is not yours, and, when none is, which
   node the phone is paired with or that it is no longer yours (next
   section); tapping it opens Settings.
   The pen button starts a conversation from the contacts. With a home
@@ -60,8 +61,8 @@ is a prototype for the bench, not the app people will carry.
   check-mark button, **Acknowledge**; nothing is acknowledged by itself.
   Once pressed, the button turns into one plain check, and the two
   checks appear on the sender's copy.
-  A text longer than one message holds, 160 bytes in a box without an
-  address, goes as parts of up to 159 bytes, 16 at most (roadmap D137):
+  A text longer than one message holds, 156 bytes in a box without an
+  address, goes as parts of up to 155 bytes, 16 at most (roadmap D137):
   once the text in the field needs more than one, a line under it says
   how many, "2 parts", counted in the bytes that will go, one a letter
   for Cyrillic. Send splits it between two characters, after a space
@@ -92,7 +93,11 @@ is a prototype for the bench, not the app people will carry.
   send. Without a home it says that people can answer you only after
   you write to them.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one) and the node the phone is paired with, the fake node switch, the
+  one; a public node says so, with its RSSI, and a tap joins it as a
+  guest, **Pair** pairs with it instead) and the node the phone is
+  paired with, the fake node switch, on the paired node of link version
+  7 or later the switch **Public: serve phones without pairing** (Public
+  nodes, below), the
   version of the connected node's firmware and **Update firmware**
   (Updating a node, below), whether the app is exempt from battery
   optimisation (next section), your name, the home node (make the
@@ -158,22 +163,63 @@ screen and in Settings. A pairing cancelled or with a wrong code says
 so. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
 bond), which needs no code of the app's own on the Android side.
 
+**Public nodes.** The owner may make their node public with the switch
+in Settings, so that it also passes on the texts of phones that have
+not paired with it, guests, as a shop's or a café's node would (spec
+"Phone link", Public). A public node advertises another UUID in place
+of the service's, so a scan tells it apart without connecting. A guest
+connects without pairing and touches only what a guest may: Node,
+Status, Send, Inbox, Given back and Recipient. It does not set the
+clock, read Home or Public, set the map point, read the neighbours or
+update the firmware, and Settings and the map hide those: Android may
+start a pairing by itself when the node refuses a read for want of the
+bond. On every connection to a node of link version 7 or later, the
+owner's or a guest's, the app first writes the person's recipient tag
+at that node to Recipient, before it reads the inbox: a public node
+hands each phone only the messages that carry its tag, and keeps the
+owner's for when the owner comes back. The phones on a public node take
+turns at the one message it holds, and the turn is Ready: the node sets
+it for one phone at a time, so the app's queue waits for Ready as on
+any node. A reply that reaches a public node after its
+guest has left is lost, so a guest's conversations work best while it
+stays.
+
 While it is not connected, the app looks for the node it is paired with
-and connects to it when it sees it, by the same path as a tap and without
-a code: from its start, and after a link drops, so that texts waiting go
-out as soon as the node is in reach. Bluetooth switched off ends the link
+and connects to it when it sees it, and, when it is not paired with a
+node, it is no longer its own, or the paired node is not heard in a
+round, joins the public node heard strongest as a guest, by the best
+RSSI each node had over the round. The paired node always comes first:
+while connected as a guest the app goes on looking for it and moves to
+it once it hears it. When a guest link drops, the next round takes the
+strongest public node again, so the phone moves to a nearer one. The
+app never joins as a guest the node that is no longer its own: Android
+still holds the old bond and would encrypt the link with it, which the
+node ends.
+
+The paired node is connected by the same path as a tap and without
+a code; the search runs from the app's start, and after a link drops,
+so that texts waiting go out as soon as a node is in reach. It runs
+only once Android allows the app Bluetooth: a fresh install scans
+nothing and shows no notification until the person presses **Scan** in
+Settings, which asks for it. The app checks again when it comes to the
+front and when Bluetooth is switched on or off, in case the person
+allowed it in Android's settings. Bluetooth switched off ends the link
 as a drop does: Android does not report that end itself. The first screen, and Settings under
-the scan rows, say "Looking for bark-…", or that Bluetooth is off. A
-search round scans for four of the node's advertising intervals, 4.1 s,
-without a break, and a round starts every 15 s: Android refuses an app's
+the scan rows, say "Looking for bark-…" or "Looking for a public node…",
+or that Bluetooth is off. A
+search round scans for four of a node's advertising intervals, 4.1 s,
+without a break, less once it hears the paired node, and a round
+starts every 15 s: Android refuses an app's
 sixth scan started within 30 s, and two leave room for the person's own
 Scan and Pair again. A phone's Bluetooth scanning without a break draws
 in the order of 10 mA (an estimate, not measured here), so the search
 costs about 3 mAh an hour, under a tenth of a percent of a phone's
-battery. The app stops looking while it is connected or Bluetooth is
-off, after "This node is no longer yours" (the person decides with
-**Pair again**), and after the person presses **Disconnect** or **Stop
-looking** in Settings, until they tap a node. That stop is kept with the
+battery. The app stops looking while it is connected to its paired
+node, while it is a guest with no paired node to move to, or Bluetooth
+is off; after "This node is no longer yours" it looks for public nodes
+alone (the person decides with **Pair again**); and it stops after the
+person presses **Disconnect** or **Stop looking** in Settings, until
+they tap a node. That stop is kept with the
 queue, so neither a restart of the app nor of the phone undoes it: the
 person chose it, and the phone should not start looking behind their
 back. A tap on a node, or a scan, ends a search round at once.
@@ -225,6 +271,10 @@ node (previous section) the service runs too, and its notification says
 "Looking for bark-…": without one Android suspends or ends an app in the
 background, and the search with it, and queued texts are to go out as
 soon as the node is in reach, not when the person next opens the app.
+While it looks for a public node alone, or is a guest, the notification
+says so: "Looking for a public node", "Connected to bark-… as a
+guest". Before Bluetooth is allowed there is no search, and no
+notification.
 The service goes on from connected to looking and back, changing only its
 notification, as Android 12 and later restrict starting a service from
 the background. It stops, and its notification goes, when the app neither
@@ -296,7 +346,17 @@ and they write from a node of their own away from it,
 messages. It runs on while the app is disconnected, as
 a node does. It counts as paired with the phone; a test can have it
 pair with another phone (`FakeNode.pairElsewhere`), and the app then
-finds it no longer yours, as with a node.
+finds it no longer yours, as with a node. Made public, by the switch or
+by a test, it takes up to three guests' links beside its owner's: a
+guest's link answers 0x05, insufficient authentication, to every value
+that needs the bond; it hands each message to the guests whose tag it
+carries and to the owner when it is the owner's tag or it has none yet,
+keeps the owner's while the owner is away, and drops what it can hand
+to nobody. Its turns are Ready: set for one phone at a time, in the
+order of their links, passing on when the node takes that phone's
+message, when its link ends, or after a ban unused; a Send out of turn
+is answered 0x80, not ready. A guest keeps its own
+inbox in the fake, where the node keeps one queue.
 
 ## Updating a node
 
@@ -382,7 +442,12 @@ key from your identity that only your phones and your home node have,
 and the node's replies are opened with it: one for each item newer than
 the last this phone has, or one that says nothing is new (spec
 "Mailbox"). A payload
-that opens for nobody is kept for the debug screen only.
+that opens for nobody is kept for the debug screen only. Each payload's
+second byte, in the clear, is its recipient's tag at the node it goes
+to, made from the recipient's identity and that node's ID, by which a
+public node tells whose it is (Public nodes, above); a fetch carries
+your tag at your home, and inside it your tag at the node the replies
+are to come to, which the replies carry. No receiver checks it.
 
 **Making a node the home.** The connected node must be of link version
 3 or later. The app writes 1 and the mailbox key to Home, reads Home
@@ -474,7 +539,8 @@ The tests check every value's bytes against the vectors of
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
 messages, acknowledgements, a reflected message, a forged first message,
-the header's written-from address kept apart from the card's, and the
+the header's written-from address kept apart from the card's, the
+recipient tag on every payload, and the
 mailbox's replies, and long texts sent as parts, put together in any
 order and acknowledged, against the fake node, which answers a fetch
 as a home does; pass messages between two phones by hand, in every
@@ -483,7 +549,13 @@ and with a first message read after a box, delayed or forged; the
 fetch button's wait, ended by a reply, a give-back
 or its bound, and after a restart; give the fake node the
 mailbox key, read it back, clear it, write it again at every connection
-to the home, and refuse a node that does not keep it; read the fake
+to the home, and refuse a node that does not keep it; make the fake
+public, join it as a guest that writes its tag and touches nothing
+closed, and hand each phone only the messages with its tag, with the
+turn as Ready;
+choose the paired node, else the strongest public node, and move to a
+public node when the paired one is not heard, back when it is, and to
+the strongest again after a guest link drops; read the fake
 node's neighbours, in one page and across several, and not from a node
 before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
@@ -511,7 +583,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 6,
+3. Menu, **Debug**: your identity and card address; link version 7,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -583,7 +655,7 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen `PHONE PAIRED`.
-3. **Debug** shows link version 6, the node's clock (from its GPS if it
+3. **Debug** shows link version 7, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
@@ -687,3 +759,16 @@ a phone (Trying it, With a node).
     version 1, version N is available" opens **Update firmware** with
     "Version N" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
+15. A public node, on link version 7, with two phones. On the owner's
+    phone, connected, **Settings**, **Public: serve phones without
+    pairing**: the switch turns on, and the node's screen says `PHONE
+    PUBLIC`. On a second phone that has never paired with it, **Scan**
+    lists the node as public with its RSSI; or, with no paired node of
+    its own in reach, the second phone joins it by itself within a
+    round, and its first screen says "Connected to bark-… as a guest".
+    No pairing dialog shows, at the connect or later. Its Debug shows
+    the link as a guest's, and its log `Recipient: tag …` before the
+    inbox is read; Settings shows no Public switch, firmware, home
+    buttons or map point. A text between the two phones' contacts
+    reaches each, and neither sees the other's. Taken near its own
+    paired node, the guest phone moves to it within a round.

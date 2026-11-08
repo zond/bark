@@ -1371,7 +1371,7 @@ impl<'a> Console<'a> {
         log::info!(
             "status id={} uptime_s={} battery_mv={} ch={} hz={} power_dbm={} beacon={} rx_ok={} rx_crc_error={} \
 rx_header_error={} rx_started={} tx={} tx_airtime_us={} cad={} cad_busy={} pongs_sent={} pongs_received={} \
-radio_errors={} resets={} configured={} cold_starts={} tcxo_us={}",
+radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={}",
             Id,
             Instant::now().as_secs(),
             battery_mv,
@@ -1393,7 +1393,8 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={}",
             r.resets,
             r.configured,
             r.cold_starts,
-            self.radio.tcxo().delay.as_micros()
+            self.radio.tcxo().delay.as_micros(),
+            public()
         );
         if reset {
             self.counters = Counters::default();
@@ -1533,4 +1534,18 @@ impl fmt::Display for CutOp {
             None => f.write_str("none"),
         }
     }
+}
+
+/// Whether the node is public, as the bond the node keeps says (spec
+/// "Phone link", Public; `store.rs`): its page read where it lies in the
+/// chip's address space, as the console writes no flash of the node's.
+fn public() -> bool {
+    let (_, kept) = crate::store::scan(|at, out| {
+        // SAFETY: flash is mapped from address 0 (nRF52840 Product
+        // Specification, Memory), and the store's page lies in it.
+        let bytes = unsafe { core::slice::from_raw_parts(at as *const u8, out.len()) };
+        out.copy_from_slice(bytes);
+        true
+    });
+    kept.bond.is_some_and(|b| b.public)
 }

@@ -28,19 +28,19 @@ fn vectors_file_is_current() {
 
 #[test]
 fn the_sizes_are_the_notes() {
-    assert_eq!(MAX_APP_PAYLOAD, 205);
-    assert_eq!(seal::BOX_OVERHEAD, 41);
-    assert_eq!(seal::INTRO_OVERHEAD, 49);
-    assert_eq!(seal::REPLY_OVERHEAD, 22);
-    assert_eq!(seal::NOTHING_NEW_LEN, 17);
-    assert_eq!(Fetch::LEN, 58);
+    assert_eq!(MAX_APP_PAYLOAD, 204);
+    assert_eq!(seal::BOX_OVERHEAD, 42);
+    assert_eq!(seal::INTRO_OVERHEAD, 50);
+    assert_eq!(seal::REPLY_OVERHEAD, 23);
+    assert_eq!(seal::NOTHING_NEW_LEN, 18);
+    assert_eq!(Fetch::LEN, 60);
     assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 83);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 133);
-    // The longest text: 205 less the box, the header and the record's type.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 158);
+    // The longest text: 204 less the box, the header and the record's type.
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 156);
     // A part's: one byte more, its number and the count.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 157);
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 155);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn boxed_text(from: &Keys, to: &Keys, s: &str) -> Vec<u8> {
     let len = w.finish();
     let pair = seal::pair(&PublicKey::from(to.identity.0), &from.secret_key());
     let mut out = [0u8; MAX_PAYLOAD];
-    let m = seal::seal_box(&pair, &[9; 24], &b[..len], &mut out).unwrap();
+    let m = seal::seal_box(&pair, 7, &[9; 24], &b[..len], &mut out).unwrap();
     out[..m].to_vec()
 }
 
@@ -170,7 +170,9 @@ fn a_changed_byte_does_not_open() {
     let f = fixture();
     let pair = seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key());
     let payload = boxed_text(&f.alice, &f.bob, "hi");
-    for i in 1..payload.len() {
+    // The recipient tag is not sealed: changed, it only sends the payload
+    // to a phone that cannot open it.
+    for i in (1..payload.len()).filter(|&i| i != seal::RECIPIENT_AT) {
         let mut p = payload.clone();
         p[i] ^= 1;
         let mut out = [0u8; MAX_PAYLOAD];
@@ -205,17 +207,18 @@ fn our_sealed_box_is_the_librarys() {
     let mut out = [0u8; MAX_PAYLOAD];
     let n = seal::seal_intro(
         &bob.public_key(),
+        7,
         &SecretKey::from([5; 32]),
         b"abc",
         &mut out,
     )
     .unwrap();
-    assert_eq!(bob.unseal(&out[1..n]).unwrap(), b"abc");
+    assert_eq!(bob.unseal(&out[seal::HEAD_LEN..n]).unwrap(), b"abc");
     let theirs = bob
         .public_key()
         .seal(&mut crypto_box::aead::OsRng, b"xyz")
         .unwrap();
-    let mut p = Vec::from([Form::Introduction.format()]);
+    let mut p = Vec::from([Form::Introduction.format(), 7]);
     p.extend_from_slice(&theirs);
     let n = seal::open_intro(&bob, &p, &mut out).unwrap();
     assert_eq!(&out[..n], b"xyz");
@@ -228,14 +231,15 @@ fn too_long_is_refused() {
     let mut out = [0u8; MAX_PAYLOAD];
     let plain = [0u8; seal::MAX_BOX_PLAIN + 1];
     assert_eq!(
-        seal::seal_box(&pair, &[0; 24], &plain, &mut out),
+        seal::seal_box(&pair, 7, &[0; 24], &plain, &mut out),
         Err(Error::TooLong)
     );
-    let n = seal::seal_box(&pair, &[0; 24], &plain[1..], &mut out).unwrap();
+    let n = seal::seal_box(&pair, 7, &[0; 24], &plain[1..], &mut out).unwrap();
     assert_eq!(n, MAX_APP_PAYLOAD);
     assert_eq!(
         seal::seal_reply(
             &f.alice.mailbox,
+            7,
             1,
             1,
             1,
@@ -253,8 +257,10 @@ fn a_fetch_opens_under_its_key_only() {
     let fetch = Fetch {
         sent: 3,
         address: f.away,
+        recipient: 9,
     };
-    let p = fetch.seal(&f.alice.mailbox, &[1; 24]).unwrap();
+    let p = fetch.seal(&f.alice.mailbox, 7, &[1; 24]).unwrap();
+    assert_eq!(seal::recipient_of(&p), Some(7));
     assert_eq!(Fetch::open(&f.alice.mailbox, &p), Ok(fetch));
     assert_eq!(Fetch::open(&f.bob.mailbox, &p), Err(Error::Open));
 }
@@ -265,6 +271,7 @@ fn a_reply_opens_in_its_round_only_and_tells_its_number_and_what_remains() {
     let mut out = [0u8; MAX_PAYLOAD];
     let n = seal::seal_reply(
         &k,
+        7,
         10,
         seal::MAX_REPLIES,
         0x12_3456,
@@ -291,7 +298,7 @@ fn a_reply_opens_in_its_round_only_and_tells_its_number_and_what_remains() {
     assert_eq!(seal::open_reply(&other, 10, &p, &mut got), Err(Error::Open));
     for place in [0, seal::MAX_REPLIES + 1] {
         assert_eq!(
-            seal::seal_reply(&k, 10, place, 1, 0, b"item", &mut out),
+            seal::seal_reply(&k, 7, 10, place, 1, 0, b"item", &mut out),
             Err(Error::TooLong)
         );
     }
@@ -300,8 +307,9 @@ fn a_reply_opens_in_its_round_only_and_tells_its_number_and_what_remains() {
 #[test]
 fn nothing_new_opens_in_its_round_only() {
     let k = fixture().alice.mailbox;
-    let p = seal::seal_nothing_new(&k, 10);
+    let p = seal::seal_nothing_new(&k, 7, 10);
     assert_eq!(p[0], Form::Reply.format());
+    assert_eq!(seal::recipient_of(&p), Some(7));
     let mut got = [0u8; MAX_PAYLOAD];
     assert_eq!(
         seal::open_reply(&k, 10, &p, &mut got),
@@ -515,18 +523,18 @@ fn the_longest_parts_fill_a_box() {
         sent: 1,
         address: None,
     };
-    for (len, fits) in [(157, true), (158, false)] {
+    for (len, fits) in [(155, true), (156, false)] {
         let mut b = [0u8; MAX_PAYLOAD];
         let mut w = Writer::new(&mut b, &h).unwrap();
         w.push(&Record::Text {
             encoding: Encoding::Utf8,
             part: Some(Part { number: 1, of: 2 }),
-            bytes: &[b'a'; 158][..len],
+            bytes: &[b'a'; 156][..len],
         })
         .unwrap();
         let n = w.finish();
         let mut out = [0u8; MAX_PAYLOAD];
-        let r = seal::seal_box(&pair, &[0; 24], &b[..n], &mut out);
+        let r = seal::seal_box(&pair, 7, &[0; 24], &b[..n], &mut out);
         assert_eq!(
             r.map(|m| m == MAX_APP_PAYLOAD),
             if fits { Ok(true) } else { Err(Error::TooLong) }
@@ -582,8 +590,9 @@ mod mailbox {
         Fetch {
             sent,
             address: fixture().away,
+            recipient: 9,
         }
-        .seal(key, &[sent as u8; 24])
+        .seal(key, 7, &[sent as u8; 24])
         .unwrap()
     }
 
@@ -602,6 +611,8 @@ mod mailbox {
         let mut out = [0u8; MAX_PAYLOAD];
         while let Some(o) = m.next(&mut out) {
             assert_eq!(o.address, fixture().away);
+            // The fetch's recipient tag, for the node it is answered at.
+            assert_eq!(seal::recipient_of(&out[..o.len]), Some(9));
             let mut item = [0u8; MAX_PAYLOAD];
             got.push(
                 match seal::open_reply(&key, round, &out[..o.len], &mut item) {
@@ -624,6 +635,22 @@ mod mailbox {
         }
         assert!(!m.reply_due());
         got
+    }
+
+    #[test]
+    fn a_public_node_keeps_without_a_key_and_takes_no_fetch() {
+        let mut m = Mailbox::new(RamRing::<32>::new());
+        assert_eq!(m.arrive(MsgId(1), b"a"), Arrival::NotHome);
+        m.set_public(true);
+        assert!(m.keeps() && !m.is_home());
+        assert_eq!(m.arrive(MsgId(2), b"b"), Arrival::Kept(1));
+        let f = fetch(&fixture().alice.mailbox, 5);
+        assert_eq!(m.arrive(MsgId(3), &f), Arrival::Refused);
+        assert!(!m.reply_due());
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.unread(&mut out), Some((1, MsgId(2), 1)));
+        m.set_public(false);
+        assert_eq!(m.arrive(MsgId(4), b"c"), Arrival::NotHome);
     }
 
     fn numbers(got: &[Got]) -> Vec<u32> {
@@ -1027,8 +1054,9 @@ mod flash_ring {
         Fetch {
             sent,
             address: fixture().away,
+            recipient: 9,
         }
-        .seal(&fixture().alice.mailbox, &[sent as u8; 24])
+        .seal(&fixture().alice.mailbox, 7, &[sent as u8; 24])
         .unwrap()
     }
 

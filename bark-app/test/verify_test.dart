@@ -241,6 +241,7 @@ void main() {
       final forged = sealIntro(
         sodium,
         b.me.identity,
+        0,
         writePlain(
           Header(greater(a.me.identity, b.me.identity), 1 << 30, at(9)),
           [

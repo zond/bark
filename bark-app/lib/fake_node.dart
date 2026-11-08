@@ -8,7 +8,8 @@
 // fetch as the spec's "Mailbox" says. Around it stand a few neighbours,
 // one of each link quality and of each kind a map draws apart. It takes
 // a firmware update as the node does, and comes back from its reboot
-// running the new version.
+// running the new version. Made public, it also takes guests' links, as
+// the spec's "Phone link", Public, says.
 
 import 'dart:async';
 import 'dart:math';
@@ -72,6 +73,9 @@ class FakeNode implements NodeLink {
 
   /// `bark-fa4e00000001`.
   static final id = Uint8List.fromList([0xfa, 0x4e, 0, 0, 0, 1]);
+
+  /// Its ID: [id], unless a test's other node has its own.
+  Uint8List get nodeId => id;
 
   /// The fake's GPS fix.
   static final gps = Position.fromDegrees(50.45, 30.52);
@@ -177,17 +181,18 @@ class FakeNode implements NodeLink {
   int homeKeyChanges = 0;
   int _relays = 0;
   bool _ready = true;
+
+  /// The owner's inbox; on a public node, the ring, which never refuses.
   final List<InboxMessage> _inbox = [];
 
   /// The fake friend's last `sent`, and how many messages they wrote.
   int _friendSent = 0;
   int _friendWrote = 0;
-  (int, DateTime)? _givenBack;
   int _writes = 0;
   int _taken = 0;
-  bool _connected = false;
-  final _status = StreamController<Status>.broadcast();
-  final _given = StreamController<GivenBack?>.broadcast();
+
+  /// The paired phone's link, which this fake is.
+  final _Phone _owner = _Phone();
   var _closed = Completer<void>();
   final List<Timer> _timers = [];
 
@@ -203,11 +208,15 @@ class FakeNode implements NodeLink {
       _after(step * i, () => _relays++);
     }
     _after(firstRotation, () {});
-    _inbox.add(_intro('Hello from the fake node.'));
-    _inbox.add(_intro('A second message, waiting in the inbox.'));
+    _place(_intro('Hello from the fake node.'));
+    _place(_intro('A second message, waiting in the inbox.'));
   }
 
-  Address get _own => Address(_mapPoint ?? _fix, id);
+  /// The app's recipient tag at this node, which the fake friend's
+  /// messages carry.
+  late final int _appTag = recipientTag(sodium, app, nodeId);
+
+  Address get _own => Address(_mapPoint ?? _fix, nodeId);
 
   late final PrecalculatedBox _pair = sodium.crypto.box.precalculate(
     publicKey: app,
@@ -230,6 +239,7 @@ class FakeNode implements NodeLink {
     sealIntro(
       sodium,
       app,
+      _appTag,
       writePlain(_header(), [
         CardRecord(friendCard.encode()),
         TextRecord(text),
@@ -285,6 +295,7 @@ class FakeNode implements NodeLink {
         _message(
           sealBox(
             _pair,
+            _appTag,
             sodium.randombytes.buf(nonceLen),
             writePlain(
               Header(greater(friend.identity, app), first + i, friendAway),
@@ -293,8 +304,10 @@ class FakeNode implements NodeLink {
           ),
         ),
     ];
-    _inbox.add(sealed.last);
-    if (n > 1) _after(echoAfter, () => _inbox.addAll(sealed.sublist(0, n - 1)));
+    _place(sealed.last);
+    if (n > 1) {
+      _after(echoAfter, () => sealed.sublist(0, n - 1).forEach(_place));
+    }
   });
 
   /// The home away's answer to a fetch, as its mailbox gives it: the
@@ -321,6 +334,7 @@ class FakeNode implements NodeLink {
         sealReply(
           sodium,
           key,
+          f.recipient,
           f.sent,
           i + 1,
           n,
@@ -328,10 +342,12 @@ class FakeNode implements NodeLink {
           homeRing[n - 1],
         ),
     ];
-    if (replies.isEmpty) replies.add(sealNothingNew(sodium, key, f.sent));
+    if (replies.isEmpty) {
+      replies.add(sealNothingNew(sodium, key, f.recipient, f.sent));
+    }
     _after(fetchAnswerAfter, () {
       for (final r in replies) {
-        _inbox.add(_message(r));
+        _place(_message(r));
       }
     });
   }
@@ -347,13 +363,22 @@ class FakeNode implements NodeLink {
   }
 
   void _notify() {
-    if (_connected) _status.add(_now());
+    if (_owner.connected) _owner.status.add(_now());
+    for (final g in guests) {
+      g._phone.status.add(_statusOf(g));
+    }
   }
 
-  Status _now() {
+  Status _now() => _statusOf(this);
+
+  /// Status as the phone `p` reads it: on a public node ready for the
+  /// phone whose turn it is alone, and a guest's inbox count 1 while a
+  /// message waits for it.
+  Status _statusOf(Object p) {
     final left = firstRotation - now().difference(_boot);
+    final g = p is FakeGuest ? p : null;
     return Status(
-      ready: _ready,
+      ready: _ready && (!public || _turn == p),
       externalPower: true,
       sleepy: sleepy,
       carried: carried,
@@ -363,7 +388,7 @@ class FakeNode implements NodeLink {
       relays: _relays,
       bootLeftS: _ceilS(left),
       address: _mapPoint ?? _fix,
-      inbox: _inbox.length,
+      inbox: g == null ? _inbox.length : min(1, g._inbox.length),
     );
   }
 
@@ -372,20 +397,20 @@ class FakeNode implements NodeLink {
       : (d.inMicroseconds + Duration.microsecondsPerSecond - 1) ~/
             Duration.microsecondsPerSecond;
 
-  GivenBack? _givenBackNow() {
-    final g = _givenBack;
+  GivenBack? _givenBackNow([_Phone? p]) {
+    final g = (p ?? _owner).givenBack;
     if (g == null) return null;
     return GivenBack(g.$1, _ceilS(g.$2.difference(now())));
   }
 
   Future<T> _answer<T>(T Function() f) async {
-    if (!_connected) throw StateError('not connected');
+    if (!_owner.connected) throw StateError('not connected');
     return f();
   }
 
   @override
   Future<NodeInfo> readNode() =>
-      _answer(() => NodeInfo(linkVersion, id, image));
+      _answer(() => NodeInfo(linkVersion, nodeId, image));
 
   @override
   Future<void> subscribe() => _answer(() {});
@@ -410,10 +435,24 @@ class FakeNode implements NodeLink {
   });
 
   @override
-  Future<void> send(Uint8List value) => _answer(() {
+  Future<void> send(Uint8List value) => _answer(() => _send(this, value));
+
+  /// A Send from the phone `p`, this fake for the owner or a guest.
+  void _send(Object p, Uint8List value) {
     if (value.length < Address.len || value.length > Address.len + maxPayload) {
       throw const AttException(AttError.invalidLength);
     }
+    // On a public node the turn is Ready: a phone whose turn it is not
+    // is answered not ready, as when the node takes none.
+    if (public && _turn != p) throw const AttException(AttError.notReady);
+    _turnGen++;
+    final phone = _phoneOf(p);
+    final dst = Address(
+      Position.decode(value),
+      value.sublist(Position.wireLen, Address.len),
+    );
+    final payload = value.sublist(Address.len);
+    final id = msgId(dst, payload);
     _writes++;
     if (!_ready || _writes % notReadyEvery == 0) {
       // As when the bucket empties between the status the app read and
@@ -421,37 +460,97 @@ class FakeNode implements NodeLink {
       if (_ready) {
         _ready = false;
         _notify();
-        _after(ban, () => _ready = true);
+        _freeAfter(ban);
       }
       throw const AttException(AttError.notReady);
     }
-    final dst = Address(
-      Position.decode(value),
-      value.sublist(Position.wireLen, Address.len),
-    );
-    final payload = value.sublist(Address.len);
-    final id = msgId(dst, payload);
     _taken++;
     _ready = false;
-    if (_givenBack != null) {
-      _givenBack = null;
-      if (_connected) _given.add(null);
+    if (phone.givenBack != null) {
+      phone.givenBack = null;
+      if (phone.connected) phone.given.add(null);
     }
+    _passTurn();
     _notify();
     if (_taken % givenBackEvery == 0) {
-      _after(handOver, () {
-        _givenBack = (id, now().add(givenBackWait));
-        if (_connected) _given.add(_givenBackNow());
-      });
-      _after(handOver + givenBackWait, () => _ready = true);
+      _after(handOver, () => _giveBack(phone, id, givenBackWait));
+      _freeAfter(handOver + givenBackWait);
     } else {
-      _after(handOver, () => _ready = true);
+      _freeAfter(handOver);
+      if (p != this) return;
       _answerFetch(payload);
       final got = _textTo(payload);
       final text = got == null ? null : _whole(got.$1, got.$2);
       if (text != null) _echo('Echo: $text');
     }
-  });
+  }
+
+  _Phone _phoneOf(Object p) => p is FakeGuest ? p._phone : _owner;
+
+  void _giveBack(_Phone phone, int id, Duration wait) {
+    phone.givenBack = (id, now().add(wait));
+    if (phone.connected) phone.given.add(_givenBackNow(phone));
+  }
+
+  /// The phones connected, in the order of their links: the owner's link,
+  /// this fake, and the guests'.
+  final List<Object> _links = [];
+
+  /// The phone whose turn it is on a public node, for which alone Ready is
+  /// set; null with no phone connected.
+  Object? _turn;
+
+  /// Counts the turn's changes and its holder's writes, so that a check a
+  /// ban later sees whether the holder sat on it.
+  int _turnGen = 0;
+
+  /// Gives the turn to the next phone connected after the one that has
+  /// it, in the order of their links, and starts its ban.
+  void _passTurn() {
+    final at = _turn == null ? -1 : _links.indexOf(_turn!);
+    _turn = _links.isEmpty ? null : _links[(at + 1) % _links.length];
+    _turnGen++;
+    _idleCheck();
+  }
+
+  /// A phone that has had Ready for a ban without writing passes the
+  /// turn on, so that one with nothing to send holds nobody up; alone, it
+  /// would pass it to itself.
+  void _idleCheck() {
+    if (!public || !_ready || _turn == null || _links.length < 2) return;
+    final gen = _turnGen;
+    _after(ban, () {
+      if (_ready && _turnGen == gen) _passTurn();
+    });
+  }
+
+  void _joined(Object p) {
+    _links.add(p);
+    _turn ??= p;
+    _turnGen++;
+    _idleCheck();
+  }
+
+  void _gone(Object p) {
+    final had = _turn == p;
+    final at = _links.indexOf(p);
+    _links.remove(p);
+    if (!had) return;
+    // The next in order now stands where the one gone stood.
+    _turn = _links.isEmpty ? null : _links[at % _links.length];
+    _turnGen++;
+    _idleCheck();
+  }
+
+  /// Takes messages again after `d`; Ready comes back for the phone
+  /// whose turn it is.
+  void _freeAfter(Duration d) {
+    _after(d, () {
+      _ready = true;
+      _turnGen++;
+      _idleCheck();
+    });
+  }
 
   @override
   Future<void> setMapPoint(Position? p) => _answer(() {
@@ -657,17 +756,103 @@ class FakeNode implements NodeLink {
   }
 
   @override
-  Stream<Status> get statusNotified => _status.stream;
+  Future<void> setRecipient(int tag) => _answer(() {
+    encodeRecipient(tag);
+    ownerTag = tag;
+  });
 
   @override
-  Stream<GivenBack?> get givenBackNotified => _given.stream;
+  Future<bool> readPublic() => _answer(() => public);
+
+  @override
+  Future<void> setPublic(bool v) => _answer(() => public = v);
+
+  @override
+  Stream<Status> get statusNotified => _owner.status.stream;
+
+  @override
+  Stream<GivenBack?> get givenBackNotified => _owner.given.stream;
+
+  /// Whether it serves phones that have not paired, kept across
+  /// connections and pairings as with the bond.
+  bool get public => _public;
+  bool _public = false;
+  set public(bool v) {
+    _public = v;
+    _turnGen++;
+    _idleCheck();
+    _notify();
+  }
+
+  /// The paired phone's recipient tag, kept with the bond; null until it
+  /// writes one.
+  int? ownerTag;
+
+  /// The guests' links up now.
+  final List<FakeGuest> guests = [];
+
+  /// The guests it takes at once beside its owner, as the firmware plans;
+  /// the app does not count on the number.
+  static const maxGuests = 3;
+
+  /// Messages it took for its phones and could place with none.
+  int dropped = 0;
+
+  /// A message the network delivered for its phones, as a test makes one.
+  void deliver(Uint8List payload) {
+    _place(_message(payload));
+    _notify();
+  }
+
+  /// Hands a message to its phones: on a public node to every guest whose
+  /// tag it carries, and to the owner when it is the owner's tag or the
+  /// node holds none; what it can hand to nobody it drops.
+  void _place(InboxMessage m) {
+    if (!public) {
+      _inbox.add(m);
+      return;
+    }
+    final tag = m.payload.length > 1 ? m.payload[1] : null;
+    var placed = false;
+    for (final g in guests.where((g) => g.tag != null && g.tag == tag)) {
+      g._inbox.add(m);
+      placed = true;
+    }
+    if (ownerTag == null || ownerTag == tag) {
+      _inbox.add(m);
+      placed = true;
+    }
+    if (!placed) dropped++;
+  }
+
+  /// A phone that has not paired connects; on a node that is not public
+  /// every value it touches is refused for want of the bond.
+  FakeGuest connectGuest() {
+    if (guests.length >= maxGuests) throw StateError('no link free');
+    final g = FakeGuest._(this);
+    guests.add(g);
+    _joined(g);
+    return g;
+  }
+
+  /// A guest's link ended: what waited for it goes, and its turn passes.
+  void _left(FakeGuest g) {
+    guests.remove(g);
+    _gone(g);
+    dropped += g._inbox.length;
+    g._inbox.clear();
+  }
 
   /// The phone the app runs on holds the fake's bond; false once
   /// [pairElsewhere] has it pair with another (spec "Phone link").
   bool paired = true;
 
-  /// Another phone pairs with the fake, which then refuses this one.
-  void pairElsewhere() => paired = false;
+  /// Another phone pairs with the fake, which then refuses this one; the
+  /// tag kept with the old bond goes with it.
+  void pairElsewhere() {
+    paired = false;
+    ownerTag = null;
+  }
 
   /// This phone pairs again, by the code on the fake's screen.
   void pair() => paired = true;
@@ -675,12 +860,13 @@ class FakeNode implements NodeLink {
   /// The fake runs on while the app is away, as a node does, so a
   /// message can be given back or arrive while it is.
   NodeLink connect() {
-    if (!paired) throw NotOurs(nodeName(id));
+    if (!paired) throw NotOurs(nodeName(nodeId));
     final back = _backAt;
     if (back != null && now().isBefore(back)) {
-      throw StateError('${nodeName(id)} is swapping in its new image');
+      throw StateError('${nodeName(nodeId)} is swapping in its new image');
     }
-    _connected = true;
+    if (!_owner.connected) _joined(this);
+    _owner.connected = true;
     _closed = Completer<void>();
     return this;
   }
@@ -690,15 +876,139 @@ class FakeNode implements NodeLink {
 
   @override
   Future<void> close() async {
-    _connected = false;
+    if (_owner.connected) _gone(this);
+    _owner.connected = false;
     if (!_closed.isCompleted) _closed.complete();
   }
 
   /// Switches the fake off.
   void dispose() {
     close();
+    for (final g in [...guests]) {
+      g.close();
+    }
     for (final t in _timers) {
       t.cancel();
     }
+  }
+}
+
+/// One phone's side of a link: what the node notifies it and has given
+/// back to it.
+class _Phone {
+  bool connected = false;
+  (int, DateTime)? givenBack;
+  final status = StreamController<Status>.broadcast();
+  final given = StreamController<GivenBack?>.broadcast();
+}
+
+/// A guest's link to a public [FakeNode]: Node, Status, Send, Inbox, Given
+/// back and Recipient; every other value is answered insufficient
+/// authentication, 0x05, as on a link without the bond.
+class FakeGuest implements NodeLink {
+  final FakeNode node;
+  final _Phone _phone = _Phone()..connected = true;
+  final _closed = Completer<void>();
+
+  /// What waits for this guest; it reads one at a time.
+  final List<InboxMessage> _inbox = [];
+
+  /// The tag it wrote to Recipient.
+  int? tag;
+
+  FakeGuest._(this.node);
+
+  Future<T> _open<T>(T Function() f) async {
+    if (!_phone.connected) throw StateError('not connected');
+    if (!node.public) _shut();
+    return f();
+  }
+
+  Never _shut() =>
+      throw const AttException(AttError.insufficientAuthentication);
+
+  Future<T> _bonded<T>() async {
+    if (!_phone.connected) throw StateError('not connected');
+    _shut();
+  }
+
+  @override
+  Future<NodeInfo> readNode() =>
+      _open(() => NodeInfo(linkVersion, node.nodeId, node.image));
+
+  @override
+  Future<void> subscribe() => _open(() {});
+
+  @override
+  Future<Status> readStatus() => _open(() => node._statusOf(this));
+
+  @override
+  Future<GivenBack?> readGivenBack() => _open(() => node._givenBackNow(_phone));
+
+  @override
+  Future<InboxMessage?> readInbox() =>
+      _open(() => _inbox.isEmpty ? null : _inbox.first);
+
+  @override
+  Future<void> confirm(int id) => _open(() {
+    if (_inbox.isEmpty || _inbox.first.msgId != id) {
+      throw const AttException(AttError.valueNotAllowed);
+    }
+    _inbox.removeAt(0);
+    node._notify();
+  });
+
+  @override
+  Future<void> send(Uint8List value) => _open(() => node._send(this, value));
+
+  @override
+  Future<void> setRecipient(int tag) => _open(() {
+    encodeRecipient(tag);
+    this.tag = tag;
+  });
+
+  @override
+  Future<void> setMapPoint(Position? p) => _bonded();
+  @override
+  Future<void> setClock(int utcS, int offsetMin) => _bonded();
+  @override
+  Future<NodeTime> readClock() => _bonded();
+  @override
+  Future<void> setHome(List<int>? key) => _bonded();
+  @override
+  Future<NodeHome> readHome() => _bonded();
+  @override
+  Future<void> setNeighboursFrom(int slot) => _bonded();
+  @override
+  Future<NeighbourPage> readNeighbours() => _bonded();
+  @override
+  Future<UpdateProgress> readUpdate() => _bonded();
+  @override
+  Future<void> writeUpdate(Uint8List value) => _bonded();
+  @override
+  Future<void> writePiece(Uint8List value) => _bonded();
+  @override
+  Future<bool> readPublic() => _bonded();
+  @override
+  Future<void> setPublic(bool public) => _bonded();
+
+  @override
+  Future<void> hurry() => _open(() {});
+
+  @override
+  Stream<Status> get statusNotified => _phone.status.stream;
+
+  @override
+  Stream<GivenBack?> get givenBackNotified => _phone.given.stream;
+
+  @override
+  Future<void> get closed => _closed.future;
+
+  @override
+  Future<void> close() async {
+    if (!_phone.connected) return;
+    _phone.connected = false;
+    node._left(this);
+    if (!_closed.isCompleted) _closed.complete();
   }
 }

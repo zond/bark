@@ -115,7 +115,7 @@ void main() {
     final h = Header(greater(f.identity, app.me.identity), 1000 + id, null);
     return InboxMessage(
       id,
-      sealBox(pair, sodium.randombytes.buf(nonceLen), writePlain(h, rs)),
+      sealBox(pair, 0, sodium.randombytes.buf(nonceLen), writePlain(h, rs)),
     );
   }
 

@@ -1,5 +1,6 @@
 // Settings: the node to connect to and the phone paired with it, the
-// fake node, the node's firmware, the battery exemption
+// fake node, whether the node serves phones without pairing, the node's
+// firmware, the battery exemption
 // that keeps the link with the screen off, the person's name, their home
 // node, their backup words, and the node's map point.
 
@@ -183,6 +184,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             NoticeCard(app),
             ..._connection(),
+            ..._public(),
             ..._firmware(),
             ..._battery(),
             _heading('My name'),
@@ -242,7 +244,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(nodeName(s.node!.id)),
-          subtitle: Text('Connected and paired, MTU ${app.mtu ?? '?'}'),
+          subtitle: Text(
+            s.guest
+                ? 'Connected as a guest: a public node, someone else\'s, '
+                      'which passes on your texts without pairing. MTU '
+                      '${app.mtu ?? '?'}'
+                : 'Connected and paired, MTU ${app.mtu ?? '?'}',
+          ),
           trailing: OutlinedButton(
             onPressed: app.disconnect,
             child: const Text('Disconnect'),
@@ -278,22 +286,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
         // The connected node's row does nothing; another's connects to
-        // it, closing the link to this one first.
-        for (final FoundNode n in app.found.values)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(n.name),
-            subtitle: Text(
-              app.connectedTo(n.deviceId)
-                  ? 'Connected'
-                  : '${n.deviceId}, ${n.rssi ?? '?'} dBm',
-            ),
-            onTap: app.connecting || app.connectedTo(n.deviceId)
-                ? null
-                : () => _connect(() => app.connect(n)),
-          ),
+        // it, closing the link to this one first: a public node not the
+        // phone's as a guest, which **Pair** makes the phone's instead.
+        for (final FoundNode n in app.found.values) _found(n),
         ..._looking(),
       ],
+    ];
+  }
+
+  Widget _found(FoundNode n) {
+    final guest = n.public && n.name != app.pairedNode;
+    final busy = app.connecting || app.connectedTo(n.deviceId);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(n.public ? Icons.storefront : Icons.router),
+      title: Text(n.name),
+      subtitle: Text(
+        [
+          if (app.connectedTo(n.deviceId)) 'Connected' else n.deviceId,
+          if (n.public) 'public: serves phones without pairing',
+          '${n.rssi ?? '?'} dBm',
+        ].join(', '),
+      ),
+      onTap: busy
+          ? null
+          : () => _connect(() => guest ? app.connectGuest(n) : app.connect(n)),
+      trailing: guest
+          ? TextButton(
+              onPressed: busy ? null : () => _connect(() => app.connect(n)),
+              child: const Text('Pair'),
+            )
+          : null,
+    );
+  }
+
+  /// The owner's switch of whether the node serves phones that have not
+  /// paired with it, from link version 7.
+  List<Widget> _public() {
+    final s = app.session;
+    final p = s.nodePublic;
+    if (!s.connected || s.guest || p == null) return [];
+    return [
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Public: serve phones without pairing'),
+        subtitle: const Text(
+          'Phones near the node that have not paired with it can send and '
+          'receive their texts through it, as at a shop\'s or a café\'s '
+          'node. They cannot change its settings, and your texts stay '
+          'yours.',
+        ),
+        value: p,
+        onChanged: (v) => _try(() => s.writePublic(v), 'Setting Public failed'),
+      ),
     ];
   }
 
@@ -319,7 +364,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// The connected node's firmware, and its update over the link.
   List<Widget> _firmware() {
     final n = app.session.node;
-    if (n == null) return [];
+    if (n == null || app.session.guest) return [];
     return [
       _heading('Firmware'),
       Text(
@@ -374,6 +419,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final here = s.address;
     final st = s.status;
     final atHome = app.atHome;
+    // A guest can neither make the node its home nor clear its key.
+    final owned = !s.guest;
     return [
       _heading('Home node'),
       Text(
@@ -405,7 +452,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Wrap(
         spacing: 8,
         children: [
-          if (here != null && !atHome)
+          if (owned && here != null && !atHome)
             FilledButton(
               onPressed: () => _setHome(here),
               child: const Text('Make this node my home'),
@@ -415,7 +462,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: () => _setHome(null),
               child: const Text('No home node'),
             ),
-          if (app.holdsOtherKey)
+          if (owned && app.holdsOtherKey)
             OutlinedButton(
               onPressed: () => _try(() async {
                 final r = await app.clearKey();
@@ -527,7 +574,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   List<Widget> _mapPoint() {
     final s = app.session;
-    if (!s.connected) return [];
+    if (!s.connected || s.guest) return [];
     final st = s.status;
     return [
       _heading('Map point'),

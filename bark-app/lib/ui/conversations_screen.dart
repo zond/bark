@@ -103,7 +103,8 @@ class ConversationsScreen extends StatelessWidget {
     final r = app.releases;
     final a = r.newerApp;
     final node = app.session.node;
-    final i = r.newerImage(node);
+    // Only the paired phone updates a node.
+    final i = app.session.guest ? null : r.newerImage(node);
     return [
       if (a != null)
         _bar(
@@ -157,7 +158,10 @@ class ConversationsScreen extends StatelessWidget {
   Widget _connection(BuildContext context) {
     final s = app.session;
     final looking = lookingLine(app);
-    final text = s.connected
+    final text = s.connected && s.guest
+        ? 'Connected to ${nodeName(s.node!.id)} as a guest: a public node, '
+              'not yours'
+        : s.connected
         ? 'Connected to ${nodeName(s.node!.id)}, paired'
         : looking != null
         ? '$looking Texts wait on the phone until it is in reach.'

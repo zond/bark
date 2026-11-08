@@ -723,7 +723,7 @@ its value flush right. Top to bottom:
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
-| phone | `PHONE NONE` or `PHONE PAIRED`; while a phone pairs, `PAIR CODE 012345`, drawn at once | the phone link (Phone link, below) |
+| phone | `PHONE NONE`, `PHONE PAIRED` or `PHONE PUBLIC`; while a phone pairs, `PAIR CODE 012345`, drawn at once | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -816,7 +816,7 @@ sleep mode 1. The front light (P1.11) stays off.
 ## Phone link
 
 The link (`src/ble.rs`, spec "Phone link") is open only to the paired
-phone (roadmap D135). Every characteristic of the service needs a link
+phone (roadmap D135), unless its owner has made the node public (below). Every characteristic of the service needs a link
 encrypted with an authenticated key; any other connection's read, write
 or subscription gets ATT's insufficient authentication, and an Android
 phone then pairs: it shows a dialog for a code, and the node draws a
@@ -886,6 +886,36 @@ to close, at most the 32 s of the longest supervision timeout, and
 resets. They cost 14.8 KB of flash and 1.4 KB of static RAM, the
 SHA-256 among it, which the node build did not have before
 (2026-11-07, `llvm-size`, an open build).
+
+Recipient and Public (link version 7) make a node public
+(spec "Phone link", Public; roadmap D150). The paired phone writes Public; the bond's
+record keeps it, and the paired phone's recipient tag, which it writes
+to Recipient at every connection. The host takes 3 links at once, each
+served by a task of its own (`slot`), so that its future lies in static
+storage and the stack holds one poll at a time; one slot advertises at a
+time, and on a node that is not public only while no link is up. Node,
+Status, Send, Inbox, Given back and Recipient have no permission in the
+attribute table, as the host cannot tell a public node from another, and
+`allowed` refuses them on a link that is not the bond's while the node
+is not public, as the host refused them before. The node's loop places
+each message for its application by its tag (`src/node.rs`, `Placing`):
+the ring keeps the owner's, as a home's, the guests whose tag it carries
+read it from the core's inbox, and it is confirmed to the core once both
+are done; one for nobody is confirmed at once, dropped. Whose turn it
+is at the one message the node holds, and so whose Ready is set, is
+`Turn` in `src/ble.rs`. The
+console's `status` ends in `public=true` or `public=false`, read from
+the bond in the stored-state page.
+
+The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
+5a slot 1 owner false` as a phone writes its tag, `ble: public true`,
+`public: id=... tag=Some(5a) owner=false guests=0b010` for each message
+placed on a public node, and `ble: confirm id=... ok=true (guest 1)`.
+
+They cost 9.3 KB of flash and 11.9 KB of static RAM, 5.6 KB a link
+beyond the first, which leaves the stack 17.9 KB; the deepest poll of
+any task, the phone link's set-up, is 11.8 KB by the disassembly
+(2026-11-08, `llvm-size`, `llvm-objdump`).
 
 ## Mailbox
 

@@ -96,7 +96,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   bool get _readable =>
-      _s.connected && (_s.node?.version ?? 0) >= neighboursVersion;
+      _s.connected && !_s.guest && (_s.node?.version ?? 0) >= neighboursVersion;
 
   Future<void> _read() async {
     if (!_readable) return;
@@ -133,6 +133,12 @@ class _MapScreenState extends State<MapScreen> {
     final n = _s.node;
     if (n == null) {
       return _say('Not connected to a node: connect to see its neighbours.');
+    }
+    if (_s.guest) {
+      return _say(
+        'Connected as a guest: only the phone paired with this node sees '
+        'its neighbours.',
+      );
     }
     if (n.version < neighboursVersion) {
       return _say(

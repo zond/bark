@@ -121,6 +121,7 @@ void main() {
     Address? from,
   ]) => sealBox(
     friendPair(p, node),
+    0,
     sodium.randombytes.buf(nonceLen),
     writePlain(
       Header(greater(node.friend.identity, p.me.identity), sent, from),
@@ -524,6 +525,7 @@ void main() {
       final forged = sealIntro(
         sodium,
         p.me.identity,
+        0,
         writePlain(Header(greater(node.friend.identity, p.me.identity), 500), [
           CardRecord(node.friendCard.encode()),
           const TextRecord('I am your friend, honest'),
@@ -569,6 +571,7 @@ void main() {
           final reply = sealReply(
             sodium,
             p.me.keys.mailbox,
+            f.recipient,
             f.sent,
             top - n + 1,
             n,
@@ -599,7 +602,9 @@ void main() {
       expect(p.session.received.where((r) => r.body == 't6').length, 1);
       // A reply under another key opens for nobody.
       final other = Keys.fromSeed(sodium, List.filled(16, 7));
-      final stray = sealReply(sodium, other.mailbox, lastSent, 4, 74, 0, [1]);
+      final stray = sealReply(sodium, other.mailbox, 0, lastSent, 4, 74, 0, [
+        1,
+      ]);
       p.messenger.receive(InboxMessage(200, stray));
       async.flushMicrotasks();
       expect(p.session.received.last.from, isNull);
@@ -733,7 +738,10 @@ void main() {
       expect(again.session.fetchWaiting?.id, o.id);
       // Its answer, nothing new, ends the wait there too.
       again.messenger.receive(
-        InboxMessage(1, sealNothingNew(sodium, again.me.keys.mailbox, o.sent)),
+        InboxMessage(
+          1,
+          sealNothingNew(sodium, again.me.keys.mailbox, 0, o.sent),
+        ),
       );
       async.flushMicrotasks();
       expect(again.session.fetchWaiting, isNull);

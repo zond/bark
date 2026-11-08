@@ -268,6 +268,10 @@ class Session extends ChangeNotifier {
   /// The mailbox key a node should hold, if it is the person's home.
   Uint8List? Function(NodeInfo)? homeKey;
 
+  /// The person's recipient tag at a node, which the app writes to it as
+  /// it connects (spec "Phone link", Public).
+  int Function(NodeInfo)? recipient;
+
   /// The last value of Given back read or notified.
   GivenBack? givenBack;
 
@@ -289,6 +293,16 @@ class Session extends ChangeNotifier {
 
   /// The node's Home as last read, from link version 3.
   NodeHome? nodeHome;
+
+  /// Whether the node serves phones that have not paired, as last read,
+  /// from link version 7; the paired phone's alone to read.
+  bool? nodePublic;
+
+  /// The link is a guest's, on a public node that is not the person's:
+  /// only Node, Status, Send, Inbox, Given back and Recipient may be
+  /// touched, as Android may start a pairing by itself on a read or write
+  /// the node refuses for want of the bond (spec "Phone link", Public).
+  bool guest = false;
 
   /// The node's neighbour table as last read, from link version 4.
   NeighbourTable? neighbours;
@@ -432,9 +446,10 @@ class Session extends ChangeNotifier {
   }
 
   /// Takes a connected link through the checklist of the phone link's
-  /// note: Node first, refused if newer than the app; then the
-  /// subscriptions, Status and Given back, the inbox, the queue.
-  Future<bool> attach(NodeLink link) async {
+  /// note: Node first, refused if newer than the app; the recipient tag,
+  /// so that the node hands the inbox over; then the subscriptions, Status
+  /// and Given back, the inbox, the queue. A `guest` link stops there.
+  Future<bool> attach(NodeLink link, {bool guest = false}) async {
     final NodeInfo n;
     try {
       n = await link.readNode();
@@ -452,14 +467,17 @@ class Session extends ChangeNotifier {
     }
     node = n;
     _link = link;
+    this.guest = guest;
     notice = null;
     note(
-      'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}',
+      'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}'
+      '${guest ? ', as a guest' : ''}',
     );
     _subs
       ..add(link.statusNotified.listen(_onStatus, onError: _badValue))
       ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue));
     unawaited(link.closed.then((_) => _detach(link)));
+    if (n.version >= publicVersion) await _setRecipient(link, n);
     try {
       await link.subscribe();
       _onStatus(await link.readStatus());
@@ -467,9 +485,57 @@ class Session extends ChangeNotifier {
     } catch (e) {
       _tell('Reading the node failed: $e');
     }
+    if (guest) return true;
     if (n.version >= clockVersion) await _setClock(link);
     if (n.version >= homeVersion) await _keepHome(link, n);
+    if (n.version >= publicVersion) await _readPublic(link);
     return true;
+  }
+
+  /// Writes the person's recipient tag at the node: a public node hands a
+  /// phone only the messages that carry its tag, and keeps the paired
+  /// phone's to place its messages while it is away.
+  Future<void> _setRecipient(NodeLink link, NodeInfo n) async {
+    final tag = recipient?.call(n);
+    if (tag == null) return;
+    try {
+      await link.setRecipient(tag);
+      note('Recipient: tag $tag');
+    } catch (e) {
+      note('Recipient: $e');
+    }
+  }
+
+  Future<void> _readPublic(NodeLink link) async {
+    try {
+      nodePublic = await link.readPublic();
+      note('Public: ${nodePublic! ? 'yes' : 'no'}');
+    } catch (e) {
+      note('Public: $e');
+    }
+    notifyListeners();
+  }
+
+  /// The link, if the paired phone's and of `version` or later.
+  NodeLink _owned(int version, String what) {
+    final link = _link;
+    final n = node;
+    if (link == null || n == null) throw StateError('not connected');
+    if (guest) throw StateError('$what is the paired phone\'s alone');
+    if (n.version < version) {
+      throw StateError('no $what before link version $version');
+    }
+    return link;
+  }
+
+  /// Makes the node public, or the person's alone, and reads it back.
+  Future<bool> writePublic(bool public) async {
+    final link = _owned(publicVersion, 'Public');
+    await link.setPublic(public);
+    nodePublic = await link.readPublic();
+    note('Public: wrote ${public ? 'yes' : 'no'}, reads ${nodePublic!}');
+    notifyListeners();
+    return nodePublic!;
   }
 
   /// Gives the person's home its key, silently, and reads Home. A home
@@ -493,12 +559,7 @@ class Session extends ChangeNotifier {
 
   /// Writes Home, the mailbox key or none, and reads it back.
   Future<NodeHome> writeHome(List<int>? key) async {
-    final link = _link;
-    final n = node;
-    if (link == null || n == null) throw StateError('not connected');
-    if (n.version < homeVersion) {
-      throw StateError('no Home before link version $homeVersion');
-    }
+    final link = _owned(homeVersion, 'Home');
     await link.setHome(key);
     nodeHome = await link.readHome();
     note('Home: wrote ${key == null ? 'no key' : 'the key'}, reads $nodeHome');
@@ -512,12 +573,7 @@ class Session extends ChangeNotifier {
       _readNeighbours().whenComplete(() => _readingNeighbours = null);
 
   Future<NeighbourTable> _readNeighbours() async {
-    final link = _link;
-    final n = node;
-    if (link == null || n == null) throw StateError('not connected');
-    if (n.version < neighboursVersion) {
-      throw StateError('no Neighbours before link version $neighboursVersion');
-    }
+    final link = _owned(neighboursVersion, 'Neighbours');
     final list = <Neighbour>[];
     var slot = 0;
     NeighbourPage page;
@@ -566,6 +622,8 @@ class Session extends ChangeNotifier {
     givenBack = null;
     nodeTime = null;
     nodeHome = null;
+    nodePublic = null;
+    guest = false;
     neighbours = null;
     note('Disconnected');
   }
@@ -794,7 +852,7 @@ class Session extends ChangeNotifier {
 
   Future<void> setMapPoint(Position? p) async {
     final link = _link;
-    if (link == null) return;
+    if (link == null || guest) return;
     try {
       await link.setMapPoint(p);
       note('Map point: ${p ?? 'cleared'}');

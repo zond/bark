@@ -6,11 +6,13 @@
 // sees the node, at start, after a drop and after Bluetooth was off, an
 // update going on from what the node holds, but not after the person
 // disconnected, not to a node no longer theirs, and gives way to the
-// person's tap on another node.
+// person's tap on another node; and with no paired node, or while it
+// is not heard, the strongest public node, joined as a guest.
 
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:bark_app/app_layer.dart' show recipientTag;
 import 'package:bark_app/app.dart';
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/contacts.dart';
@@ -175,7 +177,10 @@ class HiddenNode extends UniversalBlePlatform {
 }
 
 /// Fake nodes behind Bluetooth, by device ID: each advertises while in
-/// reach and not connected, and answers reads and writes as its fake.
+/// reach and not connected, a public one by the public node's UUID, and
+/// answers reads and writes as its fake: as its owner's link to a phone
+/// that holds its bond or to a node that is not public, else as a
+/// guest's.
 class FakeNodes extends UniversalBlePlatform {
   final Map<String, FakeNode> nodes;
 
@@ -183,6 +188,10 @@ class FakeNodes extends UniversalBlePlatform {
   final Set<String> bonds;
   final Set<String> inReach;
   final Set<String> _up = {};
+  final Map<String, NodeLink> _links = {};
+
+  /// The RSSI each device is heard with, dBm.
+  final Map<String, int> rssi = {};
 
   /// Each scan's start, and each connect's device, in order.
   int scans = 0;
@@ -193,12 +202,32 @@ class FakeNodes extends UniversalBlePlatform {
   /// The link to `id` drops, from the node's side.
   void drop(String id) {
     _up.remove(id);
-    nodes[id]!.close();
+    _links.remove(id)?.close();
     updateConnection(id, false);
   }
 
+  /// The link the phone has to `id`.
+  NodeLink? linkTo(String id) => _links[id];
+
   /// Bluetooth is on.
   bool on = true;
+
+  /// Android lets the app use Bluetooth; the person's answer when asked.
+  bool allowed = true;
+  bool allows = true;
+  int asked = 0;
+
+  @override
+  Future<bool> hasPermissions({bool withAndroidFineLocation = false}) async =>
+      allowed;
+
+  @override
+  Future<void> requestPermissions({
+    bool withAndroidFineLocation = false,
+  }) async {
+    asked++;
+    allowed = allows;
+  }
 
   /// The person switches Bluetooth off or on. Off, every link is gone,
   /// and Android tells the app of the adapter only, not of the links: a
@@ -207,7 +236,7 @@ class FakeNodes extends UniversalBlePlatform {
     on = v;
     if (!v) {
       for (final id in _up) {
-        nodes[id]!.close();
+        _links.remove(id)?.close();
       }
       _up.clear();
     }
@@ -247,13 +276,18 @@ class FakeNodes extends UniversalBlePlatform {
     scans++;
     Timer(const Duration(milliseconds: 10), () {
       for (final id in inReach.difference(_up)) {
-        updateScanResult(BleDevice(deviceId: id, name: _name(nodes[id]!)));
+        final n = nodes[id]!;
+        updateScanResult(
+          BleDevice(
+            deviceId: id,
+            name: nodeName(n.nodeId),
+            rssi: rssi[id],
+            services: [n.public ? Uuids.publicNode : Uuids.service],
+          ),
+        );
       }
     });
   }
-
-  String _name(FakeNode n) =>
-      n is OtherNode ? nodeName(OtherNode.otherId) : nodeName(FakeNode.id);
 
   @override
   Future<void> stopScan() async {}
@@ -276,7 +310,7 @@ class FakeNodes extends UniversalBlePlatform {
   @override
   Future<void> disconnect(String deviceId) async {
     _up.remove(deviceId);
-    await nodes[deviceId]!.close();
+    await _links.remove(deviceId)?.close();
     updateConnection(deviceId, false);
   }
 
@@ -307,17 +341,24 @@ class FakeNodes extends UniversalBlePlatform {
         details: '133',
       );
     }
-    n.connect();
+    _links[deviceId] = bonds.contains(deviceId) || !n.public
+        ? n.connect()
+        : n.connectGuest();
     return expectedMtu;
   }
 
   @override
   Future<bool> isPaired(String deviceId) async => bonds.contains(deviceId);
 
+  /// Pairs, which makes a guest's link the owner's.
   @override
   Future<bool> pair(String deviceId) async {
     bonds.add(deviceId);
-    nodes[deviceId]!.pair();
+    final n = nodes[deviceId]!..pair();
+    if (_links[deviceId] is FakeGuest) {
+      await _links[deviceId]!.close();
+      _links[deviceId] = n.connect();
+    }
     return true;
   }
 
@@ -337,7 +378,7 @@ class FakeNodes extends UniversalBlePlatform {
     Duration? timeout,
   }) async {
     _reach(deviceId);
-    final n = nodes[deviceId]!;
+    final n = _links[deviceId]!;
     return switch (characteristic) {
       Uuids.node => (await n.readNode()).encode(),
       Uuids.status => (await n.readStatus()).encode(),
@@ -346,6 +387,7 @@ class FakeNodes extends UniversalBlePlatform {
       Uuids.clock => (await n.readClock()).encode(),
       Uuids.home => (await n.readHome()).encode(),
       Uuids.update => (await n.readUpdate()).encode(),
+      Uuids.public => encodePublic(await n.readPublic()),
       _ => throw UnimplementedError(characteristic),
     };
   }
@@ -362,15 +404,19 @@ class FakeNodes extends UniversalBlePlatform {
     BleOutputProperty bleOutputProperty,
   ) async {
     _reach(deviceId);
-    final n = nodes[deviceId]!;
+    final n = _links[deviceId]!;
     switch (characteristic) {
+      case Uuids.recipient:
+        await n.setRecipient(value.single);
+      case Uuids.public:
+        await n.setPublic(value.single == 1);
       case Uuids.inbox:
         await n.confirm(ByteData.sublistView(value).getUint32(0));
       case Uuids.update:
         await n.writeUpdate(value);
       case Uuids.image:
         await n.writePiece(value);
-        if (n.piecesWritten == offAfterPieces) power(false);
+        if (nodes[deviceId]!.piecesWritten == offAfterPieces) power(false);
     }
   }
 
@@ -385,12 +431,17 @@ class FakeNodes extends UniversalBlePlatform {
       throw UnimplementedError('${invocation.memberName}');
 }
 
-/// Another node, `bark-0ce400000002`.
+/// Another node, `bark-0ce400000002`, or of the ID `nodeId`.
 class OtherNode extends FakeNode {
   static final otherId = Uint8List.fromList([0x0c, 0xe4, 0, 0, 0, 2]);
-  OtherNode({required super.now, required super.sodium, required super.app});
   @override
-  Future<NodeInfo> readNode() async => NodeInfo(linkVersion, otherId, 1);
+  final Uint8List nodeId;
+  OtherNode({
+    required super.now,
+    required super.sodium,
+    required super.app,
+    List<int>? id,
+  }) : nodeId = Uint8List.fromList(id ?? otherId);
 }
 
 void main() {
@@ -620,12 +671,13 @@ void main() {
         async.elapse(const Duration(seconds: 1));
         expect(app.session.pairingLost, isTrue);
         expect(app.pairAgain, isNotNull);
+        expect(app.lookingFor, isNull);
         final connects = ble.connects.length;
-        final scans = ble.scans;
         async.elapse(const Duration(minutes: 5));
         expect(app.session.connected, isFalse);
         expect(ble.connects.length, connects);
-        expect(ble.scans, scans);
+        // It goes on looking for a public node, of which none is near.
+        expect(lookingLine(app), 'Looking for a public node…');
       });
     });
 
@@ -643,6 +695,221 @@ void main() {
         async.elapse(const Duration(minutes: 1));
         expect(app.linkDevice, other);
         expect(ble.connects, [other]);
+      });
+    });
+  });
+
+  group('the choice of a round', () {
+    FoundNode n(String name, int? rssi, {bool public = true}) =>
+        FoundNode(name, name, rssi, public: public);
+
+    test('the strongest public node; one not public is passed over', () {
+      final heard = [
+        n('a', -70),
+        n('b', -50),
+        n('c', -40, public: false),
+        n('d', null),
+      ];
+      expect(chooseNode(heard)?.name, 'b');
+      expect(chooseNode([n('d', null), n('a', -100)])?.name, 'a');
+      expect(chooseNode([n('d', null)])?.name, 'd');
+    });
+
+    test('the paired node, heard, before any public node', () {
+      final heard = [n('a', -40), n('mine', -95, public: false)];
+      expect(chooseNode(heard, paired: 'mine')?.name, 'mine');
+      expect(chooseNode(heard, paired: 'mine', linked: true)?.name, 'mine');
+      // Not heard: the strongest public node, unless a link is up.
+      expect(chooseNode([n('a', -40)], paired: 'mine')?.name, 'a');
+      expect(chooseNode([n('a', -40)], paired: 'mine', linked: true), isNull);
+    });
+
+    test('no public node heard: none', () {
+      expect(chooseNode([]), isNull);
+      expect(chooseNode([n('c', -40, public: false)]), isNull);
+    });
+
+    test('never the node whose pairing was lost', () {
+      final heard = [n('lost', -40), n('a', -80)];
+      expect(chooseNode(heard, lost: 'lost')?.name, 'a');
+      expect(chooseNode([n('lost', -40)], lost: 'lost'), isNull);
+    });
+  });
+
+  group('the search for a public node', () {
+    late Sodium sodium;
+    setUpAll(() async => sodium = await SodiumInit.init());
+    const paired = 'aa:bb:cc:dd:ee:01';
+    const weak = 'aa:bb:cc:dd:ee:03', strong = 'aa:bb:cc:dd:ee:04';
+    const shut = 'aa:bb:cc:dd:ee:05';
+    final weakId = [0x0c, 0xe4, 0, 0, 0, 3],
+        strongId = [0x0c, 0xe4, 0, 0, 0, 4];
+    final start = DateTime.utc(2026, 11, 8);
+
+    /// Two public nodes, at −70 and −50 dBm, and a stronger one that is
+    /// not public; with `withPaired`, the paired node, in reach or not.
+    void run(
+      void Function(FakeAsync, AppModel, FakeNodes) body, {
+      bool withPaired = false,
+      bool pairedInReach = false,
+      bool allowed = true,
+    }) {
+      fakeAsync((async) {
+        DateTime now() => start.add(async.elapsed);
+        final app = AppModel(
+          sodium: sodium,
+          me: Me(MemoryStore(), sodium, now),
+          session: Session(store: MemoryStore(), now: now),
+          contacts: Contacts(MemoryStore()),
+          now: now,
+        );
+        app.load();
+        async.flushMicrotasks();
+        final id = app.me.identity;
+        OtherNode other(List<int> nid) =>
+            OtherNode(now: now, sodium: sodium, app: id, id: nid);
+        final ble = FakeNodes(
+          {
+            if (withPaired) paired: FakeNode(now: now, sodium: sodium, app: id),
+            weak: other(weakId)..public = true,
+            strong: other(strongId)..public = true,
+            shut: other([0x0c, 0xe4, 0, 0, 0, 5]),
+          },
+          bonds: {if (withPaired) paired},
+        );
+        ble.rssi.addAll({weak: -70, strong: -50, shut: -40, paired: -90});
+        ble.allowed = allowed;
+        if (withPaired && !pairedInReach) ble.inReach.remove(paired);
+        UniversalBle.setInstance(ble);
+        if (withPaired) app.session.setPaired(nodeName(FakeNode.id));
+        async.flushMicrotasks();
+        app.startSearch();
+        body(async, app, ble);
+        app.dispose();
+        for (final n in ble.nodes.values) {
+          n.dispose();
+        }
+        async.flushMicrotasks();
+      });
+    }
+
+    /// A round's scan and a connect.
+    const round = Duration(seconds: 5);
+
+    test('without a paired node: the strongest, as a guest, its tag '
+        'written', () {
+      run((async, app, ble) {
+        async.elapse(const Duration(seconds: 1));
+        expect(lookingLine(app), 'Looking for a public node…');
+        async.elapse(round);
+        final s = app.session;
+        expect((s.connected, s.guest, app.linkDevice), (true, true, strong));
+        expect(ble.connects, [strong]);
+        // No pairing, and nothing the guest may not touch.
+        expect(ble.bonds, isEmpty);
+        expect(s.pairedWith, isNull);
+        expect((s.nodeTime, s.nodeHome, s.nodePublic), (null, null, null));
+        expect(s.log.where((l) => l.text.contains('0x5')), isEmpty);
+        final guest = ble.linkTo(strong)! as FakeGuest;
+        expect(guest.tag, recipientTag(sodium, app.me.identity, strongId));
+        // The two first messages the fake makes are its owner's: none
+        // carries this phone's tag here.
+        expect(s.received, isEmpty);
+        // With no paired node to move to, it stops scanning.
+        final scans = ble.scans;
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.scans, scans);
+        expect(app.linkDevice, strong);
+      });
+    });
+
+    test('a guest link that drops: the next round takes the strongest '
+        'again', () {
+      run((async, app, ble) {
+        async.elapse(round);
+        expect(app.linkDevice, strong);
+        ble.rssi[weak] = -45;
+        ble.drop(strong);
+        async.elapse(round);
+        expect(app.session.guest, isTrue);
+        expect(app.linkDevice, weak);
+        expect(ble.connects, [strong, weak]);
+      });
+    });
+
+    test('the paired node not heard: a public node, then the paired node '
+        'once heard', () {
+      run(withPaired: true, (async, app, ble) {
+        async.elapse(round);
+        expect((app.session.guest, app.linkDevice), (true, strong));
+        // Still a round every 15 s, for the paired node: two scans in
+        // 30 s, within Android's five.
+        final scans = ble.scans;
+        async.elapse(const Duration(seconds: 30));
+        expect(ble.scans - scans, 2);
+        expect(app.linkDevice, strong);
+        ble.inReach.add(paired);
+        async.elapse(lookRound);
+        expect((app.session.guest, app.linkDevice), (false, paired));
+        expect(app.session.connected, isTrue);
+        expect(ble.nodes[strong]!.guests, isEmpty);
+        expect(ble.connects, [strong, paired]);
+        // On its paired node the search stops.
+        final after = ble.scans;
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.scans, after);
+      });
+    });
+
+    test('the paired node before a stronger public node', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        expect((app.session.guest, app.linkDevice), (false, paired));
+        expect(ble.connects, [paired]);
+        final owner = ble.nodes[paired]!;
+        expect(
+          owner.ownerTag,
+          recipientTag(sodium, app.me.identity, FakeNode.id),
+        );
+      });
+    });
+
+    test('the person\'s stop ends it; the fake node wins', () {
+      run((async, app, ble) {
+        async.elapse(round);
+        expect(app.session.guest, isTrue);
+        app.disconnect();
+        async.elapse(const Duration(seconds: 1));
+        final scans = ble.scans;
+        async.elapse(const Duration(minutes: 1));
+        expect(app.session.connected, isFalse);
+        expect(ble.scans, scans);
+        expect(lookingLine(app), isNull);
+        app.setFake(true);
+        app.session.setStopped(false);
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.scans, scans);
+        expect(app.searchOn, isFalse);
+      });
+    });
+
+    test('before Bluetooth is allowed nothing runs and nothing shows; the '
+        'person\'s Scan asks, and the search runs from then', () {
+      run(allowed: false, (async, app, ble) {
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.scans, 0);
+        expect(app.lookingNow, isFalse);
+        expect(app.held, isNull);
+        expect(lookingLine(app), isNull);
+        app.scan();
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.asked, 1);
+        expect(app.bluetoothAllowed, isTrue);
+        expect(app.held?.title, 'Looking for a public node');
+        app.stopScan();
+        async.elapse(round);
+        expect((app.session.guest, app.linkDevice), (true, strong));
+        expect(app.held?.title, 'Connected to bark-0ce400000004 as a guest');
       });
     });
   });

@@ -322,6 +322,7 @@ fn the_phone_paired_or_its_code() {
     };
     assert_eq!(phone(Phone::None), "PHONE       NONE");
     assert_eq!(phone(Phone::Paired), "PHONE     PAIRED");
+    assert_eq!(phone(Phone::Public), "PHONE     PUBLIC");
     assert_eq!(phone(Phone::Code(42)), "PAIR CODE 000042");
     assert_eq!(phone(Phone::Code(999_999)), "PAIR CODE 999999");
 }
