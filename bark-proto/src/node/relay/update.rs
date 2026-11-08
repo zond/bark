@@ -17,7 +17,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::time::{Duration, Instant};
 use crate::update::{
     credit, Image, ImageTag, Piece, ANNOUNCE_EVERY, HOLD_BACK, PACE, PASS, PIECES, REQUEST_WAIT,
-    SERVED_CHANNELS, SLOT_LISTEN,
+    SERVED_CHANNELS, SLOT_ANNOUNCE_LISTEN, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -239,8 +239,8 @@ enum Out {
     Request,
     Piece(usize),
     /// An announcement on this channel: owed, the hourly one on the home
-    /// channel or on another, one for blocks newly held, or the one after
-    /// the slot heartbeat.
+    /// channel or on another, one for blocks newly held, or the hourly one
+    /// after the slot heartbeat.
     Announce(Channel, Turn),
 }
 
@@ -281,9 +281,8 @@ pub(super) struct Spread {
     /// Until when the frame after its slot heartbeat on its home channel
     /// may start, where its sleepy nodes listen.
     slot_open: Option<Instant>,
-    /// A sleepy node: when it next listens after its anchor's slot
-    /// heartbeat for an announcement, not gathering.
-    listen_at: Instant,
+    /// Not before this, its next announcement after a slot heartbeat.
+    slot_announce_at: Instant,
     /// Until when it sends no pieces on its home channel, where another
     /// holder sends them.
     held_back: Option<Instant>,
@@ -309,7 +308,7 @@ impl Spread {
             owed: None,
             grown_at: None,
             slot_open: None,
-            listen_at: Instant::ZERO,
+            slot_announce_at: Instant::ZERO,
             held_back: None,
             current: None,
             busy_checks: 0,
@@ -388,8 +387,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// `AppCommand::Gather`: the driver's policy took `image`; the node
     /// asks for it from block `from` on.
     pub(super) fn gather(&mut self, image: Image, from: u8, now: Instant) {
+        // A sleepy node asks its anchor, which serves what it holds and is
+        // silent otherwise.
+        let anchor = self.anchor().filter(|_| self.sleepy()).map(|a| Holder {
+            id: a.id,
+            home: self.home,
+            held: image.blocks,
+        });
         let s = &mut self.spread;
-        let holder = s.offered.filter(|(o, _)| o.id == image.id).map(|(_, h)| h);
+        let holder = s
+            .offered
+            .filter(|(o, _)| o.id == image.id)
+            .map(|(_, h)| h)
+            .or(anchor);
         let mut g = Gather {
             image,
             holder,
@@ -444,8 +454,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Its slot heartbeat went on its home channel: a relay whose sleepy
-    /// nodes listen now sends them one update frame at once, the piece
-    /// they asked for or its announcement.
+    /// nodes listen now sends them one update frame at once, a piece they
+    /// asked for, or once an hour its announcement.
     pub(super) fn slot_heartbeat(&mut self, now: Instant) {
         let sleepy_asked = self
             .spread
@@ -453,28 +463,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .iter()
             .flatten()
             .any(|v| v.sleepy && v.channel == self.home);
-        if sleepy_asked || (self.offer().is_some() && !self.heard.is_empty()) {
+        let announce =
+            self.offer().is_some() && !self.heard.is_empty() && now >= self.spread.slot_announce_at;
+        if sleepy_asked || announce {
             self.spread.slot_open = Some(now + SLOT_START);
         }
     }
 
-    /// A sleepy node heard its anchor's slot heartbeat: it listens for the
-    /// frame after it while it gathers from its anchor, and once an hour
-    /// for an announcement.
+    /// A sleepy node heard its anchor's slot heartbeat: it listens for a
+    /// piece after it while it gathers from its anchor, else for an
+    /// announcement.
     pub(super) fn anchor_slot_heard(&mut self, now: Instant) {
         let anchor = self.anchor().map(|a| a.id);
-        let s = &mut self.spread;
-        let gathers = s
+        let gathers = self
+            .spread
             .gather
             .and_then(|g| g.source())
             .is_some_and(|h| Some(h.id) == anchor);
-        if !gathers && now < s.listen_at {
-            return;
-        }
-        if !gathers {
-            s.listen_at = now + ANNOUNCE_EVERY;
-        }
-        self.timers.awake_until = self.timers.awake_until.max(now + SLOT_LISTEN);
+        let listen = if gathers {
+            SLOT_LISTEN
+        } else {
+            SLOT_ANNOUNCE_LISTEN
+        };
+        self.timers.awake_until = self.timers.awake_until.max(now + listen);
     }
 
     /// The next slot heartbeat of this relay on its home channel.
@@ -699,7 +710,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 _ => now,
             };
             let at = match slot {
-                Some(_) if v.channel == self.home && sleepy_home => now,
+                Some(_) if v.channel == self.home && sleepy_home && at <= now => now,
+                Some(_) if v.channel == self.home && sleepy_home => return None,
                 None if v.sleepy => return None,
                 None if v.channel == self.home && sleepy_home && home_slot < at + PACE => {
                     return None
@@ -847,7 +859,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             Out::Announce(_, turn) => {
                 let (image, held) = match turn {
-                    Turn::Grown | Turn::Slot | Turn::Other => self.offer()?,
+                    Turn::Grown | Turn::Other | Turn::Slot => self.offer()?,
                     _ => s.own.map(|o| (o, o.blocks))?,
                 };
                 Update::Announce {
@@ -987,7 +999,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 s.other = c.next();
             }
             Out::Announce(_, Turn::Grown) => s.grown_at = None,
-            Out::Announce(_, Turn::Slot) => {}
+            Out::Announce(_, Turn::Slot) => s.slot_announce_at = now + ANNOUNCE_EVERY,
         }
     }
 }

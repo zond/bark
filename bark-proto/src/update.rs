@@ -124,6 +124,13 @@ pub const ANNOUNCE_EVERY: Duration = Duration::from_secs(3600);
 /// (spec "Heartbeat"), and a full frame.
 pub const SLOT_LISTEN: Duration = Duration::from_micros(FULL_FRAME.as_micros() + 5_000);
 
+/// How long a sleepy node that does not gather listens after its anchor's
+/// slot heartbeat, for the announcement its anchor sends there once an
+/// hour: as [`SLOT_LISTEN`], with an announcement in place of the frame.
+pub const SLOT_ANNOUNCE_LISTEN: Duration = Duration::from_micros(
+    time_on_air(crate::wire::ANNOUNCE_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + 5_000,
+);
+
 /// How long a node that holds the image sends no pieces on its home
 /// channel after it heard a piece of it there from another: two paces,
 /// the most between two pieces of a holder that keeps the pace.
