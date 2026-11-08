@@ -33,6 +33,10 @@ use crate::wire::{Packet, Update, PIECE_BYTES};
 /// (spec "Heartbeat").
 const SLOT_START: Duration = Duration::from_millis(1);
 
+/// The sweeps a node keeps: one a channel, and one of the pieces after
+/// its slot heartbeats, for its sleepy nodes alone.
+const SWEEPS: usize = CHANNELS as usize + 1;
+
 /// Other senders' pieces a node remembers, to count them against its own
 /// pace on its home channel.
 const OTHERS: usize = 8;
@@ -106,9 +110,9 @@ pub(super) struct Spread {
     passed: u8,
     /// On each channel, the block its sweep is at (none before the first,
     /// `u8::MAX`), the pieces of it sent, and the pieces of it to send.
-    cur: [u8; CHANNELS as usize],
-    sent_cur: [u8; CHANNELS as usize],
-    target: [u8; CHANNELS as usize],
+    cur: [u8; SWEEPS],
+    sent_cur: [u8; SWEEPS],
+    target: [u8; SWEEPS],
     /// The piece of each block it streams next: from a random start,
     /// climbing, so a block's pieces repeat only after [`PIECES`].
     index: [u8; MAX_BLOCKS],
@@ -145,9 +149,9 @@ impl Spread {
             gather: None,
             sent: [None; SERVED_CHANNELS],
             passed: 0,
-            cur: [u8::MAX; CHANNELS as usize],
-            sent_cur: [0; CHANNELS as usize],
-            target: [0; CHANNELS as usize],
+            cur: [u8::MAX; SWEEPS],
+            sent_cur: [0; SWEEPS],
+            target: [0; SWEEPS],
             index: [0; MAX_BLOCKS],
             section_left: 0,
             section_at: Instant::ZERO,
@@ -301,9 +305,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// seldom send the same, and every sweep from the first block.
     fn random_starts(&mut self) {
         let s = &mut self.spread;
-        s.cur = [u8::MAX; CHANNELS as usize];
-        s.sent_cur = [0; CHANNELS as usize];
-        s.target = [0; CHANNELS as usize];
+        s.cur = [u8::MAX; SWEEPS];
+        s.sent_cur = [0; SWEEPS];
+        s.target = [0; SWEEPS];
         for i in 0..MAX_BLOCKS {
             self.spread.index[i] = self.rng.range(0, PIECES as u64 - 1) as u8;
         }
@@ -526,17 +530,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         out
     }
 
+    /// The sweep a piece on `c` now belongs to, and whether it serves
+    /// sleepy nodes alone: the slot piece's own, else the channel's.
+    fn sweep_of(&self, c: Channel) -> (usize, bool) {
+        if c == self.home && self.spread.slot_open.is_some() {
+            (SWEEPS - 1, true)
+        } else {
+            (usize::from(c.index()), false)
+        }
+    }
+
     /// The pieces of block `b` the neighbour on channel `c` furthest
-    /// behind on it lacks, by their sections: all of the block for one
-    /// that lacks an earlier block, what it lacks of it for one at it.
-    fn deficit(&self, c: Channel, b: u8, now: Instant) -> u8 {
+    /// behind on it lacks, by their sections, of the sleepy ones alone if
+    /// `sleepy`: all of the block for one that lacks an earlier block,
+    /// what it lacks of it for one at it.
+    fn deficit(&self, c: Channel, b: u8, sleepy: bool, now: Instant) -> u8 {
         let Some(image) = self.streams() else {
             return 0;
         };
         let k = image.pieces(b);
         self.neighbours
             .live(now)
-            .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
+            .filter(|(_, n)| n.home == c && (n.sleepy || !sleepy))
+            .filter(|(_, n)| self.streams_to(n, image, now))
             .filter_map(|(_, n)| n.update.filter(|u| u.gathers(image.tag())))
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
@@ -550,15 +566,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The block whose piece goes next on channel `c`: the block its sweep
     /// is at until it has sent what the neighbour furthest behind on it
     /// lacks and the loss margin, then the next block it holds that a
-    /// neighbour there lacks, in order, and from the first again.
+    /// neighbour there lacks, in order, and from the first again. The
+    /// piece after the slot heartbeat has a sweep of its own, by the
+    /// sleepy nodes there alone.
     fn stream_block(&self, c: Channel, now: Instant) -> Option<u8> {
         let image = self.streams()?;
         let blocks = image.blocks;
         let s = &self.spread;
-        let i = usize::from(c.index());
+        let (i, sleepy) = self.sweep_of(c);
         let cur = s.cur[i];
         let there = self.held_at_home(image, now)[usize::from(c.index())];
-        let wanted = |b: u8| b >= there && self.holds_block(b) && self.deficit(c, b, now) > 0;
+        let wanted =
+            |b: u8| b >= there && self.holds_block(b) && self.deficit(c, b, sleepy, now) > 0;
         if s.sent_cur[i] < s.target[i] && wanted(cur) {
             return Some(cur);
         }
@@ -813,7 +832,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Ok(Packet::Update(Update::Piece { block, .. })) => Some(block),
             _ => None,
         };
-        let deficit = block.map_or(0, |b| self.deficit(c, b, now));
+        let sleepy = self.sweep_of(c).1;
+        let deficit = block.map_or(0, |b| self.deficit(c, b, sleepy, now));
         self.radio.budget.record(airtime, now);
         let slot = self.spread.slot_open.is_some();
         self.slot_end(SlotPiece::Sent, emit);
@@ -839,7 +859,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((b, deficit)) = block {
             let at = &mut s.index[usize::from(b)];
             *at = ((usize::from(*at) + 1) % PIECES) as u8;
-            let i = usize::from(c.index());
+            let i = if after_slot {
+                SWEEPS - 1
+            } else {
+                usize::from(c.index())
+            };
             if s.cur[i] == b && s.sent_cur[i] < s.target[i] {
                 s.sent_cur[i] += 1;
             } else {
