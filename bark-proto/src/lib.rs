@@ -29,7 +29,7 @@ pub mod update;
 pub mod wire;
 
 pub use event::{
-    Action, AppCommand, AppEvent, Delivery, DropReason, Event, Frame, Trace, MAX_FRAME,
+    Action, AppCommand, AppEvent, Delivery, DropReason, Event, Frame, SlotPiece, Trace, MAX_FRAME,
 };
 pub use ids::{MsgId, NodeId};
 pub use node::{

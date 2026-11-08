@@ -67,6 +67,8 @@ pub struct UpdateRun {
     /// Such pieces to such relays, and those that came within a pace of
     /// one from another such sender.
     foreign: [u64; 2],
+    /// What became of the pieces due after anchors' slot heartbeats.
+    slots: std::collections::BTreeMap<String, u64>,
 }
 
 impl UpdateRun {
@@ -99,6 +101,7 @@ impl UpdateRun {
             home_beats: std::collections::HashMap::new(),
             last_foreign: std::collections::HashMap::new(),
             foreign: [0; 2],
+            slots: std::collections::BTreeMap::new(),
         }
     }
 
@@ -138,6 +141,11 @@ impl UpdateRun {
             self.owed.push((node, AppCommand::Holds(self.image)));
             self.holds_at[node as usize].get_or_insert(now);
         }
+    }
+
+    /// What became of a piece due after a slot heartbeat.
+    pub fn slot_piece(&mut self, o: bark_proto::SlotPiece) {
+        *self.slots.entry(format!("{o:?}")).or_default() += 1;
     }
 
     /// Relay `node` sent a heartbeat on its home channel.
@@ -285,6 +293,16 @@ impl UpdateRun {
             s(self.air_total[2]),
             s(self.air_total[3]),
         );
+        let all: u64 = self.slots.values().sum();
+        let _ = write!(out, "# pieces due after a slot heartbeat: {all}");
+        for (k, n) in &self.slots {
+            let _ = write!(
+                out,
+                ", {k} {n} ({:.1} %)",
+                100.0 * *n as f64 / all.max(1) as f64
+            );
+        }
+        out.push('\n');
         let _ = writeln!(
             out,
             "# pieces from another channel than the sender's home to relays that lacked them: {}, within a pace of another such sender's {} ({:.1} %)",

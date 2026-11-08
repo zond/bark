@@ -2759,6 +2759,11 @@ impl Sim {
                 w[0] += 1;
                 w[1] += u32::from(self.now >= self.settle);
             }
+            Action::Trace(Trace::SlotPiece(o)) => {
+                if let Some(u) = self.update.as_mut() {
+                    u.slot_piece(o);
+                }
+            }
             Action::Trace(Trace::Dropped { msg_id, reason }) => {
                 self.power_trace(node, &Trace::Dropped { msg_id, reason });
                 self.message_dropped(node, msg_id, reason)

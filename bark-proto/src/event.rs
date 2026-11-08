@@ -335,9 +335,34 @@ pub enum Action {
     Serve(Frame),
 }
 
+/// What became of the piece due after a slot heartbeat ([`Trace::SlotPiece`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotPiece {
+    /// It went.
+    Sent,
+    /// Its channel's pace held it, shared with others heard there.
+    SharedPace,
+    /// Its channel's pace held it, the node's own last piece there.
+    OwnPace,
+    /// Its pace on its two channels held it.
+    Channels,
+    /// The next piece was for another channel.
+    OtherChannel,
+    /// The bucket could not pay it with the reply reserve left.
+    Bucket,
+    /// Listen-before-talk found the channel busy.
+    ChannelBusy,
+    /// The radio was not free in time, or a wait was under way.
+    Late,
+}
+
 /// A protocol event worth recording, emitted where it happens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trace {
+    /// What became of the piece due after this relay's slot heartbeat on
+    /// its home channel, for its sleepy nodes
+    /// (spec "Updates over the mesh").
+    SlotPiece(SlotPiece),
     /// The home channel changed: chosen at the end of the first rotation
     /// (spec "Channel at boot") or moved by the move rule (spec "Channel moves").
     HomeChannelMoved {
