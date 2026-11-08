@@ -56,31 +56,14 @@ pub struct LinkApp<'a> {
     replying: Option<bark_proto::MsgId>,
 }
 
-/// Where the core's inbox's oldest message goes, on a node whose ring
-/// keeps its owner's messages, a home or a public node (spec "Mailbox";
-/// "Phone link", Public): into the ring as the owner's, to the guests
-/// whose recipient tag it carries, or, on a public node, nowhere. It is
-/// confirmed to the core once the ring's slot is written, so that one
-/// taken is not lost to a reboot meanwhile, and no guest connected waits
-/// for it.
+/// The core's inbox's oldest message on a node whose ring keeps what
+/// arrives, a home or a public node (spec "Mailbox"; "Phone link",
+/// Public): into the ring, the owner's and a guest's alike, and confirmed
+/// to the core once its slot is written, so that one taken is not lost to
+/// a reboot meanwhile.
 #[derive(Clone, Copy)]
 struct Placing {
     id: bark_proto::MsgId,
-    /// Its recipient tag.
-    tag: Option<u8>,
-    /// The ring keeps it.
-    ring: bool,
-    /// The guests it waits for, by their links' slots, until each confirms
-    /// it or leaves.
-    guests: u8,
-}
-
-impl Placing {
-    /// The guests still waiting for it: those left of [`Placing::guests`]
-    /// whose links are up with its tag.
-    fn waiting(&self) -> u8 {
-        self.guests & crate::ble::guests_with(self.tag)
-    }
 }
 
 impl App for LinkApp<'_> {
@@ -162,7 +145,8 @@ impl App for LinkApp<'_> {
             | Link::Confirm(_)
             | Link::Clock(_)
             | Link::Neighbours(_)
-            | Link::Inbox { .. } => None,
+            | Link::Inbox(_)
+            | Link::Guest { .. } => None,
         })
     }
 
@@ -265,29 +249,10 @@ impl LinkApp<'_> {
             let l = l.borrow();
             (l.inbox, l.ring_head)
         });
-        let public = crate::ble::public();
-        let placing = &mut self.placing;
-        let own = crate::ble::take_request(|from, r| match *r {
+        let own = crate::ble::take_request(|_, r| match *r {
             Link::Send { .. } if !offer => {
                 log::info!("ble: send refused, the node takes none now");
                 Some((false, false))
-            }
-            // A guest has the message waiting for it.
-            Link::Confirm(id) if public && !from.owner => {
-                let bit = 1 << from.slot;
-                let ok = placing.as_mut().is_some_and(|p| {
-                    p.id == id && p.guests & bit != 0 && {
-                        p.guests &= !bit;
-                        true
-                    }
-                });
-                log::info!(
-                    "ble: confirm id={:08x} ok={} (guest {})",
-                    id.0,
-                    ok,
-                    from.slot
-                );
-                Some((false, ok))
             }
             // A home's inbox is the ring's: the phone's confirmation moves
             // its mark there, and the core holds nothing for it.
@@ -320,23 +285,20 @@ impl LinkApp<'_> {
         if ring {
             publish_home(crate::ble::LINK.lock(|l| l.borrow().status));
         }
-        crate::ble::guests_waiting(self.placing.map_or(0, |p| p.waiting()));
         crate::ble::answer(false);
         self.placed().is_some()
     }
 
-    /// The message placed, once it may be confirmed to the core: the ring
-    /// has it written, if it keeps it, and no guest waits for it.
+    /// The message placed, once the ring has it written, to confirm to
+    /// the core.
     fn placed(&self) -> Option<bark_proto::MsgId> {
         let p = self.placing?;
-        (p.waiting() == 0 && (!p.ring || crate::mailbox::idle())).then_some(p.id)
+        crate::mailbox::idle().then_some(p.id)
     }
 
     /// Place the core's inbox's oldest message as it arrives ([`Placing`]),
-    /// once, on a node whose ring keeps its owner's; on any other the
-    /// core's inbox is the phone's, as without the mailbox. On a public
-    /// node a message is the owner's by its tag, or while the bond holds
-    /// none; one for no guest connected and not the owner's is dropped.
+    /// once, on a node whose ring keeps what arrives; on any other the
+    /// core's inbox is the phone's, as without the mailbox.
     fn place(&mut self, oldest: Option<(bark_proto::MsgId, &[u8])>) {
         if self.placing.is_some() || !crate::mailbox::keeps() {
             return;
@@ -344,31 +306,15 @@ impl LinkApp<'_> {
         let Some((id, payload)) = oldest else {
             return;
         };
-        let public = crate::ble::public();
-        let tag = bark_app_layer::seal::recipient_of(payload);
-        let ring = !public || crate::ble::owner_tag_is(tag);
-        let guests = match public {
-            true => crate::ble::guests_with(tag),
-            false => 0,
-        };
-        if ring {
-            crate::mailbox::arrive(id, payload);
-        }
-        if public {
+        crate::mailbox::arrive(id, payload);
+        if crate::ble::public() {
             log::info!(
-                "public: id={:08x} tag={:02x?} owner={} guests={:#04b}",
+                "public: id={:08x} tag={:02x?} kept",
                 id.0,
-                tag,
-                ring,
-                guests
+                bark_app_layer::seal::recipient_of(payload)
             );
         }
-        self.placing = Some(Placing {
-            id,
-            tag,
-            ring,
-            guests,
-        });
+        self.placing = Some(Placing { id });
     }
 
     /// The phone's message, if it wrote one (`ble.rs`, Send).
@@ -479,30 +425,41 @@ fn publish_home(mut status: Status) {
     crate::ble::publish_ring(status, unread.map(|(n, id, _)| (n, id)));
 }
 
-/// The Inbox as the phone reads it now, into `b`: a guest's message while
-/// it waits for that guest, else the ring's oldest unread item where the
-/// ring keeps the owner's, else the core's inbox's oldest; its length.
-fn inbox_message(
-    slot: usize,
-    guest: bool,
-    waiting: Option<Placing>,
-    oldest: Option<(bark_proto::MsgId, &[u8])>,
-    b: &mut [u8],
-) -> usize {
+/// The Inbox as the paired phone reads it now, into `b`: the ring's oldest
+/// unread item where the ring keeps the owner's, else the core's inbox's
+/// oldest; its length.
+fn inbox_message(oldest: Option<(bark_proto::MsgId, &[u8])>, b: &mut [u8]) -> usize {
     let at: &mut [u8; bark_link::Message::MAX_LEN] = (&mut b[..bark_link::Message::MAX_LEN])
         .try_into()
         .expect("it fits");
     let mut item = [0u8; MAX_PAYLOAD];
-    let shown = match guest {
-        true => oldest.filter(|_| waiting.is_some_and(|p| p.waiting() & 1 << slot != 0)),
-        false if crate::mailbox::keeps() => {
-            crate::mailbox::unread(&mut item).map(|(_, id, len)| (id, &item[..len]))
-        }
+    let shown = match crate::mailbox::keeps() {
+        true => crate::mailbox::unread(&mut item).map(|(_, id, len)| (id, &item[..len])),
         false => oldest,
     };
     shown.map_or(0, |(msg_id, payload)| {
         bark_link::Message { msg_id, payload }.encode(at)
     })
+}
+
+/// What a guest reads from Guest now, into `b`: the oldest item in the
+/// ring after `after` for its `tag` (spec "Phone link", Public); its
+/// length.
+fn guest_item(tag: u8, after: u32, b: &mut [u8]) -> usize {
+    let at: &mut [u8; bark_link::GuestItem::MAX_LEN] = (&mut b[..bark_link::GuestItem::MAX_LEN])
+        .try_into()
+        .expect("it fits");
+    let mut item = [0u8; MAX_PAYLOAD];
+    crate::mailbox::with(|m| m.for_tag(tag, after, &mut item))
+        .flatten()
+        .map_or(0, |(number, msg_id, len)| {
+            bark_link::GuestItem {
+                number,
+                msg_id,
+                payload: &item[..len],
+            }
+            .encode(at)
+        })
 }
 
 /// What the e-paper shows of `core` now (`display.rs`, `bark-screen`).
@@ -657,17 +614,13 @@ pub async fn run<'a>(
         } else {
             crate::ble::publish(status, core.inbox().map(|(id, _)| id));
         }
-        let placing = driver.app().placing;
-        let waiting = placing.filter(|p| oldest.is_some_and(|(head, _)| head == p.id));
-        crate::ble::publish_guests(waiting.map_or(0, |p| p.waiting()));
         let core_inbox = (status.inbox, head.as_ref().map(|(id, ..)| *id));
         driver.app_mut().core_inbox = core_inbox;
         let core = &driver.core().0;
         crate::ble::serve_read(|r, b| match *r {
             crate::ble::Request::Neighbours(from) => neighbours_page(core, now, from, b),
-            crate::ble::Request::Inbox { slot, guest } => {
-                inbox_message(slot, guest, waiting, oldest, b)
-            }
+            crate::ble::Request::Inbox(_) => inbox_message(oldest, b),
+            crate::ble::Request::Guest { tag, after, .. } => guest_item(tag, after, b),
             _ => 0,
         });
         crate::display::publish(screen(core, now, driver.app().battery_mv));

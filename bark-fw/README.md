@@ -893,27 +893,32 @@ Recipient and Public (link version 7) serve guests on a public node
 paired phone writes 0 to Public, private; the bond's record keeps that
 in its byte 14, so a node never paired, and a bond kept before, is
 public, and it keeps the paired phone's recipient tag, which it writes
-to Recipient at every connection. The host takes 2 links at once, each
-served by a task of its own (`slot`), so that its future lies in static
-storage and the stack holds one poll at a time; one slot advertises at a
-time, and on a node that is not public only while no link is up. Node,
-Status, Send, Inbox, Given back and Recipient have no permission in the
-attribute table, as the host cannot tell a public node from another, and
-`allowed` refuses them on a link that is not the bond's while the node
-is not public, as the host refused them before. The node's loop places
-each message for its application by its tag (`src/node.rs`, `Placing`):
-the ring keeps the owner's, as a home's, the guests whose tag it carries
-read it from the core's inbox, and it is confirmed to the core once both
-are done; one for nobody is confirmed at once, dropped. Whose turn it
-is at the one message the node holds, and so whose Ready is set, is
-`Turn` in `src/ble.rs`. The
+to Recipient at every connection. The host takes 2 links, the owner's
+and one guest's at a time, each served by a task of its own (`slot`),
+so that its future lies in static storage and the stack holds one poll
+at a time; one slot advertises at a time, and on a node that is not
+public only while no link is up. A guest's link ends 30 s after it
+began, and a second guest's as soon as it writes Recipient while one is
+up. Node, Status, Send, Inbox, Given back, Recipient and Guest have no
+permission in the attribute table, as the host cannot tell a public node
+from another, and `allowed` refuses them on a link that is not the
+bond's while the node is not public, as the host refused them before.
+The node's loop puts every message for its application on a public
+node into the ring (`src/node.rs`, `Placing`), a guest's written as
+sent, and confirms it to the core once it is written; the mailbox tells
+the owner's from the guests' by tag (`bark_app_layer::mailbox::Owner`),
+and a guest's read of Inbox asks the node for the oldest item after the
+number it wrote to Guest (`for_tag`). Whose turn it is at the one
+message the node holds, and so whose Ready is set, is `Turn` in
+`src/ble.rs`. The
 console's `status` ends in `public=true` or `public=false`, read from
 the bond in the stored-state page.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
 5a slot 1 owner false` as a phone writes its tag, `ble: public false`,
-`public: id=... tag=Some(5a) owner=false guests=0b010` for each message
-placed on a public node, and `ble: confirm id=... ok=true (guest 1)`.
+`public: id=... tag=Some(5a) kept` for each message kept on a public
+node, `ble: a second guest in slot 1, closed`, and `ble: the guest in
+slot 1 closed after its time`.
 
 A link beyond the first costs 5.6 KB of static RAM, taken from the
 stack; a third, as first built, left the stack under its floor once the
@@ -1028,6 +1033,7 @@ confirmation takes, not 8.
 | merged with 3 links (`4fdcf58`) | 246 136 B | 14 984 B |
 | 2 links | 240 520 B | 20 576 B |
 | 2 links, no copies (above) | 236 280 B | 24 832 B |
+| one guest's link, its mail in the ring | 236 472 B | 24 640 B |
 | console | 16 264 B | 244 840 B |
 
 ## Radio power

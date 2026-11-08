@@ -81,9 +81,9 @@ pub mod uuid {
     /// Public: read and write whether the node serves phones without
     /// pairing ([`crate::Public`]); from link version 7.
     pub const PUBLIC: u128 = 0x28bc000e_a1b8_4893_9537_2ee3559d7644;
-    /// Guest: write the number of the last item taken, read the next item
-    /// for the phone's recipient tag ([`crate::GuestItem`]); from link
-    /// version 8.
+    /// Guest: write the number of the last item a guest took, after which
+    /// its next read of Inbox looks ([`crate::After`],
+    /// [`crate::GuestItem`]); from link version 8.
     pub const GUEST: u128 = 0x28bc000f_a1b8_4893_9537_2ee3559d7644;
     /// What a public node advertises in place of [`SERVICE`]: the class
     /// of nodes that serve any phone. No attribute has it.
@@ -684,8 +684,8 @@ impl Public {
 /// (`bark_app_layer::seal::NUMBER_LEN`).
 const NUMBER: usize = 3;
 
-/// Guest, write: the number of the last item the guest took; the next
-/// read gives the oldest item after it for the guest's recipient tag
+/// Guest, write: the number of the last item the guest took; its next
+/// read of Inbox gives the oldest item after it for its recipient tag
 /// (spec "Phone link", Public). 0 at each connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct After(pub u32);
@@ -709,8 +709,9 @@ impl After {
     }
 }
 
-/// Guest, read: the item's number in the ring, the message ID it arrived
-/// with, and its payload; empty when none waits after the number written.
+/// Inbox, read on a guest's link: the item's number in the ring, the
+/// message ID it arrived with, and its payload; empty when none waits
+/// after the number written to Guest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GuestItem<'a> {
     /// The item's number, which the guest writes back as [`After`] to
