@@ -14,16 +14,16 @@
 //! its stream on its home channel.
 
 use super::{Job, Node, Stage};
-use crate::event::{Action, Frame};
+use crate::event::{Action, Frame, SlotPiece, Trace};
 use crate::geo::Point;
-use crate::node::{heartbeat_interval, mac};
+use crate::node::mac;
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::neighbours::Neighbour;
 use crate::time::{Duration, Instant};
 use crate::update::{
-    sweep_pieces, Image, ImageTag, Piece, Section, MAX_BLOCKS, PACE, PASS, PIECES, SECTION_EVERY,
-    SERVED_CHANNELS, SLOT_LISTEN,
+    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, MAX_BLOCKS, PACE, PASS, PIECES,
+    SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -124,6 +124,9 @@ pub(super) struct Spread {
     /// Until when the frame after its slot heartbeat on its home channel
     /// may start, where its sleepy nodes listen.
     slot_open: Option<Instant>,
+    /// When it last heard a heartbeat on its home channel: a piece that
+    /// ends within [`SLOT_LISTEN`] of it is the sender's slot piece.
+    beat_heard: Instant,
     /// When it last heard other nodes' pieces on its home channel, the
     /// last few: they share the channel's pace with it.
     others: [Instant; OTHERS],
@@ -150,6 +153,7 @@ impl Spread {
             section_at: Instant::ZERO,
             told: None,
             slot_open: None,
+            beat_heard: Instant::ZERO,
             others: [Instant::ZERO; OTHERS],
             current: None,
             busy_checks: 0,
@@ -159,13 +163,13 @@ impl Spread {
 }
 
 /// What a channel needs of what this node holds: the lowest block a
-/// neighbour heard there lacks, how many lack something, and whether all
-/// of them are sleepy.
+/// neighbour heard there lacks, how many lack something, and how many of
+/// them are sleepy.
 #[derive(Clone, Copy, Debug, Default)]
 struct Need {
     from: u8,
     count: u8,
-    sleepy: bool,
+    sleepy: u8,
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
@@ -346,7 +350,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// stream at once, while they listen.
     pub(super) fn slot_heartbeat(&mut self, now: Instant) {
         let home = self.needs(now)[usize::from(self.home.index())];
-        if home.count > 0 {
+        if home.sleepy > 0 {
             self.spread.slot_open = Some(now + SLOT_START);
             // A wait for a pace that had nothing to send ends: this frame
             // is its own chance, and the bucket is asked again.
@@ -371,6 +375,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// A heartbeat was heard: a piece that ends within [`SLOT_LISTEN`]
+    /// is its sender's piece after the slot.
+    pub(super) fn beat_heard(&mut self, now: Instant) {
+        self.spread.beat_heard = now;
+    }
+
     /// A piece heard on the home channel.
     pub(super) fn update_heard(
         &mut self,
@@ -384,10 +394,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             index,
             bytes,
         } = u;
-        // Another node sends here: it shares the channel's pace.
-        let o = &mut self.spread.others;
-        o.rotate_right(1);
-        o[0] = now;
+        // Another node sends here: it shares the channel's pace, unless
+        // this is the piece after a slot heartbeat just heard, which keeps
+        // no pace.
+        if now.since(self.spread.beat_heard) > SLOT_LISTEN {
+            let o = &mut self.spread.others;
+            o.rotate_right(1);
+            o[0] = now;
+        }
         if usize::from(index) >= PIECES {
             return;
         }
@@ -479,12 +493,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 *c = Need {
                     from,
                     count: 0,
-                    sleepy: true,
+                    sleepy: 0,
                 };
             }
             c.from = c.from.min(from);
             c.count = c.count.saturating_add(1);
-            c.sleepy &= n.sleepy;
+            c.sleepy = c.sleepy.saturating_add(u8::from(n.sleepy));
         }
         need
     }
@@ -587,37 +601,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         at
     }
 
-    /// The next slot heartbeat of this relay on its home channel.
-    fn next_home_slot(&self) -> Instant {
-        let b = &self.radio.beacon;
-        let steps = (u64::from(self.home.index()) + u64::from(CHANNELS)
-            - u64::from(b.rotation.index()))
-            % u64::from(CHANNELS);
-        b.next_at + heartbeat_interval(self.id, &self.config).mul(steps)
-    }
-
-    /// The channel of the next piece and when the pace lets it go. A
-    /// stream only sleepy nodes need goes right after the slot heartbeat;
-    /// others on the home channel leave the pace room for that slot when
-    /// sleepy nodes there need it and it comes within a pace.
+    /// The channel of the next piece and when the pace lets it go. The
+    /// piece right after the slot heartbeat keeps no pace; a stream only
+    /// sleepy nodes need goes only then.
     fn next_out(&self, now: Instant) -> Option<(Channel, Instant)> {
         let s = &self.spread;
         let home = self.home;
-        let slot = s.slot_open;
-        let home_slot = self.next_home_slot();
         self.stream_channels(now)
             .into_iter()
             .flatten()
-            .filter_map(|(c, need)| {
-                let at = now;
-                let at = match slot {
-                    Some(_) if c == home && at <= now => now,
-                    Some(_) if c == home => return None,
-                    None if c == home && need.sleepy => return None,
-                    None if c == home && home_slot < at + PACE => return None,
-                    _ => at,
-                };
-                Some((c, self.pace_allows(c, at)))
+            .filter_map(|(c, need)| match s.slot_open {
+                // The piece after the slot heartbeat keeps no pace.
+                Some(_) if c == home => Some((c, now)),
+                None if c == home && need.sleepy == need.count => None,
+                _ => Some((c, self.pace_allows(c, now))),
             })
             .min_by_key(|x| x.1)
     }
@@ -682,13 +679,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn start_update(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if self.spread.slot_open.is_some_and(|t| now > t) {
             // The frame after the slot heartbeat could not start at once.
-            self.spread.slot_open = None;
+            self.slot_end(SlotPiece::Late, emit);
         }
         if !self.spreads() || now < self.spread.ready_at {
+            if now < self.spread.ready_at {
+                self.slot_end(SlotPiece::Late, emit);
+            }
             return false;
         }
         if self.spread.current.is_none() {
             let next = self.next_out(now);
+            if self.spread.slot_open.is_some() {
+                match next {
+                    Some((c, t)) if t <= now && c != self.home => {
+                        self.slot_end(SlotPiece::OtherChannel, emit)
+                    }
+                    Some((_, t)) if t <= now => {}
+                    _ => {
+                        let why = self.slot_held(now);
+                        self.slot_end(why, emit);
+                    }
+                }
+            }
             let Some((c, _)) = next.filter(|o| o.1 <= now) else {
                 self.spread.slot_open = None;
                 // Nothing goes now: not before the next that may, or a
@@ -708,6 +720,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let airtime = mac::airtime(&f);
         if !self.affordable(airtime, now) {
+            self.slot_end(SlotPiece::Bucket, emit);
             self.spread.ready_at = self
                 .radio
                 .budget
@@ -719,6 +732,49 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         true
     }
 
+    /// The piece due after the slot heartbeat went or was given up: say
+    /// what became of it.
+    fn slot_end(&mut self, why: SlotPiece, emit: &mut dyn FnMut(Action)) {
+        if self.spread.slot_open.take().is_some() {
+            emit(Action::Trace(Trace::SlotPiece(why)));
+        }
+    }
+
+    /// A piece went on `c` at `now` in its pace: in place of this
+    /// channel's entry of the last two, or of the oldest.
+    fn paced(s: &mut Spread, c: Channel, now: Instant) {
+        let slot = s
+            .sent
+            .iter()
+            .position(|e| e.is_none_or(|(d, _)| d == c))
+            .unwrap_or_else(|| {
+                let oldest = s.sent.iter().flatten().map(|e| e.1).min();
+                s.sent
+                    .iter()
+                    .position(|e| e.map(|e| e.1) == oldest)
+                    .unwrap_or(0)
+            });
+        s.sent[slot] = Some((c, now));
+    }
+
+    /// What of the pace holds the piece on the home channel at `now`.
+    fn slot_held(&self, now: Instant) -> SlotPiece {
+        let s = &self.spread;
+        let last = s.sent.iter().flatten().find(|(d, _)| *d == self.home);
+        match last {
+            Some((_, x)) if *x + PACE > now => SlotPiece::OwnPace,
+            Some((_, x)) => {
+                let k = s.others.iter().filter(|&&o| o > *x).count() as u64;
+                if *x + PACE.mul(k + 1) > now {
+                    SlotPiece::SharedPace
+                } else {
+                    SlotPiece::Channels
+                }
+            }
+            None => SlotPiece::Channels,
+        }
+    }
+
     /// The check of the piece's channel completed.
     pub(super) fn update_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let Some(c) = self.spread.current else {
@@ -727,10 +783,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if busy {
             self.spread.busy_checks += 1;
             // After the slot heartbeat the sleepy nodes listen only now.
-            let slot = self.spread.slot_open.take().is_some();
-            if slot || self.spread.busy_checks >= self.config.lbt_attempts {
+            let slot = self.spread.slot_open.is_some();
+            self.slot_end(SlotPiece::ChannelBusy, emit);
+            if slot {
+                self.spread.current = None;
+                self.spread.busy_checks = 0;
+            } else if self.spread.busy_checks >= self.config.lbt_attempts {
                 // As a heartbeat is skipped: the piece waits its pace.
-                self.update_sent(c, None, now);
+                self.update_sent(c, None, false, now);
             } else {
                 self.spread.ready_at = now
                     + self
@@ -755,31 +815,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let deficit = block.map_or(0, |b| self.deficit(c, b, now));
         self.radio.budget.record(airtime, now);
-        self.update_sent(c, block.map(|b| (b, deficit)), now);
+        let slot = self.spread.slot_open.is_some();
+        self.slot_end(SlotPiece::Sent, emit);
+        self.update_sent(c, block.map(|b| (b, deficit)), slot, now);
         self.radio.excursion.serve(Job::Update, f, emit);
     }
 
-    /// The piece went, or gave the channel up: the pace starts again, and
-    /// the stream moves on.
-    fn update_sent(&mut self, c: Channel, block: Option<(u8, u8)>, now: Instant) {
+    /// The piece went, or gave the channel up: the pace starts again,
+    /// unless it was the piece after the slot heartbeat, which keeps none,
+    /// and the stream moves on.
+    fn update_sent(&mut self, c: Channel, block: Option<(u8, u8)>, after_slot: bool, now: Instant) {
+        // Two senders that start a pace together part by more than a frame,
+        // and then hear each other, a quarter of the time each pace.
+        let jitter = self.rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
         let s = &mut self.spread;
         s.current = None;
         s.busy_checks = 0;
-        s.passed = 0;
         s.slot_open = None;
-        // In place of this channel's entry, or of the oldest.
-        let slot = s
-            .sent
-            .iter()
-            .position(|e| e.is_none_or(|(d, _)| d == c))
-            .unwrap_or_else(|| {
-                let oldest = s.sent.iter().flatten().map(|e| e.1).min();
-                s.sent
-                    .iter()
-                    .position(|e| e.map(|e| e.1) == oldest)
-                    .unwrap_or(0)
-            });
-        s.sent[slot] = Some((c, now));
+        if !after_slot {
+            s.passed = 0;
+            Self::paced(s, c, now + jitter);
+        }
         if let Some((b, deficit)) = block {
             let at = &mut s.index[usize::from(b)];
             *at = ((usize::from(*at) + 1) % PIECES) as u8;

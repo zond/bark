@@ -575,6 +575,109 @@ The sleepy nodes gain about a block a day. Fewer sections and a stricter
 foreign rule slowed them by a block over the run: their anchors' slot
 pieces are the same pace's.
 
+17. **The slot piece out of the shared pace.** The simulator traces what
+    becomes of each piece due after an anchor's slot heartbeat
+    (`Trace::SlotPiece`). Over an update's first 24 hours, of 329 860
+    due, 60.0 % went, the shared pace held 39.2 %, 0.7 % went to another
+    channel, listen-before-talk held 0.1 %, and the bucket, the
+    anchor's own pace and lateness under 0.1 % together. The slot
+    piece now keeps no pace: one frame a rotation of an anchor, 0.1 %
+    of its channel, neither waiting for the shared pace nor counted
+    toward it; a node takes a piece that ends within the slot listen of
+    a heartbeat it heard for that sender's slot piece. It opens only
+    where a sleepy node lacks a block, no longer for relays at home.
+    The tests found two holders in step: they learnt of a gatherer at
+    the same heartbeat, sent in the same instant every pace and never
+    heard each other, so each pace now ends a random time within two
+    frames after its piece.
+
+    Over 96 hours on `715fb4f`, 99.9 % of the 998 850 pieces due after
+    slot heartbeats went. The sleepy nodes hardly moved for it: 64 of
+    945 held the image at 90 hours against 55, and those gathering
+    lacked block 2.7 on average against 2.9; 50 % was not reached. Each
+    heard about 650 pieces it lacked in the 96 hours, one in four of
+    its anchor's rotations, spread over the blocks by the sweep, about
+    23 of each block's 64. Where the other three go is not measured
+    yet. The relays held the image 50 / 90 / 100 % after 13.8 / 14.5 /
+    21.7 hours; the channels were busy 1.68 % against 1.71 % before and
+    1.28 % without the update; texts delivered 99.8 %, latency p50 /
+    p90 1.0 / 16.2 s, as without.
+
+18. **Where the slot pieces go.** The count of item 17 took the pieces
+    a sleepy node lacked by its anchor's table, which holds the node's
+    section as last told. By the simulator's truth instead, for each
+    slot piece and each sleepy node of that anchor (`bark-sim`,
+    `slot_fate`), over the first 36 hours on `715fb4f`: 67.1 % were
+    heard by a node that lacked the block, 0.6 % lost while it
+    listened, 19.0 % carried a block the node held already, 7.9 % found
+    it out of reach, 3.3 % found it not listening because its anchor's
+    section as it last heard it showed nothing more, 0.9 % went after
+    the node had changed anchor and 0.7 % after it missed the slot
+    heartbeat. No three in four went missing; the earlier count was
+    the table's.
+
+    A sleepy node keeps every block and takes one piece a rotation, so
+    it finishes blocks out of order, while its section counts only the
+    blocks held from the first: its anchor sends blocks it holds
+    already. The slot piece follows the channel's sweep, driven by the
+    relays there too. A sweep of its own by the sleepy nodes' sections
+    alone was tried (`8edc0fb`) and dropped: over 96 hours it gained
+    a block: 73 of 945 sleepy nodes held the image at 90 hours against
+    64, and those gathering lacked block 3.7 on average against 2.7;
+    50 % was not reached (86 of 946 at 96 hours). The pieces of blocks
+    already held grew to 27.8 %, as the nodes held more blocks out of
+    order. But the relays behind on an anchor's channel lost the slot
+    pieces that had fed them, and the last relay held the image after
+    31.5 hours against 21.7 (19); the user accepts slow sleepy nodes,
+    so the slot piece follows the channel's sweep again. Rerun for 36
+    hours with it so: relays held the image 50 / 90 / 100 % after 13.8
+    / 14.5 / 21.7 hours, 5 of 944 sleepy nodes at 36 hours, the
+    channels busy 2.12 % (1.28 % without the update), texts delivered
+    99.58 / 99.84 / 99.67 % by 12 hours (99.64 / 99.83 / 99.75 %
+    without). Each sleepy
+    node stored about 890 pieces in the 96 hours,
+    about half the image's; and its anchor sent a slot piece in only
+    about 45 % of its rotations, which is not explained yet. The relays
+    held the image 50 / 90 / 100 % after 13.5 / 14.3 / 31.5 hours; the
+    channels were busy 1.68 %; texts delivered 99.8 %, latency p50 /
+    p90 1.0 / 16.3 s.
+
+19. **Why anchors open the slot in under half their rotations.** At
+    each home heartbeat of an anchor of sleepy nodes, by the
+    simulator's truth against the anchor's table (`slot_opens`), over
+    36 hours on `8edc0fb`: in the first 15 hours, while the relays
+    gather, the slot opened after 42.9 %; in 48.6 % one of the anchor's
+    sleepy nodes lacked a block the anchor held but its table's sleepy
+    sections showed nothing lacking; in 8.3 % none of its sleepy nodes
+    lacked a block it held; in 0.2 % it held no block. After 15 hours:
+    45.3 % opened, 53.5 % the table showed nothing lacking, 1.2 % none
+    lacked. Of the slots opened, 99.9 % sent their piece; the bucket
+    and listen-before-talk held 0.1 %. So the anchor's table is the
+    cause: a sleepy node's section rides one beat after a change and
+    one an hour, and an entry that expired and came back, or was
+    first heard from a beat without one, has no section until the
+    next. Which of these weighs most is not separated.
+
+    The relays' last holder came at 31.5 hours on `8edc0fb` against
+    21.7 on `715fb4f`: one relay lacked the image from 21.7 to 31.4
+    hours, and 6 of the last 8 relays to hold it finished 2 to 10 hours
+    later than in the run before. The only change between the two is
+    the slot piece's sweep: it used to follow the channel's sweep and so
+    also served the relays behind on the anchor's channel, and now
+    serves the sleepy nodes alone. The 50 % and 90 % times did not
+    change (13.5 / 14.3 hours against 13.8 / 14.5).
+
+**Known limits, accepted by the user on 2026-11-08.** Sleepy nodes
+update slowly: one piece a rotation of their anchor is a floor of 2 133
+rotations for today's image at the margin, 77 hours, 3.2 days (spec
+"Updates over the mesh", What it costs a sleepy node); about a fifth to
+a quarter of the slot pieces carry blocks the node already holds, since
+it finishes blocks out of order and its section counts them only from
+the first; and anchors open the slot in under half their rotations,
+since their tables' sleepy sections are stale or missing (19). The
+section carries no bitmap of the blocks held, and a slot carries one
+piece.
+
 
 ## What is left
 

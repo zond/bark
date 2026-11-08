@@ -140,7 +140,7 @@ pub mod external {
     /// Blocks of an image the mesh carries, the table's among them: a
     /// lane of four sectors, 64 pieces of 256 bytes, for each, since a
     /// node keeps the pieces of every block it lacks (`crate::pieces`,
-    /// roadmap D150). 48 lanes and the head are what the chip has room
+    /// roadmap D151). 48 lanes and the head are what the chip has room
     /// for beside the staged image and the mailbox, with about 108 KiB to
     /// spare: an image of 47 blocks, 743 KB packed, today's 28.
     pub const PIECE_LANES: u32 = 48;

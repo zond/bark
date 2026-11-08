@@ -1,5 +1,5 @@
 //! The pieces of an image a node gathers over the mesh (roadmap D146,
-//! D150;
+//! D151;
 //! `docs/mesh-update-2026-10-25.md`, "The code"), kept on the external flash until their block decodes,
 //! and the decoded image, written into the staged slot as the phone's
 //! staging writes it (`crate::boot::Stager`).
@@ -25,7 +25,7 @@
 //! | 1 to 192 | [`LANES`], 48, lanes of four sectors, 64 slots: block `b`'s pieces in lane `b` |
 //!
 //! A node takes the pieces of every block it lacks, whichever comes, since
-//! a holder streams all the blocks it holds in turn (roadmap D150), so an
+//! a holder streams all the blocks it holds in turn (roadmap D151), so an
 //! image has at most [`MAX_BLOCKS`], 48, the table's among them; a lane is
 //! freed by erasing its own four sectors. A slot is one page program of 256
 //! bytes: the piece, its block, its index, and a CRC-32 (ISO-HDLC, as in
@@ -137,7 +137,7 @@ pub const SLOT: u32 = PROGRAM_PAGE;
 
 /// Blocks whose pieces a node keeps at once: every block of the image,
 /// one lane each, since a holder streams every block it holds and a node
-/// keeps every piece of every block it lacks (roadmap D146, D150).
+/// keeps every piece of every block it lacks (roadmap D146, D151).
 pub const LANES: usize = crate::layout::external::PIECE_LANES as usize;
 
 const SLOTS_PER_SECTOR: usize = (SECTOR / SLOT) as usize;

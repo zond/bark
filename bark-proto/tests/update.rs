@@ -375,6 +375,17 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         done,
         "the sleepy node does not hold the image within twelve hours"
     );
+    // One piece a rotation of the anchor, its slot piece keeping no pace:
+    // the image's 72 pieces within 72 of the longest rotations, 195 s
+    // (spec "Heartbeat").
+    let took = h.nodes[1]
+        .updates
+        .as_ref()
+        .unwrap()
+        .holds_at
+        .unwrap()
+        .since(start);
+    assert!(took.as_micros() <= 72 * 195_000_000, "{took:?}");
     // Its beats carried its section, and every piece it took came right
     // after one of its anchor's heartbeats on its channel.
     assert!(h.nodes[1].sent.iter().any(|(_, f)| {
