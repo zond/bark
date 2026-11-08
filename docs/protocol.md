@@ -3812,10 +3812,8 @@ the pieces it hears in its windows ([delivery](#delivery)) and after
 its anchor's slot heartbeats. The anchor sends one piece right after
 each of its slot heartbeats on its home channel, where its sleepy nodes
 listen for that heartbeat ([relay choice](#relay-choice)), while a
-sleepy node there lacks a block it holds: the next piece of a sweep of
-its own, as rule 4 sweeps but by the sections of the sleepy nodes there
-alone, since the channel's sweep follows its relays. That piece keeps
-no pace: it is fixed by the rotation,
+sleepy node there lacks a block it holds: the next piece of its stream
+on that channel. That piece keeps no pace: it is fixed by the rotation,
 one frame of 138.6 ms in a rotation of 130 s
 ([heartbeat](#heartbeat)), 0.1 % of the channel for each anchor, so it
 neither waits for the home channel's shared pace nor counts toward it.

@@ -619,14 +619,23 @@ pieces are the same pace's.
     A sleepy node keeps every block and takes one piece a rotation, so
     it finishes blocks out of order, while its section counts only the
     blocks held from the first: its anchor sends blocks it holds
-    already. The slot piece then followed the channel's sweep, driven
-    by the relays there too; it now has a sweep of its own by the
-    sleepy nodes' sections alone (`8edc0fb`). Over 96 hours that gained
+    already. The slot piece follows the channel's sweep, driven by the
+    relays there too. A sweep of its own by the sleepy nodes' sections
+    alone was tried (`8edc0fb`) and dropped: over 96 hours it gained
     a block: 73 of 945 sleepy nodes held the image at 90 hours against
     64, and those gathering lacked block 3.7 on average against 2.7;
     50 % was not reached (86 of 946 at 96 hours). The pieces of blocks
     already held grew to 27.8 %, as the nodes held more blocks out of
-    order. Each sleepy node stored about 890 pieces in the 96 hours,
+    order. But the relays behind on an anchor's channel lost the slot
+    pieces that had fed them, and the last relay held the image after
+    31.5 hours against 21.7 (19); the user accepts slow sleepy nodes,
+    so the slot piece follows the channel's sweep again. Rerun for 36
+    hours with it so: relays held the image 50 / 90 / 100 % after 13.8
+    / 14.5 / 21.7 hours, 5 of 944 sleepy nodes at 36 hours, the
+    channels busy 2.12 % (1.28 % without the update), texts delivered
+    99.58 / 99.84 / 99.67 % by 12 hours (99.64 / 99.83 / 99.75 %
+    without). Each sleepy
+    node stored about 890 pieces in the 96 hours,
     about half the image's; and its anchor sent a slot piece in only
     about 45 % of its rotations, which is not explained yet. The relays
     held the image 50 / 90 / 100 % after 13.5 / 14.3 / 31.5 hours; the
