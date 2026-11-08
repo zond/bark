@@ -35,7 +35,6 @@ mod protect;
 mod radio;
 #[cfg(not(feature = "console"))]
 mod stack;
-#[cfg(not(feature = "console"))]
 mod store;
 mod touch;
 mod update;
@@ -438,12 +437,15 @@ async fn main(spawner: Spawner) {
             embassy_nrf::peripherals::NVMC::steal()
         }));
         let mpsl_flash = store::shared(mpsl_flash);
-        spawner.spawn(phone(ble_parts, p.RNG, mpsl, mpsl_flash, shared).expect("spawned once"));
+        spawner.spawn(
+            phone(spawner, ble_parts, p.RNG, mpsl, mpsl_flash, shared).expect("spawned once"),
+        );
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The bond with the paired phone, to the phone link, and its line
         // on the first picture.
         display::phone_at_boot(match kept.bond {
+            Some(b) if b.public => bark_screen::Phone::Public,
             Some(_) => bark_screen::Phone::Paired,
             None => bark_screen::Phone::None,
         });
@@ -585,6 +587,7 @@ async fn mpsl_task(mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>) 
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn phone(
+    spawner: Spawner,
     parts: nrf_sdc::Peripherals<'static>,
     rng: embassy_nrf::Peri<'static, peripherals::RNG>,
     mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
@@ -593,7 +596,10 @@ async fn phone(
 ) {
     ble::START.wait().await;
     match ble::controller(parts, rng, mpsl) {
-        Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION, internal, flash).await,
+        Ok(c) => {
+            let image = update::BARK_IMAGE_VERSION;
+            ble::run(spawner, c, node_id(), image, internal, flash).await
+        }
         // An nRF errno, negated (`nrf_mpsl::Error`).
         Err(e) => log::error!("ble: controller {}", i32::from(e)),
     }

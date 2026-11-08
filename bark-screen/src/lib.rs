@@ -276,6 +276,8 @@ pub enum Phone {
     None,
     /// One phone is paired.
     Paired,
+    /// The node is public: it serves phones that have not paired too.
+    Public,
     /// A phone is pairing: the six-digit code to type into it.
     Code(u32),
 }
@@ -352,6 +354,7 @@ pub fn lines(
         match state.phone {
             Phone::None => row("PHONE", format_args!("NONE")),
             Phone::Paired => row("PHONE", format_args!("PAIRED")),
+            Phone::Public => row("PHONE", format_args!("PUBLIC")),
             Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
         },
         0,

@@ -16,8 +16,10 @@
 //! once its slot is written, so that one taken is not lost to a reboot
 //! meanwhile (`node.rs`).
 //!
-//! While the node is nobody's home nothing changes: the core's inbox is
-//! the phone's, as without the mailbox.
+//! While the node is nobody's home and not public nothing changes: the
+//! core's inbox is the phone's, as without the mailbox. A public node's
+//! ring keeps its owner's messages as a home's does (spec "Phone link",
+//! Public).
 
 use core::cell::RefCell;
 
@@ -124,9 +126,9 @@ pub fn with<R>(f: impl FnOnce(&mut Home) -> R) -> Option<R> {
     Some(r)
 }
 
-/// Whether the node is someone's home.
-pub fn is_home() -> bool {
-    with(|m| m.is_home()).unwrap_or(false)
+/// Whether the ring keeps what arrives: on a home or a public node.
+pub fn keeps() -> bool {
+    with(|m| m.keeps()).unwrap_or(false)
 }
 
 /// Whether every write asked for is done.
