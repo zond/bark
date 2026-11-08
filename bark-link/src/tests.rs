@@ -160,7 +160,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [7, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [8, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -411,4 +411,22 @@ fn other_records_are_no_bond() {
     // The UTC offset's record (`bark-fw/src/store.rs`).
     r[..8].copy_from_slice(&[0x80, 0, 60, 0, 0x7f, 0xff, 0xc3, 0xff]);
     assert_eq!(bond::Bond::from_record(&r), None);
+}
+
+#[test]
+fn a_guest_item_round_trips_and_after_is_three_bytes() {
+    assert_eq!(After(0x01_0203).encode(), [1, 2, 3]);
+    assert_eq!(After::decode(&[1, 2, 3]), Ok(After(0x01_0203)));
+    assert_eq!(After::decode(&[1, 2]), Err(Malformed::Length));
+    let item = GuestItem {
+        number: 7,
+        msg_id: MsgId(0x0102_0304),
+        payload: b"hi",
+    };
+    let mut b = [0u8; GuestItem::MAX_LEN];
+    let n = item.encode(&mut b);
+    assert_eq!(&b[..n], &[0, 0, 7, 1, 2, 3, 4, b'h', b'i']);
+    assert_eq!(GuestItem::decode(&b[..n]), Ok(Some(item)));
+    assert_eq!(GuestItem::decode(&[]), Ok(None));
+    assert_eq!(GuestItem::decode(&b[..6]), Err(Malformed::Length));
 }

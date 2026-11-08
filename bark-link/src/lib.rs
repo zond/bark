@@ -21,8 +21,9 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// change to the node's attribute table comes with a new version, as the
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
-/// and the database hash, 6 Update and Image, 7 Recipient and Public.
-pub const VERSION: u8 = 7;
+/// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
+/// Guest.
+pub const VERSION: u8 = 8;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -80,6 +81,10 @@ pub mod uuid {
     /// Public: read and write whether the node serves phones without
     /// pairing ([`crate::Public`]); from link version 7.
     pub const PUBLIC: u128 = 0x28bc000e_a1b8_4893_9537_2ee3559d7644;
+    /// Guest: write the number of the last item taken, read the next item
+    /// for the phone's recipient tag ([`crate::GuestItem`]); from link
+    /// version 8.
+    pub const GUEST: u128 = 0x28bc000f_a1b8_4893_9537_2ee3559d7644;
     /// What a public node advertises in place of [`SERVICE`]: the class
     /// of nodes that serve any phone. No attribute has it.
     pub const PUBLIC_NODE: u128 = 0x28bc1001_a1b8_4893_9537_2ee3559d7644;
@@ -675,10 +680,81 @@ impl Public {
     }
 }
 
+/// Bytes of an item's number in the ring, which counts to 2^24 − 1
+/// (`bark_app_layer::seal::NUMBER_LEN`).
+const NUMBER: usize = 3;
+
+/// Guest, write: the number of the last item the guest took; the next
+/// read gives the oldest item after it for the guest's recipient tag
+/// (spec "Phone link", Public). 0 at each connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct After(pub u32);
+
+impl After {
+    /// Bytes in the value.
+    pub const LEN: usize = NUMBER;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        let b = self.0.to_be_bytes();
+        [b[1], b[2], b[3]]
+    }
+
+    /// Take a written value whole.
+    pub fn decode(b: &[u8]) -> Result<After, Malformed> {
+        match b {
+            [x, y, z] => Ok(After(u32::from_be_bytes([0, *x, *y, *z]))),
+            _ => Err(Malformed::Length),
+        }
+    }
+}
+
+/// Guest, read: the item's number in the ring, the message ID it arrived
+/// with, and its payload; empty when none waits after the number written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GuestItem<'a> {
+    /// The item's number, which the guest writes back as [`After`] to
+    /// read on.
+    pub number: u32,
+    /// Its message ID.
+    pub msg_id: MsgId,
+    /// The payload.
+    pub payload: &'a [u8],
+}
+
+impl<'a> GuestItem<'a> {
+    /// Bytes before the payload.
+    pub const HEADER: usize = NUMBER + MSG_ID;
+    /// Bytes in the longest value.
+    pub const MAX_LEN: usize = Self::HEADER + MAX_PAYLOAD;
+
+    /// The value, into `b`; its length.
+    pub fn encode(&self, b: &mut [u8; GuestItem::MAX_LEN]) -> usize {
+        b[..NUMBER].copy_from_slice(&After(self.number).encode());
+        b[NUMBER..Self::HEADER].copy_from_slice(&self.msg_id.0.to_be_bytes());
+        b[Self::HEADER..Self::HEADER + self.payload.len()].copy_from_slice(self.payload);
+        Self::HEADER + self.payload.len()
+    }
+
+    /// Read a value, `None` when empty.
+    pub fn decode(b: &'a [u8]) -> Result<Option<GuestItem<'a>>, Malformed> {
+        match b.len() {
+            0 => Ok(None),
+            n if !(Self::HEADER..=Self::MAX_LEN).contains(&n) => Err(Malformed::Length),
+            _ => Ok(Some(GuestItem {
+                number: After::decode(&b[..NUMBER])?.0,
+                msg_id: msg_id(&b[NUMBER..]),
+                payload: &b[Self::HEADER..],
+            })),
+        }
+    }
+}
+
 // Every value the node or the app writes fits one ATT PDU at the MTU the
 // node offers; the status fits one at the default MTU.
 const _: () = assert!(Send::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(Message::MAX_LEN <= value_room(ATT_MTU));
+const _: () = assert!(GuestItem::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);
