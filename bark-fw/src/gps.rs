@@ -31,6 +31,14 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 
+/// Raw GSA and GSV sentences kept for the bench's line on a fix without
+/// C/N0: none in the node image, whose stack wants the 736 bytes.
+const SENTENCES_KEPT: usize = if cfg!(feature = "console") {
+    bark_driver::gnss::RAW
+} else {
+    0
+};
+
 /// The receiver's rate (module documentation).
 const BAUD: uarte::Baudrate = uarte::Baudrate::Baud9600;
 
@@ -115,7 +123,7 @@ pub async fn run(mut p: Parts) -> ! {
     let mut config = uarte::Config::default();
     config.baudrate = BAUD;
     let mut want = Gps::Rest;
-    let mut nmea = Nmea::default();
+    let mut nmea = Nmea::<SENTENCES_KEPT>::default();
     let mut buf = [0u8; READ];
     loop {
         while !runs(want) {

@@ -47,8 +47,9 @@ const ADDRESSES: usize = 8;
 
 /// GSA and GSV sentences kept as they came, for the bench: one per
 /// talker and kind, and of a combined talker's GSA one per system, so a
-/// receiver of GPS, GLONASS and BeiDou fills six.
-const RAW: usize = 8;
+/// receiver of GPS, GLONASS and BeiDou fills six. A parser may keep none
+/// ([`Nmea`]'s `KEPT`), 736 bytes less.
+pub const RAW: usize = 8;
 
 /// The C/N0 band of a real sky, dB-Hz: open item O18 of the spec, a
 /// bench number. Until it is measured the band is the receiver's whole
@@ -133,8 +134,9 @@ pub struct Fix {
     pub cn0: Cn0,
 }
 
-/// The parser's state between bytes.
-pub struct Nmea {
+/// The parser's state between bytes, keeping `KEPT` raw sentences for
+/// the bench.
+pub struct Nmea<const KEPT: usize = RAW> {
     line: [u8; LINE],
     len: usize,
     /// The bytes since `$` overran [`LINE`]: the line is dropped.
@@ -151,14 +153,14 @@ pub struct Nmea {
     /// The last GSA and GSV sentences, as they came, for the bench: the
     /// sentence's address and, for a GSA, its system field's first byte;
     /// the line; its length.
-    raw: [([u8; 6], [u8; LINE], usize); RAW],
+    raw: [([u8; 6], [u8; LINE], usize); KEPT],
     /// The addresses of the sentences taken, in the order first seen.
     addresses: [[u8; 5]; ADDRESSES],
     /// Sentences dropped for their checksum or their length.
     pub bad: u32,
 }
 
-impl Default for Nmea {
+impl<const KEPT: usize> Default for Nmea<KEPT> {
     fn default() -> Self {
         Nmea {
             line: [0; LINE],
@@ -171,7 +173,7 @@ impl Default for Nmea {
             n_seen: 0,
             satellites: 0,
             hdop_tenths: 0,
-            raw: [([0; 6], [0; LINE], 0); RAW],
+            raw: [([0; 6], [0; LINE], 0); KEPT],
             addresses: [[0; 5]; ADDRESSES],
             bad: 0,
         }
@@ -305,7 +307,7 @@ fn utc(time: &[u8], date: &[u8]) -> Option<u64> {
     u64::try_from(d * 86_400 + i64::from(h * 3600 + m * 60 + s)).ok()
 }
 
-impl Nmea {
+impl<const KEPT: usize> Nmea<KEPT> {
     /// Take the receiver's bytes; `fix` is called with each second's
     /// [`Fix`].
     pub fn feed(&mut self, bytes: &[u8], fix: &mut impl FnMut(Fix)) {
@@ -549,7 +551,7 @@ mod tests {
 
     #[test]
     fn a_second_with_a_fix() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let got = fixes(&mut n, &second());
         assert_eq!(got.len(), 1);
         let f = got[0];
@@ -609,7 +611,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn the_l76k_specification_second() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let got = fixes(&mut n, L76K_SECOND);
         assert_eq!(n.bad, 0, "the specification's checksums hold");
         assert_eq!(got.len(), 1);
@@ -639,18 +641,18 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn a_second_cut_anywhere() {
-        let mut whole = Nmea::default();
+        let mut whole = <Nmea>::default();
         let want = fixes(&mut whole, L76K_SECOND);
         let text = L76K_SECOND.as_bytes();
         for cut in 0..=text.len() {
-            let mut n = Nmea::default();
+            let mut n = <Nmea>::default();
             let mut got = Vec::new();
             n.feed(&text[..cut], &mut |f| got.push(f));
             n.feed(&text[cut..], &mut |f| got.push(f));
             assert_eq!(got, want, "cut at {cut}");
             assert_eq!(n.bad, 0);
         }
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let mut got = Vec::new();
         for b in text.chunks(1) {
             n.feed(b, &mut |f| got.push(f));
@@ -689,7 +691,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn used_satellites_matched_by_system_and_number() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let f = fixes(&mut n, &four_systems(true))[0];
         assert_eq!(n.bad, 0);
         // GPS 05 41 and 13 38, GLONASS 70 36, BeiDou 13 29 and 21 35, QZSS
@@ -709,7 +711,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn without_the_system_and_signal_fields() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let f = fixes(&mut n, &four_systems(false))[0];
         assert_eq!(n.bad, 0);
         assert_eq!(f.cn0.listed, 6);
@@ -730,7 +732,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn no_fix_no_position_no_time() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let text = [
             s("GPGGA,,,,,,0,00,99.9,,,,,,"),
             s("GPRMC,,V,,,,,,,,,,N,V"),
@@ -750,7 +752,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
     /// A walker's speed and course: 2.92 kn is 150.2 cm/s.
     #[test]
     fn speed_and_course() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let text = s("GNRMC,101500.000,A,5912.9071,N,01812.7088,E,2.92,123.45,061126,,,A,V");
         let got = fixes(&mut n, &text);
         assert_eq!(
@@ -766,7 +768,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn a_bad_checksum_or_a_long_line_is_dropped() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let good = s("GPRMC,000000.00,A,0000.0000,S,00000.0000,W,0,0,010100,,,A");
         let mut bad = good.clone().into_bytes();
         bad[10] ^= 1;
@@ -781,7 +783,7 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
 
     #[test]
     fn southern_and_western_hemispheres() {
-        let mut n = Nmea::default();
+        let mut n = <Nmea>::default();
         let text = s("GPRMC,010203,A,3352.1280,S,15112.5600,W,0,0,290224,,,A");
         let f = fixes(&mut n, &text)[0];
         let (lat, lon) = f.position.unwrap().micro_degrees();
