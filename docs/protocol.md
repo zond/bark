@@ -3359,7 +3359,7 @@ On a public node:
   encrypted or not, and so do the subscriptions to Status and Given
   back; Map point, Clock, Home, Neighbours, Update, Image and
   Public stay the paired phone's, as on any node.
-- *It takes 3 links at once*, the owner's and two guests'. Made
+- *It takes 2 links at once*, the owner's and a guest's. Made
   private again, it closes its guests' links.
 - *Each phone writes its recipient tag at the node to Recipient* as it
   connects (The payload, below), and the node hands each message it
@@ -3402,14 +3402,14 @@ takes 19 bytes. A second UUID costs no byte, and both phone systems
 filter a scan by service UUID in the controller, where a flag would be
 read only by the app.
 
-*Why 3.* A link costs 5.6 KB of static RAM, measured: the controller's
+*Why 2.* A link costs 5.6 KB of static RAM, measured: the controller's
 2.4 KB by `sdc.h`'s formulas, the host's 1.2 KB, and the task that
-serves it, 1.9 KB. All of it comes out of the stack, which with 3 links
-keeps 17.9 KB against the 11.8 KB of the deepest poll of any task, the
-phone link's set-up, by the disassembly, which does not follow calls
-through pointers; the 6 KB between are for those and the interrupts. A
-fourth link would leave 12.4 KB, less than the 14.2 KB that set-up then
-takes (roadmap D150).
+serves it, 1.9 KB. All of it comes out of the stack, which must keep
+16 KiB: the 9.5 KiB of the deepest poll of any task, the phone link's
+set-up, by the disassembly, and 6 KiB for the interrupts and the calls
+through pointers it does not follow (`bark-fw/README.md`, "Tasks and
+the stack"). With 2 links the stack keeps 20.1 KiB; a third would leave
+14.6 KiB, and two boards with it faulted at boot (roadmap D150).
 
 *Why every guest whose tag it is, and the owner's too.* A tag is one
 byte (The payload, below), so two phones at a node may share one; each
@@ -3479,8 +3479,8 @@ node, which their destination address already groups by node.
 *Why one byte.* A phone handed a payload that is not its own fails to
 open it and drops it (Public, above), so a wrong match costs a read
 and a failed open, not a message. The phones that can match at once are
-those on one node, at most two guests and the owner, so a payload for
-one of them matches another with odds of at most 2 in 256, 0.8 %, and
+those on one node, at most a guest and the owner, so a payload for one
+of them matches the other with odds of 1 in 256, 0.4 %, and
 one for nobody there is taken by a guest as often; a second byte would
 make that rarer at a byte on every message, and would tie a person's
 payloads at a node together more surely. A boxed payload names no sender: the receiver tries the key of

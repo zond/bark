@@ -58,14 +58,13 @@ use static_cell::StaticCell;
 use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::*;
 
-/// Links at once: one on a node that is not public, the owner's and two
-/// guests' on a public one (spec "Phone link", Public; roadmap D150).
+/// Links at once: one on a node that is not public, the owner's and a
+/// guest's on a public one (spec "Phone link", Public; roadmap D150).
 /// Each costs 5.6 KB of static RAM, the controller's [`PER_LINK`], the
-/// host's 1.2 KB and its slot's task, all taken from the stack; three
-/// leave it 17.9 KB against the 11.8 KB of the deepest poll, the phone
-/// link's set-up, and a fourth would leave 12.4 KB, less than that
-/// set-up then takes, 14.2 KB.
-pub const LINKS: usize = 3;
+/// host's 1.2 KB and its slot's task, all taken from the stack, which
+/// two leave above its floor and three do not (`bark-fw/README.md`,
+/// "Tasks and the stack").
+pub const LINKS: usize = 2;
 /// L2CAP channels: the signalling channel and the ATT channel.
 const CHANNELS: usize = 2;
 /// Advertising sets: the one advertisement.
