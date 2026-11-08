@@ -473,3 +473,40 @@ fn a_rewritten_bond_keeps_the_phone_s_keys() {
         );
     }
 }
+
+/// A pairing replaces the kept bond only when authenticated and bonding:
+/// a failed one, one cut off, or a Just Works one leaves it, the record
+/// and its address as they were.
+#[test]
+fn only_an_authenticated_pairing_replaces_the_kept_bond() {
+    let owner = bond::Bond {
+        kind: 0,
+        addr: [0xc0, 0xbb, 0x39, 0x1f, 0x54, 0x88],
+        irk: Some([1; 16]),
+        ltk: [2; 16],
+        seen: VERSION,
+        service_changed: true,
+        private: true,
+        owner: Some(7),
+    };
+    let other = bond::Bond {
+        addr: [0xa7, 0x05, 0x29, 0xa2, 0x00, 0xf4],
+        irk: None,
+        ltk: [9; 16],
+        private: false,
+        owner: None,
+        ..owner
+    };
+    for (paired, authenticated) in [(None, false), (None, true), (Some(other), false)] {
+        let kept = bond::after_pairing(Some(owner), paired, authenticated);
+        assert_eq!(kept, Some(owner));
+        assert_eq!(kept.map(|b| b.record()), Some(owner.record()));
+    }
+    // An authenticated pairing replaces it, the node private as it was.
+    let kept = bond::after_pairing(Some(owner), Some(other), true).unwrap();
+    assert_eq!(
+        (kept.addr, kept.ltk, kept.private, kept.owner),
+        (other.addr, other.ltk, true, None)
+    );
+    assert_eq!(bond::after_pairing(None, None, false), None);
+}

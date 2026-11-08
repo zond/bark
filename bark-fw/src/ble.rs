@@ -1695,14 +1695,19 @@ fn settle(
     level: SecurityLevel,
     bond: Option<BondInformation>,
 ) {
-    let new = bond.filter(|b| level == SecurityLevel::EncryptedAuthenticated && b.is_bonded);
-    if let Some(b) = &new {
+    let authenticated = level == SecurityLevel::EncryptedAuthenticated;
+    let paired = bond
+        .as_ref()
+        .filter(|b| b.is_bonded)
+        .map(|b| bond_of(b, false));
+    let before = KEPT.lock(|k| *k.borrow());
+    let after = bark_link::bond::after_pairing(before, paired, authenticated);
+    if let Some(b) = after.filter(|_| after != before) {
         log::info!(
             "ble: paired; the bond replaces any before it, {}",
-            Whose(&bond_of(b, false))
+            Whose(&b)
         );
-        let private = KEPT.lock(|k| k.borrow().is_some_and(|b| b.private));
-        keep(bond_of(b, private));
+        keep(b);
     } else if level != SecurityLevel::NoEncryption {
         log::warn!("ble: a pairing that is not authenticated or does not bond; closed");
         conn.raw().disconnect();
