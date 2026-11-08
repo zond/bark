@@ -24,7 +24,7 @@
 //! a slot of its own ([`slot`]), the characteristics a guest needs open
 //! on any of them ([`allowed`]), the payloads for the node's application
 //! handed out by their recipient tags (`node.rs`), and the one message
-//! the node holds for its phones taken in turn ([`Line`]).
+//! the node holds for its phones taken in turn ([`Turn`]).
 //!
 //! The paired phone keeps the attribute table it discovered; the node
 //! tells it when the table has changed since, by the link version the
@@ -416,8 +416,6 @@ struct Peer {
     /// A guest's message given back, and the end of its wait; the paired
     /// phone's is [`State::given_back`].
     given_back: Option<(MsgId, Instant)>,
-    /// Its place in the phones' line, while it stands in it ([`Line`]).
-    place: Option<Instant>,
     /// The slot it reads the neighbour table from (spec "Phone link",
     /// Neighbours); 0 at each connection.
     neighbours_from: u8,
@@ -430,7 +428,6 @@ impl Peer {
         owner: false,
         tag: None,
         given_back: None,
-        place: None,
         neighbours_from: 0,
     };
 }
@@ -458,15 +455,10 @@ pub struct State {
     /// The phones, by their links' slots.
     phones: [Peer; LINKS],
     /// The message the node took last from a phone: its ID, slot and link,
-    /// to give it back to that phone; and whether the node may hold it
-    /// still, as it has taken none since.
+    /// to give it back to that phone.
     took: Option<(MsgId, From, u32)>,
-    holding: bool,
-    /// The phones' line (spec "Phone link", Public).
-    line: Line,
-    /// Before when the node's own wait ends: the wait its last refusal
-    /// asked for (`Relay::retry_at`).
-    retry_at: Instant,
+    /// The phone whose turn it is ([`Turn`]).
+    turn: Turn,
     /// The node is public, and the paired phone's recipient tag, as the
     /// bond keeps them.
     public: bool,
@@ -483,76 +475,66 @@ pub struct State {
     flags: Option<u8>,
 }
 
-/// The phones' line for the one message the node holds for them (spec
-/// "Phone link", Public): a phone refused for another's turn or message
-/// is given a place, a ban after the last; the first in line, once its
-/// place has come and the node takes a message, has the turn for a ban.
+/// Whose turn it is at the one message the node holds for its phones
+/// (spec "Phone link", Public): Ready is that phone's alone. The turn goes
+/// to the next phone, in the order of the links' slots, when the node
+/// takes the phone's message, when its link ends, or when it has had
+/// Ready for a ban and not written.
 #[derive(Clone, Copy)]
-struct Line {
-    /// The last place given.
-    last: Instant,
-    /// Since when the first in line has had the turn.
-    turn_since: Option<Instant>,
+struct Turn {
+    /// The phone's slot.
+    slot: Option<usize>,
+    /// Since when it has had Ready.
+    since: Option<Instant>,
 }
 
-/// The unit of the line, a ban: the shortest wait the protocol tells, as
-/// nothing in it acts sooner (spec "Bans").
+/// How long a turn lasts unused, a ban: the shortest wait the protocol
+/// tells, as nothing in it acts sooner (spec "Bans").
 const BAN: bark_proto::Duration = bark_proto::tables::budget::BAN;
 
 impl State {
-    /// The phone first in line, and its place.
-    fn first(&self) -> Option<(usize, Instant)> {
-        (0..LINKS)
-            .filter_map(|i| self.phones[i].place.map(|p| (i, p)))
-            .min_by_key(|&(_, p)| p)
+    /// The next phone after `after` in the order of the links' slots, or
+    /// the first; `after` itself if it is the only one.
+    fn next(&self, after: Option<usize>) -> Option<usize> {
+        let from = after.map_or(0, |a| a + 1);
+        (from..from + LINKS)
+            .map(|i| i % LINKS)
+            .find(|&i| self.phones[i].live)
     }
 
-    /// Move the line on to `now`: the first phone's turn starts once its
-    /// place has come and the node takes a message, and ends a ban later
-    /// if it has not sent. Whether the line changed.
+    /// Pass the turn on from the phone that has it.
+    fn pass(&mut self) {
+        self.turn = Turn {
+            slot: self.next(self.turn.slot),
+            since: None,
+        };
+    }
+
+    /// Move the turn on to `now`: to a phone if none has it or its link
+    /// has ended, and on from one that has had Ready for a ban unused; the
+    /// ban counts only while the node takes a message. Whether the turn
+    /// moved.
     fn advance(&mut self, now: Instant) -> bool {
-        let mut changed = false;
-        while let Some((f, place)) = self.first() {
-            if !self.status.ready || place > now {
-                self.line.turn_since = None;
-                break;
+        let before = self.turn.slot;
+        if before.is_none_or(|s| !self.phones[s].live) {
+            self.pass();
+        }
+        if !self.status.ready {
+            self.turn.since = None;
+        } else {
+            let since = *self.turn.since.get_or_insert(now);
+            if now.since(since) >= BAN {
+                self.pass();
+                self.turn.since = Some(now);
             }
-            let since = *self.line.turn_since.get_or_insert(now);
-            if now.since(since) < BAN {
-                break;
-            }
-            self.phones[f].place = None;
-            self.line.turn_since = None;
-            changed = true;
         }
-        changed
+        self.turn.slot != before
     }
 
-    /// When the line next changes by itself, if it can.
-    fn line_changes(&self) -> Option<Instant> {
-        let (_, place) = self.first()?;
-        match self.line.turn_since {
-            Some(t) => Some(t + BAN),
-            None if self.status.ready => Some(place),
-            None => None,
-        }
-    }
-
-    /// Whether `slot` may send now as the line stands: no other phone has
-    /// the turn.
-    fn in_turn(&self, slot: usize) -> bool {
-        match self.first() {
-            Some((f, _)) => f == slot || self.line.turn_since.is_none(),
-            None => true,
-        }
-    }
-
-    /// Whether `slot` is held back by another phone: one has the turn or
-    /// stands ahead in line, or the node holds another's message.
-    fn held_back(&self, slot: usize) -> bool {
-        let ahead = self.first().is_some_and(|(f, _)| f != slot);
-        let theirs = self.holding && self.took.is_some_and(|(_, f, _)| f.slot != slot);
-        ahead || theirs
+    /// When the turn next moves by itself, if another phone could take it.
+    fn turn_ends(&self) -> Option<Instant> {
+        let others = self.next(self.turn.slot) != self.turn.slot;
+        self.turn.since.filter(|_| others).map(|t| t + BAN)
     }
 
     /// Whether `slot` is a guest's link: the node is public and the link
@@ -625,12 +607,10 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     given_back: None,
     phones: [Peer::NONE; LINKS],
     took: None,
-    holding: false,
-    line: Line {
-        last: Instant::ZERO,
-        turn_since: None,
+    turn: Turn {
+        slot: None,
+        since: None,
     },
-    retry_at: Instant::ZERO,
     public: false,
     owner_tag: None,
     request: None,
@@ -715,8 +695,6 @@ fn publish_inbox(status: Status, inbox: Option<(MsgId, &[u8])>) {
         let mut l = l.borrow_mut();
         l.inbox = inbox.map(|(id, p)| copy(id, p));
         l.status = status;
-        // Ready again: the node holds no phone's message now.
-        l.holding &= !status.ready;
         let told = l.told;
         let quiet = |s: Status| Status {
             boot_left_s: 0,
@@ -728,13 +706,13 @@ fn publish_inbox(status: Status, inbox: Option<(MsgId, &[u8])>) {
         if changed {
             l.told = status;
         }
-        let line = l.advance(now());
+        let turn = l.advance(now());
         // The flags as the phone reads them, at the first publish and each
         // change, for the bench to check reads against.
         let flags = status.encode()[0];
         let new_flags = l.flags != Some(flags);
         l.flags = Some(flags);
-        (changed || line, new_flags.then_some(flags))
+        (changed || turn, new_flags.then_some(flags))
     });
     let (changed, flags) = changed;
     if let Some(flags) = flags {
@@ -794,12 +772,6 @@ pub fn guests_waiting(slots: u8) {
             ..Notify::default()
         });
     }
-}
-
-/// The node's side: when its own wait ends (`Relay::retry_at`), which a
-/// place in the phones' line is not before.
-pub fn retry_at(at: Instant) {
-    LINK.lock(|l| l.borrow_mut().retry_at = at);
 }
 
 /// Whether the node is public (spec "Phone link", Public).
@@ -891,16 +863,14 @@ pub fn take_request<R>(f: impl FnOnce(From, &Request) -> Option<(R, bool)>) -> O
         {
             if answer {
                 // A phone's message taken: what it was given back before
-                // is over, it leaves the line, and the node holds it.
+                // is over, and the turn passes on.
                 match from.owner {
                     true => l.given_back = None,
                     false => l.phones[from.slot].given_back = None,
                 }
-                l.phones[from.slot].place = None;
-                l.line.turn_since = None;
                 let id = MsgId::of(dst_pos, dst_id, &payload[..usize::from(len)]);
                 l.took = Some((id, from, l.phones[from.slot].link));
-                l.holding = true;
+                l.pass();
             }
         }
         l.request = None;
@@ -965,7 +935,7 @@ fn status_now(slot: usize) -> Status {
             false => l.status.inbox,
         };
         Status {
-            ready: l.status.ready && l.request.is_none() && l.in_turn(slot),
+            ready: l.status.ready && l.request.is_none() && l.turn.slot == Some(slot),
             boot_left_s: l.boot_ends.map_or(0, |e| seconds_left(now, e)),
             inbox,
             ..l.status
@@ -1203,9 +1173,16 @@ async fn slot(
             let link = l.phones[i].link;
             l.phones[i] = Peer { link, ..Peer::NONE };
         });
-        // A message waiting for this guest alone is now nobody's.
+        // A message waiting for this guest alone is now nobody's, and its
+        // turn passes on.
         crate::mailbox::FOR_CORE.signal(());
         ADVERTISE.signal(());
+        if LINK.lock(|l| l.borrow_mut().advance(now())) {
+            notify(Notify {
+                status: true,
+                ..Notify::default()
+            });
+        }
     }
 }
 
@@ -1411,8 +1388,8 @@ async fn serve(
     let link = &server.link;
     refresh(slot, server, conn, update);
     loop {
-        let next = LINK.lock(|l| l.borrow().line_changes());
-        let line = async {
+        let next = LINK.lock(|l| l.borrow().turn_ends());
+        let turn = async {
             match next {
                 Some(t) => {
                     embassy_time::Timer::at(embassy_time::Instant::from_micros(t.as_micros())).await
@@ -1420,7 +1397,7 @@ async fn serve(
                 None => core::future::pending().await,
             }
         };
-        let event = match select3(conn.next(), NOTIFY[slot].wait(), line).await {
+        let event = match select3(conn.next(), NOTIFY[slot].wait(), turn).await {
             Either3::First(e) => e,
             Either3::Second(n) => {
                 // A guest's link ends with the public setting.
@@ -1444,7 +1421,7 @@ async fn serve(
                 continue;
             }
             Either3::Third(()) => {
-                // The line moved: the turn came or passed.
+                // The turn passed on unused.
                 if LINK.lock(|l| l.borrow_mut().advance(now())) {
                     notify(Notify {
                         status: true,
@@ -1929,9 +1906,8 @@ async fn write_image(
     }
 }
 
-/// Send, written: the node takes the message, or answers not ready; a
-/// phone held back by another's turn or message is given its message
-/// back with a place in the phones' line (spec "Phone link", Public).
+/// Send, written: the node takes the message, or answers not ready, as
+/// it does a phone whose turn it is not (spec "Phone link", Public).
 async fn write_send(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
@@ -1951,72 +1927,12 @@ async fn write_send(
         })
     })?;
     if !status_now(from.slot).ready {
-        if line_up(from, &request) {
-            return Ok(());
-        }
         return Err(NOT_READY);
     }
     match ask(from, request).await {
         true => Ok(()),
         false => Err(NOT_READY),
     }
-}
-
-/// If the phone at `from` is held back by another phone, give `request`,
-/// its message, back to it at once with its place in the line: one ban
-/// after the last place given, and not before the node's own wait ends;
-/// a phone in line keeps its place. Whether it was given back.
-fn line_up(from: From, request: &Request) -> bool {
-    let Request::Send {
-        dst_pos,
-        dst_id,
-        len,
-        payload,
-    } = *request
-    else {
-        return false;
-    };
-    let given = LINK.lock(|l| {
-        let mut l = l.borrow_mut();
-        let now = now();
-        l.advance(now);
-        if !l.held_back(from.slot) {
-            return None;
-        }
-        let place = match l.phones[from.slot].place {
-            Some(p) => p,
-            None => {
-                let after = l.line.last.max(now) + BAN;
-                let p = after.max(l.retry_at);
-                l.line.last = p;
-                l.phones[from.slot].place = Some(p);
-                p
-            }
-        };
-        let id = MsgId::of(dst_pos, dst_id, &payload[..usize::from(len)]);
-        match from.owner {
-            true => l.given_back = Some((id, place)),
-            false => l.phones[from.slot].given_back = Some((id, place)),
-        }
-        Some((id, place.since(now)))
-    });
-    let Some((id, wait)) = given else {
-        return false;
-    };
-    log::info!(
-        "ble: send id={:08x} from slot {} given back for its turn, wait_ms={}",
-        id.0,
-        from.slot,
-        wait.as_millis()
-    );
-    notify_one(
-        from.slot,
-        Notify {
-            given_back: true,
-            ..Notify::default()
-        },
-    );
-    true
 }
 
 async fn write_confirm(

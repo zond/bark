@@ -602,7 +602,6 @@ pub async fn run<'a>(
         // A home's or a public node's messages are placed one at a time,
         // each confirmed to the core once it is (`request`); the paired
         // phone reads its own from the ring.
-        crate::ble::retry_at(core.retry_at());
         let head = core.inbox().map(|(id, p)| {
             let mut payload = [0; MAX_PAYLOAD];
             payload[..p.len()].copy_from_slice(p);

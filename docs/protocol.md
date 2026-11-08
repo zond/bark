@@ -3371,22 +3371,16 @@ On a public node:
   So a reply that arrives after its guest's link has ended is lost; the
   owner's is kept. A message given back to a guest whose link has ended
   is dropped too.
-- *Guests take turns at the one message the node holds for its phones*
-  (Sending; [receiving DATA](#receiving-data)). Ready, as each phone
-  reads it, is set while the node takes a message and no other phone
-  has the turn. A phone whose Send the node does not take because
-  another phone has the turn or holds the place with its message is
-  answered as the node's own gate answers a message entering the
-  network: the node takes the message and gives it back at once (Given
-  back), with a wait that is the phone's place in a line of phones,
-  one ban after the place before it ([bans](#bans): 1.58 s, the unit
-  of every told wait) and no sooner than the node's own wait. From its
-  place on, while the node takes a message, the first phone in line has
-  the turn, and Ready is set for it alone; it leaves the line when the
-  node takes a message of its, when its link ends, or a ban after its
-  turn came, so that a phone whose person gave up holds nobody up. A
-  Send the node does not take while it takes none from any phone is
-  answered 0x80, not ready, as on any node.
+- *Phones take turns at the one message the node holds for them*
+  (Sending; [receiving DATA](#receiving-data)), and the turn is Ready:
+  the node sets it, while it takes a message, for one phone at a time.
+  The turn goes to the next phone connected, in the order of their
+  links, when the node takes the message of the phone that has it, when
+  that phone's link ends, or when that phone has had Ready for a ban
+  without writing ([bans](#bans): 1.58 s, the shortest wait the
+  protocol tells). A Send from a phone whose turn it is not is answered
+  0x80, not ready, as on any node; an app writes only while Ready is set,
+  so only one that does not keep to that meets it.
 
 *Why the public node's UUID, not a flag beside the service's.* The 10
 bytes the advertisement has left beside the flags and the service's
@@ -3418,14 +3412,15 @@ DATA](#receiving-data)); what the node cannot place it must not keep,
 or a guest's mail would fill the room of those who are there. The tag
 tells the node at once whose a message is without opening it.
 
-*Why turns.* One message at a time is the node's rule for its
-application ([receiving DATA](#receiving-data)); several phones writing
-whenever Ready is set would take it in the order their writes reach the
-node, and a phone with a queue would keep it. Given back with a place,
-a phone's person sees the wait as for a refusal on the way, and
-the phones come back one after another, not all at once to be refused
-again. The line is spaced by a ban, as the network's lines are, since
-nothing in the protocol acts sooner.
+*Why the turn is Ready.* One message at a time is the node's rule for
+its application ([receiving DATA](#receiving-data)), and Ready is
+already how the node says it takes one: one rule for one slot. Set for
+every phone at once, the slot would go to whichever write reached the
+node first, and a phone with a queue would keep it. A refusal with a
+wait would need the person, as the app offers a given-back message
+again only when they say so; an app waits for Ready by itself. A phone
+with nothing to send passes the turn on after a ban, as nothing in the
+protocol acts sooner.
 
 **The payload.** The app owns it; this is its layout (roadmap D123 to
 D127, D150). The reasons, and the alternatives a reader would ask about, are

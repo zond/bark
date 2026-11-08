@@ -872,18 +872,18 @@ is not public, as the host refused them before. The node's loop places
 each message for its application by its tag (`src/node.rs`, `Placing`):
 the ring keeps the owner's, as a home's, the guests whose tag it carries
 read it from the core's inbox, and it is confirmed to the core once both
-are done; one for nobody is confirmed at once, dropped. The phones' line
-for the one message the node holds is `Line` in `src/ble.rs`. The
+are done; one for nobody is confirmed at once, dropped. Whose turn it
+is at the one message the node holds, and so whose Ready is set, is
+`Turn` in `src/ble.rs`. The
 console's `status` ends in `public=true` or `public=false`, read from
 the bond in the stored-state page.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
 5a slot 1 owner false` as a phone writes its tag, `ble: public true`,
 `public: id=... tag=Some(5a) owner=false guests=0b010` for each message
-placed on a public node, `ble: confirm id=... ok=true (guest 1)`, and
-`ble: send id=... from slot 2 given back for its turn, wait_ms=1580`.
+placed on a public node, and `ble: confirm id=... ok=true (guest 1)`.
 
-They cost 10.4 KB of flash and 12.0 KB of static RAM, 5.6 KB a link
+They cost 9.3 KB of flash and 11.9 KB of static RAM, 5.6 KB a link
 beyond the first, which leaves the stack 17.9 KB; the deepest poll of
 any task, the phone link's set-up, is 11.8 KB by the disassembly
 (2026-11-08, `llvm-size`, `llvm-objdump`).
