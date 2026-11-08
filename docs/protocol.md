@@ -3809,7 +3809,14 @@ pieces goes as it stands when sent. A sleepy node's beats carry it for
 one beat after a change and one an hour: its anchor hears every beat.
 A node keeps each neighbour's last section in its neighbour table
 ([neighbour table](#neighbour-table)), as it keeps the rest of what the
-neighbour's heartbeats say.
+neighbour's heartbeats say, and the images the sections name once, at
+most four: the release spreading, the one before it, an older one of a
+node that was away through a release, and one of another key, a
+bench's, since a release follows the last no sooner than the day it
+takes to reach every relay. A fifth takes the place of the lowest
+version, and the sections that named that one name none; one older than
+the four is kept as naming none. No node that runs a newer image
+gathers the lowest.
 
 *Why in the heartbeat.* One frame kind, the piece, instead of an
 announcement, a request and a piece: the neighbour table knows what

@@ -314,7 +314,7 @@ test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 128 B | 8.0 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 112 B, and 4 × 16 B for the images their sections name | 7.1 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
@@ -322,7 +322,7 @@ test in `tables/mod.rs`:
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **183.7 KiB** |
+| **All** | | **182.7 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -330,11 +330,11 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-191 008 B (186.5 KiB): the tables and, in under 1 KiB around them, the
+190 056 B (185.6 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 1 856 B (spec "Updates over the mesh"), with 24 B of each neighbour's entry for its heartbeats' section; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 171 992 B (168.0 KiB), without the heard table and the delivery
+of the update, 1 856 B (spec "Updates over the mesh"), with 8 B of each neighbour's entry for its heartbeats' section and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 171 040 B (167.0 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM

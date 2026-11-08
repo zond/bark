@@ -367,7 +367,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let anchor = self.anchor().and_then(|a| self.neighbours.get(a.id));
         let helps = anchor
-            .and_then(|n| n.update)
+            .and_then(|n| self.neighbours.section(n))
             .and_then(|u| u.image.map(|i| (i, u.complete)))
             .is_some_and(|(i, complete)| i.tag() == g.image.tag() && complete > g.block);
         if helps {
@@ -423,7 +423,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The blocks from the first of the image it streams that `m` holds,
     /// by its section.
     fn complete_of(&self, m: &Neighbour, image: Image) -> u8 {
-        m.update
+        self.neighbours
+            .section(m)
             .filter(|u| u.image.is_some_and(|i| i.tag() == image.tag()))
             .map_or(0, |u| u.complete)
     }
@@ -451,7 +452,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if n.home == self.home {
             return true;
         }
-        let Some(u) = n.update else {
+        let Some(u) = self.neighbours.section(n) else {
             return false;
         };
         let mine = self.section().map_or(0, |s| s.complete);
@@ -475,7 +476,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let held = self.held_at_home(image, now);
         for (_, n) in self.neighbours.live(now) {
-            let Some(u) = n.update.filter(|u| u.gathers(image.tag())) else {
+            let Some(u) = self
+                .neighbours
+                .section(n)
+                .filter(|u| u.gathers(image.tag()))
+            else {
                 continue;
             };
             if !self.streams_to(n, image, now) {
@@ -537,7 +542,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours
             .live(now)
             .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
-            .filter_map(|(_, n)| n.update.filter(|u| u.gathers(image.tag())))
+            .filter_map(|(_, n)| {
+                self.neighbours
+                    .section(n)
+                    .filter(|u| u.gathers(image.tag()))
+            })
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
                 core::cmp::Ordering::Equal => k.saturating_sub(u.have),

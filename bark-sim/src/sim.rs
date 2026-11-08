@@ -2652,12 +2652,12 @@ impl Sim {
             return "no sleepy node of its own lacks a block it holds";
         }
         let local = self.clocks[a as usize].local(self.now);
-        let table_says = r
-            .neighbour_table()
+        let table = r.neighbour_table();
+        let table_says = table
             .live(local)
             .map(|(_, n)| n)
             .filter(|n| n.sleepy && n.home == r.home())
-            .filter_map(|n| n.update)
+            .filter_map(|n| table.section(n))
             .filter(|x| x.gathers(image.tag()))
             .any(|x| {
                 (x.complete..image.blocks)
@@ -2793,7 +2793,7 @@ impl Sim {
                                 .map(|(_, n)| n)
                                 .filter(|n| n.home == f.channel)
                                 .filter(|n| {
-                                    n.update.is_some_and(|s| {
+                                    table.section(n).is_some_and(|s| {
                                         s.gathers(image.tag())
                                             && (s.complete < block
                                                 || s.complete == block
@@ -2827,11 +2827,11 @@ impl Sim {
                                         Some("absent")
                                     } else if let Some((g, first)) = c.gathering() {
                                         let local = self.clocks[s as usize].local(self.now);
-                                        let anchor_says = c
-                                            .neighbour_table()
+                                        let t = c.neighbour_table();
+                                        let anchor_says = t
                                             .live(local)
                                             .find(|(_, n)| n.id == me)
-                                            .and_then(|(_, n)| n.update)
+                                            .and_then(|(_, n)| t.section(n))
                                             .filter(|x| x.image.is_some_and(|i| i.tag() == g.tag()))
                                             .map_or(0, |x| x.complete);
                                         let heard_beat =
