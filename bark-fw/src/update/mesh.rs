@@ -26,7 +26,7 @@ use bark_proto::update::{Image, ImageTag, Piece};
 use bark_proto::wire::{Packet, Update, PIECE_BYTES, PIECE_HEADER_LEN};
 use bark_proto::Frame;
 use embassy_embedded_hal::flash::partition::Partition;
-use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::channel::Channel;
@@ -56,6 +56,8 @@ struct Running {
     header: [u8; HEADER_LEN],
     length: u32,
     table: Table,
+    /// The slot hashed to the header, and the table is whole.
+    checked: bool,
 }
 
 /// What the core is to be told: read by the driver's application
@@ -240,25 +242,28 @@ pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -
         log::error!("update: no external flash; nothing gathered or served");
         core::future::pending::<()>().await;
     }
-    match select(serve_loop(flash), work(flash, internal)).await {
-        Either::First(n) | Either::Second(n) => n,
-    }
+    work(flash, internal).await
 }
 
-/// Fill the pieces the radio's task asks for, as they come.
-async fn serve_loop(flash: &'static super::Flash) -> ! {
-    loop {
-        let named = SERVE.wait().await;
-        let (tag, block, index) = named;
-        let ok = fill(flash, tag, block, index).await;
-        SERVED.signal((named, ok));
-    }
+/// Fill the piece the radio's task asks for. Between the store's steps,
+/// in the same future as they, so that its state shares room with the
+/// staging's: a piece asked for while a whole image is checked and
+/// staged, about 3 s, is not filled in time.
+async fn answer(flash: &super::Flash, named: Named) {
+    let (tag, block, index) = named;
+    let ok = fill(flash, tag, block, index).await;
+    SERVED.signal((named, ok));
 }
 
 /// Piece `index` of block `block` of the image named `tag` into [`OUT`]:
 /// coded from the block's data pieces, read one at a time.
 async fn fill(flash: &super::Flash, tag: ImageTag, block: u8, index: u8) -> bool {
-    let running = RUNNING.lock(|r| r.borrow().as_ref().map(|r| r.table.image()));
+    let running = RUNNING.lock(|r| {
+        r.borrow()
+            .as_ref()
+            .filter(|r| r.checked)
+            .map(|r| r.table.image())
+    });
     let gathered = STORE.lock(|s| s.borrow().image());
     let (n, from_store) = match (running, gathered) {
         (Some(i), _) if i.tag == tag.0 => (i.pieces(block), false),
@@ -268,11 +273,11 @@ async fn fill(flash: &super::Flash, tag: ImageTag, block: u8, index: u8) -> bool
     let Ok(mut encoder) = Encoder::new(n, index) else {
         return false;
     };
-    let mut piece = [0u8; PIECE];
     for i in 0..n {
         if !encoder.wants(i) {
             continue;
         }
+        let mut piece = [0u8; PIECE];
         let read = match from_store {
             true => crate::ext_flash::with(|chip| {
                 STORE.lock(|s| s.borrow().data_piece(chip, block, i, &mut piece))
@@ -345,53 +350,85 @@ fn running_piece(flash: &super::Flash, block: u8, i: usize, out: &mut [u8; PIECE
 /// the header of the image swapped in; a UF2 leaves none, and a swap
 /// back leaves the newer one's, which the version tells.
 async fn running(flash: &super::Flash) -> Option<Image> {
-    let mut header = [0u8; HEADER_LEN];
-    let at = RECORD.start + bark_image::record::HEADER_AT;
-    flash.lock(|f| f.borrow_mut().read(at, &mut header)).ok()?;
-    let Ok(h) = Header::decode(&header) else {
-        log::info!("update: no header for the running image; it serves none");
-        return None;
-    };
-    if h.version != BARK_IMAGE_VERSION || h.length > ACTIVE.len {
-        log::info!(
-            "update: the record's header is version {}, not the running {}; it serves none",
-            h.version,
-            BARK_IMAGE_VERSION
-        );
-        return None;
-    }
-    // The key the section names: one this firmware checks it with, else
-    // the first slot's.
-    let key = sign::verify(&header, &BARK_SIGNING_KEYS).unwrap_or(header[sign::SIGNED_LEN]);
-    let image = pieces::held(&header, h.length, h.version, key)?;
-    let mut tabling = Tabling::new(image, &pieces::name(&header));
-    tabling.feed(&header);
-    let mut buf = [0u8; 256];
-    let mut done = 0;
-    while done < h.length {
-        let n = (h.length - done).min(buf.len() as u32) as usize;
-        let read = flash.lock(|f| f.borrow_mut().read(ACTIVE.start + done, &mut buf[..n]));
-        if read.is_err() {
+    // In a scope of its own, so that the header is not kept in the task's
+    // future across the hashing's waits: it is kept once, in `RUNNING`.
+    let (image, h) = {
+        let mut header = [0u8; HEADER_LEN];
+        let at = RECORD.start + bark_image::record::HEADER_AT;
+        flash.lock(|f| f.borrow_mut().read(at, &mut header)).ok()?;
+        let Ok(h) = Header::decode(&header) else {
+            log::info!("update: no header for the running image; it serves none");
+            return None;
+        };
+        if h.version != BARK_IMAGE_VERSION || h.length > ACTIVE.len {
+            log::info!(
+                "update: the record's header is version {}, not the running {}; it serves none",
+                h.version,
+                BARK_IMAGE_VERSION
+            );
             return None;
         }
-        tabling.feed(&buf[..n]);
+        // The key the section names: one this firmware checks it with,
+        // else the first slot's.
+        let key = sign::verify(&header, &BARK_SIGNING_KEYS).unwrap_or(header[sign::SIGNED_LEN]);
+        let image = pieces::held(&header, h.length, h.version, key)?;
+        RUNNING.lock(|r| {
+            *r.borrow_mut() = Some(Running {
+                header,
+                length: h.length,
+                table: Table::new(image, &pieces::name(&header)),
+                checked: false,
+            })
+        });
+        (image, h)
+    };
+    let mut tabling = Tabling::new();
+    let mut done = 0;
+    // The header, then the slot, a few words at a time from flash.
+    let total = HEADER_LEN as u32 + h.length;
+    while done < total {
+        let read = RUNNING.lock(|r| {
+            let mut r = r.borrow_mut();
+            let r = r.as_mut()?;
+            let mut buf = [0u8; 64];
+            let n = (total - done).min(buf.len() as u32) as usize;
+            if done < HEADER_LEN as u32 {
+                let n = n.min(HEADER_LEN - done as usize);
+                buf[..n].copy_from_slice(&r.header[done as usize..done as usize + n]);
+                tabling.feed(&mut r.table, &buf[..n]);
+                return Some(n);
+            }
+            let at = ACTIVE.start + done - HEADER_LEN as u32;
+            flash
+                .lock(|f| f.borrow_mut().read(at, &mut buf[..n]))
+                .ok()?;
+            tabling.feed(&mut r.table, &buf[..n]);
+            Some(n)
+        });
+        let Some(n) = read else {
+            RUNNING.lock(|r| *r.borrow_mut() = None);
+            return None;
+        };
         done += n as u32;
-        embassy_futures::yield_now().await;
+        // A yield every 4 KiB: hashing them takes about a millisecond.
+        if done.is_multiple_of(4096) {
+            embassy_futures::yield_now().await;
+        }
     }
-    let (table, hash) = tabling.finish();
-    if hash != h.hash {
+    let ok = RUNNING.lock(|r| {
+        let mut r = r.borrow_mut();
+        let r = r.as_mut()?;
+        let hash = tabling.finish(&mut r.table);
+        r.checked = hash == h.hash;
+        Some(r.checked)
+    });
+    if ok != Some(true) {
         log::warn!(
             "update: the running image does not hash to its record's header; it serves none"
         );
+        RUNNING.lock(|r| *r.borrow_mut() = None);
         return None;
     }
-    RUNNING.lock(|r| {
-        *r.borrow_mut() = Some(Running {
-            header,
-            length: h.length,
-            table,
-        })
-    });
     Some(core_image(&image))
 }
 
@@ -507,6 +544,9 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             gather = None;
             told = false;
         }
+        if let Some(named) = SERVE.try_take() {
+            answer(flash, named).await;
+        }
         let polled = match step() {
             Some(Ok(p)) => p,
             Some(Err(e)) => {
@@ -547,17 +587,26 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 .await;
             }
             Poll::Idle => {
-                if staged().is_some() {
-                    // Nothing more to do until the reboot.
-                    core::future::pending::<()>().await;
+                // Staged, it only serves until the reboot.
+                while staged().is_some() {
+                    answer(flash, SERVE.wait().await).await;
                 }
-                let wait =
-                    select3(OFFERED.wait(), PIECE_IN.wait(), until_ready(gather, told)).await;
-                if let Either3::First(image) = wait {
-                    if let Some(i) = offer(flash, &image, refused) {
-                        gather = Some(i);
-                        told = false;
+                let wait = select4(
+                    OFFERED.wait(),
+                    PIECE_IN.wait(),
+                    until_ready(gather, told),
+                    SERVE.wait(),
+                )
+                .await;
+                match wait {
+                    Either4::First(image) => {
+                        if let Some(i) = offer(flash, &image, refused) {
+                            gather = Some(i);
+                            told = false;
+                        }
                     }
+                    Either4::Fourth(named) => answer(flash, named).await,
+                    _ => {}
                 }
             }
         }

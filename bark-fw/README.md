@@ -638,7 +638,9 @@ confirmed itself.
   gathered and decoded, from the external flash. A piece not filled
   within 372.8 ms, the longest a check of the channel may be held
   (`docs/core-interface.md` §3 rule 8), is not sent: it would go on an
-  older check than the core allows for. The 10 s line counts them,
+  older check than the core allows for. The task fills pieces between
+  the store's steps, so one asked for while a whole image is checked and
+  staged, about 3 s, is not sent. The 10 s line counts them,
   `unserved=`.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed

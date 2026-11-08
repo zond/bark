@@ -37,8 +37,9 @@
 //! slot holds what the loader swaps in.
 //!
 //! **How a block is decoded.** When a lane holds as many pieces as its
-//! block has, the block is decoded twice, eight data pieces at a time, each
-//! eight from one read of each piece the lane holds ([`crate::code`]).
+//! block has, its slots are read for the pieces to use, one a step, and
+//! the block is decoded twice, two data pieces at a time, each two from
+//! one read of each piece the lane holds ([`crate::code`]).
 //! The first time it is checked: block 0 must begin with the first bytes
 //! of the image's name, any other block hash to its entry in the table,
 //! and block 1, which begins with the header, have a header whose signed
@@ -48,12 +49,13 @@
 //! head cleared ([`Poll::Decoded`]); then its lane is erased. Nothing
 //! that failed is ever written, so every byte written is the one that
 //! belongs there, and a write done again after a power cut writes the
-//! same bytes. A block of 64 none of whose data pieces came reads 1 024
-//! pieces and does about 2 million multiply-adds of a byte; at the
-//! bus's 2 088 ms for 256 KiB read (`docs/roadmap.md`, "The external
-//! flash's bus") and the code's 14 cycles a byte, about 2 s of reads and
-//! 0.4 s of sums, in steps of one piece read, 2 ms, and its sums, 0.43 ms;
-//! a block takes 99 paces of 13.86 s, 22.9 minutes, to gather.
+//! same bytes. A block of 64 none of whose data pieces came reads its 64
+//! slots, then 4 096 pieces, 32 groups of 64 twice over, and does about 2
+//! million multiply-adds of a byte; at the bus's 2 088 ms for 256 KiB read
+//! (`docs/roadmap.md`, "The external flash's bus"), 2 ms a piece, and the
+//! code's 14 cycles a byte, about 8.3 s of reads and 0.4 s of sums, in
+//! steps of one piece read and its sums, 0.11 ms; a block takes 99 paces of
+//! 13.86 s, 22.9 minutes, to gather, so the decode is 0.6 % of that.
 //!
 //! **What a reset keeps.** The head: the image, which blocks are done, the
 //! table and the header; the decoded blocks in [`DFU`]; and every slot
@@ -77,9 +79,12 @@
 //! as for an image from the phone; that is the firmware's, not this
 //! module's.
 //!
-//! **RAM.** About 7 KiB: the eight data pieces of the group decoded,
-//! 1 976 B; two slots queued, 516 B; the table, two pieces, 494 B; each
-//! lane's piece indices, 64 B, 3 KiB for the 48.
+//! **RAM.** 3 928 B in the node image (`llvm-nm`, 2026-11-08): the two
+//! data pieces of the group decoded, 494 B; the pieces used and their
+//! slots, 128 B, and their factors; two slots queued, 516 B; the table,
+//! two pieces, 494 B; each lane's set of the pieces it holds, a bit an
+//! index, 32 B, 1.5 KiB for the 48. Two data pieces at a time and not
+//! eight keep 1.5 KB for the stack, for 6 s more of reads a block.
 
 use core::cmp::min;
 
@@ -188,9 +193,9 @@ const HEADER_AT: u32 = 4 * SLOT;
 /// so two are room for two holders' pieces at once.
 const QUEUE: usize = 2;
 
-/// Data pieces decoded at once: 1 976 bytes of RAM, and the lane read 8
-/// times for a block of 64 none of whose data pieces came.
-const GROUP: usize = 8;
+/// Data pieces decoded at once: 494 bytes of RAM, and the lane read 32
+/// times a pass for a block of 64 none of whose data pieces came.
+const GROUP: usize = 2;
 
 /// A slot's piece index that is no piece.
 const NONE: u8 = CODED as u8;
@@ -339,13 +344,20 @@ pub fn piece_offset(block: u8, i: usize) -> u32 {
 
 /// Block 0 of an image a node holds: the name, then 8 bytes of the
 /// SHA-256 of each other block's pieces, the last padded with zeros as it
-/// travels ([`Tabling`]).
+/// travels, made by a [`Tabling`].
 pub struct Table {
     image: Image,
     bytes: [u8; TABLE_PIECES * PIECE],
 }
 
 impl Table {
+    /// The table of `image`, named `name`, its entries yet to be made.
+    pub fn new(image: Image, name: &[u8; HASH_LEN]) -> Table {
+        let mut bytes = [0u8; TABLE_PIECES * PIECE];
+        bytes[..HASH_LEN].copy_from_slice(name);
+        Table { image, bytes }
+    }
+
     /// The image it is of.
     pub fn image(&self) -> Image {
         self.image
@@ -360,10 +372,10 @@ impl Table {
     }
 }
 
-/// A [`Table`] being made from the packed image's bytes, fed in order,
-/// and the SHA-256 of its firmware, to check against its header's.
+/// The making of a [`Table`] from the packed image's bytes, fed in order,
+/// and the SHA-256 of its firmware, to check against its header's. It
+/// holds only the hashes, so that the table can lie where it is kept.
 pub struct Tabling {
-    table: Table,
     block: Sha256,
     firmware: Sha256,
     /// Bytes fed.
@@ -371,29 +383,26 @@ pub struct Tabling {
 }
 
 impl Tabling {
-    /// The table of `image`, named `name`, before any byte is fed.
-    pub fn new(image: Image, name: &[u8; HASH_LEN]) -> Tabling {
-        let mut bytes = [0u8; TABLE_PIECES * PIECE];
-        bytes[..HASH_LEN].copy_from_slice(name);
+    /// Before any byte is fed.
+    pub fn new() -> Tabling {
         Tabling {
-            table: Table { image, bytes },
             block: Sha256::new(),
             firmware: Sha256::new(),
             fed: 0,
         }
     }
 
-    /// Feed the next bytes of the packed image: its header, then its
-    /// firmware.
-    pub fn feed(&mut self, bytes: &[u8]) {
+    /// Feed the next bytes of the packed image into `table`: its header,
+    /// then its firmware.
+    pub fn feed(&mut self, table: &mut Table, bytes: &[u8]) {
         let past_header = (HEADER_LEN as u32).saturating_sub(self.fed) as usize;
         if past_header < bytes.len() {
             self.firmware.update(&bytes[past_header..]);
         }
-        self.hash(bytes);
+        self.hash(table, bytes);
     }
 
-    fn hash(&mut self, mut bytes: &[u8]) {
+    fn hash(&mut self, table: &mut Table, mut bytes: &[u8]) {
         while !bytes.is_empty() {
             let room = BLOCK_BYTES - self.fed % BLOCK_BYTES;
             let n = bytes.len().min(room as usize);
@@ -401,34 +410,40 @@ impl Tabling {
             self.fed += n as u32;
             bytes = &bytes[n..];
             if self.fed.is_multiple_of(BLOCK_BYTES) {
-                self.entry();
+                self.entry(table);
             }
         }
     }
 
-    /// The table, once every byte was fed, its last block padded; and the
-    /// SHA-256 of the firmware fed.
-    pub fn finish(mut self) -> (Table, [u8; HASH_LEN]) {
-        let end = self.table.image.len();
+    /// Once every byte was fed: the last block padded into `table`, and
+    /// the SHA-256 of the firmware fed.
+    pub fn finish(mut self, table: &mut Table) -> [u8; HASH_LEN] {
+        let end = table.image.len();
         let zeros = [0u8; PIECE];
         while self.fed < end {
             let n = (end - self.fed).min(PIECE as u32) as usize;
-            self.hash(&zeros[..n]);
+            self.hash(table, &zeros[..n]);
         }
         if !self.fed.is_multiple_of(BLOCK_BYTES) {
-            self.entry();
+            self.entry(table);
         }
-        (self.table, self.firmware.finalize().into())
+        self.firmware.finalize().into()
     }
 
     /// The block just fed whole: its entry.
-    fn entry(&mut self) {
+    fn entry(&mut self, table: &mut Table) {
         let block = (self.fed - 1) / BLOCK_BYTES;
         let at = HASH_LEN + ENTRY * block as usize;
         let hash = core::mem::take(&mut self.block).finalize();
-        if let Some(entry) = self.table.bytes.get_mut(at..at + ENTRY) {
+        if let Some(entry) = table.bytes.get_mut(at..at + ENTRY) {
             entry.copy_from_slice(&hash[..ENTRY]);
         }
+    }
+}
+
+impl Default for Tabling {
+    fn default() -> Self {
+        Tabling::new()
     }
 }
 
@@ -499,8 +514,9 @@ enum Mode {
 struct Lane {
     /// The block whose pieces it holds.
     block: Option<u8>,
-    /// The piece in each slot, [`NONE`] where it holds none.
-    index: [u8; DATA],
+    /// The pieces its slots hold or are queued for, a bit an index: which
+    /// slot holds which is read from the slots when the block is decoded.
+    held: [u8; CODED.div_ceil(8)],
     /// The first slot not written since the lane was erased.
     next: u8,
     /// Distinct pieces in its slots or queued for them.
@@ -516,13 +532,21 @@ struct Lane {
 impl Lane {
     const FREE: Lane = Lane {
         block: None,
-        index: [NONE; DATA],
+        held: [0; CODED.div_ceil(8)],
         next: 0,
         taken: 0,
         whole: 0,
         mixed: false,
         erase: None,
     };
+
+    fn holds(&self, index: u8) -> bool {
+        self.held[usize::from(index / 8)] >> (index % 8) & 1 == 1
+    }
+
+    fn hold(&mut self, index: u8) {
+        self.held[usize::from(index / 8)] |= 1 << (index % 8);
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -557,9 +581,14 @@ struct Decode {
     lane: u8,
     block: u8,
     n: u8,
-    /// The pieces used, and their slots.
+    /// The pieces used, and their slots: read from the lane's slots first,
+    /// one a step, until `n` are found.
     points: Points,
+    indices: [u8; DATA],
     slots: [u8; DATA],
+    found: u8,
+    /// The next slot to read for them.
+    scan: u8,
     /// Second time through: writing.
     writing: bool,
     /// The group: data pieces from `group * GROUP`.
@@ -825,7 +854,7 @@ impl Store {
             return Offer::Busy;
         }
         let next = usize::from(lane.next);
-        if lane.index[..next].contains(&index) {
+        if lane.holds(index) {
             return Offer::Held;
         }
         if usize::from(lane.taken) >= image.pieces(block) {
@@ -849,7 +878,7 @@ impl Store {
             bytes,
         });
         lane.block = Some(block);
-        lane.index[next] = index;
+        lane.hold(index);
         lane.next += 1;
         lane.taken += 1;
         Offer::Kept
@@ -960,8 +989,8 @@ impl Store {
                     Some(b) if b != block => l.mixed = true,
                     _ => {}
                 }
-                if !l.index[..slot].contains(&index) {
-                    l.index[slot] = index;
+                if !l.holds(index) {
+                    l.hold(index);
                     l.taken += 1;
                     l.whole += 1;
                 }
@@ -1042,28 +1071,15 @@ impl Store {
     }
 
     fn start_decode(&mut self, lane: usize, block: u8, n: usize) {
-        let l = &self.lanes[lane];
-        let mut indices = [0u8; DATA];
-        let mut slots = [0u8; DATA];
-        let mut used = 0;
-        for (slot, &index) in l.index[..usize::from(l.next)].iter().enumerate() {
-            if index != NONE && used < n {
-                indices[used] = index;
-                slots[used] = slot as u8;
-                used += 1;
-            }
-        }
-        let Ok(points) = Points::new(&indices[..n]) else {
-            // Not reached: the lane holds distinct indices below `CODED`.
-            self.lanes[lane].erase = Some((0, Some(block)));
-            return;
-        };
-        let mut d = Decode {
+        self.decode = Some(Decode {
             lane: lane as u8,
             block,
             n: n as u8,
-            points,
-            slots,
+            points: Points::EMPTY,
+            indices: [0; DATA],
+            slots: [0; DATA],
+            found: 0,
+            scan: 0,
             writing: false,
             group: 0,
             next: 0,
@@ -1072,9 +1088,58 @@ impl Store {
             sha: Sha256::new(),
             header_ok: block != 1,
             out: [[0; PIECE]; GROUP],
+        });
+    }
+
+    /// Read the next slot of the lane decoded for the pieces to use: one
+    /// written whole, of the block, not taken already.
+    fn find_step<F: Flash>(&mut self, flash: &mut F) -> Result<Poll, F::Error> {
+        let Some(d) = self.decode.as_mut() else {
+            return Ok(Poll::Again);
         };
-        d.start_group(0);
-        self.decode = Some(d);
+        let lane = usize::from(d.lane);
+        if d.scan >= self.lanes[lane].next {
+            // Not reached: the lane holds as many whole pieces as the block
+            // has, each counted once.
+            self.lanes[lane].erase = Some((0, Some(d.block)));
+            self.decode = None;
+            return Ok(Poll::Again);
+        }
+        let slot = usize::from(d.scan);
+        d.scan += 1;
+        let mut bytes = [0u8; SLOT as usize];
+        flash.read(slot_address(lane, slot), &mut bytes)?;
+        let check = u32::from_le_bytes([
+            bytes[CHECK_AT],
+            bytes[CHECK_AT + 1],
+            bytes[CHECK_AT + 2],
+            bytes[CHECK_AT + 3],
+        ]);
+        let index = bytes[INDEX_AT];
+        let found = usize::from(d.found);
+        if crc32(&bytes[..CHECK_AT]) == check
+            && bytes[BLOCK_AT] == d.block
+            && index != NONE
+            && !d.indices[..found].contains(&index)
+        {
+            d.indices[found] = index;
+            d.slots[found] = slot as u8;
+            d.found += 1;
+        }
+        if d.found == d.n {
+            match Points::new(&d.indices[..usize::from(d.n)]) {
+                Ok(points) => {
+                    d.points = points;
+                    d.start_group(0);
+                }
+                // Not reached: the indices are distinct and below `CODED`.
+                Err(_) => {
+                    self.lanes[lane].erase = Some((0, Some(d.block)));
+                    self.decode = None;
+                }
+            }
+        }
+        Ok(Poll::Again)
     }
 
     fn decode_step<F: Flash>(&mut self, flash: &mut F, image: Image) -> Result<Poll, F::Error> {
@@ -1088,6 +1153,9 @@ impl Store {
         let Some(d) = decode.as_mut() else {
             return Ok(Poll::Again);
         };
+        if d.found < d.n {
+            return self.find_step(flash);
+        }
         let n = usize::from(d.n);
         let count = d.count();
         // Read the next piece the group wants and add it in.

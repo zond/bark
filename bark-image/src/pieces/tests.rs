@@ -319,11 +319,11 @@ fn an_image_is_gathered() {
     assert_eq!(feeder.events, decoded);
     // Clearing: the head, the three blocks' lanes and the 5 sectors of the
     // image, 18;
-    // the record; the table's piece, page and byte; block 1's 64 slots, 70
-    // writes of header and image, each group's bytes split where a page
-    // or the header ends, and its byte; block 2's 5 slots, 5 writes and
-    // byte; the lanes of the three blocks erased, 12.
-    assert_eq!(flash.ops, 18 + 1 + 3 + (64 + 70 + 1) + (5 + 5 + 1) + 12);
+    // the record; the table's piece, page and byte; block 1's 64 slots and
+    // its byte, block 2's 5 slots and its byte, and 101 writes of the two
+    // blocks' header and image, each group's two pieces split where a page
+    // or the header ends; the lanes of the three blocks erased, 12.
+    assert_eq!(flash.ops, 18 + 1 + 3 + (64 + 1) + (5 + 1) + 101 + 12);
 }
 
 #[test]
@@ -371,7 +371,7 @@ fn a_power_cut_at_every_operation_loses_nothing() {
         tested += 1;
         check(&built, &store, &mut flash);
     }
-    assert_eq!(tested, 180);
+    assert_eq!(tested, 206);
 }
 
 #[test]
@@ -505,11 +505,11 @@ fn an_image_is_gathered_through_the_driver() {
 }
 
 #[test]
-fn the_store_takes_about_7_kib() {
+fn the_store_takes_under_4_kib() {
     // On this 64-bit host; the decode's factors take half as many bytes on
-    // the chip. The lanes' piece indices are 48 × 64 B of it.
+    // the chip. The lanes' sets of pieces held are 48 × 32 B of it.
     std::println!("Store {} B", core::mem::size_of::<Store>());
-    assert!(core::mem::size_of::<Store>() <= 7400);
+    assert!(core::mem::size_of::<Store>() <= 4000);
 }
 
 #[test]
@@ -519,11 +519,12 @@ fn a_holder_makes_the_blocks_a_gatherer_takes() {
     let header: &[u8; HEADER_LEN] = built.stream[..HEADER_LEN].try_into().unwrap();
     let image = held(header, firmware as u32, 7, 1).unwrap();
     assert_eq!(image, built.image);
-    let mut tabling = Tabling::new(image, &name(header));
+    let mut table = Table::new(image, &name(header));
+    let mut tabling = Tabling::new();
     for chunk in built.stream[..HEADER_LEN + firmware].chunks(1000) {
-        tabling.feed(chunk);
+        tabling.feed(&mut table, chunk);
     }
-    let (table, hash) = tabling.finish();
+    let hash = tabling.finish(&mut table);
     assert_eq!(hash, sha(&built.stream[HEADER_LEN..HEADER_LEN + firmware]));
     assert_eq!(table.image(), image);
     for (i, piece) in built.blocks[0].iter().enumerate() {
