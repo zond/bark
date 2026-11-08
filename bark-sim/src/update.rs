@@ -59,6 +59,14 @@ pub struct UpdateRun {
     /// relays, and sleepy nodes, which listen only at times.
     targeted: [u64; 2],
     reached: [u64; 2],
+    /// When each relay last sent a heartbeat on its home channel.
+    home_beats: std::collections::HashMap<u32, Instant>,
+    /// Per relay that lacked a piece sent from another channel than the
+    /// sender's home: the last such sender and when.
+    last_foreign: std::collections::HashMap<u32, (u32, Instant)>,
+    /// Such pieces to such relays, and those that came within a pace of
+    /// one from another such sender.
+    foreign: [u64; 2],
 }
 
 impl UpdateRun {
@@ -88,6 +96,9 @@ impl UpdateRun {
             expected: std::collections::HashMap::new(),
             targeted: [0; 2],
             reached: [0; 2],
+            home_beats: std::collections::HashMap::new(),
+            last_foreign: std::collections::HashMap::new(),
+            foreign: [0; 2],
         }
     }
 
@@ -129,11 +140,43 @@ impl UpdateRun {
         }
     }
 
-    /// Piece `index` of `block` went on the air to `targets`, the
-    /// neighbours the sender's table said lack it, each with whether it
-    /// is sleepy.
-    pub fn piece_sent(&mut self, block: u8, index: u8, targets: impl Iterator<Item = (u32, bool)>) {
+    /// Relay `node` sent a heartbeat on its home channel.
+    pub fn home_beat(&mut self, node: u32, now: Instant) {
+        self.home_beats.insert(node, now);
+    }
+
+    /// Whether a frame of `node` at `now` is the one right after its slot
+    /// heartbeat: its check and its start, within 20 ms.
+    pub fn after_home_beat(&self, node: u32, now: Instant) -> bool {
+        self.home_beats
+            .get(&node)
+            .is_some_and(|&t| now.since(t).as_micros() < 20_000)
+    }
+
+    /// Relay `sender` sent piece `index` of `block` at `now`, from
+    /// another channel than its home if `foreign`, to `targets`: the
+    /// neighbours its table said lack it, each with whether it is sleepy,
+    /// sleepy ones only for their anchor's piece after its slot.
+    pub fn piece_sent(
+        &mut self,
+        sender: u32,
+        foreign: bool,
+        now: Instant,
+        block: u8,
+        index: u8,
+        targets: Vec<(u32, bool)>,
+    ) {
         for (t, sleepy) in targets {
+            if foreign && !sleepy {
+                self.foreign[0] += 1;
+                let pace = bark_proto::update::PACE.as_micros();
+                if let Some(&(other, at)) = self.last_foreign.get(&t) {
+                    if other != sender && now.since(at).as_micros() < pace {
+                        self.foreign[1] += 1;
+                    }
+                }
+                self.last_foreign.insert(t, (sender, now));
+            }
             let k = usize::from(sleepy);
             self.targeted[k] += 1;
             // A target that missed the last copy of this piece missed it.
@@ -240,7 +283,17 @@ impl UpdateRun {
             s(self.air_total[2]),
             s(self.air_total[3]),
         );
-        for (k, who) in ["relays", "sleepy nodes"].iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "# pieces from another channel than the sender's home to relays that lacked them: {}, within a pace of another such sender's {} ({:.1} %)",
+            self.foreign[0],
+            self.foreign[1],
+            100.0 * self.foreign[1] as f64 / self.foreign[0].max(1) as f64,
+        );
+        for (k, who) in ["relays", "sleepy nodes after their anchor's slot"]
+            .iter()
+            .enumerate()
+        {
             let _ = writeln!(
                 out,
                 "# pieces to {who} that lacked them: {}, heard {}, lost {:.1} %",

@@ -2683,7 +2683,12 @@ impl Sim {
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
                 if let Some(u) = self.update.as_mut() {
                     use bark_proto::wire::{Packet, Update, HEARTBEAT_LEN};
-                    match Packet::decode(f.payload()) {
+                    let home = self.relays[node as usize].home();
+                    let decoded = Packet::decode(f.payload());
+                    if matches!(decoded, Ok(Packet::Heartbeat(_))) && f.channel == home {
+                        u.home_beat(node, self.now);
+                    }
+                    match decoded {
                         // A heartbeat's section: what it adds to the frame.
                         Ok(Packet::Heartbeat(_)) if usize::from(f.len) > HEARTBEAT_LEN => {
                             let bare =
@@ -2696,6 +2701,11 @@ impl Sim {
                             let image = u.image;
                             let table = self.relays[node as usize].neighbour_table();
                             let (relays, sleepy) = (&self.relay_index, &self.sleepy_index);
+                            let me = self.relays[node as usize].id();
+                            let cores = &self.relays;
+                            // A sleepy node listens only for its anchor's
+                            // piece right after the anchor's slot heartbeat.
+                            let slot = u.after_home_beat(node, self.now);
                             let targets = table
                                 .live(self.clocks[node as usize].local(self.now))
                                 .map(|(_, n)| n)
@@ -2711,8 +2721,17 @@ impl Sim {
                                 .filter_map(|n| {
                                     let i = relays.get(&key(n.id)).or(sleepy.get(&key(n.id)));
                                     i.map(|&i| (i, n.sleepy))
-                                });
-                            u.piece_sent(block, index, targets);
+                                })
+                                .filter(|&(i, sleepy)| {
+                                    !sleepy
+                                        || slot
+                                            && cores[i as usize]
+                                                .anchor()
+                                                .is_some_and(|a| a.id == me)
+                                })
+                                .collect::<Vec<_>>();
+                            let foreign = f.channel != home;
+                            u.piece_sent(node, foreign, self.now, block, index, targets);
                         }
                         _ => u.aired(None, air),
                     }
