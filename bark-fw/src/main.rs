@@ -27,8 +27,6 @@ mod ext_flash;
 #[cfg(not(feature = "console"))]
 mod gps;
 #[cfg(not(feature = "console"))]
-mod lfclk;
-#[cfg(not(feature = "console"))]
 mod mailbox;
 #[cfg(not(feature = "console"))]
 mod node;
@@ -47,11 +45,12 @@ mod utc;
 #[cfg(feature = "console")]
 use core::fmt::Write as _;
 
+use bark_image::lfclk;
 use bark_proto::NodeId;
 use embassy_executor::Spawner;
 #[cfg(feature = "console")]
 use embassy_futures::join::join3;
-use embassy_nrf::config::{Config, HfclkSource};
+use embassy_nrf::config::{Config, HfclkSource, LfclkSource};
 use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
 use embassy_time::Instant;
@@ -204,13 +203,21 @@ async fn main(spawner: Spawner) {
     // Specification, USBD chapter). The console starts it at boot, for its
     // stopwatch too (clock.rs); in the node build the MPSL owns the clock,
     // starts the crystal for its radio, and holds it while asked to, on
-    // USB (`on_usb_only`). The 32.768 kHz clock starts on the internal RC
-    // oscillator, which assumes nothing about a fitted crystal; the node
-    // build then tries the crystal (`lfclk.rs`), and the console keeps the
-    // RC oscillator.
+    // USB (`on_usb_only`).
     config.hfclk_source = match cfg!(feature = "console") {
         true => HfclkSource::ExternalXtal,
         false => HfclkSource::Internal,
+    };
+    // The 32.768 kHz clock starts on the internal RC oscillator, which
+    // assumes nothing about a fitted crystal; the node build then tries the
+    // crystal, and the console keeps the RC oscillator. But a watchdog the
+    // loader started holds the clock on its source until a reset
+    // (`bark_image::lfclk`), and init writes LFCLKSRC even while the clock
+    // runs, which the Product Specification does not allow (CLOCK, LFCLK);
+    // given the source the clock runs from, the write changes nothing.
+    config.lfclk_source = match lfclk::held() {
+        Some(lfclk::Source::Crystal) => LfclkSource::ExternalXtal,
+        Some(lfclk::Source::Rc) | None => LfclkSource::InternalRC,
     };
     #[cfg(not(feature = "console"))]
     {
@@ -230,11 +237,15 @@ async fn main(spawner: Spawner) {
     // Mutable for the seed's borrow of the generator in the node build.
     #[cfg_attr(feature = "console", allow(unused_mut))]
     let mut p = embassy_nrf::init(config);
-    // The 32.768 kHz clock's source, before the MPSL takes the clock.
+    // The 32.768 kHz clock's source, before the MPSL takes the clock. The
+    // embassy clock, on RTC1, stands still while the crystal starts, up to
+    // `lfclk::START_MS`, so the wait counts the CPU's cycles.
     #[cfg(not(feature = "console"))]
-    let lf_source = lfclk::probe();
+    let lf_found = lfclk::probe(&mut ext_flash::Cycles);
     #[cfg(not(feature = "console"))]
-    boot::note(|f| f.lfclk = Some(lf_source));
+    let lf_source = lf_found.source();
+    #[cfg(not(feature = "console"))]
+    boot::note(|f| f.lfclk = Some(lf_found));
     #[cfg(not(feature = "console"))]
     let mpsl = ble::mpsl(
         ble::MpslParts {
@@ -334,11 +345,18 @@ async fn main(spawner: Spawner) {
     #[cfg(not(feature = "console"))]
     boot::note(|f| f.protection = Some(protection));
     #[cfg(not(feature = "console"))]
-    match lf_source {
-        lfclk::Source::Crystal { started_ms } => {
+    match lf_found {
+        lfclk::Found::Crystal { started_ms } => {
             log::info!("lfclk: crystal, started in {} ms", started_ms)
         }
-        lfclk::Source::Rc => log::warn!("lfclk: no crystal started; RC oscillator, calibrated"),
+        lfclk::Found::Rc => log::warn!("lfclk: no crystal started; RC oscillator, calibrated"),
+        lfclk::Found::Held(lfclk::Source::Crystal) => {
+            log::info!("lfclk: crystal, already running")
+        }
+        // A loader that started the watchdog without starting the clock.
+        lfclk::Found::Held(lfclk::Source::Rc) => {
+            log::warn!("lfclk: RC oscillator, calibrated, already running")
+        }
     }
     if let Some(msg) = previous_panic {
         log::error!("previous boot panicked: {}", msg);
@@ -405,20 +423,22 @@ async fn main(spawner: Spawner) {
             p.PPI_CH17, p.PPI_CH18, p.PPI_CH20, p.PPI_CH21, p.PPI_CH22, p.PPI_CH23, p.PPI_CH24,
             p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
         );
-        spawner.spawn(phone(ble_parts, p.RNG, mpsl).expect("spawned once"));
         // The node's flash: the stored state through the MPSL's timeslots
         // (`store.rs`), and the update's confirmation through the NVMC
         // driver directly, which runs once at boot before the BLE
         // controller starts (`ble::START`).
         let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
-        // SAFETY: a second handle on the NVMC, for `update::started` alone,
-        // which writes before the controller starts and so before anything
-        // writes through the MPSL: the core asks to store only once the
-        // node runs, after `update::started`.
+        // SAFETY: a second handle on the NVMC, which writes only in
+        // `update::started`, before the controller starts and so before
+        // anything writes through the MPSL: the core asks to store only
+        // once the node runs, after `update::started`. The phone link's
+        // update reads through it, which the NVMC serves as any read of
+        // flash.
         let shared = update::flash(embassy_nrf::nvmc::Nvmc::new(unsafe {
             embassy_nrf::peripherals::NVMC::steal()
         }));
         let mpsl_flash = store::shared(mpsl_flash);
+        spawner.spawn(phone(ble_parts, p.RNG, mpsl, mpsl_flash, shared).expect("spawned once"));
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The bond with the paired phone, to the phone link, and its line
@@ -568,10 +588,12 @@ async fn phone(
     parts: nrf_sdc::Peripherals<'static>,
     rng: embassy_nrf::Peri<'static, peripherals::RNG>,
     mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
+    internal: &'static store::SharedFlash,
+    flash: &'static update::Flash,
 ) {
     ble::START.wait().await;
     match ble::controller(parts, rng, mpsl) {
-        Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION).await,
+        Ok(c) => ble::run(c, node_id(), update::BARK_IMAGE_VERSION, internal, flash).await,
         // An nRF errno, negated (`nrf_mpsl::Error`).
         Err(e) => log::error!("ble: controller {}", i32::from(e)),
     }

@@ -291,7 +291,7 @@ What setting the stack up changed:
   timing, runs from the crystal if the board has one: the node tries it
   at boot for 1 s, four times its typical start-up (Product
   Specification, tSTART,LFXO), and otherwise falls back to the internal
-  RC oscillator (`lfclk.rs`). The MPSL is told the crystal is good to
+  RC oscillator (`bark_image::lfclk`). The MPSL is told the crystal is good to
   ±250 ppm, the tolerance the Product Specification requires of one for
   a BLE stack, since the fitted crystal's own is not known; the RC
   oscillator it calibrates every 4 s, which holds it to ±500 ppm. The
@@ -368,7 +368,9 @@ into its bootloader's `TECHOBOOT` drive, which takes the UF2
 
 1. **Boot.** The log shows the 32.768 kHz clock's source:
    `lfclk: crystal, started in N ms`, or the warning
-   `lfclk: no crystal started; RC oscillator, calibrated`. Then
+   `lfclk: no crystal started; RC oscillator, calibrated`; after a swap,
+   `lfclk: crystal, already running` or the warning `lfclk: RC
+   oscillator, calibrated, already running` (roadmap D148). Then
    `ble: controller memory N of 3104 bytes`,
    N at most 3104, `ble: advertising`, `ble: status flags=0x22 …` with
    the built address in degrees (bits 1 and 5, USB and placed; bit 6

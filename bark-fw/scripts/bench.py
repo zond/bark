@@ -128,6 +128,25 @@ def build(a: argparse.Namespace) -> None:
 # ---- the boards on the host ----------------------------------------------
 
 
+def open_raw(port: str) -> int:
+    """The port opened to read, raw at once.
+
+    Until raw mode takes hold the port echoes what the board sends back
+    into the board's console as typed input, and a board that has just
+    booted sends at once. Raw mode set right after the open, and the
+    echoes not yet sent dropped, keep that window as short as the host
+    allows, but cannot close it: `image.py stage` ends the console's line
+    before its first command for that reason."""
+    fd = os.open(port, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        tty.setraw(fd, termios.TCSANOW)
+        termios.tcflush(fd, termios.TCOFLUSH)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
 def capture(a: argparse.Namespace) -> None:
     """Every board's log into DIR/<id>.log, each line after the host's clock
     in seconds. A board that leaves (its bootloader, a reset) is logged
@@ -139,13 +158,12 @@ def capture(a: argparse.Namespace) -> None:
     def follow(node: str, port: str) -> None:
         with open(out / f"{node}.log", "a", buffering=1) as log:
             try:
-                fd = os.open(port, os.O_RDONLY | os.O_NOCTTY)
+                fd = open_raw(port)
+                os.set_blocking(fd, True)
             except OSError as e:
                 print(f"{node}: {e}", file=sys.stderr)
                 return
             try:
-                # Raw: no echo back into the board, lines split here.
-                tty.setraw(fd, termios.TCSANOW)
                 rest = b""
                 while True:
                     chunk = os.read(fd, 4096)

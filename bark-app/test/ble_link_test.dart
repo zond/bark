@@ -3,7 +3,8 @@
 // this phone's when the phone holds a bond for it, and a plain failure
 // when it does not; a node Android can reach only once a scan has seen
 // it; and the app's search for its paired node, which connects when it
-// sees the node, at start and after a drop, but not after the person
+// sees the node, at start, after a drop and after Bluetooth was off, an
+// update going on from what the node holds, but not after the person
 // disconnected, not to a node no longer theirs, and gives way to the
 // person's tap on another node.
 
@@ -20,10 +21,13 @@ import 'package:bark_app/node_link.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/ui/common.dart';
+import 'package:bark_app/updater.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 import 'package:universal_ble/universal_ble.dart';
+
+import 'update_test.dart' show imageFile;
 
 /// Connects, then fails the MTU request with 133 and drops the link, as
 /// a bonded Android phone saw it from a node that held another bond.
@@ -193,15 +197,53 @@ class FakeNodes extends UniversalBlePlatform {
     updateConnection(id, false);
   }
 
+  /// Bluetooth is on.
+  bool on = true;
+
+  /// The person switches Bluetooth off or on. Off, every link is gone,
+  /// and Android tells the app of the adapter only, not of the links: a
+  /// read or write then finds no characteristic (bench, 2026-11-07).
+  void power(bool v) {
+    on = v;
+    if (!v) {
+      for (final id in _up) {
+        nodes[id]!.close();
+      }
+      _up.clear();
+    }
+    updateAvailability(
+      v ? AvailabilityState.poweredOn : AvailabilityState.poweredOff,
+    );
+  }
+
+  /// For a test: Bluetooth goes off once this many pieces of an image
+  /// are written.
+  int? offAfterPieces;
+
+  void _reach(String deviceId) {
+    if (!_up.contains(deviceId)) {
+      throw UniversalBleException(
+        code: UniversalBleErrorCode.characteristicNotFound,
+        message: 'Characteristic not found',
+      );
+    }
+  }
+
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async =>
-      AvailabilityState.poweredOn;
+      on ? AvailabilityState.poweredOn : AvailabilityState.poweredOff;
 
   @override
   Future<void> startScan({
     ScanFilter? scanFilter,
     PlatformConfig? platformConfig,
   }) async {
+    if (!on) {
+      throw UniversalBleException(
+        code: UniversalBleErrorCode.bluetoothNotEnabled,
+        message: 'Bluetooth is off',
+      );
+    }
     scans++;
     Timer(const Duration(milliseconds: 10), () {
       for (final id in inReach.difference(_up)) {
@@ -224,7 +266,7 @@ class FakeNodes extends UniversalBlePlatform {
     ConnectionPlatformConfig? platformConfig,
   }) async {
     connects.add(deviceId);
-    if (!inReach.contains(deviceId)) {
+    if (!on || !inReach.contains(deviceId)) {
       throw ConnectionException('timed out after 30 seconds');
     }
     _up.add(deviceId);
@@ -294,6 +336,7 @@ class FakeNodes extends UniversalBlePlatform {
     String characteristic, {
     Duration? timeout,
   }) async {
+    _reach(deviceId);
     final n = nodes[deviceId]!;
     return switch (characteristic) {
       Uuids.node => (await n.readNode()).encode(),
@@ -302,12 +345,14 @@ class FakeNodes extends UniversalBlePlatform {
       Uuids.inbox => (await n.readInbox())?.encode() ?? Uint8List(0),
       Uuids.clock => (await n.readClock()).encode(),
       Uuids.home => (await n.readHome()).encode(),
+      Uuids.update => (await n.readUpdate()).encode(),
       _ => throw UnimplementedError(characteristic),
     };
   }
 
-  /// Writes the app makes at every connection; the clock and the home
-  /// the fake takes are not what these tests are about.
+  /// Writes the app makes at every connection, and an update's; the
+  /// clock and the home the fake takes are not what these tests are
+  /// about.
   @override
   Future<void> writeValue(
     String deviceId,
@@ -316,11 +361,24 @@ class FakeNodes extends UniversalBlePlatform {
     Uint8List value,
     BleOutputProperty bleOutputProperty,
   ) async {
+    _reach(deviceId);
     final n = nodes[deviceId]!;
-    if (characteristic == Uuids.inbox) {
-      await n.confirm(ByteData.sublistView(value).getUint32(0));
+    switch (characteristic) {
+      case Uuids.inbox:
+        await n.confirm(ByteData.sublistView(value).getUint32(0));
+      case Uuids.update:
+        await n.writeUpdate(value);
+      case Uuids.image:
+        await n.writePiece(value);
+        if (n.piecesWritten == offAfterPieces) power(false);
     }
   }
+
+  @override
+  Future<void> requestConnectionPriority(
+    String deviceId,
+    BleConnectionPriority priority,
+  ) async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
@@ -500,6 +558,44 @@ void main() {
         async.elapse(const Duration(seconds: 1));
         expect(app.session.connected, isTrue);
         expect(ble.connects, [paired, paired]);
+      });
+    });
+
+    test('Bluetooth off ends the link; on again, it connects', () {
+      run((async, app, ble) {
+        async.elapse(const Duration(seconds: 1));
+        expect(app.session.connected, isTrue);
+        ble.power(false);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.session.connected, isFalse);
+        expect(app.lookingFor, isNull);
+        expect(lookingLine(app), startsWith('Bluetooth is off'));
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.connects, [paired]);
+        ble.power(true);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.session.connected, isTrue);
+        expect(ble.connects, [paired, paired]);
+      });
+    });
+
+    test('an update cut by Bluetooth off goes on from what the node '
+        'holds', () {
+      run((async, app, ble) {
+        async.elapse(const Duration(seconds: 1));
+        final image = parseImage(imageFile(2, 20001));
+        final pieces = (image.length / pieceBytes(attMtu)).ceil();
+        app.updater.choose(image, 'file');
+        ble.offAfterPieces = 40;
+        app.updater.send();
+        async.elapse(const Duration(seconds: 1));
+        expect(app.updater.phase, Phase.paused);
+        expect(app.updater.held, greaterThan(0));
+        expect(app.session.connected, isFalse);
+        ble.power(true);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.updater.phase, Phase.committed, reason: app.updater.message);
+        expect(ble.nodes[paired]!.piecesWritten, lessThan(pieces + window));
       });
     });
 

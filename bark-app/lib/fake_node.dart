@@ -6,12 +6,15 @@
 // writes from a node away from it, which moves between their messages.
 // Somewhere away is the person's home node, whose mailbox answers a
 // fetch as the spec's "Mailbox" says. Around it stand a few neighbours,
-// one of each link quality and of each kind a map draws apart.
+// one of each link quality and of each kind a map draws apart. It takes
+// a firmware update as the node does, and comes back from its reboot
+// running the new version.
 
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:sodium/sodium.dart';
 
 import 'app_layer.dart';
@@ -381,7 +384,8 @@ class FakeNode implements NodeLink {
   }
 
   @override
-  Future<NodeInfo> readNode() => _answer(() => NodeInfo(linkVersion, id, 1));
+  Future<NodeInfo> readNode() =>
+      _answer(() => NodeInfo(linkVersion, id, image));
 
   @override
   Future<void> subscribe() => _answer(() {});
@@ -511,6 +515,147 @@ class FakeNode implements NodeLink {
     ]);
   });
 
+  /// The firmware image's version it runs.
+  int image = 1;
+
+  /// On battery at or below the low level: a commit, and a reboot into a
+  /// swap, are refused (spec "Phone link", Updates).
+  bool lowBattery = false;
+
+  /// For a test: every this many pieces written, one is lost, as the
+  /// node's host drops a PDU its full queue has no room for.
+  int? dropEvery;
+  int _pieces = 0;
+
+  /// For a test: the link is lost once this many pieces are written.
+  int? closeAfterPieces;
+
+  /// For a test: the link's end at a reboot overtakes the answer, and
+  /// the write fails with Android's catch-all GATT error 133, as on the
+  /// bench.
+  bool rebootAnswerLost = false;
+
+  /// Pieces the app has written, those lost among them.
+  int get piecesWritten => _pieces;
+
+  /// How long its loader takes to swap at a reboot, as a node's does,
+  /// 55 s on the bench (`bark-fw/README.md`, "Updates").
+  static const swapTime = Duration(seconds: 55);
+
+  /// The update: the header taken, the bytes held, and whether committed.
+  Uint8List? _staging;
+  final List<int> _held = [];
+  bool _committed = false;
+  Refusal? _refused;
+  DateTime? _backAt;
+
+  static int _le32(List<int> b, int at) =>
+      b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24);
+
+  int get _length => _le32(_staging!, 12);
+
+  @override
+  Future<UpdateProgress> readUpdate() => _answer(() {
+    final h = _staging;
+    if (h == null) return UpdateProgress(UpdateState.idle, refused: _refused);
+    return UpdateProgress(
+      _committed
+          ? UpdateState.committed
+          : _held.length == _length
+          ? UpdateState.staged
+          : UpdateState.receiving,
+      refused: _refused,
+      held: _held.length,
+      version: _le32(h, 8),
+      hash: h.sublist(16, 48),
+    );
+  });
+
+  Never _refuse(Refusal r) {
+    _refused = r;
+    throw const AttException(AttError.refused);
+  }
+
+  @override
+  Future<void> writeUpdate(Uint8List value) => _answer(() {
+    if (value.isEmpty) throw const AttException(AttError.invalidLength);
+    switch (value[0]) {
+      case 0 when value.length == 1 + FirmwareImage.headerLen:
+        final h = value.sublist(1);
+        if (_committed) _refuse(Refusal.busy);
+        _staging = null;
+        _held.clear();
+        if (String.fromCharCodes(h.sublist(0, 4)) != 'bark' || h[4] != 1) {
+          _refuse(Refusal.header);
+        }
+        if (_le32(h, 8) <= image) _refuse(Refusal.version);
+        // A node verifies each slot's Ed25519 signature; the fake takes a
+        // header with any slot naming a key as signed.
+        if (![for (var s = 0; s < 3; s++) h[48 + 65 * s]].any((k) => k != 0)) {
+          _refuse(Refusal.signature);
+        }
+        _staging = h;
+        _refused = null;
+      case 1 when value.length == 1:
+        if (_staging == null || _committed) _refuse(Refusal.incomplete);
+        if (_held.length != _length) _refuse(Refusal.incomplete);
+        if (lowBattery) _refuse(Refusal.battery);
+        if (hex(sha256.convert(_held).bytes) !=
+            hex(_staging!.sublist(16, 48))) {
+          _staging = null;
+          _held.clear();
+          _refuse(Refusal.hash);
+        }
+        _committed = true;
+        _refused = null;
+      case 2 when value.length == 1:
+        if (_committed && lowBattery) _refuse(Refusal.battery);
+        _reboot();
+        if (rebootAnswerLost) throw const AttException(0x85);
+      case 0 || 1 || 2:
+        throw const AttException(AttError.invalidLength);
+      default:
+        throw const AttException(AttError.valueNotAllowed);
+    }
+  });
+
+  @override
+  Future<void> writePiece(Uint8List value) => _answer(() {
+    if (value.length <= pieceHeader) {
+      throw const AttException(AttError.invalidLength);
+    }
+    _pieces++;
+    if (_pieces == closeAfterPieces) scheduleMicrotask(close);
+    final drop = dropEvery;
+    if (drop != null && _pieces % drop == 0) return;
+    final at = (value[0] << 24) | (value[1] << 16) | (value[2] << 8) | value[3];
+    final bytes = value.sublist(pieceHeader);
+    if (_staging == null ||
+        _committed ||
+        at != _held.length ||
+        at + bytes.length > _length) {
+      return;
+    }
+    _held.addAll(bytes);
+  });
+
+  @override
+  Future<void> hurry() => _answer(() {});
+
+  /// Ends the link and resets; a committed image runs once the swap is
+  /// over, until then the fake takes no connection.
+  void _reboot() {
+    final committed = _committed;
+    final version = committed ? _le32(_staging!, 8) : image;
+    _staging = null;
+    _held.clear();
+    _committed = false;
+    _refused = null;
+    _backAt = now().add(committed ? swapTime : Duration.zero);
+    image = version;
+    scheduleMicrotask(close);
+  }
+
   @override
   Stream<Status> get statusNotified => _status.stream;
 
@@ -531,6 +676,10 @@ class FakeNode implements NodeLink {
   /// message can be given back or arrive while it is.
   NodeLink connect() {
     if (!paired) throw NotOurs(nodeName(id));
+    final back = _backAt;
+    if (back != null && now().isBefore(back)) {
+      throw StateError('${nodeName(id)} is swapping in its new image');
+    }
     _connected = true;
     _closed = Completer<void>();
     return this;

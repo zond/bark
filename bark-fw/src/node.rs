@@ -502,6 +502,10 @@ pub async fn run<'a>(
         let now = bark_driver::Clock::now(&clock);
         let core = &driver.core().0;
         let status = status(core, now, driver.app().battery_mv);
+        crate::update::note_power(crate::update::Power {
+            external: status.external_power,
+            battery_mv: core.battery_millivolts(driver.app().battery_mv),
+        });
         // A home's messages go into its mailbox, one at a time, each
         // confirmed to the core once it is written (`request`); its phone
         // reads them from the ring.

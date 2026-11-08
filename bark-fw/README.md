@@ -166,8 +166,12 @@ Unverified, in the order they will fail if wrong:
   the controller takes the host's resolving-list commands. Only built.
 - The 32.768 kHz clock: whether the board has the crystal is not known.
   The node tries it at boot, giving it 1 s, and falls back to the
-  calibrated internal RC oscillator, logging which runs (`src/lfclk.rs`);
-  the console keeps the RC oscillator.
+  calibrated internal RC oscillator, logging which runs
+  (`bark_image::lfclk`); the console keeps the RC oscillator. Under a
+  trial's watchdog the clock runs on the source the loader found, which
+  the node logs as `already running` (roadmap D148); that embassy-nrf's
+  init, which starts the clock again, gets its LFCLKSTARTED from a clock
+  the loader started on the crystal is not yet seen.
 - The bootloader from the serial port (`src/touch.rs`): 0x57 in GPREGRET
   as the bootloader's UF2 reset magic is taken from its source as
   remembered, not read from the board's 0.6.1; the bench's first
@@ -241,7 +245,9 @@ Stable Rust and the Cortex-M4F target:
 rustup target add thumbv7em-none-eabihf
 ```
 
-Python 3.9 or later for the scripts (standard library only). No probe, objcopy or
+Python 3.9 or later for the scripts, with the standard library alone but
+for signing an image, which takes the `cryptography` package
+(`apt install python3-cryptography`; Updates, below). No probe, objcopy or
 cargo-binutils is needed.
 
 ## Flash layout
@@ -301,7 +307,8 @@ firmware and the loader each use the rest.
 ## Build and package
 
 From `bark-fw/`, the firmware alone, for a board that already has the
-loader:
+loader (`scripts/uf2.py` packs a protected build only with
+`BARK_SIGNING_KEYS`, an open one, `BARK_OPEN=1`, without: Updates, Keys):
 
 ```
 cargo build --release && scripts/uf2.py target/thumbv7em-none-eabihf/release/bark-fw target/bark-fw.uf2
@@ -441,11 +448,10 @@ as `scripts/uf2.py` lays them:
 | 8–11 | version, little-endian, raised with every image |
 | 12–15 | the image's length in bytes, little-endian |
 | 16–47 | SHA-256 of the image (FIPS 180-4) |
-| 48–255 | zero: room for three signatures of 65 bytes, an Ed25519 signature (RFC 8032) and a byte naming its key |
+| 48–242 | three signatures of 65 bytes: a byte naming the key, 1 to 255, then an Ed25519 signature (RFC 8032) of bytes 0–47; all zero if empty |
+| 243–255 | zero |
 
-The header is not signed yet: signatures come with the key policy, and
-the running firmware will check them before it stages, never the loader
-(D79). The firmware's version is `BARK_IMAGE_VERSION` at build time,
+The firmware's version is `BARK_IMAGE_VERSION` at build time,
 kept under its own symbol, from which `scripts/image.py`
 writes the header's; an image is staged only above the running one's
 version. Without the variable the version is 0: a bench build, flashed
@@ -454,6 +460,23 @@ staged over another, since `scripts/image.py` packs only a version
 above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
 swap.
+
+**Signatures.** The running firmware stages an image only if one of
+the header's signatures verifies under one of the up to three public
+keys it was built with, the one its byte names (roadmap D144;
+`bark-image/src/sign.rs`, checked with the `ed25519-compact` crate,
+2.6.0). The loader checks none (D79): no key sits in the one part
+that is never updated. A signature covers bytes 0–47, the hash
+standing for the image: the firmware hashes the staged bytes anyway, so
+it checks a signature over 48 bytes, not the image's 388 KB, and checks
+it as the staging starts, before a byte of the image has come; the hash
+once the last byte has. A header is refused with the reason:
+`Signature(Unsigned)`, `Signature(UnknownKey)` when no signature is by a
+key the firmware holds, or `Signature(Bad)`.
+
+The version and the signature together stop a captured image from
+being staged again: it is signed, but at or below the running version.
+A bench build, version 0, takes any signed version.
 
 **The loader**, at every boot:
 
@@ -486,7 +509,10 @@ swap.
    instructions: about 190 ms a page, 44 s, and 3 s more for the hash; a
    swap back as long without the hash. Unmeasured; the mailbox's open
    logs the bus's speed (Mailbox, below). Then the rail falls again.
-5. On those boots it starts the watchdog first, with a period of
+5. On those boots it first starts the 32.768 kHz clock as the firmware
+   does, on the crystal if it starts within 1 s (`bark_image::lfclk`),
+   since the watchdog holds the clock on its source until a reset
+   (roadmap D148); then the watchdog, with a period of
    600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
    timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
    feeds it at every flash operation of the swap.
@@ -513,22 +539,63 @@ sector of the staged slot is erased twice, in staging and in the swap,
 three times with a swap back: the external flash's 100 000 (datasheet,
 "Features") last 33 000.
 
-**Staging is a bench tool** until the update has a transport (BLE, then
-the mesh). A console build takes an image over its serial port:
-`stage <header hex>`, `chunk <offset> <hex>` for up to 256 bytes at a
-time, in order, `commit`, which checks the hash, records the header and
-asks for the swap, and `reboot`. `scripts/image.py` packs and sends it:
+**Staging** takes two paths, the same steps on each
+(`bark_image::boot::Stager`): the phone link, in the node build, and the
+serial port, in a console build. Both begin through `update::stage`,
+which checks the version and the header's signature against the keys
+the image holds, commit through `update::commit`, which checks that
+every byte came, the battery (below), the hash, records the header and
+asks for the swap, and reboot through `update::reboot`, so that a check
+added there applies to both. `scripts/image.py pack` makes the image
+either takes and `scripts/image.py sign` signs it; a release carries it,
+signed, as `bark-fw-<N>.img`.
+
+From the phone (spec "Phone link", Updates; roadmap D145): the app
+writes the header to Update, the image to Image in pieces of 240 bytes
+without a response, reads Update after every seven and goes on from the
+bytes the node holds, then commits and reboots (`bark-app/README.md`,
+"Updating a node"). The node stages through the MPSL's flash timeslots
+for the record and the state page, as the store writes, and through the
+external flash's driver with the executor free while the chip erases or
+programs, as the mailbox writes; the commit's hash reads 256 bytes at a
+time and lets the executor run between, about 3 s for the whole image.
+What is staged stays across connections until the node resets. The log
+has a line for each change, none for a piece:
 
 ```
-BARK_IMAGE_VERSION=2 cargo build --release --features console
+update: receiving version=8 length=394112 from the phone
+update: link closed with 120960 bytes of version 8 held
+update: staged version=8, all 394112 bytes held; commit next
+update: committed version=8 length=394112: the loader swaps it in at the next boot
+update: reboot asked by the phone
+ble: disconnected 0x16
+reboot
+```
+
+and a refusal as `update: begin refused=Version { running: 8, staged: 8 }`,
+`update: begin refused=Signature(Unsigned)`,
+`update: commit refused=BatteryLow usb=false battery_mv=3702`, or the
+like.
+
+From a console build, over its serial port: `stage <header hex>`,
+`chunk <offset> <hex>` for up to 256 bytes at a time, in order,
+`commit` and `reboot`. `scripts/image.py` packs, signs and sends it;
+an open build takes the bench key, below:
+
+```
+BARK_OPEN=1 BARK_IMAGE_VERSION=2 cargo build --release --features console
 scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v2.img
-BARK_IMAGE_VERSION=1 cargo build --release --features console
+scripts/image.py sign target/v2.img keys/bench.pem --key-id 1
+BARK_OPEN=1 BARK_IMAGE_VERSION=1 cargo build --release --features console
 scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader target/thumbv7em-none-eabihf/release/bark-fw target/bark.uf2
 # copy target/bark.uf2 to the board, then:
 scripts/image.py stage target/v2.img /dev/ttyACM0 --reboot
 ```
 
 The log then shows `image version 2` and `update: version 2 confirmed`.
+`scripts/image.py check target/v2.img ELF` says whether the firmware
+built as ELF would stage the image, and `stage --running ELF` asks it
+first; `scripts/uf2.py` prints the keys a firmware holds.
 `BARK_UPDATE_BENCH` at build time makes the images that must be swapped
 back: `unconfirmed` runs and never confirms, `panic` panics where it
 would confirm, `hang` spins there with everything else stopped; and
@@ -539,10 +606,13 @@ at most a copy). Every image logs the two protected regions as the ACL
 reads them back, `update: acl 0 start=0x0 len=0x5000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
-On battery at or below the low level of spec "Sleepy nodes" the console
-refuses `commit`, and `reboot` with a swap asked for, with
-`commit refused=BatteryLow battery_mv=... low_mv=3741` (spec
-"Implementation notes"); over its USB cable it is never on battery.
+On battery at or below the low level of spec "Sleepy nodes" a commit,
+and a reboot with a swap asked for, are refused
+(spec "Implementation notes"): the console says `commit refused=BatteryLow battery_mv=...
+low_mv=3741`, and over its USB cable it is never on battery; the phone
+link answers refused, battery, and the node keeps the image staged, to
+commit once it is on USB or charged. The node reads its battery as the
+core does, calibrated; the console, without a core, uncalibrated.
 
 **A bench loader**, built with `BARK_LOADER_BENCH=reset`, resets the
 chip once in each swap and once in each swap back, at a moment drawn
@@ -559,6 +629,45 @@ of version 1 to the board through its bootloader, and runs 200 rounds:
 in turn a console image one version up, to confirm, and a `panic` image
 one version up, to be swapped back (roadmap Phase 2, "Resets in a
 swap").
+
+**Keys.** A firmware takes its public keys from `BARK_SIGNING_KEYS` at
+build time, up to three `id:hex` comma-separated, each id a byte from 1
+to 255 that names the key in a signature and each key 32 bytes
+(`build.rs`); they are kept under their own symbol, from which the
+scripts read them. A protected build without them holds no key and
+stages no image: it builds, with a warning, so that the checks run
+without keys, but `scripts/uf2.py` and `scripts/image.py pack` refuse
+it, so no such image reaches a board. An open build without them takes
+the bench key, `keys/bench.pub`, whose private key is beside it in
+`keys/bench.pem` for every bench to sign with; a protected build fails
+if given it.
+
+The release key is made once with `scripts/image.py keygen`, which
+writes the private key, PEM, readable by its owner alone, and prints
+the public key. The private key is kept outside the repository, in the
+same folder as the app's release key and backed up the same way
+(README.md, "Releases"): a node can take an image only from a key it
+holds, so with the key lost, every node is updated by hand at its next
+visit. The release workflow signs with it from the secret
+`BARK_SIGNING_KEY` and builds with the repository variable
+`BARK_SIGNING_KEYS`:
+
+```
+scripts/image.py keygen bark-signing-1.pem   # in the folder of the app's key
+gh secret set BARK_SIGNING_KEY < bark-signing-1.pem
+gh variable set BARK_SIGNING_KEYS --body 1:<the public key it printed>
+```
+
+The workflow signs under the id the built firmware gives the key and
+fails if it holds no such key, so no release leaves the nodes unable to
+take the next one. To replace a key: make key 2, release once holding
+both, `1:<old>,2:<new>`, still signed with key 1, which the nodes hold;
+then set the secret to key 2 and the variable to `2:<new>`. Once every
+node runs a release holding key 2, key 1 signs nothing they take. A
+stolen key is replaced the same way, at once: until the nodes run a
+release without it, its holder can sign for them. A lost key cannot
+sign the release that brings in the next; a second key held from the
+start, kept apart, can.
 
 ## Display
 
@@ -735,6 +844,19 @@ the phone is subscribed and saw another version, `ble: service changed:
 the phone saw version 4, this is 5` and, once the phone confirms,
 `ble: service changed confirmed`. It costs 4 KB of flash and 0.4 KB of
 static RAM (2026-11-07, `llvm-size`).
+
+Update and Image (link version 6) stage a new image from the phone
+(Updates, above). The BLE task serves them itself and keeps the staging
+across connections (`src/update/phone.rs`); it awaits each piece's
+writes before it takes the next request, so the pieces wait in the
+host's queue of 8 meanwhile, which the app's window of seven and its
+read fill. The pieces and the reads of Update are not logged as ATT
+requests, as the rest are, and a piece reads none of the values the
+node publishes. A reboot asked for answers, ends the link, waits for it
+to close, at most the 32 s of the longest supervision timeout, and
+resets. They cost 14.8 KB of flash and 1.4 KB of static RAM, the
+SHA-256 among it, which the node build did not have before
+(2026-11-07, `llvm-size`, an open build).
 
 ## Mailbox
 
@@ -1142,8 +1264,12 @@ Linux raises DTR when a tty is opened, so all three work, and the kernel
 hands over bytes only while something holds the port open: whatever opens
 it first takes the waiting boot lines, so a `stty` run before the reader
 takes them into nothing. Set the line and read it in one open, as in
-`( stty 115200 raw -echo <&3; cat <&3 ) 3<>/dev/ttyACM0`. Your user needs to
-be in the `dialout` group (or `uucp`, depending on the distribution).
+`( stty 115200 raw -echo <&3; cat <&3 ) 3<>/dev/ttyACM0`. Until `-echo`
+takes hold, the kernel echoes what the board sends back into its console,
+so a port opened just as the board boots can leave stray text on the
+console's line: type a bare Enter before the first command.
+`scripts/image.py stage` does so itself. Your user needs to be in the
+`dialout` group (or `uucp`, depending on the distribution).
 
 Each line is `[seconds.millis LEVEL] message`, seconds since boot; command
 echoes are `> command`.

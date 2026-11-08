@@ -22,8 +22,9 @@ console = []
 [dependencies]
 bark-proto = { path = "../bark-proto" }
 bark-driver = { path = "../bark-driver" }
-# The flash layout, and the staging and confirmation of an image.
-bark-image = { path = "../bark-image" }
+# The flash layout, the staging and confirmation of an image, and the
+# 32.768 kHz clock's start.
+bark-image = { path = "../bark-image", features = ["lfclk"] }
 # A place for the 150 KiB relay outside every task's future and stack.
 static_cell = "=2.1.1"
 
@@ -59,8 +60,10 @@ panic-persist = { version = "=0.3.0", features = ["utf8"] }
 lora-phy = { path = "vendor/lora-phy" }
 # The flash traits embassy-nrf's NVMC driver implements, for the stored
 # state (src/store.rs), and the partitions that share the NVMC between it
-# and the update (src/update.rs).
+# and the update (src/update.rs); their async forms, which the update's
+# staging takes (src/update.rs, src/ext_flash.rs).
 embedded-storage = "=0.3.2"
+embedded-storage-async = "=0.4.2"
 embassy-embedded-hal = "=0.6.0"
 # The phone link (roadmap D5, D117; protocol.md "Phone link"): Nordic's
 # SoftDevice Controller, peripheral-only, under the multiprotocol service

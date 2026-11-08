@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Resets in the middle of swaps on one board (roadmap Phase 2, "Resets in a swap", D143).
 
-No dependencies beyond Python 3; run from bark-fw/, the board on USB:
+Python 3 and its `cryptography` package, to sign the images with the
+bench key; run from bark-fw/, the board on USB:
 
     scripts/swapbench.py ID 200
 
@@ -36,14 +37,12 @@ import re
 import select
 import subprocess
 import sys
-import termios
 import time
-import tty
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import bench  # noqa: E402  (beside this script: ports, the touch, the copy)
+import bench  # noqa: E402  (beside this script: ports, the raw open, the touch, the copy)
 import image  # noqa: E402  (beside this script: pack, stage)
 
 FW = bench.FW
@@ -73,15 +72,18 @@ READY = "console ready"
 def build_image(kind: str, version: int) -> Path:
     """The console image of `kind`, up or panic, at `version`, packed."""
     out = OUT / f"{kind}-v{version}.img"
-    if out.exists():
-        return out
-    env = {"BARK_OPEN": "1", "BARK_IMAGE_VERSION": str(version)}
-    if kind == "panic":
-        env["BARK_UPDATE_BENCH"] = "panic"
-    cargo(FW, env, ["--features", "console"])
-    data, v = image.pack(ELF.read_bytes())
-    assert v == version
-    out.write_bytes(data)
+    if not out.exists():
+        env = {"BARK_OPEN": "1", "BARK_IMAGE_VERSION": str(version)}
+        if kind == "panic":
+            env["BARK_UPDATE_BENCH"] = "panic"
+        cargo(FW, env, ["--features", "console"])
+        data, v = image.pack(ELF.read_bytes())
+        assert v == version
+        out.write_bytes(data)
+    # Signed by the bench key, which an open build holds; one packed
+    # before images were signed is signed now.
+    if not any(key_id for key_id, _ in image.slots(out.read_bytes()[: image.HEADER_LEN])):
+        image.sign(str(out), image.BENCH_KEY, image.bench_key_id(), None)
     return out
 
 
@@ -138,7 +140,7 @@ def read_boot(port: str, log) -> list[str]:
     port goes, or BOOT_S passes."""
     for _ in range(100):
         try:
-            fd = os.open(port, os.O_RDONLY | os.O_NOCTTY)
+            fd = bench.open_raw(port)
             break
         except OSError:
             time.sleep(0.05)
@@ -148,7 +150,6 @@ def read_boot(port: str, log) -> list[str]:
     rest = b""
     end = time.monotonic() + BOOT_S
     try:
-        tty.setraw(fd, termios.TCSANOW)
         while time.monotonic() < end:
             if not select.select([fd], [], [], 0.5)[0]:
                 continue

@@ -23,7 +23,8 @@ pub struct ImageTag(pub [u8; TAG_LEN]);
 /// (spec "Updates over the mesh").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
-    /// SHA-256 of the image's signed header: its name everywhere.
+    /// SHA-256 of the image's signed header, the 48 bytes its
+    /// signatures cover (`bark-image`, `sign.rs`): its name everywhere.
     pub id: [u8; 32],
     /// The signed version number; only the policy test reads it.
     pub version: u32,

@@ -193,6 +193,7 @@ class BleLink implements NodeLink {
   final String deviceId;
   final _closed = Completer<void>();
   StreamSubscription<bool>? _connection;
+  StreamSubscription<AvailabilityState>? _adapter;
 
   BleLink._(this.deviceId);
 
@@ -227,6 +228,15 @@ class BleLink implements NodeLink {
     );
     link._connection = UniversalBle.connectionStream(deviceId).listen((up) {
       if (!up && !link._closed.isCompleted) link._closed.complete();
+    });
+    // Android reports no end of the link when its Bluetooth is switched
+    // off: the link stayed up for the app, whose writes then failed with
+    // characteristicNotFound until it was restarted (bench, 2026-11-07).
+    // The adapter's going off ends it here, as a drop, and the close lets
+    // Android forget the dead connection, so that the next connect makes
+    // a new one.
+    link._adapter = UniversalBle.availabilityStream.listen((a) {
+      if (a != AvailabilityState.poweredOn) unawaited(link._adapterOff());
     });
     final int mtu;
     try {
@@ -391,6 +401,39 @@ class BleLink implements NodeLink {
       NeighbourPage.decode(await _read(Uuids.neighbours));
 
   @override
+  Future<UpdateProgress> readUpdate() async =>
+      UpdateProgress.decode(await _read(Uuids.update));
+
+  /// A begin is longer than one write at the node's MTU, and Android
+  /// writes it as a long write (spec "Phone link", MTU).
+  @override
+  Future<void> writeUpdate(Uint8List value) => _write(Uuids.update, value);
+
+  @override
+  Future<void> writePiece(Uint8List value) => UniversalBle.write(
+    deviceId,
+    Uuids.service,
+    Uuids.image,
+    value,
+    withoutResponse: true,
+    timeout: attTimeout,
+  );
+
+  /// Android's high priority, an interval of 11.25 to 15 ms (spec
+  /// "Phone link", Updates); other platforms choose their own.
+  @override
+  Future<void> hurry() async {
+    try {
+      await UniversalBle.requestConnectionPriority(
+        deviceId,
+        BleConnectionPriority.highPerformance,
+      );
+    } on UniversalBleException {
+      // Not supported here: the transfer takes longer.
+    }
+  }
+
+  @override
   Stream<Status> get statusNotified =>
       _notified(Uuids.status).map(Status.decode);
 
@@ -401,9 +444,18 @@ class BleLink implements NodeLink {
   @override
   Future<void> get closed => _closed.future;
 
+  Future<void> _adapterOff() async {
+    try {
+      await close();
+    } catch (_) {
+      // The link is closed for the app whatever Android answers.
+    }
+  }
+
   @override
   Future<void> close() async {
     unawaited(_connection?.cancel());
+    unawaited(_adapter?.cancel());
     try {
       await UniversalBle.disconnect(deviceId);
     } finally {

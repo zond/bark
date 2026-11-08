@@ -4,13 +4,18 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The T-Echo's flash layout, its external flash's driver, the firmware image header and the swap of a staged image, shared by the firmware, its loader and their build scripts."
+description = "The T-Echo's flash layout, its external flash's driver, the firmware image header, the swap of a staged image and the start of the 32.768 kHz clock, shared by the firmware, its loader and their build scripts."
 
 [features]
 default = ["boot"]
-# The swap and the staging on a flash (`boot`); the build scripts, which
-# need only the layout, leave it out.
-boot = ["dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-hal", "dep:embedded-storage", "dep:sha2"]
+# The swap and the staging on a flash (`boot`), which checks a header's
+# signatures (`verify`); the build scripts, which need only the layout
+# and the keys' format, leave them out.
+verify = ["dep:ed25519-compact"]
+boot = ["verify", "dep:embassy-boot", "dep:embassy-embedded-hal", "dep:embassy-sync", "dep:embedded-hal", "dep:embedded-storage", "dep:embedded-storage-async", "dep:sha2"]
+# The 32.768 kHz clock's start (`lfclk`), which only the loader and the
+# firmware run, on the chip.
+lfclk = ["dep:nrf-pac", "dep:embedded-hal"]
 
 [dependencies]
 # The swap that survives a power cut, and the confirmation that keeps it.
@@ -18,7 +23,18 @@ embassy-boot = { version = "=0.7.0", optional = true }
 embassy-embedded-hal = { version = "=0.6.0", optional = true }
 embassy-sync = { version = "=0.8.0", optional = true }
 embedded-storage = { version = "=0.3.2", optional = true }
-# The pins and the clock the external flash's bus is driven by.
+# The same, for flashes that let the processor go on while they erase or
+# write (`boot::Stager`).
+embedded-storage-async = { version = "=0.4.2", optional = true }
+# The pins and the clock the external flash's bus is driven by, and the
+# wait for the 32.768 kHz crystal.
 embedded-hal = { version = "=1.0.0", optional = true }
+# The CLOCK and WDT registers, the version embassy-nrf 0.11.0 drives the
+# chip with (`lfclk`).
+nrf-pac = { version = "=0.4.0", features = ["nrf52840"], optional = true }
 # SHA-256 (FIPS 180-4) of a staged image.
 sha2 = { version = "=0.10.9", default-features = false, optional = true }
+# Ed25519 (RFC 8032) for a header's signatures: no dependencies, no
+# allocation; built for size, 17.4 KB of the node image where
+# ed25519-dalek 2.2.0 took 25.4 KB (roadmap D144).
+ed25519-compact = { version = "=2.6.0", default-features = false, features = ["opt_size"], optional = true }

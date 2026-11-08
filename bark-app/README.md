@@ -92,7 +92,9 @@ is a prototype for the bench, not the app people will carry.
   send. Without a home it says that people can answer you only after
   you write to them.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one) and the node the phone is paired with, the fake node switch, whether the app is exempt from battery
+  one) and the node the phone is paired with, the fake node switch, the
+  version of the connected node's firmware and **Update firmware**
+  (Updating a node, below), whether the app is exempt from battery
   optimisation (next section), your name, the home node (make the
   connected node your home if it is not, or none; the dialog says so,
   and on **Go ahead** your new card goes to every contact; **Send my
@@ -159,7 +161,8 @@ bond), which needs no code of the app's own on the Android side.
 While it is not connected, the app looks for the node it is paired with
 and connects to it when it sees it, by the same path as a tap and without
 a code: from its start, and after a link drops, so that texts waiting go
-out as soon as the node is in reach. The first screen, and Settings under
+out as soon as the node is in reach. Bluetooth switched off ends the link
+as a drop does: Android does not report that end itself. The first screen, and Settings under
 the scan rows, say "Looking for bark-…", or that Bluetooth is off. A
 search round scans for four of the node's advertising intervals, 4.1 s,
 without a break, and a round starts every 15 s: Android refuses an app's
@@ -295,6 +298,64 @@ a node does. It counts as paired with the phone; a test can have it
 pair with another phone (`FakeNode.pairElsewhere`), and the app then
 finds it no longer yours, as with a node.
 
+## Updating a node
+
+A node out of reach, on a roof, is updated from the phone over the link
+(spec "Phone link", Updates; roadmap D145). Settings, under
+**Firmware**, says the version the connected node runs; **Update
+firmware** opens a screen that takes the image from **Latest release**,
+the `bark-fw-<N>.img` of the repository's latest GitHub release,
+fetched through GitHub's releases API without an account and signed
+by the release, or from **Pick a file**, an image
+`bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
+node refuses an image no key of its own signed (`bark-fw/README.md`,
+"Updates"). The app
+checks the file's header and hash before it offers it, and shows its
+version, and says so when it is not newer than the node's: the node
+would refuse it. **Send to the node** sends it with a progress bar, in
+windows of seven pieces of 240 bytes, each window followed by a read of
+where the node stands (`lib/updater.dart`); it asks Android for a short
+connection interval first, and an image of 400 KB takes about 20 s, up
+to a minute where Android does not grant it. If the link is lost, the
+screen says how far it got, and when the app connects again it goes on
+from the bytes the node holds, not from the start. Once every byte is
+there the app commits: the node checks the image and answers, and the
+screen says it keeps it for its next boot, or why it refused, in words.
+A refusal for a low battery keeps the image on the node, and
+**Commit** tries again once the node is on USB. **Reboot into version
+N** then restarts the node, which swaps the image in, about a minute.
+The node answers and ends the link, and Android may report the write
+failed when the end overtakes the answer; a link that ends after such a
+failure is the reboot, not an error. The app looks for the node and
+connects again by itself, and the screen says "The node runs version
+N", or the version it came back on if the new
+image did not start and the node swapped the old one back. A node from
+before link version 6 cannot be updated this way: Settings says to
+update it by USB once (`bark-fw/README.md`, "Flash").
+
+## Newer releases
+
+At start, and once a day while it runs, the app asks GitHub's releases
+API, without an account, for the repository's latest release `v<N>`
+(`lib/releases.dart`; `README.md`, "Releases"). When it carries an APK
+newer than the app, a bar at the top of the conversations says "A newer
+app, version N, is available"; a tap opens the APK's download in the
+browser, and Android asks before it installs it over the app. When the
+connected node runs a version below N, a bar says "Your node runs
+version M, version N is available"; a tap opens **Update firmware**
+with the release's image downloaded and chosen (Updating a node), and
+for a node from before link version 6 the bar says to update it by USB
+once. A bar's × hides it until a newer version, the node's for that
+node alone. The app learns its own version from the release workflow,
+which builds it with `--dart-define=BARK_VERSION=<N>`; a build without
+it is a development build, which Debug says, and which never asks for
+a newer app. A node of version 0, a bench build flashed by USB, gets no
+bar either: any signed image replaces it, and the bench updates it by
+USB. Without a network nothing shows, and the app asks again at its
+next start. The last answer, its time and the versions hidden are kept
+in `release.json`, so the bars show at once at the next start while the
+app asks again.
+
 ## The payload
 
 What the app sends is sealed with libsodium (the `sodium` package,
@@ -361,7 +422,8 @@ licences compatible with the repository's GPL-3:
 | package | does | licence |
 |---|---|---|
 | `sodium` 4.1.2+1 | libsodium 1.0.22, built from its source into the app, and its Dart binding | BSD-3-Clause; libsodium ISC |
-| `crypto` 3.0.8 | SHA-256, for the backup words' checksum | BSD-3-Clause |
+| `crypto` 3.0.8 | SHA-256, for the backup words' checksum and a firmware image's hash | BSD-3-Clause |
+| `file_selector` 1.1.0 | picks a firmware image file | BSD-3-Clause |
 | `qr_flutter` 4.1.0, with `qr` | draws the code | BSD-3-Clause |
 | `qr_code_scanner_plus` 2.3.2 | scans it with the camera | BSD-2-Clause; on Android it uses the ZXing libraries, Apache-2.0 |
 | `flutter_local_notifications` 22.3.3 | the texts' notifications and the permission to notify | BSD-3-Clause |
@@ -427,7 +489,8 @@ with the phone, against a notifier that writes down what it is asked;
 and drive the screens: a text to the fake friend, its echo, an
 acknowledgement, the backup words, a contact from a pasted or a scanned
 card, my card, the debug screen, the fetch button, the choice of where
-a text goes, a long text's parts, and the map, its markers, lines,
+a text goes, a long text's parts, the bars for a newer release against
+a fake fetch, and the map, its markers, lines,
 legend and a neighbour's details, over tiles that cannot be had. The Android side, the service and
 the boot receiver, cannot run on the host; it is kept small and tried on
 a phone (Trying it, With a node).
@@ -445,7 +508,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 5,
+3. Menu, **Debug**: your identity and card address; link version 6,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -498,6 +561,15 @@ a phone (Trying it, With a node).
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
+15. **Settings**, under **Firmware**: the fake runs version 1. **Update
+    firmware**, **Latest release** (or **Pick a file** with a signed
+    image; the fake refuses one whose header names no key):
+    the image's version and size. **Send to the node**: the bar fills at
+    once, the fake has no radio to wait for; then "The node checked
+    version N". **Reboot into version N**: the link closes, and the
+    fake takes no connection for 55 s, as a node swapping; then
+    **Connect** in Settings, and the screen says "The node runs version
+    N".
 
 ### With a node
 
@@ -508,7 +580,7 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen `PHONE PAIRED`.
-3. **Debug** shows link version 5, the node's clock (from its GPS if it
+3. **Debug** shows link version 6, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
@@ -570,3 +642,44 @@ a phone (Trying it, With a node).
     descriptor, the log shows `ble: service changed: the phone saw
     version` with the old and the new version, then `ble: service
     changed confirmed`; the next connection logs neither.
+13. An update from the phone (Updating a node), on a node of link
+    version 6 with the loader, version N, on USB with its log open. On
+    the host, from `bark-fw/`, build an image one version up, open for
+    the bench, and copy it to the phone:
+    `BARK_OPEN=1 BARK_IMAGE_VERSION=N+1 cargo build --release &&
+    scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
+    target/vN+1.img`, then sign it with the bench key, which an open
+    build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
+    --key-id 1`. In **Settings**, **Firmware** says version N.
+    **Update firmware**, **Pick a file**, the image: "Version N+1".
+    **Send to the node**: the node logs `update: receiving version=N+1`
+    and then nothing while the bar fills, about 20 s; half way, switch
+    the phone's Bluetooth off and on: the node logs `update: link closed
+    with … bytes of version N+1 held`, the screen says how far it got,
+    and once the app has connected again the bar goes on from there, the
+    app's log saying `Update: goes on from …`. Then `update: staged`,
+    a few seconds of the hash, and `update: committed version=N+1`; the
+    screen says the node keeps it. **Reboot into version N+1**: `update:
+    reboot asked by the phone`, `ble: disconnected 0x16`, `reboot`; about
+    a minute later the log's banner says `image version N+1` and
+    `update: version N+1 confirmed`, the app connects again, and the
+    screen says "The node runs version N+1". Sending the same file
+    again is refused, as not newer; an image packed and not signed is
+    refused at once, before any piece, as not signed by a key the node
+    holds, and the node logs `update: begin refused=Signature(Unsigned)`.
+14. Newer releases. While the repository has no release, or the phone is
+    offline, the conversations show no bar; Debug says "Latest release:
+    not known" and its log `Checking for a new release failed:` with
+    the reason, `HTTP 404` when there is no release. Release `v1`
+    shows nothing new either: no version but 0 is below 1, and version
+    0 never asks. From release N of 2 or more, with the app built and
+    installed from a checkout as
+    `flutter build apk --debug --dart-define=BARK_VERSION=1` and a node
+    flashed by USB from a build with `BARK_IMAGE_VERSION=1`: Debug says
+    app version 1 and "Latest release: N, checked" a moment ago; the
+    bar "A newer app, version N, is available" opens the APK in the
+    browser, and its × hides it, also after the app is closed and
+    opened again. Connected to the node, the bar "Your node runs
+    version 1, version N is available" opens **Update firmware** with
+    "Version N" chosen, and its × hides it for that node; another node
+    of version 1 still shows it. A node of version 0 shows none.

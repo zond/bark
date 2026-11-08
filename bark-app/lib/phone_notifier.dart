@@ -24,6 +24,9 @@ class PhoneNotifier implements Notifier {
   /// (MainActivity.kt).
   static const _power = MethodChannel('org.bark.bark_app/power');
 
+  /// The browser, for a link to download (MainActivity.kt).
+  static const _browser = MethodChannel('org.bark.bark_app/browser');
+
   /// The link's foreground service and its notification (LinkService.kt).
   static const _link = MethodChannel('org.bark.bark_app/link');
 
@@ -145,4 +148,7 @@ class PhoneNotifier implements Notifier {
 
   @override
   Future<void> askBatteryExempt() => _power.invokeMethod<void>('askExempt');
+
+  @override
+  Future<void> openLink(String url) => _browser.invokeMethod<void>('open', url);
 }

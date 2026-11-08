@@ -11,8 +11,9 @@ publish = false
 [workspace]
 
 [dependencies]
-# The layout and the swap with its check, shared with bark-fw.
-bark-image = { path = "../bark-image" }
+# The layout, the swap with its check and the 32.768 kHz clock's start,
+# shared with bark-fw.
+bark-image = { path = "../bark-image", features = ["lfclk"] }
 # The watchdog that pets itself on every flash operation of the swap.
 embassy-boot-nrf = "=0.12.0"
 embassy-nrf = { version = "=0.11.0", features = ["nrf52840", "unstable-pac"] }
