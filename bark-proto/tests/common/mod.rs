@@ -120,6 +120,10 @@ pub struct Updates {
     pub kept: HashMap<u8, usize>,
     pub decoded: usize,
     pub holds_at: Option<Instant>,
+    /// A block whose first decoding fails its hash.
+    pub fail_once: Option<u8>,
+    /// When each block passed.
+    pub passed: Vec<Option<Instant>>,
 }
 
 /// Decides whether a frame is lost: `(now, from, to, bytes)`.
@@ -647,6 +651,21 @@ impl Updates {
                 if *kept != self.needs[usize::from(p.block)] {
                     return None;
                 }
+                if self.fail_once == Some(p.block) {
+                    self.fail_once = None;
+                    self.kept.remove(&p.block);
+                    return Some([
+                        Some(AppCommand::Block {
+                            index: p.block,
+                            ok: false,
+                        }),
+                        None,
+                    ]);
+                }
+                if self.passed.len() < self.needs.len() {
+                    self.passed.resize(self.needs.len(), None);
+                }
+                self.passed[usize::from(p.block)] = Some(now);
                 self.decoded += 1;
                 let block = AppCommand::Block {
                     index: p.block,

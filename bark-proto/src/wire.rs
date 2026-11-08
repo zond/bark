@@ -31,8 +31,10 @@
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id hops
 //!            payload                                              = 28 + payload
-//! ANNOUNCE   first format from home version blocks last key image = 48
+//! ANNOUNCE   first format from home version blocks last held key
+//!            image                                                = 49
 //! REQUEST    first format to channel version tag block lacks      = 19
+//!            (channel's top bit: the asker sleeps)
 //! PIECE      first format tag block index bytes                   = 255
 //! ```
 //!
@@ -179,7 +181,8 @@ const ANNOUNCE_HOME: usize = ANNOUNCE_FROM + ID_LEN;
 const ANNOUNCE_VERSION: usize = ANNOUNCE_HOME + 1;
 const ANNOUNCE_BLOCKS: usize = ANNOUNCE_VERSION + VERSION_LEN;
 const ANNOUNCE_LAST: usize = ANNOUNCE_BLOCKS + 1;
-const ANNOUNCE_KEY: usize = ANNOUNCE_LAST + 1;
+const ANNOUNCE_HELD: usize = ANNOUNCE_LAST + 1;
+const ANNOUNCE_KEY: usize = ANNOUNCE_HELD + 1;
 const ANNOUNCE_IMAGE: usize = ANNOUNCE_KEY + 1;
 /// ANNOUNCE length.
 pub const ANNOUNCE_LEN: usize = ANNOUNCE_IMAGE + IMAGE_LEN;
@@ -200,7 +203,9 @@ pub const PIECE_HEADER_LEN: usize = PIECE_INDEX + 1;
 /// A piece's bytes: what a full frame holds after the piece's header.
 pub const PIECE_BYTES: usize = MAX_FRAME - PIECE_HEADER_LEN;
 
-const _: () = assert!(ANNOUNCE_LEN == 48 && REQUEST_LEN == 19);
+const _: () = assert!(ANNOUNCE_LEN == 49 && REQUEST_LEN == 19);
+// A request's channel byte: the channel below, the asker's sleep on top.
+const REQUEST_SLEEPS: u8 = 0x80;
 const _: () = assert!(PIECE_HEADER_LEN == 8 && PIECE_BYTES == 247);
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
@@ -317,7 +322,8 @@ impl Data<'_> {
 /// An update frame (spec "Updates over the mesh").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Update<'a> {
-    /// The newest image `from` holds whole; it listens on `home`.
+    /// The newest image `from` holds, its first `held` blocks or whole;
+    /// it listens on `home`.
     Announce {
         /// The holder.
         from: NodeId,
@@ -325,6 +331,8 @@ pub enum Update<'a> {
         home: Channel,
         /// The image.
         image: Image,
+        /// The blocks it holds, from the first: `image.blocks` when whole.
+        held: u8,
     },
     /// Pieces of the image `tag`, `version`, from block `block` on, asked
     /// of the holder `to`, to be sent on `channel`, where the asker
@@ -334,6 +342,9 @@ pub enum Update<'a> {
         to: NodeId,
         /// The asker's home channel, where the pieces go.
         channel: Channel,
+        /// The asker is sleepy: it listens only after its anchor's slot
+        /// heartbeat and in its windows.
+        sleeps: bool,
         /// The image's version, as its announcement gave it.
         version: u32,
         /// The image.
@@ -511,13 +522,19 @@ impl Packet<'_> {
             Packet::Update(u) => {
                 buf[VERSION] = FORMAT;
                 match u {
-                    Update::Announce { from, home, image } => {
+                    Update::Announce {
+                        from,
+                        home,
+                        image,
+                        held,
+                    } => {
                         buf[FIRST] = ANNOUNCE_AUX;
                         put(buf, ANNOUNCE_FROM, &from.0);
                         buf[ANNOUNCE_HOME] = home.index();
                         put(buf, ANNOUNCE_VERSION, &image.version.to_be_bytes());
                         buf[ANNOUNCE_BLOCKS] = image.blocks;
                         buf[ANNOUNCE_LAST] = image.last;
+                        buf[ANNOUNCE_HELD] = *held;
                         buf[ANNOUNCE_KEY] = image.key;
                         put(buf, ANNOUNCE_IMAGE, &image.id);
                         Ok(ANNOUNCE_LEN)
@@ -525,6 +542,7 @@ impl Packet<'_> {
                     Update::Request {
                         to,
                         channel,
+                        sleeps,
                         version,
                         tag,
                         block,
@@ -532,7 +550,8 @@ impl Packet<'_> {
                     } => {
                         buf[FIRST] = REQUEST_AUX;
                         put(buf, REQUEST_TO, &to.0);
-                        buf[REQUEST_CHANNEL] = channel.index();
+                        let sleeps = if *sleeps { REQUEST_SLEEPS } else { 0 };
+                        buf[REQUEST_CHANNEL] = channel.index() | sleeps;
                         put(buf, REQUEST_VERSION, &version.to_be_bytes());
                         put(buf, REQUEST_TAG, &tag.0);
                         buf[REQUEST_BLOCK] = *block;
@@ -666,13 +685,15 @@ impl<'a> Packet<'a> {
                         last: b[ANNOUNCE_LAST],
                         key: b[ANNOUNCE_KEY],
                     },
+                    held: b[ANNOUNCE_HELD],
                 })
             }
             REQUEST_AUX => {
                 exact(b, REQUEST_LEN)?;
                 Ok(Update::Request {
                     to: get_id(b, REQUEST_TO),
-                    channel: channel(b[REQUEST_CHANNEL])?,
+                    channel: channel(b[REQUEST_CHANNEL] & !REQUEST_SLEEPS)?,
+                    sleeps: b[REQUEST_CHANNEL] & REQUEST_SLEEPS != 0,
                     version: version(REQUEST_VERSION),
                     tag: tag(REQUEST_TAG),
                     block: b[REQUEST_BLOCK],
@@ -730,7 +751,7 @@ mod tests {
             Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
             Packet::Data(d) => 28 + d.payload.len(),
-            Packet::Update(Update::Announce { .. }) => 48,
+            Packet::Update(Update::Announce { .. }) => 49,
             Packet::Update(Update::Request { .. }) => 19,
             Packet::Update(Update::Piece { .. }) => 255,
         };
@@ -754,11 +775,11 @@ mod tests {
             bytes in proptest::collection::vec(any::<u8>(), PIECE_BYTES),
         ) {
             let image = Image { id: image_id, version, blocks, last, key };
-            let announce = Update::Announce { from, home, image };
+            let announce = Update::Announce { from, home, image, held: index };
             round_trip(&Packet::Update(announce));
             prop_assert_eq!(Packet::Update(announce).sender(), Some(from));
             let tag = ImageTag(tag);
-            let request = Update::Request { to: from, channel: home, version, tag, block, lacks: index };
+            let request = Update::Request { to: from, channel: home, sleeps: block % 2 == 0, version, tag, block, lacks: index };
             round_trip(&Packet::Update(request));
             prop_assert_eq!(Packet::Update(request).sender(), None);
             round_trip(&Packet::Update(Update::Piece { tag, block, index, bytes: &bytes }));

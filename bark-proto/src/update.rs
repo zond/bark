@@ -118,6 +118,12 @@ pub const REQUEST_WAIT: Duration = Duration::from_secs(600);
 /// and on one other channel (spec "Updates over the mesh").
 pub const ANNOUNCE_EVERY: Duration = Duration::from_secs(3600);
 
+/// How long a sleepy node that gathers listens after its anchor's slot
+/// heartbeat for the update frame the anchor sends then: the anchor's
+/// check of the channel, about 3 ms, the transmission's start, under 1 ms
+/// (spec "Heartbeat"), and a full frame.
+pub const SLOT_LISTEN: Duration = Duration::from_micros(FULL_FRAME.as_micros() + 5_000);
+
 /// How long a node that holds the image sends no pieces on its home
 /// channel after it heard a piece of it there from another: two paces,
 /// the most between two pieces of a holder that keeps the pace.

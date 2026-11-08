@@ -328,6 +328,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// sleeping node's beat, always on its home, has no rotation to keep.
     pub(super) fn heartbeat_done(&mut self, now: Instant, sent: bool) {
         self.radio.beacon.busy_checks = 0;
+        let home = self.home;
+        let slot_home = matches!(self.radio.beacon.current, Some((c, Beat::Slot)) if c == home);
+        if sent && slot_home && !self.sleepy() {
+            // Its sleepy nodes listen now (spec "Updates over the mesh").
+            self.slot_heartbeat(now);
+        }
         match self.radio.beacon.current.take() {
             Some((channel, Beat::Announce)) => {
                 // A second move meanwhile has a newer old channel to announce on.
@@ -495,6 +501,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.anchor_alive();
             } else {
                 self.anchor_heard(started);
+                if self.sleepy() {
+                    self.anchor_slot_heard(now);
+                }
             }
         }
     }
