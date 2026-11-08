@@ -37,6 +37,11 @@ const SLOT_START: Duration = Duration::from_millis(1);
 /// pace on its home channel.
 const OTHERS: usize = 8;
 
+/// What a section tells that starts a rotation of it when it changes: the
+/// version the node runs, its newest image and the blocks of it held from
+/// the first.
+type Told = (u32, Option<(ImageTag, u32)>, u8);
+
 /// What a node that gathers an image keeps.
 #[derive(Clone, Copy, Debug)]
 struct Gather {
@@ -107,10 +112,15 @@ pub(super) struct Spread {
     /// The piece of each block it streams next: from a random start,
     /// climbing, so a block's pieces repeat only after [`PIECES`].
     index: [u8; MAX_BLOCKS],
-    /// Until when its heartbeats carry its section, from the hour's start.
-    section_until: Instant,
-    /// When its heartbeats next start to carry it for a rotation.
+    /// The heartbeats left that carry its section: of the rotation after
+    /// what it tells changed, or of the hour's.
+    section_left: u8,
+    /// When its heartbeats next start to carry it for a rotation, if
+    /// nothing changes.
     section_at: Instant,
+    /// What the last rotation of its section told: the version it runs,
+    /// the newest image, and the blocks of it held from the first.
+    told: Option<Told>,
     /// Until when the frame after its slot heartbeat on its home channel
     /// may start, where its sleepy nodes listen.
     slot_open: Option<Instant>,
@@ -136,8 +146,9 @@ impl Spread {
             sent_cur: [0; CHANNELS as usize],
             target: [0; CHANNELS as usize],
             index: [0; MAX_BLOCKS],
-            section_until: Instant::ZERO,
+            section_left: 0,
             section_at: Instant::ZERO,
+            told: None,
             slot_open: None,
             others: [Instant::ZERO; OTHERS],
             current: None,
@@ -213,34 +224,38 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Whether a live neighbour it hears gathers an image and lacks a
-    /// block, or it gathers itself: its heartbeats then carry its section
-    /// every time.
-    fn update_running(&self, now: Instant) -> bool {
-        self.spread.gather.is_some()
-            || self.neighbours.live(now).any(|(_, n)| {
-                n.update
-                    .is_some_and(|u| u.image.is_some_and(|i| u.complete < i.blocks))
-            })
+    /// What its section tells that starts a rotation of it when it
+    /// changes; the pieces of the next block may be stale, which the
+    /// loss margin covers.
+    fn told_now(&self) -> Option<Told> {
+        self.section()
+            .map(|t| (t.runs, t.image.map(|i| (i.tag(), i.version)), t.complete))
     }
 
     /// The section a heartbeat sent at `now` carries, if any: every
-    /// heartbeat while an update runs here, else every heartbeat of one
-    /// rotation an hour, so that each channel hears it.
+    /// heartbeat and beat of the rotation after what it tells changed,
+    /// and of one rotation an hour, so that each channel hears it.
     pub(super) fn heartbeat_section(&self, now: Instant) -> Option<Section> {
         let s = &self.spread;
-        let due = self.update_running(now) || now < s.section_until || now >= s.section_at;
+        let changed = self.told_now() != s.told;
+        let due = changed || s.section_left > 0 || now >= s.section_at;
         self.section().filter(|_| due)
     }
 
-    /// A heartbeat with the section went: the hour's rotation of them
-    /// starts now if it was due.
+    /// A heartbeat with the section went: a rotation of them starts now
+    /// if what it tells changed or the hour's is due. A rotation is a
+    /// relay's 13 heartbeats, one on each channel, and a sleepy node's
+    /// one beat, which its anchor hears.
     pub(super) fn section_sent(&mut self, now: Instant) {
+        let told = self.told_now();
+        let rotation = if self.sleepy() { 1 } else { CHANNELS };
         let s = &mut self.spread;
-        if now >= s.section_at {
+        if told != s.told || now >= s.section_at {
+            s.told = told;
             s.section_at = now + SECTION_EVERY;
-            s.section_until = now + self.config.heartbeat_max.mul(u64::from(CHANNELS));
+            s.section_left = rotation;
         }
+        s.section_left = s.section_left.saturating_sub(1);
     }
 
     /// `AppCommand::Holds`: its section tells it within a rotation.

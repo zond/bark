@@ -399,3 +399,25 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         .count();
     assert_eq!(after_slot, NEEDS.iter().sum::<usize>());
 }
+
+/// With nothing changing, a node's heartbeats carry its section for one
+/// rotation an hour (spec "Updates over the mesh").
+#[test]
+fn a_section_rides_one_rotation_an_hour_when_nothing_changes() {
+    let mut h = mesh(2);
+    h.deliver_app(1, AppCommand::Holds(IMAGE));
+    let start = h.now;
+    h.run_until(start + secs(5 * 3600 / 2), |_| false);
+    let beats = |with: bool| {
+        h.nodes[0]
+            .sent
+            .iter()
+            .filter(|(t, _)| *t >= start)
+            .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+            .filter(|(_, f)| bark_proto::wire::decode_section(f.payload()).is_some() == with)
+            .count()
+    };
+    // A rotation in each of the three hours begun, 13 heartbeats each.
+    assert_eq!(beats(true), 39);
+    assert!(beats(false) > 600, "{}", beats(false));
+}
