@@ -102,7 +102,11 @@ class AppModel extends ChangeNotifier {
   late final Timer _ticker;
 
   /// The firmware update of the connected node.
-  late final Updater updater = Updater(session, () => mtu ?? defaultAttMtu);
+  late final Updater updater = Updater(
+    session,
+    () => mtu ?? defaultAttMtu,
+    release: () => releases.latest,
+  );
 
   /// Everything a screen redraws on.
   Listenable get changes =>

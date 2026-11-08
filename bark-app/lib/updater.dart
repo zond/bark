@@ -85,6 +85,10 @@ enum Phase {
   failed,
 }
 
+/// A finished update: the node `id` went from version `from` to `to` at
+/// `at`.
+typedef Updated = ({List<int> id, int from, int to, DateTime at});
+
 /// The update of the connected node.
 class Updater extends ChangeNotifier {
   final Session session;
@@ -92,7 +96,11 @@ class Updater extends ChangeNotifier {
   /// The MTU agreed for the link.
   final int Function() mtu;
 
-  Updater(this.session, this.mtu) {
+  /// The latest release the app knows of (`releases.dart`).
+  final Release? Function() release;
+
+  Updater(this.session, this.mtu, {Release? Function()? release})
+    : release = release ?? (() => null) {
     session.addListener(_onSession);
   }
 
@@ -111,6 +119,49 @@ class Updater extends ChangeNotifier {
 
   /// The version the node ran before the reboot.
   int? _before;
+
+  Updated? _updated;
+
+  /// The last update finished, while the connected node is the one it
+  /// updated and still runs its version.
+  Updated? get updated {
+    final u = _updated;
+    final n = session.node;
+    if (u == null || n == null) return null;
+    return listEquals(n.id, u.id) && n.image == u.to ? u : null;
+  }
+
+  /// Whether the chosen image, its progress and its actions are shown:
+  /// not once the node runs it, when they say nothing more.
+  bool get showsImage => image != null && phase != Phase.done;
+
+  /// The chosen image is newer than the node runs, so the node would take
+  /// it.
+  bool get newer {
+    final n = session.node;
+    return n == null || (image?.version ?? 0) > n.image;
+  }
+
+  /// The latest release, if it carries an image newer than the node
+  /// runs: what "Latest release" chooses.
+  Release? get latest {
+    final r = release();
+    final n = session.node;
+    if (r == null || r.image == null || n == null) return null;
+    return r.n > n.image ? r : null;
+  }
+
+  /// Why there is no [latest], for the person; null when there is one,
+  /// or no node to compare with.
+  String? get noLatest {
+    final r = release();
+    final n = session.node;
+    if (n == null || latest != null) return null;
+    if (r == null) return 'No release known yet.';
+    if (r.image == null) return 'Release ${r.n} carries no node image.';
+    if (r.n == n.image) return 'The node already runs the latest release.';
+    return 'The node runs a newer version than the latest release, ${r.n}.';
+  }
 
   /// The link has closed since the reboot was asked for.
   bool _down = false;
@@ -300,13 +351,23 @@ class Updater extends ChangeNotifier {
       unawaited(send());
     } else if (phase == Phase.rebooting && _down) {
       final want = image?.version;
+      if (n.image == want) {
+        _updated = (
+          id: n.id,
+          from: _before ?? 0,
+          to: n.image,
+          at: session.now(),
+        );
+        _set(Phase.done);
+        // After the phase moved: the note notifies this listener again.
+        session.note('Update: version ${n.image} runs');
+        return;
+      }
       _set(
-        n.image == want ? Phase.done : Phase.failed,
-        n.image == want
-            ? 'The node runs version ${n.image}'
-            : 'The node came back on version ${n.image}, not $want: the '
-                  'new image did not start, and the node swapped '
-                  'version ${_before ?? n.image} back',
+        Phase.failed,
+        'The node came back on version ${n.image}, not $want: the '
+        'new image did not start, and the node swapped '
+        'version ${_before ?? n.image} back',
       );
     }
   }
@@ -337,15 +398,4 @@ Future<(FirmwareImage, String)> downloadImage(
   final url = r.image;
   if (url == null) throw StateError('release ${r.n} has no ${r.imageName}');
   return (parseImage(Uint8List.fromList(await get(url))), r.imageName);
-}
-
-/// The latest release's image, downloaded and checked, with its file
-/// name.
-Future<(FirmwareImage, String)> latestRelease() async {
-  final j = await fetchLatest();
-  final r = Release.parse(j);
-  if (r == null) {
-    throw StateError('the latest release, ${j['tag_name']}, is not v<N>');
-  }
-  return downloadImage(r);
 }

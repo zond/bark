@@ -2,17 +2,25 @@
 // `bark-link`'s tests give them; an image file's checks and the name a
 // picked one is shown by; where a transfer goes on from; and the whole
 // update against the fake node, with lost pieces, a lost link, a low
-// battery and the reboot, its answer lost to the link's end or not.
+// battery and the reboot, its answer lost to the link's end or not; what
+// the finished update shows, and when the latest release is offered; and
+// the screen of a finished update.
 
 import 'dart:typed_data';
 
+import 'package:bark_app/app.dart';
+import 'package:bark_app/contacts.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
+import 'package:bark_app/me.dart';
+import 'package:bark_app/releases.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/ui/update_screen.dart';
 import 'package:bark_app/updater.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/material.dart' hide Step;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 
@@ -129,6 +137,9 @@ void main() {
     late Sodium sodium;
     setUpAll(() async => sodium = await SodiumInit.init());
     final start = DateTime.utc(2026, 11, 7);
+    // The latest release the updater knows of.
+    Release? known;
+    setUp(() => known = null);
 
     void run(void Function(FakeAsync, Session, FakeNode, Updater) body) {
       fakeAsync((async) {
@@ -141,7 +152,7 @@ void main() {
         );
         s.attach(node.connect());
         async.flushMicrotasks();
-        final u = Updater(s, () => attMtu);
+        final u = Updater(s, () => attMtu, release: () => known);
         body(async, s, node, u);
         u.dispose();
         node.dispose();
@@ -170,6 +181,63 @@ void main() {
         async.flushMicrotasks();
         expect(u.phase, Phase.done, reason: u.message);
         expect(s.node!.image, 2);
+      });
+    });
+
+    test('a finished update shows the versions, not the image', () {
+      run((async, s, node, u) {
+        expect(u.updated, isNull);
+        u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
+        expect(u.showsImage, isTrue);
+        u.send();
+        async.flushMicrotasks();
+        u.reboot();
+        async.flushMicrotasks();
+        expect(u.showsImage, isTrue);
+        async.elapse(FakeNode.swapTime);
+        s.attach(node.connect());
+        async.flushMicrotasks();
+        expect(u.phase, Phase.done, reason: u.message);
+        expect(u.showsImage, isFalse);
+        expect(u.message, isNull);
+        final done = u.updated!;
+        expect((done.from, done.to), (1, 2));
+        expect(done.at, start.add(async.elapsed));
+        // Another pick shows its image again; the node still runs 2.
+        u.choose(parseImage(imageFile(3, 5000)), 'bark-fw-3.img');
+        expect(u.phase, Phase.idle);
+        expect(u.showsImage, isTrue);
+        expect(u.newer, isTrue);
+        expect(u.updated, same(done));
+        // A node on another version is no longer the one updated.
+        node.image = 1;
+        s.attach(node.connect());
+        async.flushMicrotasks();
+        expect(u.updated, isNull);
+      });
+    });
+
+    test('the latest release is offered only when newer than the node', () {
+      run((async, s, node, u) {
+        expect(u.latest, isNull);
+        expect(u.noLatest, 'No release known yet.');
+        known = const Release(1, image: 'https://x/img1');
+        expect(u.latest, isNull);
+        expect(u.noLatest, 'The node already runs the latest release.');
+        known = const Release(2);
+        expect(u.latest, isNull);
+        expect(u.noLatest, 'Release 2 carries no node image.');
+        known = const Release(2, image: 'https://x/img2');
+        expect(u.latest?.n, 2);
+        expect(u.noLatest, isNull);
+        node.image = 3;
+        s.attach(node.connect());
+        async.flushMicrotasks();
+        expect(u.latest, isNull);
+        expect(
+          u.noLatest,
+          'The node runs a newer version than the latest release, 2.',
+        );
       });
     });
 
@@ -244,5 +312,65 @@ void main() {
         expect(u.message, contains(Refusal.version.why));
       });
     });
+  });
+
+  testWidgets('the screen of a finished update', (t) async {
+    final sodium = await SodiumInit.init();
+    var clock = DateTime.utc(2026, 11, 8, 10);
+    DateTime now() => clock;
+    final app = AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, now),
+      session: Session(store: MemoryStore(), now: now),
+      contacts: Contacts(MemoryStore()),
+      now: now,
+    );
+    await t.runAsync(app.load);
+    app.releases.latest = const Release(2, image: 'https://x/img2');
+    app.setFake(true);
+    await app.connectFake();
+    final u = app.updater;
+    await t.pumpWidget(MaterialApp(home: UpdateScreen(app)));
+    final latest = find.widgetWithText(FilledButton, 'Latest release');
+    final pick = find.widgetWithText(OutlinedButton, 'Pick a file');
+    expect(t.widget<FilledButton>(latest).enabled, isTrue);
+
+    u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
+    await u.send();
+    await t.pump();
+    expect(u.phase, Phase.committed, reason: u.message);
+    expect(find.text('Version 2'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    await u.reboot();
+    await t.pump();
+    clock = clock.add(FakeNode.swapTime);
+    await app.connectFake();
+    await t.pump();
+    expect(u.phase, Phase.done, reason: u.message);
+
+    final name = nodeName(app.session.node!.id);
+    expect(
+      find.text('$name runs version 2, updated from version 1 just now.'),
+      findsOneWidget,
+    );
+    expect(find.text('Version 2'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.textContaining('KiB'), findsNothing);
+    expect(t.widget<FilledButton>(latest).enabled, isFalse);
+    expect(t.widget<OutlinedButton>(pick).enabled, isTrue);
+    expect(
+      find.text('The node already runs the latest release.'),
+      findsOneWidget,
+    );
+    clock = clock.add(const Duration(minutes: 3));
+    await t.pump(const Duration(seconds: 1));
+    expect(
+      find.text('$name runs version 2, updated from version 1 3 min ago.'),
+      findsOneWidget,
+    );
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    app.dispose();
   });
 }

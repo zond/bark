@@ -304,13 +304,14 @@ A node out of reach, on a roof, is updated from the phone over the link
 (spec "Phone link", Updates; roadmap D145). Settings, under
 **Firmware**, says the version the connected node runs; **Update
 firmware** opens a screen that takes the image from **Latest release**,
-the `bark-fw-<N>.img` of the repository's latest GitHub release,
-fetched through GitHub's releases API without an account and signed
-by the release, or from **Pick a file**, an image
+the `bark-fw-<N>.img` of the latest release the app knows of (Newer
+releases), signed by the release, or from **Pick a file**, an image
 `bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
 node refuses an image no key of its own signed (`bark-fw/README.md`,
-"Updates"). The app
-checks the file's header and hash before it offers it, and shows its
+"Updates"). **Latest release** is offered only when that release's
+image is newer than the node's; otherwise a line under the buttons
+says why: no release known yet, or the node already runs the latest.
+The app checks the file's header and hash before it offers it, and shows its
 version, and says so when it is not newer than the node's: the node
 would refuse it. **Send to the node** sends it with a progress bar, in
 windows of seven pieces of 240 bytes, each window followed by a read of
@@ -327,9 +328,11 @@ N** then restarts the node, which swaps the image in, about a minute.
 The node answers and ends the link, and Android may report the write
 failed when the end overtakes the answer; a link that ends after such a
 failure is the reboot, not an error. The app looks for the node and
-connects again by itself, and the screen says "The node runs version
-N", or the version it came back on if the new
-image did not start and the node swapped the old one back. A node from
+connects again by itself, and the screen says the node runs version N,
+updated from version M just now, or so many minutes ago; the image,
+its progress and its buttons go until another is picked. If the new
+image did not start, the node swapped the old one back, and the screen
+says the version it came back on. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").
 
@@ -568,8 +571,8 @@ a phone (Trying it, With a node).
     once, the fake has no radio to wait for; then "The node checked
     version N". **Reboot into version N**: the link closes, and the
     fake takes no connection for 55 s, as a node swapping; then
-    **Connect** in Settings, and the screen says "The node runs version
-    N".
+    **Connect** in Settings, and the screen says "bark-… runs version
+    N, updated from version 1 just now.", without the image or the bar.
 
 ### With a node
 
@@ -663,8 +666,9 @@ a phone (Trying it, With a node).
     reboot asked by the phone`, `ble: disconnected 0x16`, `reboot`; about
     a minute later the log's banner says `image version N+1` and
     `update: version N+1 confirmed`, the app connects again, and the
-    screen says "The node runs version N+1". Sending the same file
-    again is refused, as not newer; an image packed and not signed is
+    screen says "bark-… runs version N+1, updated from version N just
+    now.", without the image or the bar. Picking the same file again
+    shows it, and sending it is refused, as not newer; an image packed and not signed is
     refused at once, before any piece, as not signed by a key the node
     holds, and the node logs `update: begin refused=Signature(Unsigned)`.
 14. Newer releases. While the repository has no release, or the phone is
