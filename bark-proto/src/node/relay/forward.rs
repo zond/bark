@@ -201,7 +201,7 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, State, HOP_PLACES, HOP_WAIT, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
@@ -555,7 +555,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// At most the queue's entries times the neighbour table's entries
     /// per call, and no allocation.
     fn pick(&mut self, now: Instant) -> Option<usize> {
-        const N: usize = SEND_QUEUE + HOP_PLACES;
+        const N: usize = SEND_QUEUE + HOP_SLOTS;
         let mut banned = [false; N];
         let mut hints = [None::<u16>; N];
         let mut toward = [0u8; N];

@@ -57,7 +57,7 @@ use crate::ids::NodeId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{most_on_air, BAN};
 use crate::tables::neighbours::NEIGHBOURS;
-use crate::tables::send_queue::{HOP_PLACES, SEND_QUEUE};
+use crate::tables::send_queue::{HOP_SLOTS, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{ACK_LEN, DATA_HEADER_LEN};
 
@@ -66,12 +66,12 @@ pub const MAX_HOPS: u8 = u8::MAX;
 
 /// How long a full send queue takes to drain with each entry waiting out
 /// one ban; see the module documentation.
-pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_PLACES) as u64);
+pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_SLOTS) as u64);
 
 /// The most messages a relay holds at once: one per place in its send
 /// queue. A message set aside for the delivery queue keeps its place
 /// (`relay/forward.rs`).
-pub const HELD: usize = SEND_QUEUE + HOP_PLACES;
+pub const HELD: usize = SEND_QUEUE + HOP_SLOTS;
 
 /// The most messages a relay can touch in `span`; see the module
 /// documentation.
