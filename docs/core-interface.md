@@ -263,7 +263,13 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   the image the driver said it holds or of the one it gathers, a block it said
   decoded and passed; completes with `TxDone`. The driver holds the
   bytes, so the core needs no copy of a piece to send one, and a coded piece is
-  made only when it goes.
+  made only when it goes. A piece the driver cannot fill in time it does not send,
+  and still completes with `TxDone`: to the core it is a piece lost on the air.
+
+`bark-driver` hands these to its application, `App::offered`, `App::store_piece` and
+`App::serve`, and the application's answers come back as `Request::Holds`,
+`Request::Gather` and `Request::Block`, which the driver delivers as the commands.
+The firmware's application is `bark-fw/src/update/mesh.rs` (§5).
 
 `AppEvent::Boot { relays, ends }` tells the application how the node's first rotation goes
 (spec "Channel at boot", "Phone link"): at boot, with no relay known and when the rotation
@@ -298,7 +304,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
 | GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
-| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | none yet: `Offered` and `StorePiece` go unanswered and `Holds` is never said, so the core never serves; the decoder, the flash and the signature check come later (`bark-driver/src/lib.rs`) |
+| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment (`bark-fw/src/update/mesh.rs`, `bark-fw/README.md` "Updates") |
 | Inbox (§4) | the application reads and confirms each message at once | the phone link reads the oldest and confirms it when the phone writes its ID back (`bark-fw/src/ble.rs`, spec "Phone link") |
 
 ## 6. Memory

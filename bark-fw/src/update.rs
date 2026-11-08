@@ -5,8 +5,9 @@
 //! (nRF52840 Product Specification, WDT: once started it cannot be
 //! stopped). An image is staged on the external flash through the
 //! console (`console.rs`, `stage`) or the phone link ([`Phone`];
-//! `ble.rs`), and both commit and reboot through the same functions
-//! here ([`commit`], [`reboot`]), so that they check the same.
+//! `ble.rs`), or gathered over the mesh (`mesh`), and all commit and
+//! reboot through the same functions here ([`commit`], [`reboot`]), so
+//! that they check the same.
 
 use core::cell::RefCell;
 
@@ -318,4 +319,10 @@ pub async fn reboot() -> ! {
 pub use phone::{note_power, Phone};
 
 #[cfg(not(feature = "console"))]
+use phone::power;
+
+#[cfg(not(feature = "console"))]
 mod phone;
+
+#[cfg(not(feature = "console"))]
+pub mod mesh;
