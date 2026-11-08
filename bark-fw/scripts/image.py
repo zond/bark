@@ -63,6 +63,13 @@ def bench_key_id() -> int:
         return int(f.read().split(":")[0])
 
 
+# The most blocks an image the mesh carries has, the table's among them, and
+# a block's bytes: 64 pieces of 247 (bark-image/src/pieces.rs, MAX_BLOCKS;
+# docs/protocol.md, "Updates over the mesh"). A packed image longer than
+# 47 blocks cannot travel over the mesh.
+MESH_BLOCKS = 48
+BLOCK_BYTES = 64 * 247
+
 # Bytes the console's `chunk` takes at once (bark_image::boot::CHUNK).
 CHUNK = 256
 # How long to wait for the console's answer to one command. A chunk that
@@ -90,7 +97,15 @@ def pack(elf: bytes) -> tuple[bytes, int]:
     if version == 0:
         # Staged only above the running version, 0 never is.
         sys.exit("the ELF was built without BARK_IMAGE_VERSION: version 0 cannot be staged")
-    return header(version, image) + image, version
+    packed = header(version, image) + image
+    blocks = 1 + -(-len(packed) // BLOCK_BYTES)
+    if blocks > MESH_BLOCKS:
+        sys.exit(
+            f"the image packs to {len(packed)} bytes, {blocks} blocks with the table: "
+            f"more than the {MESH_BLOCKS} the mesh carries, {(MESH_BLOCKS - 1) * BLOCK_BYTES} bytes "
+            "(bark-image/src/pieces.rs, MAX_BLOCKS)"
+        )
+    return packed, version
 
 
 def ed25519():

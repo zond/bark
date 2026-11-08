@@ -1,4 +1,5 @@
-//! The pieces of an image a node gathers over the mesh (roadmap D146;
+//! The pieces of an image a node gathers over the mesh (roadmap D146,
+//! D150;
 //! `docs/mesh-update-2026-10-25.md`, "The code"), kept on the external flash until their block decodes,
 //! and the decoded image, written into the staged slot as the phone's
 //! staging writes it (`crate::boot::Stager`).
@@ -14,17 +15,17 @@
 //! its name, so the mesh sees one image, whichever of its signatures a
 //! holder has.
 //!
-//! **Where it goes**, in [`PIECES`]' 22 sectors:
+//! **Where it goes**, in [`PIECES`]' 193 sectors:
 //!
 //! | Sector | Holds |
 //! |---|---|
 //! | 0, the head | the image gathered and its check; a byte for each block, cleared once it is decoded and written; the block table; the header |
-//! | 1 to 20 | five lanes of four sectors, 64 slots: block `b`'s pieces in lane `b mod 5` |
-//! | 21 | nothing |
+//! | 1 to 192 | [`LANES`], 48, lanes of four sectors, 64 slots: block `b`'s pieces in lane `b` |
 //!
-//! A node takes the pieces of the first block it lacks and of the four
-//! after it, so the five never share a lane, and a lane is freed by
-//! erasing its own four sectors. A slot is one page program of 256
+//! A node takes the pieces of every block it lacks, whichever comes, since
+//! a holder streams all the blocks it holds in turn (roadmap D150), so an
+//! image has at most [`MAX_BLOCKS`], 48, the table's among them; a lane is
+//! freed by erasing its own four sectors. A slot is one page program of 256
 //! bytes: the piece, its block, its index, and a CRC-32 (ISO-HDLC, as in
 //! IEEE 802.3) of those 249 bytes; the last three bytes stay erased. A slot
 //! cut short by a power cut is neither erased nor passes its check, and
@@ -74,9 +75,9 @@
 //! as for an image from the phone; that is the firmware's, not this
 //! module's.
 //!
-//! **RAM.** About 4 KiB: the eight data pieces of the group decoded,
-//! 1 976 B; two slots queued, 516 B; the table, 741 B; each lane's piece
-//! indices, 64 B.
+//! **RAM.** About 7 KiB: the eight data pieces of the group decoded,
+//! 1 976 B; two slots queued, 516 B; the table, two pieces, 494 B; each
+//! lane's piece indices, 64 B, 3 KiB for the 48.
 
 use core::cmp::min;
 
@@ -132,9 +133,10 @@ impl<B: Bus> Flash for Chip<B> {
 /// Bytes of a slot: one page program.
 pub const SLOT: u32 = PROGRAM_PAGE;
 
-/// Blocks whose pieces a node keeps at once: the first it lacks and the
-/// four after it, the only ones the transport hands it (roadmap D146).
-pub const LANES: usize = 5;
+/// Blocks whose pieces a node keeps at once: every block of the image,
+/// one lane each, since a holder streams every block it holds and a node
+/// keeps every piece of every block it lacks (roadmap D146, D150).
+pub const LANES: usize = crate::layout::external::PIECE_LANES as usize;
 
 const SLOTS_PER_SECTOR: usize = (SECTOR / SLOT) as usize;
 
@@ -155,9 +157,16 @@ const BLOCK_BYTES: u32 = (DATA * PIECE) as u32;
 /// Bytes of a block's entry in the table.
 const ENTRY: usize = 8;
 
-/// The most blocks an image can have, the table among them: one that fits
-/// the running slot, behind its header.
-pub const MAX_BLOCKS: usize = 1 + (HEADER_LEN as u32 + ACTIVE.len).div_ceil(BLOCK_BYTES) as usize;
+/// The most blocks an image can have, the table among them: a lane each,
+/// and no more than fit the running slot behind its header.
+pub const MAX_BLOCKS: usize = {
+    let slot = 1 + (HEADER_LEN as u32 + ACTIVE.len).div_ceil(BLOCK_BYTES) as usize;
+    if slot < LANES {
+        slot
+    } else {
+        LANES
+    }
+};
 
 /// The longest table's pieces.
 const TABLE_PIECES: usize = (HASH_LEN + ENTRY * (MAX_BLOCKS - 1)).div_ceil(PIECE);
@@ -301,8 +310,7 @@ pub enum Offer {
     Enough,
     /// The block is decoded already.
     Decoded,
-    /// No block of the image, not among the five gathered, or not a piece
-    /// index.
+    /// No block of the image, or not a piece index.
     Outside,
     /// No room just now: the queue is full, or the lane is being erased.
     Busy,
@@ -598,11 +606,7 @@ impl Store {
         if self.is_done(block) {
             return Offer::Decoded;
         }
-        match self.lacks() {
-            Some(first) if block >= first && usize::from(block - first) < LANES => {}
-            _ => return Offer::Outside,
-        }
-        let lane_no = usize::from(block) % LANES;
+        let lane_no = usize::from(block);
         let lane = &mut self.lanes[lane_no];
         if lane.erase.is_some() || lane.block.is_some_and(|b| b != block) {
             return Offer::Busy;
@@ -660,7 +664,7 @@ impl Store {
         match self.mode {
             Mode::Empty | Mode::Forget => Ok(Poll::Idle),
             Mode::Clear(done) => {
-                let lanes = LANES as u32 * LANE_SECTORS;
+                let lanes = u32::from(image.blocks) * LANE_SECTORS;
                 let address = match done {
                     0 => HEAD,
                     _ if done <= lanes => LANES_START + (done - 1) * SECTOR,
@@ -714,7 +718,7 @@ impl Store {
                     self.table_known = true;
                 }
                 self.decode = None;
-                self.lanes[usize::from(block) % LANES].erase = Some((0, None));
+                self.lanes[usize::from(block)].erase = Some((0, None));
                 return Some(Poll::Decoded(block));
             }
             Op::Forget => self.mode = Mode::Empty,
@@ -771,21 +775,18 @@ impl Store {
 
     /// After a reset, erase a lane that holds what is not wanted.
     fn judge(&mut self, lane: usize) {
-        let (Some(image), first) = (self.image, self.lacks()) else {
+        let Some(image) = self.image else {
             return;
         };
         let l = self.lanes[lane];
-        let keep = match (l.block, first) {
-            (None, _) => l.next == 0,
-            (Some(_), None) => false,
-            (Some(b), Some(first)) => {
+        let keep = match l.block {
+            None => l.next == 0,
+            Some(b) => {
                 let need = image.pieces(b);
                 !l.mixed
                     && b < image.blocks
-                    && usize::from(b) % LANES == lane
+                    && usize::from(b) == lane
                     && !self.is_done(b)
-                    && b >= first
-                    && usize::from(b - first) < LANES
                     && need - min(need, usize::from(l.whole)) <= DATA - usize::from(l.next)
             }
         };

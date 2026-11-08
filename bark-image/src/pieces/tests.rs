@@ -313,17 +313,18 @@ fn an_image_is_gathered() {
     // The short last block comes whole first.
     let decoded = [Poll::Decoded(0), Poll::Decoded(2), Poll::Decoded(1)];
     assert_eq!(feeder.events, decoded);
-    // Clearing: the head, the lanes and the 5 sectors of the image, 26;
+    // Clearing: the head, the three blocks' lanes and the 5 sectors of the
+    // image, 18;
     // the record; the table's piece, page and byte; block 1's 64 slots, 70
     // writes of header and image, each group's bytes split where a page
     // or the header ends, and its byte; block 2's 5 slots, 5 writes and
     // byte; the lanes of the three blocks erased, 12.
-    assert_eq!(flash.ops, 26 + 1 + 3 + (64 + 70 + 1) + (5 + 5 + 1) + 12);
+    assert_eq!(flash.ops, 18 + 1 + 3 + (64 + 70 + 1) + (5 + 5 + 1) + 12);
 }
 
 #[test]
-fn a_larger_image_is_gathered_through_its_lanes_again() {
-    // Eight blocks of image: the lanes of the first are used again.
+fn a_larger_image_is_gathered_a_lane_a_block() {
+    // Eight blocks of image, each in a lane of its own.
     let built = build(7 * DATA * PIECE + 3000, 3, None, false);
     assert_eq!(built.image.blocks, 9);
     let (_, feeder) = gathered(&built, 4);
@@ -332,7 +333,8 @@ fn a_larger_image_is_gathered_through_its_lanes_again() {
 
 #[test]
 fn the_largest_image_is_gathered() {
-    let built = build(ACTIVE.len as usize, 5, None, false);
+    // The most the lanes hold: 47 blocks of image behind the header.
+    let built = build((MAX_BLOCKS - 1) * DATA * PIECE - HEADER_LEN, 5, None, false);
     assert_eq!(usize::from(built.image.blocks), MAX_BLOCKS);
     gathered(&built, 6);
     let mut too_large = built.image;
@@ -365,7 +367,7 @@ fn a_power_cut_at_every_operation_loses_nothing() {
         tested += 1;
         check(&built, &store, &mut flash);
     }
-    assert_eq!(tested, 188);
+    assert_eq!(tested, 180);
 }
 
 #[test]
@@ -439,7 +441,7 @@ fn an_image_signed_again_keeps_its_name() {
 }
 
 #[test]
-fn only_the_five_blocks_from_the_first_lacked_are_taken() {
+fn every_block_of_the_image_is_taken() {
     let built = build(9 * DATA * PIECE, 12, None, false);
     let mut flash = Ram::new();
     let mut store = Store::open(&mut flash).unwrap();
@@ -450,19 +452,22 @@ fn only_the_five_blocks_from_the_first_lacked_are_taken() {
     let mut feeder = Feeder::new(&built, 13);
     feeder.settle(&mut store, &mut flash).unwrap();
     assert_eq!(store.lacks(), Some(0));
-    assert_eq!(store.offer(5, 0, &piece), Offer::Outside);
     assert_eq!(store.offer(4, 255, &piece), Offer::Outside);
     assert_eq!(store.offer(built.image.blocks, 0, &piece), Offer::Outside);
     let table = &built.blocks[0][0];
     assert_eq!(store.offer(0, 9, table), Offer::Kept);
     assert_eq!(store.offer(0, 9, table), Offer::Held);
     assert_eq!(store.offer(0, 10, table), Offer::Enough);
+    // The last block, far from the first lacked, is taken too.
+    let last = built.image.blocks - 1;
+    assert_eq!(store.offer(last, 0, &piece), Offer::Kept);
+    assert_eq!(store.offer(5, 0, &piece), Offer::Busy);
     feeder.settle(&mut store, &mut flash).unwrap();
     assert_eq!(feeder.events, [Poll::Decoded(0)]);
     assert_eq!(store.offer(0, 1, table), Offer::Decoded);
+    assert_eq!(store.offer(last, 0, &piece), Offer::Held);
     assert_eq!(store.offer(5, 0, &piece), Offer::Kept);
-    assert_eq!(store.offer(6, 0, &piece), Offer::Outside);
-    assert_eq!(store.offer(4, 0, &piece), Offer::Kept);
+    assert_eq!(store.offer(6, 0, &piece), Offer::Kept);
     assert_eq!(store.offer(3, 0, &piece), Offer::Busy);
 }
 
@@ -496,8 +501,9 @@ fn an_image_is_gathered_through_the_driver() {
 }
 
 #[test]
-fn the_store_takes_about_4_kib() {
-    // 4 176 B on this 64-bit host; the decode's factors take half as many
-    // bytes on the chip.
-    assert!(core::mem::size_of::<Store>() <= 4200);
+fn the_store_takes_about_7_kib() {
+    // On this 64-bit host; the decode's factors take half as many bytes on
+    // the chip. The lanes' piece indices are 48 × 64 B of it.
+    std::println!("Store {} B", core::mem::size_of::<Store>());
+    assert!(core::mem::size_of::<Store>() <= 7400);
 }
