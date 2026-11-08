@@ -139,7 +139,9 @@ pub mod external {
 
     /// Sectors for coded pieces: 352 pieces of 256 bytes, five and a half
     /// blocks of 64, more than a node gathers at once
-    /// (`docs/mesh-update-2026-10-25.md`, "The code").
+    /// (`docs/mesh-update-2026-10-25.md`, "The code"): the five blocks it
+    /// gathers, a sector of what it has gathered, and one spare
+    /// (`crate::pieces`).
     const PIECES_SECTORS: u32 = 22;
 
     /// Sectors for the mailbox's ring: 64 of 16 items of 256 bytes, 1024
@@ -153,8 +155,8 @@ pub mod external {
     /// partition"). After a swap it holds the previous image, for the
     /// swap back.
     pub const DFU: Region = Region::pages_from(0, ACTIVE_PAGES + 1);
-    /// Coded pieces of an update arriving over the mesh; unused until the
-    /// transport exists.
+    /// Coded pieces of an update arriving over the mesh, and what has been
+    /// gathered of it (`crate::pieces`).
     pub const PIECES: Region = Region::pages_from(DFU.end(), PIECES_SECTORS);
     /// The mailbox's ring. Its items are sealed to the phone, so whoever
     /// reads the chip learns nothing from them.
