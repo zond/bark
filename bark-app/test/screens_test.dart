@@ -1,8 +1,9 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
 // the echo is acknowledged, its button no taller than the small text;
-// the card, the backup words, adding a contact from a pasted or a scanned
-// card, and the debug screen; the fetch button, on the first screen and
+// the card, and without a name a prompt in its place, the backup words,
+// adding a contact from a pasted card or from a scanned one without a
+// name, its thread opened at once, and the debug screen; the fetch button, on the first screen and
 // in a thread, and why it sends nothing; the home
 // buttons, the home known by its node ID wherever it is, and its card
 // sent after a move only by "Send my card"; and a node that another
@@ -21,7 +22,9 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
+import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
+import 'package:bark_app/ui/conversations_screen.dart';
 import 'package:bark_app/ui/settings_screen.dart';
 import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
@@ -137,6 +140,7 @@ void main() {
     await t.pageBack();
     await t.pumpAndSettle();
 
+    await t.runAsync(() => app.me.setName('Ana'));
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
@@ -209,17 +213,58 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('a contact from a scanned card', (t) async {
+  testWidgets('without a name, My card asks for one in place of the card', (
+    t,
+  ) async {
     final app = await model(t);
-    final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
-    final card = PersonCard(List.filled(32, 5), where, 1, 'Olena');
-    // What My card and Add contact open once the camera has read a card.
-    await t.pumpWidget(MaterialApp(home: AddContactScreen(app, card: card)));
-    expect(find.text(card.toText()), findsOneWidget);
-    expect(find.text('Olena'), findsOneWidget);
+    await t.pumpWidget(BarkApp(app));
+    await t.tap(find.byTooltip('My card'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Set your name first'), findsOneWidget);
+    expect(find.byType(QrImageView), findsNothing);
+    expect(find.text('Card'), findsNothing);
+    expect(find.text('Scan their card'), findsOneWidget);
+    await t.tap(find.text('Set my name'));
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField), 'Ana');
     await t.tap(find.text('Save'));
     await t.pumpAndSettle();
+    expect(app.me.name, 'Ana');
+    expect(find.textContaining('Set your name first'), findsNothing);
+    expect(find.byType(QrImageView), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a scanned card without a name opens its thread, Unnamed', (
+    t,
+  ) async {
+    final app = await model(t);
+    final where = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final card = PersonCard(List.filled(32, 5), where, 1, '');
+    await t.runAsync(() => app.me.setName('Ana'));
+    await t.pumpWidget(BarkApp(app));
+    await t.tap(find.byTooltip('My card'));
+    await t.pumpAndSettle();
+    // What My card and Add contact do once the camera has read a card.
+    await openScanned(t.element(find.byType(CardScreen)), app, card);
+    await t.pumpAndSettle();
+    const unnamed = 'Unnamed (05050505…)';
+    expect(find.byType(ThreadScreen), findsOneWidget);
+    expect(find.text(unnamed), findsOneWidget);
+    expect(find.byIcon(Icons.send), findsOneWidget);
     expect(app.contacts.list.single.key, card.key);
+
+    // Back leads to the conversations; the contact is in Contacts.
+    await t.pageBack();
+    await t.pumpAndSettle();
+    expect(find.byType(ConversationsScreen), findsOneWidget);
+    await t.tap(find.byType(PopupMenuButton<Widget Function()>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Contacts'));
+    await t.pumpAndSettle();
+    expect(find.text(unnamed), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

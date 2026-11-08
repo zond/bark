@@ -187,6 +187,12 @@ class SendCardLine extends StatelessWidget {
   }
 }
 
+/// Asks for the person's name and sets it, as Settings and My card do.
+Future<void> askMyName(BuildContext context, AppModel app) async {
+  final n = await askText(context, 'My name', app.me.name);
+  if (n != null) await app.me.setName(n);
+}
+
 /// Asks for one line of text; null if the person cancels.
 Future<String?> askText(BuildContext context, String label, String initial) {
   final c = TextEditingController(text: initial);

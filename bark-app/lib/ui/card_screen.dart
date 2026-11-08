@@ -18,7 +18,9 @@ class CardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Watch(app, (context) {
     final me = app.me;
-    final card = me.card;
+    final card = me.shownCard;
+    final home = me.home;
+    final mono = const TextStyle(fontFamily: 'monospace');
     return Scaffold(
       appBar: AppBar(title: const Text('My card')),
       body: SafeArea(
@@ -33,21 +35,15 @@ class CardScreen extends StatelessWidget {
               trailing: IconButton(
                 tooltip: 'Change',
                 icon: const Icon(Icons.edit),
-                onPressed: () async {
-                  final n = await askText(context, 'My name', me.name);
-                  if (n != null) await me.setName(n);
-                },
+                onPressed: () => askMyName(context, app),
               ),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('My identity'),
-              subtitle: SelectableText(
-                me.key,
-                style: const TextStyle(fontFamily: 'monospace'),
-              ),
+              subtitle: SelectableText(me.key, style: mono),
             ),
-            ..._card(card),
+            if (card == null) ..._noName(context) else ..._card(card),
             const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerLeft,
@@ -57,12 +53,60 @@ class CardScreen extends StatelessWidget {
                 onPressed: () => _scan(context),
               ),
             ),
-            ..._copy(context, card),
+            const SizedBox(height: 8),
+            if (home != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Home address'),
+                subtitle: SelectableText(home.toString(), style: mono),
+                trailing: IconButton(
+                  tooltip: 'Copy the address',
+                  icon: const Icon(Icons.copy),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: home.toString()));
+                    say(context, 'Address copied');
+                  },
+                ),
+              ),
+            if (card != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Card'),
+                subtitle: SelectableText(card.toText(), style: mono),
+                trailing: IconButton(
+                  tooltip: 'Copy the card',
+                  icon: const Icon(Icons.copy),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: card.toText()));
+                    say(context, 'Card copied');
+                  },
+                ),
+              ),
           ],
         ),
       ),
     );
   });
+
+  /// In place of the card while the person has no name.
+  List<Widget> _noName(BuildContext context) => [
+    const Padding(
+      padding: EdgeInsets.only(top: 8),
+      child: Text(
+        'Set your name first: your card carries it, so that whoever scans '
+        'it knows who you are.',
+      ),
+    ),
+    const SizedBox(height: 16),
+    Align(
+      alignment: Alignment.centerLeft,
+      child: FilledButton.icon(
+        icon: const Icon(Icons.edit),
+        label: const Text('Set my name'),
+        onPressed: () => askMyName(context, app),
+      ),
+    ),
+  ];
 
   List<Widget> _card(PersonCard card) => [
     Padding(
@@ -80,47 +124,9 @@ class CardScreen extends StatelessWidget {
     Center(child: _qr(card.toText())),
   ];
 
-  List<Widget> _copy(BuildContext context, PersonCard card) {
-    final mono = const TextStyle(fontFamily: 'monospace');
-    final home = card.home;
-    return [
-      const SizedBox(height: 8),
-      if (home != null)
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Home address'),
-          subtitle: SelectableText(home.toString(), style: mono),
-          trailing: IconButton(
-            tooltip: 'Copy the address',
-            icon: const Icon(Icons.copy),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: home.toString()));
-              say(context, 'Address copied');
-            },
-          ),
-        ),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('Card'),
-        subtitle: SelectableText(card.toText(), style: mono),
-        trailing: IconButton(
-          tooltip: 'Copy the card',
-          icon: const Icon(Icons.copy),
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: card.toText()));
-            say(context, 'Card copied');
-          },
-        ),
-      ),
-    ];
-  }
-
   Future<void> _scan(BuildContext context) async {
     final c = await scanCard(context);
-    if (c == null || !context.mounted) return;
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => AddContactScreen(app, card: c)));
+    if (c != null && context.mounted) await openScanned(context, app, c);
   }
 
   /// Dark on white whatever the theme, as scanners expect, with the
