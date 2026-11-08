@@ -273,12 +273,12 @@ pub struct State {
 /// The phone link as the screen says it (spec "Phone link", Pairing).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phone {
-    /// No phone is paired.
+    /// No phone has paired; the node is public all the same.
     #[default]
-    None,
-    /// One phone is paired.
-    Paired,
-    /// The node is public: it serves phones that have not paired too.
+    Unpaired,
+    /// An owner has paired, and the node is theirs alone.
+    Private,
+    /// An owner has paired, and the node serves guests too.
     Public,
     /// A phone is pairing: the six-digit code to type into it.
     Code(u32),
@@ -346,8 +346,8 @@ pub fn lines(
     put(row(fixed.image, format_args!("V{}", fixed.version)), 0);
     put(
         match state.phone {
-            Phone::None => row("PHONE", format_args!("NONE")),
-            Phone::Paired => row("PHONE", format_args!("PAIRED")),
+            Phone::Unpaired => row("PHONE", format_args!("UNPAIRED")),
+            Phone::Private => row("PHONE", format_args!("PRIVATE")),
             Phone::Public => row("PHONE", format_args!("PUBLIC")),
             Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
         },

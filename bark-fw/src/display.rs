@@ -293,7 +293,7 @@ static STATE: embassy_sync::blocking_mutex::Mutex<
     heard: 0,
     strong: 0,
     both_ways: 0,
-    phone: bark_screen::Phone::None,
+    phone: bark_screen::Phone::Unpaired,
 }));
 
 /// The phone link's line (`ble.rs`), apart from the node's state, as it
@@ -302,7 +302,7 @@ static STATE: embassy_sync::blocking_mutex::Mutex<
 static PHONE: embassy_sync::blocking_mutex::Mutex<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
     core::cell::Cell<bark_screen::Phone>,
-> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(bark_screen::Phone::None));
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(bark_screen::Phone::Unpaired));
 #[cfg(not(feature = "console"))]
 static CHANGED: embassy_sync::signal::Signal<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,

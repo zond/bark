@@ -107,7 +107,7 @@ fn quick_changes_drawn_once() {
     let mut s = shown(battery(), 1_000);
     let off = usb();
     let paired = State {
-        phone: Phone::Paired,
+        phone: Phone::Private,
         ..off
     };
     assert_eq!(s.due(&off, 5_000), 5_000 + REFRESH_MS);

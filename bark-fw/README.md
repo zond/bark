@@ -723,7 +723,7 @@ its value flush right. Top to bottom:
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
-| phone | `PHONE PUBLIC`, or `PHONE PAIRED` once its owner has made it private; while a phone pairs, `PAIR CODE 012345` | the phone link (Phone link, below) |
+| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then `PHONE PUBLIC` or, once its owner has made it theirs alone, `PHONE PRIVATE`; while a phone pairs, `PAIR CODE 012345` | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -853,8 +853,9 @@ identity resolving key and the long-term key, as a 64-byte record of two
 slots of the stored-state page (`src/store.rs`, `bark_link::bond`), and
 forgets any other: one phone at a time, and a new pairing replaces the
 last. A pairing that is not authenticated or does not bond leaves the
-bond as it was and its link is closed. The screen says `PHONE PUBLIC`,
-at boot too, or `PHONE PAIRED` on a node its owner has made private.
+bond as it was and its link is closed. The screen says `PHONE UNPAIRED`
+until a phone has paired, then `PHONE PUBLIC`, or `PHONE PRIVATE` on a
+node its owner has made private.
 The controller is built with LE privacy, as the host puts the bonded
 phone in its resolving list.
 

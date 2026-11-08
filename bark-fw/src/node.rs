@@ -487,7 +487,7 @@ fn screen(core: &Role, now: Instant, battery_mv: u16) -> bark_screen::State {
         strong: counts.strong,
         both_ways: counts.both_ways,
         // The phone link's, which the screen fills in (`display::phone`).
-        phone: bark_screen::Phone::None,
+        phone: bark_screen::Phone::Unpaired,
     }
 }
 
