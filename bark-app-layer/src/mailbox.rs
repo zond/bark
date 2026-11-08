@@ -99,7 +99,7 @@ pub enum Arrival {
     /// A fetch that does not open under the key, or is not later than the
     /// last taken: dropped.
     Refused,
-    /// The node is nobody's home: nothing is kept.
+    /// The node is nobody's home and not public: nothing is kept.
     NotHome,
 }
 
@@ -110,6 +110,8 @@ struct Reply {
     round: u32,
     /// Where they go.
     address: Address,
+    /// The requester's recipient tag there.
+    recipient: u8,
     /// The next item to look at, going down; the round has none below
     /// `bottom`.
     next: u32,
@@ -163,6 +165,8 @@ pub struct Mailbox<R: Ring> {
     /// The highest number the phone at the node has confirmed reading;
     /// 0 before any (spec "Phone link", Receiving).
     read: u32,
+    /// The node is public ([`Mailbox::keeps`]).
+    public: bool,
 }
 
 impl<R: Ring> Mailbox<R> {
@@ -177,6 +181,7 @@ impl<R: Ring> Mailbox<R> {
             newest: 0,
             unsent: 0,
             read: 0,
+            public: false,
         };
         // A whole slot counts only in its own place: one that is not, left
         // by a ring laid out otherwise before, would set the newest number
@@ -293,6 +298,19 @@ impl<R: Ring> Mailbox<R> {
         self.key.is_some()
     }
 
+    /// Whether the ring keeps what arrives: on a home, and on a public
+    /// node, whose owner's messages it keeps as a home's while guests
+    /// come and go (spec "Phone link", Public).
+    pub fn keeps(&self) -> bool {
+        self.key.is_some() || self.public
+    }
+
+    /// The node is public, or no longer; not kept here, as the setting is
+    /// kept with the bond (`bark_link::bond`).
+    pub fn set_public(&mut self, public: bool) {
+        self.public = public;
+    }
+
     /// Makes the node a home with this mailbox key, or no home with
     /// `None` (the phone link's Home characteristic). A new key forgets
     /// the last fetch, which was under the old one.
@@ -344,10 +362,13 @@ impl<R: Ring> Mailbox<R> {
     /// item by it, and computed again from the node's address it would
     /// change whenever the address does.
     pub fn arrive(&mut self, msg_id: MsgId, payload: &[u8]) -> Arrival {
-        let Some(key) = self.key else {
+        if !self.keeps() {
             return Arrival::NotHome;
-        };
+        }
         if Form::of(payload) == Ok(Form::Fetch) {
+            let Some(key) = self.key else {
+                return Arrival::Refused;
+            };
             return match Fetch::open(&key, payload) {
                 Ok(f) if f.sent > self.last_fetch => {
                     self.take(f);
@@ -398,6 +419,7 @@ impl<R: Ring> Mailbox<R> {
         self.reply = Some(Reply {
             round: f.sent,
             address: f.address,
+            recipient: f.recipient,
             next: self.newest,
             bottom,
             handed: 0,
@@ -440,7 +462,7 @@ impl<R: Ring> Mailbox<R> {
             }
         }
         if sealed.is_none() && !r.answered {
-            let nothing = seal::seal_nothing_new(&key, r.round);
+            let nothing = seal::seal_nothing_new(&key, r.recipient, r.round);
             out[..nothing.len()].copy_from_slice(&nothing);
             sealed = Some((0, 0, nothing.len()));
         }
@@ -477,9 +499,18 @@ impl<R: Ring> Mailbox<R> {
         let mut item = [0u8; MAX_PAYLOAD];
         let len = self.item(n, &mut item)?;
         let len = if len > MAX_APP_PAYLOAD { 0 } else { len };
-        seal::seal_reply(key, r.round, place, n, r.remaining, &item[..len], out)
-            .ok()
-            .map(|m| (n, place, m))
+        seal::seal_reply(
+            key,
+            r.recipient,
+            r.round,
+            place,
+            n,
+            r.remaining,
+            &item[..len],
+            out,
+        )
+        .ok()
+        .map(|m| (n, place, m))
     }
 
     /// The core gave the message back: if it is the last reply, it goes

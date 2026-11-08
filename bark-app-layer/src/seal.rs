@@ -1,16 +1,19 @@
 //! The payload's four forms (spec "Phone link"). The
 //! first byte, in the clear, is the format: the version in the high four
-//! bits, the form in the low four.
+//! bits, the form in the low four. The second, in the clear too, is the
+//! recipient tag, by which a public node hands the payload to the phone
+//! it is for ([`recipient`]).
 //!
-//! | form | after the format byte |
+//! | form | after the format byte and the recipient tag |
 //! |---|---|
 //! | 0, boxed | nonce (24), `crypto_box_easy`: tag (16), ciphertext |
 //! | 1, introduction | `crypto_box_seal`: ephemeral key (32), tag (16), ciphertext |
 //! | 2, fetch | nonce (24), `crypto_secretbox_easy`: tag (16), ciphertext |
 //! | 3, from the mailbox | `crypto_secretbox_easy`: tag (16), ciphertext of the item's number (3), the items still unsent (2) and the item, or of nothing; nonce derived, not sent |
 
-use blake2::digest::consts::U24;
-use blake2::{Blake2b, Digest};
+use blake2::digest::consts::{U16, U24};
+use blake2::digest::Mac;
+use blake2::{Blake2b, Blake2bMac, Digest};
 use crypto_box::aead::generic_array::GenericArray;
 use crypto_box::aead::AeadCore;
 use crypto_box::aead::{AeadInPlace, KeyInit};
@@ -18,7 +21,8 @@ use crypto_box::{PublicKey, SalsaBox, SecretKey};
 use crypto_secretbox::XSalsa20Poly1305;
 
 use crate::keys::KEY_LEN;
-use crate::{be, Address, Error, MAX_APP_PAYLOAD, MAX_PAYLOAD, VERSION};
+use crate::{be, Address, Error, Identity, MAX_APP_PAYLOAD, MAX_PAYLOAD, VERSION};
+use bark_proto::NodeId;
 
 /// The forms, the format byte's low four bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,22 +59,48 @@ impl Form {
     }
 }
 
+/// Where the recipient tag sits: after the format byte.
+pub const RECIPIENT_AT: usize = 1;
+/// Bytes before a form's own: the format byte and the recipient tag.
+pub const HEAD_LEN: usize = RECIPIENT_AT + 1;
+
+/// The recipient tag of `identity` at the node `node`: the first byte of
+/// `crypto_generichash` of the node ID to 16 bytes, its shortest output,
+/// keyed with the identity. Keyed with the identity, only someone who
+/// holds the person's card can make it; over the node ID, it differs from
+/// node to node, so it ties together only the payloads for one person at
+/// one node. One byte: a phone handed a payload that is not its own fails
+/// to open it and drops it, so a wrong match costs a read, and among the
+/// few phones on one node at once one in 256 is rare enough (spec "Phone
+/// link", Recipient tag).
+pub fn recipient(identity: &Identity, node: NodeId) -> u8 {
+    let mut mac =
+        <Blake2bMac<U16> as Mac>::new_from_slice(&identity.0).expect("a 32-byte key is BLAKE2b's");
+    mac.update(&node.0);
+    mac.finalize().into_bytes()[0]
+}
+
+/// The recipient tag of `payload`, the byte after its format.
+pub fn recipient_of(payload: &[u8]) -> Option<u8> {
+    payload.get(RECIPIENT_AT).copied()
+}
+
 /// Bytes of a nonce.
 pub const NONCE_LEN: usize = 24;
 /// Bytes of a tag.
 pub const TAG_LEN: usize = 16;
 
 /// Bytes a boxed payload adds to its plaintext.
-pub const BOX_OVERHEAD: usize = 1 + NONCE_LEN + TAG_LEN;
+pub const BOX_OVERHEAD: usize = HEAD_LEN + NONCE_LEN + TAG_LEN;
 /// Bytes an introduction adds to its plaintext.
-pub const INTRO_OVERHEAD: usize = 1 + KEY_LEN + TAG_LEN;
+pub const INTRO_OVERHEAD: usize = HEAD_LEN + KEY_LEN + TAG_LEN;
 /// Bytes of a reply's count of the items still unsent after its batch.
 pub const REMAINING_LEN: usize = 2;
-/// Bytes a reply adds to the item it carries: the format byte, the tag,
-/// the item's number and the items remaining.
-pub const REPLY_OVERHEAD: usize = 1 + TAG_LEN + NUMBER_LEN + REMAINING_LEN;
+/// Bytes a reply adds to the item it carries: the format byte, the
+/// recipient tag, the tag, the item's number and the items remaining.
+pub const REPLY_OVERHEAD: usize = HEAD_LEN + TAG_LEN + NUMBER_LEN + REMAINING_LEN;
 /// Bytes of the reply that says nothing is new.
-pub const NOTHING_NEW_LEN: usize = 1 + TAG_LEN;
+pub const NOTHING_NEW_LEN: usize = HEAD_LEN + TAG_LEN;
 
 /// The longest plaintext of a boxed payload.
 pub const MAX_BOX_PLAIN: usize = MAX_APP_PAYLOAD - BOX_OVERHEAD;
@@ -132,14 +162,28 @@ fn open_into<A: AeadInPlace + AeadCore<NonceSize = U24>>(
 
 fn nonce_at(payload: &[u8]) -> Result<[u8; NONCE_LEN], Error> {
     let mut n = [0u8; NONCE_LEN];
-    n.copy_from_slice(payload.get(1..1 + NONCE_LEN).ok_or(Error::Malformed)?);
+    n.copy_from_slice(
+        payload
+            .get(HEAD_LEN..HEAD_LEN + NONCE_LEN)
+            .ok_or(Error::Malformed)?,
+    );
     Ok(n)
 }
 
-/// A boxed payload (form 0) of `plain` under a pair's key, with a random
-/// `nonce`, into `out`; its length.
+/// A form's head: its format byte, the recipient tag and `rest`.
+fn head<const N: usize>(form: Form, recipient: u8, rest: &[u8]) -> [u8; N] {
+    let mut head = [0u8; N];
+    head[0] = form.format();
+    head[RECIPIENT_AT] = recipient;
+    head[HEAD_LEN..].copy_from_slice(rest);
+    head
+}
+
+/// A boxed payload (form 0) of `plain` under a pair's key, for the
+/// `recipient` tag, with a random `nonce`, into `out`; its length.
 pub fn seal_box(
     pair: &SalsaBox,
+    recipient: u8,
     nonce: &[u8; NONCE_LEN],
     plain: &[u8],
     out: &mut [u8],
@@ -147,9 +191,7 @@ pub fn seal_box(
     if plain.len() > MAX_BOX_PLAIN {
         return Err(Error::TooLong);
     }
-    let mut head = [0u8; 1 + NONCE_LEN];
-    head[0] = Form::Boxed.format();
-    head[1..].copy_from_slice(nonce);
+    let head: [u8; HEAD_LEN + NONCE_LEN] = head(Form::Boxed, recipient, nonce);
     seal_into(pair, nonce, &head, plain, out)
 }
 
@@ -159,7 +201,12 @@ pub fn open_box(pair: &SalsaBox, payload: &[u8], out: &mut [u8]) -> Result<usize
     if Form::of(payload)? != Form::Boxed || payload.len() > MAX_PAYLOAD {
         return Err(Error::Malformed);
     }
-    open_into(pair, &nonce_at(payload)?, &payload[1 + NONCE_LEN..], out)
+    open_into(
+        pair,
+        &nonce_at(payload)?,
+        &payload[HEAD_LEN + NONCE_LEN..],
+        out,
+    )
 }
 
 /// `crypto_box_seal`'s nonce: BLAKE2b-192 of the ephemeral key and the
@@ -171,10 +218,11 @@ fn seal_nonce(ephemeral: &PublicKey, to: &PublicKey) -> [u8; NONCE_LEN] {
     h.finalize().into()
 }
 
-/// An introduction (form 1) of `plain` to `to`, sealed with a fresh
-/// `ephemeral` key, into `out`; its length.
+/// An introduction (form 1) of `plain` to `to`, for the `recipient` tag,
+/// sealed with a fresh `ephemeral` key, into `out`; its length.
 pub fn seal_intro(
     to: &PublicKey,
+    recipient: u8,
     ephemeral: &SecretKey,
     plain: &[u8],
     out: &mut [u8],
@@ -183,9 +231,7 @@ pub fn seal_intro(
         return Err(Error::TooLong);
     }
     let epk = ephemeral.public_key();
-    let mut head = [0u8; 1 + KEY_LEN];
-    head[0] = Form::Introduction.format();
-    head[1..].copy_from_slice(epk.as_bytes());
+    let head: [u8; HEAD_LEN + KEY_LEN] = head(Form::Introduction, recipient, epk.as_bytes());
     seal_into(
         &SalsaBox::new(to, ephemeral),
         &seal_nonce(&epk, to),
@@ -201,19 +247,24 @@ pub fn open_intro(me: &SecretKey, payload: &[u8], out: &mut [u8]) -> Result<usiz
         return Err(Error::Malformed);
     }
     let mut e = [0u8; KEY_LEN];
-    e.copy_from_slice(payload.get(1..1 + KEY_LEN).ok_or(Error::Malformed)?);
+    e.copy_from_slice(
+        payload
+            .get(HEAD_LEN..HEAD_LEN + KEY_LEN)
+            .ok_or(Error::Malformed)?,
+    );
     let epk = PublicKey::from(e);
     let nonce = seal_nonce(&epk, &me.public_key());
     open_into(
         &SalsaBox::new(&epk, me),
         &nonce,
-        &payload[1 + KEY_LEN..],
+        &payload[HEAD_LEN + KEY_LEN..],
         out,
     )
 }
 
 /// A fetch (spec "Mailbox"): the requester asks its home node for the
-/// newest batch of the items it has not sent, to be sent to `address`.
+/// newest batch of the items it has not sent, to be sent to `address`
+/// for the `recipient` tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fetch {
     /// The requester's clock, as a text's `sent`; a fetch is taken only
@@ -221,31 +272,35 @@ pub struct Fetch {
     pub sent: u32,
     /// The requester's current address.
     pub address: Address,
+    /// The requester's recipient tag at that address's node, which the
+    /// home node cannot make, as it does not know the identity.
+    pub recipient: u8,
 }
 
 impl Fetch {
     /// Bytes of its plaintext.
-    pub const PLAIN_LEN: usize = 4 + Address::LEN;
+    pub const PLAIN_LEN: usize = 4 + Address::LEN + 1;
     /// Bytes of its payload.
     pub const LEN: usize = BOX_OVERHEAD + Self::PLAIN_LEN;
 
     fn plain(&self) -> [u8; Self::PLAIN_LEN] {
         let mut b = [0u8; Self::PLAIN_LEN];
         b[..4].copy_from_slice(&self.sent.to_be_bytes());
-        b[4..].copy_from_slice(&self.address.encode());
+        b[4..4 + Address::LEN].copy_from_slice(&self.address.encode());
+        b[4 + Address::LEN] = self.recipient;
         b
     }
 
     /// The fetch as a payload (form 2) under the mailbox `key`, with a
-    /// random `nonce`.
+    /// random `nonce`, for `home`, the requester's recipient tag at its
+    /// home node.
     pub fn seal(
         &self,
         key: &[u8; KEY_LEN],
+        home: u8,
         nonce: &[u8; NONCE_LEN],
     ) -> Result<[u8; Self::LEN], Error> {
-        let mut head = [0u8; 1 + NONCE_LEN];
-        head[0] = Form::Fetch.format();
-        head[1..].copy_from_slice(nonce);
+        let head: [u8; HEAD_LEN + NONCE_LEN] = head(Form::Fetch, home, nonce);
         let mut out = [0u8; Self::LEN];
         seal_into(&secretbox(key), nonce, &head, &self.plain(), &mut out)?;
         Ok(out)
@@ -260,12 +315,13 @@ impl Fetch {
         open_into(
             &secretbox(key),
             &nonce_at(payload)?,
-            &payload[1 + NONCE_LEN..],
+            &payload[HEAD_LEN + NONCE_LEN..],
             &mut b,
         )?;
         Ok(Fetch {
             sent: be(&b[..4]),
             address: Address::decode(&b[4..])?,
+            recipient: b[4 + Address::LEN],
         })
     }
 }
@@ -301,9 +357,12 @@ pub fn reply_nonce(round: u32, place: u32) -> [u8; NONCE_LEN] {
 
 /// A reply (form 3) carrying item `number` at `place` in the round, with
 /// `remaining` items still unsent after the round's batch, sealed under
-/// the mailbox `key` for the fetch of `round`, into `out`; its length.
+/// the mailbox `key` for the fetch of `round`, for its `recipient` tag,
+/// into `out`; its length.
+#[allow(clippy::too_many_arguments)]
 pub fn seal_reply(
     key: &[u8; KEY_LEN],
+    recipient: u8,
     round: u32,
     place: u32,
     number: u32,
@@ -319,24 +378,27 @@ pub fn seal_reply(
     plain[..NUMBER_LEN].copy_from_slice(&number.to_be_bytes()[1..]);
     plain[NUMBER_LEN..HEAD].copy_from_slice(&remaining.to_be_bytes());
     plain[HEAD..HEAD + item.len()].copy_from_slice(item);
+    let head: [u8; HEAD_LEN] = head(Form::Reply, recipient, &[]);
     seal_into(
         &secretbox(key),
         &reply_nonce(round, place),
-        &[Form::Reply.format()],
+        &head,
         &plain[..HEAD + item.len()],
         out,
     )
 }
 
 /// The reply that says the mailbox holds nothing the fetch of `round`
-/// asks for: form 3 sealing nothing at place 0, [`NOTHING_NEW_LEN`] bytes.
-pub fn seal_nothing_new(key: &[u8; KEY_LEN], round: u32) -> [u8; NOTHING_NEW_LEN] {
+/// asks for, for its `recipient` tag: form 3 sealing nothing at place 0,
+/// [`NOTHING_NEW_LEN`] bytes.
+pub fn seal_nothing_new(key: &[u8; KEY_LEN], recipient: u8, round: u32) -> [u8; NOTHING_NEW_LEN] {
     let mut out = [0u8; NOTHING_NEW_LEN];
+    let head: [u8; HEAD_LEN] = head(Form::Reply, recipient, &[]);
     // Nothing to seal cannot be too long.
     let _ = seal_into(
         &secretbox(key),
         &reply_nonce(round, 0),
-        &[Form::Reply.format()],
+        &head,
         &[],
         &mut out,
     );
@@ -376,7 +438,12 @@ pub fn open_reply(
     }
     let cipher = secretbox(key);
     if payload.len() == NOTHING_NEW_LEN {
-        open_into(&cipher, &reply_nonce(round, 0), &payload[1..], &mut [])?;
+        open_into(
+            &cipher,
+            &reply_nonce(round, 0),
+            &payload[HEAD_LEN..],
+            &mut [],
+        )?;
         return Ok(Opened::NothingNew);
     }
     let len = payload
@@ -391,7 +458,7 @@ pub fn open_reply(
         if open_into(
             &cipher,
             &reply_nonce(round, place),
-            &payload[1..],
+            &payload[HEAD_LEN..],
             &mut plain,
         )
         .is_ok()

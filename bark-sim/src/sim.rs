@@ -5255,9 +5255,13 @@ mod tests {
             node: sim.node_id(2),
         };
         let fetch = |sent: u32| {
-            Fetch { sent, address }
-                .seal(&key, &[sent as u8; 24])
-                .unwrap()
+            Fetch {
+                sent,
+                address,
+                recipient: 0,
+            }
+            .seal(&key, 0, &[sent as u8; 24])
+            .unwrap()
         };
         send(&mut sim, 2, &fetch(7));
         let t = sim.now + Duration::from_secs(300);

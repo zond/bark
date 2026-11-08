@@ -21,8 +21,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// change to the node's attribute table comes with a new version, as the
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
-/// and the database hash, 6 Update and Image.
-pub const VERSION: u8 = 6;
+/// and the database hash, 6 Update and Image, 7 Recipient and Public.
+pub const VERSION: u8 = 7;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -74,6 +74,15 @@ pub mod uuid {
     /// Image: write the image's bytes, with or without a response
     /// ([`crate::update::Piece`]); from link version 6.
     pub const IMAGE: u128 = 0x28bc000c_a1b8_4893_9537_2ee3559d7644;
+    /// Recipient: write the phone's recipient tag at this node
+    /// ([`crate::Recipient`]); from link version 7.
+    pub const RECIPIENT: u128 = 0x28bc000d_a1b8_4893_9537_2ee3559d7644;
+    /// Public: read and write whether the node serves phones without
+    /// pairing ([`crate::Public`]); from link version 7.
+    pub const PUBLIC: u128 = 0x28bc000e_a1b8_4893_9537_2ee3559d7644;
+    /// What a public node advertises in place of [`SERVICE`]: the class
+    /// of nodes that serve any phone. No attribute has it.
+    pub const PUBLIC_NODE: u128 = 0x28bc1001_a1b8_4893_9537_2ee3559d7644;
 }
 
 /// A UUID's bytes in the order BLE sends them, least significant first
@@ -613,6 +622,56 @@ impl NodeTime {
             offset_min: u16_at(b, 4) as i16,
             source,
         })
+    }
+}
+
+/// Recipient, write: the phone's recipient tag at this node, by which the
+/// node hands it the payloads that are its own (spec "Phone link",
+/// Recipient tag; `bark_app_layer::seal::recipient`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Recipient(pub u8);
+
+impl Recipient {
+    /// Bytes in the value.
+    pub const LEN: usize = 1;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        [self.0]
+    }
+
+    /// Take a written value whole.
+    pub fn decode(b: &[u8]) -> Result<Recipient, Malformed> {
+        match b {
+            [t] => Ok(Recipient(*t)),
+            _ => Err(Malformed::Length),
+        }
+    }
+}
+
+/// Public, read and write: 1 when the node serves phones that have not
+/// paired with it, 0 when only the paired phone (spec "Phone link",
+/// Public).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Public(pub bool);
+
+impl Public {
+    /// Bytes in the value.
+    pub const LEN: usize = 1;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        [u8::from(self.0)]
+    }
+
+    /// Take a written value whole.
+    pub fn decode(b: &[u8]) -> Result<Public, Malformed> {
+        match b {
+            [0] => Ok(Public(false)),
+            [1] => Ok(Public(true)),
+            [_] => Err(Malformed::Value),
+            _ => Err(Malformed::Length),
+        }
     }
 }
 
