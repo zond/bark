@@ -307,8 +307,7 @@ firmware and the loader each use the rest.
 ## Build and package
 
 From `bark-fw/`, the firmware alone, for a board that already has the
-loader (`scripts/uf2.py` packs a protected build only with
-`BARK_SIGNING_KEYS`, an open one, `BARK_OPEN=1`, without: Updates, Keys):
+loader:
 
 ```
 cargo build --release && scripts/uf2.py target/thumbv7em-none-eabihf/release/bark-fw target/bark-fw.uf2
@@ -580,12 +579,12 @@ like.
 From a console build, over its serial port: `stage <header hex>`,
 `chunk <offset> <hex>` for up to 256 bytes at a time, in order,
 `commit` and `reboot`. `scripts/image.py` packs, signs and sends it;
-an open build takes the bench key, below:
+an open build holds the bench key as well, below:
 
 ```
 BARK_OPEN=1 BARK_IMAGE_VERSION=2 cargo build --release --features console
 scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v2.img
-scripts/image.py sign target/v2.img keys/bench.pem --key-id 1
+scripts/image.py sign target/v2.img keys/bench.pem --key-id 255
 BARK_OPEN=1 BARK_IMAGE_VERSION=1 cargo build --release --features console
 scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader target/thumbv7em-none-eabihf/release/bark-fw target/bark.uf2
 # copy target/bark.uf2 to the board, then:
@@ -659,17 +658,17 @@ back. A round also fails unless the log names the operation expected,
 its flash, erase or write, and page, and the other phase's moment as not
 reached (roadmap Phase 2, "Resets at chosen moments of a swap").
 
-**Keys.** A firmware takes its public keys from `BARK_SIGNING_KEYS` at
-build time, up to three `id:hex` comma-separated, each id a byte from 1
-to 255 that names the key in a signature and each key 32 bytes
-(`build.rs`); they are kept under their own symbol, from which the
-scripts read them. A protected build without them holds no key and
-stages no image: it builds, with a warning, so that the checks run
-without keys, but `scripts/uf2.py` and `scripts/image.py pack` refuse
-it, so no such image reaches a board. An open build without them takes
-the bench key, `keys/bench.pub`, whose private key is beside it in
-`keys/bench.pem` for every bench to sign with; a protected build fails
-if given it.
+**Keys.** A firmware holds up to three public keys, each under an id,
+a byte from 1 to 255 that names the key in a signature, and each 32
+bytes (`build.rs`); they are kept under their own symbol, from which
+the scripts read them. Every build holds the project's keys,
+`keys/project.pub`, one `id:hex` a line, so that a node takes the
+project's releases whichever build it runs (roadmap D154). An open
+build holds the bench key, `keys/bench.pub`, id 255, as well: its
+private key is beside it in `keys/bench.pem` for every bench to sign
+with, and a protected build fails if given it. A fork that signs its
+own images gives its public keys at build time in `BARK_SIGNING_KEYS`,
+`id:hex` comma-separated, in place of the project's.
 
 The release key is made once with `scripts/image.py keygen`, which
 writes the private key, PEM, readable by its owner alone, and prints
@@ -677,21 +676,20 @@ the public key. The private key is kept outside the repository, in the
 same folder as the app's release key and backed up the same way
 (README.md, "Releases"): a node can take an image only from a key it
 holds, so with the key lost, every node is updated by hand at its next
-visit. The release workflow signs with it from the secret
-`BARK_SIGNING_KEY` and builds with the repository variable
-`BARK_SIGNING_KEYS`:
+visit. Its public key goes in `keys/project.pub`, and the release
+workflow signs with it from the secret `BARK_SIGNING_KEY`:
 
 ```
 scripts/image.py keygen bark-signing-1.pem   # in the folder of the app's key
 gh secret set BARK_SIGNING_KEY < bark-signing-1.pem
-gh variable set BARK_SIGNING_KEYS --body 1:<the public key it printed>
+echo 1:<the public key it printed> >> keys/project.pub
 ```
 
 The workflow signs under the id the built firmware gives the key and
 fails if it holds no such key, so no release leaves the nodes unable to
 take the next one. To replace a key: make key 2, release once holding
-both, `1:<old>,2:<new>`, still signed with key 1, which the nodes hold;
-then set the secret to key 2 and the variable to `2:<new>`. Once every
+both in `keys/project.pub`, still signed with key 1, which the nodes
+hold; then set the secret to key 2 and remove key 1 from the file. Once every
 node runs a release holding key 2, key 1 signs nothing they take. A
 stolen key is replaced the same way, at once: until the nodes run a
 release without it, its holder can sign for them. A lost key cannot
