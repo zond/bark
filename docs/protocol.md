@@ -3677,9 +3677,11 @@ bytes and 14.4 ms.
 3. A relay **helps** a channel where a neighbour's section says it
    gathers the image the relay gathers or holds and lacks a block the
    relay holds: it **streams** there, one piece a pace (below), from the
-   blocks it holds. Of such channels it streams on at most two, those
-   with the most neighbours lacking, its home first of equals. It stops
-   on a channel when no neighbour there lacks a block it holds.
+   blocks it holds. On a channel other than its home it streams only
+   the blocks past those a relay at home there holds, by that relay's
+   section. It streams on at most two channels: its home, then
+   those with the most neighbours lacking. It stops on a channel when no
+   neighbour there lacks a block it streams there.
 4. A stream **sweeps** the blocks in order. Of the block at hand it
    sends fresh pieces, each block's index climbing from a random start
    and wrapping at 255, until it has sent what the neighbour there
@@ -3727,7 +3729,13 @@ channel with several streaming would carry their sum: in a district run
 with no such rule the update's frames came to 7 % of each channel's
 time once 70 relays held the image. Helpers at home on a channel hear
 each other there and each takes its share, so the channel carries one
-piece a pace whatever their number. *Why share and not leave the
+piece a pace whatever their number. *Why the relays at home on a channel
+serve it first.* A node hears pieces only on its home channel, so it
+can share the pace only there; streams from elsewhere would add up
+unheard. In the district at the design rate over an update's first 6
+hours, leaving a channel's blocks to the relays at home there cut the pieces' airtime from 92 400 s
+to 69 000 s and the channels' busy share from 4.2 to 3.5 %, the relays
+as far along (`mesh-update-2026-11-07.md`). *Why share and not leave the
 channel to one.* Every helper keeps streaming, each from the blocks it
 holds, so a neighbour that lacks a block one helper does not hold still
 has it from another, and the channel loses nothing when a helper goes.

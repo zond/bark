@@ -389,6 +389,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::StorePiece(piece));
     }
 
+    /// On each channel, the blocks from the first that a relay at home
+    /// there holds, as far as this node hears: it streams those there
+    /// (spec "Updates over the mesh"), and this node only the blocks past
+    /// them, or on its own home channel.
+    fn held_at_home(&self, now: Instant) -> [u8; CHANNELS as usize] {
+        let mut held = [0; CHANNELS as usize];
+        let Some(image) = self.streams() else {
+            return held;
+        };
+        for (_, m) in self.neighbours.live(now).filter(|(_, m)| !m.sleepy) {
+            let complete = m
+                .update
+                .filter(|u| u.image.is_some_and(|i| i.tag() == image.tag()))
+                .map_or(0, |u| u.complete);
+            let h = &mut held[usize::from(m.home.index())];
+            *h = (*h).max(complete);
+        }
+        held[usize::from(self.home.index())] = 0;
+        held
+    }
+
     /// What each channel needs of what this node streams, from the
     /// sections of the neighbours it hears there.
     fn needs(&self, now: Instant) -> [Need; CHANNELS as usize] {
@@ -396,12 +417,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(image) = self.streams() else {
             return need;
         };
+        let held = self.held_at_home(now);
         for (_, n) in self.neighbours.live(now) {
             let Some(u) = n.update.filter(|u| u.gathers(image.tag())) else {
                 continue;
             };
             let lacks = |b: u8| b > u.complete || u.have < image.pieces(b);
-            let Some(from) = (u.complete..image.blocks).find(|&b| self.holds_block(b) && lacks(b))
+            let there = held[usize::from(n.home.index())];
+            let Some(from) =
+                (u.complete.max(there)..image.blocks).find(|&b| self.holds_block(b) && lacks(b))
             else {
                 continue;
             };
@@ -420,9 +444,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         need
     }
 
-    /// The channels it streams on: those whose neighbours lack the most of
-    /// what it holds, its home first of equals, at most
-    /// [`SERVED_CHANNELS`].
+    /// The channels it streams on: its home, where the others leave it
+    /// the blocks it holds, then those whose neighbours lack the most of
+    /// what it holds, at most [`SERVED_CHANNELS`].
     fn stream_channels(&self, now: Instant) -> [Option<(Channel, Need)>; SERVED_CHANNELS] {
         let need = self.needs(now);
         let mut out = [None; SERVED_CHANNELS];
@@ -433,7 +457,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             let better = |o: &Option<(Channel, Need)>| match o {
                 None => true,
-                Some((oc, on)) => (n.count, c == self.home) > (on.count, *oc == self.home),
+                Some((oc, on)) => (c == self.home, n.count) > (*oc == self.home, on.count),
             };
             if let Some(i) = out.iter().position(better) {
                 out[i..].rotate_right(1);
@@ -473,7 +497,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let s = &self.spread;
         let i = usize::from(c.index());
         let cur = s.cur[i];
-        let wanted = |b: u8| self.holds_block(b) && self.deficit(c, b, now) > 0;
+        let there = self.held_at_home(now)[usize::from(c.index())];
+        let wanted = |b: u8| b >= there && self.holds_block(b) && self.deficit(c, b, now) > 0;
         if s.sent_cur[i] < s.target[i] && wanted(cur) {
             return Some(cur);
         }
