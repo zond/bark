@@ -69,6 +69,14 @@ pub struct UpdateRun {
     foreign: [u64; 2],
     /// What became of the pieces due after anchors' slot heartbeats.
     slots: std::collections::BTreeMap<String, u64>,
+    /// The blocks each node holds.
+    pub has: std::collections::HashSet<(u32, u8)>,
+    /// What became of each slot piece at each sleepy node of its anchor.
+    fates: std::collections::BTreeMap<&'static str, u64>,
+    /// Slot pieces a sleepy node was listening for, until it hears them.
+    listened: std::collections::HashSet<(u8, u8, u32)>,
+    /// Pieces stored by sleepy nodes.
+    pub stored_sleepy: u64,
 }
 
 impl UpdateRun {
@@ -102,6 +110,10 @@ impl UpdateRun {
             last_foreign: std::collections::HashMap::new(),
             foreign: [0; 2],
             slots: std::collections::BTreeMap::new(),
+            has: std::collections::HashSet::new(),
+            fates: std::collections::BTreeMap::new(),
+            listened: std::collections::HashSet::new(),
+            stored_sleepy: 0,
         }
     }
 
@@ -113,6 +125,7 @@ impl UpdateRun {
     /// The policy takes every image offered.
     pub fn offered(&mut self, node: u32, image: Image) {
         self.kept.retain(|k, _| k.0 != node);
+        self.has.retain(|k| k.0 != node);
         self.decoded[node as usize] = 0;
         self.owed
             .push((node, AppCommand::Gather { image, from: 0 }));
@@ -127,6 +140,7 @@ impl UpdateRun {
             return;
         }
         self.kept.remove(&(node, p.block));
+        self.has.insert((node, p.block));
         let d = &mut self.decoded[node as usize];
         *d += 1;
         let all = usize::from(*d) == self.needs.len();
@@ -140,6 +154,18 @@ impl UpdateRun {
         if all {
             self.owed.push((node, AppCommand::Holds(self.image)));
             self.holds_at[node as usize].get_or_insert(now);
+        }
+    }
+
+    /// A slot piece at one of its anchor's sleepy nodes: `fate` says why
+    /// it could not take it, or `None` when it should listen for it.
+    pub fn slot_fate(&mut self, node: u32, block: u8, index: u8, fate: Option<&'static str>) {
+        match fate {
+            Some(f) => *self.fates.entry(f).or_default() += 1,
+            None => {
+                *self.fates.entry("listened for").or_default() += 1;
+                self.listened.insert((block, index, node));
+            }
         }
     }
 
@@ -196,6 +222,9 @@ impl UpdateRun {
 
     /// A node heard piece `index` of `block`.
     pub fn piece_heard(&mut self, node: u32, block: u8, index: u8) {
+        if self.listened.remove(&(block, index, node)) {
+            *self.fates.entry("listened for, heard").or_default() += 1;
+        }
         if let Some(k) = self.expected.remove(&(block, index, node)) {
             self.reached[k] += 1;
         }
@@ -292,6 +321,21 @@ impl UpdateRun {
             s(self.air_total[1]),
             s(self.air_total[2]),
             s(self.air_total[3]),
+        );
+        let all: u64 =
+            self.fates.values().sum::<u64>() - self.fates.get("listened for, heard").unwrap_or(&0);
+        let _ = write!(out, "# slot pieces at their anchor's sleepy nodes: {all}");
+        for (k, n) in &self.fates {
+            let _ = write!(
+                out,
+                ", {k} {n} ({:.1} %)",
+                100.0 * *n as f64 / all.max(1) as f64
+            );
+        }
+        let _ = writeln!(
+            out,
+            "; pieces stored by sleepy nodes {}",
+            self.stored_sleepy
         );
         let all: u64 = self.slots.values().sum();
         let _ = write!(out, "# pieces due after a slot heartbeat: {all}");

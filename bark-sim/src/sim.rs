@@ -724,6 +724,10 @@ pub struct Sim {
     delivered_by: [u64; 4],
     /// Relay node by ID, as [`key`] gives it.
     pub(crate) relay_index: HashMap<u64, u32>,
+    /// Each anchor's sleepy nodes, as of the update's last sample.
+    sleepers: HashMap<u32, Vec<u32>>,
+    /// The last heartbeat each node heard, its sender and when.
+    beat_from: HashMap<u32, (u64, Instant)>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
     was_booting: bool,
@@ -1335,6 +1339,8 @@ impl Sim {
             power: None,
             battery: None,
             update: None,
+            sleepers: HashMap::new(),
+            beat_from: HashMap::new(),
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1819,6 +1825,21 @@ impl Sim {
             .collect();
         u.sample(self.now, &nodes, &gathering, busy);
         self.update = Some(u);
+        self.sleepers.clear();
+        for i in 0..self.relays.len() {
+            let r = &self.relays[i];
+            if !self.nodes[i].alive || !r.sleepy() {
+                continue;
+            }
+            let Some(a) = r.anchor() else { continue };
+            if let Some(&ai) = self
+                .relay_index
+                .get(&key(a.id))
+                .or(self.sleepy_index.get(&key(a.id)))
+            {
+                self.sleepers.entry(ai).or_default().push(i as u32);
+            }
+        }
         self.push(
             self.now + Duration::from_micros(crate::update::SAMPLE_US),
             Ev::UpdateSample,
@@ -2179,8 +2200,14 @@ impl Sim {
         }
         if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
             use bark_proto::wire::{Packet, Update};
-            if let Ok(Packet::Update(Update::Piece { block, index, .. })) = Packet::decode(bytes) {
-                u.piece_heard(node, block, index);
+            match Packet::decode(bytes) {
+                Ok(Packet::Update(Update::Piece { block, index, .. })) => {
+                    u.piece_heard(node, block, index)
+                }
+                Ok(Packet::Heartbeat(hb)) => {
+                    self.beat_from.insert(node, (key(hb.id), now));
+                }
+                _ => {}
             }
         }
         let clock = self.clocks[node as usize];
@@ -2674,6 +2701,9 @@ impl Sim {
             }
             Action::StorePiece(p) => {
                 if let Some(u) = self.update.as_mut() {
+                    if self.relays[node as usize].sleepy() {
+                        u.stored_sleepy += 1;
+                    }
                     u.piece(node, p, self.now);
                 }
             }
@@ -2732,6 +2762,48 @@ impl Sim {
                                 .collect::<Vec<_>>();
                             let foreign = f.channel != home;
                             u.piece_sent(node, foreign, self.now, block, index, targets);
+                            if slot && !foreign {
+                                let me_key = key(me);
+                                for &s in self.sleepers.get(&node).into_iter().flatten() {
+                                    let c = &self.relays[s as usize];
+                                    let st = &self.nodes[s as usize];
+                                    if c.anchor().is_none_or(|a| a.id != me) {
+                                        u.slot_fate(s, block, index, Some("anchor changed"));
+                                        continue;
+                                    }
+                                    let fate = if !st.alive || !st.present {
+                                        Some("absent")
+                                    } else if let Some((g, first)) = c.gathering() {
+                                        let local = self.clocks[s as usize].local(self.now);
+                                        let anchor_says = c
+                                            .neighbour_table()
+                                            .live(local)
+                                            .find(|(_, n)| n.id == me)
+                                            .and_then(|(_, n)| n.update)
+                                            .filter(|x| x.image.is_some_and(|i| i.tag() == g.tag()))
+                                            .map_or(0, |x| x.complete);
+                                        let heard_beat =
+                                            self.beat_from.get(&s).is_some_and(|&(k, t)| {
+                                                k == me_key
+                                                    && self.now.since(t).as_micros() < 60_000
+                                            });
+                                        if u.has.contains(&(s, block)) {
+                                            Some("has the block")
+                                        } else if !heard_beat {
+                                            Some("missed the slot heartbeat")
+                                        } else if anchor_says <= first {
+                                            Some("anchor's section says it holds nothing more")
+                                        } else {
+                                            None
+                                        }
+                                    } else if u.holds_at[s as usize].is_some() {
+                                        Some("holds the image")
+                                    } else {
+                                        Some("not gathering")
+                                    };
+                                    u.slot_fate(s, block, index, fate);
+                                }
+                            }
                         }
                         _ => u.aired(None, air),
                     }
