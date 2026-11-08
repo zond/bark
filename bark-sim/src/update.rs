@@ -16,7 +16,7 @@ pub const SAMPLE_US: u64 = 600_000_000;
 
 /// The pieces each block of an image of `bytes` bytes is made of: block 0
 /// the block table, the image's hash and 8 bytes of each block's hash,
-/// one piece up to 26 blocks (spec "Updates over the mesh"); then the image in blocks
+/// one piece up to 26 blocks, two up to 57 (spec "Updates over the mesh"); then the image in blocks
 /// of [`BLOCK_PIECES`] pieces, the last one shorter.
 pub fn blocks(bytes: u32) -> Vec<usize> {
     let pieces = (bytes as usize).div_ceil(PIECE_BYTES);
@@ -220,13 +220,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn todays_image_is_the_table_and_25_blocks() {
-        // 387 796 B packed in pieces of 247 B: 1571 pieces, 24 blocks of 64
-        // and one of 35, after the table's block.
-        let b = blocks(387_796);
-        assert_eq!(b.len(), 26);
-        assert_eq!(b[0], 1);
-        assert_eq!(b[25], 35);
-        assert_eq!(b.iter().sum::<usize>(), 1 + 1571);
+    fn todays_image_is_the_table_and_27_blocks() {
+        // 420 808 B packed in pieces of 247 B: 1704 pieces, 26 blocks of 64
+        // and one of 40, after the table's block of two pieces.
+        let b = blocks(420_808);
+        assert_eq!(b.len(), 28);
+        assert_eq!(b[0], 2);
+        assert_eq!(b[27], 40);
+        assert_eq!(b.iter().sum::<usize>(), 2 + 1704);
     }
 }

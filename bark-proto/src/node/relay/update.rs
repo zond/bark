@@ -1,8 +1,9 @@
 //! Firmware images spreading over the mesh
 //! (spec "Updates over the mesh"): a relay that holds an image, whole or
-//! its first blocks, announces it and sends the pieces of the block it is
-//! asked for; one that gathers an image asks for its blocks in order and
-//! hands the driver the pieces it takes. Every update frame keeps the pace
+//! some of its blocks, announces it and, while it is asked, streams one
+//! fresh piece of each block it holds in turn; one that gathers an image
+//! asks from the first block it lacks and hands the driver every piece of
+//! every block it lacks. Every update frame keeps the pace
 //! of [`PACE`] a channel, is paid from the bucket as a forward is, and
 //! waits behind at most [`PASS`] frames of the send queue. A sleepy node
 //! gathers from its anchor, which sends to it after its slot heartbeat.
@@ -16,8 +17,8 @@ use crate::radio::{Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::REPLY_RESERVE;
 use crate::time::{Duration, Instant};
 use crate::update::{
-    credit, Image, ImageTag, Piece, ANNOUNCE_EVERY, HOLD_BACK, PACE, PASS, PIECES, REQUEST_WAIT,
-    SERVED_CHANNELS, SLOT_ANNOUNCE_LISTEN, SLOT_LISTEN,
+    Image, ImageTag, Piece, ANNOUNCE_EVERY, HOLD_BACK, MAX_BLOCKS, PACE, PASS, PIECES,
+    REQUEST_WAIT, SERVED_CHANNELS, SLOT_ANNOUNCE_LISTEN, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -26,11 +27,6 @@ use crate::wire::{Packet, Update, PIECE_BYTES};
 /// its check and its start, 5 ms less about 3 ms and under 1 ms
 /// (spec "Heartbeat").
 const SLOT_START: Duration = Duration::from_millis(1);
-
-/// Blocks a node takes pieces of at once: as many whole blocks as the
-/// driver's room for pieces holds, 352 pieces (`bark-image/src/layout.rs`),
-/// 5.5 blocks of [`crate::update::BLOCK_PIECES`].
-const WINDOW: usize = 5;
 
 /// A node that holds an image, as its announcement said: whom to ask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,18 +44,18 @@ struct Gather {
     image: Image,
     /// The holder it asks.
     holder: Option<Holder>,
-    /// The first block it lacks: it takes pieces of this block and of the
-    /// [`WINDOW`] − 1 after it.
+    /// The first block it lacks: it asks from this block up.
     block: u8,
-    /// The pieces of each block of the window handed to the driver, a bit
-    /// each.
-    seen: [[u8; PIECES.div_ceil(8)]; WINDOW],
-    /// The blocks of the window that decoded, a bit each.
-    done: u8,
-    /// A request is owed from `ask_at`: the gathering began, or a block
-    /// ended.
+    /// The pieces of each block handed to the driver, a bit each.
+    seen: [[u8; PIECES.div_ceil(8)]; MAX_BLOCKS],
+    /// The blocks that decoded and passed their hash, a bit each.
+    done: u64,
+    /// A request is owed from `ask_at`: the gathering began, or a source
+    /// was found.
     ask: bool,
     ask_at: Instant,
+    /// When it last asked.
+    asked_at: Instant,
     /// When it last asked, or took a piece; the later of the two starts
     /// [`REQUEST_WAIT`], and a random wait within a pace after it, since
     /// nodes that took the same pieces fall quiet together.
@@ -68,50 +64,38 @@ struct Gather {
 }
 
 impl Gather {
-    /// Where block `b` is in the window, if it is and lacks pieces.
-    fn slot(&self, b: u8) -> Option<usize> {
-        let i = usize::from(b.checked_sub(self.block)?);
-        (i < WINDOW && b < self.image.blocks && self.done & (1 << i) == 0).then_some(i)
+    /// Whether block `b` decoded and passed.
+    fn holds(&self, b: u8) -> bool {
+        b < 64 && self.done >> b & 1 == 1
     }
 
-    /// Whether piece `index` of block `b` is one it takes: of a block of
-    /// the window that lacks pieces, and not handed before. It marks it.
+    /// Whether piece `index` of block `b` is one it takes: of a block it
+    /// lacks, and not handed before. It marks it.
     fn take(&mut self, b: u8, index: u8) -> bool {
-        let Some(i) = self.slot(b) else {
+        if b >= self.image.blocks || self.holds(b) {
             return false;
-        };
+        }
         let (byte, bit) = (usize::from(index / 8), 1 << (index % 8));
-        let new = self.seen[i][byte] & bit == 0;
-        self.seen[i][byte] |= bit;
+        let seen = &mut self.seen[usize::from(b)];
+        let new = seen[byte] & bit == 0;
+        seen[byte] |= bit;
         new
     }
 
-    /// Block `b` decoded, `ok`, or failed its hash: the window moves past
-    /// the blocks decoded, or the block's pieces are gathered again. A
-    /// request is owed when the first block lacked changes, or fails.
+    /// Block `b` decoded, `ok`, or failed its hash, and its pieces are
+    /// taken again. The first block it lacks moves past the blocks held.
     fn decoded(&mut self, b: u8, ok: bool) {
-        let Some(i) = self.slot(b) else {
+        if b >= self.image.blocks || self.holds(b) {
             return;
-        };
+        }
         if !ok {
-            self.seen[i] = [0; PIECES.div_ceil(8)];
-            self.ask = i == 0;
+            self.seen[usize::from(b)] = [0; PIECES.div_ceil(8)];
             return;
         }
-        self.done |= 1 << i;
-        while self.done & 1 != 0 {
+        self.done |= 1 << b;
+        while self.lacks() && self.holds(self.block) {
             self.block += 1;
-            self.done >>= 1;
-            self.seen.copy_within(1.., 0);
-            self.seen[WINDOW - 1] = [0; PIECES.div_ceil(8)];
-            self.ask = self.lacks();
         }
-    }
-
-    /// The pieces of the first block it lacks that it has yet to take.
-    fn lacking(&self) -> u8 {
-        let had: u32 = self.seen[0].iter().map(|b| b.count_ones()).sum();
-        (u32::from(self.image.pieces(self.block)).saturating_sub(had)).max(1) as u8
     }
 
     /// Whether it still lacks a block.
@@ -144,23 +128,8 @@ impl Gather {
     }
 }
 
-/// Blocks asked for on one channel at once that a holder keeps: the
-/// nodes there take the same pieces and move through the blocks together,
-/// so few are asked for at a time; one asked for when all are taken is
-/// asked for again after [`REQUEST_WAIT`].
-const ASKED: usize = 4;
-
-/// A block asked for on a channel.
-#[derive(Clone, Copy, Debug)]
-struct Asked {
-    block: u8,
-    /// The piece of it sent next.
-    index: u8,
-    /// Pieces still to send for the requests heard ([`Image::credit`]).
-    left: u8,
-}
-
-/// A channel a holder sends pieces on, and the blocks asked for there.
+/// A channel a holder streams on: one piece of each block it holds from
+/// `from` up, in turn, while it is asked.
 #[derive(Clone, Copy, Debug)]
 struct Serving {
     channel: Channel,
@@ -169,68 +138,15 @@ struct Serving {
     /// Only sleepy nodes asked: the pieces go after the slot heartbeat on
     /// the home channel, when they listen.
     sleepy: bool,
-    asked: [Option<Asked>; ASKED],
-    /// The block it has begun to send, which it sends until its pieces
-    /// are spent.
-    started: Option<u8>,
-}
-
-impl Serving {
-    /// The block it sends now: the one begun, else the highest asked for,
-    /// so that the nodes nearest to holding the image come to hold it
-    /// first and serve it in turn.
-    fn current(&self) -> Option<Asked> {
-        let asked = || self.asked.iter().flatten();
-        self.started
-            .and_then(|b| asked().find(|a| a.block == b))
-            .or_else(|| asked().max_by_key(|a| a.block))
-            .copied()
-    }
-
-    /// A request for `block`: it buys `credit` pieces of it from now, or
-    /// none if more are still to go,
-    /// from piece `start` on for a block not kept. A block higher than one
-    /// kept takes that one's place when all are taken.
-    fn ask(&mut self, block: u8, credit: u8, start: u8) {
-        if let Some(a) = self.asked.iter_mut().flatten().find(|a| a.block == block) {
-            a.left = a.left.max(credit);
-            return;
-        }
-        let new = Some(Asked {
-            block,
-            index: start,
-            left: credit,
-        });
-        if let Some(free) = self.asked.iter_mut().find(|a| a.is_none()) {
-            *free = new;
-        } else if let Some(lowest) = self
-            .asked
-            .iter_mut()
-            .filter(|a| a.is_some_and(|a| a.block < block))
-            .min_by_key(|a| a.map(|a| a.block))
-        {
-            *lowest = new;
-        }
-    }
-
-    /// The current block's piece went: the next piece, and the block is
-    /// done once its credit is spent.
-    fn sent(&mut self) {
-        let Some(cur) = self.current() else { return };
-        self.started = Some(cur.block);
-        for a in self.asked.iter_mut() {
-            if let Some(x) = a.as_mut().filter(|x| x.block == cur.block) {
-                x.index = ((usize::from(x.index) + 1) % PIECES) as u8;
-                x.left -= 1;
-                if x.left == 0 {
-                    *a = None;
-                }
-            }
-        }
-        if self.current().is_some_and(|a| a.block != cur.block) {
-            self.started = None;
-        }
-    }
+    /// The lowest block an asker within the last cycle lacks, and when it
+    /// was asked for.
+    from: u8,
+    from_at: Instant,
+    /// When it was last asked.
+    asked_at: Instant,
+    /// The block whose piece goes next, if it holds it, else the next it
+    /// holds, from `from` again past the last.
+    next: u8,
 }
 
 /// An update frame the node sends.
@@ -286,6 +202,9 @@ pub(super) struct Spread {
     /// Until when it sends no pieces on its home channel, where another
     /// holder sends them.
     held_back: Option<Instant>,
+    /// The piece of each block it streams next: from a random start,
+    /// climbing, so a block's pieces repeat only after [`PIECES`].
+    index: [u8; MAX_BLOCKS],
     /// The frame under way, and its listen-before-talk checks.
     current: Option<(Out, Channel)>,
     busy_checks: u8,
@@ -310,6 +229,7 @@ impl Spread {
             slot_open: None,
             slot_announce_at: Instant::ZERO,
             held_back: None,
+            index: [0; MAX_BLOCKS],
             current: None,
             busy_checks: 0,
             ready_at: Instant::ZERO,
@@ -347,6 +267,36 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|g| (g.image, g.block))
     }
 
+    /// Whether it holds block `b` of the image `tag` to stream: any of the
+    /// image it holds whole, those that passed of the one it gathers.
+    fn stream_has(&self, tag: ImageTag, b: u8) -> bool {
+        let s = &self.spread;
+        if s.own.is_some_and(|o| o.tag() == tag) {
+            return s.own.is_some_and(|o| b < o.blocks);
+        }
+        s.gather.is_some_and(|g| g.image.tag() == tag && g.holds(b))
+    }
+
+    /// The blocks it streams on `v`, from its `from` up.
+    fn stream_count(&self, v: &Serving) -> u64 {
+        (v.from..MAX_BLOCKS as u8)
+            .filter(|&b| self.stream_has(v.tag, b))
+            .count() as u64
+    }
+
+    /// The block whose piece goes next on `v`: the first it holds from
+    /// `next` up, else from `from` up again.
+    fn stream_block(&self, v: &Serving) -> Option<u8> {
+        let after = (v.next..MAX_BLOCKS as u8).find(|&b| self.stream_has(v.tag, b));
+        after.or_else(|| (v.from..MAX_BLOCKS as u8).find(|&b| self.stream_has(v.tag, b)))
+    }
+
+    /// Whether `v` was asked within its last cycle, and a pace's margin:
+    /// it streams only while it is.
+    fn stream_live(&self, v: &Serving, now: Instant) -> bool {
+        now < v.asked_at + PACE.mul(self.stream_count(v) + 1)
+    }
+
     /// What it announces: the image it gathers while it holds blocks of
     /// it, the newest, else the one it holds whole.
     fn offer(&self) -> Option<(Image, u8)> {
@@ -378,6 +328,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 *v = None;
             }
         }
+        // Each block's pieces from a random start, so that two holders of
+        // it seldom send the same.
+        let mut index = [0u8; MAX_BLOCKS];
+        for i in index.iter_mut() {
+            *i = self.rng.range(0, PIECES as u64 - 1) as u8;
+        }
+        let s = &mut self.spread;
+        if s.gather.is_none() {
+            s.index = index;
+        }
         // Nodes that finish together would announce together.
         s.home_at = Some(now + wait);
         let first = self.rng.duration(Duration::ZERO, ANNOUNCE_EVERY);
@@ -404,15 +364,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             image,
             holder,
             block: from,
-            seen: [[0; PIECES.div_ceil(8)]; WINDOW],
+            seen: [[0; PIECES.div_ceil(8)]; MAX_BLOCKS],
             done: 0,
             ask: false,
             ask_at: now,
+            asked_at: now,
             quiet_since: now,
             quiet_wait: Duration::ZERO,
         };
         g.ask = g.source().is_some();
         g.ask_at = now + self.ask_wait();
+        for i in self.spread.index.iter_mut() {
+            *i = self.rng.range(0, PIECES as u64 - 1) as u8;
+        }
         self.spread.gather = Some(g);
     }
 
@@ -509,9 +473,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mine = self.home;
         let me = self.me();
         let wait = self.ask_wait();
-        // A block asked for again starts where the nodes that have some of
-        // its pieces most likely lack them.
-        let start = self.rng.range(0, PIECES as u64 - 1) as u8;
         let s = &mut self.spread;
         match u {
             Update::Announce {
@@ -559,56 +520,58 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 sleeps,
                 tag,
                 block,
-                lacks,
             } => {
                 if to != me || sleepy {
                     return;
                 }
                 let served = self.served(tag);
+                let holds_some = (block..MAX_BLOCKS as u8).any(|b| self.stream_has(tag, b));
+                let blocks = served.map_or(1, |(image, _)| image.blocks);
                 let s = &mut self.spread;
-                let Some((image, held)) = served else {
+                if served.is_none() {
                     // It asks for an older image than this one: tell it.
                     if s.own.is_some_and(|o| version < o.version) {
                         s.owed = Some(channel);
                     }
                     return;
-                };
-                // A block it does not hold yet: the asker asks again when
-                // it hears that this one holds more, or asks another.
-                if block >= held {
+                }
+                // Nothing it holds from that block up: the asker asks
+                // again when it hears that this one holds more, or asks
+                // another.
+                if !holds_some {
                     return;
                 }
-                let credit = credit(lacks.min(image.pieces(block)));
+                let fresh = Serving {
+                    channel,
+                    tag,
+                    sleepy: sleeps,
+                    from: block,
+                    from_at: now,
+                    asked_at: now,
+                    next: block,
+                };
                 match s
                     .serving
                     .iter_mut()
                     .flatten()
                     .find(|v| v.channel == channel)
                 {
-                    Some(v) => {
-                        if v.tag != tag {
-                            *v = Serving {
-                                channel,
-                                tag,
-                                sleepy: sleeps,
-                                asked: [None; ASKED],
-                                started: None,
-                            };
+                    Some(v) if v.tag == tag => {
+                        // The lowest block an asker lacks within the last
+                        // cycle; one asked for before it, past it, is
+                        // forgotten.
+                        let cycle = PACE.mul(u64::from(blocks));
+                        if block <= v.from || now >= v.from_at + cycle {
+                            v.from = block;
+                            v.from_at = now;
                         }
+                        v.asked_at = now;
                         v.sleepy &= sleeps;
-                        v.ask(block, credit, start);
                     }
+                    Some(v) => *v = fresh,
                     None => {
                         if let Some(free) = s.serving.iter_mut().find(|v| v.is_none()) {
-                            let mut v = Serving {
-                                channel,
-                                tag,
-                                sleepy: sleeps,
-                                asked: [None; ASKED],
-                                started: None,
-                            };
-                            v.ask(block, credit, start);
-                            *free = Some(v);
+                            *free = Some(fresh);
                         }
                     }
                 }
@@ -683,10 +646,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let slot = s.slot_open.filter(|_| relay);
         let request = s.gather.and_then(|g| {
             let channel = g.source()?.home;
+            // Again once a cycle of the holder's stream from the block it
+            // lacks, while it is not whole, so that the stream goes on; and
+            // after ten quiet minutes.
+            let cycle = PACE.mul(u64::from(g.source()?.held - g.block) + 1);
             let at = if g.ask {
                 g.ask_at
             } else {
-                g.quiet_since + REQUEST_WAIT + g.quiet_wait
+                (g.quiet_since + REQUEST_WAIT).min(g.asked_at + cycle) + g.quiet_wait
             };
             Some((Out::Request, channel, at))
         });
@@ -701,10 +668,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let home_slot = self.next_home_slot();
         let pieces = s.serving.iter().enumerate().filter_map(move |(i, v)| {
             let v = (*v)?;
-            v.current()?;
-            if !relay {
+            if !relay || !self.stream_live(&v, now) {
                 return None;
             }
+            self.stream_block(&v)?;
             let at = match s.held_back {
                 Some(until) if v.channel == self.home => until.max(now),
                 _ => now,
@@ -844,16 +811,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     version: g.image.version,
                     tag: g.image.tag(),
                     block: g.block,
-                    lacks: g.lacking(),
                 }
             }
             Out::Piece(i) => {
                 let v = s.serving[i]?;
-                let a = v.current()?;
+                let block = self.stream_block(&v)?;
                 Update::Piece {
                     tag: v.tag,
-                    block: a.block,
-                    index: a.index,
+                    block,
+                    index: s.index[usize::from(block)],
                     bytes: &[0; PIECE_BYTES],
                 }
             }
@@ -980,15 +946,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Out::Request => {
                 if let Some(g) = s.gather.as_mut() {
                     g.ask = false;
+                    g.asked_at = now;
                     g.quiet_since = now;
                     g.quiet_wait = wait;
                 }
             }
             Out::Piece(i) => {
-                if let Some(v) = s.serving[i].as_mut() {
-                    v.sent();
-                    if v.current().is_none() {
-                        s.serving[i] = None;
+                if let Some(v) = s.serving[i] {
+                    if let Some(b) = self.stream_block(&v) {
+                        let s = &mut self.spread;
+                        let at = &mut s.index[usize::from(b)];
+                        *at = ((usize::from(*at) + 1) % PIECES) as u8;
+                        if let Some(v) = s.serving[i].as_mut() {
+                            v.next = b + 1;
+                        }
+                    }
+                }
+                // A stream nobody asks for any more ends.
+                for i in 0..SERVED_CHANNELS {
+                    if let Some(v) = self.spread.serving[i] {
+                        if !self.stream_live(&v, now) {
+                            self.spread.serving[i] = None;
+                        }
                     }
                 }
             }

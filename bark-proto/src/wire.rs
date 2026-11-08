@@ -33,7 +33,7 @@
 //!            payload                                              = 28 + payload
 //! ANNOUNCE   first format from home version blocks last held key
 //!            image                                                = 49
-//! REQUEST    first format to channel version tag block lacks      = 19
+//! REQUEST    first format to channel version tag block            = 18
 //!            (channel's top bit: the asker sleeps)
 //! PIECE      first format tag block index bytes                   = 255
 //! ```
@@ -191,9 +191,8 @@ const REQUEST_CHANNEL: usize = REQUEST_TO + ID_LEN;
 const REQUEST_VERSION: usize = REQUEST_CHANNEL + 1;
 const REQUEST_TAG: usize = REQUEST_VERSION + VERSION_LEN;
 const REQUEST_BLOCK: usize = REQUEST_TAG + TAG_LEN;
-const REQUEST_LACKS: usize = REQUEST_BLOCK + 1;
 /// REQUEST length.
-pub const REQUEST_LEN: usize = REQUEST_LACKS + 1;
+pub const REQUEST_LEN: usize = REQUEST_BLOCK + 1;
 const PIECE_TAG: usize = BODY;
 const PIECE_BLOCK: usize = PIECE_TAG + TAG_LEN;
 const PIECE_INDEX: usize = PIECE_BLOCK + 1;
@@ -203,7 +202,7 @@ pub const PIECE_HEADER_LEN: usize = PIECE_INDEX + 1;
 /// A piece's bytes: what a full frame holds after the piece's header.
 pub const PIECE_BYTES: usize = MAX_FRAME - PIECE_HEADER_LEN;
 
-const _: () = assert!(ANNOUNCE_LEN == 49 && REQUEST_LEN == 19);
+const _: () = assert!(ANNOUNCE_LEN == 49 && REQUEST_LEN == 18);
 // A request's channel byte: the channel below, the asker's sleep on top.
 const REQUEST_SLEEPS: u8 = 0x80;
 const _: () = assert!(PIECE_HEADER_LEN == 8 && PIECE_BYTES == 247);
@@ -349,10 +348,9 @@ pub enum Update<'a> {
         version: u32,
         /// The image.
         tag: ImageTag,
-        /// The first block the asker lacks; it lacks every block after.
+        /// The first block the asker lacks: it gathers from this block
+        /// up.
         block: u8,
-        /// The pieces of `block` it still lacks.
-        lacks: u8,
     },
     /// One coded piece of block `block` of the image `tag`.
     Piece {
@@ -546,7 +544,6 @@ impl Packet<'_> {
                         version,
                         tag,
                         block,
-                        lacks,
                     } => {
                         buf[FIRST] = REQUEST_AUX;
                         put(buf, REQUEST_TO, &to.0);
@@ -555,7 +552,6 @@ impl Packet<'_> {
                         put(buf, REQUEST_VERSION, &version.to_be_bytes());
                         put(buf, REQUEST_TAG, &tag.0);
                         buf[REQUEST_BLOCK] = *block;
-                        buf[REQUEST_LACKS] = *lacks;
                         Ok(REQUEST_LEN)
                     }
                     Update::Piece {
@@ -697,7 +693,6 @@ impl<'a> Packet<'a> {
                     version: version(REQUEST_VERSION),
                     tag: tag(REQUEST_TAG),
                     block: b[REQUEST_BLOCK],
-                    lacks: b[REQUEST_LACKS],
                 })
             }
             _ => {
@@ -752,7 +747,7 @@ mod tests {
             Packet::Ack(_) => 18,
             Packet::Data(d) => 28 + d.payload.len(),
             Packet::Update(Update::Announce { .. }) => 49,
-            Packet::Update(Update::Request { .. }) => 19,
+            Packet::Update(Update::Request { .. }) => 18,
             Packet::Update(Update::Piece { .. }) => 255,
         };
         assert_eq!(len, expected);
@@ -779,7 +774,7 @@ mod tests {
             round_trip(&Packet::Update(announce));
             prop_assert_eq!(Packet::Update(announce).sender(), Some(from));
             let tag = ImageTag(tag);
-            let request = Update::Request { to: from, channel: home, sleeps: block % 2 == 0, version, tag, block, lacks: index };
+            let request = Update::Request { to: from, channel: home, sleeps: block % 2 == 0, version, tag, block };
             round_trip(&Packet::Update(request));
             prop_assert_eq!(Packet::Update(request).sender(), None);
             round_trip(&Packet::Update(Update::Piece { tag, block, index, bytes: &bytes }));

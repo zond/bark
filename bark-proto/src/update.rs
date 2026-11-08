@@ -68,21 +68,10 @@ pub const BLOCK_PIECES: usize = 64;
 /// field of 256 elements, one of which is not a piece.
 pub const PIECES: usize = 255;
 
-/// The frames a holder sends for a request that lacks [`BLOCK_PIECES`]
-/// pieces ([`credit`]).
-const CREDIT_PER_64: u32 = 99;
-
-/// How many pieces a holder sends for a request that lacks `lacks`
-/// pieces of a block: enough that every node on the channel that lacks
-/// as many has them, at the most frames the first note on updates
-/// derives for any loss and channel it tabulates, 99 for 64 pieces, 1.55
-/// times as many (`docs/mesh-update-2026-10-25.md`, "Relays": 74
-/// receivers losing a fifth of the frames, all done with 99 % odds).
-pub fn credit(lacks: u8) -> u8 {
-    (u32::from(lacks) * CREDIT_PER_64)
-        .div_ceil(BLOCK_PIECES as u32)
-        .clamp(1, PIECES as u32) as u8
-}
+/// The most blocks an image the mesh carries has, the table's among
+/// them: the lanes the firmware keeps pieces in, one a block
+/// (`bark-image`, `pieces.rs`, `MAX_BLOCKS`; roadmap D150).
+pub const MAX_BLOCKS: usize = 48;
 
 /// The airtime of a full frame, a piece's, 138.6 ms.
 pub const FULL_FRAME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
