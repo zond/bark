@@ -15,9 +15,11 @@
 
 use super::{Job, Node, Stage};
 use crate::event::{Action, Frame};
+use crate::geo::Point;
 use crate::node::{heartbeat_interval, mac};
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::REPLY_RESERVE;
+use crate::tables::neighbours::Neighbour;
 use crate::time::{Duration, Instant};
 use crate::update::{
     sweep_pieces, Image, ImageTag, Piece, Section, MAX_BLOCKS, PACE, PASS, PIECES, SECTION_EVERY,
@@ -389,25 +391,50 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::StorePiece(piece));
     }
 
+    /// The blocks from the first of the image it streams that `m` holds,
+    /// by its section.
+    fn complete_of(&self, m: &Neighbour, image: Image) -> u8 {
+        m.update
+            .filter(|u| u.image.is_some_and(|i| i.tag() == image.tag()))
+            .map_or(0, |u| u.complete)
+    }
+
     /// On each channel, the blocks from the first that a relay at home
-    /// there holds, as far as this node hears: it streams those there
-    /// (spec "Updates over the mesh"), and this node only the blocks past
-    /// them, or on its own home channel.
-    fn held_at_home(&self, now: Instant) -> [u8; CHANNELS as usize] {
+    /// there holds, as far as this node hears: that relay streams them
+    /// there, and this node only the blocks past them, or on its own home
+    /// channel (spec "Updates over the mesh").
+    fn held_at_home(&self, image: Image, now: Instant) -> [u8; CHANNELS as usize] {
         let mut held = [0; CHANNELS as usize];
-        let Some(image) = self.streams() else {
-            return held;
-        };
         for (_, m) in self.neighbours.live(now).filter(|(_, m)| !m.sleepy) {
-            let complete = m
-                .update
-                .filter(|u| u.image.is_some_and(|i| i.tag() == image.tag()))
-                .map_or(0, |u| u.complete);
             let h = &mut held[usize::from(m.home.index())];
-            *h = (*h).max(complete);
+            *h = (*h).max(self.complete_of(m, image));
         }
         held[usize::from(self.home.index())] = 0;
         held
+    }
+
+    /// Whether this node streams to the gatherer `n` on `n`'s channel:
+    /// always at home; elsewhere only if no relay it hears that is not at
+    /// home there, holds more than `n` and is no farther from `n` is a
+    /// better holder, with more blocks from the first, then a lower ID
+    /// (spec "Updates over the mesh").
+    fn streams_to(&self, n: &Neighbour, image: Image, now: Instant) -> bool {
+        if n.home == self.home {
+            return true;
+        }
+        let Some(u) = n.update else {
+            return false;
+        };
+        let mine = self.section().map_or(0, |s| s.complete);
+        let far = n.local.distance2(Point::default());
+        !self.neighbours.live(now).any(|(_, m)| {
+            let k = self.complete_of(m, image);
+            !m.sleepy
+                && m.home != n.home
+                && k > u.complete
+                && (k > mine || k == mine && m.id.0 < self.id.0)
+                && m.local.distance2(n.local) <= far
+        })
     }
 
     /// What each channel needs of what this node streams, from the
@@ -417,11 +444,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(image) = self.streams() else {
             return need;
         };
-        let held = self.held_at_home(now);
+        let held = self.held_at_home(image, now);
         for (_, n) in self.neighbours.live(now) {
             let Some(u) = n.update.filter(|u| u.gathers(image.tag())) else {
                 continue;
             };
+            if !self.streams_to(n, image, now) {
+                continue;
+            }
             let lacks = |b: u8| b > u.complete || u.have < image.pieces(b);
             let there = held[usize::from(n.home.index())];
             let Some(from) =
@@ -477,7 +507,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let k = image.pieces(b);
         self.neighbours
             .live(now)
-            .filter(|(_, n)| n.home == c)
+            .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
             .filter_map(|(_, n)| n.update.filter(|u| u.gathers(image.tag())))
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
@@ -493,11 +523,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// lacks and the loss margin, then the next block it holds that a
     /// neighbour there lacks, in order, and from the first again.
     fn stream_block(&self, c: Channel, now: Instant) -> Option<u8> {
-        let blocks = self.streams()?.blocks;
+        let image = self.streams()?;
+        let blocks = image.blocks;
         let s = &self.spread;
         let i = usize::from(c.index());
         let cur = s.cur[i];
-        let there = self.held_at_home(now)[usize::from(c.index())];
+        let there = self.held_at_home(image, now)[usize::from(c.index())];
         let wanted = |b: u8| b >= there && self.holds_block(b) && self.deficit(c, b, now) > 0;
         if s.sent_cur[i] < s.target[i] && wanted(cur) {
             return Some(cur);
