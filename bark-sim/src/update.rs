@@ -48,17 +48,24 @@ pub struct UpdateRun {
     pub owed: Vec<(u32, AppCommand<'static>)>,
     /// The series: one row every [`SAMPLE_US`].
     series: String,
-    /// Airtime of update frames by kind (announcement, request, piece),
+    /// Airtime of the update by kind (heartbeat sections, none, pieces),
     /// and of every frame, µs, since the last row, and in all.
     air: [u64; 4],
     air_total: [u64; 4],
+    /// Pieces on the air not yet heard by a neighbour that lacked them,
+    /// as the sender's table said: block, index and that neighbour.
+    expected: std::collections::HashMap<(u8, u8, u32), usize>,
+    /// Such neighbours a piece was sent to, and those that heard it:
+    /// relays, and sleepy nodes, which listen only at times.
+    targeted: [u64; 2],
+    reached: [u64; 2],
 }
 
 impl UpdateRun {
     pub fn new(image_bytes: u32, holder: u32, at: Instant, nodes: usize) -> UpdateRun {
         let needs = blocks(image_bytes);
         let image = Image {
-            id: [0x5a; 32],
+            name: bark_proto::update::ImageTag([0x5a; 4]),
             version: 2,
             blocks: needs.len() as u8,
             last: *needs.last().expect("blocks") as u8,
@@ -74,10 +81,13 @@ impl UpdateRun {
             holds_at: vec![None; nodes],
             owed: Vec::new(),
             series: String::from(
-                "t_s,relays,relays_holding,placed_relays,placed_holding,sleepy,sleepy_holding,gathering,gathering_block_mean,gathering_block_max,busy_home_mean,busy_home_p90,air_announce_s,air_request_s,air_piece_s,air_all_s\n",
+                "t_s,relays,relays_holding,placed_relays,placed_holding,sleepy,sleepy_holding,gathering,gathering_block_mean,gathering_block_max,busy_home_mean,busy_home_p90,air_section_s,air_unused_s,air_piece_s,air_all_s\n",
             ),
             air: [0; 4],
             air_total: [0; 4],
+            expected: std::collections::HashMap::new(),
+            targeted: [0; 2],
+            reached: [0; 2],
         }
     }
 
@@ -116,6 +126,25 @@ impl UpdateRun {
         if all {
             self.owed.push((node, AppCommand::Holds(self.image)));
             self.holds_at[node as usize].get_or_insert(now);
+        }
+    }
+
+    /// Piece `index` of `block` went on the air to `targets`, the
+    /// neighbours the sender's table said lack it, each with whether it
+    /// is sleepy.
+    pub fn piece_sent(&mut self, block: u8, index: u8, targets: impl Iterator<Item = (u32, bool)>) {
+        for (t, sleepy) in targets {
+            let k = usize::from(sleepy);
+            self.targeted[k] += 1;
+            // A target that missed the last copy of this piece missed it.
+            self.expected.insert((block, index, t), k);
+        }
+    }
+
+    /// A node heard piece `index` of `block`.
+    pub fn piece_heard(&mut self, node: u32, block: u8, index: u8) {
+        if let Some(k) = self.expected.remove(&(block, index, node)) {
+            self.reached[k] += 1;
         }
     }
 
@@ -205,12 +234,21 @@ impl UpdateRun {
         let s = |us: u64| us as f64 / 1e6;
         let _ = writeln!(
             out,
-            "# airtime in all, s: announce {:.1}, request {:.1}, piece {:.1}, all {:.1}",
+            "# airtime in all, s: heartbeat sections {:.1}, unused {:.1}, piece {:.1}, all {:.1}",
             s(self.air_total[0]),
             s(self.air_total[1]),
             s(self.air_total[2]),
             s(self.air_total[3]),
         );
+        for (k, who) in ["relays", "sleepy nodes"].iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "# pieces to {who} that lacked them: {}, heard {}, lost {:.1} %",
+                self.targeted[k],
+                self.reached[k],
+                100.0 * (1.0 - self.reached[k] as f64 / self.targeted[k].max(1) as f64),
+            );
+        }
         out
     }
 }

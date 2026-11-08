@@ -2177,6 +2177,12 @@ impl Sim {
                 _ => None,
             };
         }
+        if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
+            use bark_proto::wire::{Packet, Update};
+            if let Ok(Packet::Update(Update::Piece { block, index, .. })) = Packet::decode(bytes) {
+                u.piece_heard(node, block, index);
+            }
+        }
         let clock = self.clocks[node as usize];
         let rx = self.rx_data.filter(|r| r.0 == node);
         if let Some((at, id, _, _)) = rx {
@@ -2676,14 +2682,40 @@ impl Sim {
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
                 if let Some(u) = self.update.as_mut() {
-                    use bark_proto::wire::{Packet, Update};
-                    let kind = match Packet::decode(f.payload()) {
-                        Ok(Packet::Update(Update::Announce { .. })) => Some(0),
-                        Ok(Packet::Update(Update::Request { .. })) => Some(1),
-                        Ok(Packet::Update(Update::Piece { .. })) => Some(2),
-                        _ => None,
-                    };
-                    u.aired(kind, air);
+                    use bark_proto::wire::{Packet, Update, HEARTBEAT_LEN};
+                    match Packet::decode(f.payload()) {
+                        // A heartbeat's section: what it adds to the frame.
+                        Ok(Packet::Heartbeat(_)) if usize::from(f.len) > HEARTBEAT_LEN => {
+                            let bare =
+                                time_on_air(HEARTBEAT_LEN as u8, f.preamble_symbols).as_micros();
+                            u.aired(Some(0), air - bare);
+                            u.aired(None, bare);
+                        }
+                        Ok(Packet::Update(Update::Piece { block, index, .. })) => {
+                            u.aired(Some(2), air);
+                            let image = u.image;
+                            let table = self.relays[node as usize].neighbour_table();
+                            let (relays, sleepy) = (&self.relay_index, &self.sleepy_index);
+                            let targets = table
+                                .live(self.clocks[node as usize].local(self.now))
+                                .map(|(_, n)| n)
+                                .filter(|n| n.home == f.channel)
+                                .filter(|n| {
+                                    n.update.is_some_and(|s| {
+                                        s.gathers(image.tag())
+                                            && (s.complete < block
+                                                || s.complete == block
+                                                    && s.have < image.pieces(block))
+                                    })
+                                })
+                                .filter_map(|n| {
+                                    let i = relays.get(&key(n.id)).or(sleepy.get(&key(n.id)));
+                                    i.map(|&i| (i, n.sleepy))
+                                });
+                            u.piece_sent(block, index, targets);
+                        }
+                        _ => u.aired(None, air),
+                    }
                 }
                 self.metrics.boot_airtime.add(
                     self.now,
