@@ -859,7 +859,15 @@ phone in its resolving list.
 
 The log says `ble: pairing, the code shown`, then `ble: paired; the bond
 replaces any before it` or `ble: pairing failed ..`, and at boot `ble:
-bond kept` for a node with one. A disconnect's reason, and a host error
+bond kept` for a node with one; each names the bond's phone by its
+identity address, kind and an IRK fingerprint, and each connection says
+whether the peer is the bond's (`the bond's=Some(true)`). Only an
+authenticated pairing that bonds replaces the kept bond
+(`bark_link::bond::after_pairing`). A phone whose node's bond names
+another phone, as the log then shows, is no longer the owner and pairs
+again; c367's bond came to name `f4:00:a2:29:05:a7` while it ran on
+battery on 2026-11-08, with no log to say how, and its owner paired
+again. A disconnect's reason, and a host error
 that carries an HCI or ATT error, is logged as that code in hex
 (Bluetooth Core, Vol 1, Part F, and Vol 3, Part F, 3.4.1.1): `ble:
 disconnected 0x13` when the phone ends the link, `0x16` when the node
