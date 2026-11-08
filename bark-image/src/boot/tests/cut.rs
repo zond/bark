@@ -2,14 +2,15 @@
 //! moment falls, that each phase is stopped once and ends at the next
 //! boot with the image expected whole, and the external chip left
 //! running by its part of an operation; that a chosen moment names the
-//! operation the host test's power cut of the same index takes.
+//! operation the host test's power cut of the same index takes, and
+//! that the bench script's moments are named as the host counts them.
 
 use super::*;
 use crate::boot::cut::{
     choose, cost, moment, operations, phase, phase_us, prepare_cut, recorded, written_by,
     ChooseError, Cutting, ExternalPartial, Fell, Moment, Op, Partial, Phase, Plan, Recorded, Side,
 };
-use std::string::ToString;
+use std::string::{String, ToString};
 
 /// What a cut leaves on a flash in RAM: the start of an erase's page
 /// erased in proportion to its time, or the words of a write that were
@@ -361,4 +362,56 @@ fn a_moment_is_chosen_only_once_for_a_swap_not_begun() {
         noted.to_string(),
         "bench reset in the swap at operation 1363: not reached"
     );
+}
+
+/// `bark-fw/scripts/cutbench.py --list`, run on this layout: each moment
+/// it walks names, by its index, the operation the host counts there.
+#[test]
+fn the_bench_script_names_its_moments_as_the_host_counts_them() {
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../bark-fw/scripts/cutbench.py"
+    );
+    let layout = [ACTIVE.start, ACTIVE.end(), STATE.start, RECORD.start].map(|v| v.to_string());
+    let out = std::process::Command::new("python3")
+        .arg("-I")
+        .arg(script)
+        .arg("--list")
+        .arg("--layout")
+        .args(&layout)
+        .output()
+        .expect("python3 runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ops = [enumerate(Phase::Swap), enumerate(Phase::Back)];
+    let mut walked = [0; 2];
+    for line in String::from_utf8(out.stdout).unwrap().lines() {
+        // `swap 2 external write 227: before progress word 0`
+        let w: Vec<&str> = line.split([' ', ':']).collect();
+        let phase = match w[0] {
+            "swap" => Phase::Swap,
+            "back" => Phase::Back,
+            _ => panic!("{line}"),
+        };
+        let n: usize = w[1].parse().unwrap();
+        let named = Done {
+            side: match w[2] {
+                "internal" => Side::Internal,
+                "external" => Side::External,
+                _ => panic!("{line}"),
+            },
+            op: match w[3] {
+                "erase" => Op::Erase,
+                "write" => Op::Write,
+                _ => panic!("{line}"),
+            },
+            page: w[4].parse().unwrap(),
+        };
+        assert_eq!(ops[phase as usize][n], named, "{line}");
+        walked[phase as usize] += 1;
+    }
+    assert!(walked.iter().all(|&n| n > 0), "{walked:?}");
 }
