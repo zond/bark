@@ -109,9 +109,8 @@ rustup target add thumbv7em-none-eabihf
 (cd bark-loader && cargo build --release)
 ```
 
-The firmware is built protected, which needs in `BARK_SIGNING_KEYS`
-the public keys of whoever signs the images it will stage before
-`scripts/uf2.py` packs it, or open, for the bench, with `BARK_OPEN=1` (`bark-fw/README.md`, "Read-out protection" and
+The firmware is built protected, or open, for the bench, with
+`BARK_OPEN=1` (`bark-fw/README.md`, "Read-out protection" and
 "Updates").
 
 See `bark-fw/README.md` for packaging the UF2, with the loader, and
@@ -153,8 +152,8 @@ The keystore keytool makes has one password for the store and the key,
 and the workflow uses it for both.
 
 The firmware image a node stages is signed too, with a key of its own
-in the secret `BARK_SIGNING_KEY`, and the firmware is built with its
-public key from the repository variable `BARK_SIGNING_KEYS`: a node
-stages only an image signed by a key it holds. `bark-fw/README.md`,
+in the secret `BARK_SIGNING_KEY`, whose public key every firmware holds
+from `bark-fw/keys/project.pub`: a node stages only an image signed by
+a key it holds. `bark-fw/README.md`,
 "Updates", Keys, says how to make it, where to keep it and how to
 replace it.
