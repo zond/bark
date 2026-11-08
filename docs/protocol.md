@@ -3691,9 +3691,11 @@ bytes and 14.4 ms.
    sends fresh pieces, each block's index climbing from a random start
    and wrapping at 255, until it has sent what the neighbour there
    furthest behind on that block lacks, by its section, and a margin
-   for loss: that count over 1 − 40 %, the share of pieces a
-   gatherer missed in the simulator (40.4 % of the pieces sent to relays that lacked them, in the district at the design rate over an update's first 6 hours, `mesh-update-2026-11-07.md`). Then it moves to the
-   next block that a neighbour there lacks, skipping the blocks none
+   for loss: that count over 1 − 20 %, the share of pieces a
+   gatherer missed in the simulator (20.5 % of the pieces sent to
+   relays that lacked them, in the district at the design rate over an
+   update's first 6 hours, `mesh-update-2026-11-07.md`). Then it moves
+   to the next block that a neighbour there lacks, skipping the blocks none
    lacks, and after the last starts the sweep again while any lacks
    something.
 5. On its home channel, where it hears the others, a node that heard k
@@ -3796,8 +3798,8 @@ time, so the heartbeats take at most 3.3 % against 3.0 % without. Were
 the section in every heartbeat while an update runs, they would take
 270 × 23.36 ms / (10 s × 13) = 4.9 %. A channel that gathers adds a piece a
 pace, 1 % of its time, however many help. Today's image takes a sweep
-of 2 853 paces from a helper that holds it to a neighbour that holds
-none, 11.0 hours, at the margin of rule 4.
+of 2 133 paces from a helper that holds it to a neighbour that holds
+none, 8.2 hours, at the margin of rule 4.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes
@@ -3819,11 +3821,11 @@ wakes for anyway. A sleepy node without an anchor takes no part.
 
 *What it costs a sleepy node.* One piece a rotation of its anchor, 13
 of its heartbeats, 130 s at the mean interval
-([heartbeat](#heartbeat)): today's image takes 2 853 rotations at
-the margin of rule 4, 103 hours, 4.3 days, and as many
-listens of 143.6 ms, 410 s, at the 5.8 mA of listening
+([heartbeat](#heartbeat)): today's image takes 2 133 rotations at
+the margin of rule 4, 77 hours, 3.2 days, and as many
+listens of 143.6 ms, 306 s, at the 5.8 mA of listening
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
-0.66 mAh, 0.08 % of the 850 mAh battery
+0.49 mAh, 0.06 % of the 850 mAh battery
 ([hardware](#hardware)). Its beats carry the section once for each
 block it completes, 28 times, and once an hour, 8.96 ms more each on
 the 230 ms an hour of its beats ([beats](#beats)).

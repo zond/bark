@@ -132,11 +132,11 @@ pub const SECTION_EVERY: Duration = Duration::from_secs(3600);
 /// holds of the block after them (1).
 pub const SECTION_LEN: usize = 17;
 
-/// The share of pieces a relay that lacked them missed, in percent: 40.4
+/// The share of pieces a relay that lacked them missed, in percent: 20.5
 /// in the district at the design rate, seed 1, over the first 6 hours
 /// of an update (`docs/mesh-update-2026-11-07.md`, "Heartbeat sections
 /// and a sweep"). A helper sends a block's pieces over 1 less this share.
-pub const PIECE_LOSS_PERCENT: u64 = 40;
+pub const PIECE_LOSS_PERCENT: u64 = 20;
 
 /// The pieces a helper sends of a block that a neighbour lacks `lacks`
 /// of: enough at [`PIECE_LOSS_PERCENT`] lost.
