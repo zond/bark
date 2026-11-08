@@ -242,13 +242,14 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
 
 - `AppCommand::Holds(image)`: the image the node holds whole and has checked, the one
   it runs or one staged after its signature passed, with its name, version, block
-  count, the pieces of its last block and its key; at boot and after each change. The core announces it and serves it.
-- `Action::Offered(image)`: a neighbour announced an image above the version held.
-  The driver answers `AppCommand::Gather { image, from }` if its policy takes it,
-  `from` the first block it lacks, 0 unless it gathered some before a reboot, which it
-  may also say at boot unasked; else it answers nothing, and the core asks again at
-  the next announcement. The keys and the signatures stay out of the core, which
-  keeps no answer.
+  count, the pieces of its last block and its key; at boot and after each change. The
+  core tells it in its heartbeats' section and serves it.
+- `Action::Offered(image)`: a neighbour's heartbeat named an image above the version the
+  node runs and the one it gathers; once for each image. The driver answers
+  `AppCommand::Gather { image, from }` if its policy takes it, `from` the first block it
+  lacks, 0 unless it gathered some before a reboot, which it may also say at boot
+  unasked; else it answers nothing. The keys and the signatures stay out of the core,
+  which keeps no answer.
 - `Action::StorePiece(piece)`: keep this piece. The core hands pieces of every block
   the node lacks, each once, of an image of at most 48 blocks, so the driver holds at
   most a lane of 64 a block, 48 lanes (`bark-image`, `pieces.rs`). When a
@@ -305,7 +306,7 @@ test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 104 B | 6.5 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 128 B | 8.0 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
@@ -313,7 +314,7 @@ test in `tables/mod.rs`:
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **182.2 KiB** |
+| **All** | | **183.7 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -321,18 +322,18 @@ for each hop count a message can be sent on with, keep overload from dropping me
 463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-189 616 B (185.2 KiB): the tables and, in under 1 KiB around them, the
+190 992 B (186.5 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 2 000 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 170 600 B (166.6 KiB), without the heard table and the delivery
+of the update, 1 840 B (spec "Updates over the mesh"), with 24 B of each neighbour's entry for its heartbeats' section; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 171 976 B (167.9 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
 relay, Embassy, the USB log and the phone link with its BLE stack, was 217 504 B
-(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 1 992 B since
-(`docs/mesh-update-2026-11-07.md`) is 219 496 B and leaves 41 624 B, 40.6 KiB, for
+(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 3 368 B since
+(`docs/mesh-update-2026-11-07.md`) is 220 872 B and leaves 40 248 B, 39.3 KiB, for
 the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
@@ -378,10 +379,10 @@ action at a time, and the core never allocates.
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
   - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
     header; the decoder rejects anything longer.
-  - A DATA's `aux` 13, 14 and 15 are the update's announcement, request and piece,
-    and 16 to 63 are rejected (spec "Packet formats"); the version in an
-    announcement and a request is big-endian, and a piece is always a full frame,
-    247 bytes after its 8-byte header.
+  - A DATA's `aux` 15 is the update's piece, and 13, 14 and 16 to 63 are rejected
+    (spec "Packet formats"); a piece is always a full frame, 247 bytes after its 8-byte
+    header. A heartbeat of 30 bytes or more carries the update's section in bytes 13 to
+    29, its versions big-endian (`wire::decode_section`).
   - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit
     the seen flag (roadmap D76, D90). With bit 6 clear, the top bit marks a heartbeat,
     whose low four bits hold its channel, 0 to 12, and the two between are zero; the

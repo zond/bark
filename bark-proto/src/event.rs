@@ -147,8 +147,9 @@ pub enum AppCommand<'a> {
     },
     /// The image this node holds whole and has checked, the one it runs
     /// or one staged after its signature passed: at boot and after each
-    /// change (spec "Updates over the mesh"). The node announces it and
-    /// serves its pieces, and wants only images above its version.
+    /// change (spec "Updates over the mesh"). The node tells it in its
+    /// heartbeats' section and serves its pieces, and wants only images
+    /// above its version.
     Holds(Image),
     /// Gather `image`, from block `from` on, the blocks before it already
     /// held: the driver's policy takes it, as an answer to
@@ -317,14 +318,15 @@ pub enum Action {
     /// A protocol event for logs and the simulator's metrics. Carries no
     /// obligation; a driver may ignore it (`docs/core-interface.md` §3).
     Trace(Trace),
-    /// A neighbour announced an image above the version this node holds:
-    /// if the driver's policy takes it, the driver answers
+    /// A neighbour's heartbeat named an image above the version this node
+    /// runs and the one it gathers, once an image: if the driver's policy
+    /// takes it, the driver answers
     /// [`AppCommand::Gather`]; else nothing
     /// (spec "Updates over the mesh").
     Offered(Image),
     /// Keep this piece of the block the node gathers, until the block
-    /// decodes; then answer [`AppCommand::Block`]. Never more than one
-    /// block's distinct pieces at a time (spec "Updates over the mesh").
+    /// decodes; then answer [`AppCommand::Block`]. Pieces of every block
+    /// the node lacks, each once (spec "Updates over the mesh").
     StorePiece(Piece),
     /// Transmit this piece frame as [`Action::Transmit`] does, after
     /// writing into it, from [`crate::wire::PIECE_HEADER_LEN`] on, the
