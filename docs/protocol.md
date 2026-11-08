@@ -3405,11 +3405,9 @@ read only by the app.
 *Why 2.* A link costs 5.6 KB of static RAM, measured: the controller's
 2.4 KB by `sdc.h`'s formulas, the host's 1.2 KB, and the task that
 serves it, 1.9 KB. All of it comes out of the stack, which must keep
-16 KiB: the 9.5 KiB of the deepest poll of any task, the phone link's
-set-up, by the disassembly, and 6 KiB for the interrupts and the calls
-through pointers it does not follow (`bark-fw/README.md`, "Tasks and
-the stack"). With 2 links the stack keeps 20.1 KiB; a third would leave
-14.6 KiB, and two boards with it faulted at boot (roadmap D150).
+24 KiB, the most the boards have used and a margin (`bark-fw/README.md`,
+"Tasks and the stack"). With 2 links the stack keeps 24.3 KiB; a third
+left 14.6 KiB, and two boards with it faulted at boot (roadmap D150).
 
 *Why every guest whose tag it is, and the owner's too.* A tag is one
 byte (The payload, below), so two phones at a node may share one; each

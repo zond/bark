@@ -43,7 +43,6 @@ use bark_link::update::{Command, Piece, Progress, Refusal};
 use bark_link::{
     le_bytes, seconds_left, uuid, GivenBack, Malformed, Message, Node, Status, ATT_MTU,
 };
-use bark_proto::tables::neighbours::NEIGHBOURS;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
 use bark_screen::Phone;
@@ -65,8 +64,11 @@ use trouble_host::prelude::*;
 /// two leave above its floor and three do not (`bark-fw/README.md`,
 /// "Tasks and the stack").
 pub const LINKS: usize = 2;
-/// L2CAP channels: the signalling channel and the ATT channel.
-const CHANNELS: usize = 2;
+/// Room for L2CAP's connection-oriented channels (Vol 3 Part A §10),
+/// none: the node registers no protocol for them, so it opens none and
+/// refuses every one a phone asks for, and ATT and the signalling run on
+/// fixed channels, which take no room (Vol 3 Part A §2.1).
+const CHANNELS: usize = 0;
 /// Advertising sets: the one advertisement.
 const ADV_SETS: usize = 1;
 /// Bonds the host holds: the one kept, and the one a pairing adds before
@@ -390,6 +392,12 @@ pub enum Request {
     MapPoint(bark_link::MapPoint),
     /// The phone's time and UTC offset.
     Clock(bark_link::Clock),
+    /// The page of the neighbour table from this slot, which the phone
+    /// reads now.
+    Neighbours(u8),
+    /// The Inbox the phone in this link's slot reads now: the oldest
+    /// message, its own as a guest's.
+    Inbox { slot: usize, guest: bool },
 }
 
 /// Which phone a request is from: its link's slot, and whether it is the
@@ -438,15 +446,16 @@ pub struct State {
     pub status: Status,
     /// When the first rotation ends, while it runs.
     pub boot_ends: Option<Instant>,
-    /// What the paired phone's Inbox shows: the core's inbox's oldest
-    /// message, or the ring's, its ID, length and payload.
-    pub inbox: Option<(MsgId, u8, [u8; MAX_PAYLOAD])>,
+    /// The ID of what the paired phone's Inbox shows: the core's inbox's
+    /// oldest message, or the ring's, which the node writes as the phone
+    /// reads it ([`Request::Inbox`]).
+    pub inbox: Option<MsgId>,
     /// Of a ring, the item the inbox shows: its number and ID
     /// (`mailbox.rs`); `None` while the inbox is the core's.
     pub ring_head: Option<(u32, MsgId)>,
-    /// On a public node, the core's inbox's oldest message while it waits
-    /// for guests, and the slots of the guests it waits for (`node.rs`).
-    guests: Option<(MsgId, u8, [u8; MAX_PAYLOAD])>,
+    /// On a public node, the slots of the guests the core's inbox's
+    /// oldest message waits for (`node.rs`), whose Inbox reads it
+    /// ([`Request::Inbox`]).
     guests_for: u8,
     /// The paired phone's message last given back and the end of its
     /// wait, until the node takes another; kept across its links.
@@ -544,57 +553,26 @@ impl State {
     }
 }
 
-/// The neighbour table as the phone reads it, by slot.
-pub struct Table {
-    /// The node's noise floor, dBm.
-    pub floor_dbm: i8,
-    /// The node's own position; zero while it has no place.
-    pub own: Position,
-    /// Each slot's neighbour, if [`Slot::live`].
-    pub slots: [Slot; NEIGHBOURS],
-}
+/// A value the node writes when a phone reads it, so that the link keeps
+/// no copy of what the core holds: a page of the neighbour table (spec
+/// "Phone link", Neighbours) or the message waiting for a guest (Public),
+/// with which request it answers, as the value the phone reads is set from
+/// it with no wait between ([`Request::Neighbours`], [`Request::Inbox`]).
+static READ: Mutex<CriticalSectionRawMutex, RefCell<(Option<Read>, ReadValue)>> =
+    Mutex::new(RefCell::new((None, heapless::Vec::new())));
 
-/// The neighbour table as the last step left it, apart from [`LINK`],
-/// which has fields that are not zero at the start: all zeros, it takes
-/// no flash.
-static TABLE: Mutex<CriticalSectionRawMutex, RefCell<Table>> = Mutex::new(RefCell::new(Table {
-    floor_dbm: 0,
-    own: Position { lat: 0, lon: 0 },
-    slots: [Slot::EMPTY; NEIGHBOURS],
-}));
+/// The bytes of a value read as [`READ`] holds them.
+type ReadValue = heapless::Vec<u8, READ_LEN>;
 
-/// A slot of the neighbour table; all zeros is an empty one.
-#[derive(Clone, Copy)]
-pub struct Slot {
-    /// A live neighbour is in the slot.
-    pub live: bool,
-    /// The neighbour, but its age.
-    pub neighbour: neighbours::Neighbour,
-    /// When it was last heard, which its age is read against.
-    pub heard: Instant,
+/// What [`READ`] holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Read {
+    Neighbours,
+    /// The Inbox for the phone in this slot.
+    Inbox(usize),
 }
-
-impl Slot {
-    /// An empty slot.
-    pub const EMPTY: Slot = Slot {
-        live: false,
-        neighbour: neighbours::Neighbour {
-            id: NodeId([0; NodeId::LEN]),
-            position: Position { lat: 0, lon: 0 },
-            rssi_ddbm: 0,
-            age_s: 0,
-            sleepy: false,
-            map_point: false,
-            demoted: false,
-            banned: false,
-            anchor: false,
-            carried: false,
-            anchorless: false,
-            proven: false,
-        },
-        heard: Instant::ZERO,
-    };
-}
+const READ_LEN: usize = neighbours::MAX_LEN;
+const _: () = assert!(Message::MAX_LEN <= READ_LEN);
 
 /// The state both sides share.
 pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(RefCell::new(State {
@@ -602,7 +580,6 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     boot_ends: None,
     inbox: None,
     ring_head: None,
-    guests: None,
     guests_for: 0,
     given_back: None,
     phones: [Peer::NONE; LINKS],
@@ -675,7 +652,7 @@ const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
 /// after a step, and notify the phones of a change of the flags, the
 /// relays, the inbox's count or the address, or of the battery by a step
 /// (spec "Phone link", Status).
-pub fn publish(status: Status, inbox: Option<(MsgId, &[u8])>) {
+pub fn publish(status: Status, inbox: Option<MsgId>) {
     LINK.lock(|l| l.borrow_mut().ring_head = None);
     publish_inbox(status, inbox);
 }
@@ -683,17 +660,15 @@ pub fn publish(status: Status, inbox: Option<(MsgId, &[u8])>) {
 /// The node's side, for a ring, a home's or a public node's: [`publish`]
 /// with the inbox the ring's oldest unread item, its number beside (spec
 /// "Mailbox").
-pub fn publish_ring(status: Status, item: Option<(u32, MsgId, &[u8])>) {
-    LINK.lock(|l| {
-        l.borrow_mut().ring_head = Some(item.map_or((0, MsgId(0)), |(n, id, _)| (n, id)))
-    });
-    publish_inbox(status, item.map(|(_, id, p)| (id, p)));
+pub fn publish_ring(status: Status, item: Option<(u32, MsgId)>) {
+    LINK.lock(|l| l.borrow_mut().ring_head = Some(item.unwrap_or((0, MsgId(0)))));
+    publish_inbox(status, item.map(|(_, id)| id));
 }
 
-fn publish_inbox(status: Status, inbox: Option<(MsgId, &[u8])>) {
+fn publish_inbox(status: Status, inbox: Option<MsgId>) {
     let changed = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        l.inbox = inbox.map(|(id, p)| copy(id, p));
+        l.inbox = inbox;
         l.status = status;
         let told = l.told;
         let quiet = |s: Status| Status {
@@ -732,22 +707,15 @@ fn publish_inbox(status: Status, inbox: Option<(MsgId, &[u8])>) {
     }
 }
 
-fn copy(id: MsgId, p: &[u8]) -> (MsgId, u8, [u8; MAX_PAYLOAD]) {
-    let mut payload = [0; MAX_PAYLOAD];
-    payload[..p.len()].copy_from_slice(p);
-    (id, p.len() as u8, payload)
-}
-
-/// The node's side, on a public node: the core's inbox's oldest message
-/// while it waits for the guests in `slots` (`node.rs`), whose Inbox
-/// shows it; a guest told of a change by its status.
-pub fn publish_guests(waiting: Option<(MsgId, &[u8], u8)>) {
+/// The node's side, on a public node: the guests in `slots` the core's
+/// inbox's oldest message waits for (`node.rs`); a guest told of a change
+/// by its status.
+pub fn publish_guests(slots: u8) {
     let changed = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        let before = (l.guests.map(|(id, ..)| id), l.guests_for);
-        l.guests = waiting.map(|(id, p, _)| copy(id, p));
-        l.guests_for = waiting.map_or(0, |(.., s)| s);
-        before != (l.guests.map(|(id, ..)| id), l.guests_for)
+        let before = l.guests_for;
+        l.guests_for = slots;
+        before != slots
     });
     if changed {
         notify(Notify {
@@ -804,10 +772,26 @@ pub fn guests_with(tag: Option<u8>) -> u8 {
     })
 }
 
-/// The node's side: publish the neighbour table after a step, which `fill`
-/// writes.
-pub fn publish_neighbours(fill: impl FnOnce(&mut Table)) {
-    TABLE.lock(|t| fill(&mut t.borrow_mut()));
+/// The node's side: the value a phone reads now, if one asks
+/// ([`READ`]), written by `write` for the request into its buffer.
+pub fn serve_read(write: impl FnOnce(&Request, &mut [u8; READ_LEN]) -> usize) {
+    take_request(|_, r| match *r {
+        Request::Neighbours(_) | Request::Inbox { .. } => {
+            let mut b = [0; READ_LEN];
+            let n = write(r, &mut b);
+            READ.lock(|v| {
+                let mut v = v.borrow_mut();
+                v.0 = Some(match *r {
+                    Request::Inbox { slot, .. } => Read::Inbox(slot),
+                    _ => Read::Neighbours,
+                });
+                v.1.clear();
+                let _ = v.1.extend_from_slice(&b[..n]);
+            });
+            Some(((), true))
+        }
+        _ => None,
+    });
 }
 
 /// The node's side: the first rotation's end, from `AppEvent::Boot`.
@@ -986,66 +970,32 @@ fn clock_now() -> [u8; bark_link::NodeTime::LEN] {
     .encode()
 }
 
-/// The page of the neighbour table the phone reads now: the live
-/// neighbours from the slot it wrote on, as many as fit.
-fn neighbours_now(slot: usize) -> heapless::Vec<u8, { neighbours::MAX_LEN }> {
-    let mut page = [neighbours::Neighbour::default(); neighbours::PER_PAGE];
-    let mut len = 0;
-    let from = LINK.lock(|l| l.borrow().phones[slot].neighbours_from);
-    let header = TABLE.lock(|t| {
-        let t = t.borrow();
-        let mut next = 0;
-        let live = t
-            .slots
-            .iter()
-            .enumerate()
-            .skip(usize::from(from))
-            .filter(|(_, s)| s.live);
-        for (slot, s) in live {
-            if len == page.len() {
-                next = slot as u8;
-                break;
-            }
-            let age_s = now().since(s.heard).as_micros() / 1_000_000;
-            page[len] = neighbours::Neighbour {
-                age_s: age_s.min(u64::from(u16::MAX)) as u16,
-                ..s.neighbour
-            };
-            len += 1;
-        }
-        neighbours::Header {
-            floor_dbm: t.floor_dbm,
-            next,
-            own: t.own,
-        }
-    });
-    let mut b = [0; neighbours::MAX_LEN];
-    let n = neighbours::encode(&header, &page[..len], &mut b);
-    heapless::Vec::from_slice(&b[..n]).expect("it fits")
-}
-
-/// The Inbox the phone in `slot` reads: the paired phone's, or on a
-/// public node a guest's, the message waiting for it.
-fn inbox_now(slot: usize) -> heapless::Vec<u8, { Message::MAX_LEN }> {
-    LINK.lock(|l| {
-        let l = l.borrow();
-        let shown = match l.guest(slot) {
-            true => l.guests.filter(|_| l.guests_for & 1 << slot != 0),
-            false => l.inbox,
-        };
-        match shown {
-            Some((msg_id, len, payload)) => {
-                let mut b = [0; Message::MAX_LEN];
-                let n = Message {
-                    msg_id,
-                    payload: &payload[..len as usize],
-                }
-                .encode(&mut b);
-                heapless::Vec::from_slice(&b[..n]).expect("it fits")
-            }
-            None => heapless::Vec::new(),
+/// What the node last wrote, if it was `read`.
+fn read_for(read: Read) -> heapless::Vec<u8, READ_LEN> {
+    READ.lock(|v| {
+        let v = v.borrow();
+        match v.0 == Some(read) {
+            true => v.1.clone(),
+            false => heapless::Vec::new(),
         }
     })
+}
+
+/// The page of the neighbour table as the node last wrote it.
+fn neighbours_now() -> heapless::Vec<u8, { neighbours::MAX_LEN }> {
+    read_for(Read::Neighbours)
+}
+
+/// The Inbox the phone in `slot` reads, as the node wrote it as the phone
+/// read: a guest's while the message still waits for it.
+fn inbox_now(slot: usize) -> heapless::Vec<u8, { Message::MAX_LEN }> {
+    let (guest, waits) = LINK.lock(|l| {
+        let l = l.borrow();
+        (l.guest(slot), l.guests_for & 1 << slot != 0)
+    });
+    let b = read_for(Read::Inbox(slot));
+    let b = if guest && !waits { &[][..] } else { &b[..] };
+    heapless::Vec::from_slice(b).expect("a message fits")
 }
 
 /// The bond kept in flash, handed once at boot when the store has opened
@@ -1055,7 +1005,14 @@ pub static STORED_BOND: Signal<CriticalSectionRawMutex, Option<Bond>> = Signal::
 type Stack = trouble_host::Stack<'static, SoftdeviceController<'static>, DefaultPacketPool>;
 
 /// The update the paired phone stages, across its links.
-type Update = embassy_sync::mutex::Mutex<NoopRawMutex, crate::update::Phone>;
+type Update = embassy_sync::mutex::Mutex<NoopRawMutex, Staging>;
+
+/// The update, and room for the header a begin carries, kept here rather
+/// than in every link's task, as only the paired phone stages.
+pub struct Staging {
+    phone: crate::update::Phone,
+    header: [u8; bark_link::update::HEADER_LEN],
+}
 
 /// The advertising, which one slot does at a time.
 type Advertising = embassy_sync::mutex::Mutex<
@@ -1113,7 +1070,10 @@ pub async fn run(
     static ADVERTISING: StaticCell<Advertising> = StaticCell::new();
     let advertising = ADVERTISING.init(Advertising::new(stack.peripheral()));
     static UPDATE: StaticCell<Update> = StaticCell::new();
-    let update = UPDATE.init(Update::new(crate::update::Phone::new(internal, flash)));
+    let update = UPDATE.init(Update::new(Staging {
+        phone: crate::update::Phone::new(internal, flash),
+        header: [0; bark_link::update::HEADER_LEN],
+    }));
     for i in 0..LINKS {
         let token = slot(i, stack, advertising, server, gatt, name, update);
         spawner.spawn(token.expect("one task a slot"));
@@ -1440,7 +1400,7 @@ async fn serve(
             GattConnectionEvent::Disconnected { reason } => {
                 log::info!("ble: disconnected 0x{:02x} slot {}", u8::from(reason), slot);
                 if owner(conn) {
-                    update.lock().await.link_closed();
+                    update.lock().await.phone.link_closed();
                 }
                 // A pairing cut short leaves no code on the screen.
                 crate::display::phone(phone_now());
@@ -1533,6 +1493,16 @@ async fn serve(
             incoming,
             AttClient::Request(AttReq::ReadBlob { offset, .. }) if offset > 0
         );
+        // A read of Neighbours asks the node for the page first: the table
+        // is the core's, which only the node's task reads.
+        if !continued && from.owner && read_of(&incoming) == Some(link.neighbours.handle) {
+            let start = LINK.lock(|l| l.borrow().phones[slot].neighbours_from);
+            ask(from, Request::Neighbours(start)).await;
+        }
+        if !continued && read_of(&incoming) == Some(link.inbox.handle) {
+            let guest = LINK.lock(|l| l.borrow().guest(slot));
+            ask(from, Request::Inbox { slot, guest }).await;
+        }
         if !continued && !piece {
             refresh(slot, server, conn, update);
         }
@@ -1543,7 +1513,7 @@ async fn serve(
                 let h = w.handle();
                 wrote_changes = h == changes.0;
                 let answer = if h == link.image.handle {
-                    let taken = write_image(&w, &mut *update.lock().await).await;
+                    let taken = write_image(&w, &mut update.lock().await.phone).await;
                     // A write without response has no answer to refuse
                     // with; the phone reads Update instead.
                     match w.payload().incoming() {
@@ -1554,7 +1524,7 @@ async fn serve(
                     let mut u = update.lock().await;
                     let answer = write_update(&w, &mut u).await;
                     reboot = answer == Ok(true);
-                    let _ = conn.set(&link.update, &progress(&u));
+                    let _ = conn.set(&link.update, &progress(&u.phone));
                     Some(answer.map(|_| ()))
                 } else if h == link.send.handle {
                     Some(write_send(from, &w).await)
@@ -1830,7 +1800,7 @@ fn refresh(
     let staged = update
         .try_lock()
         .ok()
-        .and_then(|u| conn.set(&link.update, &progress(&u)).err());
+        .and_then(|u| conn.set(&link.update, &progress(&u.phone)).err());
     for e in [
         staged,
         conn.set(&link.status, &status).err(),
@@ -1838,7 +1808,7 @@ fn refresh(
         conn.set(&link.given_back, &given_back_now(slot)).err(),
         conn.set(&link.clock, &clock_now()).err(),
         conn.set(&link.home, &home_now().encode()).err(),
-        conn.set(&link.neighbours, &neighbours_now(slot)).err(),
+        conn.set(&link.neighbours, &neighbours_now()).err(),
         conn.set(&link.public, &bark_link::Public(public()).encode())
             .err(),
     ]
@@ -1861,14 +1831,17 @@ const REFUSED: AttErrorCode = AttErrorCode::new(bark_link::att::REFUSED);
 /// Update's read then says.
 async fn write_update(
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
-    update: &mut crate::update::Phone,
+    staging: &mut Staging,
 ) -> Result<bool, AttErrorCode> {
     enum Asked {
         Begin,
         Commit,
         Reboot,
     }
-    let mut header = [0u8; bark_link::update::HEADER_LEN];
+    let Staging {
+        phone: update,
+        header,
+    } = staging;
     let asked = w.with_data(|offset, data| match offset {
         0 => Ok(match Command::decode(data).map_err(malformed)? {
             Command::Begin(h) => {
@@ -1881,7 +1854,7 @@ async fn write_update(
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
     let done: Result<bool, Refusal> = match asked {
-        Asked::Begin => update.begin(&header).await.map(|()| false),
+        Asked::Begin => update.begin(header).await.map(|()| false),
         Asked::Commit => update.commit().await.map(|()| false),
         Asked::Reboot => update.reboot().map(|()| true),
     };
@@ -1894,16 +1867,16 @@ async fn write_image(
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
     update: &mut crate::update::Phone,
 ) -> Result<(), AttErrorCode> {
-    let mut bytes = [0u8; Piece::MAX_BYTES];
-    let (offset, len) = w.with_data(|offset, data| match offset {
-        0 => {
-            let p = Piece::decode(data).map_err(malformed)?;
-            bytes[..p.bytes.len()].copy_from_slice(p.bytes);
-            Ok((p.offset, p.bytes.len()))
-        }
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
-    match update.piece(offset, &bytes[..len]).await {
+    // A piece is one PDU, by request or command, never a long write
+    // (spec "Phone link", Updates), so its bytes are read where the event
+    // holds them, with no copy in the link's task.
+    let data = match w.payload().incoming() {
+        AttClient::Request(AttReq::Write { data, .. })
+        | AttClient::Command(AttCmd::Write { data, .. }) => data,
+        _ => return Err(AttErrorCode::INVALID_OFFSET),
+    };
+    let p = Piece::decode(data).map_err(malformed)?;
+    match update.piece(p.offset, p.bytes).await {
         true => Ok(()),
         false => Err(malformed(Malformed::Value)),
     }

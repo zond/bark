@@ -1003,19 +1003,31 @@ has.
 **The floor.** The stack is the RAM static memory leaves, and nothing
 else bounds it: an image whose statics grow past it faults at boot, as
 two boards did on 2026-11-08, with 14.6 KiB left, after the public
-node's links and the mesh spread's tables came together. So the stack
-keeps at least 16 KiB: the deepest poll of any task, the phone link's
-set-up at 9.5 KiB (2026-11-08, `llvm-objdump`, two links), and 6 KiB for
-the interrupts' frames and the calls through pointers the disassembly
-does not follow. `scripts/uf2.py` refuses to pack an image that leaves
-less, from its `__sheap` and `_stack_start`, and `uf2.py --stack` only
-checks, which CI runs on the release build. A change that deepens a
-task's poll raises the floor with it.
+node's links and the mesh spread's tables came together. The most a
+node image has used is what the boards painted (`stack_used`) over a
+day, 2026-11-08: 16 564 B on version 4 (`42dd68f`), 15 412 B on version
+0, against a deepest poll of 9.5 KiB by the disassembly, which does not
+follow calls through pointers or count the interrupts. So the stack
+keeps at least 24 KiB: the measured 16.2 KiB and 6 KiB for what an image
+since may add, 22.2 KiB, rounded up. `scripts/uf2.py` refuses to pack an
+image that leaves less, from its `__sheap` and `_stack_start`, and
+`uf2.py --stack` only checks, which CI runs on the release build. A
+measurement above it raises the floor.
+
+To get there, the phone link keeps no copy of what the node holds: a
+read of Neighbours or of Inbox asks the node, which writes the page or
+the message into one buffer as the phone reads it (`ble::READ`), where
+the link kept the whole neighbour table, 2.6 KB, and two messages; the
+host keeps no room for L2CAP's connection-oriented channels, which the
+node never opens; the update's header is kept once, not in every link's
+task; and the mailbox queues 6 flash ops, twice the 3 a message or a
+confirmation takes, not 8.
 
 | node image, release, open, version 6 | data + bss | stack |
 |---|---|---|
 | merged with 3 links (`4fdcf58`) | 246 136 B | 14 984 B |
 | 2 links | 240 520 B | 20 576 B |
+| 2 links, no copies (above) | 236 280 B | 24 832 B |
 | console | 16 264 B | 244 840 B |
 
 ## Radio power

@@ -71,13 +71,12 @@ SOFTDEVICE_MAGIC = 0x51B1E5DB
 
 # The least room a firmware may leave its call stack, between the end of
 # its static memory and the top of RAM (cortex-m-rt's `__sheap` and
-# `_stack_start`): the deepest poll of any task the disassembly shows,
-# 9.5 KiB, the phone link's set-up, and 6 KiB for the interrupts' frames
-# above it and the calls through pointers the disassembly does not
-# follow, rounded up (bark-fw/README.md, "Tasks and the stack"). An image
-# that leaves less faults at boot: two boards did, 2026-11-08, with
-# 14.6 KiB.
-STACK_FLOOR = 16 * 1024
+# `_stack_start`): the most a board's node image has used, 16 564 B
+# painted over a day, and 6 KiB for what the disassembly cannot show,
+# 22.2 KiB, rounded up (bark-fw/README.md, "Tasks and the stack"). An
+# image that leaves less may fault at boot: two boards did, 2026-11-08,
+# with 14.6 KiB.
+STACK_FLOOR = 24 * 1024
 
 
 def check_stack(syms: dict[str, int]) -> int:
