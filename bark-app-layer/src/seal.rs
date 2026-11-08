@@ -66,13 +66,7 @@ pub const HEAD_LEN: usize = RECIPIENT_AT + 1;
 
 /// The recipient tag of `identity` at the node `node`: the first byte of
 /// `crypto_generichash` of the node ID to 16 bytes, its shortest output,
-/// keyed with the identity. Keyed with the identity, only someone who
-/// holds the person's card can make it; over the node ID, it differs from
-/// node to node, so it ties together only the payloads for one person at
-/// one node. One byte: a phone handed a payload that is not its own fails
-/// to open it and drops it, so a wrong match costs a read, and among the
-/// few phones on one node at once one in 256 is rare enough (spec "Phone
-/// link", Recipient tag).
+/// keyed with the identity (spec "Phone link", Recipient tag, says why).
 pub fn recipient(identity: &Identity, node: NodeId) -> u8 {
     let mut mac =
         <Blake2bMac<U16> as Mac>::new_from_slice(&identity.0).expect("a 32-byte key is BLAKE2b's");

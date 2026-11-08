@@ -1907,7 +1907,8 @@ depends on what the packet gives it to do:
   no live neighbour at all takes it, and the search ends as in
   [return to parent](#return-to-parent).
   - From its own application a node takes one message at a time, until
-    its first hop takes it: while it is running, holds none, has room
+    its first hop takes it, and a public node's phones take turns at it
+    ([phone link](#phone-link), Public): while it is running, holds none, has room
     in its send queue and bucket for a full frame on top of what they
     hold, and not every neighbour is banned, or, for a sleepy node with
     a live anchor, not the anchor
@@ -2961,7 +2962,7 @@ numbers below are of the Bluetooth Core Specification 5.0
 in the advertisement; its name, `bark-` and the twelve hex digits of
 its ID as its display shows them, in the scan response. It takes one
 connection at a time and does not advertise while it has one (roadmap
-D120).
+D120); a public node takes more (Public, below).
 
 *Why the name in the scan response.* A legacy advertisement holds 31
 bytes (Vol 6 Part B §2.3.1): the flags take 3 and a 128-bit UUID 18,
@@ -2977,11 +2978,13 @@ receive (an estimate from the nRF52840 Product Specification's radio
 currents, for the bench to measure).
 
 *Why one connection.* One person's phone owns the node: two phones
-would share one inbox and one message slot.
+would share one inbox and one message slot. A public node shares them
+by rules of their own (Public, below).
 
 **Pairing.** A node is one phone's: the phone paired with it (roadmap
 D135). Every characteristic of the service needs a link encrypted with
-an authenticated key; a read, write or subscription on any other link
+an authenticated key, but on a public node those a guest needs (Public,
+below); a read, write or subscription on any other link
 is answered with the ATT error 0x05, insufficient authentication (Vol 3
 Part F §3.4.1.1), which is the phone's cue to pair. The node's name and
 appearance stay open, as the advertisement says them anyway.
@@ -2991,7 +2994,8 @@ The pairing is LE Secure Connections with passkey entry (Vol 3 Part H
 is that the node shows a six-digit passkey and the person types it into
 the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it, on the line `PAIR CODE`; the
-same line says `PHONE PAIRED` or `PHONE NONE` otherwise. The node keeps
+same line says `PHONE PUBLIC` on a public node, and `PHONE PAIRED` or
+`PHONE NONE` otherwise. The node keeps
 one bond in flash across reboots: the phone's identity address, the
 identity resolving key by which it knows the phone's changing address
 (Vol 6 Part B §1.3.2.2), and the long-term key. A new pairing replaces
@@ -3062,6 +3066,8 @@ service and its characteristics:
 | Update | `28bc000b-…` | read | state(1) refused(1) held(4) version(4) hash(32) | 42 |
 | | | write | 0 then header(256) to begin; 1 to commit; 2 to reboot | 257, 1 |
 | Image | `28bc000c-…` | write, write without response | offset(4) bytes(1–240) | 5–244 |
+| Recipient | `28bc000d-…` | write | tag(1) | 1 |
+| Public | `28bc000e-…` | read, write | public(1) | 1 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -3073,7 +3079,7 @@ which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 5 in this specification; the node's ID, the
+**Node.** The link version, 7 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3082,7 +3088,7 @@ countdown of `boot_left`:
 
 | | |
 |---|---|
-| flags bit 0 | ready: the node takes a message from the app now |
+| flags bit 0 | ready: the node takes a message from this phone now |
 | bit 1 | on external power, USB |
 | bits 2, 3, 4 | sleepy, carried, map point, as its heartbeat says them ([packet formats](#packet-formats)) |
 | bit 5 | placed: it has a place, and `address` holds a position; else `address` is zero ([position](#position)) |
@@ -3105,6 +3111,8 @@ is the node's: the app hears of it again only if the node gives it
 back ([addresses](#addresses)). The node holds one message of its app's
 at a time ([receiving DATA](#receiving-data)), so the phone is the
 queue: it keeps the rest and offers the next when ready is set again.
+On a public node its phones take turns at that one message (Public,
+below).
 
 **Given back.** When the node gives the app's message back, it sets
 Given back to the message's ID and the seconds left of the wait the
@@ -3323,8 +3331,104 @@ discovers the whole table, a few round trips once per version. The hash
 lets a phone that reads it as it connects find a change before the
 indication comes.
 
+**Public.** The owner may make the node public, so that it also serves
+phones that have not paired with it, guests, as a café's or a shop's
+node serves its customers. The paired phone writes 1 to Public to make
+the node public and 0 to make it its own alone; the node keeps the
+setting with the bond across reboots, and a new pairing keeps it
+(roadmap D150). Public needs the bond, as Pairing says, so only the
+owner sets it.
+
+On a public node:
+
+- *The advertisement* holds, in place of the service's UUID, the
+  public node's, `28bc1001-a1b8-4893-9537-2ee3559d7644`, which no
+  attribute has: an app finds the public nodes in reach in a scan,
+  without connecting. The scan response is as before. The node
+  advertises while it has a link free.
+- *Node, Status, Send, Inbox, Given back and Recipient* take any link,
+  encrypted or not, and so do the subscriptions to Status and Given
+  back; Map point, Clock, Home, Neighbours, Update, Image and
+  Public stay the paired phone's, as on any node.
+- *It takes 3 links at once*, the owner's and two guests'. Made
+  private again, it closes its guests' links.
+- *Each phone writes its recipient tag at the node to Recipient* as it
+  connects (The payload, below), and the node hands each message it
+  receives for its application by the tag in the payload's second
+  byte: to every guest connected whose tag it is, and to the owner,
+  when it is the owner's tag, or when the node holds none yet. The
+  paired phone's tag is kept with the bond, so the owner's messages are
+  placed while the owner is away. The owner's inbox is the ring, as a
+  home's ([mailbox](#mailbox)), whether or not the node is a home: the
+  ring keeps what the owner has not read across guests and reboots,
+  and never refuses. A message for a guest waits in the node's inbox
+  until that guest confirms it (Receiving): a guest's Inbox reads it,
+  and Status's count, as the guest reads it, is 1 while one waits for
+  it, else 0. Messages behind it wait for it, as the inbox is one queue
+  and a guest connected reads at once. A message the node cannot place,
+  for no phone connected and not the owner's, it takes and drops: the
+  network has delivered it, as one to a carried node's old address is.
+  So a reply that arrives after its guest's link has ended is lost; the
+  owner's is kept. A message given back to a guest whose link has ended
+  is dropped too.
+- *Guests take turns at the one message the node holds for its phones*
+  (Sending; [receiving DATA](#receiving-data)). Ready, as each phone
+  reads it, is set while the node takes a message and no other phone
+  has the turn. A phone whose Send the node does not take because
+  another phone has the turn or holds the place with its message is
+  answered as the node's own gate answers a message entering the
+  network: the node takes the message and gives it back at once (Given
+  back), with a wait that is the phone's place in a line of phones,
+  one ban after the place before it ([bans](#bans): 1.58 s, the unit
+  of every told wait) and no sooner than the node's own wait. From its
+  place on, while the node takes a message, the first phone in line has
+  the turn, and Ready is set for it alone; it leaves the line when the
+  node takes a message of its, when its link ends, or a ban after its
+  turn came, so that a phone whose person gave up holds nobody up. A
+  Send the node does not take while it takes none from any phone is
+  answered 0x80, not ready, as on any node.
+
+*Why the public node's UUID, not a flag beside the service's.* The 10
+bytes the advertisement has left beside the flags and the service's
+UUID hold one more AD structure (Core Specification Supplement, Part
+A, Data types); those that carry a value of one's own name it by a company
+identifier or a 16- or 32-bit UUID that the Bluetooth SIG assigns, of
+which bark holds none, and the form with a 128-bit UUID, service data,
+takes 19 bytes. A second UUID costs no byte, and both phone systems
+filter a scan by service UUID in the controller, where a flag would be
+read only by the app.
+
+*Why 3.* A link costs 5.6 KB of static RAM, measured: the controller's
+2.4 KB by `sdc.h`'s formulas, the host's 1.2 KB, and the task that
+serves it, 1.9 KB. All of it comes out of the stack, which with 3 links
+keeps 17.9 KB against the 11.8 KB of the deepest poll of any task, the
+phone link's set-up, by the disassembly, which does not follow calls
+through pointers; the 6 KB between are for those and the interrupts. A
+fourth link would leave 12.4 KB, less than the 14.2 KB that set-up then
+takes (roadmap D150).
+
+*Why every guest whose tag it is, and the owner's too.* A tag is one
+byte (The payload, below), so two phones at a node may share one; each
+then reads the other's message too, fails to open it and drops it,
+which costs a read. Handed to one of them, the other would lose it.
+
+*Why the tag, and not a guest's inbox per link.* The node's inbox is
+the core's, one queue for its application ([receiving
+DATA](#receiving-data)); what the node cannot place it must not keep,
+or a guest's mail would fill the room of those who are there. The tag
+tells the node at once whose a message is without opening it.
+
+*Why turns.* One message at a time is the node's rule for its
+application ([receiving DATA](#receiving-data)); several phones writing
+whenever Ready is set would take it in the order their writes reach the
+node, and a phone with a queue would keep it. Given back with a place,
+a phone's person sees the wait as for a refusal on the way, and
+the phones come back one after another, not all at once to be refused
+again. The line is spaced by a ban, as the network's lines are, since
+nothing in the protocol acts sooner.
+
 **The payload.** The app owns it; this is its layout (roadmap D123 to
-D127). The reasons, and the alternatives a reader would ask about, are
+D127, D150). The reasons, and the alternatives a reader would ask about, are
 in `docs/app-layer-2026-11-05.md`; the codec and the vectors the app is
 tested against are `bark-app-layer`.
 
@@ -3338,20 +3442,43 @@ identity's key pair `crypto_box_seed_keypair` of
 `crypto_kdf_derive_from_key(master, 2, "bark-mbx")`. No signatures, and
 keys do not change.
 
-*Forms.* A payload's first byte is its format: the version, 1, in the
-high four bits, the form in the low four. A receiver drops a payload of
-a version or form it does not know.
+*Forms.* A payload's first byte is its format: the version, 2, in the
+high four bits, the form in the low four. Its second is the recipient
+tag (below), which every version keeps there, as a public node reads
+it. A receiver drops a payload of a version or form it does not know.
 
-| form | to | after the format byte | over the plaintext |
+| form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
-| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 41 |
-| 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 49 |
-| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 41 |
-| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3), the count of items still unsent (2) and the item; the nonce is not sent | 22 |
+| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 42 |
+| 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 50 |
+| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 42 |
+| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3), the count of items still unsent (2) and the item; the nonce is not sent | 23 |
 
 Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
-227 − 22 = 205 bytes, so that its mailbox can send any payload on as a
-reply. A boxed payload names no sender: the receiver tries the key of
+227 − 23 = 204 bytes, so that its mailbox can send any payload on as a
+reply.
+
+*Recipient tag.* The first byte of `crypto_generichash` of the
+destination's node ID to 16 bytes, its shortest output, keyed with the
+recipient's identity; in the clear. A boxed payload or an introduction
+carries its recipient's tag at the node it is sent to, a fetch the
+requester's at its home node, and a reply the one the fetch asks for. A
+public node hands a payload to the phones whose tag it carries (Public,
+above); every other node and every app ignores it.
+
+*Why keyed with the identity, over the node.* Only someone who holds
+the recipient's card can make the tag, and it differs from node to
+node, so it ties together only the payloads for one person at one
+node, which their destination address already groups by node.
+
+*Why one byte.* A phone handed a payload that is not its own fails to
+open it and drops it (Public, above), so a wrong match costs a read
+and a failed open, not a message. The phones that can match at once are
+those on one node, at most two guests and the owner, so a payload for
+one of them matches another with odds of at most 2 in 256, 0.8 %, and
+one for nobody there is taken by a guest as often; a second byte would
+make that rarer at a byte on every message, and would tie a person's
+payloads at a node together more surely. A boxed payload names no sender: the receiver tries the key of
 each contact, `crypto_box_beforenm` of each made once, until one opens
 it. An introduction carries the sender's card; its sender is shown as
 unverified until a boxed payload from that identity opens. It is used
@@ -3392,7 +3519,7 @@ acknowledged as a text is. The parts take consecutive `sent`, so a
 part's `sent` less its number and one is the first part's, which names
 the text: the receiver puts parts together in any order of arrival,
 knows from the count which have not come, and needs no byte more for
-it. A part costs one byte over a whole text, 157 bytes of text in a box
+it. A part costs one byte over a whole text, 155 bytes of text in a box
 without an address; 16 parts hold about 2.5 KB (roadmap D137).
 
 *The card*, what people exchange, shown as a QR code: version (1), 2;
@@ -3472,7 +3599,9 @@ stays. Its phone link's inbox reads from the ring, and an item the phone
 confirms there is marked sent too ([phone link](#phone-link), Home).
 
 **The fetch** is a form 2 payload to the home address whose plaintext
-is `sent` (4) and the requester's current address (13). The node takes
+is `sent` (4), the requester's current address (13) and its recipient
+tag at that address's node (1), which the home cannot make, as it does
+not know the identity ([phone link](#phone-link), The payload). The node takes
 it only if it opens under the mailbox key and its `sent` is later than
 the last fetch's it took, which it keeps.
 
@@ -3482,12 +3611,12 @@ first, one at a time through its send slot, or, when there is none, one
 reply that says nothing is new. It marks an item sent when it hands the
 item's reply to the core; nothing confirms it. An item that arrives
 after the fetch waits for the next one. Each reply is a form 3 payload
-sealed under the mailbox key with the nonce: the fetch's `sent` (4), the
-reply's place (3), 17 zero bytes. An item's place is its rank in the
+with the fetch's recipient tag, sealed under the mailbox key with the
+nonce: the fetch's `sent` (4), the reply's place (3), 17 zero bytes. An item's place is its rank in the
 round, 1 to 32, and its plaintext is its number (3), the count of items
 still unsent after the round's when the fetch was taken (2), and the
 item; an item longer than the app writes goes empty. The reply that says
-nothing is new has place 0 and an empty plaintext, 17 bytes; none
+nothing is new has place 0 and an empty plaintext, 18 bytes; none
 remains. The requester tries places 1 to 32 on a reply that carries an
 item. A reboot ends a round, so that no place seals two items: what it
 had not handed over stays unsent.
@@ -3575,9 +3704,9 @@ channels they visit:
   14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, over a day 23 for each user,
   the **design rate** the rest of this document uses.
 
-The app's encryption and header take 47 to 60 bytes of a payload
+The app's encryption and header take 48 to 61 bytes of a payload
 ([phone link](#phone-link)), so the 100-byte payload above holds a text
-of 40 to 53 bytes. A message fetched from a [mailbox](#mailbox) crosses
+of 39 to 52 bytes. A message fetched from a [mailbox](#mailbox) crosses
 the city twice: with a share f of messages fetched, the design rate is
 23 / (1 + f) texts a person a day.
 
