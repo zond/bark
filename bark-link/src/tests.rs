@@ -430,3 +430,46 @@ fn a_guest_item_round_trips_and_after_is_three_bytes() {
     assert_eq!(GuestItem::decode(&[]), Ok(None));
     assert_eq!(GuestItem::decode(&b[..6]), Err(Malformed::Length));
 }
+
+/// The node rewrites its bond as the phone saw a table, subscribed, wrote
+/// its tag or made the node private (`bark-fw/src/ble.rs`, `keep`): each
+/// record reads back with the phone's address, its kind, its identity
+/// resolving key and the long-term key as the pairing left them.
+#[test]
+fn a_rewritten_bond_keeps_the_phone_s_keys() {
+    let paired = bond::Bond {
+        kind: 0,
+        addr: [1, 2, 3, 4, 5, 6],
+        irk: Some([0x4d; 16]),
+        ltk: [0x37; 16],
+        seen: 6,
+        service_changed: false,
+        private: false,
+        owner: None,
+    };
+    let mut b = paired;
+    for step in 0..4 {
+        b = match step {
+            0 => bond::Bond {
+                seen: VERSION,
+                service_changed: true,
+                ..b
+            },
+            1 => bond::Bond {
+                owner: Some(0x5a),
+                ..b
+            },
+            2 => bond::Bond { private: true, ..b },
+            _ => bond::Bond {
+                private: false,
+                ..b
+            },
+        };
+        let back = bond::Bond::from_record(&b.record()).expect("a whole record");
+        assert_eq!(
+            (back.kind, back.addr, back.irk, back.ltk),
+            (paired.kind, paired.addr, paired.irk, paired.ltk),
+            "step {step}"
+        );
+    }
+}
