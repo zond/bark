@@ -79,7 +79,7 @@ fn a_sleepy_carried_node_on_battery() {
         heard: 5,
         strong: 4,
         both_ways: 2,
-        phone: Phone::Paired,
+        phone: Phone::Private,
     };
     assert_eq!(
         texts(&state, 12),
@@ -87,7 +87,7 @@ fn a_sleepy_carried_node_on_battery() {
             "SLEEPY ANCHORED ",
             "ID  BAE6E6CBF4F5",
             "NODE         V12",
-            "PHONE     PAIRED",
+            "PHONE    PRIVATE",
             "KNOWN      5/4/2",
             "BATTERY      73%",
             "UP        12 MIN",
@@ -109,7 +109,7 @@ fn a_relay_starting_without_a_place() {
             "STARTING        ",
             "ID  BAE6E6CBF4F5",
             "NODE         V12",
-            "PHONE       NONE",
+            "PHONE   UNPAIRED",
             "KNOWN      0/0/0",
             "POWER        USB",
             "UP         0 MIN",
@@ -139,7 +139,7 @@ fn a_fixed_relay_on_usb() {
             "FIXED RELAY     ",
             "ID  BAE6E6CBF4F5",
             "NODE         V12",
-            "PHONE       NONE",
+            "PHONE   UNPAIRED",
             "KNOWN     12/9/3",
             "POWER        USB",
             "UP        90 MIN",
@@ -320,8 +320,8 @@ fn the_phone_paired_or_its_code() {
         )[3]
         .clone()
     };
-    assert_eq!(phone(Phone::None), "PHONE       NONE");
-    assert_eq!(phone(Phone::Paired), "PHONE     PAIRED");
+    assert_eq!(phone(Phone::Unpaired), "PHONE   UNPAIRED");
+    assert_eq!(phone(Phone::Private), "PHONE    PRIVATE");
     assert_eq!(phone(Phone::Public), "PHONE     PUBLIC");
     assert_eq!(phone(Phone::Code(42)), "PAIR CODE 000042");
     assert_eq!(phone(Phone::Code(999_999)), "PAIR CODE 999999");

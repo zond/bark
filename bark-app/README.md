@@ -686,7 +686,7 @@ a phone (Trying it, With a node).
    digits. Tap it. The first time, Android asks for a code and the
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
-   the node's screen `PHONE PAIRED`.
+   the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
 3. **Debug** shows link version 8, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
@@ -794,7 +794,7 @@ a phone (Trying it, With a node).
 15. A public node, on link version 8, with two phones. On the owner's
     phone, connected, **Settings**, **Public: serve phones without
     pairing** is on from the start, and the node's screen says `PHONE
-    PUBLIC`; turned off, it says `PHONE PAIRED`, and on again `PHONE
+    PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its RSSI; or, with no paired node of
     its own in reach, the second phone goes on an errand there within a

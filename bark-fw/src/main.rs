@@ -444,10 +444,7 @@ async fn main(spawner: Spawner) {
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The bond with the paired phone, to the phone link, and its line
         // on the first picture.
-        display::phone_at_boot(match bark_link::bond::public(kept.bond.as_ref()) {
-            true => bark_screen::Phone::Public,
-            false => bark_screen::Phone::Paired,
-        });
+        display::phone_at_boot(ble::phone_of(kept.bond.as_ref()));
         ble::STORED_BOND.signal(kept.bond);
         // The mailbox's writes, its state beside the store on the same
         // flash (`mailbox.rs`); the mailbox opens once the radio has
