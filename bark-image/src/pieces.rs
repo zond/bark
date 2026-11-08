@@ -13,7 +13,9 @@
 //! header's first [`SIGNED_LEN`] bytes, the part its signatures cover
 //! (`crate::sign`): the same image signed again with another key keeps
 //! its name, so the mesh sees one image, whichever of its signatures a
-//! holder has.
+//! holder has. The mesh names it by the name's first [`TAG_LEN`] bytes,
+//! in a heartbeat and in every piece; the store begins with those, and
+//! takes the whole name from block 0.
 //!
 //! **Where it goes**, in [`PIECES`]' 193 sectors:
 //!
@@ -37,10 +39,10 @@
 //! **How a block is decoded.** When a lane holds as many pieces as its
 //! block has, the block is decoded twice, eight data pieces at a time, each
 //! eight from one read of each piece the lane holds ([`crate::code`]).
-//! The first time it is checked: block 0 must begin with the image's name,
-//! any other block hash to its entry in the table, and block 1, which
-//! begins with the header, have a header whose signed bytes hash to the
-//! name; its signatures are checked once the image is whole. A block
+//! The first time it is checked: block 0 must begin with the first bytes
+//! of the image's name, any other block hash to its entry in the table,
+//! and block 1, which begins with the header, have a header whose signed
+//! bytes hash to the name block 0 gave; its signatures are checked once the image is whole. A block
 //! that fails is erased from its lane and gathered again
 //! ([`Poll::Failed`]). The second time it is written, and its byte in the
 //! head cleared ([`Poll::Decoded`]); then its lane is erased. Nothing
@@ -173,7 +175,7 @@ const TABLE_PIECES: usize = (HASH_LEN + ENTRY * (MAX_BLOCKS - 1)).div_ceil(PIECE
 
 // The head: the image's record at its start, then the done bytes, the
 // table and the header, each from a page of its own.
-const RECORD_LEN: usize = HASH_LEN + 2 + 4;
+const RECORD_LEN: usize = TAG_LEN + 2 + 4;
 const DONE_AT: u32 = 64;
 const TABLE_AT: u32 = SLOT;
 const HEADER_AT: u32 = 4 * SLOT;
@@ -217,11 +219,17 @@ fn crc32(bytes: &[u8]) -> u32 {
     !c
 }
 
-/// An image to gather, as its announcement describes it.
+/// Bytes of a name the mesh carries in a heartbeat and in a piece: its
+/// first four (spec "Updates over the mesh").
+pub const TAG_LEN: usize = 4;
+
+/// An image to gather, as a neighbour's heartbeat describes it: the
+/// first bytes of its name, the whole of which block 0 carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
-    /// SHA-256 of its header's signed bytes.
-    pub name: [u8; HASH_LEN],
+    /// The first [`TAG_LEN`] bytes of the SHA-256 of its header's signed
+    /// bytes, its name.
+    pub tag: [u8; TAG_LEN],
     /// Its blocks, the table among them.
     pub blocks: u8,
     /// The pieces of its last block.
@@ -259,25 +267,26 @@ impl Image {
 
     fn record(&self) -> [u8; RECORD_LEN] {
         let mut r = [0u8; RECORD_LEN];
-        r[..HASH_LEN].copy_from_slice(&self.name);
-        r[HASH_LEN] = self.blocks;
-        r[HASH_LEN + 1] = self.last;
-        let check = crc32(&r[..HASH_LEN + 2]);
-        r[HASH_LEN + 2..].copy_from_slice(&check.to_le_bytes());
+        r[..TAG_LEN].copy_from_slice(&self.tag);
+        r[TAG_LEN] = self.blocks;
+        r[TAG_LEN + 1] = self.last;
+        let check = crc32(&r[..TAG_LEN + 2]);
+        r[TAG_LEN + 2..].copy_from_slice(&check.to_le_bytes());
         r
     }
 
     fn from_record(r: &[u8; RECORD_LEN]) -> Option<Image> {
-        let check = u32::from_le_bytes([r[34], r[35], r[36], r[37]]);
-        if crc32(&r[..HASH_LEN + 2]) != check {
+        let c = TAG_LEN + 2;
+        let check = u32::from_le_bytes([r[c], r[c + 1], r[c + 2], r[c + 3]]);
+        if crc32(&r[..c]) != check {
             return None;
         }
-        let mut name = [0u8; HASH_LEN];
-        name.copy_from_slice(&r[..HASH_LEN]);
+        let mut tag = [0u8; TAG_LEN];
+        tag.copy_from_slice(&r[..TAG_LEN]);
         let image = Image {
-            name,
-            blocks: r[HASH_LEN],
-            last: r[HASH_LEN + 1],
+            tag,
+            blocks: r[TAG_LEN],
+            last: r[TAG_LEN + 1],
         };
         image.fits().then_some(image)
     }
@@ -897,7 +906,9 @@ impl Store {
             } else {
                 if d.block == 1 && d.group == 0 {
                     let signed = &d.out.as_flattened()[..SIGNED_LEN];
-                    d.header_ok = <[u8; HASH_LEN]>::from(Sha256::digest(signed)) == image.name;
+                    // The name block 0 carried, the table's start.
+                    d.header_ok =
+                        <[u8; HASH_LEN]>::from(Sha256::digest(signed))[..] == table[..HASH_LEN];
                 }
                 d.sha.update(d.out[..count].as_flattened());
             }
@@ -906,7 +917,7 @@ impl Store {
                 return Ok(Poll::Again);
             }
             let ok = match d.block {
-                0 => table[..HASH_LEN] == image.name,
+                0 => table[..TAG_LEN] == image.tag,
                 b => {
                     let at = HASH_LEN + ENTRY * usize::from(b - 1);
                     let hash = core::mem::take(&mut d.sha).finalize();

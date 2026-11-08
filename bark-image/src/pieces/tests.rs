@@ -176,8 +176,10 @@ fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>, resigned: boo
         0,
         table.chunks(PIECE).map(|c| c.try_into().unwrap()).collect(),
     );
+    let mut tag = [0u8; TAG_LEN];
+    tag.copy_from_slice(&name[..TAG_LEN]);
     let image = Image {
-        name,
+        tag,
         blocks: blocks.len() as u8,
         last: blocks.last().unwrap().len() as u8,
     };
