@@ -225,7 +225,9 @@ def answer(fd: int, buf: bytearray, words: tuple[str, ...]) -> str:
         buf += os.read(fd, 4096)
 
 
-def stage(path: str, port: str, reboot: bool, running: str | None = None) -> int:
+def stage(path: str, port: str, reboot: bool, running: str | None = None, after: tuple[str, ...] = ()) -> int:
+    """Send the image, commit it, then each console command of `after`,
+    each answered by a line that holds it whole, and reboot if asked."""
     if running is not None:
         print(accepted_by(path, running))
     head, image = read_image(path)
@@ -255,6 +257,8 @@ def stage(path: str, port: str, reboot: bool, running: str | None = None) -> int
         print(f"\r{at + min(CHUNK, len(image) - at)} / {len(image)} bytes", end="", flush=True)
     print()
     print(send("commit", ("commit",)))
+    for line in after:
+        print(send(line, (line,)))
     if reboot:
         os.write(fd, b"reboot\r\n")
         print("reboot sent")

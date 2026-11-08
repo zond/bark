@@ -29,9 +29,14 @@
 //! chunk <offset> <hex>       write up to 256 bytes of it, in order
 //! commit                     check it and ask the loader to swap it in
 //! reboot                     reset, to let the loader swap
+//! cut <swap|back> <op|none>  where a bench loader stops the swap or the swap back
 //! ```
 //!
-//! `scripts/image.py stage` sends an image through the last four.
+//! `scripts/image.py stage` sends an image through `stage` to `reboot`.
+//! `cut`, only in an open build (`BARK_OPEN=1`), writes the moment a bench
+//! loader stops a phase of the swap just asked for at, an operation's
+//! index or none (`bark_image::boot::cut::choose`), for
+//! `scripts/cutbench.py`.
 //! `commit`, and `reboot` with a swap asked for, are refused on battery at
 //! or below the low level of spec "Sleepy nodes", as spec
 //! "Implementation notes" says.
@@ -72,7 +77,9 @@ use embassy_usb_logger::ReceiverHandler;
 use crate::clock::Clock;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
 use crate::update::{decimal, ConsoleStager, External, Flash, Power, Refused};
+use bark_image::boot::cut::{choose, Phase};
 use bark_image::boot::{blocking, CHUNK};
+use bark_image::protect::Build;
 use bark_image::HEADER_LEN;
 use bark_proto::BatteryLevels;
 
@@ -342,7 +349,13 @@ enum Command<'l> {
     Chunk(u32, &'l [u8]),
     Commit,
     Reboot,
+    /// A phase of the swap, and the operation to stop it in, or none.
+    Cut(Phase, Option<u32>),
 }
+
+/// Whether the bench's commands are taken: only in an open build, so that
+/// none goes out with a board that leaves the bench.
+const OPEN: bool = matches!(crate::protect::BUILD, Build::Open);
 
 /// Default `rx` wait, ms.
 const RX_DEFAULT_MS: u32 = 10_000;
@@ -358,6 +371,7 @@ const HELP: &str =
     "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
 survey [n] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
+const HELP_OPEN: &str = "cut <swap|back> <op|none>";
 
 fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim_start_matches('>');
@@ -430,6 +444,18 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
         }
         "commit" => Command::Commit,
         "reboot" => Command::Reboot,
+        "cut" if OPEN => {
+            let phase = match arg() {
+                Some("swap") => Phase::Swap,
+                Some("back") => Phase::Back,
+                _ => return Err("cut: swap or back"),
+            };
+            let op = match arg() {
+                Some("none") => None,
+                word => Some(number(word)?),
+            };
+            Command::Cut(phase, op)
+        }
         _ => return Err("unknown command; try `help`"),
     };
     if words.next().is_some() {
@@ -949,7 +975,12 @@ impl<'a> Console<'a> {
             Command::Ping(ch) => self.ping(ch).await?,
             Command::Status(reset) => self.status(reset).await,
             Command::Survey(n) => self.print_survey(n).await,
-            Command::Help => log::info!("{}", HELP),
+            Command::Help => {
+                log::info!("{}", HELP);
+                if OPEN {
+                    log::info!("{}", HELP_OPEN);
+                }
+            }
             Command::Stage(hex) => {
                 let mut header = [0u8; HEADER_LEN];
                 decode_hex(hex, &mut header);
@@ -1002,6 +1033,22 @@ impl<'a> Console<'a> {
                     return Ok(());
                 }
                 crate::update::reboot().await;
+            }
+            Command::Cut(phase, op) => {
+                // The command as typed, which `scripts/image.py` waits for.
+                let phase_word = match phase {
+                    Phase::Swap => "swap",
+                    Phase::Back => "back",
+                };
+                let op_word = CutOp(op);
+                match choose(self.flash, phase, op) {
+                    Ok(()) => log::info!(
+                        "cut {} {}: a bench loader stops there at the boot that starts it",
+                        phase_word,
+                        op_word
+                    ),
+                    Err(e) => log::warn!("cut {} {} refused={:?}", phase_word, op_word, e),
+                }
             }
         }
         Ok(())
@@ -1474,4 +1521,16 @@ fn airtime_us(len: usize, preamble: u16) -> u64 {
 fn percentile(samples: &[i16], p: usize) -> i16 {
     let rank = (p * samples.len()).div_ceil(100).max(1);
     samples[rank - 1]
+}
+
+/// A `cut` operation as typed: its index, or `none`.
+struct CutOp(Option<u32>);
+
+impl fmt::Display for CutOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(n) => write!(f, "{n}"),
+            None => f.write_str("none"),
+        }
+    }
 }
