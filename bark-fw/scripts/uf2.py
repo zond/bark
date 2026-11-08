@@ -10,6 +10,8 @@ here, so neither objcopy nor cargo-binutils is needed.
     scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader \\
         target/thumbv7em-none-eabihf/release/bark-fw bark.uf2
     scripts/uf2.py --check bark.uf2
+    # only that the firmware leaves its stack the room it needs
+    scripts/uf2.py --stack target/thumbv7em-none-eabihf/release/bark-fw
 
 Format: UF2 specification (github.com/microsoft/uf2, README "File format"):
 512-byte blocks, each carrying 256 bytes of payload for one flash address,
@@ -65,6 +67,31 @@ WINDOW_END = 0xEA000
 SOFTDEVICE_END = 0x26000
 SOFTDEVICE_MAGIC_AT = 0x3004
 SOFTDEVICE_MAGIC = 0x51B1E5DB
+
+
+# The least room a firmware may leave its call stack, between the end of
+# its static memory and the top of RAM (cortex-m-rt's `__sheap` and
+# `_stack_start`): the deepest poll of any task the disassembly shows,
+# 9.5 KiB, the phone link's set-up, and 6 KiB for the interrupts' frames
+# above it and the calls through pointers the disassembly does not
+# follow, rounded up (bark-fw/README.md, "Tasks and the stack"). An image
+# that leaves less faults at boot: two boards did, 2026-11-08, with
+# 14.6 KiB.
+STACK_FLOOR = 16 * 1024
+
+
+def check_stack(syms: dict[str, int]) -> int:
+    """The room the firmware leaves its stack; exits if under the floor."""
+    try:
+        room = syms["_stack_start"] - syms["__sheap"]
+    except KeyError:
+        sys.exit("the ELF has no _stack_start/__sheap: not a cortex-m-rt image")
+    if room < STACK_FLOOR:
+        sys.exit(
+            f"the stack has {room} bytes, under the floor of {STACK_FLOOR}: "
+            "static RAM must shrink (bark-fw/README.md, \"Tasks and the stack\")"
+        )
+    return room
 
 
 def check_elf(elf: bytes) -> None:
@@ -219,6 +246,8 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
         start, end = region(syms, name)
         payloads += blocks(start, bytes([FLASH_ERASED]) * (end - start))
         lines.append(f"{what + ':':<9} {end - start} bytes at {start:#x}, erased")
+    room = check_stack(syms)
+    lines.append(f"stack:    {room} bytes, the floor {STACK_FLOOR}")
     start, end = region(syms, "__bootloader_active")
     firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
     check_keys(firmware, start, syms)
@@ -285,6 +314,7 @@ def check(uf2: bytes) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true", help="validate an existing UF2 instead")
+    ap.add_argument("--stack", action="store_true", help="only check the firmware's room for its stack")
     ap.add_argument("--loader", help="the loader's ELF, to put in front of the firmware")
     ap.add_argument("input", help="the firmware's ELF, or a UF2 with --check")
     ap.add_argument("output", nargs="?", help="UF2 to write")
@@ -293,6 +323,10 @@ def main() -> int:
         data = f.read()
     if args.check:
         return check(data)
+    if args.stack:
+        room = check_stack(symbols(data))
+        print(f"{args.input}: the stack has {room} bytes, the floor {STACK_FLOOR}")
+        return 0
     if not args.output:
         ap.error("output path required")
     loader = None

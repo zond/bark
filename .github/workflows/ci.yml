@@ -116,6 +116,15 @@ jobs:
         run: cargo clippy --release -- -D warnings
         working-directory: bark-loader
 
+      # An image whose static memory leaves the stack under its floor
+      # faults at boot (bark-fw/README.md, "Tasks and the stack");
+      # release.yml's packing checks the same.
+      - name: the stack's floor, node
+        run: |
+          cargo build --release
+          python3 -I scripts/uf2.py --stack target/thumbv7em-none-eabihf/release/bark-fw
+        working-directory: bark-fw
+
   # release.yml runs analyze and test too, before it builds an APK.
   app:
     name: App (format, analyze, test)

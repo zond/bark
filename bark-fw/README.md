@@ -893,7 +893,7 @@ Recipient and Public (link version 7) serve guests on a public node
 paired phone writes 0 to Public, private; the bond's record keeps that
 in its byte 14, so a node never paired, and a bond kept before, is
 public, and it keeps the paired phone's recipient tag, which it writes
-to Recipient at every connection. The host takes 3 links at once, each
+to Recipient at every connection. The host takes 2 links at once, each
 served by a task of its own (`slot`), so that its future lies in static
 storage and the stack holds one poll at a time; one slot advertises at a
 time, and on a node that is not public only while no link is up. Node,
@@ -915,10 +915,10 @@ The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
 `public: id=... tag=Some(5a) owner=false guests=0b010` for each message
 placed on a public node, and `ble: confirm id=... ok=true (guest 1)`.
 
-They cost 9.3 KB of flash and 11.9 KB of static RAM, 5.6 KB a link
-beyond the first, which leaves the stack 17.9 KB; the deepest poll of
-any task, the phone link's set-up, is 11.8 KB by the disassembly
-(2026-11-08, `llvm-size`, `llvm-objdump`).
+A link beyond the first costs 5.6 KB of static RAM, taken from the
+stack; a third, as first built, left the stack under its floor once the
+mesh spread's tables came, and two boards faulted at boot (Tasks and the
+stack, below).
 
 ## Mailbox
 
@@ -999,6 +999,24 @@ the stack's high-water mark should fall from the 37.0 KB painted
 (`stack_used`) to about 11 KB, the phone link's chain and the executor's
 200 B, with the interrupts' frames above it, of the 41.7 KB the stack
 has.
+
+**The floor.** The stack is the RAM static memory leaves, and nothing
+else bounds it: an image whose statics grow past it faults at boot, as
+two boards did on 2026-11-08, with 14.6 KiB left, after the public
+node's links and the mesh spread's tables came together. So the stack
+keeps at least 16 KiB: the deepest poll of any task, the phone link's
+set-up at 9.5 KiB (2026-11-08, `llvm-objdump`, two links), and 6 KiB for
+the interrupts' frames and the calls through pointers the disassembly
+does not follow. `scripts/uf2.py` refuses to pack an image that leaves
+less, from its `__sheap` and `_stack_start`, and `uf2.py --stack` only
+checks, which CI runs on the release build. A change that deepens a
+task's poll raises the floor with it.
+
+| node image, release, open, version 6 | data + bss | stack |
+|---|---|---|
+| merged with 3 links (`4fdcf58`) | 246 136 B | 14 984 B |
+| 2 links | 240 520 B | 20 576 B |
+| console | 16 264 B | 244 840 B |
 
 ## Radio power
 
