@@ -12,17 +12,18 @@
 //! in a few seconds.
 //!
 //! **Hop places.** Beyond the regular room there is one place for each
-//! hop count. A packet received with count `h` that the regular room
-//! refuses takes the highest free place numbered `h` or lower, whatever
-//! the bucket holds; the bucket still decides when it is sent. A packet
-//! from the node's own application, count 0, has none, so
-//! overload pushes back where messages enter (roadmap D31). The places
-//! keep the network from locking up while nothing is dropped for want of
-//! room: take the highest-numbered place held anywhere, `k`. Its message
-//! has made at least `k` hops and sends `k + 1` or more, and place `k + 1`
-//! is free everywhere, so its next hop can take it, unless the count is at
-//! the cap, where the message ends (spec "Hop count"). By induction downwards, every
-//! message held moves.
+//! band of [`BAND`] hop counts. A packet received with count `h` that the
+//! regular room refuses takes the highest free place numbered `h / 4` or
+//! lower, whatever the bucket holds; the bucket still decides when it is
+//! sent. A packet from the node's own application, count 0, or with a
+//! count under 4, has none, so overload pushes back where messages enter
+//! (roadmap D31, D155). The places keep the network from locking up while
+//! nothing is dropped for want of room: take the highest place held
+//! anywhere, `k`. Its message's count rises by one each hop, so within
+//! four hops it reaches band `k + 1`, whose place is free everywhere;
+//! until then it can be held only by a ring of relays each holding the
+//! places up to `k` for the next, and the gate's budget and the return
+//! to parent bound how long a message waits in one (spec "Send queue").
 //!
 //! Each entry is a frame, what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"), and where
@@ -75,9 +76,16 @@ const _: () = assert!(SEND_QUEUE == 39);
 /// than normal (roadmap D106).
 pub const HOP_WAIT: Duration = Duration::from_secs(30);
 
-/// Hop places: one for each count a packet can be received with and still
-/// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
-pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
+/// Counts that share a hop place: a packet received with count `h` may
+/// take place `h / BAND` or a lower one (spec "Send queue", roadmap D155).
+pub const BAND: u8 = 4;
+
+/// Hop places: one for each band of counts a packet can be received with
+/// and still be sent on, counts 4 to 254 in places 1 to 63; a packet
+/// received at 255 ends at the hop cap, and counts 1 to 3 take none.
+pub const HOP_PLACES: usize = (MAX_HOPS as usize - 1) / BAND as usize;
+
+const _: () = assert!(HOP_PLACES == 63);
 
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,12 +325,12 @@ impl SendQueue {
         if let Some(k) = freed {
             taken[k as usize] = false;
         }
-        let top = (hops as usize).min(HOP_PLACES);
+        let top = usize::from(hops / BAND).min(HOP_PLACES);
         (1..=top).rev().find(|&k| !taken[k]).map(|k| k as u8)
     }
 
-    /// The lowest free hop place: a packet received with this count or
-    /// higher finds one.
+    /// The lowest free hop place: a packet received with this place's
+    /// lowest count, `place × BAND`, or higher finds one.
     pub fn lowest_free_place(&self) -> Option<u8> {
         let mut taken = [false; HOP_PLACES + 1];
         for o in self.iter() {
@@ -578,21 +586,22 @@ mod tests {
     fn a_packet_takes_the_highest_free_place_not_above_its_count() {
         let mut q = SendQueue::new();
         assert_eq!(q.free_place(0, None), None, "nothing for count 0");
-        assert_eq!(q.free_place(3, None), Some(3));
+        assert_eq!(q.free_place(3, None), None, "nor for counts 1 to 3");
+        assert_eq!(q.free_place(15, None), Some(3), "count 15 is in band 3");
         for k in [3, 1] {
             let mut o = frame(k);
             o.place = k;
             q.push(o).unwrap();
         }
         assert_eq!(q.regular(), 0);
-        assert_eq!(q.free_place(3, None), Some(2));
-        assert_eq!(q.free_place(1, None), None);
-        assert_eq!(q.free_place(1, Some(1)), Some(1));
+        assert_eq!(q.free_place(12, None), Some(2));
+        assert_eq!(q.free_place(4, None), None);
+        assert_eq!(q.free_place(7, Some(1)), Some(1));
         // The place frees when its frame leaves.
         q.select(0);
         q.take_current();
-        assert_eq!(q.free_place(5, None), Some(5));
-        assert_eq!(q.free_place(3, None), Some(3));
+        assert_eq!(q.free_place(20, None), Some(5));
+        assert_eq!(q.free_place(12, None), Some(3));
     }
 
     impl SendQueue {

@@ -723,7 +723,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// a hop place now, if any is free (spec "Send queue"). For a driver to sample;
     /// reading it changes nothing.
     pub fn lowest_free_hop_place(&self) -> Option<u8> {
-        self.queue.lowest_free_place()
+        self.queue
+            .lowest_free_place()
+            .map(|k| k * crate::tables::send_queue::BAND)
     }
 
     /// The highest count this relay would send, of the forwards in its

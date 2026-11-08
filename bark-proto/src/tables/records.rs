@@ -22,17 +22,17 @@
 //! each entry waiting out one ban (spec "Bans", roadmap D31):
 //!
 //! ```text
-//! (39 + 254) places × 1.58 s = 463.4 s
+//! (39 + 63) places × 1.58 s = 161.3 s
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
 //! cycle (spec "Duty cycle cap"): each costs at least an ACK (18 bytes, 16.96 ms) and one
 //! DATA packet with no payload (28 bytes, 22.08 ms), together 39.04 ms;
-//! any 463.4 s carries at most a full bucket and its refill,
-//! 6 s + 9.83 % × 463.4 s = 51.57 s of airtime ([`most_on_air`]), and
-//! ⌊51.57 s / 39.04 ms⌋ = 1320. The records of held messages are not
+//! any 161.3 s carries at most a full bucket and its refill,
+//! 6 s + 9.83 % × 161.3 s = 21.86 s of airtime ([`most_on_air`]), and
+//! ⌊21.86 s / 39.04 ms⌋ = 560. The records of held messages are not
 //! evicted and may be older than that, so the table has room for them on
-//! top: 1320 + 293 = 1613.
+//! top: 560 + 102 = 662.
 //!
 //! # The tried set
 //!
@@ -85,7 +85,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1613);
+const _: () = assert!(RECORDS == 662);
 const _: () = assert!(RECORDS <= u16::MAX as usize, "a hint holds a place");
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
@@ -390,11 +390,11 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        // 293 places × one ban, 1.58 s.
-        assert_eq!(DRAIN, BAN.mul(293));
-        assert_eq!(DRAIN.as_millis(), 463_397);
-        assert_eq!(HELD, 293);
-        assert_eq!(RECORDS, 1320 + 293);
+        // 102 places × one ban, 1.58 s.
+        assert_eq!(DRAIN, BAN.mul(102));
+        assert_eq!(DRAIN.as_millis(), 161_319);
+        assert_eq!(HELD, 102);
+        assert_eq!(RECORDS, 560 + 102);
         assert_eq!(core::mem::size_of::<Record>(), 40);
     }
 

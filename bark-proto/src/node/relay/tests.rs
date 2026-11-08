@@ -774,8 +774,8 @@ fn the_application_waits_for_room() {
 }
 
 /// With the regular room closed by the bucket, a packet that has come
-/// two hops takes hop place 2, then 1, whatever the bucket holds; a
-/// sleepy node's own, or a third from two hops out, is refused. A place frees
+/// nine hops takes hop place 2, its band's, then 1, whatever the bucket
+/// holds; a sleepy node's own, or a third from nine hops out, is refused. A place frees
 /// when its frame leaves (roadmap D31). The relay has no neighbours, so
 /// each packet, from a sender of its own, would go back its own way.
 #[test]
@@ -842,14 +842,15 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
         offer(&mut r, &mut now, 1, 0),
         (None, Some(DropReason::Budget))
     );
-    assert_eq!(offer(&mut r, &mut now, 2, 2), (Some(2), None));
-    assert_eq!(offer(&mut r, &mut now, 3, 2), (Some(1), None));
+    // Counts 8 to 11 share place 2 (spec "Send queue").
+    assert_eq!(offer(&mut r, &mut now, 2, 9), (Some(2), None));
+    assert_eq!(offer(&mut r, &mut now, 3, 9), (Some(1), None));
     assert_eq!(
-        offer(&mut r, &mut now, 4, 2),
+        offer(&mut r, &mut now, 4, 9),
         (None, Some(DropReason::Budget))
     );
     r.queue.retain(|_, o| o.place != 1);
-    assert_eq!(offer(&mut r, &mut now, 5, 2), (Some(1), None));
+    assert_eq!(offer(&mut r, &mut now, 5, 9), (Some(1), None));
     assert_eq!(r.queue.regular(), 0);
 }
 
@@ -909,7 +910,7 @@ fn a_waiting_message_keeps_its_record() {
         drive_from(r, now, until, pending);
         d.msg_id()
     };
-    let waiting = offer(&mut r, &mut now, 1, 2);
+    let waiting = offer(&mut r, &mut now, 1, 8);
     assert!(r.queue.iter().any(|o| o.msg_id() == Some(waiting)));
     // Every other record newer.
     let later = now + Duration::from_secs(1);
@@ -919,7 +920,7 @@ fn a_waiting_message_keeps_its_record() {
     }
     assert!(r.records.is_full());
     now = later + Duration::from_secs(1);
-    let next = offer(&mut r, &mut now, 2, 3);
+    let next = offer(&mut r, &mut now, 2, 12);
     assert!(
         r.records.get(waiting).is_some(),
         "the waiting message's record went"
@@ -1643,7 +1644,7 @@ fn a_message_waits_whatever_its_age() {
     r.radio.budget.record(spend, now);
     // A count higher than the first's passes the gate (spec "Receiving DATA").
     assert_eq!(
-        offer_dropped(&mut r, &mut now, far, 2, 3),
+        offer_dropped(&mut r, &mut now, far, 2, 13),
         (Some(3), None, None)
     );
     // The neighbours do not answer: the messages wait for their bans
@@ -1670,7 +1671,7 @@ fn a_packet_in_the_network_is_taken_whatever_the_bans() {
     let spend = r.radio.budget.available(now) - Duration::from_millis(300);
     r.radio.budget.record(spend, now);
     // A count higher than the first's passes the gate (spec "Receiving DATA").
-    assert_eq!(offer_data(&mut r, &mut now, far, 2, 3), (Some(3), None));
+    assert_eq!(offer_data(&mut r, &mut now, far, 2, 13), (Some(3), None));
 }
 
 /// A hand-over carries the record's highest count plus one, stamped at
