@@ -1089,8 +1089,11 @@ pub struct PowerMetrics {
     pub back: [u64; 2],
     /// Graces that ended after the settle time.
     pub graces: u64,
-    /// The texts a relay held at the end of its grace after the settle
-    /// time, by how they went: by the flush, at a beat of their node in its
+    /// Relays that left after the settle time for being carried on
+    /// battery, with no grace (roadmap D152).
+    pub carried: u64,
+    /// The texts a relay held when it left, at the end of its grace or
+    /// carried on battery, after the settle time, by how they went: by the flush, at a beat of their node in its
     /// window or outside it, to their node as a relay, dropped at the turn
     /// to sleepy, none of these.
     pub held: [u64; 5],

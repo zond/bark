@@ -855,9 +855,10 @@ fn district_is_a_tenth_of_the_city() {
 
 /// S2 with a third of the sleepy nodes walking, on battery while they
 /// walk and on USB at their stops, and a third of the others switching
-/// at random (`[power]`, roadmap D71): nodes turn sleepy after their grace
-/// and relays at once, some power comes back within the grace, and texts
-/// still arrive or are accounted for.
+/// at random (`[power]`, roadmap D71, D152): fixed nodes turn sleepy
+/// after their grace, carried ones as they leave the charger, and both
+/// relays at once on it; some power comes back within the grace, and
+/// texts still arrive or are accounted for.
 #[test]
 fn nodes_switch_with_their_power() {
     let mut sc = scenario("s2-block.toml");
@@ -879,6 +880,7 @@ fn nodes_switch_with_their_power() {
     assert!(to_sleepy > 20 && to_relay > 20, "{to_sleepy} / {to_relay}");
     assert!(p.back[0] > 5, "{:?} back in the grace", p.back);
     assert!(p.graces > 10, "{} graces", p.graces);
+    assert!(p.carried > 10, "{} carried on battery", p.carried);
     let phase = &s.app.phases[1];
     assert!(phase.delivery_ratio >= 0.6, "{}", s.table());
     accounted(&sim, "S2 switching");

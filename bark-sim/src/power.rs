@@ -26,7 +26,7 @@ pub(crate) struct PowerModel {
     switches: Vec<bool>,
     /// Switching node by its ID's key.
     index: HashMap<u64, u32>,
-    /// The texts held at the end of a grace after the settle time, and
+    /// The texts held at a turn to leaving after the settle time, and
     /// their fate so far, an index of `PowerMetrics::held`.
     held: HashMap<u32, Option<usize>>,
     /// Per node, the anchor it had after its last event.
@@ -193,7 +193,7 @@ impl Sim {
                     p.turns.push((s, node, sleepy));
                 }
             }
-            T::GraceEnded if after => {
+            T::GraceEnded | T::CarriedOnBattery if after => {
                 let held: Vec<u32> = self
                     .relay(node)
                     .delivery_queue()
@@ -204,7 +204,11 @@ impl Sim {
                     m.held.entry(id).or_insert(None);
                 }
                 if let Some(p) = self.metrics.research.power.as_mut() {
-                    p.graces += 1;
+                    if *t == T::GraceEnded {
+                        p.graces += 1;
+                    } else {
+                        p.carried += 1;
+                    }
                 }
             }
             T::Delivered { msg_id, by, .. } => {
@@ -215,10 +219,19 @@ impl Sim {
                 };
                 self.power_fate(msg_id, fate);
             }
+            // A relay that leaves with its flush done turns sleepy in the
+            // same call, so what it drops was held when it left, though
+            // its queue was empty by the time the trace was read.
             T::Dropped {
                 msg_id,
                 reason: DropReason::Unplugged,
-            } => self.power_fate(msg_id, 3),
+            } => {
+                if after {
+                    let m = self.power.as_mut().expect("checked");
+                    m.held.entry(msg_id.0).or_insert(None);
+                }
+                self.power_fate(msg_id, 3)
+            }
             _ => {}
         }
     }
@@ -244,7 +257,7 @@ impl Sim {
         }
     }
 
-    /// The fates of the texts held at the end of a grace
+    /// The fates of the texts held at a turn to leaving
     /// (`PowerMetrics::held`).
     pub(crate) fn power_held(&self) -> [u64; 5] {
         let mut held = [0; 5];
