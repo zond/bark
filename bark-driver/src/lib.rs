@@ -33,6 +33,7 @@ use core::future::pending;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
+use bark_proto::update::{Image, Piece};
 use bark_proto::wire::{Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
@@ -205,6 +206,25 @@ pub enum Request {
     /// since the last fix: the driver tells the core
     /// (`AppCommand::NoFix`). Sent at the change from fixes to none.
     NoFix,
+    /// The image the node holds whole and checked (`AppCommand::Holds`).
+    Holds(Image),
+    /// Gather this image from block `from` on (`AppCommand::Gather`): the
+    /// application's answer to [`App::offered`], or at boot for one
+    /// gathered in part.
+    Gather {
+        /// The image.
+        image: Image,
+        /// The first block it lacks.
+        from: u8,
+    },
+    /// A block of the image gathered decoded, and matched its hash or not
+    /// (`AppCommand::Block`).
+    Block {
+        /// The block.
+        index: u8,
+        /// It matched.
+        ok: bool,
+    },
 }
 
 /// What the GPS is to do (core-interface §4): rest in standby, search
@@ -264,6 +284,20 @@ pub trait App {
     /// at each change; the receiver's fixes come back as
     /// [`Request::Fix`].
     fn gps(&mut self, gps: Gps);
+
+    /// A neighbour holds `image`, newer than what the node runs or
+    /// gathers (`Action::Offered`): if the application's policy takes it,
+    /// it answers [`Request::Gather`].
+    fn offered(&mut self, image: &Image);
+
+    /// Keep this piece of the image gathered (`Action::StorePiece`); a
+    /// block it completes comes back as [`Request::Block`].
+    fn store_piece(&mut self, piece: &Piece);
+
+    /// Write the bytes of the piece `frame`'s header names into it, from
+    /// `wire::PIECE_HEADER_LEN` on (`Action::Serve`); whether it did. A
+    /// frame it could not fill in time is not sent.
+    async fn serve(&mut self, frame: &mut Frame) -> bool;
 }
 
 /// Counters for the log, and the timings that say whether the loop keeps
@@ -291,6 +325,8 @@ pub struct Stats {
     /// Times [`App::ready`] resolved and the application gave nothing,
     /// against its contract.
     pub empty_readies: u32,
+    /// Pieces the application could not fill, not sent ([`App::serve`]).
+    pub unserved: u32,
 }
 
 /// The loop: one core, one radio, one clock, one application.
@@ -611,6 +647,15 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Request::Fix(position) => self.fix(position).await?,
                 Request::NoFix => self.deliver(Event::App(AppCommand::NoFix)).await?,
+                Request::Holds(image) => self.deliver(Event::App(AppCommand::Holds(image))).await?,
+                Request::Gather { image, from } => {
+                    self.deliver(Event::App(AppCommand::Gather { image, from }))
+                        .await?
+                }
+                Request::Block { index, ok } => {
+                    self.deliver(Event::App(AppCommand::Block { index, ok }))
+                        .await?
+                }
             }
         }
         Ok(any)
@@ -703,11 +748,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Store(s) => app.store(&s),
             Action::Locate(until) => search = Some(until).filter(|&t| t > now),
             Action::Trace(t) => log::info!("{:?}", t),
-            // No image is offered to a policy yet, nor a piece kept: the
-            // decoder, the flash and the signature check come later
-            // (spec "Updates over the mesh"), and a core never told an
-            // image held asks for neither but these two, which go unanswered.
-            Action::Offered(_) | Action::StorePiece(_) => {}
+            Action::Offered(image) => app.offered(&image),
+            Action::StorePiece(piece) => app.store_piece(&piece),
         });
         let took = self.clock.now().since(now);
         self.stats.events += 1;
@@ -774,13 +816,16 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Event::TxDone
             }
-            // The core serves pieces only of an image the driver said it
-            // holds (`AppCommand::Holds`), which this driver never says
-            // yet; the frame goes as it is, its bytes zero.
-            Action::Serve(frame) => {
-                self.deaf();
-                if let Err(e) = self.radio.transmit(&frame, self.tx_dbm).await {
-                    self.failed(e);
+            // A piece the application could not fill is not sent: the
+            // core counts it gone, as a piece lost on the air.
+            Action::Serve(mut frame) => {
+                if self.app.serve(&mut frame).await {
+                    self.deaf();
+                    if let Err(e) = self.radio.transmit(&frame, self.tx_dbm).await {
+                        self.failed(e);
+                    }
+                } else {
+                    self.stats.unserved += 1;
                 }
                 Event::TxDone
             }

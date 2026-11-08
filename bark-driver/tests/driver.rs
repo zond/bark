@@ -17,7 +17,10 @@ use bark_driver::{
     App, Clock, Driver, Gps, Heard, Outgoing, Radio, Request, MAX_AIRTIME, RSSI_DWELL,
 };
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::wire::{Ack, Data, Heartbeat, Packet, MAX_PAYLOAD};
+use bark_proto::update::{Image, ImageTag, Piece};
+use bark_proto::wire::{
+    Ack, Data, Heartbeat, Packet, Update, MAX_PAYLOAD, PIECE_BYTES, PIECE_HEADER_LEN,
+};
 use bark_proto::{
     Action, AppEvent, Config, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
     Relay, Stored, MAX_FRAME,
@@ -327,6 +330,11 @@ struct TestApp {
     /// What it queues, without a signal, when the core hands it a
     /// message, as a home's mailbox does a reply to a fetch.
     reply: Option<(Outgoing, Vec<u8>)>,
+    /// The images offered and the pieces handed to it, and the byte it
+    /// fills a piece served with, `None` if it cannot.
+    offered: Vec<Image>,
+    pieces: Vec<Piece>,
+    fill: Option<u8>,
 }
 
 impl TestApp {
@@ -396,6 +404,22 @@ impl App for TestApp {
 
     fn gps(&mut self, gps: Gps) {
         self.gps.push(gps);
+    }
+
+    fn offered(&mut self, image: &Image) {
+        self.offered.push(*image);
+    }
+
+    fn store_piece(&mut self, piece: &Piece) {
+        self.pieces.push(*piece);
+    }
+
+    async fn serve(&mut self, frame: &mut Frame) -> bool {
+        let Some(b) = self.fill else {
+            return false;
+        };
+        frame.bytes[PIECE_HEADER_LEN..usize::from(frame.len)].fill(b);
+        true
     }
 }
 
@@ -1457,4 +1481,87 @@ fn a_reply_that_becomes_due_goes_without_a_signal() {
     assert_eq!(d.app().messages, [fetch]);
     assert_eq!(sends(&d), [100_000]);
     assert_eq!(d.app().readies, 0);
+}
+
+fn image() -> Image {
+    Image {
+        name: ImageTag([1, 2, 3, 4]),
+        version: 8,
+        blocks: 3,
+        last: 5,
+        key: 1,
+    }
+}
+
+/// The core's update actions reach the application, and its answers
+/// reach the core as commands (core-interface §4).
+#[test]
+fn an_update_goes_between_the_core_and_the_application() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(500)]);
+    let piece = Piece {
+        block: 1,
+        index: 9,
+        bytes: [7; PIECE_BYTES],
+    };
+    core.then.push((at_ms(10), Action::Offered(image())));
+    core.then.push((at_ms(10), Action::StorePiece(piece)));
+    let mut d = driver(core, &world, Duration::ZERO);
+    run_until(&mut d, &world, at_ms(100));
+    assert_eq!(d.app().offered, [image()]);
+    assert_eq!(d.app().pieces, [piece]);
+    d.app_mut().push_request(Request::Gather {
+        image: image(),
+        from: 0,
+    });
+    d.app_mut()
+        .push_request(Request::Block { index: 1, ok: true });
+    d.app_mut().push_request(Request::Holds(image()));
+    step(&mut d, &world);
+    let told: Vec<&str> = seen(&d)
+        .into_iter()
+        .map(|(_, s)| s)
+        .filter(|s| s.starts_with("App"))
+        .collect();
+    assert_eq!(
+        told,
+        [
+            format!("App(Gather {{ image: {:?}, from: 0 }})", image()),
+            "App(Block { index: 1, ok: true })".into(),
+            format!("App(Holds({:?}))", image()),
+        ]
+    );
+}
+
+/// A piece frame goes with the bytes the application wrote into it; one
+/// it could not fill is not sent, and still completes.
+#[test]
+fn a_piece_goes_filled_or_not_at_all() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(500), at_ms(1000)]);
+    let mut buf = [0u8; MAX_FRAME];
+    let piece = Packet::Update(Update::Piece {
+        tag: ImageTag([1, 2, 3, 4]),
+        block: 1,
+        index: 9,
+        bytes: &[0; PIECE_BYTES],
+    });
+    let len = piece.encode(&mut buf).expect("it fits");
+    let out = frame(ch(5), &buf[..len]);
+    core.then.push((at_ms(10), Action::Serve(out)));
+    core.then.push((at_ms(500), Action::Serve(out)));
+    let mut d = driver(core, &world, Duration::ZERO);
+    d.app_mut().fill = Some(0x5a);
+    run_until(&mut d, &world, at_ms(400));
+    let mut filled = out;
+    filled.bytes[PIECE_HEADER_LEN..len].fill(0x5a);
+    assert!(world
+        .ops()
+        .iter()
+        .any(|(t, op)| *t == at_ms(10) && *op == Op::Transmit(filled)));
+    d.app_mut().fill = None;
+    run_until(&mut d, &world, at_ms(1000));
+    assert!(!world.ops().iter().any(|(t, _)| *t == at_ms(500)));
+    assert_eq!(d.stats().unserved, 1);
+    assert_eq!(seen(&d).iter().filter(|(_, s)| *s == "tx done").count(), 2);
 }

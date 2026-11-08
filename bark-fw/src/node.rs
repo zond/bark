@@ -211,6 +211,16 @@ impl App for LinkApp<'_> {
     fn gps(&mut self, gps: bark_driver::Gps) {
         crate::gps::want(gps);
     }
+
+    // Not wired yet: an offered image is not taken, so no piece comes,
+    // and the node never says it holds one, so the core serves none.
+    fn offered(&mut self, _: &bark_proto::update::Image) {}
+
+    fn store_piece(&mut self, _: &bark_proto::update::Piece) {}
+
+    async fn serve(&mut self, _: &mut bark_proto::Frame) -> bool {
+        false
+    }
 }
 
 impl LinkApp<'_> {
