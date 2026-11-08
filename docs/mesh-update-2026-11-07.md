@@ -575,6 +575,34 @@ The sleepy nodes gain about a block a day. Fewer sections and a stricter
 foreign rule slowed them by a block over the run: their anchors' slot
 pieces are the same pace's.
 
+17. **The slot piece out of the shared pace.** The simulator traces what
+    becomes of each piece due after an anchor's slot heartbeat
+    (`Trace::SlotPiece`). Over an update's first 24 hours, of 329 860
+    due, 60.0 % went, the shared pace held 39.2 %, 0.7 % went to another
+    channel, listen-before-talk held 0.1 %, and the bucket, the
+    anchor's own pace and lateness under 0.1 % together. The slot
+    piece now keeps no pace: one frame a rotation of an anchor, 0.1 %
+    of its channel, neither waiting for the shared pace nor counted
+    toward it; a node takes a piece that ends within the slot listen of
+    a heartbeat it heard for that sender's slot piece. It opens only
+    where a sleepy node lacks a block, no longer for relays at home.
+    The tests found two holders in step: they learnt of a gatherer at
+    the same heartbeat, sent in the same instant every pace and never
+    heard each other, so each pace now ends a random time within two
+    frames after its piece.
+
+    Over 96 hours on `715fb4f`, 99.9 % of the 998 850 pieces due after
+    slot heartbeats went. The sleepy nodes hardly moved for it: 64 of
+    945 held the image at 90 hours against 55, and those gathering
+    lacked block 2.7 on average against 2.9; 50 % was not reached. Each
+    heard about 650 pieces it lacked in the 96 hours, one in four of
+    its anchor's rotations, spread over the blocks by the sweep, about
+    23 of each block's 64. Where the other three go is not measured
+    yet. The relays held the image 50 / 90 / 100 % after 13.8 / 14.5 /
+    21.7 hours; the channels were busy 1.68 % against 1.71 % before and
+    1.28 % without the update; texts delivered 99.8 %, latency p50 /
+    p90 1.0 / 16.2 s, as without.
+
 
 ## What is left
 
