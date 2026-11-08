@@ -3700,7 +3700,9 @@ bytes and 14.4 ms.
    something.
 5. On its home channel, where it hears the others, a node that heard k
    pieces from other nodes since its last there sends its next there
-   k + 1 paces after its last; on another channel, one a pace.
+   k + 1 paces after its last; on another channel, one a pace. The
+   piece after a slot heartbeat is apart from this (sleepy nodes,
+   below).
 
 *Why a stream.* Every piece on a channel serves every node there that
 lacks its block, whenever that node began, so the nodes of a channel
@@ -3765,7 +3767,10 @@ from the bucket as a forward is, leaving the reply reserve
 ([duty cycle cap](#duty-cycle-cap)), and listens before it talks as a
 heartbeat does ([heartbeat](#heartbeat)): up to three checks, and if
 every one is busy the piece waits its pace. The pieces go on whichever
-channel the pace frees first.
+channel the pace frees first. Each pace ends a random time within two
+frames, 277 ms, after the piece: two senders that start a pace
+together then part by more than a frame, and hear each other, a quarter
+of the time each pace.
 
 *Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
 to 1.4 % of the time at the design rate of
@@ -3807,10 +3812,16 @@ the pieces it hears in its windows ([delivery](#delivery)) and after
 its anchor's slot heartbeats. The anchor sends one piece right after
 each of its slot heartbeats on its home channel, where its sleepy nodes
 listen for that heartbeat ([relay choice](#relay-choice)), while a
-neighbour there lacks a block it holds: the next piece of its stream on
-that channel, which keeps the pace. Its stream on that channel leaves
-the pace room for the slot when it comes within a pace, and a stream
-only sleepy nodes need goes only then. Every sleepy node of the anchor
+sleepy node there lacks a block it holds: the next piece of its stream
+on that channel. That piece keeps no pace: it is fixed by the rotation,
+one frame of 138.6 ms in a rotation of 130 s
+([heartbeat](#heartbeat)), 0.1 % of the channel for each anchor, so it
+neither waits for the home channel's shared pace nor counts toward it.
+A node that hears a piece end within 143.6 ms of a heartbeat it heard
+takes it for that sender's slot piece and does not count it. The piece
+still pays from the bucket and listens before it talks, and if the
+channel is busy it waits for the next slot. A stream only sleepy nodes
+need goes only then. Every sleepy node of the anchor
 takes the same piece, so all of them gather at once. The node listens
 after its anchor's slot heartbeat for that piece while it gathers and
 the anchor's section says it holds a block the node lacks: 143.6 ms,
@@ -3832,6 +3843,14 @@ the 230 ms an hour of its beats ([beats](#beats)).
 The pieces it hears in its windows shorten its time. The nodes of an
 anchor gather together, so a district's sleepy nodes take days, not
 days for each.
+
+*Why the slot piece keeps no pace.* Shared, the pace let an anchor send
+after few of its slot heartbeats wherever several streamed on its
+channel: in the district at the design rate, over an update's first
+24 hours, the shared pace held 39 % of the pieces due after slot
+heartbeats, and listen-before-talk, the bucket and the anchor's own
+pace together under 1 % (`mesh-update-2026-11-07.md`). Its own load is bounded by the
+rotation, and a sleepy node can take a piece at no other time.
 
 *Why after the slot heartbeat.* Every sleepy node of the anchor listens
 for it in the same moment, so one frame reaches all of them; in a
