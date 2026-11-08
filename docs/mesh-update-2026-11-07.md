@@ -8,7 +8,7 @@ name. Built: the frames, the core's side and the simulator's driver
 side, without bytes; on 2026-11-08 the chain and the sleepy side
 ("The chain and the sleepy side", below), then heartbeat sections in
 place of the announcement and the request, a sweep and a shared pace
-("Heartbeat sections and a sweep", below, roadmap D150). Not built: the firmware's
+("Heartbeat sections and a sweep", below, roadmap D151). Not built: the firmware's
 side of the transport (the policy, the signature check and the
 install, and the driver's answers; the code and the pieces store are
 `bark-image`'s `code.rs` and `pieces.rs`, roadmap D149).
@@ -385,7 +385,7 @@ of 2026-11-07.
 ## Heartbeat sections and a sweep (2026-11-08)
 
 The user changed the shape on 2026-11-08, in three steps the same day:
-the holder streams and every block is kept (roadmap D150's store); then
+the holder streams and every block is kept (roadmap D151's store); then
 the announcement and the request go, and the heartbeat tells instead;
 then the stream sweeps the blocks in order, and the senders on a
 channel share the pace instead of one keeping it.

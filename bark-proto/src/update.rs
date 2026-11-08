@@ -92,7 +92,7 @@ impl Section {
 
 /// The most blocks an image the mesh carries has, the table's among
 /// them: the lanes the firmware keeps pieces in, one a block
-/// (`bark-image`, `pieces.rs`, `MAX_BLOCKS`; roadmap D150).
+/// (`bark-image`, `pieces.rs`, `MAX_BLOCKS`; roadmap D151).
 pub const MAX_BLOCKS: usize = 48;
 
 /// The airtime of a full frame, a piece's, 138.6 ms.
