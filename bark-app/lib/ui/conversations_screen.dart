@@ -1,9 +1,11 @@
 // The first screen: one row a conversation, newest first, under a bar for
-// each newer release of the app or the node's firmware.
+// each newer release of the app or the node's firmware, and a line to
+// the archived ones.
 
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import 'archived_screen.dart';
 import '../conversations.dart';
 import '../link.dart';
 import 'card_screen.dart';
@@ -25,7 +27,12 @@ class ConversationsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Watch(app, (context) {
     final s = app.session;
-    final list = conversations(app.contacts.list, s.outbox, s.received);
+    final all = conversations(app.contacts.list, s.outbox, s.received);
+    final list = [
+      for (final c in all)
+        if (!app.contacts.isArchived(c.key)) c,
+    ];
+    final archived = all.length - list.length;
     return Scaffold(
       appBar: AppBar(
         title: const Text('bark'),
@@ -42,6 +49,10 @@ class ConversationsScreen extends StatelessWidget {
               PopupMenuItem(
                 value: () => ContactsScreen(app),
                 child: const Text('Contacts'),
+              ),
+              PopupMenuItem(
+                value: () => ArchivedScreen(app),
+                child: const Text('Archived'),
               ),
               PopupMenuItem(
                 value: () => MapScreen(app),
@@ -77,7 +88,7 @@ class ConversationsScreen extends StatelessWidget {
             ),
           _connection(context),
           SendCardLine(app),
-          if (list.isEmpty)
+          if (all.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
@@ -86,6 +97,11 @@ class ConversationsScreen extends StatelessWidget {
               ),
             ),
           for (final c in list) _row(context, c),
+          if (archived > 0)
+            ArchivedLine(
+              '$archived archived',
+              onTap: () => _open(context, ArchivedScreen(app)),
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -177,7 +193,35 @@ class ConversationsScreen extends StatelessWidget {
     );
   }
 
-  Widget _row(BuildContext context, Conversation c) {
+  /// A swipe either way archives, with an undo, as the row is gone at
+  /// once.
+  Widget _row(BuildContext context, Conversation c) => Dismissible(
+    key: ValueKey(c.key),
+    background: const SwipeBackground(Alignment.centerLeft),
+    secondaryBackground: const SwipeBackground(Alignment.centerRight),
+    onDismissed: (_) async {
+      await app.contacts.archiveConversation(c.key);
+      if (!context.mounted) return;
+      archivedSay(
+        ScaffoldMessenger.of(context),
+        app,
+        c.key,
+        '${c.title}: conversation archived',
+      );
+    },
+    child: ConversationRow(app, c),
+  );
+}
+
+/// One conversation: who, the last text and, for a sent one, its state.
+class ConversationRow extends StatelessWidget {
+  final AppModel app;
+  final Conversation c;
+  final Widget? trailing;
+  const ConversationRow(this.app, this.c, {this.trailing, super.key});
+
+  @override
+  Widget build(BuildContext context) {
     final last = c.last!;
     return ListTile(
       leading: CircleAvatar(
@@ -191,8 +235,9 @@ class ConversationsScreen extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
-      trailing: Text(when(last.at)),
-      onTap: () => _open(context, ThreadScreen(app, c.key)),
+      trailing: trailing ?? Text(when(last.at)),
+      onTap: () => Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => ThreadScreen(app, c.key))),
     );
   }
 }

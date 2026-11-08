@@ -1,10 +1,12 @@
-// The contacts, and adding one from a card.
+// The contacts, and adding one from a card. Archived ones are behind a
+// line at the bottom.
 
 import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../card.dart';
 import '../contacts.dart';
+import 'archived_screen.dart';
 import 'common.dart';
 import 'scan_screen.dart';
 import 'thread_screen.dart';
@@ -14,30 +16,24 @@ class ContactsScreen extends StatelessWidget {
   const ContactsScreen(this.app, {super.key});
 
   @override
-  Widget build(BuildContext context) => Watch(
-    app,
-    (context) => Scaffold(
+  Widget build(BuildContext context) => Watch(app, (context) {
+    final cs = app.contacts;
+    final archived = cs.list.length - cs.active.length;
+    return Scaffold(
       appBar: AppBar(title: const Text('Contacts')),
       body: ListView(
         children: [
-          if (app.contacts.list.isEmpty)
+          if (cs.list.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text('No contacts yet.'),
             ),
-          for (final c in app.contacts.list)
-            ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.person)),
-              title: Text(c.name),
-              subtitle: Text(
-                !c.verified
-                    ? 'not verified yet'
-                    : c.card.home?.toString() ?? 'no home node',
-                style: const TextStyle(fontFamily: 'monospace'),
-              ),
-              onTap: () => Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (_) => ThreadScreen(app, c.key)),
-              ),
+          for (final c in cs.active) _row(context, c),
+          if (archived > 0)
+            ArchivedLine(
+              '$archived archived',
+              onTap: () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => ArchivedScreen(app))),
             ),
         ],
       ),
@@ -47,6 +43,37 @@ class ContactsScreen extends StatelessWidget {
         onPressed: () =>
             Navigator.of(context)
                 .push(MaterialPageRoute(builder: (_) => AddContactScreen(app))),
+      ),
+    );
+  });
+
+  /// A swipe either way archives the contact and its conversation, with
+  /// an undo, as the row is gone at once.
+  Widget _row(BuildContext context, Contact c) => Dismissible(
+    key: ValueKey(c.key),
+    background: const SwipeBackground(Alignment.centerLeft),
+    secondaryBackground: const SwipeBackground(Alignment.centerRight),
+    onDismissed: (_) async {
+      await app.contacts.archiveContact(c);
+      if (!context.mounted) return;
+      archivedSay(
+        ScaffoldMessenger.of(context),
+        app,
+        c.key,
+        '${c.name}: contact archived',
+      );
+    },
+    child: ListTile(
+      leading: const CircleAvatar(child: Icon(Icons.person)),
+      title: Text(c.name),
+      subtitle: Text(
+        !c.verified
+            ? 'not verified yet'
+            : c.card.home?.toString() ?? 'no home node',
+        style: const TextStyle(fontFamily: 'monospace'),
+      ),
+      onTap: () => Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => ThreadScreen(app, c.key)),
       ),
     ),
   );
@@ -112,6 +139,8 @@ class _AddContactScreenState extends State<AddContactScreen> {
     final cs = widget.app.contacts;
     final known = cs.byKey(c.key);
     await cs.put(known?.copyWith(card: c, name: n) ?? Contact(c, n));
+    // Adding an archived contact again is asking for them back.
+    await cs.unarchive(c.key);
     if (!mounted) return;
     // Back from the new thread leads to the conversations.
     Navigator.of(context)

@@ -1,4 +1,5 @@
-// One conversation: its texts in order and a field to write the next.
+// One conversation: its texts in order and a field to write the next;
+// an archived one read-only, with a button to bring it back.
 
 import 'package:flutter/material.dart';
 
@@ -7,6 +8,7 @@ import '../app_layer.dart';
 import '../contacts.dart';
 import '../conversations.dart';
 import '../session.dart';
+import 'archived_screen.dart';
 import 'common.dart';
 
 /// The mark on a received text that came as a first message: only a box
@@ -96,6 +98,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final s = app.session;
     final c = thread(widget.keyHex, app.contacts.list, s.outbox, s.received);
     final contact = c.contact;
+    final archived = app.contacts.isArchived(widget.keyHex);
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -112,22 +115,40 @@ class _ThreadScreenState extends State<ThreadScreen> {
         ),
         actions: [
           FetchButton(app),
-          if (contact != null)
+          if (!archived)
             PopupMenuButton<void Function()>(
               onSelected: (f) => f(),
               itemBuilder: (_) => [
+                if (contact != null) ...[
+                  PopupMenuItem(
+                    value: () => _name(contact),
+                    child: const Text('Rename'),
+                  ),
+                  PopupMenuItem(
+                    value: () => app.messenger.sendCard(contact),
+                    child: const Text('Send my card'),
+                  ),
+                ],
                 PopupMenuItem(
-                  value: () => _name(contact),
-                  child: const Text('Rename'),
+                  value: () => _archive(
+                    app.contacts.archiveConversation(widget.keyHex),
+                    '${c.title}: conversation archived',
+                  ),
+                  child: const Text('Archive conversation'),
                 ),
-                PopupMenuItem(
-                  value: () => app.messenger.sendCard(contact),
-                  child: const Text('Send my card'),
-                ),
-                PopupMenuItem(
-                  value: () => app.contacts.remove(contact),
-                  child: const Text('Remove contact'),
-                ),
+                if (contact != null) ...[
+                  PopupMenuItem(
+                    value: () => _archive(
+                      app.contacts.archiveContact(contact),
+                      '${contact.name}: contact archived',
+                    ),
+                    child: const Text('Archive contact'),
+                  ),
+                  PopupMenuItem(
+                    value: () => app.contacts.remove(contact),
+                    child: const Text('Remove contact'),
+                  ),
+                ],
               ],
             ),
         ],
@@ -151,11 +172,27 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 padding: const EdgeInsets.all(8),
                 children: [
                   for (final e in c.entries.reversed)
-                    _bubble(context, e, contact?.verified ?? true),
+                    _bubble(context, e, contact?.verified ?? true, archived),
                 ],
               ),
             ),
-            if (contact == null)
+            if (archived)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('This conversation is archived.'),
+                    ),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.unarchive),
+                      label: const Text('Unarchive'),
+                      onPressed: () => app.contacts.unarchive(widget.keyHex),
+                    ),
+                  ],
+                ),
+              )
+            else if (contact == null)
               const Padding(
                 padding: EdgeInsets.all(16),
                 child: Text('This contact was removed.'),
@@ -175,6 +212,16 @@ class _ThreadScreenState extends State<ThreadScreen> {
       ),
     );
   });
+
+  /// Archives, and leaves the thread, which the first screen no longer
+  /// shows; the undo is said there.
+  Future<void> _archive(Future<void> done, String what) async {
+    final m = ScaffoldMessenger.of(context);
+    await done;
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    archivedSay(m, app, widget.keyHex, what);
+  }
 
   Future<void> _name(Contact c) async {
     final name = await askText(context, 'Name', c.name);
@@ -224,8 +271,9 @@ class _ThreadScreenState extends State<ThreadScreen> {
   );
 
   /// `verified`: the line above the thread does not already say that any
-  /// text in it may be anyone's.
-  Widget _bubble(BuildContext context, Entry e, bool verified) {
+  /// text in it may be anyone's. `archived`: read-only, so nothing in it
+  /// sends or drops.
+  Widget _bubble(BuildContext context, Entry e, bool verified, bool archived) {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall!;
     final mine = e.mine;
@@ -268,10 +316,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   children: [
                     Text(when(e.at), style: small),
                     if (mine) ..._sentMarks(e.outs, small, scheme),
-                    if (!mine) ..._receivedMarks(e, verified, small, color),
+                    if (!mine)
+                      ..._receivedMarks(e, verified, small, color, archived),
                   ],
                 ),
-                if (mine) _actions(e.outs),
+                if (mine && !archived) _actions(e.outs),
               ],
             ),
           ),
@@ -311,6 +360,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     bool verified,
     TextStyle small,
     Color color,
+    bool archived,
   ) => [
     if (verified && e.arrived.any((r) => r.intro))
       _mark(Icons.gpp_maybe, unverifiedText, small, color),
@@ -320,7 +370,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       // One plain check: the person knows they have it, so the two
       // coloured ones would say nothing.
       _mark(Icons.check, 'Acknowledged', small, color)
-    else
+    else if (!archived)
       _acknowledge(e.arrived.first, small),
   ];
 
