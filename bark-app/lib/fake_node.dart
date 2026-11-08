@@ -8,8 +8,8 @@
 // fetch as the spec's "Mailbox" says. Around it stand a few neighbours,
 // one of each link quality and of each kind a map draws apart. It takes
 // a firmware update as the node does, and comes back from its reboot
-// running the new version. Made public, it also takes guests' links, as
-// the spec's "Phone link", Public, says.
+// running the new version. Public unless its owner makes it private, it
+// also takes guests' links, as the spec's "Phone link", Public, says.
 
 import 'dart:async';
 import 'dart:math';
@@ -773,10 +773,11 @@ class FakeNode implements NodeLink {
   @override
   Stream<GivenBack?> get givenBackNotified => _owner.given.stream;
 
-  /// Whether it serves phones that have not paired, kept across
-  /// connections and pairings as with the bond.
+  /// Whether it serves phones that have not paired, as a node does
+  /// unless its owner makes it private; kept across connections and
+  /// pairings as with the bond.
   bool get public => _public;
-  bool _public = false;
+  bool _public = true;
   set public(bool v) {
     _public = v;
     _turnGen++;

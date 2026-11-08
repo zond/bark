@@ -317,10 +317,10 @@ proptest! {
         ltk: [u8; 16],
         seen: u8,
         service_changed: bool,
-        public: bool,
+        private: bool,
         owner: Option<u8>,
     ) {
-        let b = bond::Bond { kind, addr, irk, ltk, seen, service_changed, public, owner };
+        let b = bond::Bond { kind, addr, irk, ltk, seen, service_changed, private, owner };
         prop_assert_eq!(bond::Bond::from_record(&b.record()), Some(b));
     }
 
@@ -333,7 +333,7 @@ proptest! {
             ltk,
             seen: VERSION,
             service_changed: true,
-            public: true,
+            private: true,
             owner: Some(0),
         };
         let mut r = b.record();
@@ -344,9 +344,9 @@ proptest! {
 }
 
 /// A record written before the bond kept the seen version, the
-/// subscription, the public setting and the owner's tag has zeros there:
+/// subscription, the private setting and the owner's tag has zeros there:
 /// a phone that saw no version, has not subscribed and wrote no tag, on a
-/// node that is not public.
+/// public node.
 #[test]
 fn an_older_bond_saw_no_version() {
     let b = bond::Bond {
@@ -356,7 +356,7 @@ fn an_older_bond_saw_no_version() {
         ltk: [2; 16],
         seen: 0,
         service_changed: false,
-        public: false,
+        private: false,
         owner: None,
     };
     let mut r = b.record();
@@ -364,6 +364,33 @@ fn an_older_bond_saw_no_version() {
     assert_eq!(bond::Bond::from_record(&r), Some(b));
     r[10] = 2;
     assert_eq!(bond::Bond::from_record(&r), None);
+}
+
+/// Nodes are public unless the owner says otherwise: with no bond, and
+/// with a bond written while byte 11 said public, 1, or not, 0.
+#[test]
+fn a_node_is_public_unless_made_private() {
+    assert!(bond::public(None));
+    let b = bond::Bond {
+        kind: 1,
+        addr: [1; 6],
+        irk: None,
+        ltk: [2; 16],
+        seen: 7,
+        service_changed: false,
+        private: false,
+        owner: Some(3),
+    };
+    for said in [0, 1] {
+        let mut r = b.record();
+        r[11] = said;
+        let got = bond::Bond::from_record(&r);
+        assert!(bond::public(got.as_ref()), "byte 11 = {said}");
+    }
+    let private = bond::Bond { private: true, ..b };
+    assert!(!bond::public(
+        bond::Bond::from_record(&private.record()).as_ref()
+    ));
 }
 
 #[test]

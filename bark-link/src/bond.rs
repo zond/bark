@@ -10,10 +10,11 @@
 //! | 8 | 1 if an identity resolving key follows, else 0 |
 //! | 9 | the link version whose attribute table the phone last saw, 0 for none known |
 //! | 10 | 1 if the phone has asked for Service Changed indications, else 0 |
-//! | 11 | 1 if the node is public, else 0 (spec "Phone link", Public) |
+//! | 11 | ignored: a public node said 1 here before nodes were public by default |
 //! | 12 | 1 if the paired phone's recipient tag follows, else 0 |
 //! | 13 | the paired phone's recipient tag at the node, or 0 |
-//! | 14–15 | 0 |
+//! | 14 | 1 if the owner has made the node private, else 0 (spec "Phone link", Public) |
+//! | 15 | 0 |
 //! | 16–31 | the long-term key the pairing made, least significant byte first (Vol 3 Part H §2.3.5.6.5) |
 //! | 32–47 | the phone's identity resolving key, or 0 (Vol 3 Part H §3.6.4) |
 //! | 48–59 | 0 |
@@ -42,8 +43,10 @@ pub struct Bond {
     /// client's is kept across connections (Bluetooth Core Vol 3 Part G
     /// §3.3.3.3).
     pub service_changed: bool,
-    /// The node is public: false in a record from before this field.
-    pub public: bool,
+    /// The owner has made the node private: false in a record from
+    /// before this field, so a node is public unless its owner says
+    /// otherwise.
+    pub private: bool,
     /// The paired phone's recipient tag at the node, which it writes at
     /// every connection; kept so that the node knows its owner's payloads
     /// while the owner is away. `None` until the phone writes one.
@@ -70,7 +73,7 @@ impl Bond {
         }
         r[9] = self.seen;
         r[10] = u8::from(self.service_changed);
-        r[11] = u8::from(self.public);
+        r[14] = u8::from(self.private);
         if let Some(t) = self.owner {
             r[12] = 1;
             r[13] = t;
@@ -85,7 +88,7 @@ impl Bond {
     /// cut short.
     pub fn from_record(r: &[u8; Self::LEN]) -> Option<Bond> {
         let whole = r[0] == Self::TAG && (0..4).all(|i| r[60 + i] == !r[i]);
-        if !whole || r[8] > 1 || r[10] > 1 || r[11] > 1 || r[12] > 1 {
+        if !whole || r[8] > 1 || r[10] > 1 || r[12] > 1 || r[14] > 1 {
             return None;
         }
         let mut addr = [0u8; 6];
@@ -104,8 +107,14 @@ impl Bond {
             ltk,
             seen: r[9],
             service_changed: r[10] == 1,
-            public: r[11] == 1,
+            private: r[14] == 1,
             owner: (r[12] == 1).then_some(r[13]),
         })
     }
+}
+
+/// Whether a node with the bond `bond`, or none, is public: unless its
+/// owner has made it private (spec "Phone link", Public).
+pub fn public(bond: Option<&Bond>) -> bool {
+    bond.is_none_or(|b| !b.private)
 }

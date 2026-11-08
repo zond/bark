@@ -2964,9 +2964,11 @@ numbers below are of the Bluetooth Core Specification 5.0
 **Finding the node.** The node advertises, connectable, every
 1022.5 ms: its flags and the service's UUID, which the app scans for,
 in the advertisement; its name, `bark-` and the twelve hex digits of
-its ID as its display shows them, in the scan response. It takes one
-connection at a time and does not advertise while it has one (roadmap
-D120); a public node takes more (Public, below).
+its ID as its display shows them, in the scan response. A node is
+public unless its owner makes it private, and a public node advertises
+otherwise and takes more links (Public, below); a private node takes
+one connection at a time and does not advertise while it has one
+(roadmap D120).
 
 *Why the name in the scan response.* A legacy advertisement holds 31
 bytes (Vol 6 Part B §2.3.1): the flags take 3 and a 128-bit UUID 18,
@@ -2981,9 +2983,9 @@ advertising event on the three channels is about 2 ms of the radio at
 receive (an estimate from the nRF52840 Product Specification's radio
 currents, for the bench to measure).
 
-*Why one connection.* One person's phone owns the node: two phones
-would share one inbox and one message slot. A public node shares them
-by rules of their own (Public, below).
+*Why one connection.* One person's phone owns a private node: two
+phones would share one inbox and one message slot. A public node shares
+them by rules of their own (Public, below).
 
 **Pairing.** A node is one phone's: the phone paired with it (roadmap
 D135). Every characteristic of the service needs a link encrypted with
@@ -2998,8 +3000,8 @@ The pairing is LE Secure Connections with passkey entry (Vol 3 Part H
 is that the node shows a six-digit passkey and the person types it into
 the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it, on the line `PAIR CODE`; the
-same line says `PHONE PUBLIC` on a public node, and `PHONE PAIRED` or
-`PHONE NONE` otherwise. The node keeps
+same line says `PHONE PUBLIC` on a public node, and `PHONE PAIRED` on
+one its owner has made private. The node keeps
 one bond in flash across reboots: the phone's identity address, the
 identity resolving key by which it knows the phone's changing address
 (Vol 6 Part B §1.3.2.2), and the long-term key. A new pairing replaces
@@ -3335,10 +3337,13 @@ discovers the whole table, a few round trips once per version. The hash
 lets a phone that reads it as it connects find a change before the
 indication comes.
 
-**Public.** The owner may make the node public, so that it also serves
-phones that have not paired with it, guests, as a café's or a shop's
-node serves its customers. The paired phone writes 1 to Public to make
-the node public and 0 to make it its own alone; the node keeps the
+**Public.** A node is public, serving phones that have not paired with
+it, guests, as well as its owner's, unless its owner makes it private:
+a shared node serves the people around it with nothing to set, and an
+owner who wants it theirs alone says so. The paired phone writes 0 to
+Public to make the node private and 1 to make it public again; a read
+gives 1 for public. A node nobody has paired with is public, and so is
+one whose bond was kept before this setting existed. The node keeps the
 setting with the bond across reboots, and a new pairing keeps it
 (roadmap D150). Public needs the bond, as Pairing says, so only the
 owner sets it.
@@ -3360,7 +3365,8 @@ On a public node:
   connects (The payload, below), and the node hands each message it
   receives for its application by the tag in the payload's second
   byte: to every guest connected whose tag it is, and to the owner,
-  when it is the owner's tag, or when the node holds none yet. The
+  when it is the owner's tag, or when the bond holds none yet; on a
+  node nobody has paired with nothing is the owner's. The
   paired phone's tag is kept with the bond, so the owner's messages are
   placed while the owner is away. The owner's inbox is the ring, as a
   home's ([mailbox](#mailbox)), whether or not the node is a home: the

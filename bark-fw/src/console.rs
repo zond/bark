@@ -1547,5 +1547,5 @@ fn public() -> bool {
         out.copy_from_slice(bytes);
         true
     });
-    kept.bond.is_some_and(|b| b.public)
+    bark_link::bond::public(kept.bond.as_ref())
 }

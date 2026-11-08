@@ -96,8 +96,8 @@ is a prototype for the bench, not the app people will carry.
   one; a public node says so, with its RSSI, and a tap joins it as a
   guest, **Pair** pairs with it instead) and the node the phone is
   paired with, the fake node switch, on the paired node of link version
-  7 or later the switch **Public: serve phones without pairing** (Public
-  nodes, below), the
+  7 or later the switch **Public: serve phones without pairing**, on
+  unless the owner turns it off (Public nodes, below), the
   version of the connected node's firmware and **Update firmware**
   (Updating a node, below), whether the app is exempt from battery
   optimisation (next section), your name, the home node (make the
@@ -163,11 +163,13 @@ screen and in Settings. A pairing cancelled or with a wrong code says
 so. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
 bond), which needs no code of the app's own on the Android side.
 
-**Public nodes.** The owner may make their node public with the switch
-in Settings, so that it also passes on the texts of phones that have
-not paired with it, guests, as a shop's or a café's node would (spec
-"Phone link", Public). A public node advertises another UUID in place
-of the service's, so a scan tells it apart without connecting. A guest
+**Public nodes.** Every node is public unless its owner turns the
+switch in Settings off: it also passes on the texts of phones that have
+not paired with it, guests, as a shop's or a café's node would, with
+nothing to set (spec "Phone link", Public). A public node advertises
+another UUID in place of the service's, and a private one the
+service's, so a scan tells them apart without connecting; the app takes
+a node as public unless its advertisement says it is private. A guest
 connects without pairing and touches only what a guest may: Node,
 Status, Send, Inbox, Given back and Recipient. It does not set the
 clock, read Home or Public, set the map point, read the neighbours or
@@ -346,8 +348,8 @@ and they write from a node of their own away from it,
 messages. It runs on while the app is disconnected, as
 a node does. It counts as paired with the phone; a test can have it
 pair with another phone (`FakeNode.pairElsewhere`), and the app then
-finds it no longer yours, as with a node. Made public, by the switch or
-by a test, it takes up to three guests' links beside its owner's: a
+finds it no longer yours, as with a node. Public, as it starts, until
+the switch or a test makes it private, it takes up to three guests' links beside its owner's: a
 guest's link answers 0x05, insufficient authentication, to every value
 that needs the bond; it hands each message to the guests whose tag it
 carries and to the owner when it is the owner's tag or it has none yet,
@@ -761,7 +763,8 @@ a phone (Trying it, With a node).
     of version 1 still shows it. A node of version 0 shows none.
 15. A public node, on link version 7, with two phones. On the owner's
     phone, connected, **Settings**, **Public: serve phones without
-    pairing**: the switch turns on, and the node's screen says `PHONE
+    pairing** is on from the start, and the node's screen says `PHONE
+    PUBLIC`; turned off, it says `PHONE PAIRED`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its RSSI; or, with no paired node of
     its own in reach, the second phone joins it by itself within a

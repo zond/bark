@@ -760,6 +760,9 @@ void main() {
         app: p.me.identity,
         mailbox: p.me.keys.mailbox,
       );
+      // The replies come back to this node though the fetch names another,
+      // whose tag a public node would not take for the owner's.
+      node.public = false;
       p.session.attach(node.connect());
       async.flushMicrotasks();
       p.me.setHome(
