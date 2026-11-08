@@ -57,22 +57,24 @@ void main() {
   Matcher refused(int code) =>
       throwsA(isA<AttException>().having((e) => e.code, 'code', code));
 
-  test('the owner writes its tag, reads Public and sets it', () {
+  test('the owner writes its tag, reads Public, on by default, and sets '
+      'it', () {
     run((async, owner, guest, node) {
       expect(node.ownerTag, tagOf(owner));
-      expect(owner.session.nodePublic, isFalse);
-      owner.session.writePublic(true);
-      async.flushMicrotasks();
-      expect((node.public, owner.session.nodePublic), (true, true));
+      expect(owner.session.nodePublic, isTrue);
       owner.session.writePublic(false);
       async.flushMicrotasks();
       expect((node.public, owner.session.nodePublic), (false, false));
+      owner.session.writePublic(true);
+      async.flushMicrotasks();
+      expect((node.public, owner.session.nodePublic), (true, true));
     });
   });
 
   test('a guest\'s link: refused everything on a node not public, and on '
       'a public one what needs the bond', () {
     run((async, owner, guest, node) {
+      node.public = false;
       final g = node.connectGuest();
       expect(g.readNode(), refused(AttError.insufficientAuthentication));
       node.public = true;

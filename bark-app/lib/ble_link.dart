@@ -8,15 +8,16 @@ import 'package:universal_ble/universal_ble.dart';
 import 'link.dart';
 import 'node_link.dart';
 
-/// A node seen in a scan; [public] when it advertised the public node's
-/// UUID, so that it serves phones that have not paired with it (spec
-/// "Phone link", Public).
+/// A node seen in a scan; [public] unless it advertised the service's
+/// UUID, as a node whose owner made it private does: a node is public,
+/// serving phones that have not paired with it, unless its owner says
+/// otherwise (spec "Phone link", Public).
 class FoundNode {
   final String deviceId;
   final String name;
   final int? rssi;
   final bool public;
-  const FoundNode(this.deviceId, this.name, this.rssi, {this.public = false});
+  const FoundNode(this.deviceId, this.name, this.rssi, {this.public = true});
 
   /// A scan result, named by its device where Android gives no name yet:
   /// the name is in the scan response, which may come after the
@@ -27,13 +28,14 @@ class FoundNode {
       d.deviceId,
       name.isEmpty ? d.deviceId : name,
       d.rssi,
-      public: d.services.any((u) => u.toLowerCase() == Uuids.publicNode),
+      public: !d.services.any((u) => u.toLowerCase() == Uuids.service),
     );
   }
 
   /// This node and `n`, the same device heard again: its name once one
-  /// came, and the stronger RSSI, as a fade takes some advertisements
-  /// down and none up.
+  /// came, the stronger RSSI, as a fade takes some advertisements down
+  /// and none up, and private once any of them said so, as a scan
+  /// response says nothing either way.
   FoundNode heardAgain(FoundNode n) => FoundNode(
     deviceId,
     name == deviceId ? n.name : name,
@@ -41,7 +43,7 @@ class FoundNode {
       (final a?, final b?) => a > b ? a : b,
       (final a, final b) => a ?? b,
     },
-    public: public || n.public,
+    public: public && n.public,
   );
 }
 

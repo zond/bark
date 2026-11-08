@@ -645,13 +645,17 @@ void main() {
     await t.pump();
     const public = 'Public: serve phones without pairing';
     expect(find.text(public), findsOneWidget);
+    // On by default; the owner turns it off.
+    final toggle = find.widgetWithText(SwitchListTile, public);
+    expect(t.widget<SwitchListTile>(toggle).value, isTrue);
     await t.tap(find.text(public));
     await t.runAsync(() => Future<void>.delayed(Duration.zero));
     await t.pump();
-    expect(app.fakeNode!.public, isTrue);
-    expect(app.session.nodePublic, isTrue);
+    expect(app.fakeNode!.public, isFalse);
+    expect(app.session.nodePublic, isFalse);
 
-    // Another phone's view: connected as a guest.
+    // Another phone's view, on the node public again: connected as a guest.
+    app.fakeNode!.public = true;
     await app.session.disconnect();
     await app.session.attach(app.fakeNode!.connectGuest(), guest: true);
     await t.pump();

@@ -331,10 +331,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         contentPadding: EdgeInsets.zero,
         title: const Text('Public: serve phones without pairing'),
         subtitle: const Text(
-          'Phones near the node that have not paired with it can send and '
-          'receive their texts through it, as at a shop\'s or a café\'s '
-          'node. They cannot change its settings, and your texts stay '
-          'yours.',
+          'On unless you turn it off: phones near the node that have not '
+          'paired with it can send and receive their texts through it, as '
+          'at a shop\'s or a café\'s node. They cannot change its '
+          'settings, and your texts stay yours. Off, the node is yours '
+          'alone.',
         ),
         value: p,
         onChanged: (v) => _try(() => s.writePublic(v), 'Setting Public failed'),

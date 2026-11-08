@@ -447,6 +447,19 @@ class OtherNode extends FakeNode {
 void main() {
   const device = '00:11:22:33:44:55';
 
+  test('a node is public unless it advertises the service, as a private '
+      'one does', () {
+    FoundNode of(List<String> services) => FoundNode.of(
+      BleDevice(deviceId: 'd', name: 'bark-x', services: services),
+    );
+    expect(of([Uuids.publicNode]).public, isTrue);
+    expect(of([]).public, isTrue);
+    expect(of([Uuids.service]).public, isFalse);
+    // A scan response says nothing either way.
+    expect(of([Uuids.service]).heardAgain(of([])).public, isFalse);
+    expect(of([]).heardAgain(of([Uuids.publicNode])).public, isTrue);
+  });
+
   test('a bonded phone the node drops at once: no longer ours', () async {
     UniversalBle.setInstance(RefusingNode(bonded: true));
     await expectLater(
@@ -563,7 +576,7 @@ void main() {
         final ble = FakeNodes(
           {
             paired: FakeNode(now: now, sodium: sodium, app: id),
-            other: OtherNode(now: now, sodium: sodium, app: id),
+            other: OtherNode(now: now, sodium: sodium, app: id)..public = false,
           },
           bonds: {paired},
         );
@@ -773,7 +786,7 @@ void main() {
             if (withPaired) paired: FakeNode(now: now, sodium: sodium, app: id),
             weak: other(weakId)..public = true,
             strong: other(strongId)..public = true,
-            shut: other([0x0c, 0xe4, 0, 0, 0, 5]),
+            shut: other([0x0c, 0xe4, 0, 0, 0, 5])..public = false,
           },
           bonds: {if (withPaired) paired},
         );
