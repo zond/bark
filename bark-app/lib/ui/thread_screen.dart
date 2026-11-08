@@ -177,7 +177,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   });
 
   Future<void> _name(Contact c) async {
-    final name = await askText(context, 'Name', c.name);
+    final name = await askText(context, 'Name', c.given);
     if (name == null || name.isEmpty) return;
     await app.contacts.put(c.copyWith(name: name));
   }
