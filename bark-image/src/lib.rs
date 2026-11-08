@@ -5,7 +5,8 @@
 //! (`sign`); the firmware's choice of read-out
 //! protection ([`protect`]), here to be tested on the host; and the start
 //! of the 32.768 kHz clock the loader's watchdog holds (`lfclk`); and the
-//! code an update's blocks travel in over the mesh ([`code`]).
+//! code an update's blocks travel in over the mesh ([`code`]), and the
+//! store of the pieces a node gathers on its external flash (`pieces`).
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
 
@@ -24,6 +25,8 @@ pub mod ext_flash;
 pub mod layout;
 #[cfg(feature = "lfclk")]
 pub mod lfclk;
+#[cfg(feature = "boot")]
+pub mod pieces;
 pub mod protect;
 pub mod record;
 pub mod sign;
