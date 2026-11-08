@@ -221,12 +221,12 @@ mod tests {
 
     #[test]
     fn todays_image_is_the_table_and_25_blocks() {
-        // 387 540 B in pieces of 247 B: 1569 pieces, 24 blocks of 64 and
-        // one of 33, after the table's block.
-        let b = blocks(387_540);
+        // 387 796 B packed in pieces of 247 B: 1571 pieces, 24 blocks of 64
+        // and one of 35, after the table's block.
+        let b = blocks(387_796);
         assert_eq!(b.len(), 26);
         assert_eq!(b[0], 1);
-        assert_eq!(b[25], 33);
-        assert_eq!(b.iter().sum::<usize>(), 1 + 1569);
+        assert_eq!(b[25], 35);
+        assert_eq!(b.iter().sum::<usize>(), 1 + 1571);
     }
 }

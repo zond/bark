@@ -3603,18 +3603,20 @@ a node of another implementation is never overwritten against its will.
 **The image.** An image is named by the SHA-256 of its signed header,
 the 48 bytes of its header that its signatures cover: magic, format,
 version, length and the image's own SHA-256 (`bark-image`, `sign.rs`).
-The name is 32 bytes; a request and a piece carry the first 4. It travels in
-**blocks**: block 0 is the block table, the image's hash and the first
-8 bytes of each other block's hash, one piece; then the image itself, in
-blocks of 64 pieces of 247 bytes, the last block shorter. Each block is
-sent as up to 255 coded pieces, and any 64 distinct ones of a block, or
-as many as it has, give it back (a Reed-Solomon code over GF(2⁸), the
-firmware's). Today's node image, 387 540 bytes (built from main on
-2026-11-07 as `bark-fw/README.md`, "Build and package", says), is 1569
-pieces in 25 blocks, 24 of 64 and one of 33, and with the table's piece
-1570 pieces in 26 blocks. The
-table is one piece up to 26 blocks of image, 411 KB, and a block of
-two pieces up to 57.
+The name is 32 bytes; a request and a piece carry the first 4. What
+travels is the image as packed, its 256-byte header and then its bytes,
+in **blocks**: block 0 is the block table, the name and the first 8
+bytes of the SHA-256 of each other block, one piece; then the packed
+image, in blocks of 64 pieces of 247 bytes, the last block shorter and
+its last piece padded (`bark-image`, `pieces.rs`). Each block is sent as
+up to 255 coded pieces, and any 64 distinct ones of a block, or as many
+as it has, give it back (a Reed-Solomon code over GF(2⁸), the
+firmware's, `code.rs`). Today's node image, 387 540 bytes (built from
+main on 2026-11-07 as `bark-fw/README.md`, "Build and package", says),
+packs to 387 796 bytes, 1571 pieces in 25 blocks, 24 of 64 and one of
+35; with the table's piece, 1572 pieces in 26 blocks. The table is one
+piece up to 26 blocks of image, 411 KB, and a block of two pieces up
+to 57.
 
 *Why 4 bytes of the name.* Two images on the air at once in one place
 share their first 4 bytes with odds of 2⁻³²; nothing on the air is
@@ -3626,31 +3628,40 @@ signed header against.
 **Frames.** Three, each one hop and unanswered
 ([packet formats](#packet-formats)):
 
-- the **announcement**: the newest image a node holds whole, its
-  version, its blocks and the pieces of its last, which signer's key
-  signed it, the holder's ID and its home channel;
+- the **announcement**: the newest image a node holds, its version,
+  its blocks and the pieces of its last, how many of its blocks the
+  node holds, from the first, which signer's key signed it, the
+  holder's ID and its home channel;
 - the **request**: to one holder, the image it names by its name and
   version, the first block the asker lacks and how many of its pieces
-  it still lacks, and the asker's home channel, where the pieces go;
+  it still lacks, the asker's home channel, where the pieces go, and
+  whether the asker is sleepy;
 - the **piece**: one coded piece of one block.
 
 A node gathers the blocks in order, so the first block it lacks names
-all it lacks.
+all it lacks, and the blocks it holds are a count. A node **holds** an
+image's blocks once each has decoded and passed its hash; it serves
+those, whether it holds the whole image or its first blocks.
 
 **Who sends what.**
 
-1. A node that holds an image whole announces it on its home channel
+1. A relay that holds an image whole announces it on its home channel
    at a random moment within a pace of being given it, and then once an
-   hour, unless it heard the same announcement there within the hour;
-   and once an hour on one other channel, the next each hour.
+   hour, unless it heard the same whole announcement there within the
+   hour; and once an hour on one other channel, the next each hour. A
+   relay that gathers announces what it holds on its home channel a
+   random time within a pace after the count grows, the pace keeping it
+   to one a pace, and from its first block once an hour on one other
+   channel in turn, as a whole holder does.
 2. A relay that hears an announcement of a version above the one it
    holds asks its firmware whether its policy takes the image. If it
-   does, the relay gathers it: it sends a request to the holder it
-   heard announce last, a random time within a pace after the
-   announcement, but keeps a holder at home on its own channel over
-   one that is not.
-3. A holder that hears a request for its image sends, on the channel
-   named, pieces of the block named: 1.55 times as many as the request
+   does, the relay gathers it: it sends a request, a random time within
+   a pace after the announcement, to a holder that holds the block it
+   lacks, one at home on its own channel before one that is not, and of
+   those the one heard last. When the holder it asks holds no more, it
+   waits for an announcement of more, from it or another, and asks then.
+3. A holder that hears a request for a block it holds sends, on the
+   channel named, pieces of the block named: 1.55 times as many as the request
    lacks, 99 for a whole block of 64, from a random piece on, or none if
    more are still to go of that block there. It keeps the four highest
    blocks asked for on a channel; it sends one block's pieces until they
@@ -3659,16 +3670,24 @@ all it lacks.
    channel from another holder sends none there for two paces.
 4. A node that gathers hands its firmware every piece it has not
    handed before of the first block it lacks and of the four after it
-   that have not decoded, and no other: 5 blocks, 320 pieces at most of
-   the 352 the firmware's flash has room for (`bark-image/src/layout.rs`).
-   When the firmware says the first block it lacks decoded, it asks for
-   the next it lacks, again a random time within a pace later. When the
-   firmware says a block failed its hash, it gathers it again. A node that has taken no piece for 10
-   minutes asks again.
+   that have not decoded, and no other: 5 blocks, at most 320 pieces,
+   the five lanes of 64 the firmware keeps them in (`bark-image`,
+   `pieces.rs`). When the firmware says the first block it lacks
+   decoded, it asks for the next it lacks, again a random time within a
+   pace later. When the firmware says a block failed its hash, it
+   gathers it again, and does not count it held. A node that has taken
+   no piece for 10 minutes asks again, a random time within a pace
+   later.
 5. A holder that hears a request for another image, of a lower
    version than its own, announces its own on the requester's channel.
 
-*Why a block until its pieces are spent, then the highest.* The nodes
+*Why a node serves the blocks it holds.* An image then moves through a
+chain of relays a block behind each other, not a whole image behind:
+every hop of the whole image costs 9.4 hours at the pace (What it
+costs, below), and every relay that gathers becomes a source within
+minutes of its first block. *Why it serves only what passed.* A block
+that fails its hash would spread as garbage, and the asker could not
+tell it from a forger's. *Why a block until its pieces are spent, then the highest.* The nodes
 on one channel take the same broadcast pieces but not all of them: some
 lose more, and some begin later, a node that came onto the channel or
 turned relay. A block sent to its end serves those that asked for it.
@@ -3685,7 +3704,9 @@ held the image. Holders at home on a channel hear each other there, and
 one sending is enough for every node on it; a node that keeps a holder
 of its own channel lets them. *Why a random first piece.* A block asked for again is wanted
 by nodes that have some of its pieces, most likely the first ones sent.
-*Why 1.55 times.* A holder cannot tell when every node on the channel has a
+*Why waits after a growth and after quiet.* Nodes that took the same
+pieces finish a block, and fall quiet, together; their announcements
+and requests would collide. *Why 1.55 times.* A holder cannot tell when every node on the channel has a
 block, so a request buys what all the nodes that lack as much need: at
 a fifth of the frames lost, 74 nodes all have 64 distinct pieces after
 99 frames with 99 % odds, by the binomial distribution
@@ -3733,25 +3754,53 @@ own for the frame, as for a heartbeat, and a hand-over to it fails.
 Two channels at 1 % each cost it about 2 % of its hand-overs.
 
 **What it costs.** While nobody gathers, each holder sends two
-announcements an hour, 32.3 ms each. While a channel gathers, its
+announcements an hour, 33.6 ms each. While a channel gathers, its
 holder adds a piece every 13.86 s, 1 % of that channel's time, and its
-requesters a request each a block, 18.2 ms. A block of 64 pieces
-takes 99 paces, 22.9 minutes, to cross a hop, and today's image 2430,
-9.4 hours.
+requesters a request each a block, 18.2 ms, and its gatherers an
+announcement each a block. A block of 64 pieces takes 99 paces, 22.9
+minutes, to cross a hop, and today's image 2433, 9.4 hours.
+
+**Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
+alone, and serves nothing. It takes the announcements and the pieces it
+hears in its windows ([delivery](#delivery)) as a relay does, asks its
+anchor once the anchor's announcement says it holds the block the node
+lacks, and says in its request that it sleeps. Its anchor sends one
+update frame right after each of its slot heartbeats on its home
+channel, where its sleepy nodes listen for that heartbeat
+([relay choice](#relay-choice)): while sleepy nodes have asked, a
+piece of a block asked for on that channel; else its announcement; the frame keeps the pace, and pieces on that channel
+leave the pace room for the slot when sleepy nodes asked and it comes
+within a pace. Pieces only sleepy nodes asked for go only then. The
+node listens 143.6 ms after its anchor's slot heartbeat while it
+gathers from it, the anchor's check of the channel, about 3 ms, the
+transmission's start, under 1 ms ([heartbeat](#heartbeat)), and a full
+frame, with a margin to 5 ms; and once an hour while it does not, for
+an announcement. A sleepy node without an anchor takes no part.
+
+*What it costs a sleepy node.* One piece a rotation of its anchor, 13
+of its heartbeats, 130 s at the mean interval
+([heartbeat](#heartbeat)): today's image in its 2433 pieces takes
+2433 rotations, 88 hours, 3.7 days, and as many listens of 143.6 ms,
+349 s, at the 5.8 mA of listening
+([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
+0.56 mAh, 0.07 % of the 850 mAh battery ([hardware](#hardware)). A
+piece lost is one more rotation and one more listen. The hourly listen
+while it does not gather costs 0.14 s an hour, 0.0056 mAh a day.
+
+*Why after the slot heartbeat.* Every sleepy node of the anchor listens
+for it in the same moment, so one frame reaches all of them; in a
+node's own windows a frame reaches one node, and each window would be
+paid by the channel's pace.
 
 **What a node keeps.** The image it holds; the one it gathers, the
-holder it asks, the first block it lacks, and the pieces handed to its
-firmware of that block and the four after it, a bit each; per channel
-it sends on, four blocks asked for, each with its next piece and the
-pieces still to send; and the last two channels it sent update frames
-on and when: 512 bytes beside the tables (`core-interface.md`,
+holder it asks and how many blocks it holds, the first block it lacks,
+and the pieces handed to its firmware of that block and the four after
+it, a bit each; per channel it sends on, the image, whether only sleepy
+nodes asked, and four blocks asked for, each with its next piece and
+the pieces still to send; the last two channels it sent update frames
+on and when; and the times of its announcements and of the frame after
+its slot heartbeat: 552 bytes beside the tables (`core-interface.md`,
 Memory).
-
-**Sleepy nodes** take no part yet: a sleepy node neither gathers nor
-serves, and takes an image when it is next a relay, on USB, or from a
-phone. What would reach them is a piece after an anchor's slot
-heartbeat on its home channel, for which its sleepy nodes stay awake
-([relay choice](#relay-choice)); it is not built.
 
 ---
 
@@ -3913,13 +3962,15 @@ DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK
 ANNOUNCE  first(1) format(1) from(6) home(1) version(4) blocks(1) last(1)
-          key(1) image(32)                                                  = 48
+          held(1) key(1) image(32)                                          = 49
           aux = 13; from = the holder, home = its home channel;
-          last = the pieces of the last block, 1 to 64;
+          last = the pieces of the last block, 1 to 64; held = the blocks
+          it holds from the first, 1 to blocks;
           image = the SHA-256 of the image's signed header
 REQUEST   first(1) format(1) to(6) channel(1) version(4) image(4) block(1)
           lacks(1)                                                          = 19
-          aux = 14; to = the holder asked, channel = the asker's home;
+          aux = 14; to = the holder asked; channel = the asker's home in
+          its low four bits, and its top bit set when the asker is sleepy;
           image = the first 4 bytes of the image's name; block = the first
           block the asker lacks; lacks = the pieces of it it has yet to take
 PIECE     first(1) format(1) image(4) block(1) index(1) piece(247)          = 255

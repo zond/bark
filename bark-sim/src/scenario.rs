@@ -715,9 +715,11 @@ pub struct UpdateSpec {
     /// When the relay is given the image, seconds; `None` for the time the
     /// run has settled ([`Scenario::settled_s`]).
     pub at_s: Option<f64>,
-    /// The image's length in bytes: the node image built from main
-    /// `b6d14cc` on 2026-11-07 (`cargo build --release` in `bark-fw/`, as
-    /// `bark-fw/README.md`, "Build and package"), 387 540 B.
+    /// The image's length in bytes as it travels, packed behind its
+    /// 256-byte header (`bark-image`, `pieces.rs`): the node image built
+    /// from main `b6d14cc` on 2026-11-07 (`cargo build --release` in
+    /// `bark-fw/`, as `bark-fw/README.md`, "Build and package"), 387 540 B,
+    /// and the header, 387 796 B.
     pub image_bytes: u32,
     /// The relay given the image: the one placed as a relay nearest the
     /// centre of the nodes, or the named node.
@@ -728,7 +730,7 @@ impl Default for UpdateSpec {
     fn default() -> Self {
         UpdateSpec {
             at_s: None,
-            image_bytes: 387_540,
+            image_bytes: 387_796,
             holder: None,
         }
     }
