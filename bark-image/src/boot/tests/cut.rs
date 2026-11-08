@@ -1,14 +1,16 @@
 //! The bench loader's cut (`boot::cut`) on the flashes in RAM: where the
 //! moment falls, that each phase is stopped once and ends at the next
 //! boot with the image expected whole, and the external chip left
-//! running by its part of an operation.
+//! running by its part of an operation; that a chosen moment names the
+//! operation the host test's power cut of the same index takes, and
+//! that the bench script's moments are named as the host counts them.
 
 use super::*;
 use crate::boot::cut::{
-    cost, moment, phase, phase_us, prepare_cut, recorded, written_by, Cutting, ExternalPartial,
-    Fell, Op, Partial, Phase, Plan, Recorded, Side,
+    choose, cost, moment, operations, phase, phase_us, prepare_cut, recorded, written_by,
+    ChooseError, Cutting, ExternalPartial, Fell, Moment, Op, Partial, Phase, Plan, Recorded, Side,
 };
-use std::string::ToString;
+use std::string::{String, ToString};
 
 /// What a cut leaves on a flash in RAM: the start of an erase's page
 /// erased in proportion to its time, or the words of a write that were
@@ -41,10 +43,10 @@ fn boot_cut(board: &Board, draw: u32) -> (Result<Boot, FlashError>, Option<(Phas
     let plan = Plan::new(draw);
     let internal = board
         .internal
-        .lock(|f| f.replace(RamFlash::new(0, &board.power)));
+        .lock(|f| f.replace(RamFlash::new(0, Side::Internal, &board.power)));
     let external = board
         .external
-        .lock(|f| f.replace(RamFlash::new(0, &board.power)));
+        .lock(|f| f.replace(RamFlash::new(0, Side::External, &board.power)));
     let internal = Mutex::new(RefCell::new(Cutting::new(
         internal,
         RamPartial(Side::Internal),
@@ -167,7 +169,10 @@ fn each_phase_is_stopped_once_and_ends_at_the_next_boot() {
         );
         assert_eq!(active(&board, b.len()), b, "draw {draw:#x}");
         let noted = recorded(&board.internal).unwrap();
-        assert_eq!(noted[0].unwrap().at_us, moment(draw, phase_us(Phase::Swap)));
+        assert_eq!(
+            noted[0].unwrap().at,
+            Moment::Us(moment(draw, phase_us(Phase::Swap)))
+        );
         assert_eq!(noted[0].unwrap().fell, Some(swap));
         assert_eq!(noted[1], None);
         if i % 2 == 0 {
@@ -237,7 +242,7 @@ fn a_cut_reads_as_the_bench_script_parses_it() {
     };
     let swap = Recorded {
         phase: Phase::Swap,
-        at_us: 12_345_678,
+        at: Moment::Us(12_345_678),
         fell: Some(fell),
     };
     assert_eq!(
@@ -246,11 +251,167 @@ fn a_cut_reads_as_the_bench_script_parses_it() {
     );
     let back = Recorded {
         phase: Phase::Back,
-        at_us: 5,
+        at: Moment::Us(5),
         fell: None,
     };
     assert_eq!(
         back.to_string(),
         "bench reset in the swap back at 5 us: not reached"
     );
+}
+
+/// A board with the image staged, both moments chosen, and the swap
+/// done if `phase` is the swap back: the phase about to start.
+fn chosen(a: &[u8], b: &[u8], phase: Phase, op: Option<u32>) -> Board {
+    let board = board(a);
+    stage(&board, b).unwrap();
+    let swap = (phase == Phase::Swap).then_some(op).flatten();
+    let back = (phase == Phase::Back).then_some(op).flatten();
+    choose(&board.internal, Phase::Swap, swap).unwrap();
+    choose(&board.internal, Phase::Back, back).unwrap();
+    if phase == Phase::Back {
+        assert_eq!(boot_cut(&board, 0), (Ok(Boot::Trial), None));
+    }
+    board
+}
+
+/// The operations `phase` makes at the boot that starts it, as the
+/// power counts them: the host test's enumeration.
+fn enumerate(phase: Phase) -> Vec<Done> {
+    let board = chosen(&a(), &b(), phase, None);
+    board.power.borrow_mut().log.clear();
+    let _ = boot(&board);
+    let log = board.power.borrow().log.clone();
+    assert_eq!(log.len(), operations(phase) as usize);
+    log
+}
+
+/// Each operation of each phase chosen in turn: the loader stops the
+/// copy in the operation a power cut at that index takes, notes it, and
+/// the next boot ends the phase with the image expected whole.
+#[test]
+fn a_chosen_moment_falls_in_the_operation_the_power_cut_of_its_index_takes() {
+    let (a, b) = (a(), b());
+    for phase in [Phase::Swap, Phase::Back] {
+        let ops = enumerate(phase);
+        for (n, done) in ops.iter().enumerate() {
+            let n = n as u32;
+            let board = chosen(&a, &b, phase, Some(n));
+            let (got, fell) = boot_cut(&board, 0);
+            assert!(got.is_err(), "{phase:?} {n}");
+            let (at, fell) = fell.unwrap_or_else(|| panic!("{phase:?} {n}: not stopped"));
+            assert_eq!(at, phase, "{n}");
+            let fell_as = Done {
+                side: fell.side,
+                op: fell.op,
+                page: fell.page,
+            };
+            assert_eq!(fell_as, *done, "{phase:?} {n}");
+            let noted = recorded(&board.internal).unwrap()[phase as usize].unwrap();
+            assert_eq!((noted.at, noted.fell), (Moment::Op(n), Some(fell)));
+            let (again, none) = boot_cut(&board, 0);
+            assert_eq!(none, None, "{phase:?} {n}");
+            match phase {
+                Phase::Swap => {
+                    assert_eq!(again, Ok(Boot::Trial), "{n}");
+                    assert_eq!(active(&board, b.len()), b, "{phase:?} {n}");
+                }
+                Phase::Back => {
+                    // A cut in the swap back's last word leaves the state
+                    // page as with no swap asked for.
+                    let again = again.unwrap();
+                    assert!(
+                        matches!(again, Boot::Reverted | Boot::Normal),
+                        "{n}: {again:?}"
+                    );
+                    assert_eq!(active(&board, a.len()), a, "{phase:?} {n}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_moment_is_chosen_only_once_for_a_swap_not_begun() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    assert_eq!(
+        choose(&board.internal, Phase::Swap, Some(0)),
+        Err(ChooseError::NoSwap)
+    );
+    stage(&board, &b).unwrap();
+    let last = operations(Phase::Back);
+    assert_eq!(
+        choose(&board.internal, Phase::Back, Some(last)),
+        Err(ChooseError::Beyond(last))
+    );
+    choose(&board.internal, Phase::Back, Some(3)).unwrap();
+    assert_eq!(
+        choose(&board.internal, Phase::Back, Some(4)),
+        Err(ChooseError::Chosen)
+    );
+    // No moment for the swap: none is drawn either.
+    choose(&board.internal, Phase::Swap, None).unwrap();
+    assert_eq!(boot_cut(&board, 0), (Ok(Boot::Trial), None));
+    assert_eq!(
+        choose(&board.internal, Phase::Back, Some(3)),
+        Err(ChooseError::NoSwap)
+    );
+    let noted = recorded(&board.internal).unwrap()[0].unwrap();
+    assert_eq!(
+        noted.to_string(),
+        "bench reset in the swap at operation 1363: not reached"
+    );
+}
+
+/// `bark-fw/scripts/cutbench.py --list`, run on this layout: each moment
+/// it walks names, by its index, the operation the host counts there.
+#[test]
+fn the_bench_script_names_its_moments_as_the_host_counts_them() {
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../bark-fw/scripts/cutbench.py"
+    );
+    let layout = [ACTIVE.start, ACTIVE.end(), STATE.start, RECORD.start].map(|v| v.to_string());
+    let out = std::process::Command::new("python3")
+        .arg("-I")
+        .arg(script)
+        .arg("--list")
+        .arg("--layout")
+        .args(&layout)
+        .output()
+        .expect("python3 runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ops = [enumerate(Phase::Swap), enumerate(Phase::Back)];
+    let mut walked = [0; 2];
+    for line in String::from_utf8(out.stdout).unwrap().lines() {
+        // `swap 2 external write 227: before progress word 0`
+        let w: Vec<&str> = line.split([' ', ':']).collect();
+        let phase = match w[0] {
+            "swap" => Phase::Swap,
+            "back" => Phase::Back,
+            _ => panic!("{line}"),
+        };
+        let n: usize = w[1].parse().unwrap();
+        let named = Done {
+            side: match w[2] {
+                "internal" => Side::Internal,
+                "external" => Side::External,
+                _ => panic!("{line}"),
+            },
+            op: match w[3] {
+                "erase" => Op::Erase,
+                "write" => Op::Write,
+                _ => panic!("{line}"),
+            },
+            page: w[4].parse().unwrap(),
+        };
+        assert_eq!(ops[phase as usize][n], named, "{line}");
+        walked[phase as usize] += 1;
+    }
+    assert!(walked.iter().all(|&n| n > 0), "{walked:?}");
 }

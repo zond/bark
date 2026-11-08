@@ -19,7 +19,9 @@
 //!
 //! Built with `BARK_LOADER_BENCH=reset`, it resets the chip once in each
 //! swap and once in each swap back, at a moment drawn from the RNG at the
-//! boot that starts it (`bark_image::boot::cut`, roadmap D143).
+//! boot that starts it (`bark_image::boot::cut`, roadmap D143), or at the
+//! operation the record names, which the running image wrote there for a
+//! bench script.
 
 #![no_std]
 #![no_main]
