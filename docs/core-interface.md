@@ -330,8 +330,8 @@ tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
 relay, Embassy, the USB log and the phone link with its BLE stack, was 217 504 B
-(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 520 B since
-(`docs/mesh-update-2026-11-07.md`) is 218 024 B and leaves 43 096 B, 42.1 KiB, for
+(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 512 B since
+(`docs/mesh-update-2026-11-07.md`) is 218 016 B and leaves 43 104 B, 42.1 KiB, for
 the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
