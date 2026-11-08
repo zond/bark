@@ -37,7 +37,7 @@ use crate::board;
 use crate::radio::RAIL_SETTLE;
 
 /// A full refresh as the board's label gives it, 2 s (`board::Eink`).
-const REFRESH: Duration = Duration::from_secs(2);
+const REFRESH: Duration = Duration::from_millis(bark_screen::schedule::REFRESH_MS);
 
 /// How long after MASTER_ACTIVATION BUSY must have risen: far more than
 /// the controller's reaction to a command, far less than the refresh.
@@ -315,7 +315,7 @@ static PRESSED: embassy_sync::signal::Signal<
     (),
 > = embassy_sync::signal::Signal::new();
 
-/// The button's side (`button.rs`): redraw now, outside the gaps.
+/// The button's side (`button.rs`): redraw now, outside the schedule.
 #[cfg(not(feature = "console"))]
 pub fn redraw() {
     PRESSED.signal(());
@@ -327,13 +327,12 @@ pub fn phone_at_boot(phone: bark_screen::Phone) {
     PHONE.lock(|p| p.set(phone));
 }
 
-/// The phone link's side: its line, drawn at once when it changes, since
-/// a pairing code is typed while the phone waits (spec "Phone link",
-/// Pairing).
+/// The phone link's side: its line, drawn about one refresh after it
+/// changes (`bark_screen::schedule::urgent`).
 #[cfg(not(feature = "console"))]
 pub fn phone(phone: bark_screen::Phone) {
     if PHONE.lock(|p| p.replace(phone)) != phone {
-        redraw();
+        CHANGED.signal(());
     }
 }
 
@@ -346,25 +345,17 @@ pub fn publish(state: State) {
     }
 }
 
-/// How often the screen may be redrawn for a change, and how long it may
-/// go without one, on battery and on USB (`bark-fw/README.md`, Display).
-#[cfg(not(feature = "console"))]
-const BATTERY_GAP: Duration = Duration::from_secs(5 * 60);
-#[cfg(not(feature = "console"))]
-const BATTERY_STALE: Duration = Duration::from_secs(60 * 60);
-#[cfg(not(feature = "console"))]
-const USB_GAP: Duration = Duration::from_secs(60);
-#[cfg(not(feature = "console"))]
-const USB_STALE: Duration = Duration::from_secs(10 * 60);
 /// How long the first picture waits for the node's first state.
 #[cfg(not(feature = "console"))]
 const FIRST_STATE: Duration = Duration::from_secs(5);
 
-/// Draw the node's screen at boot, and again when what it shows has
-/// changed, at most once a [`BATTERY_GAP`] on battery and a [`USB_GAP`]
-/// on USB, and at least once a [`BATTERY_STALE`] or [`USB_STALE`], so
-/// that the uptime it shows says the node still runs. A press of the
+/// Draw the node's screen at boot, and again as `bark_screen::schedule`
+/// says: a change of the header, the phone's line or the power about one
+/// refresh after it, any other change no sooner than a gap after the last
+/// picture, and a picture at least once a stale time. A press of the
 /// button ([`redraw`]) draws at once and leaves that schedule as it was.
+/// Each picture is drawn to its end before the next is considered, so
+/// none starts while a refresh runs.
 #[cfg(not(feature = "console"))]
 pub async fn run(
     pins: board::Eink,
@@ -380,7 +371,7 @@ pub async fn run(
         static_cell::ConstStaticCell::new(Picture::zeroed());
     let picture = PICTURE.take();
     let mut screen = Screen::new(pins, spim, irq).await;
-    let mut shown: Option<(State, Instant)> = None;
+    let mut schedule = bark_screen::schedule::Schedule::new();
     // The first picture shows what the node knows once its loop has run,
     // which is within a second of the radio coming up.
     let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
@@ -390,17 +381,8 @@ pub async fn run(
             phone: PHONE.lock(core::cell::Cell::get),
             ..STATE.lock(core::cell::Cell::get)
         };
-        let usb = state.battery == bark_screen::Battery::Usb;
-        let (gap, stale) = match usb {
-            true => (USB_GAP, USB_STALE),
-            false => (BATTERY_GAP, BATTERY_STALE),
-        };
         let now = Instant::now();
-        let due = match shown {
-            None => now,
-            Some((s, at)) if s != state => at + gap,
-            Some((_, at)) => at + stale,
-        };
+        let due = Instant::from_millis(schedule.due(&state, now.as_millis()));
         let scheduled = now >= due;
         if !scheduled && !pressed {
             if let Either3::Second(()) =
@@ -426,14 +408,12 @@ pub async fn run(
             embassy_futures::yield_now().await;
         }
         let outcome = screen.draw(picture).await;
-        if shown.is_none() {
-            OUTCOME.lock(|o| o.set(Some(outcome)));
+        // The boot's outcome is the first picture's.
+        OUTCOME.lock(|o| o.set(o.get().or(Some(outcome))));
+        let at = Instant::now().as_millis();
+        match scheduled {
+            true => schedule.drawn(state, at),
+            false => schedule.pressed(state, at),
         }
-        // A press's picture keeps the last scheduled one's time.
-        let at = match shown {
-            Some((_, at)) if !scheduled => at,
-            _ => Instant::now(),
-        };
-        shown = Some((state, at));
     }
 }
