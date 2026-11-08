@@ -20,6 +20,16 @@
 //! written to the record before the first copy; a boot that finds it
 //! there draws none. So a swap is stopped at most once, and ends at the
 //! next boot.
+//!
+//! Or the moment is chosen ([`choose`]): the running image writes it to
+//! the record, on a bench script's behalf, before the boot that starts
+//! the phase. It names an operation by its index in the phase's erases
+//! and writes on both flashes, counted from the start of that boot, each
+//! page of an erase one, as the host test's power cuts count them
+//! (`boot/tests.rs`, `cut_everywhere`); [`operations`] says how many a
+//! phase has. That operation is done half way, as the host test's cut
+//! leaves it. Where it fell is written before the reset, and a boot that
+//! finds it there stops nothing, so the phase then ends.
 
 use core::cell::Cell;
 
@@ -91,7 +101,7 @@ pub enum Op {
 /// external one a page program at a time (ZD25WQ16B datasheet, Table 4-3,
 /// typical: the chip's own time, which the wait for the cut must stay
 /// inside).
-pub fn cost(side: Side, op: Op, from: u32, len: u32) -> u32 {
+pub const fn cost(side: Side, op: Op, from: u32, len: u32) -> u32 {
     match (side, op) {
         (Side::Internal, Op::Erase) => len / PAGE * INTERNAL_ERASE_US,
         (Side::Internal, Op::Write) => len / WORD * INTERNAL_WORD_US,
@@ -101,10 +111,23 @@ pub fn cost(side: Side, op: Op, from: u32, len: u32) -> u32 {
 }
 
 /// The page programs a write of `len` bytes from `from` takes.
-fn programs(from: u32, len: u32) -> u32 {
+const fn programs(from: u32, len: u32) -> u32 {
     match len {
         0 => 0,
         _ => (from + len - 1) / PROGRAM_PAGE - from / PROGRAM_PAGE + 1,
+    }
+}
+
+/// The erases, a page each, and the writes a phase makes at the boot
+/// that starts it, in the order of embassy-boot's `prepare_boot` (as
+/// [`phase_us`]): the swap's first is the record's word that notes the
+/// image checked, then six a page, each copy an erase, a write and a
+/// progress word; a swap back's are six a page, then the word that marks
+/// its progress invalid, the state page's erase and its word.
+pub const fn operations(phase: Phase) -> u32 {
+    match phase {
+        Phase::Swap => 1 + 6 * PAGES,
+        Phase::Back => 6 * PAGES + 3,
     }
 }
 
@@ -114,7 +137,7 @@ fn programs(from: u32, len: u32) -> u32 {
 /// flash and the staged one in, each copy a page erase, a page write and
 /// a progress word; a swap back then marks its progress invalid, erases
 /// the state page and writes its word.
-pub fn phase_us(phase: Phase) -> u32 {
+pub const fn phase_us(phase: Phase) -> u32 {
     let word = cost(Side::Internal, Op::Write, 0, WORD);
     let out = cost(Side::External, Op::Erase, 0, PAGE) + cost(Side::External, Op::Write, 0, PAGE);
     let into = cost(Side::Internal, Op::Erase, 0, PAGE) + cost(Side::Internal, Op::Write, 0, PAGE);
@@ -130,6 +153,38 @@ pub fn phase_us(phase: Phase) -> u32 {
 /// within one.
 pub fn moment(draw: u32, total: u32) -> u32 {
     ((u64::from(draw) * u64::from(total)) >> 32) as u32
+}
+
+/// A record word with this bit holds a chosen moment, an operation's
+/// index, in its other bits; without it, a drawn moment in microseconds,
+/// which never reaches it.
+pub const CHOSEN: u32 = 1 << 31;
+
+const _: () = assert!(phase_us(Phase::Swap) < CHOSEN && phase_us(Phase::Back) < CHOSEN);
+
+/// When in a phase the copy is stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Moment {
+    /// Drawn: microseconds of erasing and writing.
+    Us(u32),
+    /// Chosen: the index of an operation (`operations`).
+    Op(u32),
+}
+
+impl Moment {
+    fn encode(self) -> u32 {
+        match self {
+            Moment::Us(us) => us,
+            Moment::Op(n) => CHOSEN | n,
+        }
+    }
+
+    fn decode(w: u32) -> Moment {
+        match w & CHOSEN {
+            0 => Moment::Us(w),
+            _ => Moment::Op(w & !CHOSEN),
+        }
+    }
 }
 
 /// Where a copy was stopped.
@@ -177,8 +232,9 @@ impl Fell {
 pub struct Plan {
     draw: u32,
     /// The phase and the moment, while the copy has yet to reach it.
-    armed: Cell<Option<(Phase, u32)>>,
-    /// Erasing and writing so far in this boot, microseconds.
+    armed: Cell<Option<(Phase, Moment)>>,
+    /// Erasing and writing so far in this boot: microseconds for a drawn
+    /// moment, operations for a chosen one.
     elapsed: Cell<u32>,
     fell: Cell<Option<(Phase, Fell)>>,
 }
@@ -205,11 +261,18 @@ impl Plan {
         let (phase, at) = self.armed.get()?;
         let spent = self.elapsed.get();
         let takes = cost(side, op, from, len);
-        if at >= spent + takes {
-            self.elapsed.set(spent + takes);
-            return None;
-        }
-        let into = at - spent;
+        let into = match at {
+            Moment::Us(at) if at >= spent + takes => {
+                self.elapsed.set(spent + takes);
+                return None;
+            }
+            Moment::Us(at) => at - spent,
+            Moment::Op(n) if n > spent => {
+                self.elapsed.set(spent + 1);
+                return None;
+            }
+            Moment::Op(_) => takes / 2,
+        };
         self.armed.set(None);
         let permille = (u64::from(into) * 1000 / u64::from(takes)) as u32;
         let page = from / PAGE;
@@ -392,21 +455,43 @@ pub fn phase<F: NorFlash>(internal: &Shared<F>) -> Result<Option<Phase>, FlashEr
     if state(internal)? != State::Swap {
         return Ok(None);
     }
-    // The state page's words are the internal flash's.
-    const { assert!(F::WRITE_SIZE == WORD as usize) };
-    let (w, mut word) = (WORD, [0u8; WORD as usize]);
-    let mut state_page = part(internal, STATE);
-    state_page.read(w, &mut word).map_err(super::flash_error)?;
-    if word.iter().any(|&b| b != 0xff) {
+    if state_word(internal, 1)? != ERASED {
         return Ok(Some(Phase::Back));
     }
-    state_page
-        .read((2 + 2 * PAGES - 1) * w, &mut word)
-        .map_err(super::flash_error)?;
-    Ok(Some(match word.contains(&0xff) {
-        true => Phase::Swap,
-        false => Phase::Back,
+    Ok(Some(match progress_done(internal, 2 * PAGES - 1)? {
+        false => Phase::Swap,
+        true => Phase::Back,
     }))
+}
+
+/// The state page's `n`th word. Its words are the internal flash's.
+fn state_word<F: NorFlash>(internal: &Shared<F>, n: u32) -> Result<u32, FlashError> {
+    const { assert!(F::WRITE_SIZE == WORD as usize) };
+    let mut word = [0u8; WORD as usize];
+    part(internal, STATE)
+        .read(n * WORD, &mut word)
+        .map_err(super::flash_error)?;
+    Ok(u32::from_le_bytes(word))
+}
+
+/// Whether progress word `index` is written, as embassy-boot reads it:
+/// no byte of it erased.
+fn progress_done<F: NorFlash>(internal: &Shared<F>, index: u32) -> Result<bool, FlashError> {
+    Ok(!state_word(internal, 2 + index)?
+        .to_le_bytes()
+        .contains(&0xff))
+}
+
+/// Whether nothing of `phase` has been done yet, so that this boot's
+/// count of operations is the phase's from its start: for the swap, the
+/// record's word not yet noting the image checked and the first copy
+/// not done; for a swap back, its first copy not done and the progress
+/// not marked invalid.
+fn at_start<F: NorFlash>(internal: &Shared<F>, phase: Phase) -> Result<bool, FlashError> {
+    Ok(match phase {
+        Phase::Swap => !super::was_checked(internal)? && !progress_done(internal, 0)?,
+        Phase::Back => state_word(internal, 1)? == ERASED && !progress_done(internal, 2 * PAGES)?,
+    })
 }
 
 fn read_word<F: NorFlash>(internal: &Shared<F>, at: u32) -> Result<u32, FlashError> {
@@ -428,8 +513,8 @@ fn at_of(phase: Phase) -> u32 {
     CUTS_AT + 8 * phase.index()
 }
 
-/// Draw the phase's moment, if no earlier boot did, note it, and arm the
-/// plan.
+/// Draw the phase's moment, if no earlier boot did and none was chosen,
+/// note it, and arm the plan.
 fn arm<F: NorFlash>(internal: &Shared<F>, plan: &Plan) -> Result<(), FlashError> {
     let Some(phase) = phase(internal)? else {
         return Ok(());
@@ -437,10 +522,72 @@ fn arm<F: NorFlash>(internal: &Shared<F>, plan: &Plan) -> Result<(), FlashError>
     if read_word(internal, at_of(phase))? != ERASED {
         return Ok(());
     }
-    let at = moment(plan.draw, phase_us(phase));
-    write_word(internal, at_of(phase), at)?;
+    let at = Moment::Us(moment(plan.draw, phase_us(phase)));
+    write_word(internal, at_of(phase), at.encode())?;
     plan.elapsed.set(0);
     plan.armed.set(Some((phase, at)));
+    Ok(())
+}
+
+/// Arm the plan with the phase's chosen moment, if one is chosen, it has
+/// not fallen yet, and this boot starts the phase.
+fn arm_chosen<F: NorFlash>(internal: &Shared<F>, plan: &Plan) -> Result<(), FlashError> {
+    let Some(phase) = phase(internal)? else {
+        return Ok(());
+    };
+    let word = read_word(internal, at_of(phase))?;
+    if word == ERASED || word & CHOSEN == 0 || read_word(internal, at_of(phase) + 4)? != ERASED {
+        return Ok(());
+    }
+    if at_start(internal, phase)? {
+        plan.elapsed.set(0);
+        plan.armed.set(Some((phase, Moment::decode(word))));
+    }
+    Ok(())
+}
+
+/// Why a moment was not chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChooseError {
+    /// No swap is asked for, or it has begun.
+    NoSwap,
+    /// The phase's moment is already in the record.
+    Chosen,
+    /// Past the phase's last operation, `operations`.
+    Beyond(u32),
+    /// The flash failed.
+    Flash(FlashError),
+}
+
+impl From<FlashError> for ChooseError {
+    fn from(e: FlashError) -> Self {
+        ChooseError::Flash(e)
+    }
+}
+
+/// Choose where a bench loader stops `phase` of the swap asked for: at
+/// operation `op` (`operations`), or nowhere with `None`, which a drawn
+/// moment would otherwise take. Written by the running image once it has
+/// asked for the swap, as staging erases the record.
+pub fn choose<F: NorFlash>(
+    internal: &Shared<F>,
+    phase: Phase,
+    op: Option<u32>,
+) -> Result<(), ChooseError> {
+    if self::phase(internal)? != Some(Phase::Swap) || !at_start(internal, Phase::Swap)? {
+        return Err(ChooseError::NoSwap);
+    }
+    let last = operations(phase);
+    let op = match op {
+        // The index after the last, which the copy never reaches.
+        None => last,
+        Some(n) if n < last => n,
+        Some(_) => return Err(ChooseError::Beyond(last)),
+    };
+    if read_word(internal, at_of(phase))? != ERASED {
+        return Err(ChooseError::Chosen);
+    }
+    write_word(internal, at_of(phase), Moment::Op(op).encode())?;
     Ok(())
 }
 
@@ -460,6 +607,9 @@ where
     E: NorFlash,
     PE: Partial<E>,
 {
+    // A chosen moment counts from the boot's first operation, the
+    // record's word among them, as the host test counts.
+    arm_chosen(internal, plan)?;
     let boot = prepare_with(internal, external, page, |i| arm(i, plan));
     plan.armed.set(None);
     match plan.fell() {
@@ -476,8 +626,8 @@ where
 pub struct Recorded {
     /// Which phase.
     pub phase: Phase,
-    /// The moment drawn, in microseconds of erasing and writing.
-    pub at_us: u32,
+    /// The moment, drawn or chosen.
+    pub at: Moment,
     /// Where the copy was stopped; `None` if it never came to the moment,
     /// as when the phase began at an earlier boot.
     pub fell: Option<Fell>,
@@ -488,25 +638,33 @@ pub struct Recorded {
 pub fn recorded<F: NorFlash>(internal: &Shared<F>) -> Result<[Option<Recorded>; 2], FlashError> {
     let mut out = [None; 2];
     for (slot, phase) in out.iter_mut().zip([Phase::Swap, Phase::Back]) {
-        let at_us = read_word(internal, at_of(phase))?;
-        if at_us != ERASED {
+        let at = read_word(internal, at_of(phase))?;
+        if at != ERASED {
             let fell = Fell::decode(read_word(internal, at_of(phase) + 4)?);
-            *slot = Some(Recorded { phase, at_us, fell });
+            *slot = Some(Recorded {
+                phase,
+                at: Moment::decode(at),
+                fell,
+            });
         }
     }
     Ok(out)
 }
 
 impl core::fmt::Display for Recorded {
-    /// As the firmware logs it, and `bark-fw/scripts/swapbench.py` reads
-    /// it: `bench reset in the swap at 12345678 us: external erase of page
-    /// 113, 37.0 % through`, or `...: not reached`.
+    /// As the firmware logs it, and `bark-fw/scripts/swapbench.py` and
+    /// `cutbench.py` read it: `bench reset in the swap at 12345678 us:
+    /// external erase of page 113, 37.0 % through`, `bench reset in the
+    /// swap back at operation 4: ...`, or `...: not reached`.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let phase = match self.phase {
             Phase::Swap => "swap",
             Phase::Back => "swap back",
         };
-        write!(f, "bench reset in the {phase} at {} us: ", self.at_us)?;
+        match self.at {
+            Moment::Us(us) => write!(f, "bench reset in the {phase} at {us} us: ")?,
+            Moment::Op(n) => write!(f, "bench reset in the {phase} at operation {n}: ")?,
+        }
         let Some(fell) = self.fell else {
             return f.write_str("not reached");
         };

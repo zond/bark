@@ -11,6 +11,7 @@ use std::vec::Vec;
 use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
 
 use super::*;
+use crate::boot::cut::{operations, Op, Phase, Side};
 use crate::ext_flash;
 use crate::ext_flash::fake;
 use crate::layout::external::END;
@@ -32,6 +33,18 @@ impl NorFlashError for Cut {
 struct Power {
     budget: Option<usize>,
     dead: bool,
+    /// Every operation counted against the budget, in order: the one at
+    /// index k is the one a budget of k cuts.
+    log: Vec<Done>,
+}
+
+/// An operation as the power counts it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Done {
+    side: Side,
+    op: Op,
+    /// The page, or sector, by its number on that flash.
+    page: u32,
 }
 
 /// NOR flash in RAM that writes `W` bytes at once: an erase sets a page
@@ -42,23 +55,31 @@ struct Power {
 /// can leave.
 struct RamFlash<const W: usize> {
     bytes: Vec<u8>,
+    side: Side,
     power: Rc<Cell<Power>>,
 }
 
 impl<const W: usize> RamFlash<W> {
-    fn new(len: u32, power: &Rc<Cell<Power>>) -> Self {
+    fn new(len: u32, side: Side, power: &Rc<Cell<Power>>) -> Self {
         RamFlash {
             bytes: vec![0xff; len as usize],
+            side,
             power: power.clone(),
         }
     }
 
-    /// Whether this operation is the one the power is cut in.
-    fn cut_now(&mut self) -> Result<bool, Cut> {
+    /// Whether this operation, `op` at `at`, is the one the power is cut
+    /// in.
+    fn cut_now(&mut self, op: Op, at: u32) -> Result<bool, Cut> {
         let mut p = self.power.borrow_mut();
         if p.dead {
             return Err(Cut);
         }
+        p.log.push(Done {
+            side: self.side,
+            op,
+            page: at / PAGE,
+        });
         match &mut p.budget {
             Some(0) => {
                 p.dead = true;
@@ -102,7 +123,7 @@ impl<const W: usize> NorFlash for RamFlash<W> {
         assert!(from.is_multiple_of(PAGE) && to.is_multiple_of(PAGE));
         for page in (from..to).step_by(PAGE as usize) {
             let at = page as usize;
-            if self.cut_now()? {
+            if self.cut_now(Op::Erase, page)? {
                 self.bytes[at..at + PAGE as usize / 2].fill(0xff);
                 return Err(Cut);
             }
@@ -114,7 +135,7 @@ impl<const W: usize> NorFlash for RamFlash<W> {
     fn write(&mut self, offset: u32, data: &[u8]) -> Result<(), Cut> {
         assert!((offset as usize).is_multiple_of(W) && data.len().is_multiple_of(W));
         let at = offset as usize;
-        let n = match self.cut_now()? {
+        let n = match self.cut_now(Op::Write, offset)? {
             true => data.len() / (2 * W) * W,
             false => data.len(),
         };
@@ -156,12 +177,12 @@ const RUNNING: u32 = 1;
 /// A board running `a`, which fills its slot.
 fn board(a: &[u8]) -> Board {
     let power = Rc::new(Cell::new(Power::default()));
-    let mut internal = RamFlash::new(FLASH_END, &power);
+    let mut internal = RamFlash::new(FLASH_END, Side::Internal, &power);
     let at = ACTIVE.start as usize;
     internal.bytes[at..at + a.len()].copy_from_slice(a);
     Board {
         internal: Mutex::new(RefCell::new(internal)),
-        external: Mutex::new(RefCell::new(RamFlash::new(END, &power))),
+        external: Mutex::new(RefCell::new(RamFlash::new(END, Side::External, &power))),
         power,
     }
 }
@@ -243,7 +264,7 @@ fn stage(board: &Board, b: &[u8]) -> Result<Header, StageError> {
 fn power(board: &Board, budget: Option<usize>) {
     *board.power.borrow_mut() = Power {
         budget,
-        dead: false,
+        ..Power::default()
     };
 }
 
@@ -497,6 +518,7 @@ fn a_power_cut_anywhere_in_a_swap_leaves_the_new_image_whole() {
     // Two copies a page, each an erase, a write and its progress word,
     // and the word that notes the check.
     assert_eq!(cuts, 6 * (ACTIVE.len / PAGE) as usize + 1);
+    assert_eq!(cuts, operations(Phase::Swap) as usize);
 }
 
 #[test]
@@ -525,7 +547,10 @@ fn a_power_cut_anywhere_in_a_swap_back_leaves_the_old_image_whole() {
             assert_eq!(active(f, a.len()), a, "cut at {k}");
         },
     );
-    assert!(cuts > 6 * (ACTIVE.len / PAGE) as usize);
+    // The copies, then the word that marks the progress invalid, the
+    // state page's erase and its word.
+    assert_eq!(cuts, 6 * (ACTIVE.len / PAGE) as usize + 3);
+    assert_eq!(cuts, operations(Phase::Back) as usize);
 }
 
 #[test]
