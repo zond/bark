@@ -11,7 +11,19 @@ import 'store.dart';
 /// A card with the name this phone gives it.
 class Contact {
   final PersonCard card;
-  final String name;
+
+  /// The name the person gave this contact; empty for none, when the
+  /// card's own name stands, so that a later card's name shows.
+  final String chosen;
+
+  /// The name the person gave, or else the card's; empty when neither
+  /// has one, as a card from an older app may not.
+  String get given => chosen.isNotEmpty ? chosen : card.name;
+
+  /// What the contact is listed as: a nameless one by the start of its
+  /// identity, so that two of them are told apart and no row is empty.
+  String get name =>
+      given.isNotEmpty ? given : 'Unnamed (${key.substring(0, 8)}…)';
 
   /// A boxed message from this identity has opened here: only its
   /// holder could make one. A first message's sender is not verified.
@@ -42,7 +54,7 @@ class Contact {
 
   Contact(
     this.card,
-    this.name, {
+    this.chosen, {
     this.verified = false,
     this.knowsMine,
     this.sentMine,
@@ -91,7 +103,7 @@ class Contact {
     bool? archived,
   }) => Contact(
     card ?? this.card,
-    name ?? this.name,
+    name ?? chosen,
     verified: verified ?? this.verified,
     knowsMine: knowsMine ?? this.knowsMine,
     sentMine: sentMine ?? this.sentMine,
@@ -117,7 +129,7 @@ class Contact {
 
   Map<String, dynamic> toJson() => {
     'card': card.toText(),
-    'name': name,
+    'name': chosen,
     'verified': verified,
     'knowsMine': knowsMine,
     'sentMine': sentMine,
@@ -129,7 +141,12 @@ class Contact {
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
     PersonCard.parse(j['card'] as String),
-    j['name'] as String,
+    // Before a contact's name could be empty, a nameless card's contact
+    // was saved as this.
+    switch (j['name'] as String) {
+      'Unnamed' => '',
+      final n => n,
+    },
     verified: j['verified'] as bool,
     knowsMine: j['knowsMine'] as String?,
     sentMine: j['sentMine'] as String?,
@@ -228,6 +245,24 @@ class Contacts extends ChangeNotifier {
     list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     notifyListeners();
     await _save();
+  }
+
+  /// Adds the contact of a card scanned or pasted, named `name` if that
+  /// is not empty; a known one keeps its name, and its card unless this
+  /// one is as new or newer. An archived one comes back: adding it again
+  /// is asking for it back.
+  Future<Contact> add(PersonCard card, {String name = ''}) async {
+    final known = byKey(card.key);
+    final c =
+        (known == null
+                ? Contact(card, '')
+                : known.copyWith(
+                    card: card.time >= known.card.time ? card : null,
+                  ))
+            .copyWith(name: name.isEmpty ? null : name);
+    await put(c);
+    await unarchive(c.key);
+    return byKey(c.key)!;
   }
 
   Future<void> remove(Contact c) async {

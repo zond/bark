@@ -63,6 +63,11 @@ class Me extends ChangeNotifier {
 
   PersonCard get card => PersonCard(identity, home, cardTime, name);
 
+  /// The card to show or share: none until the person has a name, as a
+  /// contact made from a nameless card is one its holder cannot tell
+  /// apart.
+  PersonCard? get shownCard => name.isEmpty ? null : card;
+
   /// The version of `me.json`'s format.
   static const version = 1;
 
@@ -142,7 +147,7 @@ class Me extends ChangeNotifier {
   }
 
   Future<void> setName(String n) async {
-    name = n;
+    name = n.trim();
     await _changed();
   }
 

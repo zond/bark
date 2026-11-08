@@ -79,12 +79,24 @@ class ContactsScreen extends StatelessWidget {
   );
 }
 
+/// Adds the contact of a scanned card and opens its thread at once, so
+/// that the person sees where it went and can write; back from it leads
+/// to the conversations.
+Future<void> openScanned(
+  BuildContext context,
+  AppModel app,
+  PersonCard card,
+) async {
+  await app.contacts.add(card);
+  if (!context.mounted) return;
+  Navigator.of(context)
+    ..popUntil((r) => r.isFirst)
+    ..push(MaterialPageRoute(builder: (_) => ThreadScreen(app, card.key)));
+}
+
 class AddContactScreen extends StatefulWidget {
   final AppModel app;
-
-  /// A card already scanned, to name and save.
-  final PersonCard? card;
-  const AddContactScreen(this.app, {this.card, super.key});
+  const AddContactScreen(this.app, {super.key});
 
   @override
   State<AddContactScreen> createState() => _AddContactScreenState();
@@ -95,13 +107,6 @@ class _AddContactScreenState extends State<AddContactScreen> {
   final name = TextEditingController();
   PersonCard? card;
   String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    final c = widget.card;
-    if (c != null) _read(c.toText());
-  }
 
   @override
   void dispose() {
@@ -129,18 +134,15 @@ class _AddContactScreenState extends State<AddContactScreen> {
 
   Future<void> _scan() async {
     final c = await scanCard(context);
-    if (c != null) _read(c.toText());
+    if (c != null && mounted) await openScanned(context, widget.app, c);
   }
 
   Future<void> _save() async {
     final c = card;
+    if (c == null) return;
+    // The card's own name is not chosen here, so a later card's shows.
     final n = name.text.trim();
-    if (c == null || n.isEmpty) return;
-    final cs = widget.app.contacts;
-    final known = cs.byKey(c.key);
-    await cs.put(known?.copyWith(card: c, name: n) ?? Contact(c, n));
-    // Adding an archived contact again is asking for them back.
-    await cs.unarchive(c.key);
+    await widget.app.contacts.add(c, name: n == c.name ? '' : n);
     if (!mounted) return;
     // Back from the new thread leads to the conversations.
     Navigator.of(context)
@@ -200,9 +202,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
           Align(
             alignment: Alignment.centerLeft,
             child: FilledButton(
-              onPressed: card == null || name.text.trim().isEmpty
-                  ? null
-                  : _save,
+              onPressed: card == null ? null : _save,
               child: const Text('Save'),
             ),
           ),

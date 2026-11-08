@@ -348,9 +348,11 @@ class Messenger {
       return true;
     }
     await contacts.put(
-      (known?.copyWith(card: card) ??
-              Contact(card, card.name.isEmpty ? 'Unnamed' : card.name))
-          .heard(h.sent, h.address, now()),
+      (known?.copyWith(card: card) ?? Contact(card, '')).heard(
+        h.sent,
+        h.address,
+        now(),
+      ),
     );
     await _records(m, card.key, h, rs.skip(1), mailbox, intro: true);
     return true;
@@ -415,9 +417,7 @@ class Messenger {
     final c = contacts.byKey(card.key);
     if (c == null) {
       if (card.key != me.key) {
-        await contacts.put(
-          Contact(card, card.name.isEmpty ? 'Unnamed' : card.name),
-        );
+        await contacts.put(Contact(card, ''));
       }
     } else if (card.time > c.card.time) {
       await contacts.put(c.copyWith(card: card));

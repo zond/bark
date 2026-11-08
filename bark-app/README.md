@@ -18,8 +18,11 @@ is a prototype for the bench, not the app people will carry.
   an identity, the name its owner chose and, when the person has set
   one, their home node's address; without a home it carries no
   address, and they can be written to only once they have written.
-- **Contact**: a card with the name this phone gives it, known by its
-  identity.
+- **Contact**: a card with the name this phone gives it, or else the
+  card's own, known by its identity. A card from an older app may have
+  no name: its contact is listed as "Unnamed" with the first eight
+  characters of its identity until a card with a name comes or the
+  person renames it.
 - **Home node**: a node on USB that stays where it is, set in Settings;
   it holds the person's mailbox key, and the person fetches their mail
   from it, when they ask, to the node they are connected to.
@@ -91,10 +94,13 @@ is a prototype for the bench, not the app people will carry.
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
 - **Contacts**, from the menu. Adding one: scan their card with the
-  camera, or paste it, and give a name. An address alone is not
-  enough: a text is sealed to the identity on the card. A row swiped
-  aside archives the contact and its conversation, with **Undo**, and a
-  line at the bottom counts the archived contacts.
+  camera, and the new contact's thread opens at once, so you see where
+  it went and can write; or paste the card and save it, with a name of
+  your choosing if you like. An address alone is not enough: a text is
+  sealed to the identity on the card. Adding an archived contact brings
+  it back. A row swiped aside archives the contact and its
+  conversation, with **Undo**, and a line at the bottom counts the
+  archived contacts.
 - **Archived**, from the menu or the line at the bottom of either list.
   The archived conversations, then the archived contacts, each with an
   unarchive button. Unarchiving either brings back both: a person whose
@@ -109,7 +115,9 @@ is a prototype for the bench, not the app people will carry.
   another phone to scan, **Scan their card** to add theirs as in
   Contacts, and the home's address and the card as text to copy and
   send. Without a home it says that people can answer you only after
-  you write to them.
+  you write to them. Without a name it shows no card: it says "Set your
+  name first", with **Set my name**, as whoever scans a card needs to
+  know whose it is.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one; a public node says so, with its RSSI, and a tap joins it as a
   guest, **Pair** pairs with it instead) and the node the phone is

@@ -195,10 +195,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: IconButton(
                 tooltip: 'Change',
                 icon: const Icon(Icons.edit),
-                onPressed: () async {
-                  final n = await askText(context, 'My name', app.me.name);
-                  if (n != null) await app.me.setName(n);
-                },
+                onPressed: () => askMyName(context, app),
               ),
             ),
             ..._home(),
