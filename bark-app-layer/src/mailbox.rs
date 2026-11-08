@@ -14,6 +14,15 @@
 //! confirmed by the phone at the node, is marked sent in its slot and
 //! stays in the ring. An item that arrives later waits for the next
 //! fetch.
+//!
+//! On a public node the ring keeps the guests' mail too, every payload for
+//! a recipient tag that is not the owner's, which a guest reads by its tag
+//! after a number it keeps itself ([`Mailbox::for_tag`]); such an item is
+//! written marked sent, so no fetch sends it and it counts in nothing of
+//! the owner's, and it leaves the ring as the ring wraps (spec "Mailbox",
+//! "Phone link", Public).
+
+use core::cell::Cell;
 
 use bark_proto::MsgId;
 
@@ -103,6 +112,19 @@ pub enum Arrival {
     NotHome,
 }
 
+/// Whose the ring's items are, by their recipient tags (spec "Phone link",
+/// Public).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owner {
+    /// Every item is the owner's: a node that is not public, or one whose
+    /// owner's phone has not written its tag yet.
+    All,
+    /// The owner's are those with this tag; the rest are guests'.
+    Tag(u8),
+    /// None is: a public node nobody has paired with.
+    Nobody,
+}
+
 /// The fetch the mailbox answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Reply {
@@ -167,6 +189,12 @@ pub struct Mailbox<R: Ring> {
     read: u32,
     /// The node is public ([`Mailbox::keeps`]).
     public: bool,
+    /// Whose the items are.
+    owner: Owner,
+    /// The owner's oldest unread item's number, 0 for none, and the count
+    /// of them, while nothing has changed since: found by reading each
+    /// later item's tag, which the node's loop asks for at every step.
+    owners_unread: Cell<Option<(u32, u32)>>,
 }
 
 impl<R: Ring> Mailbox<R> {
@@ -182,6 +210,8 @@ impl<R: Ring> Mailbox<R> {
             unsent: 0,
             read: 0,
             public: false,
+            owner: Owner::All,
+            owners_unread: Cell::new(None),
         };
         // A whole slot counts only in its own place: one that is not, left
         // by a ring laid out otherwise before, would set the newest number
@@ -215,17 +245,75 @@ impl<R: Ring> Mailbox<R> {
     /// reads the ring from where it last confirmed; the ring keeps every
     /// item for fetches either way.
     pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
-        let from = (self.read + 1).max(self.oldest());
-        (from..=self.newest).find_map(|n| self.read_item(n, out).map(|(id, l)| (n, id, l)))
+        let (n, _) = self.owners_unread();
+        self.read_item(n, out).map(|(id, l)| (n, id, l))
     }
 
     /// Items the phone at the node has not confirmed.
     pub fn unread_count(&self) -> u32 {
-        self.newest
-            - self
-                .read
-                .max(self.oldest().saturating_sub(1))
-                .min(self.newest)
+        self.owners_unread().1
+    }
+
+    /// The owner's oldest unread item and the count of them.
+    fn owners_unread(&self) -> (u32, u32) {
+        if let Some(u) = self.owners_unread.get() {
+            return u;
+        }
+        let from = (self.read + 1).max(self.oldest());
+        let mut first = 0;
+        let mut count = 0;
+        for n in (from..=self.newest).filter(|&n| self.owners(n)) {
+            if first == 0 && self.read_item(n, &mut [0u8; MAX_PAYLOAD]).is_some() {
+                first = n;
+            }
+            count += 1;
+        }
+        self.owners_unread.set(Some((first, count)));
+        (first, count)
+    }
+
+    /// Whether item `n` is the owner's, by its tag.
+    fn owners(&self, n: u32) -> bool {
+        match self.owner {
+            Owner::All => true,
+            Owner::Nobody => false,
+            Owner::Tag(t) => {
+                self.ring
+                    .read_byte(self.slot_of(n), PAYLOAD_AT + seal::RECIPIENT_AT)
+                    == t
+            }
+        }
+    }
+
+    /// Whose the items are from now on; items kept before stay as they
+    /// were written.
+    pub fn set_owner(&mut self, owner: Owner) {
+        self.owner = owner;
+        self.owners_unread.set(None);
+    }
+
+    /// The oldest item after `after` whose recipient tag is `tag`: its
+    /// number, the message ID it arrived with and its length in `out`. A
+    /// guest reads its mail so, keeping `after` itself, and reading takes
+    /// nothing from the ring.
+    pub fn for_tag(
+        &self,
+        tag: u8,
+        after: u32,
+        out: &mut [u8; MAX_PAYLOAD],
+    ) -> Option<(u32, MsgId, usize)> {
+        let from = after.saturating_add(1).max(self.lowest());
+        (from..=self.newest)
+            .filter(|&n| {
+                self.ring
+                    .read_byte(self.slot_of(n), PAYLOAD_AT + seal::RECIPIENT_AT)
+                    == tag
+            })
+            .find_map(|n| {
+                self.read_item(n, out)
+                    .filter(|&(_, len)| out[..len].get(seal::RECIPIENT_AT) == Some(&tag))
+                    .map(|(id, len)| (n, id, len))
+            })
     }
 
     /// The phone at the node has item `n`, and every one before it. It
@@ -236,6 +324,7 @@ impl<R: Ring> Mailbox<R> {
         if n > self.read && n <= self.newest {
             self.mark(n);
             self.read = n;
+            self.owners_unread.set(None);
             self.keep();
         }
     }
@@ -390,6 +479,11 @@ impl<R: Ring> Mailbox<R> {
             }
             self.ring.erase(s / SLOTS_PER_PAGE);
         }
+        let owners = match self.owner {
+            Owner::All => true,
+            Owner::Nobody => false,
+            Owner::Tag(t) => seal::recipient_of(payload) == Some(t),
+        };
         let mut b = [0xffu8; SLOT_LEN];
         b[..seal::NUMBER_LEN].copy_from_slice(&n.to_be_bytes()[1..]);
         b[seal::NUMBER_LEN] = payload.len() as u8;
@@ -397,9 +491,15 @@ impl<R: Ring> Mailbox<R> {
         b[ID_AT..CHECK_AT].copy_from_slice(&msg_id.0.to_be_bytes());
         let check = slot_check(&b);
         b[CHECK_AT..].copy_from_slice(&check.to_be_bytes());
+        // A guest's item is sent as it is written: no fetch of the
+        // owner's sends it. The check reads the mark as erased.
+        if !owners {
+            b[MARK_AT] = 0;
+        }
         self.ring.write(s, &b);
         self.newest = n;
-        self.unsent += 1;
+        self.unsent += u32::from(owners);
+        self.owners_unread.set(None);
         Arrival::Kept(n)
     }
 
