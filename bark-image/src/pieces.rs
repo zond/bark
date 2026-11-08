@@ -175,7 +175,9 @@ const TABLE_PIECES: usize = (HASH_LEN + ENTRY * (MAX_BLOCKS - 1)).div_ceil(PIECE
 
 // The head: the image's record at its start, then the done bytes, the
 // table and the header, each from a page of its own.
-const RECORD_LEN: usize = TAG_LEN + 2 + 4;
+// The record: the tag, blocks, last, version, key, then the check.
+const CHECKED: usize = TAG_LEN + 2 + 4 + 1;
+const RECORD_LEN: usize = CHECKED + 4;
 const DONE_AT: u32 = 64;
 const TABLE_AT: u32 = SLOT;
 const HEADER_AT: u32 = 4 * SLOT;
@@ -234,6 +236,12 @@ pub struct Image {
     pub blocks: u8,
     /// The pieces of its last block.
     pub last: u8,
+    /// Its version and the key the section named, kept so that after a
+    /// reset the node says what it gathers before block 1 brings the
+    /// header.
+    pub version: u32,
+    /// See `version`.
+    pub key: u8,
 }
 
 impl Image {
@@ -270,25 +278,157 @@ impl Image {
         r[..TAG_LEN].copy_from_slice(&self.tag);
         r[TAG_LEN] = self.blocks;
         r[TAG_LEN + 1] = self.last;
-        let check = crc32(&r[..TAG_LEN + 2]);
-        r[TAG_LEN + 2..].copy_from_slice(&check.to_le_bytes());
+        r[TAG_LEN + 2..TAG_LEN + 6].copy_from_slice(&self.version.to_le_bytes());
+        r[TAG_LEN + 6] = self.key;
+        let check = crc32(&r[..CHECKED]);
+        r[CHECKED..].copy_from_slice(&check.to_le_bytes());
         r
     }
 
     fn from_record(r: &[u8; RECORD_LEN]) -> Option<Image> {
-        let c = TAG_LEN + 2;
+        let c = CHECKED;
         let check = u32::from_le_bytes([r[c], r[c + 1], r[c + 2], r[c + 3]]);
         if crc32(&r[..c]) != check {
             return None;
         }
         let mut tag = [0u8; TAG_LEN];
         tag.copy_from_slice(&r[..TAG_LEN]);
+        let v = TAG_LEN + 2;
         let image = Image {
             tag,
             blocks: r[TAG_LEN],
             last: r[TAG_LEN + 1],
+            version: u32::from_le_bytes([r[v], r[v + 1], r[v + 2], r[v + 3]]),
+            key: r[TAG_LEN + 6],
         };
         image.fits().then_some(image)
+    }
+}
+
+/// The name of the image `header` heads: the SHA-256 of the bytes its
+/// signatures cover.
+pub fn name(header: &[u8; HEADER_LEN]) -> [u8; HASH_LEN] {
+    Sha256::digest(&header[..SIGNED_LEN]).into()
+}
+
+/// The image of `header`, with `length` bytes of firmware behind it, as
+/// a holder tells and sends it: `None` if it has more blocks than a lane
+/// each.
+pub fn held(header: &[u8; HEADER_LEN], length: u32, version: u32, key: u8) -> Option<Image> {
+    let pieces = (HEADER_LEN as u32 + length).div_ceil(PIECE as u32);
+    let blocks = 1 + pieces.div_ceil(DATA as u32);
+    if blocks as usize > MAX_BLOCKS {
+        return None;
+    }
+    let mut tag = [0u8; TAG_LEN];
+    tag.copy_from_slice(&name(header)[..TAG_LEN]);
+    Some(Image {
+        tag,
+        blocks: blocks as u8,
+        last: (pieces - (blocks - 2) * DATA as u32) as u8,
+        version,
+        key,
+    })
+}
+
+/// Where data piece `i` of block `block`, 1 or later, starts in the
+/// packed image: blocks of [`DATA`] pieces from the header on.
+pub fn piece_offset(block: u8, i: usize) -> u32 {
+    ((u32::from(block) - 1) * DATA as u32 + i as u32) * PIECE as u32
+}
+
+/// Block 0 of an image a node holds: the name, then 8 bytes of the
+/// SHA-256 of each other block's pieces, the last padded with zeros as it
+/// travels ([`Tabling`]).
+pub struct Table {
+    image: Image,
+    bytes: [u8; TABLE_PIECES * PIECE],
+}
+
+impl Table {
+    /// The image it is of.
+    pub fn image(&self) -> Image {
+        self.image
+    }
+
+    /// Data piece `i` of block 0.
+    pub fn piece(&self, i: usize) -> Option<&[u8; PIECE]> {
+        if i >= self.image.pieces(0) {
+            return None;
+        }
+        self.bytes[i * PIECE..(i + 1) * PIECE].try_into().ok()
+    }
+}
+
+/// A [`Table`] being made from the packed image's bytes, fed in order,
+/// and the SHA-256 of its firmware, to check against its header's.
+pub struct Tabling {
+    table: Table,
+    block: Sha256,
+    firmware: Sha256,
+    /// Bytes fed.
+    fed: u32,
+}
+
+impl Tabling {
+    /// The table of `image`, named `name`, before any byte is fed.
+    pub fn new(image: Image, name: &[u8; HASH_LEN]) -> Tabling {
+        let mut bytes = [0u8; TABLE_PIECES * PIECE];
+        bytes[..HASH_LEN].copy_from_slice(name);
+        Tabling {
+            table: Table { image, bytes },
+            block: Sha256::new(),
+            firmware: Sha256::new(),
+            fed: 0,
+        }
+    }
+
+    /// Feed the next bytes of the packed image: its header, then its
+    /// firmware.
+    pub fn feed(&mut self, bytes: &[u8]) {
+        let past_header = (HEADER_LEN as u32).saturating_sub(self.fed) as usize;
+        if past_header < bytes.len() {
+            self.firmware.update(&bytes[past_header..]);
+        }
+        self.hash(bytes);
+    }
+
+    fn hash(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            let room = BLOCK_BYTES - self.fed % BLOCK_BYTES;
+            let n = bytes.len().min(room as usize);
+            self.block.update(&bytes[..n]);
+            self.fed += n as u32;
+            bytes = &bytes[n..];
+            if self.fed.is_multiple_of(BLOCK_BYTES) {
+                self.entry();
+            }
+        }
+    }
+
+    /// The table, once every byte was fed, its last block padded; and the
+    /// SHA-256 of the firmware fed.
+    pub fn finish(mut self) -> (Table, [u8; HASH_LEN]) {
+        let end = self.table.image.len();
+        let zeros = [0u8; PIECE];
+        while self.fed < end {
+            let n = (end - self.fed).min(PIECE as u32) as usize;
+            self.hash(&zeros[..n]);
+        }
+        if !self.fed.is_multiple_of(BLOCK_BYTES) {
+            self.entry();
+        }
+        (self.table, self.firmware.finalize().into())
+    }
+
+    /// The block just fed whole: its entry.
+    fn entry(&mut self) {
+        let block = (self.fed - 1) / BLOCK_BYTES;
+        let at = HASH_LEN + ENTRY * block as usize;
+        let hash = core::mem::take(&mut self.block).finalize();
+        if let Some(entry) = self.table.bytes.get_mut(at..at + ENTRY) {
+            entry.copy_from_slice(&hash[..ENTRY]);
+        }
     }
 }
 
@@ -493,46 +633,54 @@ fn slot_address(lane: usize, slot: usize) -> u32 {
 }
 
 impl Store {
-    fn empty() -> Store {
-        Store {
-            image: None,
-            mode: Mode::Empty,
-            done: 0,
-            table: [0; TABLE_PIECES * PIECE],
-            table_known: false,
-            lanes: [Lane::FREE; LANES],
-            queue: [None; QUEUE],
-            op: None,
-            decode: None,
-        }
-    }
+    /// A store holding nothing, for a static the firmware opens in place
+    /// ([`Store::reopen`]): at 7 KB it is never built on the stack.
+    pub const EMPTY: Store = Store {
+        image: None,
+        mode: Mode::Empty,
+        done: 0,
+        table: [0; TABLE_PIECES * PIECE],
+        table_known: false,
+        lanes: [Lane::FREE; LANES],
+        queue: [None; QUEUE],
+        op: None,
+        decode: None,
+    };
 
     /// The store as the flash holds it after a reset: the image and what
     /// is done from the head; its slots are read by the steps that follow.
     pub fn open<F: Flash>(flash: &mut F) -> Result<Store, F::Error> {
-        let mut s = Store::empty();
+        let mut s = Store::EMPTY;
+        s.reopen(flash)?;
+        Ok(s)
+    }
+
+    /// [`Store::open`], in place.
+    pub fn reopen<F: Flash>(&mut self, flash: &mut F) -> Result<(), F::Error> {
+        self.drop_all();
+        self.op = None;
         let mut record = [0u8; RECORD_LEN];
         flash.read(HEAD, &mut record)?;
         let Some(image) = Image::from_record(&record) else {
-            return Ok(s);
+            return Ok(());
         };
-        s.image = Some(image);
+        self.image = Some(image);
         let mut done = [0xffu8; MAX_BLOCKS];
         let blocks = usize::from(image.blocks);
         flash.read(HEAD + DONE_AT, &mut done[..blocks])?;
         for (b, &d) in done[..blocks].iter().enumerate() {
             // A byte cut short is cleared only once its block was written.
             if d != 0xff {
-                s.done |= 1 << b;
+                self.done |= 1 << b;
             }
         }
-        if s.is_done(0) {
+        if self.is_done(0) {
             let len = image.pieces(0) * PIECE;
-            flash.read(HEAD + TABLE_AT, &mut s.table[..len])?;
-            s.table_known = true;
+            flash.read(HEAD + TABLE_AT, &mut self.table[..len])?;
+            self.table_known = true;
         }
-        s.mode = Mode::Scan { lane: 0, slot: 0 };
-        Ok(s)
+        self.mode = Mode::Scan { lane: 0, slot: 0 };
+        Ok(())
     }
 
     /// Gather `image`: go on with it if it is the one gathered, else clear
@@ -556,15 +704,66 @@ impl Store {
         self.mode = Mode::Forget;
     }
 
+    /// Hold nothing, field by field, so that no whole store passes
+    /// through the stack.
     fn drop_all(&mut self) {
-        let op = self.op.map(|_| Op::Orphan);
-        *self = Store::empty();
-        self.op = op;
+        self.op = self.op.map(|_| Op::Orphan);
+        self.image = None;
+        self.mode = Mode::Empty;
+        self.done = 0;
+        self.table_known = false;
+        self.lanes.fill(Lane::FREE);
+        self.queue.fill(None);
+        self.decode = None;
     }
 
     /// The image gathered.
     pub fn image(&self) -> Option<Image> {
         self.image
+    }
+
+    /// Whether it takes pieces: an image is gathered, and what a new one
+    /// clears or a reset left is cleared and read.
+    pub fn ready(&self) -> bool {
+        self.image.is_some() && self.mode == Mode::Gather
+    }
+
+    /// Whether a flash operation it started may still run, or one is due:
+    /// the head's erase after [`Store::forget`].
+    pub fn busy(&self) -> bool {
+        self.op.is_some() || self.mode == Mode::Forget
+    }
+
+    /// Data piece `i` of block `block`, once the block is decoded and
+    /// written: what a node that gathers sends of it. False if it is not.
+    pub fn data_piece<F: Flash>(
+        &self,
+        flash: &mut F,
+        block: u8,
+        i: usize,
+        out: &mut [u8; PIECE],
+    ) -> Result<bool, F::Error> {
+        let Some(image) = self.image else {
+            return Ok(false);
+        };
+        if !self.is_done(block) || i >= image.pieces(block) {
+            return Ok(false);
+        }
+        if block == 0 {
+            out.copy_from_slice(&self.table[i * PIECE..(i + 1) * PIECE]);
+            return Ok(true);
+        }
+        let at = piece_offset(block, i);
+        // The header's part lies in the head, the rest in the staged slot.
+        let head = (HEADER_LEN as u32).saturating_sub(at).min(PIECE as u32) as usize;
+        if head > 0 {
+            flash.read(HEAD + HEADER_AT + at, &mut out[..head])?;
+        }
+        if head < PIECE {
+            let from = at + head as u32 - HEADER_LEN as u32;
+            flash.read(DFU.start + from, &mut out[head..])?;
+        }
+        Ok(true)
     }
 
     fn is_done(&self, block: u8) -> bool {
@@ -576,6 +775,11 @@ impl Store {
     pub fn lacks(&self) -> Option<u8> {
         let image = self.image?;
         (0..image.blocks).find(|&b| !self.is_done(b))
+    }
+
+    /// How many blocks are decoded and written.
+    pub fn decoded(&self) -> u8 {
+        self.done.count_ones() as u8
     }
 
     /// Whether every block is decoded and written.

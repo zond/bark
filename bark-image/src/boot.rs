@@ -381,6 +381,23 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
         })
     }
 
+    /// [`Stager::begin`] for an image already written into the staged
+    /// slot by other means, the mesh's store (`crate::pieces`), with the
+    /// same checks; [`Stager::finish`] then hashes it, records it and asks
+    /// for the swap.
+    pub async fn written(
+        record: R,
+        state: S,
+        dfu: D,
+        bytes: &[u8; HEADER_LEN],
+        running: u32,
+        keys: &[Key; SLOTS],
+    ) -> Result<Self, StageError> {
+        let mut s = Self::begin(record, state, dfu, bytes, running, keys).await?;
+        s.next = s.header.length;
+        Ok(s)
+    }
+
     /// Where the next chunk starts.
     pub fn next(&self) -> u32 {
         self.next

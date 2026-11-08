@@ -473,6 +473,51 @@ fn staging_refuses_what_it_cannot_stage() {
     );
 }
 
+#[test]
+fn an_image_written_by_other_means_is_checked_and_swapped_in() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    let (i, e) = (&board.internal, &board.external);
+    let dfu = || part(e, DFU);
+    let write = |bytes: &[u8]| {
+        let mut d = dfu();
+        d.erase(0, (bytes.len() as u32).div_ceil(PAGE) * PAGE)
+            .unwrap();
+        d.write(0, bytes).unwrap();
+    };
+    let written = |header: &[u8; HEADER_LEN]| {
+        let (record, state, dfu) = blocking(i, e);
+        now(Stager::written(
+            record,
+            state,
+            dfu,
+            header,
+            RUNNING,
+            &keys(),
+        ))
+    };
+    // Its signature and version as from the phone, its bytes when it is
+    // finished.
+    write(&b);
+    assert_eq!(
+        written(&unsigned_for(&b, RUNNING + 1)).err(),
+        Some(StageError::Signature(SignatureError::Unsigned))
+    );
+    assert!(matches!(
+        written(&header_for(&b, RUNNING)).err(),
+        Some(StageError::Version { .. })
+    ));
+    let other = image(3, b.len());
+    write(&other);
+    let s = written(&header_for(&b, RUNNING + 1)).unwrap();
+    assert_eq!(now(s.finish()).err(), Some(StageError::Hash));
+    write(&b);
+    let s = written(&header_for(&b, RUNNING + 1)).unwrap();
+    now(s.finish()).unwrap();
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(active(&board, b.len()), b);
+}
+
 /// Run `step` with the power cut at its first, second, ... flash
 /// operation, on either flash, each time on a board `setup` made, until
 /// it runs whole; `after` sees the board once the power is back. Returns
