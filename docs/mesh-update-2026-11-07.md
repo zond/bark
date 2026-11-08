@@ -556,6 +556,25 @@ piece goes only if the pace allows it at that moment, so on a channel
 with several anchors each sends after only some of its slot
 heartbeats. Not yet measured further.
 
+*96 hours.* The same district, 96 hours, on `d78ecaa`, against the run
+without the update and a run on `a3a78c6` (before the best holder,
+sections on change and the 20 % margin):
+
+| | without | `a3a78c6` | `d78ecaa` |
+|---|---|---|---|
+| relays holding, 50 / 90 / 100 % | | 16.5 / 17.8 / 32.0 h | 13.3 / 14.5 / 28.2 h |
+| channel busy, mean over the run | 1.28 % | 2.05 % | 1.71 % |
+| the pieces' airtime, and their share of all | | 405 700 s, 28 % | 313 500 s, 28 % |
+| the sections' airtime | | 235 500 s | 14 500 s |
+| texts delivered | 99.8 % | 99.8 % | 99.8 % |
+| latency p50 / p90 | 1.0 / 16.2 s | 1.0 / 16.2 s | 1.0 / 16.2 s |
+| sleepy nodes holding the image at 90 h | | 58 of 945 | 55 of 945 |
+| sleepy nodes gathering, first block lacked, mean at 90 h | | 4.0 | 2.9 |
+
+The sleepy nodes gain about a block a day. Fewer sections and a stricter
+foreign rule slowed them by a block over the run: their anchors' slot
+pieces are the same pace's.
+
 
 ## What is left
 
