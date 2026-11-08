@@ -295,13 +295,15 @@ impl<R: Ring> Mailbox<R> {
     /// The oldest item after `after` whose recipient tag is `tag`: its
     /// number, the message ID it arrived with and its length in `out`. A
     /// guest reads its mail so, keeping `after` itself, and reading takes
-    /// nothing from the ring.
+    /// nothing from the ring. A number above the newest is from before
+    /// the ring began again, erased or on another board, and reads as 0.
     pub fn for_tag(
         &self,
         tag: u8,
         after: u32,
         out: &mut [u8; MAX_PAYLOAD],
     ) -> Option<(u32, MsgId, usize)> {
+        let after = if after > self.newest { 0 } else { after };
         let from = after.saturating_add(1).max(self.lowest());
         (from..=self.newest)
             .filter(|&n| {

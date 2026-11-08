@@ -3382,7 +3382,8 @@ On a public node:
   reads its own through Inbox, after the number of the last item it
   took, which it writes to Guest, 0 at first: a read gives the oldest
   item after it with the guest's tag, its number, the message ID it
-  arrived with and the payload, or nothing. The guest keeps the number,
+  arrived with and the payload, or nothing; a number above the newest
+  item's, from before the ring began again, counts as 0. The guest keeps the number,
   for each node; it confirms nothing, as reading takes nothing from the
   ring, and a write to Inbox on its link is answered 0x13. A guest that was away reads
   what came meanwhile, as long as the ring holds it.

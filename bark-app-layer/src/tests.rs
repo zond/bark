@@ -687,6 +687,8 @@ mod mailbox {
         assert_eq!(m.for_tag(5, 0, &mut out).map(|u| u.0), Some(2));
         assert_eq!(m.for_tag(6, 0, &mut out).map(|u| u.0), Some(3));
         assert_eq!(m.for_tag(9, 0, &mut out), None);
+        // A number from before the ring began again reads as 0.
+        assert_eq!(m.for_tag(5, 900, &mut out).map(|u| u.0), Some(2));
         // A fetch sends the owner's alone: the guests' are written sent.
         assert_eq!(m.unsent(), 1);
         let f = fetch(&fixture().alice.mailbox, 50);
