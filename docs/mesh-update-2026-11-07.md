@@ -5,9 +5,11 @@
 2026-11-07; spec "Updates over the mesh" holds the rules, and roadmap
 D146 the decision. Spec references are to `protocol.md` by section
 name. Built: the frames, the core's side and the simulator's driver
-side, without bytes. Not built: the firmware's side (the code that
-makes and decodes the pieces, their flash, the policy, the signature
-check and the install), and the sleepy nodes' side.
+side, without bytes; on 2026-11-08 the chain and the sleepy side
+("The chain and the sleepy side", below). Not built: the firmware's
+side of the transport (the policy, the signature check and the
+install, and the driver's answers; the code and the pieces store are
+`bark-image`'s `code.rs` and `pieces.rs`, roadmap D149).
 
 ## What was built
 
@@ -269,25 +271,126 @@ four causes, in order of weight:
 The pace is the user's choice and is kept: the update never takes more
 than 1 % of a channel per holder, busy or not.
 
+## The chain and the sleepy side (2026-11-08)
+
+The user decided on 2026-11-08 to build both before D146 is merged.
+
+**What changed** (spec "Updates over the mesh"):
+
+- The announcement carries how many blocks its sender holds, from the
+  first (`held`, one byte: 49 bytes, 33.6 ms). A relay serves every
+  block it has decoded and whose hash passed, before it holds the whole
+  image. It announces on its home channel a random time within a pace
+  after its count grows, and from its first block hourly on one other
+  channel in turn.
+- A node asks a holder that holds the block it lacks, one at home on
+  its own channel first, then the one heard last. A holder asked for a
+  block it does not hold is silent; the node asks when it hears that
+  one, or another, holds more. A block that fails its hash is gathered
+  again and not counted held.
+- The request's channel byte carries the asker's sleep in its top bit.
+  A sleepy node with an anchor asks its anchor alone, at once. The
+  anchor sends one frame right after each slot heartbeat on its home
+  channel: a piece while sleepy nodes asked, else its announcement once
+  an hour. A sleepy node listens 143.6 ms after its anchor's slot
+  heartbeat while it gathers, 38.6 ms otherwise.
+- The silence of a channel where another holder sends holds for every
+  holder, partial ones too.
+
+**How it was tuned.**
+
+7. **Collisions after growth.** The two relays behind a first holder
+   finished each block together and asked for the next a pace after
+   their own growth announcements, in the same instant, and again ten
+   minutes later, every time: the requests collided and never reached
+   the holder. Growth announcements and quiet re-requests now wait a
+   random time within a pace.
+8. **An announcement after every slot heartbeat.** Every anchor that
+   held a block announced after each of its slot heartbeats, 8 190 s of
+   announcements in the district's first 12 hours. Now once an hour.
+9. **Pieces after every slot heartbeat.** Anchors sent their sleepy
+   nodes a piece after every slot heartbeat whatever their channel
+   carried; the frame now keeps the channel's silence.
+
+**Results.** The district at the design rate, seed 1, 36 hours, on
+`6cea6c1`, with and
+without the update, the image packed at 387 796 B (26 blocks):
+
+| hours | relays holding | gathering (relays and sleepy) | first block they lack, mean / most |
+|---|---|---|---|
+| 10 | 3 | 2024 | 3.4 / 19 |
+| 20 | 4 | 2023 | 6.6 / 23 |
+| 30 | 9 | 2018 | 9.9 / 25 |
+| 35 | 14 (1.3 %) | 2013 | 11.2 / 25 |
+
+No sleepy node came to hold the image; at one piece a rotation of its
+anchor it needs 3.7 days (spec, "What it costs a sleepy node").
+
+| | without | with the chain |
+|---|---|---|
+| channel busy, mean over the run (summary `channels`) | 1.27 % | 2.04 % |
+| the busiest channel | 1.61 % | 2.29 % |
+| the update's pieces, whole district, a 10-minute sample from 6 h on | | 900 to 1 080 s |
+| texts delivered, 0–12 / 12–24 / 24–36 h | 99.62 / 99.84 / 99.68 % | 99.60 / 99.79 / 99.67 % |
+| latency p50 / p90 / p99, 24–36 h | 0.9 / 15.9 / 620 s | 1.0 / 16.2 / 628 s |
+| refused at the gate | 0 | 0 |
+| texts whose application waited for its node | 37 | 39 |
+| the busiest node's airtime | 0.88 % | 1.65 % |
+
+```
+bark-sim district-x1-update.toml --duration-s 129600 --update c-upd.upd.csv \
+    --messages c-upd.msgs.csv --json c-upd.json
+bark-sim district-x1.toml --duration-s 129600 --messages c-base.msgs.csv --json c-base.json
+```
+
+**What it says.** The chain spreads blocks to every relay at once
+rather than the whole image to a few: after 35 hours every relay that
+gathers holds 11 blocks on average, and 14 relays hold all 26, where
+without the chain 44 held all and the rest held almost none. The mass
+gains about a third of a block an hour, so half the relays would hold
+the image after about 80 hours; that is an extrapolation, and no worse
+than the three days estimated without the chain. The cost is the
+channels': the update's pieces come to about 1.6 s of air a second
+across the district, from about a thousand partial holders, and the
+channels the relays sit on are busy 2.04 % of the time, 0.77 points
+more than without, where the rule without the chain added 0.23. That
+is still below the 3 to 4 % at which the network collapses
+(`collapse-research-2026-10-16.md`), and the texts do not notice.
+
+Two variants, 12 hours each, the same district, not committed:
+
+| variant | pieces in 12 h | relays holding at 10 h | gathering, first block lacked, mean |
+|---|---|---|---|
+| as committed | 55 078 s | 3 | 3.7 of 2024 |
+| sleepy nodes take no part | 39 168 s | 2 | 6.9 of 1086 |
+| a partial holder serves its own channel only, and sleepy nodes only whole holders | 9 352 s | 2 | 1.3 of 2017 |
+
+Sleepy nodes gathering a block a rotation behind their anchors cost
+the relays a third of the update's air and half their progress. A
+partial holder that serves only its own channel keeps the air to a
+sixth, but behind a sender on the same channel it is silent, so the
+chain hardly moves. Neither changes how soon the first relays hold the
+image, about ten hours, a whole image at the pace on one channel.
+
+**The image on the merged branch** (2026-11-08, `llvm-size`, the
+node image as `bark-fw/README.md` builds it): main `ea1141f`, 420 552
+B; this branch merged with it, 434 392 B, 13 840 B more, and 552 B
+more static memory. Packed behind its header it is 420 808 B, 1 704
+pieces in 27 blocks, the last of 40, and its table of 248 bytes is two
+pieces; 28 blocks in all. The runs above used the 387 796 B packed
+of 2026-11-07.
+
 ## What is left
 
-- **The firmware's side**: the coder (Reed-Solomon over GF(2⁸), 64
-  pieces a block), the pieces in the external flash's 22 sectors, the
-  block table and the block hashes, the policy (keys, the version, given
-  up images), the signature check, the install through the loader, and
-  `Holds` at boot. The firmware's driver answers none of the update's
-  actions yet.
-- **Sleepy nodes**: the anchor's piece after its slot heartbeat while
-  one of its sleepy nodes asked within the hour, the sleepy node's
-  listen for it and its request riding a beat, and the anchor's
-  announcement after its slot heartbeat. The core can express them (a
-  sleepy node already listens for its anchor's heartbeat,
-  spec "Relay choice"), but none is built: a sleepy node ignores every update frame,
-  and takes an image when it is a relay or from a phone.
-- **A chain.** Letting a node serve the blocks it has decoded would
-  bring the time per generation from a whole image to a few blocks; it
-  needs an announcement of what a node holds in part, and a rule for
-  which partial holder a node asks.
-- **Runs**: the district to the end and the city, which need the
-  simulator to carry a piece to a channel's nodes more cheaply; more
-  seeds.
+- **The firmware's side**: the driver's answers to the update's
+  actions over `bark-image`'s `pieces.rs` and `code.rs` (D149), the
+  policy (keys, the version, given up images), the signature check, the
+  install through the loader, and `Holds` at boot. The firmware's driver
+  answers none of the update's actions yet.
+- **The chain's cost.** About a thousand partial holders put 0.77
+  points on every channel; a rule that keeps one sender in a place
+  without silencing a chain behind a sender on the same channel is not
+  found yet (the variants above).
+- **Runs**: the district to its end and the city. A run of the district
+  slows as holders multiply, since every piece reaches every node on its
+  channel; 36 simulated hours took an hour of wall clock. More seeds.

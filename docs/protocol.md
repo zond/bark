@@ -3762,20 +3762,24 @@ minutes, to cross a hop, and today's image 2433, 9.4 hours.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. It takes the announcements and the pieces it
-hears in its windows ([delivery](#delivery)) as a relay does, asks its
-anchor once the anchor's announcement says it holds the block the node
-lacks, and says in its request that it sleeps. Its anchor sends one
-update frame right after each of its slot heartbeats on its home
-channel, where its sleepy nodes listen for that heartbeat
-([relay choice](#relay-choice)): while sleepy nodes have asked, a
-piece of a block asked for on that channel; else its announcement; the frame keeps the pace, and pieces on that channel
-leave the pace room for the slot when sleepy nodes asked and it comes
-within a pace. Pieces only sleepy nodes asked for go only then. The
-node listens 143.6 ms after its anchor's slot heartbeat while it
-gathers from it, the anchor's check of the channel, about 3 ms, the
-transmission's start, under 1 ms ([heartbeat](#heartbeat)), and a full
-frame, with a margin to 5 ms; and once an hour while it does not, for
-an announcement. A sleepy node without an anchor takes no part.
+hears in its windows ([delivery](#delivery)) and after its anchor's
+slot heartbeats as a relay does, asks its anchor as soon as it takes
+the image, without waiting to hear what the anchor holds, and says in
+its request that it sleeps; the anchor serves what it holds and is
+silent otherwise, and the node asks again after 10 quiet minutes. The
+anchor sends one update frame right after each of its slot heartbeats
+on its home channel, where its sleepy nodes listen for that heartbeat
+([relay choice](#relay-choice)): while sleepy nodes have asked, a piece
+of a block asked for on that channel, unless another holder sends
+there; else, once an hour, its announcement. The frame keeps the pace,
+and pieces on that channel leave the pace room for the slot when sleepy
+nodes asked and it comes within a pace; pieces only sleepy nodes asked
+for go only then. The node listens after its anchor's slot heartbeat
+for that frame: 143.6 ms while it gathers from it, the anchor's check of
+the channel, about 3 ms, the transmission's start, under 1 ms
+([heartbeat](#heartbeat)), and a full frame, with a margin to 5 ms; and
+38.6 ms otherwise, the same for an announcement. A sleepy node without
+an anchor takes no part.
 
 *What it costs a sleepy node.* One piece a rotation of its anchor, 13
 of its heartbeats, 130 s at the mean interval
@@ -3784,8 +3788,10 @@ of its heartbeats, 130 s at the mean interval
 349 s, at the 5.8 mA of listening
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
 0.56 mAh, 0.07 % of the 850 mAh battery ([hardware](#hardware)). A
-piece lost is one more rotation and one more listen. The hourly listen
-while it does not gather costs 0.14 s an hour, 0.0056 mAh a day.
+piece lost is one more rotation and one more listen. The listen while
+it does not gather, 38.6 ms a rotation, is a mean 1.7 µA, 0.3 % of the
+0.56 mA a sleepy node draws ([delivery](#delivery)): the price
+of hearing within an hour that its anchor holds an image.
 
 *Why after the slot heartbeat.* Every sleepy node of the anchor listens
 for it in the same moment, so one frame reaches all of them; in a
