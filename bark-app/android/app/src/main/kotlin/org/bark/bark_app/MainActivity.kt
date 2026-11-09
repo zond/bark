@@ -48,6 +48,19 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // Where the person forgets a node whose bond the phone
+                // could not remove itself.
+                "settings" -> try {
+                    startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                    result.success(null)
+                } catch (e: ActivityNotFoundException) {
+                    result.error("no-settings", e.message, null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE).setMethodCallHandler { call, result ->
             when (call.method) {
                 "share" -> {
@@ -75,6 +88,7 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BROWSER).setMethodCallHandler(null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE).setMethodCallHandler(null)
     }
 
@@ -82,5 +96,6 @@ class MainActivity : FlutterActivity() {
         const val POWER = "org.bark.bark_app/power"
         const val BROWSER = "org.bark.bark_app/browser"
         const val SHARE = "org.bark.bark_app/share"
+        const val BLUETOOTH = "org.bark.bark_app/bluetooth"
     }
 }

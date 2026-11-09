@@ -3547,9 +3547,12 @@ too, and is a node nobody has paired with, public, its screen saying
 screen shows. The node answers the write, then ends the link, which
 is no longer its owner's. It keeps the mailbox key, as a new pairing
 does (Pairing, above).
-The phone keeps its own copy of the bond until its person removes it
-in the phone's settings; a link the phone then encrypts with that copy
-the node ends, as for a replaced phone. From link version 12.
+The phone keeps its own copy of the bond until it is removed: the app
+removes it once the node has answered, or, on a phone that does not
+let it, its person does in the phone's settings. A link the phone
+encrypts with that copy the node ends, as for a replaced phone, a
+guest's link too, so a phone holding it cannot use the node at all.
+From link version 12.
 
 *Why on Public.* It is the owner's setting of whom the node serves, and
 unpairing ends at the node public by default, its end state; a

@@ -147,6 +147,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await f();
     } on NotOurs catch (e) {
       if (mounted) await _notOurs(e);
+    } on StaleBond catch (e) {
+      if (mounted) await askToForget(context, app, staleBondLine(e.node));
     } catch (e) {
       if (mounted) say(context, 'Connecting failed: $e');
     }
@@ -260,6 +262,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               NoticeCard(app),
+              StaleBondLine(app),
               ..._connection(),
               ..._public(),
               ..._unpair(),
@@ -494,9 +497,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'The node forgets this phone. Its screen then says UNPAIRED, '
           'and it is public again, serving any phone nearby. Anyone at '
           'the node can pair with it by the code on its screen.\n\n'
-          'Your texts and contacts stay on this phone.\n\n'
-          'The phone may still list the node in its Bluetooth settings; '
-          'you can remove it there.',
+          'Your texts and contacts stay on this phone, and the phone '
+          'forgets its own pairing with the node too.',
         ),
         actions: [
           TextButton(
@@ -512,8 +514,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (ok != true) return;
     await _try(() async {
-      await app.session.unpair();
-      if (mounted) say(context, 'Unpaired: the node is public again');
+      // The home is the node's mailbox key, which it keeps.
+      final home = app.atHome
+          ? ' It stays your home node, so texts to you still go to it.'
+          : '';
+      final forgotten = await app.unpair();
+      if (!mounted) return;
+      if (forgotten) {
+        say(context, 'Unpaired: the node is public again.$home');
+        return;
+      }
+      await askToForget(
+        context,
+        app,
+        'Unpaired: the node is public again.$home This phone could not '
+        'forget its own pairing with it: forget the node in the phone\'s '
+        'Bluetooth settings, or the phone cannot use it as a guest.',
+      );
     }, 'Unpairing failed');
   }
 

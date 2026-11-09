@@ -55,6 +55,10 @@ abstract interface class Notifier {
   /// Opens `url` in the browser.
   Future<void> openLink(String url);
 
+  /// Opens the phone's Bluetooth settings, where the person forgets a
+  /// node.
+  Future<void> openBluetoothSettings();
+
   /// Opens the system's share sheet with `text` and the PNG image `png`.
   Future<void> share(String text, Uint8List png);
 }
@@ -97,6 +101,8 @@ class NoNotifier implements Notifier {
   Future<void> askBatteryExempt() async {}
   @override
   Future<void> openLink(String url) async {}
+  @override
+  Future<void> openBluetoothSettings() async {}
   @override
   Future<void> share(String text, Uint8List png) async {}
 }

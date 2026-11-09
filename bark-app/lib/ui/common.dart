@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../ble_link.dart';
 import '../link.dart';
+import '../node_link.dart';
 import '../session.dart';
 
 void say(BuildContext context, String s) =>
@@ -242,6 +243,130 @@ class NoticeCard extends StatelessWidget {
     );
   }
 }
+
+/// While a node refuses the phone's old bond ([AppModel.staleBond]): the
+/// line that says so, with the way to the phone's Bluetooth settings.
+class StaleBondLine extends StatelessWidget {
+  final AppModel app;
+  const StaleBondLine(this.app, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final n = app.staleBond;
+    if (n == null) return const SizedBox.shrink();
+    return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(staleBondLine(n)),
+            Align(
+              alignment: Alignment.centerRight,
+              child: BluetoothSettingsButton(app),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// While the search has found the person's node again and no home is set
+/// ([AppModel.offerHome]): makes it the home in one tap.
+class HomeOfferLine extends StatelessWidget {
+  final AppModel app;
+  const HomeOfferLine(this.app, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!app.offerHome) return const SizedBox.shrink();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              app.contacts.list.isEmpty
+                  ? 'This phone has no home node set.'
+                  : 'This phone has no home node set. Making this node '
+                        'your home sends your new card to your contacts.',
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: app.notHome,
+                  child: const Text('Not now'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final a = app.session.address;
+                    if (a == null) return;
+                    try {
+                      final r = await app.makeHome(a);
+                      if (context.mounted) say(context, r);
+                    } catch (e) {
+                      if (context.mounted) {
+                        say(context, 'Setting the home failed: $e');
+                      }
+                    }
+                  },
+                  child: const Text('Make this node my home'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Opens the phone's Bluetooth settings, where the person forgets a node.
+class BluetoothSettingsButton extends StatelessWidget {
+  final AppModel app;
+  const BluetoothSettingsButton(this.app, {super.key});
+
+  @override
+  Widget build(BuildContext context) => TextButton(
+    onPressed: () => openBluetoothSettings(context, app),
+    child: const Text('Bluetooth settings'),
+  );
+}
+
+Future<void> openBluetoothSettings(BuildContext context, AppModel app) async {
+  try {
+    await app.notifier.openBluetoothSettings();
+  } catch (e) {
+    if (context.mounted) say(context, 'Opening Bluetooth settings failed: $e');
+  }
+}
+
+/// Tells the person `text`, which asks them to forget a node in the
+/// phone's Bluetooth settings, with the way there.
+Future<void> askToForget(BuildContext context, AppModel app, String text) =>
+    showDialog<void>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        content: Text(text),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(dialog);
+              openBluetoothSettings(context, app);
+            },
+            child: const Text('Bluetooth settings'),
+          ),
+        ],
+      ),
+    );
 
 /// "Fetch my mail", in an app bar, while the person has a home node; it
 /// says what was done, or why nothing was sent. While a fetch waits for

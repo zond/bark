@@ -30,6 +30,9 @@ class PhoneNotifier implements Notifier {
   /// The share sheet, which no plugin used here offers (MainActivity.kt).
   static const _share = MethodChannel('org.bark.bark_app/share');
 
+  /// The phone's Bluetooth settings (MainActivity.kt).
+  static const _bluetooth = MethodChannel('org.bark.bark_app/bluetooth');
+
   /// The link's foreground service and its notification (LinkService.kt).
   static const _link = MethodChannel('org.bark.bark_app/link');
 
@@ -154,6 +157,10 @@ class PhoneNotifier implements Notifier {
 
   @override
   Future<void> openLink(String url) => _browser.invokeMethod<void>('open', url);
+
+  @override
+  Future<void> openBluetoothSettings() =>
+      _bluetooth.invokeMethod<void>('settings');
 
   @override
   Future<void> share(String text, Uint8List png) =>

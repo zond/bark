@@ -174,11 +174,11 @@ is a prototype for the bench, not the app people will carry.
   owner turns it off (Public nodes, below), and from link version 12
   **Unpair this node**: a dialog says that the node forgets this phone,
   shows `UNPAIRED` and is public again, that anyone at the node can pair
-  with it by the code on its screen, that texts and contacts stay on the
-  phone, and that the phone may still list the node in its Bluetooth
-  settings, where it can be removed; on **Unpair** the node forgets its
-  bond and ends the link, and the app forgets the node and looks for it
-  no more. Then the home node: make
+  with it by the code on its screen, and that texts and contacts stay on
+  the phone, which forgets its own pairing with the node too; on
+  **Unpair** the node forgets its bond and ends the link, the app
+  forgets the node and looks for it no more, and then has Android remove
+  its bond with the node (Unpairing, below). Then the home node: make
   the connected node your home if it is not, or none; the dialog says
   so, and on **Go ahead** your new card goes to every contact; **Send
   my card**, as on the first screen; clear the mailbox key of a node
@@ -303,6 +303,70 @@ not its owner's in its ring, with the tag it carries, whether or not
 its guest is there, until the ring wraps; it keeps nothing for a guest
 beyond its link.
 
+**Unpairing.** The node forgets its bond when its owner unpairs, but
+Android keeps its own, and encrypts every later link to the node with
+it, a guest's too, which the node ends (spec "Phone link", Public). The
+node answers the write and ends the link, and Android may report the
+write as failed when the end overtakes the answer (its catch-all GATT
+error 133), so a failed write after which the link ends within 32 s,
+the longest supervision timeout, counts as done; only a write that
+failed while the link stayed up says "Unpairing failed", and then the
+app forgets nothing. The search waits meanwhile, as a connect with the
+bond still held would find the node no longer the phone's. Once the
+node has answered, the app has Android remove the bond, by the
+Bluetooth plugin's `UniversalBle.unpair`, and waits up to 2 s for
+Android to list it no more. Android hides the removal from apps
+(`BluetoothDevice.removeBond`, which the plugin calls by reflection and
+whose failure it does not report), so the bond's state is the only
+answer. Where the bond stays, a dialog says the node is public again
+but that the phone could not forget its own pairing, with **Bluetooth
+settings**, which opens the phone's Bluetooth settings (the intent
+`android.settings.BLUETOOTH_SETTINGS`, `MainActivity.kt`), where the
+person forgets the node. Either way, if the node was the person's home,
+the line adds that it stays their home, so texts to them still go to
+it: the node keeps the mailbox key. The search then uses the node as a
+guest without asking whether it is the person's, as a **Pair** there
+would only pair again; the texts, the contacts, the home and the card
+stay as they were.
+
+**A pairing found again.** With no pairing stored, as after the app's
+data was cleared, on a new install or after restoring the 12 words, the
+phone may still hold a bond with the person's node, and the node the
+phone's. Each round, while the app knows of no pairing, the search
+looks for a node heard that Android lists a bond with, the strongest
+first, and connects to it as its owner, before any public node and
+without asking "Is it yours?". A first read that succeeds on the
+encrypted link shows the node still holds the bond: it is kept as the
+paired node, and the first screen says "Back on your node, ID …". With
+no home set and the node placed, the first screen offers **Make this
+node my home** in one line, which says when the new card would go to
+the contacts, and **Not now**. A node that refuses the bond goes the
+way of a stale bond, below, without the question either.
+
+A phone can hold such a stale bond in other ways too: unpaired by an
+older app, or with a node another phone has paired with since. A
+guest's link to a node that fails before the app has read it, or whose
+first read is refused, while Android lists a bond with the node, is
+taken as the node refusing that bond. The app then has Android remove
+the bond, as on unpairing, scans until it sees the node again and
+connects once more. Only where Android keeps the bond does it show one
+line on the first screen and in Settings, "ID … no longer knows this phone's old
+pairing. Forget it in the phone's Bluetooth settings, then try again.",
+with the same **Bluetooth settings** button, and a tap on the node in
+the scan says the same in a dialog. The search passes the node over,
+as every link to it would fail alike, until Android no longer lists the
+bond: it checks at each round and when the app comes to the front, and
+the line goes once the bond is gone.
+
+A node Android lists a bond with is never paired anew: Android pairs
+with its old keys while the node runs a new pairing with a new code, and
+the key check fails whatever code is typed (bench, 2026-11-10, DHKey
+check failed three times). So **Pair** on such a node connects over the
+bond first, and a node that still holds it is the person's again,
+without a code; only a node that refuses it has Android remove the bond,
+as **Pair again** does, and then pairs with the code its screen shows,
+saying the stale-bond line only where Android keeps the bond.
+
 **A guest's errand.** A public node takes one guest's link at a time
 beside its owner's and ends it after 30 s, so a guest does not stay. It
 connects, writes its tag, and reads its mail: it writes to Guest the
@@ -347,9 +411,11 @@ it. A fetch sent from a public node brings the mail back there, read
 as a guest's. Each errand takes the
 strongest public node of its round, so the phone moves to a nearer one
 as it walks. The
-app never joins as a guest the node that is no longer its own: Android
-still holds the old bond and would encrypt the link with it, which the
-node ends.
+app never joins as a guest the node that is no longer its own, nor one
+that refused its old bond (Unpairing, above), while Android still holds
+the old bond: it would encrypt the link with it, which the node ends.
+Once Android holds none, the node serves the phone as a guest like any
+public node.
 
 The paired node is connected by the same path as a tap and without
 a code; the search runs from the app's start, and after a link drops,
@@ -761,7 +827,14 @@ another guest, and move to the paired node once it is heard; with a
 paired node, go to a public node only after two rounds without it,
 send through it as a guest, name it on the card and on the first
 screen's line, come back to the paired node in the round that hears it
-and say so, and stay with a paired node heard every other round; read the fake
+and say so, and stay with a paired node heard every other round; take back
+as the paired node, without asking, a node Android holds a bond with
+that still holds the phone's; have
+Android remove an old bond a public node refuses and connect again,
+and where Android keeps it, pass the node over, saying so once, until
+the bond is forgotten; on unpairing, have Android forget its bond too,
+also when the link ends under the write, say what to do where it keeps
+it, and forget nothing when the write fails with the link up; read the fake
 node's neighbours, in one page and across several, and not from a node
 before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
@@ -1011,3 +1084,14 @@ a phone (Trying it, With a node).
     guest: your node is out of reach" within about 30 s if another
     public node is in reach, sends a text through it, and says "Back on
     your node" within a round of the node's return.
+16. Unpairing, on link version 12 or later. On the owner's phone,
+    connected, **Settings**, **Unpair this node**, **Unpair**: the node's
+    screen says `PHONE UNPAIRED`, Settings says "Unpaired: the node is
+    public again", and the phone's Bluetooth settings no longer list the
+    node; the log shows `Pairing: the phone forgot its bond with … too`.
+    Within a round or two the phone goes on an errand at the node as a
+    guest. On a phone that keeps the bond, a dialog says to forget the
+    node in the phone's Bluetooth settings, and **Bluetooth settings**
+    opens them; the first screen says "ID … no longer knows this phone's
+    old pairing", and the line goes within a round of forgetting it
+    there, after which the phone uses the node as a guest.

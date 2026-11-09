@@ -10,7 +10,9 @@
 // phone has paired with since, and pairing with it again; and a long
 // text, counted in parts as it is written, sent in one bubble and
 // received as far as it has come; and a first message marked in a
-// verified thread; and the owner's Public switch, and a guest's view.
+// verified thread; and the owner's Public switch, and a guest's view;
+// and the line for a node that refuses the phone's old bond, with the
+// way to Bluetooth settings.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -35,6 +37,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:sodium/sodium.dart';
+
+import 'alerts_test.dart' show FakeNotifier;
 
 /// The one check's words: no news from the network past it.
 const sentTip = 'Sent into the network; no further news until they confirm';
@@ -1056,7 +1060,7 @@ void main() {
     expect(find.textContaining('public again'), findsOneWidget);
     expect(find.textContaining('code on its screen'), findsOneWidget);
     expect(find.textContaining('texts and contacts stay'), findsOneWidget);
-    expect(find.textContaining('Bluetooth settings'), findsOneWidget);
+    expect(find.textContaining('forgets its own pairing'), findsOneWidget);
     // Cancel changes nothing.
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
@@ -1073,6 +1077,39 @@ void main() {
     expect(app.session.pairedWith, isNull);
     expect(app.pairedNode, isNull);
     expect(find.text('Unpair this node'), findsNothing);
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a node that refuses the phone\'s old bond: one line on the '
+      'first screen and in Settings, with the way to Bluetooth settings', (
+    t,
+  ) async {
+    final notifier = FakeNotifier();
+    final app = AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, DateTime.now),
+      session: Session(store: MemoryStore(), now: DateTime.now),
+      contacts: Contacts(MemoryStore()),
+      now: DateTime.now,
+      notifier: notifier,
+    );
+    await t.runAsync(app.load);
+    const line =
+        'ID 0CE400000004 no longer knows this phone\'s old pairing. Forget '
+        'it in the phone\'s Bluetooth settings, then try again.';
+    await t.pumpWidget(BarkApp(app));
+    expect(find.text(line), findsNothing);
+    app.staleBonds['bark-0ce400000004'] = 'aa:bb:cc:dd:ee:04';
+    app.notifyListeners();
+    await t.pump();
+    expect(find.text(line), findsOneWidget);
+    await t.tap(find.text('Bluetooth settings'));
+    await t.pump();
+    expect(notifier.log, contains('Bluetooth settings'));
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    expect(find.text(line), findsOneWidget);
     await t.pumpWidget(const SizedBox());
     app.dispose();
   });

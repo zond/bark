@@ -38,8 +38,12 @@ class _BarkAppState extends State<BarkApp> {
     super.initState();
     _life = AppLifecycleListener(
       onStateChange: (s) => app.alerts.front(s == AppLifecycleState.resumed),
-      // The person may have allowed Bluetooth in Android's settings.
-      onResume: app.checkBluetooth,
+      // The person may have allowed Bluetooth in Android's settings, or
+      // forgotten a node there.
+      onResume: () {
+        unawaited(app.checkBluetooth());
+        unawaited(app.recheckStale());
+      },
     );
     _taps = app.notifier.tapped.listen(_openThread);
   }
