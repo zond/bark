@@ -59,6 +59,10 @@ pub struct UpdateRun {
     /// relays, and sleepy nodes, which listen only at times.
     targeted: [u64; 2],
     reached: [u64; 2],
+    /// When each relay last sent a piece on each channel, and its pieces
+    /// a pace or more after the one before there, and within a pace.
+    last_piece: std::collections::HashMap<(u32, u8), Instant>,
+    paced: [u64; 2],
     /// When each relay last sent a heartbeat on its home channel.
     home_beats: std::collections::HashMap<u32, Instant>,
     /// Per relay that lacked a piece sent from another channel than the
@@ -109,6 +113,8 @@ impl UpdateRun {
             targeted: [0; 2],
             reached: [0; 2],
             home_beats: std::collections::HashMap::new(),
+            last_piece: std::collections::HashMap::new(),
+            paced: [0; 2],
             last_foreign: std::collections::HashMap::new(),
             foreign: [0; 2],
             slots: std::collections::BTreeMap::new(),
@@ -198,6 +204,14 @@ impl UpdateRun {
         self.home_beats
             .get(&node)
             .is_some_and(|&t| now.since(t).as_micros() < 40_000)
+    }
+
+    /// Relay `sender` sent a piece on `channel` at `now`: within a pace of
+    /// its last there, or not.
+    pub fn piece_gap(&mut self, sender: u32, channel: u8, now: Instant) {
+        let last = self.last_piece.insert((sender, channel), now);
+        let fast = last.is_some_and(|t| now.since(t) < bark_proto::update::PACE);
+        self.paced[usize::from(fast)] += 1;
     }
 
     /// Relay `sender` sent piece `index` of `block` at `now`, from
@@ -367,6 +381,11 @@ impl UpdateRun {
             }
             out.push('\n');
         }
+        let _ = writeln!(
+            out,
+            "# pieces a pace or more after the sender's last on the channel {}, within a pace {}",
+            self.paced[0], self.paced[1]
+        );
         let all: u64 = self.slots.values().sum();
         let _ = write!(out, "# pieces due after a slot heartbeat: {all}");
         for (k, n) in &self.slots {

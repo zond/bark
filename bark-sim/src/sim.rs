@@ -2869,6 +2869,7 @@ impl Sim {
                                 })
                                 .collect::<Vec<_>>();
                             let foreign = f.channel != home;
+                            u.piece_gap(node, f.channel.index(), self.now);
                             u.piece_sent(node, foreign, self.now, block, index, targets);
                             if slot && !foreign {
                                 let me_key = key(me);
