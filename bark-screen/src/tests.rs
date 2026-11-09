@@ -75,6 +75,7 @@ fn a_sleepy_carried_node_on_battery() {
         sleepy: true,
         anchored: true,
         carried: true,
+        forced: false,
         battery: Battery::Percent(73),
         heard: 5,
         strong: 4,
@@ -197,7 +198,19 @@ fn the_role_and_the_place() {
     for (placed, carried) in [(false, false), (true, false), (true, true)] {
         assert_eq!(role(true, true, placed, carried), "SLEEPY ANCHORED");
         assert_eq!(role(true, false, placed, carried), "SLEEPY NO ANCHOR");
-    }
+    }    // A forced role says so in place of the rest.
+    let forced = |sleepy| {
+        let state = State {
+            sleepy,
+            forced: true,
+            anchored: true,
+            placed: true,
+            ..State::default()
+        };
+        String::from(texts(&state, 0)[0].trim_end())
+    };
+    assert_eq!(forced(true), "SLEEPY FORCED");
+    assert_eq!(forced(false), "RELAY FORCED");
 }
 
 #[test]
@@ -259,7 +272,7 @@ fn every_line_fits_and_is_drawable() {
 fn the_picture_is_the_lines() {
     let state = State::default();
     let mut p = Picture::white();
-    draw(&mut p, &FIXED, &state, 3, CLOCKS[0]);
+    draw(&mut p, Face::Lines, &FIXED, &state, 3, CLOCKS[0]);
     let rows: Vec<usize> = lines(&FIXED, &state, 3, CLOCKS[0])
         .iter()
         .flatten()
@@ -277,8 +290,15 @@ fn the_picture_is_the_lines() {
     assert!(!(0..rows[0]).any(inked));
     // Drawing again over an old picture leaves nothing of it.
     let mut q = Picture::white();
-    draw(&mut q, &FIXED, &State { heard: 9, ..state }, 3, None);
-    draw(&mut q, &FIXED, &state, 3, CLOCKS[0]);
+    draw(
+        &mut q,
+        Face::Lines,
+        &FIXED,
+        &State { heard: 9, ..state },
+        3,
+        None,
+    );
+    draw(&mut q, Face::Lines, &FIXED, &state, 3, CLOCKS[0]);
     assert!(q.bytes == p.bytes);
 }
 
@@ -301,7 +321,7 @@ fn lines_align_left_and_values_right() {
     let margin = (WIDTH - text_width(LINE, SCALE)) / 2;
     for clock in CLOCKS {
         let mut p = Picture::white();
-        draw(&mut p, &FIXED, &state, 5, clock);
+        draw(&mut p, Face::Lines, &FIXED, &state, 5, clock);
         for (t, y) in lines(&FIXED, &state, 5, clock).iter().flatten() {
             let band = *y..*y + line_height(SCALE);
             let inked = |x: usize| band.clone().any(|y| p.black(x, y));

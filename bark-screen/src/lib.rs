@@ -10,6 +10,7 @@
 
 use core::fmt::{self, Write};
 
+pub mod qr;
 pub mod schedule;
 
 /// The panel's width and height, pixels; its RAM is `HEIGHT` rows of
@@ -59,7 +60,7 @@ impl Picture {
 
     /// Black at the board's `(x, y)`, the origin top left; outside the
     /// panel is ignored.
-    fn plot(&mut self, x: usize, y: usize) {
+    pub(crate) fn plot(&mut self, x: usize, y: usize) {
         if x >= WIDTH || y >= HEIGHT {
             return;
         }
@@ -259,6 +260,10 @@ pub struct State {
     /// Sleepy, with a relay that holds its mail.
     pub anchored: bool,
     pub carried: bool,
+    /// Its role, sleepy or a relay, is the one a person forced with the
+    /// button, until its power changes (`bark_proto::Forced`): `sleepy`
+    /// says which.
+    pub forced: bool,
     pub battery: Battery,
     /// Neighbours whose heartbeats it hears now.
     pub heard: u8,
@@ -403,12 +408,37 @@ pub fn lines(
 
 /// What the node is, the header's first line.
 pub fn role(state: &State) -> &'static str {
+    if state.forced {
+        return if state.sleepy {
+            "SLEEPY FORCED"
+        } else {
+            "RELAY FORCED"
+        };
+    }
     match (state.sleepy, state.anchored, state.placed, state.carried) {
         (true, true, _, _) => "SLEEPY ANCHORED",
         (true, false, _, _) => "SLEEPY NO ANCHOR",
         (false, _, false, _) => "RELAY NO PLACE",
         (false, _, true, true) => "CARRIED RELAY",
         (false, _, true, false) => "FIXED RELAY",
+    }
+}
+
+/// Which picture the screen shows: the code, the default, or the lines a
+/// touch asks for (`schedule`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Face {
+    #[default]
+    Code,
+    Lines,
+}
+
+/// The line under the code: the pairing code while a phone pairs, as on
+/// the lines, else the node's ID, which its name in the app ends with.
+pub fn code_line(fixed: &Fixed<'_>, state: &State) -> Text {
+    match state.phone {
+        Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
+        _ => row("ID", format_args!("{}", Hex(fixed.id))),
     }
 }
 
@@ -466,17 +496,29 @@ impl fmt::Display for Hex<'_> {
     }
 }
 
-/// Draw the screen into `picture`, which is cleared first.
+/// Draw `face` into `picture`, which is cleared first. The firmware draws
+/// the same in steps, giving the executor back between them.
 pub fn draw(
     picture: &mut Picture,
+    face: Face,
     fixed: &Fixed<'_>,
     state: &State,
     up_min: u32,
     clock: Option<Clock>,
 ) {
     picture.clear();
-    for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
-        picture.text(text.bytes(), SCALE, *y);
+    match face {
+        Face::Lines => {
+            for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
+                picture.text(text.bytes(), SCALE, *y);
+            }
+        }
+        Face::Code => {
+            for part in 0..qr::PARTS {
+                qr::draw(picture, part);
+            }
+            picture.text(code_line(fixed, state).bytes(), SCALE, qr::LINE_TOP);
+        }
     }
 }
 
