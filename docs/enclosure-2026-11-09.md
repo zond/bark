@@ -180,9 +180,9 @@ there). At 26 m/s the basic pressure is ½ × 1.25 kg/m³ × 26² = 420 Pa;
 at 20 m over open ground the gust factor raises it to about 1.2 kPa
 (EN 1991-1-4, exposure factor about 2.8). The box with its pad shows
 0.018 m² to the wind, so with a force coefficient of 2 it takes about
-42 N. Two 12 mm stainless hose clamps hold that many times over. A
-10 W panel, about 0.09 m², takes about 210 N and goes on its own
-bracket, never on the box.
+42 N. A 10 W panel, about 0.09 m², takes about 210 N; on its ball
+joint about 0.1 m above a base, that is 21 N·m on the base's screws.
+Where the panel goes is under "The panel" below.
 
 **Condensation.** The air in the box cools every night and its
 moisture condenses on the walls. A box sealed tight still breathes,
@@ -218,7 +218,8 @@ the case, and adds 68.7 mm to the box's width. At 20 mm it would add
 
 **Size.** With a 38 mm bend: 131 mm wide, 30 mm deep, 164 mm tall over
 the antenna's tower; without the bay the box would be 62 mm wide. With
-the back pad and its ears it is 159 mm wide and 38 mm deep. At 20 mm:
+the back pad and its ears it is 159 mm wide; 56 mm deep at the pole
+saddle, and 96 mm from the saddle to the front of the panel pad. At 20 mm:
 113 mm wide and 146 mm tall, the lid also coming up as the bend shortens.
 
 **Antennas inside.** Nothing goes through the walls, the antenna
@@ -281,10 +282,56 @@ below the box before it goes to the panel, so water running along it
 drips off the bottom of the loop.
 
 **Mounting.** A pad on the back carries four screw holes in ears beyond
-the body, for a wall, and two pairs of tunnels for 12 mm stainless hose
-clamps behind the body: one pair across, for a vertical pole, one pair
-upright, for a horizontal railing. Steel clamps, not plastic ties,
-which grow brittle in UV and cold.
+the body, for a wall, and a pair of upright tunnels for hose clamps
+round a horizontal railing. For a pole, a saddle on the pad.
+
+**The pole saddle.** Wooden broom handles in shops are 23 to 28 mm
+across: Faithfull sells 23 mm, Hillbrush 23.5 and 28 mm. The saddle is
+a 90° V, 26 mm open and 13 mm deep, down the back of the pad, and two
+12 mm stainless hose clamps pull the pole into it through tunnels in the
+pad, one near the top and one near the bottom. A 23 mm pole sits with
+its centre 16.3 mm from the bottom of the V and stands 14.8 mm proud of
+the saddle; a 28 mm pole, 19.8 and 20.8 mm. So the band wraps the pole
+and not the saddle; larger poles ride on the V's edges and work as
+well. One screwdriver closes
+it. This and not a printed two-part clamp with one M4 bolt: the clamp's
+arms would bend, across the print's weak layers and in the cold, and fit
+one range of diameters; here the steel band takes the tension and the
+plastic is only pressed. The band turns round 3 mm rounded edges of the
+saddle. What it must hold: with a friction coefficient of 0.3 assumed
+between ASA and wood, and the V pressing the pole 1.41 times as hard as
+the band pulls, two clamps hold 1.7 times the band's tension; 42 N of
+wind on the box needs 25 N in each band, and 250 N with a panel on the
+box needs 150 N. A band tightened snug, about 300 N, presses the
+rounded edge with about 12.5 MPa over a 12 × 2 mm contact, a strain of
+0.7 % in compression, against a yield of 3.4 % and a strength of 40 MPa
+in tension (Prusament ASA data sheet). Nothing in it is in tension or
+bending, which is what the cold makes brittle; the cold raises the
+modulus and lowers that strain. Steel clamps, not plastic ties, which
+grow brittle in UV and cold.
+
+**The panel.** The best place for the panel is on the pole, at least a
+quarter wavelength from the antenna, 17 cm at 433 MHz (a rule of thumb
+for keeping a conductor from detuning an antenna), and lower than the
+antenna's tip, so the antenna sees over the panel's frame and cells,
+which are metal and shade the radio toward the panel's side. Below the
+box suits the cable too, which leaves the lid downward. Where there is
+no room on the pole, a pad on the bay's top takes the panel's own base:
+a 70 mm square plate (`PANEL_PAD`, an estimate for a base about 60 mm
+across), 3 mm thick on 9 mm of ribs, with four M4 holes on a 45 mm
+circle (`PANEL_PCD`, `PANEL_HOLES`, estimates: measure the base). The
+holes take heat-set brass inserts, set with a soldering iron after the
+print, and not printed threads or screws cut into the plastic: brass
+threads hold the screws' preload where plastic threads creep, and take
+the screws out and in again. The plate stands 40 mm beyond the front
+wall on 45° ribs, so it prints without support. It sits beside the
+tower, not on it: a panel there would put its metal at the antenna's
+tip. Beside it, the panel's edge is a few centimetres from the antenna,
+well inside that quarter wavelength, so this place costs the antenna
+something; how much is a bench measurement. In a design gust the pad's
+21 N·m pulls about 210 N out of the worst insert (pivoting on the base's
+far edge); the inserts' pull-out in ASA was not found, and the first
+print tests it.
 
 **Material.** ASA, not PETG: ASA is made for UV, and it holds its shape
 to 93 °C (heat deflection at 0.45 MPa, Prusament ASA data sheet)
@@ -330,6 +377,8 @@ layer plane as above.
   modelled.
 - **Hold-down of the cable.** The slot pinches the cable lightly; a hard
   pull on the cable pulls on the plug in the board.
+- **The panel on the box.** What a panel beside the tower does to the
+  antenna's match and pattern, and whether the inserts hold its gusts.
 
 ## What the first print must verify
 
@@ -348,5 +397,9 @@ layer plane as above.
 6. The antenna's match at 433 MHz in the box and out of it, on the
    bench's analyser, and the link's level to a second board at the same
    place with and without the box.
-7. A winter's log from the roof: the die temperature, the cell's
+7. The saddle on a 23 mm and a 28 mm handle: the box does not turn on
+   it when pushed by hand with the clamps snug.
+8. The inserts: an M4 screw in each, pulled to 400 N, twice the design
+   gust's load, at room temperature and from the freezer.
+9. A winter's log from the roof: the die temperature, the cell's
    voltage, and whether any water stands in the lid.
