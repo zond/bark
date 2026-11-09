@@ -752,18 +752,18 @@ enum UpdateState { idle, receiving, staged, committed }
 
 /// Why the node refused a begin, a commit or a reboot.
 enum Refusal {
-  header('the file is not an image this node reads'),
-  version('the image is not newer than the firmware the node runs'),
-  busy('the node has an image committed already: reboot it first'),
-  incomplete('the node does not hold every byte of the image'),
-  hash('the bytes the node holds are not the image\'s; send it again'),
+  header('the file is not firmware this node reads'),
+  version('the firmware is not newer than the version the node runs'),
+  busy('the node holds checked new firmware already: reboot it first'),
+  incomplete('the node does not hold every byte of the firmware'),
+  hash('the bytes the node holds are not the firmware\'s; send it again'),
   battery(
-    'the node is on a low battery; it keeps the image, to commit once '
+    'the node is on a low battery; it keeps the firmware, to go on once '
     'it is on USB or charged',
   ),
-  flash('the node\'s flash failed'),
+  flash('the node\'s flash memory failed'),
   signature(
-    'the image is not signed by a key the node holds: an image built '
+    'the firmware is not signed by a key the node holds: a file built '
     'here is signed with `image.py sign`, a release\'s is signed already',
   );
 
