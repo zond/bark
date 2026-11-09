@@ -22,8 +22,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
-/// Guest.
-pub const VERSION: u8 = 8;
+/// Guest, 9 Ask.
+pub const VERSION: u8 = 9;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -85,6 +85,10 @@ pub mod uuid {
     /// its next read of Inbox looks ([`crate::After`],
     /// [`crate::GuestItem`]); from link version 8.
     pub const GUEST: u128 = 0x28bc000f_a1b8_4893_9537_2ee3559d7644;
+    /// Ask: write a neighbour's ID to ask it for its status, read and
+    /// notify the last answer ([`crate::Ask`], [`crate::Answer`]); from
+    /// link version 9.
+    pub const ASK: u128 = 0x28bc0010_a1b8_4893_9537_2ee3559d7644;
     /// What a public node advertises in place of [`SERVICE`]: the class
     /// of nodes that serve any phone. No attribute has it.
     pub const PUBLIC_NODE: u128 = 0x28bc1001_a1b8_4893_9537_2ee3559d7644;
@@ -751,6 +755,73 @@ impl<'a> GuestItem<'a> {
     }
 }
 
+/// Ask, write: ask this neighbour for its status
+/// (spec "Neighbour status"; `AppCommand::Ask`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ask(pub NodeId);
+
+impl Ask {
+    /// Bytes in the value.
+    pub const LEN: usize = ID;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        self.0 .0
+    }
+
+    /// Take a written value whole.
+    pub fn decode(b: &[u8]) -> Result<Ask, Malformed> {
+        match b.len() {
+            Self::LEN => Ok(Ask(node_id(b))),
+            _ => Err(Malformed::Length),
+        }
+    }
+}
+
+/// Ask, read and notify: the last answer the node was given, the
+/// neighbour's ID and its status in the radio's encoding
+/// (`bark_proto::wire::encode_status`); empty before the first since
+/// the node booted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Answer {
+    /// The neighbour that answered.
+    pub from: NodeId,
+    /// What it says of itself.
+    pub status: bark_proto::status::Status,
+}
+
+impl Answer {
+    /// Bytes in the value.
+    pub const LEN: usize = ID + STATUS;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Self::LEN] {
+        let mut b = [0u8; Self::LEN];
+        b[..ID].copy_from_slice(&self.from.0);
+        let status: &mut [u8; STATUS] = (&mut b[ID..]).try_into().expect("STATUS bytes");
+        bark_proto::wire::encode_status(&self.status, status);
+        b
+    }
+
+    /// Read a value, `None` when empty, ignoring what a later version
+    /// appends.
+    pub fn decode(b: &[u8]) -> Result<Option<Answer>, Malformed> {
+        match b.len() {
+            0 => Ok(None),
+            n if n < Self::LEN => Err(Malformed::Length),
+            _ => Ok(Some(Answer {
+                from: node_id(b),
+                status: bark_proto::wire::decode_status(
+                    b[ID..Self::LEN].try_into().expect("STATUS bytes"),
+                ),
+            })),
+        }
+    }
+}
+
+/// Bytes of a status, as on the radio.
+const STATUS: usize = bark_proto::wire::STATUS_LEN;
+
 // Every value the node or the app writes fits one ATT PDU at the MTU the
 // node offers; the status fits one at the default MTU.
 const _: () = assert!(Send::MAX_LEN <= value_room(ATT_MTU));
@@ -758,6 +829,7 @@ const _: () = assert!(Message::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(GuestItem::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
+const _: () = assert!(Answer::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));

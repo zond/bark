@@ -225,6 +225,9 @@ pub enum Request {
         /// It matched.
         ok: bool,
     },
+    /// Ask this neighbour for its status (`AppCommand::Ask`); its answer
+    /// comes back to [`App::message`] as `AppEvent::Status`.
+    Ask(NodeId),
 }
 
 /// What the GPS is to do (core-interface §4): rest in standby, search
@@ -260,8 +263,9 @@ pub trait App {
     /// and the core then takes it.
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing>;
 
-    /// What the core tells the application: a message for it, or its own
-    /// message given back with when to offer it again (core-interface §4).
+    /// What the core tells the application: a message for it, its own
+    /// message given back with when to offer it again, the first
+    /// rotation, or a neighbour's status (core-interface §4).
     fn message(&mut self, event: &AppEvent);
 
     /// Whether external power, USB, is present now, if the node can tell:
@@ -654,6 +658,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Request::Block { index, ok } => {
                     self.deliver(Event::App(AppCommand::Block { index, ok }))
+                        .await?
+                }
+                Request::Ask(neighbour) => {
+                    self.deliver(Event::App(AppCommand::Ask { neighbour }))
                         .await?
                 }
             }

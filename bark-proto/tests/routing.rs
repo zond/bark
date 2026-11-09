@@ -2530,7 +2530,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         .iter()
         .filter_map(|(t, e)| match e {
             AppEvent::Message { msg_id, .. } => Some(t.since(sent_at[msg_id])),
-            AppEvent::GivenBack { .. } | AppEvent::Boot { .. } => None,
+            AppEvent::GivenBack { .. } | AppEvent::Boot { .. } | AppEvent::Status { .. } => None,
         })
         .collect();
     latency.sort();
@@ -2539,7 +2539,7 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         .iter()
         .filter_map(|(t, e)| match e {
             AppEvent::Message { msg_id, .. } => Some(t.since(taken_at[msg_id])),
-            AppEvent::GivenBack { .. } | AppEvent::Boot { .. } => None,
+            AppEvent::GivenBack { .. } | AppEvent::Boot { .. } | AppEvent::Status { .. } => None,
         })
         .collect();
     since_taken.sort();

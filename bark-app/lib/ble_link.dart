@@ -467,6 +467,13 @@ class BleLink implements NodeLink {
       GuestItem.decode(await _read(Uuids.inbox));
 
   @override
+  Future<void> subscribeAsk() =>
+      UniversalBle.subscribeNotifications(deviceId, Uuids.service, Uuids.ask);
+
+  @override
+  Future<void> ask(List<int> id) => _write(Uuids.ask, encodeAsk(id));
+
+  @override
   Future<UpdateProgress> readUpdate() async =>
       UpdateProgress.decode(await _read(Uuids.update));
 
@@ -506,6 +513,9 @@ class BleLink implements NodeLink {
   @override
   Stream<GivenBack?> get givenBackNotified =>
       _notified(Uuids.givenBack).map(GivenBack.decode);
+
+  @override
+  Stream<Answer?> get answerNotified => _notified(Uuids.ask).map(Answer.decode);
 
   @override
   Future<void> get closed => _closed.future;

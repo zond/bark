@@ -10,6 +10,7 @@
 use crate::ids::{MsgId, NodeId};
 use crate::position::Position;
 use crate::radio::Channel;
+use crate::status::Status;
 use crate::store::Stored;
 use crate::time::{Duration, Instant};
 use crate::update::{Image, Piece};
@@ -161,6 +162,14 @@ pub enum AppCommand<'a> {
         /// The first block missing.
         from: u8,
     },
+    /// A person looks at the node's neighbours: ask this one for its
+    /// status (spec "Neighbour status"). The node asks a live neighbour once, and
+    /// hands its answer, if one comes, as [`AppEvent::Status`]; a node it
+    /// does not know it does not ask.
+    Ask {
+        /// The neighbour.
+        neighbour: NodeId,
+    },
     /// The block the node gathers decoded from the pieces it was given
     /// ([`Action::StorePiece`]): its hash checked, `ok`, and the node goes
     /// on to the next; or not, and the node gathers it again.
@@ -221,7 +230,8 @@ pub enum DropReason {
 }
 
 /// Events for the application side: a message for it, a sleepy node's
-/// own message given back, and the node's first rotation. Nothing else is
+/// own message given back, the node's first rotation and a neighbour's
+/// status. Nothing else is
 /// reported of a message it sent (`docs/core-interface.md` §4). `Message` carries its payload by
 /// value for the same reason `Action::Transmit` does.
 #[allow(clippy::large_enum_variant)]
@@ -253,6 +263,14 @@ pub enum AppEvent {
         relays: u8,
         /// When the first rotation ends; `None` once it has.
         ends: Option<Instant>,
+    },
+    /// A neighbour told its status, asked by [`AppCommand::Ask`]
+    /// (spec "Neighbour status").
+    Status {
+        /// The neighbour.
+        from: NodeId,
+        /// What it says of itself.
+        status: Status,
     },
 }
 

@@ -160,7 +160,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [8, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [9, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -185,6 +185,31 @@ fn vectors() {
     };
     assert_eq!(none.encode(), [0, 0, 0, 0, 0, 60, 0]);
     assert_eq!(&name(to), b"bark-010203040506");
+
+    // The app's vector: a sleepy node anchored, placed, at 57 %, hearing
+    // 5, 3 strong, 2 proven, running version 0x01020304.
+    assert_eq!(Ask(to).encode(), [1, 2, 3, 4, 5, 6]);
+    let answer = Answer {
+        from: to,
+        status: bark_proto::status::Status {
+            placed: true,
+            sleepy: true,
+            anchored: true,
+            carried: false,
+            battery: bark_proto::status::Battery::Percent(57),
+            neighbours: bark_proto::NeighbourCounts {
+                heard: 5,
+                strong: 3,
+                both_ways: 2,
+            },
+            version: 0x0102_0304,
+        },
+    };
+    assert_eq!(
+        answer.encode(),
+        [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4]
+    );
+    assert_eq!(Answer::decode(&answer.encode()), Ok(Some(answer)));
 }
 
 #[test]
@@ -202,6 +227,10 @@ fn uuids_are_one_base_counted() {
         uuid::NEIGHBOURS,
         uuid::UPDATE,
         uuid::IMAGE,
+        uuid::RECIPIENT,
+        uuid::PUBLIC,
+        uuid::GUEST,
+        uuid::ASK,
     ];
     for (i, u) in all.into_iter().enumerate() {
         assert_eq!(u & !(0xffff << 96), uuid::SERVICE & !(0xffff << 96));
@@ -246,6 +275,8 @@ fn writes_are_taken_only_whole() {
         Clock::decode(&[0, 0, 0, 0, 0xfd, 0x2f]),
         Err(Malformed::Value)
     );
+    assert_eq!(Ask::decode(&[0; 5]), Err(Malformed::Length));
+    assert_eq!(Ask::decode(&[0; 7]), Err(Malformed::Length));
     assert_eq!(Malformed::Length.att_error(), 0x0D);
     assert_eq!(Malformed::Value.att_error(), 0x13);
 }
@@ -282,6 +313,18 @@ fn reads_ignore_what_a_later_version_appends() {
     longer[..NodeTime::LEN].copy_from_slice(&t.encode());
     assert_eq!(NodeTime::decode(&longer), Ok(t));
     assert_eq!(NodeTime::decode(&longer[..6]), Err(Malformed::Length));
+    let a = Answer {
+        from: NodeId([3; 6]),
+        status: bark_proto::status::Status::default(),
+    };
+    let mut longer = [0xAA; Answer::LEN + 2];
+    longer[..Answer::LEN].copy_from_slice(&a.encode());
+    assert_eq!(Answer::decode(&longer), Ok(Some(a)));
+    assert_eq!(Answer::decode(&[]), Ok(None));
+    assert_eq!(
+        Answer::decode(&longer[..Answer::LEN - 1]),
+        Err(Malformed::Length)
+    );
 }
 
 #[test]

@@ -1052,6 +1052,53 @@ sleepy. At a node that is not sleepy it fills the heard table too if the
 sleepy bit is alone ([heard table](#heard-table)); a node without an
 anchor has no window to deliver in.
 
+### Neighbour status
+
+A person who looks at a map of their node's neighbours in the app sees
+what each neighbour's own screen shows, as if standing at it: the node
+asks each neighbour shown for its status, and each answers.
+
+The **ask** names the node asked and the node asking, and nothing else.
+The **answer**, the status, says ([packet formats](#packet-formats)):
+
+| field | bytes | content |
+|---|---|---|
+| flags | 1 | bit 0 placed, it has a place ([position](#position)); bit 1 sleepy and bit 3 carried ([nodes](#nodes)); bit 2 anchored, sleepy with an anchor ([relay choice](#relay-choice)); bit 4 on external power, USB; bits 5 to 7 zero, ignored |
+| battery | 1 | 0 at or below the low level, about 20 % ([sleepy nodes](#sleepy-nodes)); 1 to 100 about that share of its charge left, from its last reading; 255 not read, and on USB, where the reading is the charger's |
+| heard | 1 | its live neighbours, at most 64 ([neighbour table](#neighbour-table)) |
+| strong | 1 | of them, those heard with the margin a full frame needs through a fade, likely to hear it too |
+| proven | 1 | of them, those that have taken a message from it, proven to hear it |
+| version | 4 | the version of the firmware image it runs, 0 if not known, 4 bytes as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
+
+Each is a frame from node to node ([packet formats](#packet-formats)):
+one hop, and neither answered nor sent again. A node:
+
+- asks a live neighbour only when its app asks, as a person opens or
+  refreshes the map;
+- answers an ask addressed to it from a live neighbour, once; one from
+  a node it does not hear it leaves unanswered, since that node's home
+  channel is not known to it and its answer would likely not arrive;
+- sends each on the other node's home channel, with the long preamble
+  to a sleepy one, which receives duty-cycled
+  ([duty-cycled receive](#duty-cycled-receive-and-the-long-preamble)),
+  after a listen-before-talk as a heartbeat's, given up after its three
+  checks, and paid from the bucket with the reply reserve kept, as an
+  update's piece is ([duty cycle cap](#duty-cycle-cap)); after the
+  hand-overs, so that a text never waits behind one, an answer before
+  an ask;
+- hands every answer addressed to it to its app.
+
+The ask is 14 bytes, 15.68 ms on air, the answer 23, 19.52 ms; with the
+long preamble 249.92 and 253.76 ms.
+
+*Why only on a look.* Said in every heartbeat, the same would cost
+every node every rotation, for a map that is seldom open; asked, it
+costs the network nothing between looks. A lost ask or answer costs the
+person a refresh.
+
+*Why proven.* The status fills 10 blocks of symbols at SF5 exactly
+with it, so its byte costs no airtime, and the screen shows it.
+
 ---
 
 ## Forwarding
@@ -3115,6 +3162,8 @@ service and its characteristics:
 | Recipient | `28bc000d-…` | write | tag(1) | 1 |
 | Public | `28bc000e-…` | read, write | public(1) | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
+| Ask | `28bc0010-…` | write | id(6) | 6 |
+| | | read, notify | id(6) status(9), empty when none | 0, 15 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -3126,7 +3175,7 @@ which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 8 in this specification; the node's ID, the
+**Node.** The link version, 9 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3273,6 +3322,23 @@ leaves between two reads the others stay where they were, and the next
 page skips none of them; counted from the first live one, they would
 shift down by one, and one would be skipped.
 
+**Ask.** The app writes a neighbour's ID, and the node asks that
+neighbour for its status ([neighbour status](#neighbour-status)); the
+write is answered once the node has taken it, whether or not the ID is
+a live neighbour's, as nobody answers an ask of anything else. The app
+asks each neighbour it shows, once, when the person opens or refreshes
+the map, never by itself. Each answer the node is given, the
+neighbour's ID and its status as the radio carries it, is Ask's value
+from then on, notified to the paired phone; the value is empty before
+the first since the node booted. An answer comes within about a second
+of the ask, or not at all. The app shows it on the neighbour in the
+words of the neighbour's own screen. From link version 9.
+
+*Why a characteristic of its own.* The answer is notified, and a
+notified value is the characteristic's own: Neighbours' is a page of
+the table. A write of an ID to Neighbours would also change what the
+app writes there, which only a new version may.
+
 **Updates.** The app stages a new firmware image on the node, which
 the node's loader swaps in at its next boot (roadmap D79;
 `bark-fw/README.md`, "Updates"): so a node on a roof is updated from
@@ -3339,7 +3405,7 @@ two events a piece, it would be 50 s at 15 ms.
 
 **Versions.** A later link version may add characteristics and append
 fields to the values the node writes, Node, Status, Given back, Update,
-and each neighbour of Neighbours; an app
+Ask, and each neighbour of Neighbours; an app
 reads the fields it knows and ignores the rest, as a node reads a
 heartbeat. The values the app writes change only with the version, and
 the app writes the form of the node's. A change to what a field means
@@ -3398,8 +3464,8 @@ On a public node:
   advertises while it has a link free.
 - *Node, Status, Send, Inbox, Given back, Recipient and Guest* take
   any link, encrypted or not, and so do the subscriptions to Status and
-  Given back; Map point, Clock, Home, Neighbours, Update, Image and
-  Public stay the paired phone's, as on any node.
+  Given back; Map point, Clock, Home, Neighbours, Update, Image,
+  Public and Ask stay the paired phone's, as on any node.
 - *It takes 2 links*, the owner's and one guest's, and keeps no state
   for a guest beyond its link. A guest's link is short: the guest
   connects, writes its recipient tag at the node to Recipient (The
@@ -4231,14 +4297,16 @@ its kind says otherwise, and `aux` names its kind:
 |---|---|
 | 13, 14 | free: an update's announcement and request had them, and the heartbeat's section replaced both |
 | 15 | an update's piece ([updates over the mesh](#updates-over-the-mesh)) |
-| 16 to 63 | reserved for later kinds |
+| 16 | a neighbour's status asked ([neighbour status](#neighbour-status)) |
+| 17 | a neighbour's status told, the answer to 16 |
+| 18 to 63 | reserved for later kinds |
 
 Such a frame keeps the first two bytes and lays out the rest for its
 kind: none has a hop, a destination or a count, and the piece needs
 every byte. It has lost the sender's home channel that `aux` carries in
-a message, so a kind that expects an answer carries it in a byte of its
-own; the neighbour table has it too, from the sender's heartbeats
-([neighbour table](#neighbour-table)).
+a message, so a kind that expects an answer finds it in the neighbour
+table, from the sender's heartbeats ([neighbour table](#neighbour-table)),
+as a status asked does, or carries it in a byte of its own.
 
 **The heartbeat's section.** In format 1 a heartbeat is 13 bytes, or 30
 with an update's section after the first 13
@@ -4282,9 +4350,16 @@ DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
           aux = sender's home channel, so the receiver knows where to ACK
 PIECE     first(1) format(1) image(4) block(1) index(1) piece(247)          = 255
           aux = 15; index = which coded piece of the block, 0 to 254
+ASK       first(1) format(1) to(6) from(6)                                  = 14
+          aux = 16; to, from = the IDs of the node asked and the node asking
+STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
+          strong(1) proven(1) version(4)                                    = 23
+          aux = 17; to, from = the IDs of the node that asked and the node
+          answering; the rest as [neighbour status](#neighbour-status) says
 ```
 
-Multi-byte numbers in the section, the versions, are big-endian.
+Multi-byte numbers in the section and the status, the versions, are
+big-endian.
 
 *Why the wait in the first byte.* Every answer is then one packet, of
 one length and one airtime, 17.0 ms, and the reply reserve counts one

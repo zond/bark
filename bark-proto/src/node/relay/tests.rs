@@ -3312,3 +3312,182 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
     assert!(traces.contains(&Trace::HandedOn { msg_id: id }));
     assert!(!traces.iter().any(|t| matches!(t, Trace::Dropped { .. })));
 }
+
+/// A relay on channel 3 that runs image version 9 and hears two
+/// neighbours, A, a relay at home on channel 5, and S, a sleepy node at
+/// home on channel 7 (spec "Neighbour status").
+fn with_two_neighbours() -> (Relay, Instant, NodeId, NodeId) {
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        version: 9,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let mut ids = [NOBODY; 2];
+    for (i, (k, home, sleepy)) in [(1, 5, false), (2, 7, true)].into_iter().enumerate() {
+        let at = Position {
+            lat: me.lat + 5_000 * k,
+            ..me
+        };
+        let hb = Heartbeat {
+            sleepy,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(home).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: id_of(at),
+            short: at.short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+        ids[i] = hb.id;
+    }
+    (r, now, ids[0], ids[1])
+}
+
+/// The status frames in `sent`, with their channels and preambles.
+fn status_frames(sent: &[(Instant, Frame)]) -> Vec<(u8, u16, crate::wire::StatusFrame)> {
+    sent.iter()
+        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Status(s)) => Some((f.channel.index(), f.preamble_symbols, s)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A node asked for its status tells it once, on the asker's home
+/// channel, with what its screen shows (spec "Neighbour status").
+#[test]
+fn a_status_asked_is_told_on_the_asker_s_channel() {
+    use crate::status::{Battery, Status};
+    use crate::wire::StatusFrame::{Ask, Tell};
+    let (mut r, mut now, a, _) = with_two_neighbours();
+    let me = r.me();
+    let sent = hear(&mut r, &mut now, &Packet::Status(Ask { to: me, from: a }));
+    let status = Status {
+        placed: true,
+        sleepy: false,
+        anchored: false,
+        carried: false,
+        battery: Battery::NotRead,
+        neighbours: NeighbourCounts {
+            heard: 2,
+            strong: 2,
+            both_ways: 0,
+        },
+        version: 9,
+    };
+    let told = Tell {
+        to: a,
+        from: r.me(),
+        status,
+    };
+    assert_eq!(
+        status_frames(&sent),
+        [(5, MIN_PREAMBLE_SYMBOLS, told)],
+        "told once, on A's channel"
+    );
+    assert_eq!(r.status(now), status);
+    let later = now + Duration::from_secs(10);
+    assert!(status_frames(&drive(&mut r, &mut now, later)).is_empty());
+}
+
+/// A status asked of another node, or by a node this one does not hear,
+/// goes unanswered.
+#[test]
+fn a_status_asked_of_another_node_is_not_told() {
+    use crate::wire::StatusFrame::Ask;
+    let (mut r, mut now, a, _) = with_two_neighbours();
+    let asks = [
+        Ask { to: a, from: a },
+        Ask {
+            to: r.me(),
+            from: NOBODY,
+        },
+    ];
+    for ask in asks {
+        let mut sent = hear(&mut r, &mut now, &Packet::Status(ask));
+        let later = now + Duration::from_secs(10);
+        sent.extend(drive(&mut r, &mut now, later));
+        assert!(status_frames(&sent).is_empty(), "{ask:?}");
+    }
+}
+
+/// The application asks a neighbour, the sleepy one with the long
+/// preamble on its channel, and is handed the answer addressed to this
+/// node, not one to another.
+#[test]
+fn the_application_asks_and_hears_the_answer() {
+    use crate::status::{Battery, Status};
+    use crate::wire::StatusFrame::{Ask, Tell};
+    let (mut r, mut now, a, s) = with_two_neighbours();
+    let mut pending = Vec::new();
+    for neighbour in [s, NOBODY] {
+        let ask = AppCommand::Ask { neighbour };
+        r.handle(Event::App(ask), now, &mut |x| pending.push(x));
+    }
+    let until = now;
+    let sent = drive_from(&mut r, &mut now, until, pending);
+    let asked = Ask {
+        to: s,
+        from: r.me(),
+    };
+    assert_eq!(status_frames(&sent), [(7, LONG_PREAMBLE_SYMBOLS, asked)]);
+    let status = Status {
+        sleepy: true,
+        anchored: true,
+        battery: Battery::Percent(57),
+        version: 8,
+        ..Status::default()
+    };
+    let mut told = Vec::new();
+    for to in [r.me(), a] {
+        let f = mac::frame(
+            &Packet::Status(Tell {
+                to,
+                from: s,
+                status,
+            }),
+            r.home,
+            LONG_PREAMBLE_SYMBOLS,
+        );
+        let event = Event::Received {
+            channel: r.home,
+            rssi_dbm: -80,
+            snr_db: 10,
+            bytes: f.payload(),
+        };
+        r.handle(event, now, &mut |x| {
+            if let Action::App(e) = x {
+                told.push(e)
+            }
+        });
+    }
+    assert_eq!(told, [crate::event::AppEvent::Status { from: s, status }]);
+}
+
+/// The battery as the status tells it: USB on external power, else the
+/// charge of the last reading, not read before the first, low at or
+/// below the low level.
+#[test]
+fn the_status_tells_the_battery() {
+    use crate::status::Battery;
+    let (mut r, now, _, _) = with_two_neighbours();
+    let cmd = |r: &mut Relay, c: AppCommand<'_>| r.handle(Event::App(c), now, &mut |_| {});
+    assert_eq!(r.status(now).battery, Battery::NotRead);
+    cmd(&mut r, AppCommand::Battery { millivolts: 3900 });
+    let p = crate::node::battery_percent(3900).unwrap();
+    assert_eq!(r.status(now).battery, Battery::Percent(p));
+    cmd(&mut r, AppCommand::Battery { millivolts: 3700 });
+    assert_eq!(r.status(now).battery, Battery::Low);
+    cmd(&mut r, AppCommand::Power { external: true });
+    assert_eq!(r.status(now).battery, Battery::Usb);
+}

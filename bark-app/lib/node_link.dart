@@ -94,12 +94,21 @@ abstract class NodeLink {
   /// not confirm (spec "Phone link", Public).
   Future<GuestItem?> readGuest();
 
+  /// Link version 9 and later, the paired phone's alone: subscribes to
+  /// Ask, whose answers [answerNotified] gives.
+  Future<void> subscribeAsk();
+
+  /// Asks the neighbour `id` for its status. The node answers the write
+  /// at once; the neighbour's answer, if one comes, is notified.
+  Future<void> ask(List<int> id);
+
   /// Asks for the shortest connection interval, for a transfer; where
   /// the platform chooses the interval itself, nothing.
   Future<void> hurry();
 
   Stream<Status> get statusNotified;
   Stream<GivenBack?> get givenBackNotified;
+  Stream<Answer?> get answerNotified;
 
   /// Completes when the connection ends, from either side.
   Future<void> get closed;

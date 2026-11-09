@@ -146,6 +146,10 @@ impl App for LinkApp<'_> {
                 log::info!("ble: map point cleared");
                 Some((Request::ClearMapPoint, true))
             }
+            Link::Ask(id) => {
+                log::info!("ble: ask {:02x?}", id.0);
+                Some((Request::Ask(id), true))
+            }
             Link::Send { .. }
             | Link::Confirm(_)
             | Link::Clock(_)
@@ -204,6 +208,13 @@ impl App for LinkApp<'_> {
                 let left = ends.map(|t| t.since(now).as_micros() / 1_000_000);
                 log::info!("boot relays={} first_rotation_left_s={:?}", relays, left);
                 crate::ble::booting(*ends);
+            }
+            AppEvent::Status { from, status } => {
+                log::info!("status of {:02x?}: {:?}", from.0, status);
+                crate::ble::told_status(bark_link::Answer {
+                    from: *from,
+                    status: *status,
+                });
             }
         }
     }
@@ -479,30 +490,29 @@ fn guest_item(tag: u8, after: u32, b: &mut [u8]) -> usize {
         })
 }
 
-/// What the e-paper shows of `core` now (`display.rs`, `bark-screen`).
-fn screen(core: &Role, now: Instant, battery_mv: u16) -> bark_screen::State {
+/// What the e-paper shows of `core` now (`display.rs`, `bark-screen`):
+/// the status the node tells a neighbour that asks
+/// (spec "Neighbour status"), so that the two agree.
+fn screen(core: &Role, now: Instant) -> bark_screen::State {
+    use bark_proto::status::Battery as Told;
     use bark_screen::Battery;
-    let counts = core.neighbour_counts(now);
-    let battery = if crate::power::reported() {
-        Battery::Usb
-    } else if battery_mv == 0 {
-        Battery::NotRead
-    } else {
-        match bark_proto::node::battery_percent(core.battery_millivolts(battery_mv)) {
-            Some(p) => Battery::Percent(p),
-            None => Battery::Low,
-        }
+    let s = core.status(now);
+    let battery = match s.battery {
+        Told::Usb => Battery::Usb,
+        Told::NotRead => Battery::NotRead,
+        Told::Low => Battery::Low,
+        Told::Percent(p) => Battery::Percent(p),
     };
     bark_screen::State {
         starting: core.booting(),
-        placed: core.placed(),
-        sleepy: core.sleepy(),
-        anchored: core.sleepy() && !core.anchorless(),
-        carried: core.carried(),
+        placed: s.placed,
+        sleepy: s.sleepy,
+        anchored: s.anchored,
+        carried: s.carried,
         battery,
-        heard: counts.heard,
-        strong: counts.strong,
-        both_ways: counts.both_ways,
+        heard: s.neighbours.heard,
+        strong: s.neighbours.strong,
+        both_ways: s.neighbours.both_ways,
         // The phone link's, which the screen fills in (`display::phone`).
         phone: bark_screen::Phone::Unpaired,
     }
@@ -543,6 +553,7 @@ pub fn config(stored: Option<Stored>) -> Config {
         // charger's and never low, so a fixed node would relay for ever:
         // without levels it is sleepy, as the bench wants.
         battery: (option_env!("BARK_ON_BATTERY") != Some("1")).then_some(BatteryLevels::DESIGN),
+        version: crate::update::BARK_IMAGE_VERSION,
         ..Config::default()
     }
 }
@@ -640,7 +651,7 @@ pub async fn run<'a>(
             crate::ble::Request::Guest { tag, after, .. } => guest_item(tag, after, b),
             _ => 0,
         });
-        crate::display::publish(screen(core, now, driver.app().battery_mv));
+        crate::display::publish(screen(core, now));
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));

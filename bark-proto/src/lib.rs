@@ -22,6 +22,7 @@ pub mod node;
 pub mod position;
 pub mod radio;
 pub mod sniff;
+pub mod status;
 pub mod store;
 pub mod tables;
 pub mod time;
