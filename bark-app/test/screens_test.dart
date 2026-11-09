@@ -64,7 +64,7 @@ void main() {
     await t.pump();
     await t.tap(find.text('Connect'));
     await t.pump();
-    expect(find.text('bark-fa4e00000001'), findsOneWidget);
+    expect(find.text('ID FA4E00000001'), findsOneWidget);
     await t.scrollUntilVisible(
       find.text('Show my words'),
       100,
@@ -728,13 +728,10 @@ void main() {
     expect(find.textContaining('Not paired with a node yet'), findsOneWidget);
     await app.connectFake();
     await t.pump();
-    expect(find.text('Connected to bark-fa4e00000001, paired'), findsOneWidget);
+    expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
     await app.session.disconnect();
     await t.pump();
-    expect(
-      find.textContaining('Paired with bark-fa4e00000001.'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Paired with ID FA4E00000001.'), findsOneWidget);
 
     // The node takes another phone's pairing; this one learns at its next
     // connection, and may leave it so.
@@ -749,7 +746,7 @@ void main() {
     expect(app.session.connected, isFalse);
     expect(
       find.text(
-        'bark-fa4e00000001 is no longer yours: another phone has paired '
+        'ID FA4E00000001 is no longer yours: another phone has paired '
         'with it.',
       ),
       findsOneWidget,
@@ -808,7 +805,7 @@ void main() {
     await t.pump();
     expect(
       find.text(
-        'Connected to bark-fa4e00000001 as a guest: a public node, not yours',
+        'Connected to ID FA4E00000001 as a guest: a public node, not yours',
       ),
       findsOneWidget,
     );

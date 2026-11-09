@@ -109,6 +109,8 @@ void main() {
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
     expect(nodeName(to), 'bark-010203040506');
+    expect(shownName(nodeName(to)), 'ID 010203040506');
+    expect(shownName('a phone'), 'a phone');
   });
 
   test('inbox and confirm', () {

@@ -122,7 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('This node is no longer yours'),
         content: Text(
-          'Another phone has paired with ${e.node} since, and the node '
+          'Another phone has paired with ${shownName(e.node)} since, and the node '
           'keeps one phone. To make it yours again, pair again at the '
           'node: it shows a six-digit code on its screen, and the phone '
           'asks for it.',
@@ -240,7 +240,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (s.connected)
         ListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text(nodeName(s.node!.id)),
+          title: Text(nodeLabel(s.node!.id)),
           subtitle: Text(
             s.guest
                 ? 'Connected as a guest: a public node, someone else\'s, '
@@ -297,7 +297,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(n.public ? Icons.storefront : Icons.router),
-      title: Text(n.name),
+      title: Text(shownName(n.name)),
       subtitle: Text(
         [
           if (app.connectedTo(n.deviceId)) 'Connected',

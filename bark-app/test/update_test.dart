@@ -348,7 +348,7 @@ void main() {
     await t.pump();
     expect(u.phase, Phase.done, reason: u.message);
 
-    final name = nodeName(app.session.node!.id);
+    final name = nodeLabel(app.session.node!.id);
     expect(
       find.text('$name runs version 2, updated from version 1 just now.'),
       findsOneWidget,

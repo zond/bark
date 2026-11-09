@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../ble_link.dart';
+import '../link.dart';
 import '../session.dart';
 
 void say(BuildContext context, String s) =>
@@ -285,7 +286,8 @@ Future<String?> askText(BuildContext context, String label, String initial) {
 /// waits for Bluetooth; null when there is none.
 String? lookingLine(AppModel app) {
   if (!app.searchOn || !app.bluetoothAllowed || app.connecting) return null;
-  final n = app.searchFor ?? 'a public node';
+  final p = app.searchFor;
+  final n = p == null ? 'a public node' : shownName(p);
   if (!app.bluetoothOn) return 'Bluetooth is off: turn it on to reach $n.';
   return app.scanning ? null : 'Looking for $n…';
 }
@@ -293,11 +295,12 @@ String? lookingLine(AppModel app) {
 /// The phone's pairing as a person reads it while not connected (spec
 /// "Phone link", Pairing).
 String pairedLine(Session s) {
-  final n = s.pairedWith;
-  if (n == null) {
+  final p = s.pairedWith;
+  if (p == null) {
     return 'Not paired with a node yet: the first connection pairs, by a '
         'code on the node\'s screen.';
   }
+  final n = shownName(p);
   return s.pairingLost
       ? '$n is no longer yours: another phone has paired with it.'
       : 'Paired with $n.';
@@ -309,7 +312,7 @@ String pairedLine(Session s) {
 Future<bool?> askIsYours(BuildContext context, FoundNode n) => showDialog<bool>(
   context: context,
   builder: (context) => SimpleDialog(
-    title: Text('Is ${n.name} yours?'),
+    title: Text('Is ${shownName(n.name)} yours?'),
     children: [
       SimpleDialogOption(
         onPressed: () => Navigator.pop(context, true),

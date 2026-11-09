@@ -39,7 +39,7 @@ is a prototype for the bench, not the app people will carry.
   it is done; the card goes once all are. One row a conversation,
   newest first, with the last text and, for a sent one, its state. A
   line at
-  the top says whether a node is connected, "Connected to bark-… as a
+  the top says whether a node is connected, "Connected to ID … as a
   guest" during an errand at a public node that is not yours, and, when
   none is, which
   node the phone is paired with or that it is no longer yours (next
@@ -294,7 +294,7 @@ Settings, which asks for it. The app checks again when it comes to the
 front and when Bluetooth is switched on or off, in case the person
 allowed it in Android's settings. Bluetooth switched off ends the link
 as a drop does: Android does not report that end itself. The first screen, and Settings under
-the scan rows, say "Looking for bark-…" or "Looking for a public node…",
+the scan rows, say "Looking for ID …" or "Looking for a public node…",
 or that Bluetooth is off. A
 search round scans for four of a node's advertising intervals, 4.1 s,
 without a break, less once it hears the paired node, and a round
@@ -352,17 +352,17 @@ before archiving names nothing archived and reads as such.
 
 While a node is connected over Bluetooth, the app keeps running with the
 screen off or its window closed, under a notification that names the
-node, "Connected to bark-…"; tapping it opens the app. The link is the
+node, "Connected to ID …"; tapping it opens the app. The link is the
 same one as in the foreground: the app's Dart engine outlives its window
 (`Engine.kt`), and an Android foreground service of the connected device
 type (`LinkService.kt`) keeps the process running, so there is one
 implementation of the link, in Dart. While the app looks for its paired
 node (previous section) the service runs too, and its notification says
-"Looking for bark-…": without one Android suspends or ends an app in the
+"Looking for ID …": without one Android suspends or ends an app in the
 background, and the search with it, and queued texts are to go out as
 soon as the node is in reach, not when the person next opens the app.
 While it looks for a public node alone, or is a guest, the notification
-says so: "Looking for a public node", "Connected to bark-… as a
+says so: "Looking for a public node", "Connected to ID … as a
 guest". Before Bluetooth is allowed there is no search, and no
 notification.
 The service goes on from connected to looking and back, changing only its
@@ -672,7 +672,7 @@ a phone (Trying it, With a node).
    to write down your 12 backup words. Tap the line "Not connected",
    turn on **Fake node**, press **Connect**. The first time, the app
    says why it notifies: **Continue**, and allow it. It shows
-   `bark-fa4e00000001`, connected, MTU 247. Further down, **Show my
+   `ID FA4E00000001`, connected, MTU 247. Further down, **Show my
    words**, write them down, **I wrote them down**.
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
@@ -725,7 +725,7 @@ a phone (Trying it, With a node).
 13. Menu, **Map**: the fake node in Kyiv and its five neighbours,
     three green lines, one amber and one red; the red one and a green
     one dashed. Tap the red
-    one: `bark-fa4e00000103`, fragile, 3.0 dB over the floor, demoted.
+    one: `ID FA4E00000103`, fragile, 3.0 dB over the floor, demoted.
     Within half a second most markers show their screens' roles, such
     as `FIXED RELAY`; the fake loses one ask in three, so one more
     shows about 2 s later, asked again, and the one that never answers
@@ -742,15 +742,16 @@ a phone (Trying it, With a node).
     once, the fake has no radio to wait for; then "The node checked
     version N". **Reboot into version N**: the link closes, and the
     fake takes no connection for 55 s, as a node swapping; then
-    **Connect** in Settings, and the screen says "bark-… runs version
+    **Connect** in Settings, and the screen says "ID … runs version
     N, updated from version 1 just now.", without the image or the bar.
 
 ### With a node
 
 1. Switch the node on and read the twelve hex digits on its display.
 2. In **Settings**, with **Fake node** off, press **Scan** and allow
-   Bluetooth. The node shows within about a second as `bark-` and those
-   digits. Tap it. The first time, Android asks for a code and the
+   Bluetooth. The node shows within about a second as `ID` and those
+   digits, as its screen shows them. Tap it: a public node asks whether
+   it is yours; **Pair**. The first time, Android asks for a code and the
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
@@ -807,7 +808,7 @@ a phone (Trying it, With a node).
     exempt it from battery optimisation in Settings, and connect to the
     node. Restart the phone and unlock it, without opening the app.
     Within about half a minute of the unlock the notification says
-    "Looking for bark-…", then "Connected to bark-…", and texts arrive.
+    "Looking for ID …", then "Connected to ID …", and texts arrive.
     `adb logcat -s flutter` shows the session's log from the start,
     `Found bark-…, connecting` and `Connected, MTU 247` among it.
     Opening the app shows the link as it stands. After **Disconnect**, a
@@ -841,7 +842,7 @@ a phone (Trying it, With a node).
     reboot asked by the phone`, `ble: disconnected 0x16`, `reboot`; about
     a minute later the log's banner says `image version N+1` and
     `update: version N+1 confirmed`, the app connects again, and the
-    screen says "bark-… runs version N+1, updated from version N just
+    screen says "ID … runs version N+1, updated from version N just
     now.", without the image or the bar. Picking the same file again
     shows it, and sending it is refused, as not newer; an image packed and not signed is
     refused at once, before any piece, as not signed by a key the node
@@ -869,7 +870,7 @@ a phone (Trying it, With a node).
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its RSSI; or, with no paired node of
     its own in reach, the second phone asks whether the node is its own,
-    and after **Just use it** goes on an errand there within a round, its first screen saying "Connected to bark-… as a guest" for
+    and after **Just use it** goes on an errand there within a round, its first screen saying "Connected to ID … as a guest" for
     a few seconds, then again once a minute. No pairing dialog shows,
     at the connect or later. Its log shows `Recipient: tag …`, a
     `Guest: item …` line for each item read, and `Disconnected`.

@@ -616,7 +616,7 @@ void main() {
       run(pairedInReach: false, (async, app, ble) {
         async.elapse(const Duration(seconds: 1));
         expect(app.lookingFor, 'bark-fa4e00000001');
-        expect(lookingLine(app), 'Looking for bark-fa4e00000001…');
+        expect(lookingLine(app), 'Looking for ID FA4E00000001…');
         async.elapse(const Duration(minutes: 1));
         expect(app.session.connected, isFalse);
         // A round every 15 s.

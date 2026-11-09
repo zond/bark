@@ -332,7 +332,7 @@ class _NodeMarker extends StatelessWidget {
   Widget build(BuildContext context) => GestureDetector(
     onTap: () => showModalBottomSheet<void>(
       context: context,
-      builder: (_) => _Sheet(nodeName(s.node!.id), [
+      builder: (_) => _Sheet(nodeLabel(s.node!.id), [
         'The node this phone is paired with',
         if (s.status?.sleepy ?? false) 'Sleepy',
         if (s.status?.carried ?? false) 'Carried',
@@ -380,13 +380,13 @@ class _NeighbourMarker extends StatelessWidget {
           : Icons.cell_tower,
       size: 32,
       color: qualityColor(q),
-      semanticLabel: nodeName(n.id),
+      semanticLabel: nodeLabel(n.id),
     );
     final s = said;
     return GestureDetector(
       onTap: () => showModalBottomSheet<void>(
         context: context,
-        builder: (_) => _Sheet(nodeName(n.id), [
+        builder: (_) => _Sheet(nodeLabel(n.id), [
           'Link ${qualityName(q)}: ${n.rssiDbm.toStringAsFixed(1)} dBm, '
               '${margin.toStringAsFixed(1)} dB over the noise floor',
           'Last heard ${n.ageS} s ago',

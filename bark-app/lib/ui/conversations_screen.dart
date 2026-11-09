@@ -249,10 +249,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final s = app.session;
     final looking = lookingLine(app);
     final text = s.connected && s.guest
-        ? 'Connected to ${nodeName(s.node!.id)} as a guest: a public node, '
+        ? 'Connected to ${nodeLabel(s.node!.id)} as a guest: a public node, '
               'not yours'
         : s.connected
-        ? 'Connected to ${nodeName(s.node!.id)}, paired'
+        ? 'Connected to ${nodeLabel(s.node!.id)}, paired'
         : looking != null
         ? '$looking Texts wait on the phone until it is in reach.'
         : 'Not connected to a node: texts wait on the phone. '

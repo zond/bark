@@ -236,7 +236,7 @@ class AppModel extends ChangeNotifier {
     final p = session.pairedWith;
     final boot = p == null || session.pairingLost || session.stopped
         ? null
-        : _looking(p, bluetooth: true);
+        : _looking(shownName(p), bluetooth: true);
     unawaited(alerts.atBoot(boot).catchError(_unnotified));
   }
 
@@ -250,13 +250,17 @@ class AppModel extends ChangeNotifier {
     if (n != null && !fake) {
       return (
         title: session.guest
-            ? 'Connected to ${nodeName(n.id)} as a guest'
-            : 'Connected to ${nodeName(n.id)}',
+            ? 'Connected to ${nodeLabel(n.id)} as a guest'
+            : 'Connected to ${nodeLabel(n.id)}',
         body: 'Texts arrive while the screen is off',
       );
     }
     if (!searchOn || !bluetoothAllowed) return null;
-    return _looking(searchFor ?? 'a public node', bluetooth: bluetoothOn);
+    final f = searchFor;
+    return _looking(
+      f == null ? 'a public node' : shownName(f),
+      bluetooth: bluetoothOn,
+    );
   }
 
   static Held _looking(String node, {required bool bluetooth}) => (

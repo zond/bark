@@ -21,7 +21,8 @@ class NotOurs implements Exception {
   const NotOurs(this.node);
   @override
   String toString() =>
-      '$node is no longer yours: another phone has paired with it';
+      '${shownName(node)} is no longer yours: another phone has paired '
+      'with it';
 }
 
 /// The pairing did not complete: it was cancelled, or the code typed was
