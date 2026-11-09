@@ -181,19 +181,19 @@ is a prototype for the bench, not the app people will carry.
   battery; a carried one a walker; each in its link's colour;
   the node itself is a target. Tapping one shows its ID, under it what
   it is in its screen's words, such as `FIXED RELAY` or `SLEEPY
-  ANCHORED`, and then one row a fact, an icon on the left and the value
-  on the right, always in this order: the link (an antenna, the RSSI
-  and its margin over the noise floor, such as `−71 dBm · +19 dB`, in
-  the link's colour), when it was last heard (a clock), how far it is
-  (a ruler), its power (a plug on USB, a battery with its percent),
-  the neighbours it knows (a hub, heard/strong/proven, such as `3/3/0`,
-  named in a tooltip), its firmware version (a price tag, the Material
-  set having no version icon, such as `V18 · getting V19 14/32` while
-  it gathers an image), its position (a satellite for GPS, a pin for a
-  map point a person set, a crossed-out pin with no place) and a ticked
-  box if it has taken a message from this node; then this node's own
-  view of it, its anchor, a demotion or a ban. Each icon is named for a
-  screen reader. Its power, neighbours and version come from its answer
+  ANCHORED`, and then one row a fact, an icon and a short label on the
+  left and the value on the right, always in this order: Link (an
+  antenna, the RSSI and its margin over the noise floor, such as
+  `−71 dBm · +19 dB`, in the link's colour), Last heard (a clock),
+  Distance (a ruler), Power (a plug on USB, a battery with its
+  percent), Known (a hub, the neighbours it knows, heard/strong/proven,
+  such as `3/3/0`, named in a tooltip), Version (a price tag, the
+  Material set having no version icon, such as `V18 · getting V19
+  14/32` while it gathers an image), Place (a satellite for GPS, a pin
+  for a map point a person set, a crossed-out pin with no place) and
+  Exchanged (a ticked box) if it has taken a message from this node;
+  then this node's own view of it, Anchor, Demoted or Banned, each with
+  its icon. Each icon is named for a screen reader. Its power, neighbours and version come from its answer
   (below); before one, what it is comes from its heartbeats. This
   node's own sheet says the same of it from its status, its neighbours
   counted from the table read. The map reads Neighbours when it opens, at every

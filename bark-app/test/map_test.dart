@@ -342,7 +342,20 @@ void main() {
     expect(line('V9'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
     expect(line('KNOWN 4/2/1'), findsNothing);
-    expect(named('proven'), findsNothing);
+    expect(named('exchanged'), findsNothing);
+    // Each row's plain label beside its icon, on the same line.
+    for (final (label, row) in [
+      ('Link', rows[1]),
+      ('Last heard', rows[2]),
+      ('Distance', rows[3]),
+      ('Power', rows[4]),
+      ('Known', rows[5]),
+      ('Version', rows[6]),
+      ('Place', rows[7]),
+    ]) {
+      expect(line(label), findsOneWidget);
+      expect(t.getCenter(line(label)).dy, closeTo(t.getCenter(row).dy, 1));
+    }
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
 
@@ -355,7 +368,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(BottomSheet),
-        matching: find.text('banned for now: it refused or failed a hand-over'),
+        matching: find.text('for now: it refused or failed a hand-over'),
       ),
       findsOneWidget,
     );
@@ -467,7 +480,8 @@ void main() {
     expect(find.text('ID FA4E00000103'), findsOneWidget);
     expect(find.text('\u2212115 dBm \u00b7 +3 dB'), findsOneWidget);
     expect(icon('link strength, fragile'), findsOneWidget);
-    expect(find.textContaining('demoted'), findsOneWidget);
+    expect(find.text('Demoted'), findsOneWidget);
+    expect(find.text('its last hand-overs failed'), findsOneWidget);
     expect(icon('distance'), findsOneWidget);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();

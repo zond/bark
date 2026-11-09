@@ -92,27 +92,38 @@ String knownOf(NeighbourTable t) {
       '${t.list.where((n) => n.proven).length}';
 }
 
-/// One fact of a sheet: an icon named for screen readers, and its value.
+/// One fact of a sheet: an icon named for screen readers and a short
+/// label, which a newcomer reads where an icon alone would leave them
+/// guessing, and its value.
 class Fact {
   final IconData icon;
+  final String label;
   final String name;
   final String value;
   final Color? color;
 
   /// Said on a long press, for a value whose parts need naming.
   final String? tooltip;
-  const Fact(this.icon, this.name, this.value, {this.color, this.tooltip});
+  const Fact(
+    this.icon,
+    this.label,
+    this.name,
+    this.value, {
+    this.color,
+    this.tooltip,
+  });
 }
 
 /// The facts of a node's power, as its answer or status says it.
 Fact _power({required bool usb, String? battery}) => usb
-    ? const Fact(Icons.power, 'power', 'USB')
+    ? const Fact(Icons.power, 'Power', 'power', 'USB')
     : Fact(
         switch (battery) {
           null => Icons.battery_unknown,
           'low' => Icons.battery_alert,
           _ => Icons.battery_std,
         },
+        'Power',
         'battery',
         battery ?? 'not read',
       );
@@ -120,10 +131,10 @@ Fact _power({required bool usb, String? battery}) => usb
 /// Where a node's position comes from: GPS, or a map point a person set;
 /// none without a place.
 Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
-    ? const Fact(Icons.location_off, 'position', 'no place')
+    ? const Fact(Icons.location_off, 'Place', 'position', 'no place')
     : mapPoint
-    ? Fact(Icons.push_pin, 'position from a map point', _where(p))
-    : Fact(Icons.satellite_alt, 'position from GPS', _where(p));
+    ? Fact(Icons.push_pin, 'Place', 'position from a map point', _where(p))
+    : Fact(Icons.satellite_alt, 'Place', 'position from GPS', _where(p));
 
 LatLng _at(Position p) => LatLng(p.latDeg, p.lonDeg);
 
@@ -419,22 +430,24 @@ class _NodeMarker extends StatelessWidget {
             carried: st.carried,
           ),
           [
-            const Fact(
-              Icons.smartphone,
-              'paired',
-              'the node this phone is paired with',
-            ),
+            const Fact(Icons.smartphone, 'Paired', 'paired', 'with this phone'),
             _power(
               usb: st.externalPower,
               battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
             ),
             Fact(
               Icons.hub,
+              'Known',
               'neighbours known',
               knownOf(t),
               tooltip: 'heard / strong / proven',
             ),
-            Fact(Icons.sell, 'firmware version', 'V${s.node!.image}'),
+            Fact(
+              Icons.sell,
+              'Version',
+              'firmware version',
+              'V${s.node!.image}',
+            ),
             _position(t.own, mapPoint: st.mapPoint),
           ],
         ),
@@ -478,14 +491,16 @@ class _NeighbourMarker extends StatelessWidget {
     return [
       Fact(
         Icons.settings_input_antenna,
+        'Link',
         'link strength, ${qualityName(q)}',
         '${_signed(n.rssiDbm)} dBm \u00b7 '
             '${_signed(n.rssiDbm - t.floorDbm, plus: true)} dB',
         color: qualityColor(q),
         tooltip: 'signal, and its margin over the noise floor',
       ),
-      Fact(Icons.schedule, 'last heard', secondsAgo(n.ageS)),
-      if (far != null) Fact(Icons.straighten, 'distance', distance(far)),
+      Fact(Icons.schedule, 'Last heard', 'last heard', secondsAgo(n.ageS)),
+      if (far != null)
+        Fact(Icons.straighten, 'Distance', 'distance', distance(far)),
       if (s != null) ...[
         _power(
           usb: s.usb,
@@ -497,6 +512,7 @@ class _NeighbourMarker extends StatelessWidget {
         ),
         Fact(
           Icons.hub,
+          'Known',
           'neighbours known',
           '${s.heard}/${s.strong}/${s.proven}',
           tooltip: 'heard / strong / proven',
@@ -504,6 +520,7 @@ class _NeighbourMarker extends StatelessWidget {
         if (s.version != 0)
           Fact(
             Icons.sell,
+            'Version',
             'firmware version',
             s.gathers == 0
                 ? 'V${s.version}'
@@ -515,21 +532,25 @@ class _NeighbourMarker extends StatelessWidget {
       if (n.proven)
         const Fact(
           Icons.check_box,
-          'proven',
-          'has taken a message from this node',
+          'Exchanged',
+          'exchanged',
+          'it took a message from this node',
         ),
-      if (n.anchor) const Fact(Icons.anchor, 'anchor', 'this node\'s anchor'),
+      if (n.anchor)
+        const Fact(Icons.anchor, 'Anchor', 'anchor', 'this node\'s'),
       if (n.demoted)
         const Fact(
           Icons.trending_down,
+          'Demoted',
           'demoted',
-          'demoted: its last hand-overs failed',
+          'its last hand-overs failed',
         ),
       if (n.banned)
         const Fact(
           Icons.block,
+          'Banned',
           'banned',
-          'banned for now: it refused or failed a hand-over',
+          'for now: it refused or failed a hand-over',
         ),
     ];
   }
@@ -622,15 +643,11 @@ class _Sheet extends StatelessWidget {
       child: Row(
         children: [
           Icon(f.icon, color: f.color, semanticLabel: f.name),
+          const SizedBox(width: 12),
+          // The icon names the fact to a screen reader already.
+          ExcludeSemantics(child: Text(f.label)),
           const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              f.value,
-              textAlign: TextAlign.end,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
+          Expanded(child: Text(f.value, textAlign: TextAlign.end, maxLines: 2)),
         ],
       ),
     );
