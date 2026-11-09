@@ -116,8 +116,8 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power` and
-`AppCommand::Battery`, the events
+`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power`,
+`AppCommand::ForceRole` and `AppCommand::Battery`, the events
 `AppEvent::Message`, `AppEvent::GivenBack`, `AppEvent::Boot` and `AppEvent::Heard`, the store,
 `Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
 the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
@@ -212,6 +212,15 @@ a fixed relay's grace on battery is a wakeup of its own.
 right after the boot wakeup and at every change, and may repeat it. On external power
 the node is a relay, on battery sleepy (spec "Nodes"): while it boots, from the report
 on; running, from the change on, as spec "Sleepy nodes" says.
+
+`AppCommand::ForceRole` flips the node's role, for a person at the node who holds its
+button (spec "Nodes", roadmap D160): a relay, one that leaves among them, turns sleepy,
+leaving as at its low battery, and a sleepy node turns relay at once. The node is then
+forced, which `forced()` tells, until an `AppCommand::Power` that changes the power, and a
+forced relay on battery still turns sleepy at its low battery level, either of which
+returns it to the power's rules. A node that cannot relay, or one on battery at its low
+level, does not take a flip to relay. A reboot forgets it. `bark-driver` takes it as
+`Request::ForceRole`.
 
 `AppCommand::Battery` reports the battery's voltage in millivolts as the board's converter
 reads it, uncalibrated. The driver sends it only on battery, never on external power,

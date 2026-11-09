@@ -7,3 +7,10 @@ repository.workspace = true
 description = "What a bark node shows on its e-paper: the picture built from the node's state, testable on the host."
 
 [dependencies]
+
+# The host tests encode the address again and decode the drawn picture
+# (src/qr.rs), so the code checked in cannot drift from the address and
+# the emblem cannot keep it from reading.
+[dev-dependencies]
+qrcodegen = "1.8"
+rqrr = "0.11"

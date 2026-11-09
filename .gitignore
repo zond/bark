@@ -4,3 +4,5 @@
 .claude/worktrees/
 target/
 __pycache__/
+# The Python venv of build-time scripts (bark-screen/scripts/qr.py)
+.venv/

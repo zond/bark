@@ -73,29 +73,30 @@ impl App for LinkApp<'_> {
     /// otherwise takes it and waits on: the driver offers a message that
     /// waits, the mailbox's reply among them, by itself.
     async fn ready(&mut self, offer: bool) {
-        use embassy_futures::select::{select5, Either5};
+        use embassy_futures::select::{select6, Either6};
         loop {
             let fix = crate::gps::FOR_CORE.wait();
-            let new = match select5(
+            let new = match select6(
                 crate::power::FOR_CORE.wait(),
                 crate::ble::FOR_CORE.wait(),
                 fix,
                 crate::mailbox::FOR_CORE.wait(),
                 crate::update::mesh::ready(),
+                crate::button::FOR_CORE.wait(),
             )
             .await
             {
-                Either5::First(()) => Some(crate::power::reported()) != self.power,
-                Either5::Second(()) => {
+                Either6::First(()) => Some(crate::power::reported()) != self.power,
+                Either6::Second(()) => {
                     self.serving = self.serve_own(offer);
                     self.serving
                 }
-                Either5::Third(()) => crate::gps::waiting(),
-                Either5::Fourth(()) => {
+                Either6::Third(()) => crate::gps::waiting(),
+                Either6::Fourth(()) => {
                     self.follow_home();
                     self.placed().is_some()
                 }
-                Either5::Fifth(()) => true,
+                Either6::Fifth(()) | Either6::Sixth(()) => true,
             };
             if new {
                 return;
@@ -116,6 +117,9 @@ impl App for LinkApp<'_> {
 
     fn request(&mut self) -> Option<Request> {
         use crate::ble::Request as Link;
+        if crate::button::take_force() {
+            return Some(Request::ForceRole);
+        }
         if let Some(r) = crate::update::mesh::request() {
             return Some(r);
         }

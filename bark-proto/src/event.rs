@@ -138,6 +138,15 @@ pub enum AppCommand<'a> {
         /// External power is present.
         external: bool,
     },
+    /// A person at the node presses the board's button: the node flips
+    /// its role, a relay turning sleepy, leaving as at its low battery,
+    /// and a sleepy node turning relay, and is forced until the next
+    /// change of external power, which returns it to the power's rules.
+    /// A forced relay on battery still turns sleepy at its low battery
+    /// level, which ends the force, and a flip to relay is not taken on
+    /// battery at that level (spec "Nodes", roadmap D160). A flip, not a
+    /// target, since the button is one input and the core knows the role.
+    ForceRole,
     /// The battery's voltage as the driver reads it, uncalibrated, while
     /// the radio does not transmit, on battery, once a minute (spec
     /// "Sleepy nodes", core-interface §4). The core calibrates it and
@@ -593,6 +602,12 @@ pub enum Trace {
     /// (spec "Sleepy nodes"); not while it boots.
     Role {
         /// Sleepy now; else a relay.
+        sleepy: bool,
+    },
+    /// A person forced the node's role (`AppCommand::ForceRole`): sleepy,
+    /// or a relay, until its power changes.
+    Forced {
+        /// Sleepy; else a relay.
         sleepy: bool,
     },
     /// A sleepy node that sleeps listens a rotation to check its anchor

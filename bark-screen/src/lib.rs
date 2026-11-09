@@ -4,12 +4,14 @@
 //! no hardware, so it is tested here; the firmware sends it.
 //!
 //! Text is drawn from a 5 × 7 bitmap font of the digits, the capital
-//! letters and a few signs, scaled up by whole pixels.
+//! letters, one lowercase letter and a few signs, scaled up by whole
+//! pixels.
 
 #![no_std]
 
 use core::fmt::{self, Write};
 
+pub mod qr;
 pub mod schedule;
 
 /// The panel's width and height, pixels; its RAM is `HEIGHT` rows of
@@ -59,7 +61,7 @@ impl Picture {
 
     /// Black at the board's `(x, y)`, the origin top left; outside the
     /// panel is ignored.
-    fn plot(&mut self, x: usize, y: usize) {
+    pub(crate) fn plot(&mut self, x: usize, y: usize) {
         if x >= WIDTH || y >= HEIGHT {
             return;
         }
@@ -71,7 +73,27 @@ impl Picture {
     /// pixels. A character the font lacks is a blank.
     pub fn text(&mut self, text: &[u8], scale: usize, y: usize) {
         let width = text_width(text.len(), scale);
-        let x0 = WIDTH.saturating_sub(width) / 2;
+        self.text_at(text, scale, WIDTH.saturating_sub(width) / 2, y);
+    }
+
+    /// A button's label at the left edge, its top at row `y`: an arrow
+    /// pointing left, a filled head the font's height on a one-pixel
+    /// shaft, then `text` in the small font.
+    pub fn label(&mut self, text: &[u8], y: usize) {
+        let mid = GLYPH_HEIGHT / 2;
+        for col in 0..=mid {
+            for row in mid - col..=mid + col {
+                self.plot(LABEL_LEFT + col, y + row);
+            }
+        }
+        for col in mid + 1..ARROW {
+            self.plot(LABEL_LEFT + col, y + mid);
+        }
+        self.text_at(text, LABEL_SCALE, LABEL_LEFT + ARROW + 2, y);
+    }
+
+    /// `text` with its top left corner at `(x0, y)`.
+    pub fn text_at(&mut self, text: &[u8], scale: usize, x0: usize, y: usize) {
         for (i, &c) in text.iter().enumerate() {
             let glyph = glyph(c).unwrap_or([0; GLYPH_HEIGHT]);
             for (row, bits) in glyph.iter().enumerate() {
@@ -123,9 +145,14 @@ pub const fn line_chars(scale: usize) -> usize {
 }
 
 /// The glyph of `c`, seven rows, the leftmost pixel in bit 4; `None` for
-/// a character the font lacks. Lowercase is drawn as capitals: the ID's
-/// hex is lowercase in the log and on the bus.
+/// a character the font lacks. Lowercase is drawn as capitals, the ID's
+/// hex being lowercase in the log and on the bus, but for `s`, the one
+/// lowercase letter, five rows tall on the baseline, for the seconds
+/// in the buttons' labels (`labels`).
 pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
+    if c == b's' {
+        return Some([0x00, 0x00, 0x0F, 0x10, 0x0E, 0x01, 0x1E]);
+    }
     Some(match c.to_ascii_uppercase() {
         b' ' => [0; GLYPH_HEIGHT],
         b'0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
@@ -169,6 +196,8 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
+        b'(' => [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
+        b')' => [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
         _ => return None,
     })
 }
@@ -315,15 +344,43 @@ pub struct Fixed<'a> {
 }
 
 /// The top of the first line, and the gap below the header.
-const TOP: usize = 6;
+const TOP: usize = 10;
 const GAP: usize = 8;
+
+/// The buttons' labels: one font pixel a pixel, at the left edge, on the
+/// lines picture's top and bottom margins, each the one nearer its
+/// button: both buttons are on the case's left side as the screen reads,
+/// the reset button nearer the top and the user button below the glass
+/// (`docs/enclosure-2026-11-09.md`, the maker's case model). The long
+/// press's length is `bark-fw`'s `button::LONG_PRESS`.
+pub const LABEL_SCALE: usize = 1;
+pub const LABEL_LEFT: usize = 2;
+/// The label's arrow's width, pixels: its head, as wide as half the
+/// font's height, and as much again of shaft.
+const ARROW: usize = 2 * (GLYPH_HEIGHT / 2 + 1);
+pub const REBOOT_TOP: usize = 1;
+pub const ROLE_TOP: usize = HEIGHT - 1 - GLYPH_HEIGHT * LABEL_SCALE;
 
 /// The most lines the screen takes: the role and `STARTING` as the
 /// header, the ID, the image and the one it gathers, the phone, the
 /// state's three, and the time.
 pub const LINES: usize = 10;
 
-const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
+const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= ROLE_TOP);
+const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
+
+/// The labels the lines show beside the buttons that change something,
+/// each with its top row, drawn after an arrow pointing at the button
+/// ([`Picture::label`]): the reset button reboots; the user button held
+/// flips the role, so it says the role it would turn the node to
+/// (spec "Screen and buttons").
+pub fn labels(state: &State) -> [(&'static str, usize); 2] {
+    let role = match state.sleepy {
+        false => "SLEEP (3s)",
+        true => "WAKE (3s)",
+    };
+    [("REBOOT", REBOOT_TOP), (role, ROLE_TOP)]
+}
 
 /// The screen's lines, each with the row its top edge is at, for `state`
 /// with the node up `up_min` minutes and the time `clock`; `None` past
@@ -412,6 +469,24 @@ pub fn role(state: &State) -> &'static str {
     }
 }
 
+/// Which picture the screen shows: the code, the default, or the lines a
+/// touch asks for (`schedule`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Face {
+    #[default]
+    Code,
+    Lines,
+}
+
+/// The line under the code: the pairing code while a phone pairs, as on
+/// the lines, else the node's ID, which its name in the app ends with.
+pub fn code_line(fixed: &Fixed<'_>, state: &State) -> Text {
+    match state.phone {
+        Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
+        _ => row("ID", format_args!("{}", Hex(fixed.id))),
+    }
+}
+
 /// `args` at the left, the rest of the line blank.
 fn plain(args: fmt::Arguments<'_>) -> Text {
     let mut t = Text::new();
@@ -466,17 +541,32 @@ impl fmt::Display for Hex<'_> {
     }
 }
 
-/// Draw the screen into `picture`, which is cleared first.
+/// Draw `face` into `picture`, which is cleared first. The firmware draws
+/// the same in steps, giving the executor back between them.
 pub fn draw(
     picture: &mut Picture,
+    face: Face,
     fixed: &Fixed<'_>,
     state: &State,
     up_min: u32,
     clock: Option<Clock>,
 ) {
     picture.clear();
-    for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
-        picture.text(text.bytes(), SCALE, *y);
+    match face {
+        Face::Lines => {
+            for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
+                picture.text(text.bytes(), SCALE, *y);
+            }
+            for (label, y) in labels(state) {
+                picture.label(label.as_bytes(), y);
+            }
+        }
+        Face::Code => {
+            for part in 0..qr::PARTS {
+                qr::draw(picture, part);
+            }
+            picture.text(code_line(fixed, state).bytes(), SCALE, qr::LINE_TOP);
+        }
     }
 }
 

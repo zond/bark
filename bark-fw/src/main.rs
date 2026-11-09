@@ -492,6 +492,7 @@ async fn main(spawner: Spawner) {
         };
         spawner.spawn(screen(board.eink, p.TWISPI1, fixed).expect("spawned once"));
         spawner.spawn(user_button(board.buttons.user).expect("spawned once"));
+        spawner.spawn(touch_pad(board.buttons.touch).expect("spawned once"));
     }
 }
 
@@ -695,6 +696,13 @@ async fn screen(
 #[embassy_executor::task]
 async fn user_button(pin: embassy_nrf::Peri<'static, peripherals::P1_10>) {
     button::run(pin).await
+}
+
+/// The touch pad (`button.rs`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn touch_pad(pin: embassy_nrf::Peri<'static, peripherals::P0_11>) {
+    button::pad(pin).await
 }
 
 /// Blink half-period: 1 Hz means 500 ms on, 500 ms off.

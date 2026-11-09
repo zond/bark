@@ -125,6 +125,10 @@ push to main and every pull request.
 
 ## Releases
 
+The project's page, `https://zond.github.io/bark`, built from `site/`
+by `.github/workflows/pages.yml`, links the latest release's app; each
+node's screen shows its address as a QR code.
+
 A tag `v<N>`, N a positive integer, makes release N:
 `.github/workflows/release.yml` builds the firmware, the loader, the
 measurement console and the Android app, and attaches them to a GitHub

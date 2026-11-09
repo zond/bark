@@ -254,12 +254,12 @@ fn every_line_fits_and_is_drawable() {
 }
 
 /// The picture is the lines drawn: something black in each line's band,
-/// white outside them.
+/// white outside them but for the buttons' labels in the margins.
 #[test]
 fn the_picture_is_the_lines() {
     let state = State::default();
     let mut p = Picture::white();
-    draw(&mut p, &FIXED, &state, 3, CLOCKS[0]);
+    draw(&mut p, Face::Lines, &FIXED, &state, 3, CLOCKS[0]);
     let rows: Vec<usize> = lines(&FIXED, &state, 3, CLOCKS[0])
         .iter()
         .flatten()
@@ -273,12 +273,22 @@ fn the_picture_is_the_lines() {
         );
     }
     let last = rows.last().unwrap() + line_height(SCALE);
-    assert!(!(last..HEIGHT).any(inked));
-    assert!(!(0..rows[0]).any(inked));
+    let label = LABEL_SCALE * 7;
+    assert!(!(last..ROLE_TOP).any(inked));
+    assert!(!(REBOOT_TOP + label..rows[0]).any(inked));
+    assert!((ROLE_TOP..ROLE_TOP + label).any(inked));
+    assert!((REBOOT_TOP..REBOOT_TOP + label).any(inked));
     // Drawing again over an old picture leaves nothing of it.
     let mut q = Picture::white();
-    draw(&mut q, &FIXED, &State { heard: 9, ..state }, 3, None);
-    draw(&mut q, &FIXED, &state, 3, CLOCKS[0]);
+    draw(
+        &mut q,
+        Face::Lines,
+        &FIXED,
+        &State { heard: 9, ..state },
+        3,
+        None,
+    );
+    draw(&mut q, Face::Lines, &FIXED, &state, 3, CLOCKS[0]);
     assert!(q.bytes == p.bytes);
 }
 
@@ -301,7 +311,7 @@ fn lines_align_left_and_values_right() {
     let margin = (WIDTH - text_width(LINE, SCALE)) / 2;
     for clock in CLOCKS {
         let mut p = Picture::white();
-        draw(&mut p, &FIXED, &state, 5, clock);
+        draw(&mut p, Face::Lines, &FIXED, &state, 5, clock);
         for (t, y) in lines(&FIXED, &state, 5, clock).iter().flatten() {
             let band = *y..*y + line_height(SCALE);
             let inked = |x: usize| band.clone().any(|y| p.black(x, y));
@@ -361,4 +371,43 @@ fn the_phone_paired_or_its_code() {
     assert_eq!(phone(Phone::Public), "PHONE     PUBLIC");
     assert_eq!(phone(Phone::Code(42)), "PAIR CODE 000042");
     assert_eq!(phone(Phone::Code(999_999)), "PAIR CODE 999999");
+}
+
+/// Beside each button that changes something, what it does: the reset
+/// button reboots; the user button, held, flips the role. Only on the
+/// lines.
+#[test]
+fn the_buttons_labelled() {
+    let label = |state: State| labels(&state).map(|(t, _)| t);
+    assert_eq!(label(State::default()), ["REBOOT", "SLEEP (3s)"]);
+    let sleepy = State {
+        sleepy: true,
+        battery: Battery::Low,
+        ..State::default()
+    };
+    assert_eq!(label(sleepy), ["REBOOT", "WAKE (3s)"]);
+    for (t, _) in labels(&State::default()) {
+        assert!(t.bytes().all(|c| glyph(c).is_some()));
+    }
+    // At the left edge, in the margins; and not on the code.
+    let mut p = Picture::white();
+    draw(&mut p, Face::Lines, &FIXED, &State::default(), 3, CLOCKS[1]);
+    let left = (0..WIDTH).find(|&x| (ROLE_TOP..HEIGHT).any(|y| p.black(x, y)));
+    assert_eq!(left, Some(LABEL_LEFT));
+    if let Some(path) = std::env::var_os("BARK_SCREEN_LINES") {
+        std::fs::write(path, crate::qr::tests::pbm(&p)).unwrap();
+    }
+    let mut q = Picture::white();
+    draw(&mut q, Face::Code, &FIXED, &State::default(), 3, None);
+    let mut with = Picture::white();
+    with.bytes = q.bytes;
+    with.label(b"REBOOT", REBOOT_TOP);
+    assert!(with.bytes != q.bytes, "the code shows no label");
+}
+
+/// The one lowercase letter is its own, not the capital.
+#[test]
+fn a_lowercase_s() {
+    assert_ne!(glyph(b's'), glyph(b'S'));
+    assert_eq!(glyph(b'a'), glyph(b'A'));
 }

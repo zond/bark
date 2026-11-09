@@ -1,31 +1,30 @@
-//! When the screen is drawn (`bark-fw/README.md`, Display): a new
-//! pairing code at once; any other change a person acts on at once,
-//! about one refresh after it; any other change
-//! no sooner than a gap after the last picture; and a picture at least
-//! once a stale time, so that its uptime says the node runs. Times are
-//! milliseconds since boot.
+//! When the screen is drawn, and which picture (`bark-fw/README.md`,
+//! Display; roadmap D160). The code is the default; a touch shows the
+//! lines for [`LINES_MS`] or until the next touch. A change of picture is
+//! drawn at once, and so is a new pairing code, since a person stands at
+//! the node for each; a change of what the picture shows that a person
+//! acts on is drawn about one refresh after it; nothing else is drawn.
+//! Times are milliseconds since boot.
 
-use crate::{role, Battery, Phone, State};
+use crate::{role, Battery, Face, Phone, State};
 
 /// A full refresh as the board's label gives it, 2 s (`bark-fw`,
 /// `board::Eink`). Changes a person acts on that come within one are
 /// drawn together.
 pub const REFRESH_MS: u64 = 2_000;
 
-/// How often the screen may be drawn for a change it may wait on, and
-/// how long it may go without a picture, on battery and on USB: the
-/// display's cost against a sleepy node's battery (`bark-fw/README.md`,
-/// Display).
-pub const BATTERY_GAP_MS: u64 = 5 * 60_000;
-pub const BATTERY_STALE_MS: u64 = 60 * 60_000;
-pub const USB_GAP_MS: u64 = 60_000;
-pub const USB_STALE_MS: u64 = 10 * 60_000;
+/// How long a touch shows the lines: a choice, long enough to read ten
+/// lines of two or three words, some 25 words, which at a reading pace of
+/// about four words a second take under 10 s, three times over; short
+/// enough that the next person to pass finds the code again.
+pub const LINES_MS: u64 = 30_000;
 
-/// Whether going from `shown` to `now` changes what a person acts on:
-/// the header (what the node is, and whether it is starting), the
-/// phone's line (a pairing code is typed while the phone waits, spec
+/// Whether going from `shown` to `now` changes what a person acts on in
+/// the lines: the header (what the node is, and whether it is starting),
+/// the phone's line (a pairing code is typed while the phone waits, spec
 /// "Phone link", Pairing), or the power (a node taken off USB runs on
-/// its cell). The counts, the uptime and the battery's level wait.
+/// its cell). The counts, the uptime and the battery's level wait for
+/// the next touch.
 pub fn urgent(shown: &State, now: &State) -> bool {
     role(shown) != role(now)
         || shown.starting != now.starting
@@ -33,14 +32,28 @@ pub fn urgent(shown: &State, now: &State) -> bool {
         || (shown.battery == Battery::Usb) != (now.battery == Battery::Usb)
 }
 
-/// What was last drawn, and when.
+/// The pairing code the code's line shows, if any (`crate::code_line`):
+/// all of the state the code's picture shows that changes.
+fn pairing(state: &State) -> Option<u32> {
+    match state.phone {
+        Phone::Code(c) => Some(c),
+        _ => None,
+    }
+}
+
+/// What was last drawn, and when the lines were asked for.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Schedule {
-    /// The last picture's state, and when the schedule counts it from.
-    shown: Option<(State, u64)>,
+    /// The last picture and the state it was drawn from.
+    shown: Option<(Face, State)>,
     /// Since when the state has differed from the picture in a way a
     /// person acts on.
     urgent_since: Option<u64>,
+    /// When a touch last asked for the lines.
+    touched: Option<u64>,
+    /// A person flipped the role: the lines are drawn at once, whatever
+    /// shows.
+    flipped: bool,
 }
 
 impl Schedule {
@@ -48,53 +61,74 @@ impl Schedule {
         Schedule {
             shown: None,
             urgent_since: None,
+            touched: None,
+            flipped: false,
+        }
+    }
+
+    /// The pad was touched at `now`: the lines, or the code if the lines
+    /// show.
+    pub fn touched(&mut self, now: u64) {
+        self.touched = match self.face(now) {
+            Face::Code => Some(now),
+            Face::Lines => None,
+        };
+    }
+
+    /// A person flipped the role at `now`: the lines, to show it.
+    pub fn lines(&mut self, now: u64) {
+        self.touched = Some(now);
+        self.flipped = true;
+    }
+
+    /// The picture the screen is to show at `now`.
+    pub fn face(&self, now: u64) -> Face {
+        match self.touched {
+            Some(t) if now < t + LINES_MS => Face::Lines,
+            _ => Face::Code,
         }
     }
 
     /// When the screen is next to be drawn, the node's state being
-    /// `state` at `now`; at or before `now` means at once.
-    pub fn due(&mut self, state: &State, now: u64) -> u64 {
-        let Some((shown, at)) = self.shown else {
-            return now;
+    /// `state` at `now`: at or before `now` means at once, `None` not
+    /// until something changes.
+    pub fn due(&mut self, state: &State, now: u64) -> Option<u64> {
+        let face = self.face(now);
+        let Some((shown_face, shown)) = self.shown else {
+            return Some(now);
         };
-        // A person stands at the node to type a new pairing code into
-        // the waiting phone: it waits for nothing.
-        if matches!(state.phone, Phone::Code(_)) && state.phone != shown.phone {
-            return now;
+        // A person touched the pad, or one is to type a new pairing code
+        // into the waiting phone: neither waits.
+        if self.flipped
+            || shown_face != face
+            || (pairing(state).is_some() && state.phone != shown.phone)
+        {
+            return Some(now);
         }
+        let differs = match face {
+            Face::Code => pairing(&shown) != pairing(state),
+            Face::Lines => urgent(&shown, state),
+        };
         // Counted from the first such change, so that a stream of them
         // cannot hold the picture back; forgotten when the state goes
         // back to the picture's.
-        self.urgent_since = match urgent(&shown, state) {
+        self.urgent_since = match differs {
             true => Some(self.urgent_since.unwrap_or(now)),
             false => None,
         };
-        let (gap, stale) = match state.battery {
-            Battery::Usb => (USB_GAP_MS, USB_STALE_MS),
-            _ => (BATTERY_GAP_MS, BATTERY_STALE_MS),
+        let urgent = self.urgent_since.map(|since| since + REFRESH_MS);
+        let back = match face {
+            Face::Lines => self.touched.map(|t| t + LINES_MS),
+            Face::Code => None,
         };
-        let scheduled = match shown == *state {
-            true => at + stale,
-            false => at + gap,
-        };
-        match self.urgent_since {
-            Some(since) => scheduled.min(since + REFRESH_MS),
-            None => scheduled,
-        }
+        urgent.into_iter().chain(back).min()
     }
 
-    /// `state` was drawn, the refresh over at `at`: the gap and the stale
-    /// time count from it.
-    pub fn drawn(&mut self, state: State, at: u64) {
-        self.shown = Some((state, at));
+    /// `face` was drawn from `state`.
+    pub fn drawn(&mut self, face: Face, state: State) {
+        self.shown = Some((face, state));
         self.urgent_since = None;
-    }
-
-    /// `state` was drawn for a press of the button, a bench aid that
-    /// leaves the gap and the stale time as they were.
-    pub fn pressed(&mut self, state: State, at: u64) {
-        let at = self.shown.map_or(at, |(_, at)| at);
-        self.drawn(state, at);
+        self.flipped = false;
     }
 }
 

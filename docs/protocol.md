@@ -81,6 +81,28 @@ its own, and its heartbeat publishes each as a flag
 *Why nothing to set.* The nRF52840 detects USB power itself, so a
 person's node relays on its charger and sleeps in a pocket.
 
+**A forced role.** A person at the node may flip its role by holding
+its button ([screen and buttons](#screen-and-buttons)): a relay turns
+sleepy, leaving as a relay at its low battery does
+([sleepy nodes](#sleepy-nodes)), and a sleepy node turns relay at once;
+each hold flips it again. The node then keeps the role it was given
+against the grace, the carried flag and the battery's high level until
+the external power next changes, plugged in or unplugged; from then the
+rules of this section decide again, at once. A forced relay on battery
+still turns sleepy at its low battery level, which returns it to those
+rules, and on battery at that level a flip to relay is not taken. A
+reboot forgets the force, and a node built only to be sleepy takes
+none. The heartbeat's flags say the role as it is (roadmap D160).
+
+*Why a forced role.* The power tells the node what it is on, not what
+its owner knows: a node on a power bank looks plugged in, and one on
+battery may be where its neighbours need a relay. *Why the power ends
+it.* Plugging in or unplugging is the act that says the node's place in
+the world changed, and a force forgotten must not last for good. *Why
+the low battery still wins.* The cell is the owner's: a node run flat
+serves nobody, and the low level keeps a fifth of the cell for its
+owner.
+
 *Why a carried node takes each fix.* Its heartbeats then say where it
 is, and its neighbours route to it there. A fixed node keeps its place so
 that no later fix, true or spoofed, moves it (roadmap D63).
@@ -3806,6 +3828,78 @@ air only when a person wants it (roadmap D128).
 The mailbox is an application on the node, beside the phone link: it
 uses the core's application interface (`core-interface.md`, Application) and
 nothing else, and the simulator runs it the same way.
+
+## Screen and buttons
+
+A node has a 200 × 200 e-paper screen, a touch pad and a button
+(`bark-fw/src/board.rs`). The screen keeps its picture without power, so
+it costs the battery only when it changes.
+
+**The code.** By default the screen shows a QR code of the project's
+page, `zond.github.io/bark`, where a person gets the app, and one line
+under it: the node's ID, the end of the name the app shows it by, or,
+while a phone pairs, the pairing code ([phone link](#phone-link),
+Pairing). The code is version 3, 29 × 29 modules, at error correction
+level H, the smallest version that holds the address's 19 bytes at H
+(24 bytes; version 2 holds 14), drawn 5 pixels a module, 145 pixels,
+centred across and near the top, with 2 modules clear above and below
+and more at the sides. Level H restores about 30 % of the codewords
+(ISO/IEC 18004), so a small orb web drawn over the code's centre,
+covering 61 of its 841 modules, 7 %, and none of its finder, timing,
+alignment or format patterns, leaves it readable; the web's radials and
+two frame threads go on in the margin outside the clear zone. The
+picture is decoded by three decoders in the repository's tests
+(`bark-screen/scripts/qr.py`).
+
+*Why a code by default.* Most people who see a node do not own it: a
+passer-by who wants the app gets it from the screen, with no address to
+type. A private node's code serves such a guest as well: the app works
+with any public node nearby. *Why 2 modules clear.* The standard asks
+for 4; the screen's height does not leave 4 above and below beside a
+line of text, and phones' readers take 2.
+
+**The touch.** A touch of the pad shows the node's state as lines of
+text for 30 s, or until the next touch, and then the code again: what
+the node is, its ID and image, the image it gathers, the phone, its
+neighbours, its power, its uptime and the time of day
+(`bark-fw/README.md`, Display).
+
+*Why 30 s.* A choice: ten lines of two or three words each take under
+10 s to read at a usual pace, and 30 s is three times that, short
+enough that the next person to pass finds the code again.
+
+**When it is drawn.** A change of picture, a touch or the 30 s ending,
+is drawn at once, and so is a new pairing code, since a person stands at
+the node waiting for each. On the code nothing else changes but the
+end of a pairing, drawn one refresh after it, 2 s. While the lines show,
+a change of the role, of the phone's line or of the power is drawn one
+refresh after it, and changes within one refresh are drawn together;
+the neighbour counts and the battery's level wait for the next touch.
+Nothing else is drawn.
+
+*Why so little.* Each refresh costs a sleepy node's battery
+(`bark-fw/README.md`, Display), and the code shows nothing that would
+grow stale.
+
+**The buttons.** Both are on the case's left side as the screen reads:
+the reset button nearer the top, the user button below the glass. Held
+3 s, the user button flips the role ([nodes](#nodes)) the moment the 3 s
+have passed, while it is still held, and the lines are drawn at once
+with the role it took; the release does nothing, and a shorter press
+nothing either. A press of the reset button resets the chip, and the
+node boots the image it ran. The lines label both at their left edge,
+each on the margin nearer its button, after an arrow pointing at it:
+`REBOOT` at the top, and at the bottom the role a hold would turn the
+node to, `SLEEP (3s)` on a relay and `WAKE (3s)` on a sleepy node. The
+screen says nothing of a forced role, and the code shows no labels.
+
+*Why the reset button only resets.* It is wired to the chip's reset
+pin, and reading a long press from it would take that pin over, which
+would end the bootloader's double tap and a hung board's recovery.
+
+*Why 3 s.* A choice: thirty times an ordinary press of about 100 ms, so
+that a bump, a bag or a curious finger does not change what the node
+does for its neighbours.
 
 ---
 

@@ -310,16 +310,24 @@ static CHANGED: embassy_sync::signal::Signal<
     (),
 > = embassy_sync::signal::Signal::new();
 
+/// A person at the node: true asks for the lines, false is a touch of
+/// the pad, which flips the picture.
 #[cfg(not(feature = "console"))]
-static PRESSED: embassy_sync::signal::Signal<
+static PERSON: embassy_sync::signal::Signal<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
+    bool,
 > = embassy_sync::signal::Signal::new();
 
-/// The button's side (`button.rs`): redraw now, outside the schedule.
+/// The pad's side (`button.rs`): a touch.
 #[cfg(not(feature = "console"))]
-pub fn redraw() {
-    PRESSED.signal(());
+pub fn touched() {
+    PERSON.signal(false);
+}
+
+/// The button's side (`button.rs`): the lines, for the role it forced.
+#[cfg(not(feature = "console"))]
+pub fn lines() {
+    PERSON.signal(true);
 }
 
 /// The phone link's line at boot, drawn with the first picture.
@@ -351,12 +359,11 @@ pub fn publish(state: State) {
 const FIRST_STATE: Duration = Duration::from_secs(5);
 
 /// Draw the node's screen at boot, and again as `bark_screen::schedule`
-/// says: a new pairing code at once, a change of the header, the phone's
-/// line or the power about one refresh after it, any other change no sooner than a gap after the last
-/// picture, and a picture at least once a stale time. A press of the
-/// button ([`redraw`]) draws at once and leaves that schedule as it was.
-/// Each picture is drawn to its end before the next is considered, so
-/// none starts while a refresh runs.
+/// says: the code, the lines for a while after a touch of the pad
+/// ([`touched`]) or a long press of the button ([`lines`]), a new
+/// pairing code at once, and a change a person acts on in the picture
+/// shown about one refresh after it. Each picture is drawn to its end
+/// before the next is considered, so none starts while a refresh runs.
 #[cfg(not(feature = "console"))]
 pub async fn run(
     pins: board::Eink,
@@ -364,6 +371,7 @@ pub async fn run(
     irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
     fixed: bark_screen::Fixed<'static>,
 ) -> ! {
+    use bark_screen::Face;
     use embassy_futures::select::{select3, Either3};
     // In a static, so that no 5000-byte value is built or moved through a
     // stack frame: the stack beside the relay is tight (`main.rs`,
@@ -376,45 +384,59 @@ pub async fn run(
     // The first picture shows what the node knows once its loop has run,
     // which is within a second of the radio coming up.
     let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
-    let mut pressed = false;
     loop {
         let state = State {
             phone: PHONE.lock(core::cell::Cell::get),
             ..STATE.lock(core::cell::Cell::get)
         };
         let now = Instant::now();
-        let due = Instant::from_millis(schedule.due(&state, now.as_millis()));
-        let scheduled = now >= due;
-        if !scheduled && !pressed {
-            if let Either3::Second(()) =
-                select3(CHANGED.wait(), PRESSED.wait(), Timer::at(due)).await
+        let ms = now.as_millis();
+        let due = schedule.due(&state, ms);
+        if due.is_none_or(|d| d > ms) {
+            let at = due.map_or(Instant::MAX, Instant::from_millis);
+            if let Either3::Second(lines) =
+                select3(CHANGED.wait(), PERSON.wait(), Timer::at(at)).await
             {
-                pressed = true;
+                match lines {
+                    true => schedule.lines(Instant::now().as_millis()),
+                    false => schedule.touched(Instant::now().as_millis()),
+                }
             }
             continue;
         }
-        pressed = false;
-        let up_min = (now.as_secs() / 60) as u32;
+        let face = schedule.face(ms);
         picture.clear();
-        let t = crate::utc::time();
-        let clock = t.utc_s.map(|utc_s| bark_screen::Clock {
-            utc_s,
-            offset_min: t.offset_min,
-        });
-        for (text, y) in bark_screen::lines(&fixed, &state, up_min, clock)
-            .iter()
-            .flatten()
-        {
-            picture.text(text.bytes(), bark_screen::SCALE, *y);
-            embassy_futures::yield_now().await;
+        match face {
+            Face::Lines => {
+                let up_min = (now.as_secs() / 60) as u32;
+                let t = crate::utc::time();
+                let clock = t.utc_s.map(|utc_s| bark_screen::Clock {
+                    utc_s,
+                    offset_min: t.offset_min,
+                });
+                for (text, y) in bark_screen::lines(&fixed, &state, up_min, clock)
+                    .iter()
+                    .flatten()
+                {
+                    picture.text(text.bytes(), bark_screen::SCALE, *y);
+                    embassy_futures::yield_now().await;
+                }
+                for (label, y) in bark_screen::labels(&state) {
+                    picture.label(label.as_bytes(), y);
+                }
+            }
+            Face::Code => {
+                for part in 0..bark_screen::qr::PARTS {
+                    bark_screen::qr::draw(picture, part);
+                    embassy_futures::yield_now().await;
+                }
+                let line = bark_screen::code_line(&fixed, &state);
+                picture.text(line.bytes(), bark_screen::SCALE, bark_screen::qr::LINE_TOP);
+            }
         }
         let outcome = screen.draw(picture).await;
         // The boot's outcome is the first picture's.
         OUTCOME.lock(|o| o.set(o.get().or(Some(outcome))));
-        let at = Instant::now().as_millis();
-        match scheduled {
-            true => schedule.drawn(state, at),
-            false => schedule.pressed(state, at),
-        }
+        schedule.drawn(face, state);
     }
 }

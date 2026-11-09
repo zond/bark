@@ -47,6 +47,18 @@
 //! reboots. Before the first calibration it compares the driver's
 //! readings as they are.
 //!
+//! A person at the node may flip its role with the board's button
+//! (`AppCommand::ForceRole`): a relay, one that leaves among them, turns
+//! sleepy, leaving as at its battery's low level, flushing first; a
+//! sleepy node turns relay at once. Each press flips the role again. The
+//! node is then forced: its role holds against the grace, the carried
+//! flag and a battery back at its high level, until the driver reports a
+//! change of external power, which returns it to automatic, the rules
+//! above, at once. A forced relay on battery still leaves at its low
+//! level, and the force ends there: the cell is the owner's, and an
+//! empty one serves nobody; for the same reason a flip to relay is not
+//! taken on battery at that level. A reboot forgets the force.
+//!
 //! A [`SleepyNode`](super::SleepyNode) has no room for the mail a relay
 //! holds, and stays sleepy whatever its power.
 //!
@@ -54,6 +66,16 @@
 //! [`Config::battery`]: crate::Config::battery
 
 use super::{Mode, Node, Power, Sleep, Stage};
+
+/// The role a person forced on a node (module documentation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Forced {
+    /// A relay, whatever its power, until the power changes or its
+    /// battery is low.
+    Relay,
+    /// Sleepy, whatever its power, until the power changes.
+    Sleepy,
+}
 use crate::event::{Action, AppEvent, Trace};
 use crate::node::{
     heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
@@ -87,7 +109,8 @@ impl Charge {
     }
 }
 
-/// What the node knows of its battery (module documentation).
+/// What the node knows of its battery and its power (module
+/// documentation).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Battery {
     /// Read at or below the low level since it last read at or above the
@@ -102,6 +125,9 @@ pub(super) struct Battery {
     /// The driver's last reading on battery, uncalibrated; 0 before the
     /// first. Its status tells it (spec "Neighbour status").
     pub(super) last_mv: u16,
+    /// The role a person forced, which the power's next change ends;
+    /// here, in the padding, as it lives and dies with the power.
+    pub(super) forced: Option<Forced>,
 }
 
 impl Battery {
@@ -113,6 +139,7 @@ impl Battery {
             scale,
             charge: Charge::Battery,
             last_mv: 0,
+            forced: None,
         }
     }
 }
@@ -121,6 +148,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether this node is sleepy now (module documentation).
     pub fn sleepy(&self) -> bool {
         matches!(self.mode, Mode::Sleepy(_))
+    }
+
+    /// The role a person forced on the node, while it lasts (module
+    /// documentation).
+    pub fn forced(&self) -> Option<Forced> {
+        self.battery.forced
     }
 
     /// Whether this relay on battery is to turn sleepy: it holds no mail,
@@ -156,6 +189,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver reports whether external power is present.
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
+        if external != matches!(self.battery.charge, Charge::Usb(_)) {
+            self.battery.forced = None;
+        }
         let s = Charge::secs(now);
         self.battery.charge = match (external, self.battery.charge) {
             (true, Charge::Usb(since)) => Charge::Usb(since),
@@ -171,6 +207,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             (false, Charge::Usb(_)) => Charge::Battery,
             (false, c) => c,
         };
+        if self.battery.forced.is_some() {
+            return;
+        }
         if self.stage == Stage::Booting {
             // A fixed relay rebooted on battery relays on, its grace
             // counted from the boot.
@@ -208,6 +247,47 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             (true, Mode::Relay(Power::External)) => self.mode = Mode::Relay(Power::Battery(now)),
             (true, _) => {}
         }
+    }
+
+    /// A person presses the button: the node flips its role, and is
+    /// forced until the power changes (module documentation).
+    pub(super) fn force(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.stage == Stage::Off {
+            return;
+        }
+        let external = matches!(self.battery.charge, Charge::Usb(_));
+        let booting = self.stage == Stage::Booting;
+        let sleepy = !self.sleepy();
+        if sleepy {
+            match self.mode {
+                Mode::Relay(Power::Leaving(_)) | Mode::Sleepy(_) => {}
+                // Nobody depends on a node that boots (`power`).
+                Mode::Relay(_) if booting => self.mode = Mode::Sleepy(Sleep::new(false)),
+                Mode::Relay(_) => {
+                    self.forwarding.feed_due = true;
+                    self.mode = Mode::Relay(Power::Leaving(now));
+                }
+            }
+        } else {
+            if !Self::can_relay() || (!external && self.battery.low) {
+                return;
+            }
+            let power = if external {
+                Power::External
+            } else {
+                Power::Battery(now)
+            };
+            match self.mode {
+                Mode::Sleepy(_) if !booting => self.turn_relay(power, now, emit),
+                _ => self.mode = Mode::Relay(power),
+            }
+        }
+        self.battery.forced = Some(if sleepy {
+            Forced::Sleepy
+        } else {
+            Forced::Relay
+        });
+        emit(Action::Trace(Trace::Forced { sleepy }));
     }
 
     /// The driver reads the battery: the first reading a rest after a full
@@ -270,7 +350,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Mode::Relay(Power::Battery(t)) = self.mode else {
             return None;
         };
-        let ends = self.config.battery.is_none() && !self.motion.carried;
+        let ends =
+            self.config.battery.is_none() && !self.motion.carried && self.battery.forced.is_none();
         ends.then_some(t + self.config.grace)
     }
 
@@ -292,7 +373,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         match self.mode {
             Mode::Sleepy(s) => {
-                if s.by_battery && !self.battery.low && !self.motion.carried {
+                let free = self.battery.forced.is_none();
+                if free && s.by_battery && !self.battery.low && !self.motion.carried {
                     self.turn_relay(Power::Battery(now), now, emit);
                 } else if !self.delivery.is_empty() {
                     // Room came in the send queue, as a hand-over ended.
@@ -305,7 +387,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let on_battery = power != Power::External;
                 let leaves = if on_battery && self.battery.low {
                     emit(Action::Trace(Trace::BatteryLow));
+                    self.battery.forced = None;
                     true
+                } else if self.forced() == Some(Forced::Relay) {
+                    false
                 } else if on_battery && self.motion.carried {
                     emit(Action::Trace(Trace::CarriedOnBattery));
                     true
@@ -362,7 +447,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Sleepy, holding nothing, with an anchor chosen as at the end of a
     /// first rotation.
     fn turn_sleepy(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.mode = Mode::Sleepy(Sleep::new(self.battery.low));
+        self.mode = Mode::Sleepy(Sleep::new(
+            self.battery.low && self.battery.forced.is_none(),
+        ));
         self.gps_sleepy();
         self.heard.clear();
         let held = self.queue.iter().position(Outgoing::held);
