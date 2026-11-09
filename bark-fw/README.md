@@ -865,9 +865,9 @@ whether the peer is the bond's (`the bond's=Some(true)`). Only an
 authenticated pairing that bonds replaces the kept bond
 (`bark_link::bond::after_pairing`). A phone whose node's bond names
 another phone, as the log then shows, is no longer the owner and pairs
-again; c367's bond came to name `f4:00:a2:29:05:a7` while it ran on
-battery on 2026-11-08, with no log to say how, and its owner paired
-again. A disconnect's reason, and a host error
+again; c367's bond came to name another phone on 2026-11-08, when its
+owner paired a second phone with it while it ran on battery with no
+USB log, and the first phone paired again. A disconnect's reason, and a host error
 that carries an HCI or ATT error, is logged as that code in hex
 (Bluetooth Core, Vol 1, Part F, and Vol 3, Part F, 3.4.1.1): `ble:
 disconnected 0x13` when the phone ends the link, `0x16` when the node
