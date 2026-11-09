@@ -40,8 +40,13 @@ them on the parts in hand and rerun before printing.
   straight onto the jack.
 - A USB-A to USB-C cable with a straight plug, from the panel's
   controller; its minimum bend radius goes in `BEND_R`.
-- Two 12 mm stainless hose clamps for a pole or railing, or four 4 mm
-  stainless screws for a wall.
+- Two 12 mm stainless hose clamps for a pole (a broom handle of 23 to
+  28 mm or larger, in the saddle) or a railing, or four 4 mm stainless
+  screws for a wall.
+- For a panel on the box: M4 heat-set brass inserts, set in the panel
+  pad's holes with a soldering iron, and M4 stainless screws. The panel
+  is better on the pole, a quarter wavelength (17 cm) or more below the
+  antenna; the note says why.
 
 ## Print
 
@@ -74,8 +79,9 @@ fits inside the body's bottom edge with 0.25 mm a side.
    stops, the cable's curve in the bay beside it; then press the lid in
    until all six latches click.
 5. Mount the box upright with the lid at the bottom, its bottom clear of
-   the snow, and lead the cable down in a loop below the box before it
-   goes to the panel.
+   the snow: on a pole, set the pole in the saddle's V and run each hose
+   clamp through its tunnel and round the pole, snug, not hard. Lead
+   the cable down in a loop below the box before it goes to the panel.
 
 To open: push each latch beam inward through its slot in the lid with
 a small screwdriver and pull the lid down.
