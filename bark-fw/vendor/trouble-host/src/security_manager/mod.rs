@@ -1316,7 +1316,7 @@ mod tests {
     use core::cell::RefCell;
     use std::boxed::Box;
 
-    use bt_hci::param::{ConnHandle, LeConnRole};
+    use bt_hci::param::{AddrKind, BdAddr, ConnHandle, LeConnRole};
     use embassy_sync::blocking_mutex::raw::NoopRawMutex;
     use super::*;
     use crate::connection::ConnParams;
@@ -1354,6 +1354,32 @@ mod tests {
             #[cfg(feature = "legacy-pairing")]
             secure_connections_only: false,
         }
+    }
+
+    #[test]
+    fn pairing_uses_the_rpa_on_the_link_of_a_peer_the_host_resolved() {
+        let mgr = setup_manager();
+        let handle = ConnHandle::new(5);
+        // The key and an address it resolves, as in `crypto::tests::rpa_test`.
+        let irk = unwrap!(IdentityResolvingKey::new(0x8b3958c158ed64467bd27bc90d3cf54d));
+        let identity = Identity {
+            addr: Address::new(AddrKind::PUBLIC, BdAddr::new([0x20, 2, 3, 4, 5, 6])),
+            irk: Some(irk),
+        };
+        unwrap!(mgr.security_manager.add_bond_information(BondInformation::new(
+            identity,
+            LongTermKey::new(5),
+            SecurityLevel::EncryptedAuthenticated,
+            true,
+        )));
+        let rpa = Address::random([0x92, 0xF2, 0x8F, 0x84, 0x72, 0x4F]);
+        unwrap!(mgr.connect(handle, rpa, LeConnRole::Peripheral, ConnParams::new()));
+
+        unwrap!(mgr.with_connected_handle(handle, |storage| {
+            assert_eq!(storage.peer_identity, identity);
+            assert_eq!(Inner::connection_peer_address(storage), rpa);
+            Ok(())
+        }));
     }
 
     #[test]

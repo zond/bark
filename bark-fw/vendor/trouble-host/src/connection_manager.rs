@@ -567,8 +567,16 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                     storage.bond_rejected = false;
                     storage.smp_timeout = false;
                 }
+                // A bond's identity resolved by the host, not by the
+                // controller, stands in for the address on the link; that
+                // address, an RPA, is still the one pairing's checks use
+                // (Vol 3 Part H §2.2.7, §2.2.8).
                 #[cfg(feature = "security")]
                 {
+                    let mut resolvable_addrs = resolvable_addrs;
+                    if resolvable_addrs.peer.is_none() && identity.addr != peer_addr {
+                        resolvable_addrs.peer = Some(peer_addr.addr);
+                    }
                     storage.resolvable_addrs = resolvable_addrs;
                 }
 
