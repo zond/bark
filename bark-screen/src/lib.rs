@@ -353,8 +353,8 @@ const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
 /// each with its top row, the arrow pointing at the button: the reset
 /// button reboots; the user button held forces the other role, so it
 /// says what it would turn the node to, and nothing when that would not
-/// be taken, a sleepy node on battery at its low level (spec "Screen and
-/// buttons").
+/// be taken, a sleepy node on battery at its low level
+/// (spec "Screen and buttons").
 pub fn labels(state: &State) -> [Option<(&'static str, usize)>; 2] {
     let role = match (state.sleepy, state.battery) {
         (false, _) => Some("<-[SLEEP] 3S"),
