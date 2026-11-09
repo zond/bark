@@ -308,9 +308,22 @@ class Session extends ChangeNotifier {
   NeighbourTable? neighbours;
   Future<NeighbourTable>? _readingNeighbours;
 
-  /// What each neighbour answered since they were last asked, by its ID
-  /// in hex, from link version 9.
+  /// What each neighbour answered when last asked, by its ID in hex,
+  /// from link version 9.
   final Map<String, NeighbourStatus> answers = {};
+
+  /// When each of [answers] came.
+  final Map<String, DateTime> _answeredAt = {};
+
+  /// The IDs, in hex, of the neighbours the running look waits for, and
+  /// its wait, which ends early once none is left.
+  final Set<String> _awaited = {};
+  Completer<void>? _waiting;
+  Timer? _waitTimer;
+
+  /// Counts the looks, so that a look that has been replaced or stopped
+  /// asks no more.
+  int _look = 0;
   final _statusSeen = StreamController<Status>.broadcast();
 
   /// Each status the node gives, read or notified: when what it knows
@@ -669,29 +682,82 @@ class Session extends ChangeNotifier {
     }
   }
 
-  /// Asks each of `list` once for its status, forgetting the answers to
-  /// the last asks: the person sees what the neighbours say now. A lost
-  /// question or answer is not asked again, as each costs airtime; the
-  /// person asks again.
+  /// Asks for its status each of `list` that has not answered within
+  /// [askFresh], and asks again, a round at a time, each that has not
+  /// answered within [answerWait] of its round, up to [askRounds] asks
+  /// (spec "Neighbour status"). An ask and its answer are single frames
+  /// on a shared channel and are lost under load, so the one who looks
+  /// asks again, not the node. A look that starts while another runs
+  /// replaces it.
   Future<void> askNeighbours(List<Neighbour> list) async {
     final link = _owned(askVersion, 'Ask');
-    answers.clear();
-    notifyListeners();
-    for (final n in list) {
-      try {
-        await link.ask(n.id);
-      } catch (e) {
-        note('Ask: ${nodeName(n.id)}: $e');
-        if (_link != link) return;
-      }
+    stopAsking();
+    final look = _look;
+    final t = now();
+    final stale = [
+      for (final n in list)
+        if (!(_answeredAt[hex(n.id)]?.isAfter(t.subtract(askFresh)) ?? false))
+          n,
+    ];
+    for (final n in stale) {
+      answers.remove(hex(n.id));
+      _answeredAt.remove(hex(n.id));
     }
-    note('Ask: asked ${list.length} neighbours');
+    notifyListeners();
+    _awaited.addAll(stale.map((n) => hex(n.id)));
+    for (var round = 0; round < askRounds && _awaited.isNotEmpty; round++) {
+      final asked = [
+        for (final n in stale)
+          if (_awaited.contains(hex(n.id))) n,
+      ];
+      for (final n in asked) {
+        try {
+          await link.ask(n.id);
+        } catch (e) {
+          note('Ask: ${nodeName(n.id)}: $e');
+          if (_link != link) {
+            stopAsking();
+            return;
+          }
+        }
+        if (_look != look) return;
+      }
+      note('Ask: asked ${asked.length} neighbours, round ${round + 1}');
+      final w = _waiting = Completer<void>();
+      _waitTimer = Timer(answerWait, () {
+        if (!w.isCompleted) w.complete();
+      });
+      if (_awaited.isEmpty) w.complete();
+      await w.future;
+      if (_look != look) return;
+    }
+    if (_awaited.isNotEmpty) {
+      note('Ask: ${_awaited.length} neighbours did not answer');
+    }
+    stopAsking();
+  }
+
+  /// Ends the running look, if any: the person stopped looking, or a new
+  /// look starts.
+  void stopAsking() {
+    _look++;
+    _awaited.clear();
+    _waitTimer?.cancel();
+    _waitTimer = null;
+    final w = _waiting;
+    _waiting = null;
+    if (w != null && !w.isCompleted) w.complete();
   }
 
   void _onAnswer(Answer? a) {
     if (a == null) return;
-    answers[hex(a.id)] = a.status;
+    final key = hex(a.id);
+    answers[key] = a.status;
+    _answeredAt[key] = now();
     note('Ask: ${nodeName(a.id)} answers ${a.status.lines.join(', ')}');
+    _awaited.remove(key);
+    final w = _waiting;
+    if (_awaited.isEmpty && w != null && !w.isCompleted) w.complete();
   }
 
   /// Gives the node the phone's time and UTC offset, silently: a node
@@ -728,6 +794,8 @@ class Session extends ChangeNotifier {
     guest = false;
     neighbours = null;
     answers.clear();
+    _answeredAt.clear();
+    stopAsking();
     note('Disconnected');
   }
 
@@ -777,6 +845,24 @@ class Session extends ChangeNotifier {
     await save();
     _pump();
   }
+
+  /// How long after its round's asks a neighbour is waited for before it
+  /// is asked again. On a quiet channel an answer comes about 100 ms after
+  /// the ask (the bench, 2026-11-09); under load each of the two frames
+  /// may wait two backoffs of up to 200 ms and three checks of 3.1 ms
+  /// (spec "Heartbeat"), and to a sleepy node they carry the long
+  /// preamble, 249.92 and 257.60 ms on air (spec "Neighbour status"):
+  /// 2 × 409.3 ms + 507.52 ms = 1.33 s at most more. 2 s leaves the phone
+  /// link and the node's other frames room.
+  static const answerWait = Duration(seconds: 2);
+
+  /// Asks of a neighbour in one look, the first and two more.
+  static const askRounds = 3;
+
+  /// An answer younger than this is not asked again when the map is
+  /// refreshed: a choice, the mean heartbeat interval (spec "Heartbeat"),
+  /// within which what a neighbour hears seldom changes.
+  static const askFresh = Duration(seconds: 10);
 
   /// The longest a fetch waits for its home node's first reply, by the
   /// spec's bounds on a free channel: each way at most 256 hand-overs

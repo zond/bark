@@ -2,7 +2,8 @@
 // each coloured by the link's quality (spec "Phone link", Neighbours).
 // Read when the screen opens, at every status the node gives and when
 // the person asks. When it opens and when the person asks, each
-// neighbour is also asked what its own screen shows (spec "Phone link",
+// neighbour without a fresh answer is also asked what its own screen
+// shows, and asked again while it does not answer (spec "Phone link",
 // Ask), and its marker says it in those words.
 
 import 'dart:async';
@@ -86,8 +87,8 @@ class _MapScreenState extends State<MapScreen> {
   Session get _s => widget.app.session;
 
   /// The neighbours are to be asked for their status after the next read
-  /// that succeeds: once when the map opens, perhaps before the node is
-  /// connected, and once each time the person refreshes it. Not at every
+  /// that succeeds: when the map opens, perhaps before the node is
+  /// connected, and each time the person refreshes it. Not at every
   /// status, as each ask costs airtime.
   bool _ask = true;
 
@@ -105,6 +106,8 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _seen?.cancel();
+    // Asked only while a person looks.
+    _s.stopAsking();
     super.dispose();
   }
 

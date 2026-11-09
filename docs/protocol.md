@@ -1095,10 +1095,27 @@ one hop, and neither answered nor sent again. A node:
 The ask is 14 bytes, 15.68 ms on air, the answer 30, 23.36 ms; with the
 long preamble 249.92 and 257.60 ms.
 
+The app asks again a neighbour that has not answered within 2 s of its
+round of asks, one round at a time, up to three asks of it in a look; a
+refresh asks only the neighbours that have not answered within the last
+10 s. On a quiet channel an answer comes about 100 ms after its ask;
+under load each of the two frames may wait two backoffs and three
+checks ([heartbeat](#heartbeat)), 409.3 ms, and to a sleepy node they
+carry the long preamble, so the pair takes at most 1.33 s more, and 2 s
+leaves the phone link room. 10 s is a choice: the mean heartbeat
+interval, within which what a neighbour hears seldom changes.
+
 *Why only on a look.* Said in every heartbeat, the same would cost
 every node every rotation, for a map that is seldom open; asked, it
-costs the network nothing between looks. A lost ask or answer costs the
-person a refresh.
+costs the network nothing between looks.
+
+*Why the app asks again.* An ask and an answer are single frames on a
+shared channel, lost to a collision or given up on a busy channel, the
+more often the busier it is: on the bench, with two nodes streaming an
+update, 4 of 12 asks were answered. The one who looks knows which
+answer is missing, so it asks again, not the node; three asks bound
+what a look costs, and a round at a time keeps the node's asks from
+piling up behind each other.
 
 *Why the image gathered.* During an update a person at the map sees
 which neighbours still gather and how far they are, as each one's
@@ -3337,13 +3354,14 @@ shift down by one, and one would be skipped.
 neighbour for its status ([neighbour status](#neighbour-status)); the
 write is answered once the node has taken it, whether or not the ID is
 a live neighbour's, as nobody answers an ask of anything else. The app
-asks each neighbour it shows, once, when the person opens or refreshes
-the map, never by itself. Each answer the node is given, the
-neighbour's ID and its status as the radio carries it, is Ask's value
-from then on, notified to the paired phone; the value is empty before
-the first since the node booted. An answer comes within about a second
-of the ask, or not at all. The app shows it on the neighbour in the
-words of the neighbour's own screen. From link version 9; the image it
+asks the neighbours it shows when the person opens or refreshes the
+map, and asks again those that do not answer, as
+[neighbour status](#neighbour-status) says, never at other times. Each
+answer the node is given, the neighbour's ID and its status as the
+radio carries it, is Ask's value from then on, notified to the paired
+phone; the value is empty before the first since the node booted. An
+answer comes within about a second of the ask, or not at all. The app
+shows it on the neighbour in the words of the neighbour's own screen. From link version 9; the image it
 gathers, the status's last 7 bytes, from 10.
 
 *Why a characteristic of its own.* The answer is notified, and a

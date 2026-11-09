@@ -146,15 +146,18 @@ is a prototype for the bench, not the app people will carry.
   and its flags. The map reads Neighbours when it opens, at every
   status the node gives, and when the refresh button is pressed. When
   it opens and when refreshed, on a node of link version 9 or later, it
-  also asks each neighbour once, through Ask, what its own screen shows;
+  also asks each neighbour that has not answered within the last 10 s,
+  through Ask, what its own screen shows;
   a neighbour that answers has its role under its marker in its
   screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
   details show its screen's lines one a row under the distance (the
   role, its power, the neighbours it knows, its firmware version and,
   from link version 10, the image it gathers, such as `GET V14 14/31`)
   in place of the sleepy and carried flags they repeat, then this
-  node's own view of it, such as its anchor or a ban. An ask costs airtime, so
-  one lost is not repeated: the person refreshes. The
+  node's own view of it, such as its anchor or a ban. An ask or its
+  answer is lost now and then on a busy channel, so a neighbour that
+  has not answered within 2 s is asked again, a round at a time, up to
+  three asks while the map is open (spec "Neighbour status"). The
   node is drawn at its own position, not its address, so a sleepy node
   is not drawn on its anchor; a node without a place has its
   neighbours drawn with no lines. Tiles come from the network and are
@@ -701,6 +704,11 @@ a phone (Trying it, With a node).
     three green lines, one amber and one red; the red one and a green
     one dashed. Tap the red
     one: `bark-fa4e00000103`, fragile, 3.0 dB over the floor, demoted.
+    Within half a second most markers show their screens' roles, such
+    as `FIXED RELAY`; the fake loses one ask in three, so one more
+    shows about 2 s later, asked again, and the one that never answers
+    is asked three times in all (Debug's log, `Ask:`). **Read again**
+    within 10 s asks only that one; later, all of them.
     With the phone offline and the area never seen, a line says the
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
@@ -733,7 +741,11 @@ a phone (Trying it, With a node).
    address, and **Map** draws it with the relays it hears, each line's
    colour its link's quality. Without one, set a map point in Settings: Status changes to
    placed and map point. A text names the node's address only once it
-   has one.
+   has one. With neighbours on link version 9 or later, each marker
+   shows its screen's role within a second or, asked again, a few;
+   the node's log says `ble: ask` for each ask, `status of` for each
+   answer, and `StatusGivenUp` for an ask or answer given up on a busy
+   channel, which tells it from one lost on the air.
 5. With a second node and a second phone, make one phone's node its
    home (step 9 below; a card without a home cannot be written to
    first), then each phone scans the other's card from **My card**,
