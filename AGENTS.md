@@ -58,6 +58,14 @@ engineer who has not seen the project can still read, and no terser.
 `README.md` is the project overview. This file is the contributor guide and ruleset.
 `docs/` holds design, research and decisions, each dated.
 
+## User interface
+
+What a person sees in the app or on a node's screen is clear, simple and self-explanatory:
+it shows no more choices than the moment needs, uses ordinary words rather than the
+protocol's, and gives a plain way to learn more about anything that is not obvious, a help
+sheet or a line of explanation, where the thing is shown. A polish run checks the user
+interface against this as it checks the code and the documents against the sections above.
+
 ## Commits
 
 Small, reviewed commits that each tell one story. Run `cargo test --workspace` and
