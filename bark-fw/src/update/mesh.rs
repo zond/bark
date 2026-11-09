@@ -444,6 +444,13 @@ fn slot_taken(flash: &super::Flash) -> bool {
     super::phone::holds_slot() || bark_image::boot::swap_requested(flash) == Ok(true)
 }
 
+/// Whether this node swapped back the image named `tag` once
+/// (`bark_image::given_up`): it never gathers it again. A flash that
+/// cannot be read gives up nothing.
+fn given_up(flash: &super::Flash, tag: &[u8; pieces::TAG_LEN]) -> bool {
+    bark_image::given_up::contains(flash, tag) == Ok(true)
+}
+
 /// Tell the core, waiting for room.
 async fn tell(r: Request) {
     FOR_CORE.send(r).await;
@@ -477,7 +484,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
     // up, as after the swap into it.
     let mut gather = STORE.lock(|s| s.borrow().image());
     if let Some(i) = gather {
-        if i.version <= BARK_IMAGE_VERSION || slot_taken(flash) {
+        if i.version <= BARK_IMAGE_VERSION || slot_taken(flash) || given_up(flash, &i.tag) {
             log::info!(
                 "update: version {} gathered before is not wanted; forgotten",
                 i.version
@@ -627,14 +634,19 @@ fn offer(
         running: BARK_IMAGE_VERSION,
         slot_taken: slot_taken(flash),
     };
-    let takes = policy::takes(o, &BARK_SIGNING_KEYS) && refused != Some(image.name.0);
+    let gave_up = given_up(flash, &image.name.0);
+    let takes = policy::takes(o, &BARK_SIGNING_KEYS) && refused != Some(image.name.0) && !gave_up;
     log::info!(
         "update: offered version={} blocks={} key={} name={:02x?}: {}",
         image.version,
         image.blocks,
         image.key,
         image.name.0,
-        if takes { "taken" } else { "not taken" }
+        match (takes, gave_up) {
+            (true, _) => "taken",
+            (false, true) => "not taken, given up",
+            (false, false) => "not taken",
+        }
     );
     if !takes {
         return None;

@@ -9,7 +9,8 @@
 // one of each link quality and of each kind a map draws apart, all but
 // one answering an ask with a status of their own. It takes
 // a firmware update as the node does, and comes back from its reboot
-// running the new version. Public unless its owner makes it private, it
+// running the new version, which hears no relay unless a test says so,
+// so that the app's warning of a node that hears no one can be seen. Public unless its owner makes it private, it
 // also takes guests' links, as the spec's "Phone link", Public, says.
 
 import 'dart:async';
@@ -200,7 +201,7 @@ class FakeNode implements NodeLink {
   /// How long after taking a message the echo arrives.
   static const echoAfter = Duration(seconds: 5);
 
-  late final DateTime _boot;
+  late DateTime _boot;
   Position? _mapPoint;
 
   /// A carried node's address is its live fix, which wanders; a sleepy
@@ -250,11 +251,7 @@ class FakeNode implements NodeLink {
     this.mailbox,
   }) : app = Uint8List.fromList(app) {
     _boot = now();
-    final step = firstRotation ~/ (relaysHeard + 1);
-    for (var i = 1; i <= relaysHeard; i++) {
-      _after(step * i, () => _relays++);
-    }
-    _after(firstRotation, () {});
+    _hearRelays(Duration.zero);
     _place(_intro('Hello from the fake node.'));
     _place(_intro('A second message, waiting in the inbox.'));
   }
@@ -398,6 +395,21 @@ class FakeNode implements NodeLink {
       }
     });
   }
+
+  /// Learns [relaysHeard] relays over the first rotation of a boot `at`
+  /// from now.
+  void _hearRelays(Duration at) {
+    final step = firstRotation ~/ (relaysHeard + 1);
+    final from = _timers.length;
+    for (var i = 1; i <= relaysHeard; i++) {
+      _after(at + step * i, () => _relays++);
+    }
+    _after(at + firstRotation, () {});
+    _learning = _timers.sublist(from);
+  }
+
+  /// The timers of the relays being learnt, which a reboot stops.
+  List<Timer> _learning = [];
 
   /// Runs `f` after `d`, then notifies the status.
   void _after(Duration d, void Function() f) {
@@ -688,6 +700,11 @@ class FakeNode implements NodeLink {
   /// 55 s on the bench (`bark-fw/README.md`, "Updates").
   static const swapTime = Duration(seconds: 55);
 
+  /// Whether the image an update brings hears the relays around it. Not
+  /// in the demo, so that the person sees what the app says of a node
+  /// that hears no one after an update (spec "Phone link", Updates).
+  bool hearsAfterUpdate = false;
+
   /// The update: the header taken, the bytes held, and whether committed.
   Uint8List? _staging;
   final List<int> _held = [];
@@ -808,6 +825,15 @@ class FakeNode implements NodeLink {
     _refused = null;
     _backAt = now().add(committed ? swapTime : Duration.zero);
     image = version;
+    if (committed) {
+      // A boot: its first rotation again, and the relays learnt anew.
+      _boot = _backAt!;
+      _relays = 0;
+      for (final t in _learning) {
+        t.cancel();
+      }
+      if (hearsAfterUpdate) _hearRelays(swapTime);
+    }
     scheduleMicrotask(close);
   }
 

@@ -3909,7 +3909,7 @@ impl Sim {
                 }
                 return;
             }
-            AppEvent::Boot { .. } | AppEvent::Status { .. } => return,
+            AppEvent::Boot { .. } | AppEvent::Heard | AppEvent::Status { .. } => return,
         };
         self.app_message(node, &payload[..len as usize]);
     }

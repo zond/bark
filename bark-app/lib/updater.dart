@@ -1,7 +1,8 @@
 // A firmware update of the connected node over the phone link (spec
 // "Phone link", Updates): the image from the latest release or a file,
 // sent in pieces, resumed from what the node holds after a lost link,
-// committed, and the reboot into it, until the node is back.
+// committed, and the reboot into it, until the node is back; then
+// whether the node hears anyone on its new image.
 
 import 'dart:async';
 import 'dart:math';
@@ -28,6 +29,15 @@ const int stalledWindows = 20;
 /// Specification 5.0, Vol 6 Part B §4.5.2), by which a node that reset
 /// without ending the link has lost it anyway.
 const Duration rebootEnd = Duration(seconds: 32);
+
+/// How long a node the app updated may know no relay before the app says
+/// it hears no one: as long as an image gathered over the mesh listens
+/// before it gives itself up, three worst-case rotations of heartbeats,
+/// 13 × 15 s each, and a heartbeat's lateness, 872.8 ms (spec "Updates
+/// over the mesh", the install).
+const Duration hearsNoOneAfter = Duration(
+  microseconds: 3 * 13 * 15000000 + 872800,
+);
 
 /// An image in `file`, its hash checked.
 FirmwareImage parseImage(List<int> file) =>
@@ -122,6 +132,12 @@ class Updater extends ChangeNotifier {
 
   Updated? _updated;
 
+  /// The node updated last has known a relay since it came back.
+  bool _heard = false;
+
+  /// Shows [hearsNoOne] when its time comes.
+  Timer? _listening;
+
   /// The last update finished, while the connected node is the one it
   /// updated and still runs its version.
   Updated? get updated {
@@ -130,6 +146,37 @@ class Updater extends ChangeNotifier {
     if (u == null || n == null) return null;
     return listEquals(n.id, u.id) && n.image == u.to ? u : null;
   }
+
+  /// The node updated last has known no relay for [hearsNoOneAfter] since
+  /// it came back on its new image, and is connected: the image may have
+  /// broken its radio. A node updated from the phone keeps its image
+  /// whatever it hears, as it may stand alone, so the person is told
+  /// (spec "Phone link", Updates).
+  bool get hearsNoOne {
+    final u = updated;
+    if (u == null || _heard || (session.status?.relays ?? 0) > 0) {
+      return false;
+    }
+    return session.now().difference(u.at) >= hearsNoOneAfter;
+  }
+
+  /// The person has read [hearsNoOne]'s warning: it goes until the next
+  /// update.
+  void dismissHearsNoOne() {
+    _heard = true;
+    notifyListeners();
+  }
+
+  /// What [hearsNoOne] tells the person, and the way back: the node
+  /// stages no image below its own version, so the one it ran before goes
+  /// on by USB.
+  String hearsNoOneWarning(Updated u) =>
+      'Since its update to version ${u.to} it has heard no other node: the '
+      'new firmware may have broken its radio. To bring it back, copy the '
+      'version it ran before, bark-fw-${u.from}.uf2 from that release, to '
+      'it over USB after a double tap of its reset button; it takes no '
+      'older version from the phone. A newer release, once there is one, '
+      'can be sent from here.';
 
   /// Whether the chosen image, its progress and its actions are shown:
   /// not once the node runs it, when they say nothing more.
@@ -350,6 +397,7 @@ class Updater extends ChangeNotifier {
       _down = true;
       return;
     }
+    if (updated != null && (session.status?.relays ?? 0) > 0) _heard = true;
     if (phase == Phase.paused && !_running) {
       unawaited(send());
     } else if (phase == Phase.rebooting && _down) {
@@ -361,6 +409,9 @@ class Updater extends ChangeNotifier {
           to: n.image,
           at: session.now(),
         );
+        _heard = false;
+        _listening?.cancel();
+        _listening = Timer(hearsNoOneAfter, notifyListeners);
         _set(Phase.done);
         // After the phase moved: the note notifies this listener again.
         session.note('Update: version ${n.image} runs');
@@ -377,6 +428,7 @@ class Updater extends ChangeNotifier {
 
   @override
   void dispose() {
+    _listening?.cancel();
     session.removeListener(_onSession);
     super.dispose();
   }

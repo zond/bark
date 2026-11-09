@@ -135,6 +135,9 @@ struct Radio {
     asking: Asking,
     busy: BusyEstimator,
     budget: Budget,
+    /// A frame from another node has decoded since boot
+    /// (`AppEvent::Heard`).
+    heard: bool,
 }
 
 impl Radio {
@@ -151,6 +154,7 @@ impl Radio {
             asking: Asking::IDLE,
             busy: BusyEstimator::from_config(config),
             budget: Budget::new(),
+            heard: false,
         }
     }
 }
@@ -996,6 +1000,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             s.misses = 0;
         }
         let decoded = Packet::decode(bytes);
+        // A frame that decodes proves this image's radio settings and
+        // frame format work with another node's
+        // (spec "Updates over the mesh", the install); a piece names no
+        // sender, but no node hears its own.
+        if !self.radio.heard && decoded.as_ref().is_ok_and(|p| p.sender() != Some(self.id)) {
+            self.radio.heard = true;
+            emit(Action::App(crate::AppEvent::Heard));
+        }
         // A node's DATA says where it listens now (spec "Packet sender"),
         // a sleepy node's that it is still in reach (spec "Heard table"). Its
         // DATA and ACKs show how well it is heard (spec "Neighbour table").

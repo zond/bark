@@ -16,6 +16,7 @@
 //! | [`STATE`] | the loader's state: swap requested, progress, confirmed |
 //! | [`ACTIVE`] | the running image |
 //! | [`RECORD`] | the staged image's header, which the loader checks |
+//! | [`GIVEN_UP`] | the images this node swapped back, never gathered again |
 //! | [`SPARE`] | nothing yet: room for secrets to come |
 //! | [`MAILBOX_STATE`] | the mailbox's state, its key among it (`docs/app-layer-2026-11-05.md`, section 5) |
 //! | [`STORE`] | the node's stored state (roadmap D73) |
@@ -104,13 +105,16 @@ pub const ACTIVE: Region = Region::pages_from(STATE.end(), ACTIVE_PAGES);
 /// no clip on the external flash reaches it: it holds the hash the
 /// running firmware checked before it staged.
 pub const RECORD: Region = Region::pages_from(ACTIVE.end(), 1);
+/// The names of the images this node swapped back (`crate::given_up`):
+/// above [`DRIVE_END`], so that a UF2 copied over USB leaves them.
+pub const GIVEN_UP: Region = Region::pages_from(RECORD.end(), 1);
 /// The mailbox's state page: it holds the mailbox key.
 pub const MAILBOX_STATE: Region = Region::pages_from(STORE_START - PAGE, 1);
-/// Between the record and the mailbox's state, above [`DRIVE_END`]:
-/// unused, for secrets to come, such as an update's given-up versions.
+/// Between the given-up images and the mailbox's state, above
+/// [`DRIVE_END`]: unused, for secrets to come.
 pub const SPARE: Region = Region {
-    start: RECORD.end(),
-    len: MAILBOX_STATE.start - RECORD.end(),
+    start: GIVEN_UP.end(),
+    len: MAILBOX_STATE.start - GIVEN_UP.end(),
 };
 /// The node's stored state, one page (roadmap D73).
 pub const STORE: Region = Region::pages_from(STORE_START, 1);
@@ -226,6 +230,8 @@ const _: () = {
     assert!(RECORD.end() == DRIVE_END);
     // The secrets lie where the drive neither reads nor writes.
     assert!(MAILBOX_STATE.start >= DRIVE_END && STORE.start >= DRIVE_END);
+    // No UF2 erases what the node gave up.
+    assert!(GIVEN_UP.start >= DRIVE_END);
     assert!(MAILBOX_STATE.end() == STORE.start);
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
@@ -282,6 +288,7 @@ pub fn write_memory_x(out: &mut impl core::fmt::Write, image: Image) -> core::fm
         ("__bootloader_state", STATE),
         ("__bootloader_active", ACTIVE),
         ("__bark_record", RECORD),
+        ("__bark_given_up", GIVEN_UP),
         ("__bark_spare", SPARE),
         ("__bark_mailbox_state", MAILBOX_STATE),
         ("__bark_store", STORE),
@@ -320,11 +327,12 @@ mod tests {
             }
         );
         assert_eq!(RECORD.start, 0xE9000);
+        assert_eq!(GIVEN_UP.start, 0xEA000);
         assert_eq!(
             SPARE,
             Region {
-                start: 0xEA000,
-                len: 8 * PAGE
+                start: 0xEB000,
+                len: 7 * PAGE
             }
         );
         assert_eq!(MAILBOX_STATE.start, 0xF2000);
@@ -361,7 +369,16 @@ mod tests {
 
     #[test]
     fn the_regions_follow_each_other() {
-        let inside = [LOADER, STATE, ACTIVE, RECORD, SPARE, MAILBOX_STATE, STORE];
+        let inside = [
+            LOADER,
+            STATE,
+            ACTIVE,
+            RECORD,
+            GIVEN_UP,
+            SPARE,
+            MAILBOX_STATE,
+            STORE,
+        ];
         let outside = [
             external::DFU,
             external::PIECES,
@@ -378,7 +395,7 @@ mod tests {
             }
         }
         assert_eq!(inside[0].start, APPLICATION_START);
-        assert_eq!(inside[6].end(), BOOTLOADER_START);
+        assert_eq!(inside[7].end(), BOOTLOADER_START);
         assert_eq!(outside[0].start, 0);
         assert_eq!(outside[3].end(), external::END);
     }

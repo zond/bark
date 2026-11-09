@@ -264,6 +264,12 @@ pub enum AppEvent {
         /// When the first rotation ends; `None` once it has.
         ends: Option<Instant>,
     },
+    /// The first frame from another node since boot that decoded: a
+    /// heartbeat, a DATA, an ACK, a piece or a status, whatever it is for.
+    /// Once a boot. An image gathered over the mesh keeps itself only
+    /// once it has heard a node (spec "Updates over the mesh", the
+    /// install).
+    Heard,
     /// A neighbour told its status, asked by [`AppCommand::Ask`]
     /// (spec "Neighbour status").
     Status {

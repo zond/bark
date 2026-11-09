@@ -3,8 +3,9 @@
 // picked one is shown by; where a transfer goes on from; and the whole
 // update against the fake node, with lost pieces, a lost link, a low
 // battery and the reboot, its answer lost to the link's end or not; what
-// the finished update shows, and when the latest release is offered; and
-// the screen of a finished update.
+// the finished update shows, whether the node hears anyone after it, and
+// when the latest release is offered; and the screen of a finished
+// update.
 
 import 'dart:typed_data';
 
@@ -181,6 +182,48 @@ void main() {
         async.flushMicrotasks();
         expect(u.phase, Phase.done, reason: u.message);
         expect(s.node!.image, 2);
+      });
+    });
+
+    /// An update to version 2, sent, rebooted into and back.
+    void update(FakeAsync async, Session s, FakeNode node, Updater u) {
+      u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
+      u.send();
+      async.flushMicrotasks();
+      u.reboot();
+      async.flushMicrotasks();
+      async.elapse(FakeNode.swapTime);
+      s.attach(node.connect());
+      async.flushMicrotasks();
+      expect(u.phase, Phase.done, reason: u.message);
+    }
+
+    test('a node that hears no one after its update is warned of', () {
+      run((async, s, node, u) {
+        update(async, s, node, u);
+        expect(u.hearsNoOne, isFalse);
+        async.elapse(hearsNoOneAfter - const Duration(seconds: 1));
+        expect(u.hearsNoOne, isFalse);
+        var told = 0;
+        u.addListener(() => told++);
+        async.elapse(const Duration(seconds: 1));
+        expect(told, greaterThan(0));
+        expect(u.hearsNoOne, isTrue);
+        final warning = u.hearsNoOneWarning(u.updated!);
+        expect(warning, contains('bark-fw-1.uf2'));
+        expect(warning, contains('over USB'));
+        u.dismissHearsNoOne();
+        expect(u.hearsNoOne, isFalse);
+      });
+    });
+
+    test('a node that hears relays after its update is not', () {
+      run((async, s, node, u) {
+        node.hearsAfterUpdate = true;
+        update(async, s, node, u);
+        async.elapse(hearsNoOneAfter);
+        expect(s.status!.relays, FakeNode.relaysHeard);
+        expect(u.hearsNoOne, isFalse);
       });
     });
 
@@ -368,6 +411,12 @@ void main() {
       find.text('$name runs version 2, updated from version 1 3 min ago.'),
       findsOneWidget,
     );
+    expect(find.text('The node hears no one'), findsNothing);
+    // The fake's new image hears no relay.
+    clock = clock.add(hearsNoOneAfter);
+    await t.pump(hearsNoOneAfter);
+    expect(find.text('The node hears no one'), findsOneWidget);
+    expect(find.textContaining('bark-fw-1.uf2'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

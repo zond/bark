@@ -268,6 +268,9 @@ impl Tracer {
                     );
                 }
             }
+            Action::App(AppEvent::Heard) => {
+                let _ = write!(what, "app heard a node");
+            }
             Action::App(AppEvent::Status { from, status }) => {
                 let _ = write!(what, "app status of {}: {status:?}", self.names.node(*from));
             }

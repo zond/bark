@@ -154,6 +154,32 @@ pub const SECTION_EVERY: Duration = Duration::from_secs(3600);
 /// (spec "Updates over the mesh").
 pub const LEASE_ROTATIONS: u64 = 2;
 
+/// How many worst-case rotations of heartbeats an image gathered over the
+/// mesh listens for a node before it gives itself up
+/// (spec "Updates over the mesh", the install). Every neighbour's
+/// heartbeat reaches the node's home channel once a rotation; a listening
+/// receiver loses about one in ten (spec "Channel at boot"), so two
+/// rotations miss a lone neighbour one time in a hundred, and the third,
+/// the margin, one time in a thousand: a revert gives the image up for
+/// good.
+pub const HEARD_ROTATIONS: u64 = 3;
+
+/// How long an image gathered over the mesh may run without hearing a
+/// node, from its start: [`HEARD_ROTATIONS`] worst-case rotations, 13 ×
+/// `heartbeat_max` each, and a heartbeat's lateness
+/// ([`crate::node::heartbeat_lag`]), 3 × 195 s + 872.8 ms = 585.9 s at the
+/// design's timing (spec "Heartbeat").
+pub const fn heard_within(config: &crate::Config) -> Duration {
+    Duration::from_micros(
+        config
+            .heartbeat_max
+            .mul(crate::radio::CHANNELS as u64)
+            .mul(HEARD_ROTATIONS)
+            .as_micros()
+            + crate::node::heartbeat_lag(config).as_micros(),
+    )
+}
+
 /// Bytes of a heartbeat's section: the version it runs (4), the newest
 /// image's version (4), name (4), key (1), blocks (1), last block's
 /// pieces (1), the blocks it holds from the first (1), and the pieces it
