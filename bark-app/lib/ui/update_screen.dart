@@ -17,7 +17,10 @@ class UpdateScreen extends StatefulWidget {
 
   /// A release whose image the screen downloads and chooses as it opens.
   final Release? release;
-  const UpdateScreen(this.app, {this.release, super.key});
+
+  /// Asks for an image file as it opens, for the bench.
+  final bool pick;
+  const UpdateScreen(this.app, {this.release, this.pick = false, super.key});
 
   @override
   State<UpdateScreen> createState() => _UpdateScreenState();
@@ -38,6 +41,8 @@ class _UpdateScreenState extends State<UpdateScreen> {
     final idle = u.phase == Phase.idle || u.phase == Phase.failed;
     if (r != null && idle && u.image?.version != r.n) {
       _get(() => downloadImage(r, app.releases.download));
+    } else if (widget.pick && idle) {
+      _get(_pick);
     }
   }
 

@@ -74,14 +74,24 @@ is a prototype for the bench, not the app people will carry.
   text's size whose tooltips give the words: a house, to their home; a
   pin, to where they were; an hourglass, to the node on a temporary
   card; a mailbox, from your mailbox. A sent text's states: a clock,
-  waiting on this phone; two arrows, being handed to the node; one
+  waiting for a node, on this phone; two arrows, being handed to the node; one
   check, sent into the network, whose tooltip says the network gives no
   further news until they confirm, as it sends none (spec
   "Addresses"); two checks in the theme's colour, confirmed by the
-  recipient. A text the network gave back shows an hourglass and
-  "network busy, try again in m:ss", and can be sent again once the
-  wait is over, or cancelled; a refused text says why in words. A tap
-  on a state opens a sheet that explains them all. The top line says
+  recipient. A text the network gave back shows an hourglass and "The
+  network is busy, sending again in m:ss", and the app sends it again
+  by itself once the wait is over, also after a restart; until then it
+  can be cancelled. A refused text says why in words. A tap
+  anywhere on a sent text's bubble, its words too, opens a sheet that
+  explains the states, and a tap anywhere on a received one a sheet
+  that explains the marks a received text can show, while the Got it
+  chip keeps its own tap and a long press still selects the words: Got it and its check, a first message, from your
+  mailbox, parts not yet here, the time. Above the marks, under This
+  message, each sheet gives what the app keeps that the bubble does not
+  say: for a sent text the node it went to and that node's place, its
+  parts, how it was sealed and its message IDs; for a received one when
+  the sender wrote it, by their phone's clock, its parts here, how it
+  was sealed and its message IDs. The top line says
   when the contact last wrote, and, when their card names a home,
   whether from it. A received text has a labelled chip, **Got it**,
   48 dp tall; nothing is confirmed by itself, and until the person
@@ -154,7 +164,14 @@ is a prototype for the bench, not the app people will carry.
   it**, as a guest), the node the phone is paired with, and how the
   connected node fares; on the paired node of link version 7 or later
   the switch **Public: serve phones without pairing**, on unless the
-  owner turns it off (Public nodes, below). Then the home node: make
+  owner turns it off (Public nodes, below), and from link version 12
+  **Unpair this node**: a dialog says that the node forgets this phone,
+  shows `UNPAIRED` and is public again, that anyone at the node can pair
+  with it by the code on its screen, that texts and contacts stay on the
+  phone, and that the phone may still list the node in its Bluetooth
+  settings, where it can be removed; on **Unpair** the node forgets its
+  bond and ends the link, and the app forgets the node and looks for it
+  no more. Then the home node: make
   the connected node your home if it is not, or none; the dialog says
   so, and on **Go ahead** your new card goes to every contact; **Send
   my card**, as on the first screen; clear the mailbox key of a node
@@ -163,8 +180,7 @@ is a prototype for the bench, not the app people will carry.
   which gives it the phone's position as its place; a sleepy or
   carried node cannot be made home, and the button is off with "A home
   must be a node that stays on power at a fixed place" (spec
-  "Mailbox"). Then the version of the connected node's firmware and
-  **Update firmware** (Updating a node, below), whether the app is
+  "Mailbox"). Then **Updates** (Newer releases, below), whether the app is
   exempt from battery optimisation (next section), your name, your 12
   words (show them, or restore an identity from them, after a warning
   that contacts holding the current card cannot reach the restored
@@ -179,20 +195,39 @@ is a prototype for the bench, not the app people will carry.
   demoted or banned. A legend says the bands in dB and the icons: a
   relay is a tower, a node on power; a sleepy node a battery, a node on
   battery; a carried one a walker; each in its link's colour;
-  the node itself is a target. Tapping one shows its name, RSSI,
-  margin, quality, when it was last heard, how far it is from the node,
-  and its flags. The map reads Neighbours when it opens, at every
+  the node itself is a target. Tapping one shows the contact's name if
+  the node is a contact's home or the node they last used, its ID, and
+  then one row a fact in plain words, none of its screen's, an icon and
+  a short label on the left and the value on the right, always in this
+  order: Role (a tower, `relay: passes on others' texts`, or a moon,
+  `sleepy: wakes in windows, speaks through its anchor`), Moving (a
+  walker, `carried`, or a house, `stays put`), Anchor, for a sleepy
+  node only (`anchored`, or `no anchor yet`; on this node's own sheet
+  the anchor's ID, as the link names no neighbour's anchor), Place (a
+  satellite, `from GPS`, a pin, `set by a person`, with the
+  coordinates under it, or a crossed-out pin, `no place yet`), Power (a
+  plug on USB, a battery with its percent), Link (an antenna, the RSSI
+  and its margin over the noise floor, such as `−71 dBm · +19 dB`, in
+  the link's colour), Last heard (a clock), Distance (a ruler), Known
+  (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
+  exchanged`), Version (a price tag, the Material set having no version
+  icon, such as `V18 · getting V19 14/32` while it gathers an image)
+  and Exchanged (a ticked box) if it has taken a message from this
+  node; then this node's own view of it: Anchor, `this node's anchor`,
+  for the relay this sleepy node sends through, Demoted or Banned. Each
+  icon is named for a screen reader. A tap anywhere on a row opens a
+  few plain sentences on what that fact is, how the node knows it and
+  what it means for the person, all in `lib/ui/fact_help.dart`. Its power, neighbours and version
+  come from its answer (below); before one, what it is comes from its
+  heartbeats. This node's own sheet says the same of it from its
+  status, its neighbours counted from the table read. The map reads Neighbours when it opens, at every
   status the node gives, and when the refresh button is pressed. When
   it opens and when refreshed, on a node of link version 9 or later, it
   also asks each neighbour that has not answered within the last 10 s,
   through Ask, what its own screen shows;
   a neighbour that answers has its role under its marker in its
-  screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
-  details show its screen's lines one a row under the distance (the
-  role, its power, the neighbours it knows, its firmware version and,
-  from link version 10, the image it gathers, such as `GET V14 14/31`)
-  in place of the sleepy and carried flags they repeat, then this
-  node's own view of it, such as its anchor or a ban. An ask or its
+  screen's words, and its details the rows its answer gives, the image
+  it gathers from link version 10. An ask or its
   answer is lost now and then on a busy channel, so a neighbour that
   has not answered within 2 s is asked again, a round at a time, up to
   three asks while the map is open (spec "Neighbour status"). The
@@ -473,8 +508,10 @@ no one after its update (Updating a node) can be seen.
 
 A node out of reach, on a roof, is updated from the phone over the link
 (spec "Phone link", Updates; roadmap D145). Settings, under
-**Firmware**, says the version the connected node runs; **Update
-firmware** opens a screen that takes the image from **Latest release**,
+**Updates**, says the version the connected node runs on the **Node
+image** row; its **Send to node**, when the latest release has a newer
+image, and the smaller **Pick an image file (bench)** open the update
+screen, which takes the image from **Latest release**,
 the `bark-fw-<N>.img` of the latest release the app knows of (Newer
 releases), signed by the release, or from **Pick a file**, an image
 `bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
@@ -505,14 +542,16 @@ its progress and its buttons go until another is picked. If the new
 image did not start, the node swapped the old one back, and the screen
 says the version it came back on. An image from the phone keeps itself
 whatever the node hears, since the node may stand alone
-(spec "Phone link", Updates). So if the node still knows no relay 585.9 s after it
-came back, as long as an image from the mesh would listen, the update
-screen and a bar at the top of the conversations say that the node hears
-no one and that the new firmware may have broken its radio, and how to
-bring it back: the release it ran before, `bark-fw-<M>.uf2`, copied to
+(spec "Phone link", Updates). So if the node still hears no other node,
+sleepy ones counted, 585.9 s after it came back, as long as an image
+from the mesh would listen, the update screen and a bar at the top of
+the conversations say that the node hears no one and that the new
+firmware may have broken its radio, and how to bring it back: the release it ran before, `bark-fw-<M>.uf2`, copied to
 it over USB after a double tap of its reset button, since the node
 takes no older version from the phone; or a newer release, once there
-is one. The bar's × hides it until the next update. A node from
+is one. The bar's × hides it until the next update. A node from before
+link version 11 says only the relays it knows, which the app counts
+instead, so it may warn of one that hears only sleepy nodes. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").
 
@@ -538,6 +577,18 @@ USB. Without a network nothing shows, and the app asks again at its
 next start. The last answer, its time and the versions hidden are kept
 in `release.json`, so the bars show at once at the next start while the
 app asks again.
+
+Settings' **Updates** section has **Check for updates**, which asks at
+once by the same check, with a spinner while it runs, and then says in
+one line how this app and the node stand against the latest release,
+such as "App up to date (9); node image 18, release 20 has 20: send it
+under Node image below", "A newer app is available, release 20: get it
+under App below; no node linked", or "Could not reach the release list"
+without a network. Under it the **App** row gives the app's version and,
+when the release is newer, a tap downloads it; the **Node image** row
+gives the node's version and, when the release's image is newer, **Send
+to node**; last, smaller, **Pick an image file (bench)**. A dismissed
+bar does not hide a newer version here.
 
 ## The payload
 
@@ -716,11 +767,11 @@ a phone (Trying it, With a node).
    them down**.
    A conversation with **Fake friend** holds their two
    messages.
-3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 10,
+3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 12,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
-   the relays known rising from 0 to 3. The log shows the two inbox
+   the relays known and the neighbours heard rising from 0 to 3. The log shows the two inbox
    messages read and confirmed.
 4. Open the conversation: it says not verified, and the top line "Last
    wrote just now, away from home". Write a text and send it. It shows
@@ -775,8 +826,9 @@ a phone (Trying it, With a node).
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
-15. **Settings**, under **Firmware**: the fake runs version 1. **Update
-    firmware**, **Latest release** (or **Pick a file** with a signed
+15. **Settings**, under **Updates**: **Node image** says the fake runs
+    version 1. **Pick an image file (bench)**, or with a release known
+    **Send to node**, then **Latest release** (or **Pick a file** with a signed
     image; the fake refuses one whose header names no key):
     the image's version and size. **Send to the node**: the bar fills at
     once, the fake has no radio to wait for; then "The node checked
@@ -794,14 +846,16 @@ a phone (Trying it, With a node).
    it is yours; **Pair**. The first time, Android asks for a code and the
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired." and how the node
-   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes", or
-   "Hears no other node yet: texts wait here"; and
+   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes",
+   sleepy ones counted, or "Hears no other node yet: texts wait here";
+   and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
-3. **Debug** shows link version 10, the node's clock (from its GPS if it
+3. **Debug** shows link version 12, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
-   node), and the relays it hears.
+   node), the relays it knows and the neighbours it hears, sleepy ones
+   too.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
    address, and **Nearby nodes** draws it with the relays it hears, each line's
    colour its link's quality. Without one, Settings under **Home node**
@@ -873,8 +927,8 @@ a phone (Trying it, With a node).
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
     target/vN+1.img`, then sign it with the bench key, which an open
     build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
-    --key-id 255`. In **Settings**, **Firmware** says version N.
-    **Update firmware**, **Pick a file**, the image: "Version N+1".
+    --key-id 255`. In **Settings**, **Updates**, **Node image** says
+    version N. **Pick an image file (bench)**, the image: "Version N+1".
     **Send to the node**: the node logs `update: receiving version=N+1`
     and then nothing while the bar fills, about 20 s; half way, switch
     the phone's Bluetooth off and on: the node logs `update: link closed

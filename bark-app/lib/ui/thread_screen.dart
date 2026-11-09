@@ -1,12 +1,13 @@
 // One conversation: its texts in order and a field to write the next;
 // an archived one read-only, with a button to bring it back.
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Form;
 
 import '../app.dart';
 import '../app_layer.dart';
 import '../contacts.dart';
 import '../conversations.dart';
+import '../link.dart';
 import '../session.dart';
 import 'archived_screen.dart';
 import 'common.dart';
@@ -14,6 +15,54 @@ import 'common.dart';
 /// The mark on a received text that came as a first message: only a box
 /// proves its sender, so a verified thread may still hold such a text.
 const unverifiedText = 'Came as a first message, which anyone could have made';
+
+/// A position to five decimals, about a metre.
+String _at(Position p) =>
+    '${p.latDeg.toStringAsFixed(5)}, ${p.lonDeg.toStringAsFixed(5)}';
+
+/// What the app keeps of a sent text that its bubble does not say: the
+/// node it went to and where that is, its parts, how it was sealed (spec
+/// "Payload", Forms), and each part's message ID.
+List<(String, String)> sentDetails(List<Outgoing> outs) {
+  final o = outs.first;
+  final sealed = switch (formOf(o.payload)) {
+    Form.boxed => 'for them alone',
+    Form.introduction => 'as a first message, with your card',
+    _ => null,
+  };
+  return [
+    ('To node', nodeLabel(o.dst.id)),
+    ('At', _at(o.dst.pos)),
+    if (o.of > 1) ('Parts', '${o.of}'),
+    if (sealed != null) ('Sealed', sealed),
+    (
+      outs.length > 1 ? 'Message IDs' : 'Message ID',
+      outs.map((o) => msgIdHex(o.id)).join(', '),
+    ),
+  ];
+}
+
+/// What the app keeps of a received text that its bubble does not say:
+/// when the sender wrote it, by their phone's clock, how many of its
+/// parts have come, how it was sealed, and each part's message ID.
+List<(String, String)> receivedDetails(Entry e) {
+  final r = e.arrived.first;
+  final first = r.first;
+  final sealed = switch (formOf(r.payload)) {
+    Form.boxed => 'by them, for you alone',
+    Form.introduction => 'to you, as a first message',
+    _ => null,
+  };
+  return [
+    if (first != null) ('Written', when(timeOfSent(first).toLocal())),
+    if (r.of > 1) ('Parts here', '${e.arrived.length} of ${r.of}'),
+    if (sealed != null) ('Sealed', sealed),
+    (
+      e.arrived.length > 1 ? 'Message IDs' : 'Message ID',
+      e.arrived.map((r) => msgIdHex(r.id)).join(', '),
+    ),
+  ];
+}
 
 class ThreadScreen extends StatefulWidget {
   final AppModel app;
@@ -326,6 +375,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final small = Theme.of(context).textTheme.bodySmall!;
     final mine = e.mine;
     final color = scheme.onSurfaceVariant;
+    // A tap anywhere on the bubble says what it shows; the Got it chip and
+    // the buttons take their own, and a long press still selects text.
+    void help() => mine
+        ? explainMessage(
+            context,
+            details: sentDetails(e.outs),
+            marks: sentStates,
+          )
+        : explainMessage(
+            context,
+            details: receivedDetails(e),
+            marks: receivedMarks,
+          );
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
@@ -334,42 +396,54 @@ class _ThreadScreenState extends State<ThreadScreen> {
         ),
         child: Card(
           color: mine ? scheme.primaryContainer : scheme.surfaceContainerHigh,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (mine)
-                  SelectableText(e.text)
-                else
-                  SelectableText.rich(
-                    TextSpan(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: help,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (mine)
+                    SelectableText(e.text, onTap: help)
+                  else
+                    SelectableText.rich(
+                      onTap: help,
+                      TextSpan(
+                        children: [
+                          for (final p in e.pieces)
+                            TextSpan(
+                              text: p.text,
+                              style: p.missing
+                                  ? TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      color: color,
+                                    )
+                                  : null,
+                            ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 4),
+                  if (mine)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        for (final p in e.pieces)
-                          TextSpan(
-                            text: p.text,
-                            style: p.missing
-                                ? TextStyle(
-                                    fontStyle: FontStyle.italic,
-                                    color: color,
-                                  )
-                                : null,
-                          ),
+                        Text(when(e.at), style: small),
+                        ..._sentMarks(e.outs, small, scheme),
+                      ],
+                    )
+                  else
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(when(e.at), style: small),
+                        ..._receivedMarks(e, verified, small, color, archived),
                       ],
                     ),
-                  ),
-                const SizedBox(height: 4),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(when(e.at), style: small),
-                    if (mine) ..._sentMarks(e.outs, small, scheme),
-                    if (!mine)
-                      ..._receivedMarks(e, verified, small, color, archived),
-                  ],
-                ),
-                if (mine && !archived) _actions(e.outs),
-              ],
+                  if (mine && !archived) _actions(e.outs),
+                ],
+              ),
             ),
           ),
         ),
@@ -393,6 +467,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
         Flexible(child: Text(partsLabel(app.session, outs), style: small)),
       ] else if (o.acked)
         _stateMark(
+          outs,
           Icons.done_all,
           'Confirmed by the recipient',
           small,
@@ -457,13 +532,14 @@ class _ThreadScreenState extends State<ThreadScreen> {
   List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
       switch (o.state) {
         OutState.queued => [
-          _stateMark(Icons.schedule, 'Waiting on this phone', small, color),
+          _stateMark([o], Icons.schedule, 'Waiting for a node', small, color),
         ],
         OutState.writing => [
-          _stateMark(Icons.sync, 'Being handed to the node', small, color),
+          _stateMark([o], Icons.sync, 'Being handed to the node', small, color),
         ],
         OutState.taken => [
           _stateMark(
+            [o],
             Icons.check,
             'Sent into the network; no further news until they confirm',
             small,
@@ -471,7 +547,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
         ],
         OutState.givenBack => [
-          _stateMark(Icons.hourglass_bottom, 'Network busy', small, color),
+          _stateMark(
+            [o],
+            Icons.hourglass_bottom,
+            'The network is busy',
+            small,
+            color,
+          ),
           const SizedBox(width: 4),
           Flexible(child: Text(stateLabel(app.session, o), style: small)),
         ],
@@ -481,14 +563,17 @@ class _ThreadScreenState extends State<ThreadScreen> {
         ],
       };
 
-  /// A sent text's state mark, which a tap explains with the others.
+  /// A sent text's state mark, which a tap explains with the others,
+  /// under the details of `outs`, the text's parts.
   Widget _stateMark(
+    List<Outgoing> outs,
     IconData icon,
     String words,
     TextStyle small,
     Color color,
   ) => InkWell(
-    onTap: () => explainStates(context),
+    onTap: () =>
+        explainMessage(context, details: sentDetails(outs), marks: sentStates),
     child: _mark(icon, words, small, color),
   );
 
@@ -513,42 +598,22 @@ class _ThreadScreenState extends State<ThreadScreen> {
     ),
   );
 
-  /// Send again and Cancel, for the parts each applies to.
+  /// Cancel, for the parts not yet with the node; a part given back goes
+  /// again by itself once its wait is over.
   Widget _actions(List<Outgoing> outs) {
     final s = app.session;
-    final back = [
-      for (final o in outs)
-        if (o.state == OutState.givenBack) o,
-    ];
     final droppable = [
       for (final o in outs)
         if (o.state != OutState.writing && o.state != OutState.taken) o,
     ];
-    if (back.isEmpty && droppable.isEmpty) return const SizedBox.shrink();
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (back.isNotEmpty)
-          TextButton(
-            onPressed: back.any((o) => s.waitLeftS(o) > 0)
-                ? null
-                : () async {
-                    for (final o in back) {
-                      await s.offerAgain(o);
-                    }
-                  },
-            child: const Text('Send again'),
-          ),
-        if (droppable.isNotEmpty)
-          TextButton(
-            onPressed: () async {
-              for (final o in droppable) {
-                await s.drop(o);
-              }
-            },
-            child: const Text('Cancel'),
-          ),
-      ],
+    if (droppable.isEmpty) return const SizedBox.shrink();
+    return TextButton(
+      onPressed: () async {
+        for (final o in droppable) {
+          await s.drop(o);
+        }
+      },
+      child: const Text('Cancel'),
     );
   }
 }

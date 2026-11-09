@@ -87,6 +87,10 @@ abstract class NodeLink {
   Future<bool> readPublic();
   Future<void> setPublic(bool public);
 
+  /// Link version 12 and later, the paired phone's alone: the node
+  /// forgets its bond and ends the link.
+  Future<void> unpair();
+
   /// Link version 8 and later, on a guest's link: Guest, after which
   /// [readGuest] gives the oldest item with the phone's tag.
   Future<void> setGuestAfter(int number);

@@ -69,27 +69,37 @@ void main() {
       bootLeftS: 100,
       address: kyiv,
       inbox: 2,
+      heard: 5,
     );
     final bytes = [
-      0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, //
+      0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, 5, //
     ];
     expect(s.encode(), bytes);
     final d = Status.decode(bytes);
     expect(d.ready && d.externalPower && d.placed && d.booting, isTrue);
     expect(d.sleepy || d.carried || d.mapPoint || d.anchorless, isFalse);
-    expect([d.relays, d.bootLeftS, d.batteryMv, d.inbox], [3, 100, 0, 2]);
+    expect(
+      [d.relays, d.bootLeftS, d.batteryMv, d.inbox, d.heard],
+      [3, 100, 0, 2, 5],
+    );
     expect(d.address, kyiv);
     // Each flag is its own bit.
     for (var bit = 0; bit < 8; bit++) {
-      final one = Status.decode([1 << bit, ...List.filled(13, 0)]);
+      final one = Status.decode([1 << bit, ...List.filled(14, 0)]);
       expect(one.encode()[0], 1 << bit);
     }
   });
 
   test('status ignores what a later version appends', () {
-    final s = Status(relays: 9).encode();
-    expect(Status.decode([...s, 0xaa, 0xaa, 0xaa]).relays, 9);
+    final s = Status(relays: 9, heard: 11).encode();
+    expect(Status.decode([...s, 0xaa, 0xaa, 0xaa]).heard, 11);
     expect(() => Status.decode(s.sublist(0, 13)), throwsA(isA<Malformed>()));
+  });
+
+  test('a node before link version 11 has its relays stand for heard', () {
+    final s = Status(relays: 9, heard: 11).encode();
+    final old = Status.decode(s.sublist(0, Status.len10));
+    expect([old.relays, old.heard], [9, 9]);
   });
 
   test('given back', () {
@@ -102,9 +112,15 @@ void main() {
     expect(() => GivenBack.decode([1, 2, 3]), throwsA(isA<Malformed>()));
   });
 
+  test('public and the unpairing', () {
+    expect(encodePublic(false), [0]);
+    expect(encodePublic(true), [1]);
+    expect(encodeUnpair(), [2]);
+  });
+
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [10, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);

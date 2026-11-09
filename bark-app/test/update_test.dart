@@ -17,6 +17,7 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/releases.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/ui/common.dart' show health;
 import 'package:bark_app/ui/update_screen.dart';
 import 'package:bark_app/updater.dart';
 import 'package:crypto/crypto.dart' show sha256;
@@ -224,6 +225,19 @@ void main() {
         async.elapse(hearsNoOneAfter);
         expect(s.status!.relays, FakeNode.relaysHeard);
         expect(u.hearsNoOne, isFalse);
+      });
+    });
+
+    test('a node that hears only sleepy nodes after its update is not', () {
+      run((async, s, node, u) {
+        node.hearsAfterUpdate = true;
+        node.onlySleepyAfterUpdate = true;
+        update(async, s, node, u);
+        async.elapse(hearsNoOneAfter);
+        expect(s.status!.relays, 0);
+        expect(s.status!.heard, FakeNode.relaysHeard);
+        expect(u.hearsNoOne, isFalse);
+        expect(health(s), 'Hears ${FakeNode.relaysHeard} nodes');
       });
     });
 

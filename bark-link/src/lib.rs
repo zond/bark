@@ -22,8 +22,9 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
-/// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer.
-pub const VERSION: u8 = 10;
+/// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
+/// the neighbours heard in Status, 12 Public's write that unpairs.
+pub const VERSION: u8 = 12;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -256,11 +257,14 @@ pub struct Status {
     pub battery_mv: u16,
     /// Messages in the inbox.
     pub inbox: u8,
+    /// Its live neighbours, sleepy or not (spec "Neighbour status",
+    /// heard).
+    pub heard: u8,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1;
+    pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
 
     /// Every flag clear and every count zero: a node that has said
     /// nothing yet.
@@ -278,6 +282,7 @@ impl Status {
         address: Position { lat: 0, lon: 0 },
         battery_mv: 0,
         inbox: 0,
+        heard: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -307,6 +312,7 @@ impl Status {
         }
         b[4 + POS..6 + POS].copy_from_slice(&self.battery_mv.to_be_bytes());
         b[6 + POS] = self.inbox;
+        b[7 + POS] = self.heard;
         b
     }
 
@@ -330,6 +336,7 @@ impl Status {
             address: position(&b[4..]),
             battery_mv: u16_at(b, 4 + POS),
             inbox: b[6 + POS],
+            heard: b[7 + POS],
         })
     }
 }
@@ -680,6 +687,39 @@ impl Public {
             [1] => Ok(Public(true)),
             [_] => Err(Malformed::Value),
             _ => Err(Malformed::Length),
+        }
+    }
+}
+
+/// Public, as the owner writes it: whether the node is public, or that
+/// the node is to forget its bond, unpaired, and be public again as a
+/// node nobody has paired with is (spec "Phone link", Public); the
+/// unpairing from link version 12.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicWrite {
+    /// Public or private.
+    Set(Public),
+    /// Forget the bond.
+    Unpair,
+}
+
+impl PublicWrite {
+    /// The byte of an unpairing.
+    pub const UNPAIR: u8 = 2;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Public::LEN] {
+        match self {
+            PublicWrite::Set(p) => p.encode(),
+            PublicWrite::Unpair => [Self::UNPAIR],
+        }
+    }
+
+    /// Take a written value whole.
+    pub fn decode(b: &[u8]) -> Result<PublicWrite, Malformed> {
+        match b {
+            [Self::UNPAIR] => Ok(PublicWrite::Unpair),
+            _ => Public::decode(b).map(PublicWrite::Set),
         }
     }
 }

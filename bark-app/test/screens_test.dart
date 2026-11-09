@@ -22,6 +22,7 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
+import 'package:bark_app/ui/common.dart' show receivedMarks;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';
@@ -164,7 +165,36 @@ void main() {
       find.textContaining('The network gives no further news'),
       findsOneWidget,
     );
-    await t.tapAt(Offset.zero);
+    // Above them, what the bubble does not say: the node it went to.
+    expect(find.text('This message'), findsOneWidget);
+    expect(find.text('To node'), findsOneWidget);
+    expect(find.text('Message ID'), findsOneWidget);
+    expect(find.text('Sealed'), findsOneWidget);
+    Navigator.pop(t.element(find.byType(BottomSheet)));
+    await t.pumpAndSettle();
+    // A tap anywhere on a bubble, its text too, opens the same help:
+    // a sent one's, then a received one's.
+    await t.tap(find.text('hello').first);
+    await t.pumpAndSettle();
+    expect(find.text('To node'), findsOneWidget);
+    Navigator.pop(t.element(find.byType(BottomSheet)));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Echo: hello').first);
+    await t.pumpAndSettle();
+    expect(find.text('This message'), findsOneWidget);
+    expect(find.text('Written'), findsOneWidget);
+    expect(find.text('Sealed'), findsOneWidget);
+    for (final (_, title, words) in receivedMarks) {
+      expect(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text(title, skipOffstage: false),
+        ),
+        findsOneWidget,
+      );
+      expect(words, isNotEmpty);
+    }
+    Navigator.pop(t.element(find.byType(BottomSheet)));
     await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();
@@ -699,7 +729,7 @@ void main() {
     final out = app.session.outbox;
     expect(out.map((o) => o.part), [1, 2]);
     expect(find.text(long), findsOneWidget);
-    expect(find.byTooltip('Waiting on this phone'), findsOneWidget);
+    expect(find.byTooltip('Waiting for a node'), findsOneWidget);
 
     Future<void> redraw() async {
       app.session.dismissNotice();
@@ -710,7 +740,7 @@ void main() {
     out[0].state = OutState.taken;
     await redraw();
     expect(find.text('1 of 2 sent'), findsOneWidget);
-    expect(find.byTooltip('Waiting on this phone'), findsNothing);
+    expect(find.byTooltip('Waiting for a node'), findsNothing);
     out[1].state = OutState.taken;
     await redraw();
     expect(find.byTooltip(sentTip), findsOneWidget);
@@ -989,6 +1019,45 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('the owner unpairs, after the dialog says what follows', (
+    t,
+  ) async {
+    final app = await model(t);
+    app.setFake(true);
+    await app.connectFake();
+    await app.session.setPaired(nodeName(FakeNode.id));
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    final unpair = find.text('Unpair this node');
+    await t.ensureVisible(unpair);
+    await t.tap(unpair);
+    await t.pumpAndSettle();
+    expect(find.textContaining('forgets this phone'), findsOneWidget);
+    expect(find.textContaining('UNPAIRED'), findsOneWidget);
+    expect(find.textContaining('public again'), findsOneWidget);
+    expect(find.textContaining('code on its screen'), findsOneWidget);
+    expect(find.textContaining('texts and contacts stay'), findsOneWidget);
+    expect(find.textContaining('Bluetooth settings'), findsOneWidget);
+    // Cancel changes nothing.
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(app.fakeNode!.paired, isTrue);
+    await t.tap(unpair);
+    await t.pumpAndSettle();
+    await t.tap(find.widgetWithText(FilledButton, 'Unpair'));
+    await t.runAsync(() => Future<void>.delayed(Duration.zero));
+    await t.pumpAndSettle();
+    // The node forgot the bond and ended the link; the app forgot it.
+    expect(app.fakeNode!.paired, isFalse);
+    expect(app.fakeNode!.public, isTrue);
+    expect(app.session.connected, isFalse);
+    expect(app.session.pairedWith, isNull);
+    expect(app.pairedNode, isNull);
+    expect(find.text('Unpair this node'), findsNothing);
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets('the owner\'s Public switch; a guest\'s line, without the '
       'owner\'s settings', (t) async {
     final app = await model(t);
@@ -1000,7 +1069,7 @@ void main() {
     expect(find.text(public), findsOneWidget);
     // The home node second, right under the node.
     final ys = [
-      for (final h in ['Node', 'Home node', 'Firmware'])
+      for (final h in ['Node', 'Home node', 'Updates'])
         t.getTopLeft(find.text(h, skipOffstage: false)).dy,
     ];
     expect(ys, [...ys]..sort());
@@ -1020,7 +1089,8 @@ void main() {
     await t.pump();
     expect(find.text(public), findsNothing);
     expect(find.textContaining('Connected as a guest'), findsOneWidget);
-    expect(find.text('Update firmware'), findsNothing);
+    expect(find.text('Send to node'), findsNothing);
+    expect(find.text('Pick an image file (bench)'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
     expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));

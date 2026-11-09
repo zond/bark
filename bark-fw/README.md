@@ -1106,8 +1106,15 @@ message the node holds, and so whose Ready is set, is `Turn` in
 console's `status` ends in `public=true` or `public=false`, read from
 the bond in the stored-state page.
 
+The paired phone unpairs by writing 2 to Public (link version 12): the
+node answers, removes the bond from the host, writes a forgotten bond's
+record (`bark_link::bond::forgotten`, byte 14 at 2, which an older image
+skips, keeping the bond before it), follows it as a node never paired,
+public with the screen's `PHONE UNPAIRED`, and closes the link.
+
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
-5a slot 1 owner false` as a phone writes its tag, `ble: public false`,
+5a slot 1 owner false` as a phone writes its tag, `ble: public false`, `ble: unpaired by the owner; the bond is
+forgotten and the node is public`,
 `public: id=... tag=Some(5a) kept` for each message kept on a public
 node, `ble: a second guest in slot 1, closed`, and `ble: the guest in
 slot 1 closed after its time`.

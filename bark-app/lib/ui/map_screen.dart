@@ -13,9 +13,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../app.dart';
+import '../contacts.dart';
 import '../link.dart';
 import '../session.dart';
 import 'common.dart';
+import 'fact_help.dart';
 
 /// OpenStreetMap's tiles, as its tile usage policy asks to be named.
 const osmTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -48,18 +50,136 @@ String qualityName(Quality q) => switch (q) {
   Quality.fragile => 'fragile',
 };
 
-/// The flags of a neighbour, in words; with `answered`, only this node's
-/// relation to it and view of it, as its answer says the rest.
-List<String> neighbourFlags(Neighbour n, {bool answered = false}) => [
-  if (n.anchor) 'this node\'s anchor',
-  if (n.sleepy && !answered) 'sleepy',
-  if (n.carried && !answered) 'carried',
-  if (n.mapPoint) 'position from a map point',
-  if (n.anchorless) 'anchorless',
-  if (n.demoted) 'demoted: its last hand-overs failed',
-  if (n.banned) 'banned for now: it refused or failed a hand-over',
-  if (n.proven) 'has taken a message from this node',
-];
+bool _placed(Position p) => p.lat != 0 || p.lon != 0;
+
+/// A signed number with the minus sign typography uses.
+String _signed(num v, {bool plus = false}) {
+  final r = v.round();
+  return r < 0 ? '\u2212${-r}' : (plus ? '+$r' : '$r');
+}
+
+/// A distance in metres, in kilometres from 1 km.
+String distance(double m) =>
+    m < 1000 ? '${m.round()} m' : '${(m / 1000).toStringAsFixed(1)} km';
+
+/// Seconds since, as a person says it.
+String secondsAgo(int s) => s < 60 ? '$s s ago' : ago(Duration(seconds: s));
+
+/// A position to five decimals, about a metre.
+String _where(Position p) =>
+    '${p.latDeg.toStringAsFixed(5)}, ${p.lonDeg.toStringAsFixed(5)}';
+
+/// The neighbours a node knows as its screen's KNOWN line counts them:
+/// heard, heard with the margin a full frame needs through a fade, and
+/// those that have taken a message from it (spec "Neighbour status").
+String known(int heard, int strong, int exchanged) =>
+    '$heard heard \u00b7 $strong strong \u00b7 $exchanged exchanged';
+
+/// [known] of the table read.
+String knownOf(NeighbourTable t) => known(
+  t.list.length,
+  t.list.where((n) => n.quality(t.floorDbm) != Quality.fragile).length,
+  t.list.where((n) => n.proven).length,
+);
+
+/// One fact of a sheet: an icon named for screen readers and a short
+/// label, which a newcomer reads where an icon alone would leave them
+/// guessing, and its value.
+class Fact {
+  final IconData icon;
+  final String label;
+  final String name;
+  final String value;
+  final Color? color;
+
+  /// Said on a long press, for a value whose parts need naming.
+  final String? tooltip;
+  const Fact(
+    this.icon,
+    this.label,
+    this.name,
+    this.value, {
+    this.color,
+    this.tooltip,
+  });
+}
+
+/// The facts of a node's power, as its answer or status says it.
+Fact _power({required bool usb, String? battery}) => usb
+    ? const Fact(Icons.power, 'Power', 'power', 'USB')
+    : Fact(
+        switch (battery) {
+          null => Icons.battery_unknown,
+          'low' => Icons.battery_alert,
+          _ => Icons.battery_std,
+        },
+        'Power',
+        'battery',
+        battery ?? 'not read',
+      );
+
+/// What a node does for others: a relay passes texts on; a sleepy node
+/// sleeps between windows and sends and receives through its anchor
+/// (spec "Nodes").
+Fact _role(bool sleepy) => sleepy
+    ? const Fact(
+        Icons.bedtime,
+        'Role',
+        'role, sleepy',
+        'sleepy: wakes in windows, speaks through its anchor',
+      )
+    : const Fact(
+        Icons.cell_tower,
+        'Role',
+        'role, relay',
+        'relay: passes on others\' texts',
+      );
+
+/// Whether a node is carried (spec "Nodes").
+Fact _moving(bool carried) => carried
+    ? const Fact(Icons.directions_walk, 'Moving', 'moving', 'carried')
+    : const Fact(Icons.house, 'Moving', 'moving', 'stays put');
+
+/// A sleepy node's anchor: `to` names it when known, as for this node's
+/// own, whose anchor is the neighbour the table marks; a neighbour's
+/// anchor the link does not name (spec "Phone link", Neighbours).
+Fact _anchored(bool anchored, {String? to}) => anchored
+    ? Fact(
+        Icons.anchor,
+        'Anchor',
+        'anchor',
+        to == null ? 'anchored' : 'anchored to $to',
+      )
+    : const Fact(Icons.link_off, 'Anchor', 'anchor', 'no anchor yet');
+
+/// Where a node's position comes from, GPS or a map point a person set,
+/// and the position on a second line; none without a place.
+Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
+    ? const Fact(Icons.location_off, 'Place', 'place', 'no place yet')
+    : mapPoint
+    ? Fact(
+        Icons.push_pin,
+        'Place',
+        'place, set by a person',
+        'set by a person\n${_where(p)}',
+      )
+    : Fact(
+        Icons.satellite_alt,
+        'Place',
+        'place, from GPS',
+        'from GPS\n${_where(p)}',
+      );
+
+/// The names of the contacts whose home, or node last used, has `id`:
+/// a node on the map is often a person's.
+String? contactsAt(Contacts contacts, List<int> id) {
+  bool at(Address? a) => a != null && hex(a.id) == hex(id);
+  final names = [
+    for (final c in contacts.active)
+      if (at(c.card.home) || at(c.place)) c.name,
+  ];
+  return names.isEmpty ? null : names.join(', ');
+}
 
 LatLng _at(Position p) => LatLng(p.latDeg, p.lonDeg);
 
@@ -238,7 +358,7 @@ class _MapScreenState extends State<MapScreen> {
                     point: own,
                     width: 44,
                     height: 44,
-                    child: _NodeMarker(_s),
+                    child: _NodeMarker(widget.app, t),
                   ),
               ],
             ),
@@ -284,7 +404,7 @@ class _MapScreenState extends State<MapScreen> {
       height: said == null
           ? _NeighbourMarker.size
           : _NeighbourMarker.labelledHeight,
-      child: _NeighbourMarker(m, t, own, said),
+      child: _NeighbourMarker(m, t, own, said, widget.app.contacts),
     );
   }
 
@@ -336,19 +456,45 @@ class _MapScreenState extends State<MapScreen> {
 }
 
 class _NodeMarker extends StatelessWidget {
-  final Session s;
-  const _NodeMarker(this.s);
+  final AppModel app;
+  final NeighbourTable t;
+  const _NodeMarker(this.app, this.t);
+
+  /// Its facts from its status, in the order a neighbour's take.
+  List<Fact> facts() {
+    final s = app.session;
+    final st = s.status ?? const Status();
+    final anchor = t.list.where((n) => n.anchor).firstOrNull;
+    return [
+      _role(st.sleepy),
+      _moving(st.carried),
+      if (st.sleepy)
+        _anchored(
+          !st.anchorless,
+          to: anchor == null ? null : nodeLabel(anchor.id),
+        ),
+      _position(t.own, mapPoint: st.mapPoint),
+      _power(
+        usb: st.externalPower,
+        battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
+      ),
+      Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
+      Fact(Icons.sell, 'Version', 'firmware version', 'V${s.node!.image}'),
+      const Fact(Icons.smartphone, 'Paired', 'paired', 'with this phone'),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) => GestureDetector(
     onTap: () => showModalBottomSheet<void>(
       context: context,
-      builder: (_) => _Sheet(nodeLabel(s.node!.id), [
-        'The node this phone is paired with',
-        if (s.status?.sleepy ?? false) 'Sleepy',
-        if (s.status?.carried ?? false) 'Carried',
-        'Relays known: ${s.status?.relays ?? 0}',
-      ]),
+      // Taller than half the screen when its rows need it.
+      isScrollControlled: true,
+      builder: (_) => _Sheet(
+        contactsAt(app.contacts, app.session.node!.id),
+        nodeLabel(app.session.node!.id),
+        facts(),
+      ),
     ),
     child: Icon(
       Icons.my_location,
@@ -366,7 +512,8 @@ class _NeighbourMarker extends StatelessWidget {
 
   /// What it answered when asked, if it did.
   final NeighbourStatus? said;
-  const _NeighbourMarker(this.n, this.t, this.own, this.said);
+  final Contacts contacts;
+  const _NeighbourMarker(this.n, this.t, this.own, this.said, this.contacts);
 
   static const size = 40.0;
   static const _label = 14.0;
@@ -376,13 +523,91 @@ class _NeighbourMarker extends StatelessWidget {
   static const labelledWidth = 120.0;
   static const labelledHeight = size + 2 * _label;
 
-  @override
-  Widget build(BuildContext context) {
+  /// Its facts, in an order that does not change: what it is, from its
+  /// answer or else its heartbeats, then what this node hears of it and
+  /// what its answer says, then this node's view of it, which its screen
+  /// cannot say.
+  List<Fact> facts() {
     final q = n.quality(t.floorDbm);
-    final margin = n.rssiDbm - t.floorDbm;
     final far = own == null
         ? null
         : const Distance().as(LengthUnit.Meter, own!, _at(n.position));
+    final s = said;
+    final sleepy = s?.sleepy ?? n.sleepy;
+    return [
+      _role(sleepy),
+      _moving(s?.carried ?? n.carried),
+      if (sleepy)
+        _anchored(s?.anchored ?? !n.anchorless)
+      else if (n.anchor)
+        const Fact(Icons.anchor, 'Anchor', 'anchor', 'this node\'s anchor'),
+      _position(n.position, mapPoint: n.mapPoint),
+      if (s != null)
+        _power(
+          usb: s.usb,
+          battery: s.battery == NeighbourStatus.batteryLow
+              ? 'low'
+              : s.percent == null
+              ? null
+              : '${s.percent}%',
+        ),
+      Fact(
+        Icons.settings_input_antenna,
+        'Link',
+        'link strength, ${qualityName(q)}',
+        '${_signed(n.rssiDbm)} dBm \u00b7 '
+            '${_signed(n.rssiDbm - t.floorDbm, plus: true)} dB',
+        color: qualityColor(q),
+        tooltip: 'signal, and its margin over the noise floor',
+      ),
+      Fact(Icons.schedule, 'Last heard', 'last heard', secondsAgo(n.ageS)),
+      if (far != null)
+        Fact(Icons.straighten, 'Distance', 'distance', distance(far)),
+      if (s != null) ...[
+        Fact(
+          Icons.hub,
+          'Known',
+          'neighbours known',
+          known(s.heard, s.strong, s.proven),
+        ),
+        if (s.version != 0)
+          Fact(
+            Icons.sell,
+            'Version',
+            'firmware version',
+            s.gathers == 0
+                ? 'V${s.version}'
+                : 'V${s.version} \u00b7 getting V${s.gathers} '
+                      '${s.complete}/${s.blocks}',
+          ),
+      ],
+      if (n.proven)
+        const Fact(
+          Icons.check_box,
+          'Exchanged',
+          'exchanged',
+          'it took a message from this node',
+        ),
+      if (n.demoted)
+        const Fact(
+          Icons.trending_down,
+          'Demoted',
+          'demoted',
+          'its last hand-overs failed',
+        ),
+      if (n.banned)
+        const Fact(
+          Icons.block,
+          'Banned',
+          'banned',
+          'for now: it refused or failed a hand-over',
+        ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = n.quality(t.floorDbm);
     final icon = Icon(
       n.carried
           ? Icons.directions_walk
@@ -397,16 +622,10 @@ class _NeighbourMarker extends StatelessWidget {
     return GestureDetector(
       onTap: () => showModalBottomSheet<void>(
         context: context,
-        builder: (_) => _Sheet(nodeLabel(n.id), [
-          'Link ${qualityName(q)}: ${n.rssiDbm.toStringAsFixed(1)} dBm, '
-              '${margin.toStringAsFixed(1)} dB over the noise floor',
-          'Last heard ${n.ageS} s ago',
-          if (far != null) '${far.round()} m away',
-          // Its own screen's lines, one a row, then this node's relation
-          // to it, which its screen cannot say.
-          ...?s?.lines,
-          ...neighbourFlags(n, answered: s != null),
-        ]),
+        // Taller than half the screen when its rows need it.
+        isScrollControlled: true,
+        builder: (_) =>
+            _Sheet(contactsAt(contacts, n.id), nodeLabel(n.id), facts()),
       ),
       child: s == null
           ? icon
@@ -433,24 +652,72 @@ class _NeighbourMarker extends StatelessWidget {
   }
 }
 
+/// A node's details: whose it is, if a contact's, its ID, and a row a
+/// fact, in plain words, none of its screen's.
 class _Sheet extends StatelessWidget {
-  final String title;
-  final List<String> lines;
-  const _Sheet(this.title, this.lines);
+  final String? whose;
+  final String id;
+  final List<Fact> facts;
+  const _Sheet(this.whose, this.id, this.facts);
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          for (final l in lines) Text(l),
-        ],
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (whose != null) Text(whose!, style: text.titleLarge),
+            Text(id, style: whose == null ? text.titleLarge : text.titleSmall),
+            const SizedBox(height: 8),
+            for (final f in facts) _row(context, f),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  /// A row, tapped anywhere, opens what its fact means.
+  Widget _row(BuildContext context, Fact f) {
+    final row = InkWell(
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(f.label, style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(factHelp[f.label]!),
+              ],
+            ),
+          ),
+        ),
+      ),
+      // The least tap target Material asks for.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: kMinInteractiveDimension),
+        child: Row(
+          children: [
+            Icon(f.icon, color: f.color, semanticLabel: f.name),
+            const SizedBox(width: 12),
+            // The icon names the fact to a screen reader already.
+            ExcludeSemantics(child: Text(f.label)),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(f.value, textAlign: TextAlign.end, maxLines: 3),
+            ),
+          ],
+        ),
+      ),
+    );
+    return f.tooltip == null ? row : Tooltip(message: f.tooltip, child: row);
+  }
 }

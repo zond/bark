@@ -10,9 +10,10 @@
 // one answering an ask with a status of their own, though a share of
 // asks is lost as on a loaded channel. It takes
 // a firmware update as the node does, and comes back from its reboot
-// running the new version, which hears no relay unless a test says so,
-// so that the app's warning of a node that hears no one can be seen. Public unless its owner makes it private, it
-// also takes guests' links, as the spec's "Phone link", Public, says.
+// running the new version, which hears no one unless a test says so, so
+// that the app's warning of a node that hears no one can be seen. Public
+// unless its owner makes it private, it also takes guests' links, as the
+// spec's "Phone link", Public, says.
 
 import 'dart:async';
 import 'dart:math';
@@ -240,6 +241,9 @@ class FakeNode implements NodeLink {
   /// nothing, as on the node.
   int homeKeyChanges = 0;
   int _relays = 0;
+
+  /// Its live neighbours as Status counts them, sleepy ones too.
+  int _heard = 0;
   bool _ready = true;
 
   /// The owner's inbox; on a public node, the ring, which never refuses.
@@ -263,7 +267,7 @@ class FakeNode implements NodeLink {
     this.mailbox,
   }) : app = Uint8List.fromList(app) {
     _boot = now();
-    _hearRelays(Duration.zero);
+    _hearNeighbours(Duration.zero);
     _place(_intro('Hello from the fake node.'));
     _place(_intro('A second message, waiting in the inbox.'));
   }
@@ -408,13 +412,16 @@ class FakeNode implements NodeLink {
     });
   }
 
-  /// Learns [relaysHeard] relays over the first rotation of a boot `at`
-  /// from now.
-  void _hearRelays(Duration at) {
+  /// Learns [relaysHeard] neighbours over the first rotation of a boot
+  /// `at` from now: relays, or sleepy nodes alone if `sleepy`.
+  void _hearNeighbours(Duration at, {bool sleepy = false}) {
     final step = firstRotation ~/ (relaysHeard + 1);
     final from = _timers.length;
     for (var i = 1; i <= relaysHeard; i++) {
-      _after(at + step * i, () => _relays++);
+      _after(at + step * i, () {
+        _heard++;
+        if (!sleepy) _relays++;
+      });
     }
     _after(at + firstRotation, () {});
     _learning = _timers.sublist(from);
@@ -460,6 +467,7 @@ class FakeNode implements NodeLink {
       placed: fixed || _mapPoint != null,
       booting: left > Duration.zero,
       relays: _relays,
+      heard: _heard,
       bootLeftS: _ceilS(left),
       address: _mapPoint ?? _fix,
       inbox: g == null ? _inbox.length : 0,
@@ -720,6 +728,10 @@ class FakeNode implements NodeLink {
   /// that hears no one after an update (spec "Phone link", Updates).
   bool hearsAfterUpdate = false;
 
+  /// With [hearsAfterUpdate], the nodes it hears are sleepy alone: it
+  /// knows no relay, yet its radio works.
+  bool onlySleepyAfterUpdate = false;
+
   /// The update: the header taken, the bytes held, and whether committed.
   Uint8List? _staging;
   final List<int> _held = [];
@@ -844,10 +856,13 @@ class FakeNode implements NodeLink {
       // A boot: its first rotation again, and the relays learnt anew.
       _boot = _backAt!;
       _relays = 0;
+      _heard = 0;
       for (final t in _learning) {
         t.cancel();
       }
-      if (hearsAfterUpdate) _hearRelays(swapTime);
+      if (hearsAfterUpdate) {
+        _hearNeighbours(swapTime, sleepy: onlySleepyAfterUpdate);
+      }
     }
     scheduleMicrotask(close);
   }
@@ -863,6 +878,17 @@ class FakeNode implements NodeLink {
 
   @override
   Future<void> setPublic(bool v) => _answer(() => public = v);
+
+  /// Forgets this phone's bond, as the node does: public again, its
+  /// owner's tag gone, and this phone's next link refused, as the phone
+  /// still holds its half of the bond; the link ends after the answer.
+  @override
+  Future<void> unpair() => _answer(() {
+    public = true;
+    ownerTag = null;
+    paired = false;
+    scheduleMicrotask(close);
+  });
 
   @override
   Future<void> subscribeAsk() => _answer(() {});
@@ -1165,6 +1191,8 @@ class FakeGuest implements NodeLink {
   Future<bool> readPublic() => _bonded();
   @override
   Future<void> setPublic(bool public) => _bonded();
+  @override
+  Future<void> unpair() => _bonded();
   @override
   Future<void> subscribeAsk() => _bonded();
   @override

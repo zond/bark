@@ -417,6 +417,7 @@ class Session extends ChangeNotifier {
     pairingLost = j.pairingLost;
     stopped = j.stopped;
     guestAfter.addAll(j.guestAfter);
+    _retryWhenDue();
     notifyListeners();
   }
 
@@ -616,6 +617,20 @@ class Session extends ChangeNotifier {
     return nodePublic!;
   }
 
+  /// Has the node forget this phone's bond, and forgets the node here:
+  /// the app no longer looks for it (spec "Phone link", Public).
+  Future<void> unpair() async {
+    final link = _owned(unpairVersion, 'Unpairing');
+    final name = pairedWith;
+    await link.unpair();
+    pairedWith = null;
+    pairingLost = false;
+    note('Pairing: unpaired${name == null ? '' : ' from $name'}');
+    notifyListeners();
+    await save();
+    await link.close();
+  }
+
   /// Gives the person's home its key, silently, and reads Home. A home
   /// may have been reflashed, or the identity restored from its words;
   /// the node changes nothing when it holds that key already.
@@ -803,7 +818,7 @@ class Session extends ChangeNotifier {
   void _onStatus(Status s) {
     note(
       'Status: ready ${s.ready}, inbox ${s.inbox}, relays ${s.relays}, '
-      'boot left ${s.bootLeftS} s',
+      'heard ${s.heard}, boot left ${s.bootLeftS} s',
     );
     status = s;
     _statusAt = now();
@@ -835,8 +850,41 @@ class Session extends ChangeNotifier {
     if (o.state != OutState.taken && o.state != OutState.givenBack) return;
     o.state = OutState.givenBack;
     o.retryAt = now().add(Duration(seconds: g.waitS));
+    _retryWhenDue();
     notifyListeners();
     save();
+  }
+
+  /// Sends again, by itself, each message given back once the wait the
+  /// node asked for is over: the node takes no other before then, and
+  /// the wait is the network's word on when it can (spec "Phone link",
+  /// Given back).
+  Timer? _retry;
+
+  void _retryWhenDue() {
+    _retry?.cancel();
+    final due = [
+      for (final o in outbox)
+        if (o.state == OutState.givenBack && o.retryAt != null) o.retryAt!,
+    ];
+    if (due.isEmpty) return;
+    final first = due.reduce((a, b) => a.isBefore(b) ? a : b);
+    final wait = first.difference(now());
+    _retry = Timer(wait.isNegative ? Duration.zero : wait, () {
+      final t = now();
+      for (final o in outbox) {
+        final at = o.retryAt;
+        if (o.state == OutState.givenBack && at != null && !at.isAfter(t)) {
+          o.state = OutState.queued;
+          o.retryAt = null;
+          note('Send ${msgIdHex(o.id)}: its wait is over, sent again');
+        }
+      }
+      notifyListeners();
+      unawaited(save());
+      _pump();
+      _retryWhenDue();
+    });
   }
 
   /// Queues a message; the node takes it when ready.
@@ -1054,6 +1102,7 @@ class Session extends ChangeNotifier {
 
   @override
   void dispose() {
+    _retry?.cancel();
     for (final s in _subs) {
       s.cancel();
     }

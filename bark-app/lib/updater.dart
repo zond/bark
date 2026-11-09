@@ -30,11 +30,11 @@ const int stalledWindows = 20;
 /// without ending the link has lost it anyway.
 const Duration rebootEnd = Duration(seconds: 32);
 
-/// How long a node the app updated may know no relay before the app says
-/// it hears no one: as long as an image gathered over the mesh listens
-/// before it gives itself up, three worst-case rotations of heartbeats,
-/// 13 × 15 s each, and a heartbeat's lateness, 872.8 ms (spec "Updates
-/// over the mesh", the install).
+/// How long a node the app updated may hear no neighbour, sleepy ones
+/// counted, before the app says it hears no one: as long as an image
+/// gathered over the mesh listens before it gives itself up, three
+/// worst-case rotations of heartbeats, 13 × 15 s each, and a heartbeat's
+/// lateness, 872.8 ms (spec "Updates over the mesh", the install).
 const Duration hearsNoOneAfter = Duration(
   microseconds: 3 * 13 * 15000000 + 872800,
 );
@@ -132,7 +132,7 @@ class Updater extends ChangeNotifier {
 
   Updated? _updated;
 
-  /// The node updated last has known a relay since it came back.
+  /// The node updated last has heard a neighbour since it came back.
   bool _heard = false;
 
   /// Shows [hearsNoOne] when its time comes.
@@ -147,14 +147,14 @@ class Updater extends ChangeNotifier {
     return listEquals(n.id, u.id) && n.image == u.to ? u : null;
   }
 
-  /// The node updated last has known no relay for [hearsNoOneAfter] since
-  /// it came back on its new image, and is connected: the image may have
-  /// broken its radio. A node updated from the phone keeps its image
-  /// whatever it hears, as it may stand alone, so the person is told
-  /// (spec "Phone link", Updates).
+  /// The node updated last has heard no neighbour, sleepy or not, for
+  /// [hearsNoOneAfter] since it came back on its new image, and is
+  /// connected: the image may have broken its radio. A node updated from
+  /// the phone keeps its image whatever it hears, as it may stand alone,
+  /// so the person is told (spec "Phone link", Updates).
   bool get hearsNoOne {
     final u = updated;
-    if (u == null || _heard || (session.status?.relays ?? 0) > 0) {
+    if (u == null || _heard || (session.status?.heard ?? 0) > 0) {
       return false;
     }
     return session.now().difference(u.at) >= hearsNoOneAfter;
@@ -397,7 +397,7 @@ class Updater extends ChangeNotifier {
       _down = true;
       return;
     }
-    if (updated != null && (session.status?.relays ?? 0) > 0) _heard = true;
+    if (updated != null && (session.status?.heard ?? 0) > 0) _heard = true;
     if (phase == Phase.paused && !_running) {
       unawaited(send());
     } else if (phase == Phase.rebooting && _down) {

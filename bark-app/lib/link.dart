@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 10;
+const int linkVersion = 12;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -241,7 +241,10 @@ class NodeInfo {
 
 /// Status, read and notify.
 class Status {
-  static const len = 1 + 1 + 2 + Position.wireLen + 2 + 1;
+  static const len = len10 + 1;
+
+  /// Its bytes before the neighbours heard, as link version 10 had them.
+  static const len10 = 1 + 1 + 2 + Position.wireLen + 2 + 1;
   final bool ready;
   final bool externalPower;
   final bool sleepy;
@@ -255,6 +258,10 @@ class Status {
   final Position address;
   final int batteryMv;
   final int inbox;
+
+  /// Its live neighbours, sleepy ones too; before link version 11 the
+  /// node says only [relays], which stand in for it.
+  final int heard;
 
   const Status({
     this.ready = false,
@@ -270,6 +277,7 @@ class Status {
     this.address = const Position(0, 0),
     this.batteryMv = 0,
     this.inbox = 0,
+    this.heard = 0,
   });
 
   Status copyWith({
@@ -286,6 +294,7 @@ class Status {
     Position? address,
     int? batteryMv,
     int? inbox,
+    int? heard,
   }) => Status(
     ready: ready ?? this.ready,
     externalPower: externalPower ?? this.externalPower,
@@ -300,6 +309,7 @@ class Status {
     address: address ?? this.address,
     batteryMv: batteryMv ?? this.batteryMv,
     inbox: inbox ?? this.inbox,
+    heard: heard ?? this.heard,
   );
 
   int get _flags => [
@@ -320,10 +330,11 @@ class Status {
     ...(placed ? address.encode() : List.filled(Position.wireLen, 0)),
     ..._be16(batteryMv),
     inbox,
+    heard,
   ]);
 
   static Status decode(List<int> b) {
-    if (b.length < len) throw const Malformed('Status');
+    if (b.length < len10) throw const Malformed('Status');
     bool flag(int bit) => b[0] & (1 << bit) != 0;
     return Status(
       ready: flag(0),
@@ -339,6 +350,7 @@ class Status {
       address: Position.decode(b.sublist(4, 4 + Position.wireLen)),
       batteryMv: _u16(b, 4 + Position.wireLen),
       inbox: b[6 + Position.wireLen],
+      heard: b.length < len ? b[1] : b[len10],
     );
   }
 }
@@ -818,6 +830,13 @@ Uint8List encodeRecipient(int tag) {
 
 /// Public, write: whether the node serves phones that have not paired.
 Uint8List encodePublic(bool public) => Uint8List.fromList([public ? 1 : 0]);
+
+/// The link version whose Public takes the owner's unpairing.
+const int unpairVersion = 12;
+
+/// Public, write: the node is to forget its bond (spec "Phone link",
+/// Public).
+Uint8List encodeUnpair() => Uint8List.fromList([2]);
 
 /// Public, read.
 bool decodePublic(List<int> b) {

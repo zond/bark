@@ -7,14 +7,16 @@
 import 'package:bark_app/alerts.dart';
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
+import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/releases.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/ui/settings_screen.dart';
 import 'package:fake_async/fake_async.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 
@@ -283,6 +285,107 @@ void main() {
       await app.session.disconnect();
       await t.pump();
       app.dispose();
+    });
+  });
+
+  group('Settings\' Check for updates', () {
+    late Sodium sodium;
+    setUpAll(() async => sodium = await SodiumInit.init());
+
+    /// The app at release `app` with the fake node of image `image`, or
+    /// none, against a release list that answers release 5, or none.
+    Future<AppModel> settings(
+      WidgetTester t, {
+      required int app,
+      int? image,
+      bool online = true,
+    }) async {
+      final a = AppModel(
+        sodium: sodium,
+        me: Me(MemoryStore(), sodium, DateTime.now),
+        session: Session(store: MemoryStore(), now: DateTime.now),
+        contacts: Contacts(MemoryStore()),
+        now: DateTime.now,
+        notifier: LinkNotifier(),
+        releases: Releases(
+          MemoryStore(),
+          now: DateTime.now,
+          fetch: FakeFetch(online ? answer(5) : null).call,
+          app: app,
+        ),
+      );
+      await t.runAsync(a.load);
+      if (image != null) {
+        a.setFake(true);
+        a.fakeNode = FakeNode(
+          now: DateTime.now,
+          sodium: sodium,
+          app: a.me.identity,
+        )..image = image;
+        a.connectFake();
+        await t.pump();
+      }
+      await t.pumpWidget(MaterialApp(home: SettingsScreen(a)));
+      await t.pump();
+      final check = find.text('Check for updates');
+      await t.ensureVisible(check);
+      await t.tap(check);
+      await t.runAsync(() => Future<void>.delayed(Duration.zero));
+      await t.pump();
+      return a;
+    }
+
+    Future<void> shut(WidgetTester t, AppModel a) async {
+      await t.pumpWidget(const SizedBox());
+      await a.session.disconnect();
+      await t.pump();
+      a.dispose();
+    }
+
+    testWidgets('up to date', (t) async {
+      final a = await settings(t, app: 5, image: 5);
+      expect(
+        find.text('App up to date (5); node image up to date (5)'),
+        findsOneWidget,
+      );
+      expect(find.text('Send to node'), findsNothing);
+      await shut(t, a);
+    });
+
+    testWidgets('a newer app, and no node linked', (t) async {
+      final a = await settings(t, app: 3);
+      expect(
+        find.text(
+          'A newer app is available, release 5: get it under App below; '
+          'no node linked',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('version 5 is available: tap'),
+        findsOneWidget,
+      );
+      await shut(t, a);
+    });
+
+    testWidgets('a newer node image, sent from Node image', (t) async {
+      final a = await settings(t, app: 5, image: 1);
+      expect(
+        find.text(
+          'App up to date (5); node image 1, release 5 has 5: send it '
+          'under Node image below',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Send to node'), findsOneWidget);
+      expect(find.text('Pick an image file (bench)'), findsOneWidget);
+      await shut(t, a);
+    });
+
+    testWidgets('offline', (t) async {
+      final a = await settings(t, app: 5, image: 5, online: false);
+      expect(find.text('Could not reach the release list'), findsOneWidget);
+      await shut(t, a);
     });
   });
 }

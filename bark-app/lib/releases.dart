@@ -164,26 +164,33 @@ class Releases extends ChangeNotifier {
       !_fetching &&
       (_tried == null || !now().isBefore(_tried!.add(checkEvery)));
 
-  /// Fetches the latest release if [due]. A failure, such as no network,
-  /// keeps what was known and shows nothing but a line in the log.
-  Future<void> check() async {
-    if (!due) return;
+  /// Fetches the latest release if [due], or at once when the person
+  /// asks, `now`. A failure, such as no network, keeps what was known and
+  /// shows nothing but a line in the log. Whether it fetched one.
+  Future<bool> check({bool now = false}) async {
+    if (!(now ? fetch != null && _loaded && !_fetching : due)) return false;
     _fetching = true;
-    _tried = now();
+    notifyListeners();
+    _tried = this.now();
     try {
       final j = await fetch!();
       final r = Release.parse(j);
       if (r == null) throw FormatException('tag ${j['tag_name']}');
       latest = r;
-      checked = now();
+      checked = this.now();
       await _save();
-      notifyListeners();
+      return true;
     } catch (e) {
       noted('Checking for a new release failed: $e');
+      return false;
     } finally {
       _fetching = false;
+      notifyListeners();
     }
   }
+
+  /// A check runs.
+  bool get checking => _fetching;
 
   /// The latest release if it carries a newer app than this one, and the
   /// person has not dismissed it. A development build is never older.
@@ -218,4 +225,34 @@ class Releases extends ChangeNotifier {
     notifyListeners();
     await _save();
   }
+}
+
+/// What a check the person asked for found, in one line: this app's
+/// version against the latest release's, and the node's image against
+/// the release's image, or that no node is linked.
+String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
+  final l = r.latest;
+  final app = r.app == 0
+      ? 'app is a development build'
+      : l != null && l.apk != null && l.n > r.app
+      ? 'a newer app is available, release ${l.n}: get it under App below'
+      : 'app up to date (${r.app})';
+  final String image;
+  if (node == null) {
+    image = 'no node linked';
+  } else if (guest) {
+    image = 'the node is not yours to update';
+  } else if (node.image == 0) {
+    image = 'node image is a bench build';
+  } else if (l == null || l.image == null) {
+    image = 'node image ${node.image}; the release has none';
+  } else if (l.n > node.image) {
+    image =
+        'node image ${node.image}, release ${l.n} has ${l.n}: send it '
+        'under Node image below';
+  } else {
+    image = 'node image up to date (${node.image})';
+  }
+  final line = '$app; $image';
+  return line[0].toUpperCase() + line.substring(1);
 }

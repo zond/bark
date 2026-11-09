@@ -666,7 +666,8 @@ const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
 
 /// The node's side: publish the status and the inbox's oldest message
 /// after a step, and notify the phones of a change of the flags, the
-/// relays, the inbox's count or the address, or of the battery by a step
+/// relays, the neighbours heard, the inbox's count or the address, or of
+/// the battery by a step
 /// (spec "Phone link", Status).
 pub fn publish(status: Status, inbox: Option<MsgId>) {
     LINK.lock(|l| l.borrow_mut().ring_head = None);
@@ -708,9 +709,10 @@ fn publish_inbox(status: Status, inbox: Option<MsgId>) {
     let (changed, flags) = changed;
     if let Some(flags) = flags {
         log::info!(
-            "ble: status flags={:#04x} relays={} inbox={} address={}",
+            "ble: status flags={:#04x} relays={} heard={} inbox={} address={}",
             flags,
             status.relays,
+            status.heard,
             status.inbox,
             status.address
         );
@@ -1165,8 +1167,36 @@ fn follow_bond() {
 /// and follow it.
 fn keep(bond: Bond) {
     KEPT.lock(|k| k.replace(Some(bond)));
-    crate::store::keep_bond(bond);
+    crate::store::keep_bond(Some(bond));
     follow_bond();
+}
+
+/// The owner unpairs (spec "Phone link", Public): forget the bond, in the
+/// host, in flash and here, so that the node is public, as one nobody has
+/// paired with is, and its screen says `PHONE UNPAIRED`.
+fn forget(stack: &Stack) {
+    KEPT.lock(|k| k.replace(None));
+    crate::store::keep_bond(None);
+    let mut held: heapless::Vec<Identity, BONDS> = heapless::Vec::new();
+    stack.with_bond_information(|bonds| {
+        for b in bonds {
+            let _ = held.push(b.identity);
+        }
+    });
+    for i in held {
+        if let Err(e) = stack.remove_bond_information(i) {
+            log::error!("ble: removing a bond {}", HostError(&e));
+        }
+    }
+    follow_bond();
+    log::info!("ble: unpaired by the owner; the bond is forgotten and the node is public");
+    ADVERTISE.signal(());
+    crate::mailbox::FOR_CORE.signal(());
+    notify(Notify {
+        status: true,
+        ..Notify::default()
+    });
+    crate::display::phone(phone_now());
 }
 
 /// The node's random static address: the factory's DEVICEADDR (nRF52840
@@ -1595,7 +1625,13 @@ async fn serve(
                 } else if h == link.guest.handle {
                     Some(write_guest(from, &w))
                 } else if h == link.public.handle {
-                    Some(write_public(&w))
+                    let r = write_public(from, &w);
+                    if r == Ok(true) {
+                        forget(stack);
+                        // The link was the owner's, which it is no longer.
+                        close = true;
+                    }
+                    Some(r.map(|_| ()))
                 } else {
                     // Not a request: the server takes it by its own rules,
                     // a subscription's descriptor above all.
@@ -2106,16 +2142,24 @@ fn write_guest(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<
 
 /// Public, written by the paired phone: 0 makes the node private, the
 /// owner's alone, and 1 public again, as it is by default, at once and
-/// across reboots; made private, its guests' links close
+/// across reboots; made private, its guests' links close; 2 unpairs, for
+/// the caller to [`forget`] the bond. Whether it unpairs
 /// (spec "Phone link", Public).
-fn write_public(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
-    let set = w.with_data(|offset, data| match offset {
-        0 => bark_link::Public::decode(data).map_err(malformed),
+fn write_public(
+    from: From,
+    w: &WriteEvent<'_, '_, DefaultPacketPool>,
+) -> Result<bool, AttErrorCode> {
+    let write = w.with_data(|offset, data| match offset {
+        0 => bark_link::PublicWrite::decode(data).map_err(malformed),
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
-    let Some(b) = KEPT.lock(|k| *k.borrow()) else {
-        // Only a bonded link writes it, and it is the bond's.
+    let Some(b) = KEPT.lock(|k| *k.borrow()).filter(|_| from.owner) else {
+        // Only the owner's link writes it, and it is the bond's.
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
+    };
+    let set = match write {
+        bark_link::PublicWrite::Unpair => return Ok(true),
+        bark_link::PublicWrite::Set(set) => set,
     };
     if b.private == set.0 {
         keep(Bond {
@@ -2132,7 +2176,7 @@ fn write_public(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErro
         });
         crate::display::phone(phone_now());
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Home as the phone reads it: whether the node is a home, and the

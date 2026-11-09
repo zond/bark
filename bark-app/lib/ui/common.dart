@@ -34,12 +34,12 @@ String ago(Duration d) {
 /// more than the app knows: once the node has taken a message the network
 /// says nothing more until the recipient confirms (spec "Addresses").
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
-  OutState.queued => 'waiting on this phone',
+  OutState.queued => 'Waiting for a node',
   OutState.writing => 'being handed to the node',
   OutState.taken => 'sent into the network',
   OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => 'network busy, try again now',
-    final w => 'network busy, try again in ${clock(w)}',
+    0 => 'The network is busy, sending again now',
+    final w => 'The network is busy, sending again in ${clock(w)}',
   },
   OutState.refused => 'refused: ${o.error}',
 };
@@ -49,8 +49,9 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
 const List<(IconData, String, String)> sentStates = [
   (
     Icons.schedule,
-    'Waiting on this phone',
-    'No node is linked, or the node is not ready for it yet.',
+    'Waiting for a node',
+    'It waits on this phone: no node is linked, or the node is not ready '
+        'for it yet.',
   ),
   (
     Icons.sync,
@@ -70,29 +71,109 @@ const List<(IconData, String, String)> sentStates = [
   ),
   (
     Icons.hourglass_bottom,
-    'Network busy',
-    'The network could not take it now and gave it back. Try again once '
-        'the wait it asked for is over.',
+    'The network is busy',
+    'The network could not take it now and gave it back, with a wait. '
+        'The app sends it again by itself once the wait is over.',
   ),
 ];
 
-/// Explains a sent text's states in words.
-Future<void> explainStates(BuildContext context) => showModalBottomSheet<void>(
+/// What each mark on a received text means, for the sheet a tap on its
+/// marks opens; checked against the spec's "Payload" and "Mailbox"
+/// sections and the parts of a long text (roadmap D137).
+const List<(IconData, String, String)> receivedMarks = [
+  (
+    Icons.check,
+    'Got it',
+    'Tap it to tell the sender you read it. The app sends them a short '
+        'confirmation of its own, and their copy shows two checks once it '
+        'arrives. Nothing is confirmed by itself.',
+  ),
+  (
+    Icons.check,
+    'You tapped Got it',
+    'The app sent the sender your confirmation. Like any text, it may '
+        'take a while to reach them.',
+  ),
+  (
+    Icons.gpp_maybe,
+    'First message',
+    'It came as a first message, in the form anyone who holds your card '
+        'can make, so it may not be theirs. Texts from them since came in '
+        'the form only they can make; this one is not proven.',
+  ),
+  (
+    Icons.markunread_mailbox,
+    'From your mailbox',
+    'It waited at your home node while your phone was away, and came '
+        'when the app fetched it.',
+  ),
+  (
+    Icons.more_horiz,
+    'Parts',
+    'A long text comes in up to 16 parts, each a message of its own, '
+        'which may arrive in any order. A line in italics stands for a '
+        'part not yet here.',
+  ),
+  (
+    Icons.schedule,
+    'The time',
+    'When it came to this phone. When the sender wrote it, by their '
+        'phone\'s clock, is under This message.',
+  ),
+];
+
+/// A message's details that its bubble does not show, as label and
+/// value, then what each of its marks means.
+Future<void> explainMessage(
+  BuildContext context, {
+  required List<(String, String)> details,
+  required List<(IconData, String, String)> marks,
+}) => showModalBottomSheet<void>(
   context: context,
   showDragHandle: true,
-  builder: (context) => SafeArea(
-    child: ListView(
-      shrinkWrap: true,
-      children: [
-        for (final (icon, title, words) in sentStates)
-          ListTile(
-            leading: Icon(icon),
-            title: Text(title),
-            subtitle: Text(words),
-          ),
-      ],
-    ),
-  ),
+  isScrollControlled: true,
+  builder: (context) {
+    final text = Theme.of(context).textTheme;
+    return SafeArea(
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (details.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Text('This message', style: text.titleMedium),
+              ),
+              for (final (label, value) in details)
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: SelectableText(value, textAlign: TextAlign.end),
+                      ),
+                    ],
+                  ),
+                ),
+              const Divider(),
+            ],
+            for (final (icon, title, words) in marks)
+              ListTile(
+                leading: Icon(icon),
+                title: Text(title),
+                subtitle: Text(words),
+              ),
+          ],
+        ),
+      ),
+    );
+  },
 );
 
 /// Whether a sent text's parts are all in one state, so that one part's
@@ -388,7 +469,7 @@ Future<bool> confirm(
 String health(Session s) {
   final left = s.bootLeftS;
   if (left > 0) return 'Starting up, ${clock(left)}';
-  final n = s.status?.relays ?? 0;
+  final n = s.status?.heard ?? 0;
   if (n == 0) return 'Hears no other node yet: texts wait here';
   return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
 }

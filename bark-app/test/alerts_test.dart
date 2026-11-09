@@ -332,8 +332,10 @@ void main() {
 
     // The battery exemption.
     expect(find.textContaining('not exempt'), findsOneWidget);
+    await t.ensureVisible(find.text('Exempt bark'));
     await t.tap(find.text('Exempt bark'));
     expect(n.log.last, 'ask exempt');
+    await t.ensureVisible(find.text('Connect'));
 
     await connectFake(t);
     expect(find.text('Notifications'), findsOneWidget);
