@@ -72,6 +72,7 @@ void main() {
       final c = PersonCard.parse(m['text'] as String);
       expect(hex(c.identity), m['identity']);
       expect(c.home?.toString(), m['home']);
+      expect(c.now?.toString(), m['now']);
       expect(c.time, m['time']);
       expect(c.name, m['name']);
       expect(hex(c.encode()), m['bytes']);

@@ -289,9 +289,12 @@ The firmware's application is `bark-fw/src/update/mesh.rs` (§5).
 
 **A neighbour's status** (spec "Neighbour status"). `AppCommand::Ask { neighbour }` asks
 a live neighbour for its status, once; the app sends one for each neighbour it shows when a
-person opens or refreshes a map of them, never on its own. The core ignores an ask of a
-node it does not know. An answer addressed to the node comes back as
-`AppEvent::Status { from, status }`, at most once an ask and never if a frame was lost.
+person opens or refreshes a map of them, and again for one that has not answered, never on
+its own. The core ignores an ask of a node it does not know. An answer addressed to the node
+comes back as `AppEvent::Status { from, status }`, at most once an ask and never if a frame
+was lost. An ask or answer given up after its listen-before-talk checks is
+`Trace::StatusGivenUp { to, answer }`, so a log tells a give-up from a frame lost on the
+air.
 `Node::status(now)` is what the node itself tells when asked: what its screen shows, so a
 driver draws its screen from it too. Two parts of it only the driver knows: the image
 version, `Config::version`, set at build (0 in the simulator), which the heartbeats'

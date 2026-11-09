@@ -44,22 +44,44 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
-  /// Sends the text where the contact is, or, when that may be stale,
-  /// where the person chooses, this once.
+  /// Sends the text where the contact is while that is fresh; when it
+  /// may be stale, with a home, where the person chooses, this once;
+  /// without one, there after saying it is old, as nothing else is
+  /// (roadmap D132, D162).
   Future<void> _send(Contact to) async {
     if (text.text.isEmpty) return;
-    final options = to.towards(app.now());
-    final toward = options.length == 1
-        ? options.single
+    final now = app.now();
+    final options = to.towards(now);
+    final stale = to.stale(now);
+    final ask =
+        options.length > 1 ||
+        (options.length == 1 && stale != null && to.card.home == null);
+    final toward = !ask
+        ? options.firstOrNull
         : await showDialog<Toward>(
             context: context,
             builder: (context) => SimpleDialog(
               title: const Text('Send to'),
               children: [
+                if (to.card.home == null && stale != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                    child: Text(
+                      'Last seen there ${ago(stale)}: it keeps their mail '
+                      'only while they come back',
+                    ),
+                  ),
                 for (final t in options)
                   SimpleDialogOption(
                     onPressed: () => Navigator.pop(context, t),
-                    child: Text(_option(to, t)),
+                    child: ListTile(
+                      title: Text(_option(to, t)),
+                      subtitle: Text(switch (t) {
+                        Toward.there => 'Fast if they are still near there',
+                        Toward.home =>
+                          'Waits at their home until they fetch it',
+                      }),
+                    ),
                   ),
               ],
             ),
@@ -75,7 +97,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   String _option(Contact c, Toward t) => switch (t) {
     Toward.there =>
-      'Where ${c.name} was ${ago(app.now().difference(c.heardAt!))}',
+      'Where ${c.name} was ${ago(app.now().difference(c.placeAt!))}',
     Toward.home => 'Their home mailbox',
   };
 
@@ -83,7 +105,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   String _heard(Contact c) {
     final at = c.heardAt;
     if (at == null) return 'Has not written yet';
-    final from = c.wroteFrom;
+    final from = c.place;
     final home = c.card.home;
     final where = home == null || from == null
         ? ''
@@ -145,7 +167,18 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     child: const Text('Archive contact'),
                   ),
                   PopupMenuItem(
-                    value: () => app.contacts.remove(contact),
+                    value: () async {
+                      if (await confirm(
+                        context,
+                        'Remove ${contact.name}?',
+                        'Their card goes from this phone. Their texts stay, '
+                            'but you cannot write to them until you add '
+                            'their card again.',
+                        'Remove',
+                      )) {
+                        await app.contacts.remove(contact);
+                      }
+                    },
                     child: const Text('Remove contact'),
                   ),
                 ],
@@ -158,7 +191,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
         child: Column(
           children: [
             NoticeCard(app),
-            if (contact != null && !contact.verified)
+            if (contact != null && contact.unverified)
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Text(
@@ -166,13 +199,27 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   'Once a reply of theirs opens here, it is theirs.',
                 ),
               ),
+            if (!app.me.gotItHinted &&
+                !archived &&
+                c.entries.any(
+                  (e) => !e.mine && !e.arrived.every((r) => r.acked),
+                ))
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text('Tap Got it so the sender sees you read it.'),
+              ),
             Expanded(
               child: ListView(
                 reverse: true,
                 padding: const EdgeInsets.all(8),
                 children: [
                   for (final e in c.entries.reversed)
-                    _bubble(context, e, contact?.verified ?? true, archived),
+                    _bubble(
+                      context,
+                      e,
+                      !(contact?.unverified ?? false),
+                      archived,
+                    ),
                 ],
               ),
             ),
@@ -198,11 +245,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 child: Text('This contact was removed.'),
               )
             else if (contact.towards(app.now()).isEmpty)
+              // Only a card from an app before D162 names no node at all.
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  '${contact.name} has no home node and has not written yet: '
-                  'you can answer once they write to you.',
+                  '${contact.name}\'s card is from an older app and names '
+                  'no node: ask them for a new card.',
                 ),
               )
             else
@@ -344,7 +392,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
         const SizedBox(width: 4),
         Flexible(child: Text(partsLabel(app.session, outs), style: small)),
       ] else if (o.acked)
-        _mark(Icons.done_all, 'Acknowledged', small, scheme.primary)
+        _stateMark(
+          Icons.done_all,
+          'Confirmed by the recipient',
+          small,
+          scheme.primary,
+        )
       else
         ..._state(o, small, color),
     ];
@@ -369,7 +422,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     if (e.arrived.every((r) => r.acked))
       // One plain check: the person knows they have it, so the two
       // coloured ones would say nothing.
-      _mark(Icons.check, 'Acknowledged', small, color)
+      _mark(Icons.check, 'You tapped Got it', small, color)
     else if (!archived)
       _acknowledge(e.arrived.first, small),
   ];
@@ -397,57 +450,70 @@ class _ThreadScreenState extends State<ThreadScreen> {
     Toward.home => _mark(Icons.home, 'To their home', small, color),
   };
 
-  /// A sent text's state short of acknowledged. Not yet with the node
-  /// shows a clock rather than nothing, so a missing mark never means two
-  /// things. A state that is a problem keeps its words, which say why.
+  /// A sent text's state short of confirmed, each its own icon (common.dart
+  /// [sentStates]). Not yet with the node shows a clock rather than
+  /// nothing, so a missing mark never means two things. A state that is a
+  /// problem keeps its words, which say why.
   List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
       switch (o.state) {
-        OutState.queued => [_mark(Icons.schedule, 'Queued', small, color)],
+        OutState.queued => [
+          _stateMark(Icons.schedule, 'Waiting on this phone', small, color),
+        ],
         OutState.writing => [
-          _mark(Icons.schedule, 'Offering to the node', small, color),
+          _stateMark(Icons.sync, 'Being handed to the node', small, color),
         ],
         OutState.taken => [
-          _mark(Icons.check, 'Taken by the node', small, color),
+          _stateMark(
+            Icons.check,
+            'Sent into the network; no further news until they confirm',
+            small,
+            color,
+          ),
         ],
-        OutState.givenBack || OutState.refused => [
+        OutState.givenBack => [
+          _stateMark(Icons.hourglass_bottom, 'Network busy', small, color),
+          const SizedBox(width: 4),
+          Flexible(child: Text(stateLabel(app.session, o), style: small)),
+        ],
+        OutState.refused => [
           const SizedBox(width: 4),
           Flexible(child: Text(stateLabel(app.session, o), style: small)),
         ],
       };
 
-  /// A filled button, unlike the plain check it turns into, so "tap to
-  /// acknowledge" cannot be mistaken for "acknowledged".
-  ///
-  /// One line of small text tall, so the line keeps its height with the
-  /// button in it.
-  Widget _acknowledge(Received r, TextStyle small) {
-    final line = small.fontSize! * (small.height ?? 1);
-    return Padding(
-      padding: const EdgeInsets.only(left: 4),
-      child: SizedBox.square(
-        dimension: line,
-        child: IconButton.filled(
-          tooltip: 'Acknowledge',
-          icon: const Icon(Icons.check),
-          iconSize: small.fontSize,
-          padding: EdgeInsets.zero,
-          constraints: BoxConstraints.tight(Size.square(line)),
-          style: IconButton.styleFrom(
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          onPressed: () async {
-            try {
-              await app.messenger.acknowledge(r);
-            } on BadPayload catch (e) {
-              if (mounted) say(context, 'Not sent: $e');
-            }
-          },
-        ),
-      ),
-    );
-  }
+  /// A sent text's state mark, which a tap explains with the others.
+  Widget _stateMark(
+    IconData icon,
+    String words,
+    TextStyle small,
+    Color color,
+  ) => InkWell(
+    onTap: () => explainStates(context),
+    child: _mark(icon, words, small, color),
+  );
 
-  /// Send again and Drop, for the parts each applies to.
+  /// A labelled chip, unlike the plain check it turns into, so "tap to
+  /// confirm" cannot be mistaken for "confirmed", with a tap target of
+  /// 48 dp, the least Material asks for.
+  Widget _acknowledge(Received r, TextStyle small) => Padding(
+    padding: const EdgeInsets.only(left: 4),
+    child: ActionChip(
+      avatar: const Icon(Icons.check),
+      label: const Text('Got it'),
+      tooltip: 'Tell the sender you read it',
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      onPressed: () async {
+        await app.me.setGotItHinted();
+        try {
+          await app.messenger.acknowledge(r);
+        } on BadPayload catch (e) {
+          if (mounted) say(context, 'Not sent: $e');
+        }
+      },
+    ),
+  );
+
+  /// Send again and Cancel, for the parts each applies to.
   Widget _actions(List<Outgoing> outs) {
     final s = app.session;
     final back = [
@@ -480,7 +546,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 await s.drop(o);
               }
             },
-            child: const Text('Drop'),
+            child: const Text('Cancel'),
           ),
       ],
     );

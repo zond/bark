@@ -2,7 +2,8 @@
 // each coloured by the link's quality (spec "Phone link", Neighbours).
 // Read when the screen opens, at every status the node gives and when
 // the person asks. When it opens and when the person asks, each
-// neighbour is also asked what its own screen shows (spec "Phone link",
+// neighbour without a fresh answer is also asked what its own screen
+// shows, and asked again while it does not answer (spec "Phone link",
 // Ask), and its marker says it in those words.
 
 import 'dart:async';
@@ -86,8 +87,8 @@ class _MapScreenState extends State<MapScreen> {
   Session get _s => widget.app.session;
 
   /// The neighbours are to be asked for their status after the next read
-  /// that succeeds: once when the map opens, perhaps before the node is
-  /// connected, and once each time the person refreshes it. Not at every
+  /// that succeeds: when the map opens, perhaps before the node is
+  /// connected, and each time the person refreshes it. Not at every
   /// status, as each ask costs airtime.
   bool _ask = true;
 
@@ -105,6 +106,8 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void dispose() {
     _seen?.cancel();
+    // Asked only while a person looks.
+    _s.stopAsking();
     super.dispose();
   }
 
@@ -138,7 +141,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) => Watch(widget.app, (context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Map'),
+        title: const Text('Nearby nodes'),
         actions: [
           IconButton(
             tooltip: 'Read again',
@@ -300,6 +303,14 @@ class _MapScreenState extends State<MapScreen> {
         Text('${qualityName(q)} $range', style: const TextStyle(fontSize: 12)),
       ],
     );
+    Widget kind(IconData icon, String words) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16),
+        const SizedBox(width: 4),
+        Text(words, style: const TextStyle(fontSize: 12)),
+      ],
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -314,6 +325,9 @@ class _MapScreenState extends State<MapScreen> {
             band(Quality.good, '≥ $good dB'),
             band(Quality.fair, '$fair–$good dB'),
             band(Quality.fragile, '< $fair dB over the noise floor'),
+            kind(Icons.cell_tower, 'a node on power'),
+            kind(Icons.battery_std, 'a node on battery'),
+            kind(Icons.directions_walk, 'a carried node'),
           ],
         ),
       ),
@@ -329,7 +343,7 @@ class _NodeMarker extends StatelessWidget {
   Widget build(BuildContext context) => GestureDetector(
     onTap: () => showModalBottomSheet<void>(
       context: context,
-      builder: (_) => _Sheet(nodeName(s.node!.id), [
+      builder: (_) => _Sheet(nodeLabel(s.node!.id), [
         'The node this phone is paired with',
         if (s.status?.sleepy ?? false) 'Sleepy',
         if (s.status?.carried ?? false) 'Carried',
@@ -377,13 +391,13 @@ class _NeighbourMarker extends StatelessWidget {
           : Icons.cell_tower,
       size: 32,
       color: qualityColor(q),
-      semanticLabel: nodeName(n.id),
+      semanticLabel: nodeLabel(n.id),
     );
     final s = said;
     return GestureDetector(
       onTap: () => showModalBottomSheet<void>(
         context: context,
-        builder: (_) => _Sheet(nodeName(n.id), [
+        builder: (_) => _Sheet(nodeLabel(n.id), [
           'Link ${qualityName(q)}: ${n.rssiDbm.toStringAsFixed(1)} dBm, '
               '${margin.toStringAsFixed(1)} dB over the noise floor',
           'Last heard ${n.ageS} s ago',

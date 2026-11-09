@@ -7,7 +7,8 @@
 // Somewhere away is the person's home node, whose mailbox answers a
 // fetch as the spec's "Mailbox" says. Around it stand a few neighbours,
 // one of each link quality and of each kind a map draws apart, all but
-// one answering an ask with a status of their own. It takes
+// one answering an ask with a status of their own, though a share of
+// asks is lost as on a loaded channel. It takes
 // a firmware update as the node does, and comes back from its reboot
 // running the new version, which hears no relay unless a test says so,
 // so that the app's warning of a node that hears no one can be seen. Public unless its owner makes it private, it
@@ -181,6 +182,13 @@ class FakeNode implements NodeLink {
   /// which an answer comes (spec "Phone link", Ask).
   static const answerAfter = Duration(milliseconds: 500);
 
+  /// One ask in this many is lost, the ask or its answer, as on a loaded
+  /// channel, where the bench saw 4 answers to 12 asks (2026-11-09); 0
+  /// loses none. Counted over the asks a neighbour answers, so a test
+  /// knows which; a test may change it.
+  int loseEvery = 3;
+  int _answerable = 0;
+
   /// The shortest wait a refusal tells, one ban (spec "Bans").
   static const ban = Duration(milliseconds: 1580);
 
@@ -208,6 +216,10 @@ class FakeNode implements NodeLink {
   /// node's is not its stored place either.
   bool carried = false;
   bool sleepy = false;
+
+  /// Whether its GPS has a fix; without one and no map point it has no
+  /// place. A test may change it.
+  bool fixed = true;
   Position _fix = gps;
 
   /// A new GPS fix, notified as the node does.
@@ -421,6 +433,9 @@ class FakeNode implements NodeLink {
     );
   }
 
+  /// Notifies the status after a test changed what it says.
+  void changed() => _notify();
+
   void _notify() {
     if (_owner.connected) _owner.status.add(_now());
     for (final g in guests) {
@@ -442,7 +457,7 @@ class FakeNode implements NodeLink {
       sleepy: sleepy,
       carried: carried,
       mapPoint: _mapPoint != null,
-      placed: true,
+      placed: fixed || _mapPoint != null,
       booting: left > Duration.zero,
       relays: _relays,
       bootLeftS: _ceilS(left),
@@ -864,6 +879,8 @@ class FakeNode implements NodeLink {
     if (!neighbours.values.any((n) => hex(n.id) == key)) return;
     final s = statuses[key];
     if (s == null) return;
+    _answerable++;
+    if (loseEvery > 0 && _answerable % loseEvery == 0) return;
     _timers.add(
       Timer(answerAfter, () {
         if (_owner.connected) _owner.answer.add(Answer(id, s));

@@ -1117,10 +1117,27 @@ one hop, and neither answered nor sent again. A node:
 The ask is 14 bytes, 15.68 ms on air, the answer 30, 23.36 ms; with the
 long preamble 249.92 and 257.60 ms.
 
+The app asks again a neighbour that has not answered within 2 s of its
+round of asks, one round at a time, up to three asks of it in a look; a
+refresh asks only the neighbours that have not answered within the last
+10 s. On a quiet channel an answer comes about 100 ms after its ask;
+under load each of the two frames may wait two backoffs and three
+checks ([heartbeat](#heartbeat)), 409.3 ms, and to a sleepy node they
+carry the long preamble, so the pair takes at most 1.33 s more, and 2 s
+leaves the phone link room. 10 s is a choice: the mean heartbeat
+interval, within which what a neighbour hears seldom changes.
+
 *Why only on a look.* Said in every heartbeat, the same would cost
 every node every rotation, for a map that is seldom open; asked, it
-costs the network nothing between looks. A lost ask or answer costs the
-person a refresh.
+costs the network nothing between looks.
+
+*Why the app asks again.* An ask and an answer are single frames on a
+shared channel, lost to a collision or given up on a busy channel, the
+more often the busier it is: on the bench, with two nodes streaming an
+update, 4 of 12 asks were answered. The one who looks knows which
+answer is missing, so it asks again, not the node; three asks bound
+what a look costs, and a round at a time keeps the node's asks from
+piling up behind each other.
 
 *Why the image gathered.* During an update a person at the map sees
 which neighbours still gather and how far they are, as each one's
@@ -1142,6 +1159,17 @@ position, or a sleepy node's anchor's, and the recipient's ID
 address from a previous message (the sender's address is carried in the
 encrypted payload), from a QR code, or from a directory; the network
 provides no lookup. Sending to an area is open item O7.
+
+A person's card, which people exchange as a QR code
+([phone link](#phone-link), The payload), carries two addresses: their
+home node's, if they have one, whose mailbox keeps their mail until
+they fetch it ([mailbox](#mailbox)), and that of the node their phone
+is linked to, or was last, their own or a public one, where to reach
+them now, with when the phone was last linked to it; a public node
+keeps a guest's mail by its recipient tag ([phone link](#phone-link),
+Public). A card without a home is
+**temporary**: the node on it keeps their mail only for as long as they
+come back to that node (roadmap D162).
 
 The network carries no sender address and sends no failure notices. Its
 only acknowledgement is the per-hop ACK ([hand-over](#hand-over));
@@ -3359,13 +3387,14 @@ shift down by one, and one would be skipped.
 neighbour for its status ([neighbour status](#neighbour-status)); the
 write is answered once the node has taken it, whether or not the ID is
 a live neighbour's, as nobody answers an ask of anything else. The app
-asks each neighbour it shows, once, when the person opens or refreshes
-the map, never by itself. Each answer the node is given, the
-neighbour's ID and its status as the radio carries it, is Ask's value
-from then on, notified to the paired phone; the value is empty before
-the first since the node booted. An answer comes within about a second
-of the ask, or not at all. The app shows it on the neighbour in the
-words of the neighbour's own screen. From link version 9; the image it
+asks the neighbours it shows when the person opens or refreshes the
+map, and asks again those that do not answer, as
+[neighbour status](#neighbour-status) says, never at other times. Each
+answer the node is given, the neighbour's ID and its status as the
+radio carries it, is Ask's value from then on, notified to the paired
+phone; the value is empty before the first since the node booted. An
+answer comes within about a second of the ask, or not at all. The app
+shows it on the neighbour in the words of the neighbour's own screen. From link version 9; the image it
 gathers, the status's last 7 bytes, from 10.
 
 *Why a characteristic of its own.* The answer is notified, and a
@@ -3669,7 +3698,7 @@ has verified is dropped. Payloads are not padded.
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-| card | 1 + 1 + 38 to 83 | type 4, the card's length, then the card |
+| card | 1 + 1 + 38 to 100 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
@@ -3689,33 +3718,44 @@ knows from the count which have not come, and needs no byte more for
 it. A part costs one byte over a whole text, 155 bytes of text in a box
 without an address; 16 parts hold about 2.5 KB (roadmap D137).
 
-*The card*, what people exchange, shown as a QR code: version (1), 2;
-flags (1), bit 0 set when a home address follows, the others zero; the
-identity (32); when the home was set or cleared, as `sent` (4); the
-home node's address (0 or 13); and a display name in UTF-8 (0 to 32):
-38 to 70 bytes without a home, 51 to 83 with one. As text, `BARK:` and
-the bytes in base32 (RFC 4648, its base32 alphabet) without padding. A
-card with a later time replaces a contact's card; the person sends
-their card to their contacts when it changes.
+*The card*, what people exchange, shown as a QR code: version (1), 3;
+flags (1), bit 0 set when a home address follows, bit 1 when the
+node's address follows, the others zero; the identity (32); when the
+home was set or cleared, as `sent` (4); the home node's address (0 or
+13); the address of the node the phone is linked to, or was last, when
+the card is made or shown, unless it is the home, then when the phone
+was last linked to it, as `sent` (0 or 13 + 4): now, to the minute,
+while it is linked, else when the link ended; and a display name in
+UTF-8 (0 to 32): 38 to 100 bytes. 4 bytes of seconds hold 136 years
+from the epoch of `sent`. A card of version 2, without the node and
+bit 1, is still read. As text, `BARK:` and the bytes in base32
+(RFC 4648, its base32 alphabet) without padding. A card with a later
+time replaces a contact's card, as does one of the same time, which
+may name another node; the person sends their card to their contacts
+when it changes.
 
-*Why only a home.* A home's [mailbox](#mailbox) keeps a person's mail
-until they fetch it. Any other node's address is only where they were
-when the card was made, and where they write from reaches the other
-side in every message's header. A person without a home can be written
-to once they have written.
+*Why the node too.* A home's [mailbox](#mailbox) keeps a person's mail
+until they fetch it. A person without one could be written to only
+after they wrote, and someone handed their card could not start. The
+node their phone uses keeps mail for them in its ring, as its owner's
+inbox or by their recipient tag as a guest's ([phone link](#phone-link),
+Public), so a text there waits until they come back to it; the card
+says it is temporary, so nobody takes it for a home.
 
 *Why the time without a home.* Clearing the home changes the card too,
 and a card that drops it must replace an older one only if it is later.
 
 **Where a text goes.** The app keeps a contact's home, from their card,
-apart from the address their messages were last written from, with the
-age of the newest message from them, counted from its `sent`, or from
-its arrival when `sent` is ahead of the phone's clock. While that age
-is under a minute, a text goes to where they write from; past
-it, with a home, the person chooses between where they were and the
-home's mailbox, for each text, and without one it goes to where they
-were. With a home and nothing written from, it goes to the home; with
-neither, the contact cannot be written to yet (roadmap D132).
+apart from one place they were last known at, and when: the address a
+message from them was written from, at its `sent`, or at its arrival
+when `sent` is ahead of the phone's clock, and the node on a card of
+theirs, at its link time; the newer wins, and a message without an
+address keeps the place and moves its time. While the place is under
+a minute old, a text goes there; past it, with a home, the person
+chooses between where they were and the home's mailbox, for each text,
+and without one it goes there, as nothing else is, the app saying how
+old it is. With a home and no place, or the place the home, it goes to
+the home (roadmap D132, D162).
 
 *Why where they write from.* A reply goes straight to where the person
 is, rather than to their home's mailbox to wait for a fetch, at

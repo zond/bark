@@ -81,7 +81,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
             Text(
               node == null
                   ? 'Not connected to a node.'
-                  : '${nodeName(node.id)} runs version ${node.image}'
+                  : '${nodeLabel(node.id)} runs version ${node.image}'
                         '${updated == null ? '' : _from(updated)}.',
               style: Theme.of(context).textTheme.titleMedium,
             ),

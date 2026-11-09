@@ -616,7 +616,7 @@ void main() {
       run(pairedInReach: false, (async, app, ble) {
         async.elapse(const Duration(seconds: 1));
         expect(app.lookingFor, 'bark-fa4e00000001');
-        expect(lookingLine(app), 'Looking for bark-fa4e00000001…');
+        expect(lookingLine(app), 'Looking for ID FA4E00000001…');
         async.elapse(const Duration(minutes: 1));
         expect(app.session.connected, isFalse);
         // A round every 15 s.
@@ -979,6 +979,87 @@ void main() {
         async.elapse(round);
         expect(ble.connects, [strong]);
         expect(app.held?.title, 'Looking for a public node');
+      });
+    });
+
+    test('at start the app asks for Bluetooth at once, after saying why, '
+        'and only once', () {
+      run(allowed: false, (async, app, ble) {
+        var whys = 0;
+        Future<bool> why() async {
+          whys++;
+          return true;
+        }
+
+        app.askForBluetooth(why);
+        async.elapse(const Duration(seconds: 1));
+        expect((whys, ble.asked), (1, 1));
+        expect(app.bluetoothAllowed, isTrue);
+        expect(app.me.askedBluetooth, isTrue);
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        app.askForBluetooth(why);
+        async.flushMicrotasks();
+        expect((whys, ble.asked), (1, 1));
+      });
+    });
+
+    test('a public node the search would join: asked whether it is yours; '
+        'just use it joins as a guest, asked once', () {
+      run((async, app, ble) {
+        final asked = <String>[];
+        app.askOwner = (n) async {
+          asked.add(n.name);
+          return false;
+        };
+        async.elapse(round);
+        expect(asked, [nodeName(strongId)]);
+        expect(ble.connects, [strong]);
+        expect(app.session.pairedWith, isNull);
+        async.elapse(const Duration(minutes: 1));
+        expect(asked, [nodeName(strongId)]);
+        expect(ble.connects, [strong, strong]);
+      });
+    });
+
+    test('no answer to whether it is yours: not joined', () {
+      run((async, app, ble) {
+        app.askOwner = (n) async => null;
+        async.elapse(const Duration(minutes: 1));
+        expect(ble.connects, isEmpty);
+      });
+    });
+
+    test('yours: the search pairs with it', () {
+      run((async, app, ble) {
+        app.askOwner = (n) async => true;
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        expect(ble.bonds, {strong});
+      });
+    });
+
+    test('a fetch while no node is linked waits, and goes from the next '
+        'node the phone links to', () {
+      run((async, app, ble) {
+        final home = Address(Position.fromDegrees(50, 30), [9, 9, 9, 9, 9, 9]);
+        app.stopLooking();
+        async.flushMicrotasks();
+        app.me.setHome(home);
+        String? told;
+        app.fetchNow().then((t) => told = t);
+        async.flushMicrotasks();
+        expect(told, startsWith('The fetch waits for a node'));
+        expect(app.me.fetchQueued, isTrue);
+        expect(app.session.outbox, isEmpty);
+        app.session.setStopped(false);
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        final f = app.session.outbox.single;
+        expect(f.kind, OutKind.fetch);
+        expect(f.dst.toString(), home.toString());
+        expect(f.state, OutState.taken);
+        expect(app.me.fetchQueued, isFalse);
       });
     });
   });

@@ -15,9 +15,11 @@ is a prototype for the bench, not the app people will carry.
   start from 12 words the person writes down, and can restore it from
   them on another phone. Texts are sealed to an identity.
 - **Card**: what two people exchange so that each can reach the other:
-  an identity, the name its owner chose and, when the person has set
-  one, their home node's address; without a home it carries no
-  address, and they can be written to only once they have written.
+  an identity, the name its owner chose, their home node's address
+  when the person has set one, and, unless it is the home, the
+  address of the node their phone is linked to, or was last, where to
+  reach them now, with when it was last linked to it (roadmap D162). Without a home the card is temporary: the node on it keeps
+  their mail only while they come back to it.
 - **Contact**: a card with the name this phone gives it, or else the
   card's own, known by its identity. A card from an older app may have
   no name: its contact is listed as "Unnamed" with the first eight
@@ -29,13 +31,24 @@ is a prototype for the bench, not the app people will carry.
 
 ## Screens
 
-- **Conversations**, the first screen. One row a conversation, newest
-  first, with the last text and, for a sent one, its state. A line at
-  the top says whether a node is connected, "Connected to bark-… as a
+- **Conversations**, the first screen. At the first start the app asks
+  for Bluetooth at once, after one sentence on why: it finds and talks
+  to a node over Bluetooth. Until the person has a name, a node (found
+  by the search, or paired) and a first contact, a **Get started**
+  card lists the three steps, each ticked when done and opening where
+  it is done; the card goes once all are. One row a conversation,
+  newest first, with the last text and, for a sent one, its state. A
+  line at
+  the top says whether a node is connected, "Connected to ID … as a
   guest" during an errand at a public node that is not yours, and, when
   none is, which
   node the phone is paired with or that it is no longer yours (next
-  section); tapping it opens Settings.
+  section); tapping it opens Settings. Once there is a contact and
+  until the backup words are written down, a card says "If you lose
+  this phone, these words are the only way to keep your contacts able
+  to reach you"; a tap opens Settings scrolled to the backup, which
+  shows tinted for a moment and is announced. While the demo is on, a
+  card says "Demo: nothing leaves this phone".
   A row swiped aside either way archives its conversation, with
   **Undo**; a line at the bottom then counts the archived ones, "2
   archived", and leads to Archived.
@@ -45,10 +58,11 @@ is a prototype for the bench, not the app people will carry.
   mail". The button is then off, an hourglass that says it waits for
   the home's answer and how long at most (32 minutes, the spec's
   bounds on the way there and back), until a reply comes, "No new mail"
-  if the home has nothing new, or the node gives the fetch back. It
-  sends nothing, and says why, when no node is connected or the
-  connected node is the home: a fetch goes from another node to the
-  home, and the home's own inbox already holds the mail.
+  if the home has nothing new, or the node gives the fetch back. With
+  no node connected the fetch waits, the button saying "Fetch waits for
+  a node", and goes from the next node the phone links to, addressed to
+  it. It sends nothing, and says why, when the connected node is the
+  home, whose own inbox already holds the mail.
   When the person's card has changed and has not gone to their
   contacts, a line says why, "Your card changed: your home node has a
   new address" or "…: you have no home now", with **Send my card**,
@@ -58,15 +72,21 @@ is a prototype for the bench, not the app people will carry.
   order, and a field at the bottom to write the next. Each text's small
   line has its time, then where it went, then its state, as icons the
   text's size whose tooltips give the words: a house, to their home; a
-  pin, to where they were; a mailbox, from your mailbox; a clock, not
-  yet with the node; one check, taken by the node; two checks in the
-  theme's colour, acknowledged by the other person. A given-back text
-  says so in words with its wait counting down, and can be sent again
-  once the wait is over, or dropped; a refused text says why in words.
-  The top line says when the contact last wrote, and, when their card
-  names a home, whether from it. A received text has a small filled
-  check-mark button, **Acknowledge**; nothing is acknowledged by itself.
-  Once pressed, the button turns into one plain check, and the two
+  pin, to where they were; an hourglass, to the node on a temporary
+  card; a mailbox, from your mailbox. A sent text's states: a clock,
+  waiting on this phone; two arrows, being handed to the node; one
+  check, sent into the network, whose tooltip says the network gives no
+  further news until they confirm, as it sends none (spec
+  "Addresses"); two checks in the theme's colour, confirmed by the
+  recipient. A text the network gave back shows an hourglass and
+  "network busy, try again in m:ss", and can be sent again once the
+  wait is over, or cancelled; a refused text says why in words. A tap
+  on a state opens a sheet that explains them all. The top line says
+  when the contact last wrote, and, when their card names a home,
+  whether from it. A received text has a labelled chip, **Got it**,
+  48 dp tall; nothing is confirmed by itself, and until the person
+  first taps one, a line says "Tap Got it so the sender sees you read
+  it." Once pressed, the chip turns into one plain check, and the two
   checks appear on the sender's copy.
   A text longer than one message holds, 156 bytes in a box without an
   address, goes as parts of up to 155 bytes, 16 at most (roadmap D137):
@@ -76,25 +96,31 @@ is a prototype for the bench, not the app people will carry.
   near the end of each part, and queues the parts in order. The sent
   text is one bubble with the parts' state on its small line: the usual
   icons while every part is in the same state, else words such as
-  "2 of 3 taken"; the two checks once every part is acknowledged. A
+  "2 of 3 sent"; the two checks once every part is confirmed. A
   received text in parts is one bubble with the parts that have come,
   in order, and "part 2 of 3 not yet here" in place of one that has
-  not, until all are in. **Acknowledge** acknowledges every part that
-  has come; a part that comes after the tap brings the button back and
-  is acknowledged with the next tap.
-  A contact whose first message has come but no
-  sealed reply is marked not verified; once it is verified, a text
+  not, until all are in. **Got it** confirms every part that has come;
+  a part that comes after the tap brings the chip back and is confirmed
+  with the next tap.
+  A contact made from a first message that came, with no sealed reply
+  yet, is marked not verified, in its thread and its row; one from a
+  card the person scanned or pasted is not, as the card came from its
+  holder. Once it is verified, or for a scanned one, a text
   that came in a first message has a mark of its own, as anyone could
-  have made it. A contact without a home who
-  has not written yet cannot be written to: a line says so where the
-  field would be. The menu renames the contact,
+  have made it. A contact whose card is from an app before D162, with
+  no home and no node, and who has not written yet, cannot be written
+  to: a line says so where the field would be. The menu renames the
+  contact,
   sends them your card, archives the conversation or the contact (both
-  leave the thread, with **Undo**), or removes them; a removed
+  leave the thread, with **Undo**), or removes them, after asking; a removed
   contact's thread has only **Archive conversation**. The bar has **Fetch my mail**
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
-- **Contacts**, from the menu. Adding one: scan their card with the
-  camera, and the new contact's thread opens at once, so you see where
+- **Contacts**, the head button beside the QR button. Each row says
+  "Has a home node", or for a temporary card an hourglass and
+  "temporary: at the node they used 20 min ago"; the mark goes
+  when a card with a home comes. With none, it says how to add one.
+  Adding one: scan their card with the camera, and the new contact's thread opens at once, so you see where
   it went and can write; or paste the card and save it, with a name of
   your choosing if you like. An address alone is not enough: a text is
   sealed to the identity on the card. Adding an archived contact brings
@@ -105,56 +131,71 @@ is a prototype for the bench, not the app people will carry.
   The archived conversations, then the archived contacts, each with an
   unarchive button. Unarchiving either brings back both: a person whose
   conversation is back is one you talk to again. A conversation opens
-  read-only, with no field, acknowledge buttons or menu, and
+  read-only, with no field, Got it chips or menu, and
   **Unarchive** at the bottom. An archived contact is still known: its
   card and keys are kept, its messages open, and **Send my card** still
   goes to it. A new text from an archived conversation brings it, and
   its contact, back to the first screen, with the usual notification;
   an acknowledgement or a card does not.
-- **My card**, the QR button. Your identity, the card as a QR code for
-  another phone to scan, **Scan their card** to add theirs as in
-  Contacts, and the home's address and the card as text to copy and
-  send. Without a home it says that people can answer you only after
-  you write to them. Without a name it shows no card: it says "Set your
+- **My card**, the QR button. It opens with the card as a QR code for
+  another phone to scan, then **Share**, which hands the card as text
+  and the code as an image to Android's share sheet, **Scan their
+  card** to add theirs as in Contacts, and your name. A **Details**
+  fold holds your identity, the home's address, the node's, and the
+  card as text, each to copy. Without a home the card is temporary: a dashed frame around
+  the code, an hourglass in its corner outside the code's quiet zone
+  and the word TEMPORARY under it, and a line that says so. Without a
+  name it shows no card: it says "Set your
   name first", with **Set my name**, as whoever scans a card needs to
   know whose it is.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one; a public node says so, with its RSSI, and a tap joins it as a
-  guest, **Pair** pairs with it instead) and the node the phone is
-  paired with, the fake node switch, on the paired node of link version
-  7 or later the switch **Public: serve phones without pairing**, on
-  unless the owner turns it off (Public nodes, below), the
-  version of the connected node's firmware and **Update firmware**
-  (Updating a node, below), whether the app is exempt from battery
-  optimisation (next section), your name, the home node (make the
-  connected node your home if it is not, or none; the dialog says so,
-  and on **Go ahead** your new card goes to every contact; **Send my
-  card**, as on the first screen; clear the mailbox key of a node that
-  holds one and is not your home), your 12
-  words (show them, or restore an identity from them), and the node's
-  map point: set from typed degrees or the phone's location, or
-  cleared.
-- **Map**, from the menu. The connected node and every neighbour it
+  one; a public node says so, with its RSSI, and a tap asks "Is it
+  yours?": **Pair**, typing the code its screen shows, or **Just use
+  it**, as a guest), the node the phone is paired with, and how the
+  connected node fares; on the paired node of link version 7 or later
+  the switch **Public: serve phones without pairing**, on unless the
+  owner turns it off (Public nodes, below). Then the home node: make
+  the connected node your home if it is not, or none; the dialog says
+  so, and on **Go ahead** your new card goes to every contact; **Send
+  my card**, as on the first screen; clear the mailbox key of a node
+  that holds one and is not your home. A node without a place says
+  "This node has no place yet", with **Use this phone's location**,
+  which gives it the phone's position as its place; a sleepy or
+  carried node cannot be made home, and the button is off with "A home
+  must be a node that stays on power at a fixed place" (spec
+  "Mailbox"). Then the version of the connected node's firmware and
+  **Update firmware** (Updating a node, below), whether the app is
+  exempt from battery optimisation (next section), your name, your 12
+  words (show them, or restore an identity from them, after a warning
+  that contacts holding the current card cannot reach the restored
+  identity), and **Node's place**: set from typed degrees or the
+  phone's location, or cleared. At the bottom, **Try without a node
+  (demo)**, a node in the app, and **Debug**.
+- **Nearby nodes**, from the menu: a map. The connected node and every neighbour it
   knows on an OpenStreetMap street map, a line from the node to each
   coloured by the link's quality: green good, amber fair, red fragile,
   by the margin of the link's averaged RSSI over the node's noise floor
   (spec "Phone link", Neighbours), dashed while the node avoids it,
-  demoted or banned. A legend says the bands in dB. A relay is a tower,
-  a sleepy node a battery, a carried one a walker, in its link's colour;
+  demoted or banned. A legend says the bands in dB and the icons: a
+  relay is a tower, a node on power; a sleepy node a battery, a node on
+  battery; a carried one a walker; each in its link's colour;
   the node itself is a target. Tapping one shows its name, RSSI,
   margin, quality, when it was last heard, how far it is from the node,
   and its flags. The map reads Neighbours when it opens, at every
   status the node gives, and when the refresh button is pressed. When
   it opens and when refreshed, on a node of link version 9 or later, it
-  also asks each neighbour once, through Ask, what its own screen shows;
+  also asks each neighbour that has not answered within the last 10 s,
+  through Ask, what its own screen shows;
   a neighbour that answers has its role under its marker in its
   screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
   details show its screen's lines one a row under the distance (the
   role, its power, the neighbours it knows, its firmware version and,
   from link version 10, the image it gathers, such as `GET V14 14/31`)
   in place of the sleepy and carried flags they repeat, then this
-  node's own view of it, such as its anchor or a ban. An ask costs airtime, so
-  one lost is not repeated: the person refreshes. The
+  node's own view of it, such as its anchor or a ban. An ask or its
+  answer is lost now and then on a busy channel, so a neighbour that
+  has not answered within 2 s is asked again, a round at a time, up to
+  three asks while the map is open (spec "Neighbour status"). The
   node is drawn at its own position, not its address, so a sleepy node
   is not drawn on its anchor; a node without a place has its
   neighbours drawn with no lines. Tiles come from the network and are
@@ -162,7 +203,7 @@ is a prototype for the bench, not the app people will carry.
   without internet; without either, the markers and lines are drawn on
   a blank background and a line says why. A node before link version
   4 cannot tell its neighbours, and the screen says to update it.
-- **Debug**, from the menu. Your identity, card address, home node and
+- **Debug**, at the bottom of Settings. Your identity, card address, home node and
   mailbox state; Node, what Home reads, every Status field, the last
   Given back value, each sent and received message's kind, `sent`, ID
   and payload in hex, and a log of the link's events since the app
@@ -269,7 +310,7 @@ Settings, which asks for it. The app checks again when it comes to the
 front and when Bluetooth is switched on or off, in case the person
 allowed it in Android's settings. Bluetooth switched off ends the link
 as a drop does: Android does not report that end itself. The first screen, and Settings under
-the scan rows, say "Looking for bark-…" or "Looking for a public node…",
+the scan rows, say "Looking for ID …" or "Looking for a public node…",
 or that Bluetooth is off. A
 search round scans for four of a node's advertising intervals, 4.1 s,
 without a break, less once it hears the paired node, and a round
@@ -327,17 +368,17 @@ before archiving names nothing archived and reads as such.
 
 While a node is connected over Bluetooth, the app keeps running with the
 screen off or its window closed, under a notification that names the
-node, "Connected to bark-…"; tapping it opens the app. The link is the
+node, "Connected to ID …"; tapping it opens the app. The link is the
 same one as in the foreground: the app's Dart engine outlives its window
 (`Engine.kt`), and an Android foreground service of the connected device
 type (`LinkService.kt`) keeps the process running, so there is one
 implementation of the link, in Dart. While the app looks for its paired
 node (previous section) the service runs too, and its notification says
-"Looking for bark-…": without one Android suspends or ends an app in the
+"Looking for ID …": without one Android suspends or ends an app in the
 background, and the search with it, and queued texts are to go out as
 soon as the node is in reach, not when the person next opens the app.
 While it looks for a public node alone, or is a guest, the notification
-says so: "Looking for a public node", "Connected to bark-… as a
+says so: "Looking for a public node", "Connected to ID … as a
 guest". Before Bluetooth is allowed there is no search, and no
 notification.
 The service goes on from connected to looking and back, changing only its
@@ -544,20 +585,25 @@ theirs.
 ## Where a text goes
 
 A message names the node its sender writes from, while the other side
-may not know it, so the app knows two addresses for a contact: the
-home on their card, if they have one, and the one they last wrote from, with
-the age of their newest message, counted from the time it was written,
-or from when it arrived if that is earlier. While that age is under a
-minute, a text goes where they wrote from without asking, straight to
+may not know it, and a card names the node its owner's phone uses, with
+when it was last linked to it, so the app knows two addresses for a
+contact: the home on their card, if they have one, and one place they
+were last known at, from whichever of their messages and cards is
+newest: a message counted from the time it was written, or from when
+it arrived if that is earlier, a card from its link time. While that
+place is under a minute old, a text goes there without asking, straight to
 where they are, with no fetch from their mailbox: in a minute a person
 on foot, at a brisk 1.5 m/s, moves about 90 m, within the ≈750 m a
 relay hears a handheld in the street (`docs/protocol.md`, "Physical
 layer"), while a driver has already left that reach, so no longer wait
 makes the guess better. Older, the send
-button asks, for that text only: "Where <name> was <age> ago" or "Their
-home mailbox". Without a home it goes where they were, without asking;
-with a home and nothing written from yet, to the home. A contact with
-neither cannot be written to until they write. Acknowledgements and
+button asks, for that text only: "Where <name> was <age> ago", "Fast if
+they are still near there", or "Their home mailbox", "Waits at their
+home until they fetch it". Without a home it goes where they were, as
+nothing else is; when that is old, the dialog says "Last seen there 2 h
+ago: it keeps their mail only while they come back" and still sends
+there. With a home and no place known yet, it goes to the home (roadmap
+D132, D162). Acknowledgements and
 cards go without asking, to the home's mailbox when there is a choice.
 
 ## Plugins
@@ -655,16 +701,22 @@ a phone (Trying it, With a node).
 
 ### With the fake node
 
-1. Open the app. The first screen says no conversations and asks you
-   to write down your 12 backup words. Tap the line "Not connected",
-   turn on **Fake node**, press **Connect**. The first time, the app
-   says why it notifies: **Continue**, and allow it. It shows
-   `bark-fa4e00000001`, connected, MTU 247. Further down, **Show my
-   words**, write them down, **I wrote them down**.
-2. Go back. A notification of the fake friend's two messages has come.
+1. Open the app. It says why it needs Bluetooth, and Android asks. The
+   first screen says no conversations, with the **Get started** card.
+   Tap the line "Not connected", at the bottom turn on **Try without a
+   node (demo)**, and at the top press **Connect**. The first time, the
+   app says why it notifies: **Continue**, and allow it. It shows
+   `ID FA4E00000001`, connected, "Starting up, 3:14" counting down, then
+   "Hears 3 nodes".
+2. Go back. The first screen says "Demo: nothing leaves this phone". A
+   notification of the fake friend's two messages has come, and with
+   the fake friend a contact, the first screen asks you to write down
+   your 12 backup words: tap it, and Settings opens at **Backup**,
+   tinted for a moment. **Show my words**, write them down, **I wrote
+   them down**.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 10,
+3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 10,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -672,11 +724,11 @@ a phone (Trying it, With a node).
    messages read and confirmed.
 4. Open the conversation: it says not verified, and the top line "Last
    wrote just now, away from home". Write a text and send it. It shows
-   as taken by the node, "to where they were"; 5 s later "Echo: " and
+   as sent into the network, "to where they were"; 5 s later "Echo: " and
    your text appears, and the note goes: the echo was sealed by the
    fake friend.
-5. Press the check-mark button **Acknowledge** on the echo: it becomes
-   a plain check mark, and Debug lists an `ack` sent.
+5. Press **Got it** on the echo: it becomes a plain check mark, and
+   Debug lists an `ack` sent.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
@@ -691,10 +743,11 @@ a phone (Trying it, With a node).
    state in words while they differ. When both are taken, 5 s later the
    echo's last part arrives with "part 1 of 2 not yet here" in its
    place, and 5 s after that the whole echo.
-9. The QR button, **My card**: set a name. Your identity, a QR code
-   and the card as text, `BARK:` and capitals, appear, with a line that
-   without a home people can answer you only after you write to them.
-10. Menu, **Settings**, under **Map point**: press **Phone location**
+9. The QR button, **My card**: set a name. A QR code appears, marked
+   temporary without a home; **Share** opens Android's share sheet with
+   the card's text and the code's image, and **Details** your identity
+   and the card as text, `BARK:` and capitals.
+10. Menu, **Settings**, under **Node's place**: press **Phone location**
     (allow location), then **Set**: Debug's address changes, and the
     next text to the fake friend names it. **Clear** brings back the
     fake's own fix.
@@ -709,10 +762,15 @@ a phone (Trying it, With a node).
     again, disconnect, press **No home node**: the app says the old home
     still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
-13. Menu, **Map**: the fake node in Kyiv and its five neighbours,
+13. Menu, **Nearby nodes**: the fake node in Kyiv and its five neighbours,
     three green lines, one amber and one red; the red one and a green
     one dashed. Tap the red
-    one: `bark-fa4e00000103`, fragile, 3.0 dB over the floor, demoted.
+    one: `ID FA4E00000103`, fragile, 3.0 dB over the floor, demoted.
+    Within half a second most markers show their screens' roles, such
+    as `FIXED RELAY`; the fake loses one ask in three, so one more
+    shows about 2 s later, asked again, and the one that never answers
+    is asked three times in all (Debug's log, `Ask:`). **Read again**
+    within 10 s asks only that one; later, all of them.
     With the phone offline and the area never seen, a line says the
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
@@ -724,17 +782,20 @@ a phone (Trying it, With a node).
     once, the fake has no radio to wait for; then "The node checked
     version N". **Reboot into version N**: the link closes, and the
     fake takes no connection for 55 s, as a node swapping; then
-    **Connect** in Settings, and the screen says "bark-… runs version
+    **Connect** in Settings, and the screen says "ID … runs version
     N, updated from version 1 just now.", without the image or the bar.
 
 ### With a node
 
 1. Switch the node on and read the twelve hex digits on its display.
-2. In **Settings**, with **Fake node** off, press **Scan** and allow
-   Bluetooth. The node shows within about a second as `bark-` and those
-   digits. Tap it. The first time, Android asks for a code and the
+2. In **Settings**, with the demo off, press **Scan** and allow
+   Bluetooth. The node shows within about a second as `ID` and those
+   digits, as its screen shows them. Tap it: a public node asks whether
+   it is yours; **Pair**. The first time, Android asks for a code and the
    node's screen shows `PAIR CODE` and six digits within a few seconds:
-   type them. Settings then says "Connected and paired, MTU 247", and
+   type them. Settings then says "Connected and paired." and how the node
+   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes", or
+   "Hears no other node yet: texts wait here"; and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
 3. **Debug** shows link version 10, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
@@ -742,13 +803,19 @@ a phone (Trying it, With a node).
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
-   address, and **Map** draws it with the relays it hears, each line's
-   colour its link's quality. Without one, set a map point in Settings: Status changes to
+   address, and **Nearby nodes** draws it with the relays it hears, each line's
+   colour its link's quality. Without one, Settings under **Home node**
+   says "This node has no place yet" with **Use this phone's location**,
+   or set a place under **Node's place**: Status changes to
    placed and map point. A text names the node's address only once it
-   has one.
+   has one. With neighbours on link version 9 or later, each marker
+   shows its screen's role within a second or, asked again, a few;
+   the node's log says `ble: ask` for each ask, `status of` for each
+   answer, and `StatusGivenUp` for an ask or answer given up on a busy
+   channel, which tells it from one lost on the air.
 5. With a second node and a second phone, make one phone's node its
-   home (step 9 below; a card without a home cannot be written to
-   first), then each phone scans the other's card from **My card**,
+   home (step 9 below; without one the card is temporary, and texts
+   to it wait at the node it names), then each phone scans the other's card from **My card**,
    **Scan their card** (allow the camera). Send a text from the other
    phone to the one with the home: it shows as taken, and the other phone shows
    it in the sender's conversation within the time the network takes.
@@ -756,7 +823,7 @@ a phone (Trying it, With a node).
    and falls to 0 as the app reads it. Answer it: the answer is boxed,
    and the phone that wrote first shows the other as verified. Write
    again from that phone: the phone with the home shows it as verified
-   too. Press **Acknowledge** on the answer: the other phone shows a
+   too. Press **Got it** on the answer: the other phone shows a
    check mark on its text.
 6. Switch off the receiving phone's Bluetooth, send two texts to it,
    switch it back on and connect: both arrive, oldest first, and the
@@ -785,7 +852,7 @@ a phone (Trying it, With a node).
     exempt it from battery optimisation in Settings, and connect to the
     node. Restart the phone and unlock it, without opening the app.
     Within about half a minute of the unlock the notification says
-    "Looking for bark-…", then "Connected to bark-…", and texts arrive.
+    "Looking for ID …", then "Connected to ID …", and texts arrive.
     `adb logcat -s flutter` shows the session's log from the start,
     `Found bark-…, connecting` and `Connected, MTU 247` among it.
     Opening the app shows the link as it stands. After **Disconnect**, a
@@ -819,7 +886,7 @@ a phone (Trying it, With a node).
     reboot asked by the phone`, `ble: disconnected 0x16`, `reboot`; about
     a minute later the log's banner says `image version N+1` and
     `update: version N+1 confirmed`, the app connects again, and the
-    screen says "bark-… runs version N+1, updated from version N just
+    screen says "ID … runs version N+1, updated from version N just
     now.", without the image or the bar. Picking the same file again
     shows it, and sending it is refused, as not newer; an image packed and not signed is
     refused at once, before any piece, as not signed by a key the node
@@ -846,8 +913,8 @@ a phone (Trying it, With a node).
     PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its RSSI; or, with no paired node of
-    its own in reach, the second phone goes on an errand there within a
-    round, its first screen saying "Connected to bark-… as a guest" for
+    its own in reach, the second phone asks whether the node is its own,
+    and after **Just use it** goes on an errand there within a round, its first screen saying "Connected to ID … as a guest" for
     a few seconds, then again once a minute. No pairing dialog shows,
     at the connect or later. Its log shows `Recipient: tag …`, a
     `Guest: item …` line for each item read, and `Disconnected`.

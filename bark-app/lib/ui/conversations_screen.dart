@@ -11,15 +11,38 @@ import '../link.dart';
 import 'card_screen.dart';
 import 'common.dart';
 import 'contacts_screen.dart';
-import 'debug_screen.dart';
 import 'map_screen.dart';
 import 'settings_screen.dart';
 import 'thread_screen.dart';
 import 'update_screen.dart';
 
-class ConversationsScreen extends StatelessWidget {
+class ConversationsScreen extends StatefulWidget {
   final AppModel app;
   const ConversationsScreen(this.app, {super.key});
+
+  @override
+  State<ConversationsScreen> createState() => _ConversationsScreenState();
+}
+
+class _ConversationsScreenState extends State<ConversationsScreen> {
+  AppModel get app => widget.app;
+
+  @override
+  void initState() {
+    super.initState();
+    // The first screen is under every other, so it asks over them.
+    app.askOwner = (n) => askIsYours(context, n);
+    // Without Bluetooth there is no node, so the app asks at once.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) app.askForBluetooth(() => whyBluetooth(context));
+    });
+  }
+
+  @override
+  void dispose() {
+    app.askOwner = null;
+    super.dispose();
+  }
 
   void _open(BuildContext context, Widget screen) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
@@ -39,6 +62,13 @@ class ConversationsScreen extends StatelessWidget {
         actions: [
           FetchButton(app),
           IconButton(
+            tooltip: 'Contacts',
+            // A head, as a contact is a person; account_circle would read
+            // as the person's own account, which is My card.
+            icon: const Icon(Icons.person, semanticLabel: 'Contacts'),
+            onPressed: () => _open(context, ContactsScreen(app)),
+          ),
+          IconButton(
             tooltip: 'My card',
             icon: const Icon(Icons.qr_code),
             onPressed: () => _open(context, CardScreen(app)),
@@ -47,24 +77,16 @@ class ConversationsScreen extends StatelessWidget {
             onSelected: (f) => _open(context, f()),
             itemBuilder: (_) => [
               PopupMenuItem(
-                value: () => ContactsScreen(app),
-                child: const Text('Contacts'),
-              ),
-              PopupMenuItem(
                 value: () => ArchivedScreen(app),
                 child: const Text('Archived'),
               ),
               PopupMenuItem(
                 value: () => MapScreen(app),
-                child: const Text('Map'),
+                child: const Text('Nearby nodes'),
               ),
               PopupMenuItem(
                 value: () => SettingsScreen(app),
                 child: const Text('Settings'),
-              ),
-              PopupMenuItem(
-                value: () => DebugScreen(app),
-                child: const Text('Debug'),
               ),
             ],
           ),
@@ -73,17 +95,28 @@ class ConversationsScreen extends StatelessWidget {
       body: ListView(
         children: [
           ..._releases(context),
+          if (app.fake)
+            Card(
+              color: Theme.of(context).colorScheme.tertiaryContainer,
+              child: const ListTile(
+                leading: Icon(Icons.science_outlined),
+                title: Text('Demo: nothing leaves this phone'),
+              ),
+            ),
           NoticeCard(app),
-          if (!app.me.backedUp)
+          ..._gettingStarted(context),
+          // Once there is a contact, there is someone to lose.
+          if (!app.me.backedUp && app.contacts.list.isNotEmpty)
             Card(
               child: ListTile(
                 leading: const Icon(Icons.key),
                 title: const Text('Write down your 12 backup words'),
                 subtitle: const Text(
-                  'They are your identity; without them a lost phone '
-                  'loses it. In Settings.',
+                  'If you lose this phone, these words are the only way to '
+                  'keep your contacts able to reach you.',
                 ),
-                onTap: () => _open(context, SettingsScreen(app)),
+                onTap: () =>
+                    _open(context, SettingsScreen(app, toBackup: true)),
               ),
             ),
           _connection(context),
@@ -111,6 +144,52 @@ class ConversationsScreen extends StatelessWidget {
       ),
     );
   });
+
+  /// The steps to a first text, each ticked once done, until all are.
+  List<Widget> _gettingStarted(BuildContext context) {
+    final g = app.gettingStarted;
+    if (g.name && g.node && g.contact) return [];
+    Widget step(bool done, String title, String how, VoidCallback onTap) =>
+        ListTile(
+          dense: true,
+          leading: Icon(
+            done ? Icons.check_circle : Icons.radio_button_unchecked,
+            semanticLabel: done ? 'Done' : 'To do',
+          ),
+          title: Text(title),
+          subtitle: done ? null : Text(how),
+          onTap: done ? null : onTap,
+        );
+    return [
+      Card(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const ListTile(title: Text('Get started')),
+            step(
+              g.name,
+              'Your name',
+              'On your card, so that people know who you are.',
+              () => askMyName(context, app),
+            ),
+            step(
+              g.node,
+              'A node',
+              'Found by itself when one is near, or pair your own in '
+                  'Settings.',
+              () => _open(context, SettingsScreen(app)),
+            ),
+            step(
+              g.contact,
+              'Your first contact',
+              'Scan their card, or show them yours.',
+              () => _open(context, ContactsScreen(app)),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
 
   /// A bar for a newer app, and one for a newer image than the connected
   /// node runs; each says what a tap does and can be dismissed for that
@@ -188,10 +267,10 @@ class ConversationsScreen extends StatelessWidget {
     final s = app.session;
     final looking = lookingLine(app);
     final text = s.connected && s.guest
-        ? 'Connected to ${nodeName(s.node!.id)} as a guest: a public node, '
+        ? 'Connected to ${nodeLabel(s.node!.id)} as a guest: a public node, '
               'not yours'
         : s.connected
-        ? 'Connected to ${nodeName(s.node!.id)}, paired'
+        ? 'Connected to ${nodeLabel(s.node!.id)}, paired'
         : looking != null
         ? '$looking Texts wait on the phone until it is in reach.'
         : 'Not connected to a node: texts wait on the phone. '

@@ -3,6 +3,8 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../ble_link.dart';
+import '../link.dart';
 import '../session.dart';
 
 void say(BuildContext context, String s) =>
@@ -28,17 +30,70 @@ String ago(Duration d) {
   return '${d.inDays} days ago';
 }
 
-/// What a sent text's state means to the person.
+/// What a sent text's state means to the person, in words that claim no
+/// more than the app knows: once the node has taken a message the network
+/// says nothing more until the recipient confirms (spec "Addresses").
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
-  OutState.queued => 'queued',
-  OutState.writing => 'offering to the node',
-  OutState.taken => 'taken by the node',
+  OutState.queued => 'waiting on this phone',
+  OutState.writing => 'being handed to the node',
+  OutState.taken => 'sent into the network',
   OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => 'given back, wait over',
-    final w => 'given back, wait ${clock(w)}',
+    0 => 'network busy, try again now',
+    final w => 'network busy, try again in ${clock(w)}',
   },
   OutState.refused => 'refused: ${o.error}',
 };
+
+/// The states of a sent text, in the order it moves through them, each
+/// with its icon, for the sheet a tap on a state opens.
+const List<(IconData, String, String)> sentStates = [
+  (
+    Icons.schedule,
+    'Waiting on this phone',
+    'No node is linked, or the node is not ready for it yet.',
+  ),
+  (
+    Icons.sync,
+    'Being handed to the node',
+    'The phone is giving it to the node.',
+  ),
+  (
+    Icons.check,
+    'Sent into the network',
+    'The node has it and passes it on, hop by hop. The network gives no '
+        'further news: it does not say when it arrives.',
+  ),
+  (
+    Icons.done_all,
+    'Confirmed by the recipient',
+    'They tapped Got it, and their confirmation came back.',
+  ),
+  (
+    Icons.hourglass_bottom,
+    'Network busy',
+    'The network could not take it now and gave it back. Try again once '
+        'the wait it asked for is over.',
+  ),
+];
+
+/// Explains a sent text's states in words.
+Future<void> explainStates(BuildContext context) => showModalBottomSheet<void>(
+  context: context,
+  showDragHandle: true,
+  builder: (context) => SafeArea(
+    child: ListView(
+      shrinkWrap: true,
+      children: [
+        for (final (icon, title, words) in sentStates)
+          ListTile(
+            leading: Icon(icon),
+            title: Text(title),
+            subtitle: Text(words),
+          ),
+      ],
+    ),
+  ),
+);
 
 /// Whether a sent text's parts are all in one state, so that one part's
 /// marks stand for them all.
@@ -47,7 +102,7 @@ bool partsAgree(List<Outgoing> outs) => outs.every(
 );
 
 /// A sent text's parts' states in words when they differ: how many the
-/// node has taken, how many are acknowledged, and the first problem.
+/// node has taken, how many are confirmed, and the first problem.
 String partsLabel(Session s, List<Outgoing> outs) {
   final taken = outs.where((o) => o.acked || o.state == OutState.taken);
   final acked = outs.where((o) => o.acked);
@@ -59,8 +114,8 @@ String partsLabel(Session s, List<Outgoing> outs) {
       )
       .firstOrNull;
   return [
-    '${taken.length} of ${outs.length} taken',
-    if (acked.isNotEmpty) '${acked.length} acknowledged',
+    '${taken.length} of ${outs.length} sent',
+    if (acked.isNotEmpty) '${acked.length} confirmed',
     if (problem != null) 'part ${problem.part} ${stateLabel(s, problem)}',
   ].join(', ');
 }
@@ -121,6 +176,13 @@ class FetchButton extends StatelessWidget {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (context.mounted) say(context, news);
       });
+    }
+    if (app.me.fetchQueued) {
+      return const IconButton(
+        tooltip: 'Fetch waits for a node',
+        icon: Icon(Icons.schedule_send),
+        onPressed: null,
+      );
     }
     final waiting = s.fetchWaiting;
     if (waiting != null) {
@@ -224,7 +286,8 @@ Future<String?> askText(BuildContext context, String label, String initial) {
 /// waits for Bluetooth; null when there is none.
 String? lookingLine(AppModel app) {
   if (!app.searchOn || !app.bluetoothAllowed || app.connecting) return null;
-  final n = app.searchFor ?? 'a public node';
+  final p = app.searchFor;
+  final n = p == null ? 'a public node' : shownName(p);
   if (!app.bluetoothOn) return 'Bluetooth is off: turn it on to reach $n.';
   return app.scanning ? null : 'Looking for $n…';
 }
@@ -232,12 +295,100 @@ String? lookingLine(AppModel app) {
 /// The phone's pairing as a person reads it while not connected (spec
 /// "Phone link", Pairing).
 String pairedLine(Session s) {
-  final n = s.pairedWith;
-  if (n == null) {
+  final p = s.pairedWith;
+  if (p == null) {
     return 'Not paired with a node yet: the first connection pairs, by a '
         'code on the node\'s screen.';
   }
+  final n = shownName(p);
   return s.pairingLost
       ? '$n is no longer yours: another phone has paired with it.'
       : 'Paired with $n.';
+}
+
+/// Asks whether `n`, a public node, is the person's: true pairs with it,
+/// by the code its screen shows; false uses it as a guest; null decides
+/// nothing (spec "Phone link", Pairing, Public).
+Future<bool?> askIsYours(BuildContext context, FoundNode n) => showDialog<bool>(
+  context: context,
+  builder: (context) => SimpleDialog(
+    title: Text('Is ${shownName(n.name)} yours?'),
+    children: [
+      SimpleDialogOption(
+        onPressed: () => Navigator.pop(context, true),
+        child: const ListTile(
+          title: Text('Pair'),
+          subtitle: Text('You will type the code its screen shows.'),
+        ),
+      ),
+      SimpleDialogOption(
+        onPressed: () => Navigator.pop(context, false),
+        child: const ListTile(
+          title: Text('Just use it'),
+          subtitle: Text('It passes on your texts; it stays its owner\'s.'),
+        ),
+      ),
+    ],
+  ),
+);
+
+/// Says why bark wants Bluetooth before Android asks; whether to go on.
+Future<bool> whyBluetooth(BuildContext context) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bluetooth'),
+        content: const Text(
+          'bark sends and receives through a node near you, which it finds '
+          'and talks to over Bluetooth. Android asks you next.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    ) ??
+    false;
+
+/// Asks the person to confirm `action`, which `body` explains; whether
+/// they did.
+Future<bool> confirm(
+  BuildContext context,
+  String title,
+  String body,
+  String action,
+) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    ) ??
+    false;
+
+/// How the connected node fares, in words: still in its first rotation,
+/// or how many other nodes it hears (spec "Phone link", Status).
+String health(Session s) {
+  final left = s.bootLeftS;
+  if (left > 0) return 'Starting up, ${clock(left)}';
+  final n = s.status?.relays ?? 0;
+  if (n == 0) return 'Hears no other node yet: texts wait here';
+  return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
 }

@@ -105,14 +105,17 @@ class AppModel extends ChangeNotifier {
     this.notifier = const NoNotifier(),
     Releases? releases,
     Future<bool> Function()? bluetoothAllowed,
+    Future<void> Function()? requestBluetooth,
   }) : releases = releases ?? Releases(MemoryStore('release'), now: now),
-       _bluetoothAllowed = bluetoothAllowed ?? UniversalBle.hasPermissions {
+       _bluetoothAllowed = bluetoothAllowed ?? UniversalBle.hasPermissions,
+       _requestBluetooth = requestBluetooth ?? _askAndroid {
     this.releases.noted = session.note;
     messenger = Messenger(sodium, me, contacts, session, now);
     alerts = Alerts(notifier, contacts);
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     session.addListener(_nodeAddress);
+    session.addListener(_queuedFetch);
     session.addListener(_link);
     session.addListener(_search);
     addListener(_link);
@@ -195,8 +198,14 @@ class AppModel extends ChangeNotifier {
   /// Keeps the node's address for the card, and the home's.
   void _nodeAddress() {
     final a = session.address;
-    if (a == null) return;
-    if (a.toString() != me.nodeAddress?.toString()) me.setNodeAddress(a);
+    if (a == null || !session.connected) {
+      // The link ended: the card says when it was last up.
+      if (!session.connected && me.linked) unawaited(me.unlinked());
+      return;
+    }
+    if (!me.linked || a.toString() != me.nodeAddress?.toString()) {
+      unawaited(me.setNodeAddress(a));
+    }
     // The home is the node, not the spot: a fixed, awake node's address is
     // its stored place, which moves only at boot or when it turns fixed,
     // and the card and texts to the old one would miss it. A carried
@@ -233,7 +242,7 @@ class AppModel extends ChangeNotifier {
     final p = session.pairedWith;
     final boot = p == null || session.pairingLost || session.stopped
         ? null
-        : _looking(p, bluetooth: true);
+        : _looking(shownName(p), bluetooth: true);
     unawaited(alerts.atBoot(boot).catchError(_unnotified));
   }
 
@@ -247,13 +256,17 @@ class AppModel extends ChangeNotifier {
     if (n != null && !fake) {
       return (
         title: session.guest
-            ? 'Connected to ${nodeName(n.id)} as a guest'
-            : 'Connected to ${nodeName(n.id)}',
+            ? 'Connected to ${nodeLabel(n.id)} as a guest'
+            : 'Connected to ${nodeLabel(n.id)}',
         body: 'Texts arrive while the screen is off',
       );
     }
     if (!searchOn || !bluetoothAllowed) return null;
-    return _looking(searchFor ?? 'a public node', bluetooth: bluetoothOn);
+    final f = searchFor;
+    return _looking(
+      f == null ? 'a public node' : shownName(f),
+      bluetooth: bluetoothOn,
+    );
   }
 
   static Held _looking(String node, {required bool bluetooth}) => (
@@ -274,6 +287,39 @@ class AppModel extends ChangeNotifier {
     if (await why()) await notifier.ask();
   }
 
+  /// Asks, once, to use Bluetooth, as the app starts: without it there is
+  /// no node to send through. `why` shows the person why first and says
+  /// whether to go on.
+  Future<void> askForBluetooth(Future<bool> Function() why) async {
+    if (me.askedBluetooth || fake || !_searchStarted) return;
+    await checkBluetooth();
+    if (bluetoothAllowed) return;
+    await me.setAskedBluetooth();
+    if (!await why()) return;
+    try {
+      await _requestBluetooth();
+    } finally {
+      await checkBluetooth();
+    }
+  }
+
+  final Future<void> Function() _requestBluetooth;
+  static Future<void> _askAndroid() async {
+    await UniversalBle.requestPermissions();
+  }
+
+  /// The steps to a first text, each done or not, for the first screen's
+  /// card until all are done: a name for the card, a node, by the search
+  /// or paired, and a contact.
+  ({bool name, bool node, bool contact}) get gettingStarted => (
+    name: me.name.isNotEmpty,
+    node:
+        session.connected ||
+        session.pairedWith != null ||
+        me.nodeAddress != null,
+    contact: contacts.list.isNotEmpty,
+  );
+
   /// The connected node is the person's home.
   bool get atHome {
     final n = session.node;
@@ -290,8 +336,9 @@ class AppModel extends ChangeNotifier {
   Future<String> fetchNow() async {
     if (me.home == null) return 'No home node to fetch from';
     if (!session.connected) {
-      return 'Not connected to a node: a fetch is sent from another node '
-          'to your home, and the mail comes back to that node';
+      await me.setFetchQueued(true);
+      return 'The fetch waits for a node: it goes from the next node this '
+          'phone links to, and the mail comes back there';
     }
     if (atHome) {
       return 'Connected to your home node: your mail comes from its inbox '
@@ -309,6 +356,32 @@ class AppModel extends ChangeNotifier {
     await messenger.fetch(here);
     return 'Fetching your mail';
   }
+
+  /// Sends the queued fetch once a node is linked and has an address,
+  /// from it; at the home there is nothing to fetch, as the mail is in
+  /// its inbox here.
+  Future<void> _sendQueuedFetch() =>
+      _fetchSend ??= _sendFetch().whenComplete(() => _fetchSend = null);
+
+  Future<void> _sendFetch() async {
+    if (!me.fetchQueued || !session.connected) return;
+    if (atHome) {
+      await me.setFetchQueued(false);
+      return;
+    }
+    final here = session.address;
+    if (here == null || session.fetchWaiting != null || me.home == null) {
+      return;
+    }
+    await me.setFetchQueued(false);
+    session.fetchNews = null;
+    await messenger.fetch(here);
+    session.note('Fetch: sent, queued while no node was linked');
+  }
+
+  /// The queued fetch being sent, which a guest's errand waits for.
+  Future<void>? _fetchSend;
+  void _queuedFetch() => unawaited(_sendQueuedFetch());
 
   static const _oldHomeKeeps =
       'Your old home node still holds your mailbox key until you connect '
@@ -373,7 +446,7 @@ class AppModel extends ChangeNotifier {
   Future<void> scan() async {
     if (!bluetoothAllowed) {
       try {
-        await UniversalBle.requestPermissions();
+        await _requestBluetooth();
       } finally {
         await checkBluetooth();
       }
@@ -434,6 +507,7 @@ class AppModel extends ChangeNotifier {
     }, guest: true);
     if (!session.connected || !session.guest) return;
     if (session.guestRead) _guestChecked[n.name] = now();
+    await _sendQueuedFetch();
     await _sent();
     if (session.connected && session.guest) await session.disconnect();
   }
@@ -561,6 +635,7 @@ class AppModel extends ChangeNotifier {
   /// Whether the search has started, which only the app on a phone does:
   /// a test starts it to drive it.
   bool _searchStarted = false;
+  bool get searchStarted => _searchStarted;
 
   /// Bluetooth is on, by Android's word.
   bool bluetoothOn = false;
@@ -671,7 +746,13 @@ class AppModel extends ChangeNotifier {
         if (n != null && n.name == paired) {
           await _connectFound(n);
         } else if (n != null && _guestDue(n)) {
-          await _connectPublic(n);
+          switch (await _isYours(n)) {
+            case true:
+              await _connectFound(n);
+            case false:
+              await _connectPublic(n);
+            case null:
+          }
         }
         if (!_awake()) break;
         final left = lookRound - now().difference(start);
@@ -687,6 +768,28 @@ class AppModel extends ChangeNotifier {
       _searching = false;
     }
   }
+
+  /// Asks the person, by [askOwner], whether a public node the search is
+  /// about to join is theirs, while the phone has paired with none: the
+  /// advertisement cannot tell a node nobody has paired with from
+  /// another's (spec "Phone link", Public). True pairs, false joins as a
+  /// guest, and null leaves it for this round. Asked once a node; with no
+  /// screen to ask on, it joins as a guest, as before.
+  Future<bool?> _isYours(FoundNode n) async {
+    final ask = askOwner;
+    if (pairedNode != null || ask == null || _justUse.contains(n.name)) {
+      return false;
+    }
+    final a = await ask(n);
+    if (a == false) _justUse.add(n.name);
+    return a;
+  }
+
+  /// Asks the person whether a node is theirs; set by the first screen.
+  Future<bool?> Function(FoundNode n)? askOwner;
+
+  /// The public nodes the person said to just use.
+  final Set<String> _justUse = {};
 
   /// [lookingNow], with a new [_wake] when the search goes on: the last
   /// may have ended a scan or wait for a change that has passed.
@@ -752,6 +855,7 @@ class AppModel extends ChangeNotifier {
     _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();
     session.removeListener(_nodeAddress);
+    session.removeListener(_queuedFetch);
     session.removeListener(_link);
     session.removeListener(_search);
     fakeNode?.dispose();

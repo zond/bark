@@ -81,6 +81,11 @@ void main() {
     expect(app.contacts.isArchived(olena.key), isTrue);
     // The contact stays in the contacts.
     expect(app.contacts.byKey(olena.key)!.archived, isFalse);
+    // The Undo bar goes first: it lies over the line.
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
+    await t.ensureVisible(find.text('1 archived'));
+    await t.pumpAndSettle();
     await t.tap(find.text('1 archived'));
     await t.pumpAndSettle();
     expect(find.byType(ArchivedScreen), findsOneWidget);
@@ -131,7 +136,7 @@ void main() {
     await t.tap(find.text('Olena'));
     await t.pumpAndSettle();
     expect(find.byType(ThreadScreen), findsOneWidget);
-    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
     await t.tap(find.byType(PopupMenuButton<void Function()>));
     await t.pumpAndSettle();
     await t.tap(find.text('Archive contact'));
@@ -151,12 +156,12 @@ void main() {
     expect(find.text('from Olena'), findsOneWidget);
     expect(find.text('This conversation is archived.'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
-    expect(find.byTooltip('Acknowledge'), findsNothing);
+    expect(find.byTooltip('Tell the sender you read it'), findsNothing);
     expect(find.byType(PopupMenuButton<void Function()>), findsNothing);
     await t.tap(find.text('Unarchive'));
     await t.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
     expect(app.contacts.byKey(olena.key)!.archived, isFalse);
     await done(t, app);
   });

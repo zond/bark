@@ -30,6 +30,13 @@ class Me extends ChangeNotifier {
   /// The address of the node the phone is connected to, as last read.
   Address? nodeAddress;
 
+  /// When the phone was last linked to [nodeAddress], as `sent`, set as
+  /// the link begins and ends.
+  int nodeAt = 0;
+
+  /// The phone is linked to [nodeAddress] now.
+  bool linked = false;
+
   /// When the home was set or cleared, as `sent`.
   int cardTime = 0;
 
@@ -48,6 +55,16 @@ class Me extends ChangeNotifier {
   /// The app has asked the person to let it notify.
   bool askedToNotify = false;
 
+  /// The app has asked the person to let it use Bluetooth.
+  bool askedBluetooth = false;
+
+  /// The person has tapped Got it once, so the hint is no longer needed.
+  bool gotItHinted = false;
+
+  /// A fetch the person asked for while no node was linked: it goes out
+  /// from the next node the phone links to.
+  bool fetchQueued = false;
+
   /// The mailbox: the items its home last said it has not sent, and the
   /// rounds of its latest fetches, newest first.
   int remaining = 0;
@@ -61,7 +78,22 @@ class Me extends ChangeNotifier {
   String get key => hex(identity);
   List<String> get phrase => phraseOf(keys.seed);
 
-  PersonCard get card => PersonCard(identity, home, cardTime, name);
+  /// The card, with the node the phone is linked to, or was last.
+  PersonCard get card {
+    final n = nodeAddress;
+    final atHome = n != null && n.toString() == home?.toString();
+    return PersonCard(
+      identity,
+      home,
+      cardTime,
+      name,
+      now: atHome ? null : n,
+      // While linked, now, to the minute, the span within which a sender
+      // takes a place as fresh (`Contact.fresh`), so that the code shown
+      // does not change every second.
+      nowAt: linked ? sentOf(now()) ~/ 60 * 60 : nodeAt,
+    );
+  }
 
   /// The card to show or share: none until the person has a name, as a
   /// contact made from a nameless card is one its holder cannot tell
@@ -77,6 +109,8 @@ class Me extends ChangeNotifier {
       final name = j['name'] as String;
       final home = _address(j['home']);
       final nodeAddress = _address(j['nodeAddress']);
+      // Added with D162: absent, the link's time is not known.
+      final nodeAt = j['nodeAt'] as int? ?? 0;
       final cardTime = j['cardTime'] as int;
       // Added after the format's first version: before it, every changed
       // card was sent at once, so absent means sent.
@@ -85,6 +119,11 @@ class Me extends ChangeNotifier {
       final backedUp = j['backedUp'] as bool;
       // Added after the format's first version: absent means not asked.
       final askedToNotify = j['askedToNotify'] as bool? ?? false;
+      // Added after the format's first version: absent means not asked,
+      // none queued.
+      final askedBluetooth = j['askedBluetooth'] as bool? ?? false;
+      final fetchQueued = j['fetchQueued'] as bool? ?? false;
+      final gotItHinted = j['gotItHinted'] as bool? ?? false;
       // Added after the format's first version: absent means none told.
       final remaining = j['remaining'] as int? ?? 0;
       final rounds = (j['rounds'] as List).cast<int>().toList();
@@ -93,11 +132,15 @@ class Me extends ChangeNotifier {
         this.name = name;
         this.home = home;
         this.nodeAddress = nodeAddress;
+        this.nodeAt = nodeAt;
         this.cardTime = cardTime;
         this.cardSentTime = cardSentTime;
         this.lastSent = lastSent;
         this.backedUp = backedUp;
         this.askedToNotify = askedToNotify;
+        this.askedBluetooth = askedBluetooth;
+        this.fetchQueued = fetchQueued;
+        this.gotItHinted = gotItHinted;
         this.remaining = remaining;
         this.rounds.addAll(rounds);
       };
@@ -119,11 +162,15 @@ class Me extends ChangeNotifier {
     'name': name,
     'home': home?.toString(),
     'nodeAddress': nodeAddress?.toString(),
+    'nodeAt': nodeAt,
     'cardTime': cardTime,
     'cardSentTime': cardSentTime,
     'lastSent': lastSent,
     'backedUp': backedUp,
     'askedToNotify': askedToNotify,
+    'askedBluetooth': askedBluetooth,
+    'fetchQueued': fetchQueued,
+    'gotItHinted': gotItHinted,
     'remaining': remaining,
     'rounds': rounds,
   });
@@ -161,6 +208,23 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
+  Future<void> setAskedBluetooth() async {
+    askedBluetooth = true;
+    await _changed();
+  }
+
+  Future<void> setGotItHinted() async {
+    if (gotItHinted) return;
+    gotItHinted = true;
+    await _changed();
+  }
+
+  Future<void> setFetchQueued(bool v) async {
+    if (fetchQueued == v) return;
+    fetchQueued = v;
+    await _changed();
+  }
+
   /// Replaces the identity by the one of `seed`, from its 12 words.
   Future<void> restore(Uint8List seed) async {
     keys = Keys.fromSeed(sodium, seed);
@@ -189,8 +253,16 @@ class Me extends ChangeNotifier {
 
   /// The connected node's address: where the person writes from.
   Future<void> setNodeAddress(Address a) async {
-    if (a.toString() == nodeAddress?.toString()) return;
     nodeAddress = a;
+    nodeAt = sentOf(now());
+    linked = true;
+    await _changed();
+  }
+
+  /// The link to the node ended now.
+  Future<void> unlinked() async {
+    linked = false;
+    nodeAt = sentOf(now());
     await _changed();
   }
 

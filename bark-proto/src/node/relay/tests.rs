@@ -3563,6 +3563,54 @@ fn the_application_asks_and_hears_the_answer() {
     assert_eq!(told, [crate::event::AppEvent::Status { from: s, status }]);
 }
 
+/// An ask whose channel is busy at every check is given up, and says so,
+/// so a bench can tell a give-up from a frame lost on the air
+/// (spec "Neighbour status").
+#[test]
+fn a_status_frame_on_a_busy_channel_is_given_up() {
+    let (mut r, mut now, _, s) = with_two_neighbours();
+    let busy = r.neighbours.get(s).unwrap().home;
+    let mut pending = Vec::new();
+    let ask = AppCommand::Ask { neighbour: s };
+    r.handle(Event::App(ask), now, &mut |x| pending.push(x));
+    let until = now + Duration::from_secs(5);
+    let (mut sent, mut traces) = (Vec::new(), Vec::new());
+    loop {
+        let event = match pending.pop() {
+            Some(Action::Lbt(channel)) => Event::LbtDone {
+                channel,
+                busy: channel == busy,
+                dbm: -130,
+            },
+            Some(Action::Transmit(f)) => {
+                sent.push(f);
+                now += mac::airtime(&f);
+                Event::TxDone
+            }
+            Some(Action::Trace(t)) => {
+                traces.push(t);
+                continue;
+            }
+            Some(_) => continue,
+            None => match r.next_wakeup() {
+                Some(t) if t <= until => {
+                    now = now.max(t);
+                    Event::Wakeup
+                }
+                _ => break,
+            },
+        };
+        r.handle(event, now, &mut |a| pending.push(a));
+    }
+    let sent: Vec<_> = sent.into_iter().map(|f| (now, f)).collect();
+    assert!(status_frames(&sent).is_empty());
+    let given_up = Trace::StatusGivenUp {
+        to: s,
+        answer: false,
+    };
+    assert_eq!(traces.iter().filter(|&&t| t == given_up).count(), 1);
+}
+
 /// The battery as the status tells it: USB on external power, else the
 /// charge of the last reading, not read before the first, low at or
 /// below the low level.

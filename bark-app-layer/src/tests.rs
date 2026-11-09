@@ -35,8 +35,8 @@ fn the_sizes_are_the_notes() {
     assert_eq!(seal::NOTHING_NEW_LEN, 18);
     assert_eq!(Fetch::LEN, 60);
     assert_eq!(card::FIXED_LEN, 38);
-    assert_eq!(card::MAX_LEN, 83);
-    assert_eq!(card::MAX_TEXT_LEN, 5 + 133);
+    assert_eq!(card::MAX_LEN, 100);
+    assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
     // The longest text: 204 less the box, the header and the record's type.
     assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 156);
     // A part's: one byte more, its number and the count.
@@ -329,14 +329,49 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     let c = Card {
         identity: f.alice.identity,
         home: Some(f.home),
+        now: None,
         time: 42,
         name: "Ім'я",
     };
     let mut b = [0u8; card::MAX_LEN];
     let n = c.encode(&mut b).unwrap();
     assert_eq!(n, 51 + 7);
-    assert_eq!(&b[..2], &[2, 1]);
+    assert_eq!(&b[..2], &[3, 1]);
     assert_eq!(Card::decode(&b[..n]), Ok(c));
+    // A card of version 2 reads as one without the node's address.
+    b[0] = 2;
+    assert_eq!(Card::decode(&b[..n]), Ok(c));
+    let away = card::Linked {
+        address: f.away,
+        at: 0x0102_0304,
+    };
+    let both = Card {
+        now: Some(away),
+        ..c
+    };
+    let n = both.encode(&mut b).unwrap();
+    assert_eq!(n, 68 + 7);
+    assert_eq!(b[1], 3);
+    assert_eq!(&b[51..64], &f.away.encode());
+    assert_eq!(&b[64..68], &[1, 2, 3, 4]);
+    assert_eq!(Card::decode(&b[..n]), Ok(both));
+    // Version 2 knew no node's address.
+    b[0] = 2;
+    assert_eq!(Card::decode(&b[..n]), Err(Error::Malformed));
+    let temporary = Card {
+        home: None,
+        now: Some(away),
+        ..c
+    };
+    let n = temporary.encode(&mut b).unwrap();
+    assert_eq!(n, 55 + 7);
+    // A node flag without room for the time.
+    assert_eq!(
+        Card::decode(&b[..card::FIXED_LEN + 15]),
+        Err(Error::Malformed)
+    );
+    assert_eq!(b[1], 2);
+    assert_eq!(Card::decode(&b[..n]), Ok(temporary));
     let homeless = Card { home: None, ..c };
     let n = homeless.encode(&mut b).unwrap();
     assert_eq!(n, 38 + 7);
@@ -363,6 +398,7 @@ fn a_card_that_is_not_one_is_refused() {
     let long = Card {
         identity: f.alice.identity,
         home: Some(f.home),
+        now: None,
         time: 0,
         name: "a name of more than thirty-two bytes",
     };
@@ -372,7 +408,7 @@ fn a_card_that_is_not_one_is_refused() {
     let short = Card { name: "", ..long };
     let mut b = [0u8; card::MAX_LEN];
     let n = short.encode(&mut b).unwrap();
-    for (at, v) in [(0, 1), (1, 2)] {
+    for (at, v) in [(0, 1), (0, 4), (1, 4)] {
         let mut bad = b;
         bad[at] = v;
         assert_eq!(Card::decode(&bad[..n]), Err(Error::Malformed), "{at}");
@@ -415,6 +451,10 @@ fn records_read_back_in_order() {
     let c = Card {
         identity: f.bob.identity,
         home: None,
+        now: Some(card::Linked {
+            address: f.away,
+            at: 1,
+        }),
         time: 1,
         name: "",
     };
@@ -435,7 +475,7 @@ fn records_read_back_in_order() {
     w.push(&t).unwrap();
     assert_eq!(w.push(&t), Err(Error::Malformed));
     let n = w.finish();
-    assert_eq!(n, 5 + 13 + 5 + 2 + 38 + 4);
+    assert_eq!(n, 5 + 13 + 5 + 2 + 38 + 17 + 4);
     let (got, r) = plain::read(&b[..n]).unwrap();
     assert_eq!(got, h);
     let rs: Vec<_> = r.collect();

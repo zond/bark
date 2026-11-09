@@ -26,7 +26,10 @@ class ContactsScreen extends StatelessWidget {
           if (cs.list.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text('No contacts yet.'),
+              child: Text(
+                'No contacts yet. Ask them to open bark and tap the QR '
+                'button, then tap Add contact and scan their card.',
+              ),
             ),
           for (final c in cs.active) _row(context, c),
           if (archived > 0)
@@ -66,12 +69,13 @@ class ContactsScreen extends StatelessWidget {
     child: ListTile(
       leading: const CircleAvatar(child: Icon(Icons.person)),
       title: Text(c.name),
-      subtitle: Text(
-        !c.verified
-            ? 'not verified yet'
-            : c.card.home?.toString() ?? 'no home node',
-        style: const TextStyle(fontFamily: 'monospace'),
-      ),
+      subtitle: c.unverified
+          ? const Text('Not verified yet')
+          : c.card.temporary
+          ? TemporaryLine(
+              c.placeAt == null ? null : app.now().difference(c.placeAt!),
+            )
+          : const Text('Has a home node'),
       onTap: () => Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => ThreadScreen(app, c.key)),
       ),
@@ -82,6 +86,32 @@ class ContactsScreen extends StatelessWidget {
 /// Adds the contact of a scanned card and opens its thread at once, so
 /// that the person sees where it went and can write; back from it leads
 /// to the conversations.
+/// The mark of a temporary card in a contact's row, with how long ago
+/// they were last known at their node (roadmap D162).
+class TemporaryLine extends StatelessWidget {
+  final Duration? age;
+  const TemporaryLine(this.age, {super.key});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      const Icon(
+        Icons.hourglass_empty,
+        size: 16,
+        semanticLabel: 'Temporary card',
+      ),
+      const SizedBox(width: 4),
+      Flexible(
+        child: Text(
+          age == null
+              ? 'temporary: no node known yet'
+              : 'temporary: at the node they used ${ago(age!)}',
+        ),
+      ),
+    ],
+  );
+}
+
 Future<void> openScanned(
   BuildContext context,
   AppModel app,

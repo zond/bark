@@ -24,13 +24,18 @@ import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
+import 'package:bark_app/ui/debug_screen.dart';
 import 'package:bark_app/ui/conversations_screen.dart';
 import 'package:bark_app/ui/settings_screen.dart';
 import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:sodium/sodium.dart';
+
+/// The one check's words: no news from the network past it.
+const sentTip = 'Sent into the network; no further news until they confirm';
 
 void main() {
   late Sodium sodium;
@@ -52,16 +57,27 @@ void main() {
     final app = await model(t);
     await t.pumpWidget(BarkApp(app));
     expect(find.textContaining('No conversations yet'), findsOneWidget);
-    expect(find.textContaining('12 backup words'), findsOneWidget);
+    // No contact yet, so nobody to lose: no backup banner.
+    expect(find.textContaining('these words'), findsNothing);
 
-    // Settings: the fake node, and the backup words.
+    // Settings: the demo at the bottom, and the backup words.
     await t.tap(find.textContaining('Not connected'));
     await t.pumpAndSettle();
-    await t.tap(find.text('Fake node'));
+    await t.scrollUntilVisible(
+      find.text('Try without a node (demo)'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Try without a node (demo)'));
     await t.pump();
+    await t.scrollUntilVisible(
+      find.text('Connect'),
+      -100,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.tap(find.text('Connect'));
     await t.pump();
-    expect(find.text('bark-fa4e00000001'), findsOneWidget);
+    expect(find.text('ID FA4E00000001'), findsOneWidget);
     await t.scrollUntilVisible(
       find.text('Show my words'),
       100,
@@ -77,7 +93,7 @@ void main() {
     await t.pumpAndSettle();
     expect(app.me.backedUp, isTrue);
     await t.scrollUntilVisible(
-      find.text('Map point'),
+      find.text('Node\'s place'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
@@ -98,7 +114,7 @@ void main() {
     await t.pump();
     await t.pump();
     expect(find.text('hello'), findsOneWidget);
-    expect(find.byTooltip('Taken by the node'), findsOneWidget);
+    expect(find.byTooltip(sentTip), findsOneWidget);
     await t.pump(FakeNode.echoAfter + const Duration(seconds: 1));
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
@@ -113,16 +129,20 @@ void main() {
     final mark = find.byWidgetPredicate(
       (w) => w is Icon && w.icon == Icons.done_all && w.semanticLabel != null,
     );
-    final taken = find.byTooltip('Taken by the node');
-    final button = find.byTooltip('Acknowledge');
+    final taken = find.byTooltip(sentTip);
+    final button = find.byTooltip('Tell the sender you read it');
     expect(inBubble('Echo: hello', button), findsOneWidget);
     expect(inBubble('Echo: hello', mark), findsNothing);
     expect(inBubble('hello', mark), findsNothing);
     expect(inBubble('hello', taken), findsOneWidget);
-    // The button keeps the small line one line of small text tall.
-    Finder line(Finder f) =>
-        find.ancestor(of: f, matching: find.byType(Row)).first;
-    final withButton = t.getSize(line(inBubble('Echo: hello', button))).height;
+    // A labelled chip with a tap target of 48 dp, and a hint, once.
+    expect(inBubble('Echo: hello', find.text('Got it')), findsOneWidget);
+    expect(
+      t.getSize(inBubble('Echo: hello', find.byType(ActionChip))).height,
+      greaterThanOrEqualTo(48),
+    );
+    const hint = 'Tap Got it so the sender sees you read it.';
+    expect(find.text(hint), findsOneWidget);
     app.session.outbox.singleWhere((o) => o.body == 'hello').acked = true;
     await t.tap(inBubble('Echo: hello', button));
     await t.pump();
@@ -135,8 +155,17 @@ void main() {
       (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
     );
     expect(inBubble('Echo: hello', check), findsOneWidget);
-    final withCheck = t.getSize(line(inBubble('Echo: hello', check))).height;
-    expect(withButton, closeTo(withCheck, 1));
+    expect(find.text(hint), findsNothing);
+    // A tap on a state explains them all.
+    await t.tap(inBubble('hello', mark));
+    await t.pumpAndSettle();
+    expect(find.text('Confirmed by the recipient'), findsOneWidget);
+    expect(
+      find.textContaining('The network gives no further news'),
+      findsOneWidget,
+    );
+    await t.tapAt(Offset.zero);
+    await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();
 
@@ -144,26 +173,54 @@ void main() {
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
-    expect(find.textContaining('only after you write to them'), findsOneWidget);
+    // No home: a temporary card, marked so on the code.
+    expect(find.byType(TemporaryFrame), findsOneWidget);
+    expect(find.text('TEMPORARY'), findsOneWidget);
+    // The code first, then Share and the rest; the hex in Details.
+    expect(t.getTopLeft(find.byType(QrImageView)).dy, lessThan(120));
     await t.scrollUntilVisible(
-      find.text('Scan their card'),
+      find.text('Share'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
+    expect(find.textContaining('Temporary card:'), findsOneWidget);
     final mine = app.me.card;
     expect(mine.home, isNull);
+    expect(find.text(mine.toText()), findsNothing);
+    await t.scrollUntilVisible(
+      find.text('Details'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Details'));
+    await t.pumpAndSettle();
     await t.scrollUntilVisible(
       find.text(mine.toText()),
       100,
       scrollable: find.byType(Scrollable).first,
     );
+    expect(find.text(app.me.key), findsOneWidget);
+    // What Share hands the share sheet: a PNG of the code.
+    final png = (await t.runAsync(() => qrPng(mine.toText())))!;
+    expect(png.sublist(0, 4), [0x89, 0x50, 0x4e, 0x47]);
     await t.pageBack();
     await t.pumpAndSettle();
 
+    // Debug is at the bottom of Settings.
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Settings'));
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(
+      find.text('Debug'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.ensureVisible(find.text('Debug'));
     await t.pumpAndSettle();
     await t.tap(find.text('Debug'));
     await t.pumpAndSettle();
+    expect(find.byType(DebugScreen), findsOneWidget);
     expect(find.text('fa4e00000001'), findsOneWidget);
     expect(find.text('Identity'), findsOneWidget);
     await t.scrollUntilVisible(
@@ -256,16 +313,242 @@ void main() {
     expect(find.byIcon(Icons.send), findsOneWidget);
     expect(app.contacts.list.single.key, card.key);
 
-    // Back leads to the conversations; the contact is in Contacts.
+    // Back leads to the conversations; the contact is in Contacts, a
+    // button of its own and no longer in the menu.
     await t.pageBack();
     await t.pumpAndSettle();
     expect(find.byType(ConversationsScreen), findsOneWidget);
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
     await t.pumpAndSettle();
-    await t.tap(find.text('Contacts'));
+    expect(find.text('Contacts'), findsNothing);
+    expect(find.text('Nearby nodes'), findsOneWidget);
+    await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
+    await t.tap(find.byTooltip('Contacts'));
+    await t.pumpAndSettle();
+    expect(find.byType(ContactsScreen), findsOneWidget);
     expect(find.text(unnamed), findsOneWidget);
 
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('Get started: three steps ticked as they are done, then gone', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    await t.pump();
+    expect(find.text('Get started'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsNothing);
+    await t.runAsync(() => app.me.setName('Ana'));
+    await t.pump();
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(List.filled(32, 5), null, 1, 'Olena')),
+    );
+    await t.pump();
+    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+    expect(find.text('Get started'), findsOneWidget);
+    await app.connectFake();
+    await t.pump();
+    expect(find.text('Get started'), findsNothing);
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the home: a node without a place offers the phone\'s '
+      'location; a sleepy one cannot be made home', (t) async {
+    final app = await model(t);
+    await app.connectFake();
+    final fake = app.fakeNode!
+      ..fixed = false
+      ..changed();
+    await t.pump();
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.scrollUntilVisible(
+      find.text('This node has no place yet.'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Use this phone\'s location'), findsOneWidget);
+    expect(find.text('Make this node my home'), findsNothing);
+
+    fake
+      ..fixed = true
+      ..sleepy = true
+      ..changed();
+    await t.pump();
+    expect(find.text('This node has no place yet.'), findsNothing);
+    final make = find.widgetWithText(FilledButton, 'Make this node my home');
+    expect(t.widget<FilledButton>(make).enabled, isFalse);
+    expect(
+      find.text('A home must be a node that stays on power at a fixed place.'),
+      findsOneWidget,
+    );
+    fake
+      ..sleepy = false
+      ..changed();
+    await t.pump();
+    expect(t.widget<FilledButton>(make).enabled, isTrue);
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the backup banner shows once there is a contact, and lands '
+      'on the backup, tinted for a moment', (t) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    const banner = 'Write down your 12 backup words';
+    expect(find.text(banner), findsNothing);
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(List.filled(32, 5), null, 1, 'Olena')),
+    );
+    await t.pump();
+    expect(find.text(banner), findsOneWidget);
+    expect(
+      find.textContaining('the only way to keep your contacts'),
+      findsOneWidget,
+    );
+    await t.tap(find.text(banner));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 100));
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    final words = find.text('Show my words');
+    Color? tint() {
+      final c = find.ancestor(
+        of: words,
+        matching: find.byType(AnimatedContainer),
+      );
+      final box = t.renderObject<RenderDecoratedBox>(
+        find.descendant(of: c.first, matching: find.byType(DecoratedBox)).first,
+      );
+      return (box.decoration as BoxDecoration).color;
+    }
+
+    // Tinted at first, the tint gone after the fade, and in view.
+    expect(tint()!.a, greaterThan(0));
+    await t.pumpAndSettle();
+    expect(tint()!.a, 0);
+    final view = t.view.physicalSize / t.view.devicePixelRatio;
+    final at = t.getRect(words);
+    expect(at.top, greaterThanOrEqualTo(0));
+    expect(at.bottom, lessThanOrEqualTo(view.height));
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('Remove contact and Restore from words ask first', (t) async {
+    final app = await model(t);
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), null, 1, 'Olena'),
+      'Olena',
+    );
+    await t.runAsync(() => app.contacts.put(olena));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    Future<void> remove(String choice) async {
+      await t.tap(find.byType(PopupMenuButton<void Function()>));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Remove contact'));
+      await t.pumpAndSettle();
+      expect(find.text('Remove Olena?'), findsOneWidget);
+      await t.tap(find.text(choice));
+      await t.runAsync(() => Future<void>.delayed(Duration.zero));
+      await t.pumpAndSettle();
+    }
+
+    await remove('Cancel');
+    expect(app.contacts.byKey(olena.key), isNotNull);
+    await remove('Remove');
+    expect(app.contacts.byKey(olena.key), isNull);
+
+    final key = app.me.key;
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.scrollUntilVisible(
+      find.text('Restore from words'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.ensureVisible(find.text('Restore from words'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Restore from words'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('cannot reach the new one'), findsOneWidget);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(find.text('Your 12 words'), findsNothing);
+    expect(app.me.key, key);
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a temporary contact: marked with its age until a card with a '
+      'home; written to at its node, fresh without asking, old after saying '
+      'so', (t) async {
+    final app = await model(t);
+    final home = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final node = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
+    final id = List.filled(32, 5);
+    PersonCard card(Address? h, int time, Duration linked) => PersonCard(
+      id,
+      h,
+      time,
+      'Olena',
+      now: node,
+      nowAt: sentOf(DateTime.now().subtract(linked)),
+    );
+    await t.runAsync(
+      () => app.contacts.add(card(null, 1, const Duration(minutes: 20))),
+    );
+    await t.pumpWidget(MaterialApp(home: ContactsScreen(app)));
+    expect(
+      find.text('temporary: at the node they used 20 min ago'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+
+    // Old: the dialog says so, and its one choice sends there.
+    await t.runAsync(() => app.me.setNodeAddress(home));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, hex(id))));
+    await t.enterText(find.byType(TextField), 'hi');
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    expect(
+      find.text(
+        'Last seen there 20 min ago: it keeps their mail only while they '
+        'come back',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Their home mailbox'), findsNothing);
+    await t.tap(find.text('Where Olena was 20 min ago'));
+    await t.pumpAndSettle();
+    final out = app.session.outbox.single;
+    expect(out.dst.toString(), node.toString());
+    expect(out.toward, Toward.there);
+
+    // Fresh: there without asking.
+    await t.runAsync(
+      () => app.contacts.add(card(null, 1, const Duration(seconds: 10))),
+    );
+    await t.pump();
+    await t.enterText(find.byType(TextField), 'again');
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    expect(find.text('Send to'), findsNothing);
+    expect(app.session.outbox.last.body, 'again');
+    expect(app.session.outbox.last.dst.toString(), node.toString());
+
+    await t.runAsync(
+      () => app.contacts.add(card(home, 2, const Duration(seconds: 10))),
+    );
+    await t.pumpWidget(MaterialApp(home: ContactsScreen(app)));
+    expect(find.text('Has a home node'), findsOneWidget);
+    expect(find.byIcon(Icons.hourglass_empty), findsNothing);
     await t.pumpWidget(const SizedBox());
     app.dispose();
   });
@@ -292,6 +575,13 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('Where Olena was 1 h ago'), findsOneWidget);
       expect(find.text('Their home mailbox'), findsOneWidget);
+      expect(find.text('Fast if they are still near there'), findsOneWidget);
+      expect(
+        find.text('Waits at their home until they fetch it'),
+        findsOneWidget,
+      );
+      // With a home there is a choice, so no warning.
+      expect(find.textContaining('Last seen there'), findsNothing);
       await t.tap(find.text(choice));
       await t.pumpAndSettle();
     }
@@ -342,11 +632,27 @@ void main() {
     expect(find.byTooltip(unverifiedText), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Unverified, the line above the thread says it of every text.
-    await t.runAsync(() => app.contacts.put(olena.copyWith(verified: false)));
+    // Unverified and made from a first message, the line above the
+    // thread says it of every text.
+    await t.runAsync(
+      () => app.contacts.put(
+        olena.copyWith(verified: false, cameByMessage: true),
+      ),
+    );
     await t.pump();
     expect(find.byTooltip(unverifiedText), findsNothing);
     expect(find.textContaining('Not verified yet'), findsOneWidget);
+
+    // Unverified but from a card the person scanned: no line, as the card
+    // came from its holder's hand; a first message is still marked.
+    await t.runAsync(
+      () => app.contacts.put(
+        olena.copyWith(verified: false, cameByMessage: false),
+      ),
+    );
+    await t.pump();
+    expect(find.textContaining('Not verified yet'), findsNothing);
+    expect(find.byTooltip(unverifiedText), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();
@@ -393,7 +699,7 @@ void main() {
     final out = app.session.outbox;
     expect(out.map((o) => o.part), [1, 2]);
     expect(find.text(long), findsOneWidget);
-    expect(find.byTooltip('Queued'), findsOneWidget);
+    expect(find.byTooltip('Waiting on this phone'), findsOneWidget);
 
     Future<void> redraw() async {
       app.session.dismissNotice();
@@ -403,17 +709,17 @@ void main() {
     // They differ: in words.
     out[0].state = OutState.taken;
     await redraw();
-    expect(find.text('1 of 2 taken'), findsOneWidget);
-    expect(find.byTooltip('Queued'), findsNothing);
+    expect(find.text('1 of 2 sent'), findsOneWidget);
+    expect(find.byTooltip('Waiting on this phone'), findsNothing);
     out[1].state = OutState.taken;
     await redraw();
-    expect(find.byTooltip('Taken by the node'), findsOneWidget);
+    expect(find.byTooltip(sentTip), findsOneWidget);
     final both = find.byWidgetPredicate(
       (w) => w is Icon && w.icon == Icons.done_all,
     );
     out[0].acked = true;
     await redraw();
-    expect(find.text('2 of 2 taken, 1 acknowledged'), findsOneWidget);
+    expect(find.text('2 of 2 sent, 1 confirmed'), findsOneWidget);
     expect(both, findsNothing);
     out[1].acked = true;
     await redraw();
@@ -439,17 +745,17 @@ void main() {
     await t.runAsync(() => receive(7000, 1, 'one '));
     await t.pump();
     expect(find.textContaining('part 2 of 3 not yet here'), findsOneWidget);
-    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
     for (final r in app.session.received) {
       r.acked = true;
     }
     await redraw();
-    expect(find.byTooltip('Acknowledge'), findsNothing);
+    expect(find.byTooltip('Tell the sender you read it'), findsNothing);
     await t.runAsync(() => receive(7001, 2, 'two '));
     await t.pump();
     expect(find.textContaining('not yet here'), findsNothing);
     expect(find.text('one two three'), findsOneWidget);
-    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();
@@ -477,16 +783,14 @@ void main() {
     final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
     await app.me.setHome(away);
     await t.pump();
-    await fetch('Not connected to a node: a fetch is sent from another node');
+    // Queued until a node links, then sent from it to the home.
+    await fetch('The fetch waits for a node');
     expect(app.session.outbox, isEmpty);
-
-    // Another node: the fetch goes to the home.
+    expect(find.byTooltip('Fetch waits for a node'), findsOneWidget);
     await app.connectFake();
     await t.pump();
-    await t.tap(find.byTooltip('Fetch my mail'));
     await t.pump();
-    await t.pump();
-    expect(find.text('Fetching your mail'), findsOneWidget);
+    expect(app.me.fetchQueued, isFalse);
     final f = app.session.outbox.where((o) => o.kind == OutKind.fetch);
     expect(f.single.dst.toString(), away.toString());
 
@@ -550,6 +854,9 @@ void main() {
         100,
         scrollable: find.byType(Scrollable).first,
       );
+      // Built below the screen's edge already, it is found, not shown.
+      await t.ensureVisible(find.text(button));
+      await t.pumpAndSettle();
       await t.tap(find.text(button));
       await t.pumpAndSettle();
       expect(find.textContaining(told), findsOneWidget);
@@ -639,13 +946,10 @@ void main() {
     expect(find.textContaining('Not paired with a node yet'), findsOneWidget);
     await app.connectFake();
     await t.pump();
-    expect(find.text('Connected to bark-fa4e00000001, paired'), findsOneWidget);
+    expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
     await app.session.disconnect();
     await t.pump();
-    expect(
-      find.textContaining('Paired with bark-fa4e00000001.'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Paired with ID FA4E00000001.'), findsOneWidget);
 
     // The node takes another phone's pairing; this one learns at its next
     // connection, and may leave it so.
@@ -660,7 +964,7 @@ void main() {
     expect(app.session.connected, isFalse);
     expect(
       find.text(
-        'bark-fa4e00000001 is no longer yours: another phone has paired '
+        'ID FA4E00000001 is no longer yours: another phone has paired '
         'with it.',
       ),
       findsOneWidget,
@@ -674,6 +978,10 @@ void main() {
     expect(app.session.connected, isTrue);
     expect(app.session.pairingLost, isFalse);
     expect(find.textContaining('Connected and paired'), findsOneWidget);
+    // The node's health in words, not the link's MTU: the fake is in its
+    // first rotation.
+    expect(find.textContaining('Starting up, '), findsOneWidget);
+    expect(find.textContaining('MTU'), findsNothing);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
@@ -690,6 +998,12 @@ void main() {
     await t.pump();
     const public = 'Public: serve phones without pairing';
     expect(find.text(public), findsOneWidget);
+    // The home node second, right under the node.
+    final ys = [
+      for (final h in ['Node', 'Home node', 'Firmware'])
+        t.getTopLeft(find.text(h, skipOffstage: false)).dy,
+    ];
+    expect(ys, [...ys]..sort());
     // On by default; the owner turns it off.
     final toggle = find.widgetWithText(SwitchListTile, public);
     expect(t.widget<SwitchListTile>(toggle).value, isTrue);
@@ -708,12 +1022,12 @@ void main() {
     expect(find.textContaining('Connected as a guest'), findsOneWidget);
     expect(find.text('Update firmware'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
-    expect(find.text('Map point'), findsNothing);
+    expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));
     await t.pump();
     expect(
       find.text(
-        'Connected to bark-fa4e00000001 as a guest: a public node, not yours',
+        'Connected to ID FA4E00000001 as a guest: a public node, not yours',
       ),
       findsOneWidget,
     );

@@ -5,6 +5,7 @@
 // node, their backup words, and the node's map point.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:geolocator_platform_interface/geolocator_platform_interface.dart'
     show GeolocatorPlatform, LocationPermission;
 
@@ -14,11 +15,16 @@ import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
 import 'common.dart';
+import 'debug_screen.dart';
 import 'update_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   final AppModel app;
-  const SettingsScreen(this.app, {super.key});
+
+  /// Opened to act on the backup: scrolled to it, which shows tinted for
+  /// a moment and is announced.
+  final bool toBackup;
+  const SettingsScreen(this.app, {this.toBackup = false, super.key});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -35,11 +41,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool? _exempt;
   late final AppLifecycleListener _life;
 
+  /// The backup's place in the list, to scroll to.
+  final _backupKey = GlobalKey();
+
+  /// The backup shows tinted, fading once it is in view.
+  bool _backupLit = false;
+
+  /// How long the tint takes to fade: long enough to be seen after the
+  /// scroll, short enough not to stay in the way.
+  static const _fade = Duration(milliseconds: 1500);
+
   @override
   void initState() {
     super.initState();
     _readExempt();
     _life = AppLifecycleListener(onResume: _readExempt);
+    if (widget.toBackup) {
+      _backupLit = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showBackup());
+    }
+  }
+
+  Future<void> _showBackup() async {
+    final c = _backupKey.currentContext;
+    if (c == null) return;
+    await Scrollable.ensureVisible(
+      c,
+      duration: const Duration(milliseconds: 300),
+      alignment: 0.1,
+    );
+    if (!mounted) return;
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      'Backup: write down your 12 words',
+      TextDirection.ltr,
+    );
+    setState(() => _backupLit = false);
   }
 
   Future<void> _readExempt() async {
@@ -122,7 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('This node is no longer yours'),
         content: Text(
-          'Another phone has paired with ${e.node} since, and the node '
+          'Another phone has paired with ${shownName(e.node)} since, and the node '
           'keeps one phone. To make it yours again, pair again at the '
           'node: it shows a six-digit code on its screen, and the phone '
           'asks for it.',
@@ -144,7 +181,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _connectOnce(pair);
   }
 
-  Future<void> _phoneLocation() async {
+  /// The phone's position, after asking for location if needed; null,
+  /// with the person told why, without one.
+  Future<Position?> _phonePosition() async {
     final g = GeolocatorPlatform.instance;
     try {
       var p = await g.checkPermission();
@@ -152,14 +191,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (p == LocationPermission.denied ||
           p == LocationPermission.deniedForever) {
         if (mounted) say(context, 'Location permission denied');
-        return;
+        return null;
       }
       final here = await g.getCurrentPosition();
-      lat.text = here.latitude.toStringAsFixed(6);
-      lon.text = here.longitude.toStringAsFixed(6);
+      return Position.fromDegrees(here.latitude, here.longitude);
     } catch (e) {
       if (mounted) say(context, 'No location: $e');
+      return null;
     }
+  }
+
+  Future<void> _phoneLocation() async {
+    final p = await _phonePosition();
+    if (p == null) return;
+    lat.text = p.latDeg.toStringAsFixed(6);
+    lon.text = p.lonDeg.toStringAsFixed(6);
+  }
+
+  /// Gives the node the phone's position as its place, so that it has an
+  /// address to be a home at.
+  Future<void> _placeHere() async {
+    final p = await _phonePosition();
+    if (p != null) await app.session.setMapPoint(p);
   }
 
   Future<void> _setMapPoint() async {
@@ -179,29 +232,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(title: const Text('Settings')),
       body: SafeArea(
         top: false,
-        child: ListView(
+        // Built whole, not lazily, so that the backup can be scrolled to.
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-          children: [
-            NoticeCard(app),
-            ..._connection(),
-            ..._public(),
-            ..._firmware(),
-            ..._battery(),
-            _heading('My name'),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(app.me.name.isEmpty ? 'not set' : app.me.name),
-              subtitle: const Text('On your card, for others to see'),
-              trailing: IconButton(
-                tooltip: 'Change',
-                icon: const Icon(Icons.edit),
-                onPressed: () => askMyName(context, app),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              NoticeCard(app),
+              ..._connection(),
+              ..._public(),
+              ..._home(),
+              ..._firmware(),
+              ..._battery(),
+              _heading('My name'),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(app.me.name.isEmpty ? 'not set' : app.me.name),
+                subtitle: const Text('On your card, for others to see'),
+                trailing: IconButton(
+                  tooltip: 'Change',
+                  icon: const Icon(Icons.edit),
+                  onPressed: () => askMyName(context, app),
+                ),
               ),
-            ),
-            ..._home(),
-            ..._backup(),
-            ..._mapPoint(),
-          ],
+              AnimatedContainer(
+                key: _backupKey,
+                duration: _fade,
+                curve: Curves.easeOut,
+                decoration: BoxDecoration(
+                  color: _backupLit
+                      ? Theme.of(context).colorScheme.primaryContainer
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: _backup(),
+                ),
+              ),
+              ..._mapPoint(),
+              const SizedBox(height: 24),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Try without a node (demo)'),
+                subtitle: const Text(
+                  'A node in the app with an invented network; nothing leaves '
+                  'this phone',
+                ),
+                value: app.fake,
+                onChanged: app.session.connected ? null : app.setFake,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.bug_report_outlined),
+                title: const Text('Debug'),
+                subtitle: const Text(
+                  'Everything the link says, for a bug report',
+                ),
+                onTap: () => Navigator.of(context)
+                    .push(MaterialPageRoute(builder: (_) => DebugScreen(app))),
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -228,25 +320,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = app.session;
     return [
       _heading('Node'),
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('Fake node'),
-        subtitle: const Text(
-          'A node in the app, for trying it without a board',
-        ),
-        value: app.fake,
-        onChanged: s.connected ? null : app.setFake,
-      ),
       if (s.connected)
         ListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text(nodeName(s.node!.id)),
+          title: Text(nodeLabel(s.node!.id)),
           subtitle: Text(
             s.guest
                 ? 'Connected as a guest: a public node, someone else\'s, '
-                      'which passes on your texts without pairing. MTU '
-                      '${app.mtu ?? '?'}'
-                : 'Connected and paired, MTU ${app.mtu ?? '?'}',
+                      'which passes on your texts without pairing. '
+                      '${health(s)}'
+                : 'Connected and paired. ${health(s)}',
           ),
           trailing: OutlinedButton(
             onPressed: app.disconnect,
@@ -297,24 +380,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(n.public ? Icons.storefront : Icons.router),
-      title: Text(n.name),
+      title: Text(shownName(n.name)),
       subtitle: Text(
         [
-          if (app.connectedTo(n.deviceId)) 'Connected' else n.deviceId,
+          if (app.connectedTo(n.deviceId)) 'Connected',
           if (n.public) 'public: serves phones without pairing',
           '${n.rssi ?? '?'} dBm',
         ].join(', '),
       ),
       onTap: busy
           ? null
-          : () => _connect(() => guest ? app.connectGuest(n) : app.connect(n)),
-      trailing: guest
-          ? TextButton(
-              onPressed: busy ? null : () => _connect(() => app.connect(n)),
-              child: const Text('Pair'),
-            )
-          : null,
+          : () => guest ? _yours(n) : _connect(() => app.connect(n)),
     );
+  }
+
+  /// A public node not paired with: the person says whether it is theirs.
+  Future<void> _yours(FoundNode n) async {
+    final mine = await askIsYours(context, n);
+    if (mine == null || !mounted) return;
+    await _connect(() => mine ? app.connect(n) : app.connectGuest(n));
   }
 
   /// The owner's switch of whether the node serves phones that have not
@@ -419,23 +503,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final atHome = app.atHome;
     // A guest can neither make the node its home nor clear its key.
     final owned = !s.guest;
+    // A home is a fixed relay, so that its address stays (spec "Mailbox").
+    final homeable = st != null && !st.sleepy && !st.carried;
     return [
       _heading('Home node'),
       Text(
         home == null
-            ? 'No home node: your card carries no address, so people can '
-                  'answer you only after you write to them.'
+            ? 'No home node: your card is temporary, naming the node you '
+                  'use now, which keeps your mail only while you come back '
+                  'to it.'
             : 'Your home node is at $home. Your card carries its address, '
                   'and it holds your mailbox key. "Fetch my mail", the '
                   'inbox button on the first screen, brings your mail from '
                   'it to the node you are connected to.',
       ),
-      if (here != null && !atHome && st != null && (st.sleepy || st.carried))
+      if (owned && s.connected && here == null && st != null) ...[
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('This node has no place yet.'),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.my_location),
+            label: const Text('Use this phone\'s location'),
+            onPressed: _placeHere,
+          ),
+        ),
+      ],
+      if (here != null && !atHome && !homeable)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text(
-            'This node is sleepy or carried, so its address changes: a home '
-            'should be a node on USB power that stays where it is.',
+            'A home must be a node that stays on power at a fixed place.',
           ),
         ),
       if (app.holdsOtherKey)
@@ -452,7 +552,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           if (owned && here != null && !atHome)
             FilledButton(
-              onPressed: () => _setHome(here),
+              onPressed: homeable ? () => _setHome(here) : null,
               child: const Text('Make this node my home'),
             ),
           if (home != null)
@@ -559,6 +659,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _restore() async {
+    final go = await confirm(
+      context,
+      'Restore from words?',
+      'This phone takes the identity of the words in place of its own. '
+          'Contacts who hold the card of the identity it has now cannot '
+          'reach the new one until they get its card.',
+      'Restore',
+    );
+    if (!go || !mounted) return;
     final w = await askText(context, 'Your 12 words', '');
     if (w == null || w.isEmpty) return;
     final seed = seedOfPhrase(w);
@@ -575,7 +684,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!s.connected || s.guest) return [];
     final st = s.status;
     return [
-      _heading('Map point'),
+      _heading('Node\'s place'),
       Text(
         st == null || !st.placed
             ? 'The node has no position.'

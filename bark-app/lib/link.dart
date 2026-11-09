@@ -211,6 +211,16 @@ List<int> _be32(int v) => [
 /// The advertised name: `bark-` and the ID's twelve hex digits.
 String nodeName(List<int> id) => 'bark-${hex(id)}';
 
+/// A node's name as a person sees it: its ID in capitals, as the node's
+/// own screen shows it, `ID FA4E00000001`; a name not a node's as it is.
+String shownName(String name) {
+  final m = RegExp(r'^bark-([0-9a-f]{12})$').firstMatch(name);
+  return m == null ? name : 'ID ${m[1]!.toUpperCase()}';
+}
+
+/// The node of `id` as a person sees it ([shownName]).
+String nodeLabel(List<int> id) => shownName(nodeName(id));
+
 /// Node, read. Decoders of values the node writes ignore what a later
 /// version appends.
 class NodeInfo {

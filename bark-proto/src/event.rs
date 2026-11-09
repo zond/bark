@@ -407,6 +407,14 @@ pub enum Trace {
         /// The channel it was for.
         channel: Channel,
     },
+    /// A status frame found its channel busy at every listen-before-talk
+    /// check and was given up (spec "Neighbour status").
+    StatusGivenUp {
+        /// The neighbour it was for.
+        to: NodeId,
+        /// It was an answer; else an ask.
+        answer: bool,
+    },
     /// The duty-cycle budget held a heartbeat back (spec "Duty cycle cap").
     HeartbeatDeferred {
         /// When the budget may next allow it.

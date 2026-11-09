@@ -3,9 +3,10 @@
 // tell them refused, and the screen: in the menu, a marker and a line
 // for each, the legend, a tapped marker's details, and the blank
 // background said when no street map can be had. Then Ask: each
-// neighbour asked once as the map opens and again when refreshed, the
-// answers drawn in the words of the neighbours' screens, and a node
-// before link version 9 not asked.
+// neighbour asked as the map opens, one that does not answer asked again
+// every 2 s up to three asks, a refresh asking only those without an
+// answer in the last 10 s, the answers drawn in the words of the
+// neighbours' screens, and a node before link version 9 not asked.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
@@ -129,11 +130,15 @@ void main() {
     }, make: (now, me) => OldNode(now: now, sodium: sodium, app: me));
   });
 
-  test('each neighbour asked once, the answers kept, the next ask anew', () {
+  test('each neighbour asked, the silent one again every 2 s, three times '
+      'at most', () {
     run((async, app) {
-      final fake = app.fakeNode!;
+      final fake = app.fakeNode!..loseEvery = 0;
       final s = app.session;
       final t = read(async, app)!;
+      final silent = t.list.singleWhere(
+        (n) => !fake.statuses.containsKey(hex(n.id)),
+      );
       s.askNeighbours(t.list);
       async.flushMicrotasks();
       expect(fake.asked, [for (final n in t.list) hex(n.id)]);
@@ -150,15 +155,69 @@ void main() {
         'V9',
         'GET V10 14/31',
       ]);
+      // Not asked again before its round's wait is over, then asked
+      // again at each, and no more after three asks.
+      async.elapse(Session.answerWait - FakeNode.answerAfter * 2);
+      expect(fake.asked.length, t.list.length);
+      async.elapse(FakeNode.answerAfter);
+      expect(fake.asked.length, t.list.length + 1);
+      expect(fake.asked.last, hex(silent.id));
+      async.elapse(Session.answerWait);
+      expect(fake.asked.length, t.list.length + 2);
+      async.elapse(Session.answerWait * 5);
+      expect(fake.asked.length, t.list.length + 2);
+      expect(fake.asked.where((k) => k == hex(silent.id)).length, 3);
+    });
+  });
 
-      // Asked again, the old answers go.
+  test('a lost ask is asked again and answered', () {
+    run((async, app) {
+      final fake = app.fakeNode!..loseEvery = 2;
+      final s = app.session;
+      final t = read(async, app)!;
+      s.askNeighbours(t.list);
+      async.flushMicrotasks();
+      async.elapse(FakeNode.answerAfter);
+      // Of the four that answer, the second and fourth asks are lost.
+      expect(s.answers.length, 2);
+      async.elapse(Session.answerWait * 3);
+      expect(s.answers.keys.toSet(), fake.statuses.keys.toSet());
+      // Five, then the two lost and the silent one, then the one lost
+      // again and the silent one.
+      expect(fake.asked.length, 5 + 3 + 2);
+    });
+  });
+
+  test('a refresh asks only those without an answer in the last 10 s', () {
+    run((async, app) {
+      final fake = app.fakeNode!..loseEvery = 0;
+      final s = app.session;
+      final t = read(async, app)!;
+      final silent = hex(
+        t.list.singleWhere((n) => !fake.statuses.containsKey(hex(n.id))).id,
+      );
+      s.askNeighbours(t.list);
+      async.elapse(Session.answerWait * 3);
+      final first = fake.asked.length;
+      fake.asked.clear();
       fake.statuses.remove(hex(t.list.first.id));
       s.askNeighbours(t.list);
       async.flushMicrotasks();
+      // The answers kept, the silent one asked anew.
+      expect(fake.asked, [silent]);
+      expect(s.answers.length, t.list.length - 1);
+      async.elapse(Session.answerWait * 3);
+      fake.asked.clear();
+      // Past 10 s since they answered, every one is asked, and the old
+      // answers go.
+      async.elapse(Session.askFresh);
+      s.askNeighbours(t.list);
+      async.flushMicrotasks();
+      expect(fake.asked, [for (final n in t.list) hex(n.id)]);
       expect(s.answers, isEmpty);
-      async.elapse(FakeNode.answerAfter);
+      async.elapse(Session.answerWait * 3);
       expect(s.answers.length, t.list.length - 2);
-      expect(fake.asked.length, 2 * t.list.length);
+      expect(first, t.list.length + 2);
     });
   });
 
@@ -190,17 +249,21 @@ void main() {
   Future<AppModel> openMap(
     WidgetTester t, {
     FakeNode Function(DateTime Function(), List<int>)? make,
+    int loseEvery = 0,
   }) async {
+    // The test's clock, which its timers follow.
+    DateTime now() => t.binding.clock.now();
     final app = AppModel(
       sodium: sodium,
-      me: Me(MemoryStore(), sodium, DateTime.now),
-      session: Session(store: MemoryStore(), now: DateTime.now),
+      me: Me(MemoryStore(), sodium, now),
+      session: Session(store: MemoryStore(), now: now),
       contacts: Contacts(MemoryStore()),
-      now: DateTime.now,
+      now: now,
     );
     await t.runAsync(app.load);
-    if (make != null) app.fakeNode = make(DateTime.now, app.me.identity);
+    if (make != null) app.fakeNode = make(now, app.me.identity);
     app.connectFake();
+    app.fakeNode!.loseEvery = loseEvery;
     await t.pump();
     await t.pump();
     await t.pumpWidget(
@@ -224,8 +287,8 @@ void main() {
     app.dispose();
   }
 
-  testWidgets('the map asks as it opens and when refreshed, and says the '
-      'answers in the screens\' words', (t) async {
+  testWidgets('the map asks as it opens, again while one is silent, and '
+      'when refreshed, and says the answers in the screens\' words', (t) async {
     final print = debugPrint;
     debugPrint = (_, {wrapWidth}) {};
     final app = await openMap(t);
@@ -244,7 +307,7 @@ void main() {
     Finder icon(String label) =>
         find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
     final sleepy = list.singleWhere((n) => n.sleepy);
-    await t.tap(icon(nodeName(sleepy.id)));
+    await t.tap(icon(nodeLabel(sleepy.id)));
     await t.pumpAndSettle();
     final sheet = find.byType(BottomSheet);
     Finder line(String text) =>
@@ -276,7 +339,7 @@ void main() {
     final silent = list.singleWhere(
       (n) => !fake.statuses.containsKey(hex(n.id)),
     );
-    await t.tap(icon(nodeName(silent.id)));
+    await t.tap(icon(nodeLabel(silent.id)));
     await t.pumpAndSettle();
     expect(
       find.descendant(
@@ -288,13 +351,16 @@ void main() {
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
 
-    // Refreshed, each is asked again, and the answers replaced.
+    // The silent one asked twice more, then, refreshed once the answers
+    // are 10 s old, each is asked again, and the answers replaced.
+    await t.pump(Session.askFresh);
+    expect(fake.asked.length, list.length + 2);
     fake.statuses.updateAll((_, s) => const NeighbourStatus());
     await t.tap(find.byTooltip('Read again'));
     await t.pump();
     expect(find.text('FIXED RELAY'), findsNothing);
     await t.pump(FakeNode.answerAfter);
-    expect(fake.asked.length, 2 * list.length);
+    expect(fake.asked.length, 2 * list.length + 2);
     expect(find.text('RELAY NO PLACE'), findsNWidgets(4));
     await shut(t, app);
     debugPrint = print;
@@ -329,7 +395,8 @@ void main() {
     await t.pumpWidget(BarkApp(app));
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
     await t.pumpAndSettle();
-    expect(find.text('Map'), findsOneWidget);
+    expect(find.text('Nearby nodes'), findsOneWidget);
+    expect(find.text('Debug'), findsNothing);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
     app.connectFake();
@@ -370,15 +437,15 @@ void main() {
         find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
     expect(icon('this node'), findsOneWidget);
     for (final n in fake) {
-      expect(icon(name(n)), findsOneWidget);
+      expect(icon(nodeLabel(n.id)), findsOneWidget);
     }
     expect(find.textContaining('No street map here'), findsOneWidget);
 
     // The demoted one, fragile: its details.
     final demoted = fake.singleWhere((n) => n.demoted);
-    await t.tap(icon(name(demoted)));
+    await t.tap(icon(nodeLabel(demoted.id)));
     await t.pumpAndSettle();
-    expect(find.text(name(demoted)), findsOneWidget);
+    expect(find.text('ID FA4E00000103'), findsOneWidget);
     expect(
       find.textContaining('Link fragile: -115.0 dBm, 3.0 dB'),
       findsOneWidget,

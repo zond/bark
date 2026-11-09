@@ -16,6 +16,7 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/messenger.dart';
 import 'package:bark_app/node_link.dart';
 import 'package:bark_app/session.dart';
+import 'package:bark_app/ui/common.dart';
 import 'package:bark_app/store.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -129,6 +130,14 @@ void main() {
     ),
   );
 
+  test('the node\'s health in words: starting up, then the nodes it hears', () {
+    run((async, p, node) {
+      expect(health(p.session), startsWith('Starting up, '));
+      async.elapse(FakeNode.firstRotation);
+      expect(health(p.session), 'Hears ${FakeNode.relaysHeard} nodes');
+    });
+  });
+
   test('attach drains the inbox: two first messages from the fake friend', () {
     run((async, p, node) {
       final s = p.session;
@@ -143,6 +152,8 @@ void main() {
       final f = friendOf(p, node);
       expect(f.name, 'Fake friend');
       expect(f.verified, isFalse);
+      expect(f.cameByMessage, isTrue);
+      expect(f.unverified, isTrue);
       expect(s.received.map((r) => r.from), [f.key, f.key]);
       expect((p.sessionStore.state!['received'] as List).length, 2);
       expect(s.address.toString(), '${Address(FakeNode.gps, FakeNode.id)}');
@@ -284,17 +295,17 @@ void main() {
         from(s0, there);
         var f = friendOf(p, node);
         expect(f.card.home.toString(), card);
-        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.place.toString(), there.toString());
         expect(f.heardSent, s0);
         // Without an address: unchanged, and heard later.
         from(s0 + 5, null);
         f = friendOf(p, node);
-        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.place.toString(), there.toString());
         expect(f.heardSent, s0 + 5);
         // An older message, as out of a mailbox, changes nothing.
         from(s0 + 1, elsewhere);
         f = friendOf(p, node);
-        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.place.toString(), there.toString());
         expect(f.heardSent, s0 + 5);
         expect(f.card.home.toString(), card);
       });
@@ -305,7 +316,7 @@ void main() {
     run((async, p, node) {
       var f = friendOf(p, node);
       expect(f.card.home.toString(), FakeNode.friendHome.toString());
-      final first = f.wroteFrom.toString();
+      final first = f.place.toString();
       expect(first, isNot(FakeNode.friendHome.toString()));
       expect(f.towards(start.add(async.elapsed)), [Toward.there]);
 
@@ -317,8 +328,8 @@ void main() {
       // The echo comes from a node that has moved on.
       async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
       f = friendOf(p, node);
-      expect(f.wroteFrom.toString(), isNot(first));
-      expect(f.wroteFrom.toString(), node.friendAway.toString());
+      expect(f.place.toString(), isNot(first));
+      expect(f.place.toString(), node.friendAway.toString());
 
       async.elapse(Contact.fresh);
       f = friendOf(p, node);
@@ -840,7 +851,7 @@ void main() {
     expect(() => PersonCard.decode(short), throwsA(isA<BadCard>()));
     // A card of version 1, before the flags, and an unknown flag.
     final b = PersonCard(k.identity, elsewhere, 7, '').encode();
-    for (final (at, v, why) in [(0, 1, 'older'), (1, 2, 'Not a card')]) {
+    for (final (at, v, why) in [(0, 1, 'older'), (1, 4, 'Not a card')]) {
       final bad = Uint8List.fromList(b)..[at] = v;
       expect(
         () => PersonCard.decode(bad),

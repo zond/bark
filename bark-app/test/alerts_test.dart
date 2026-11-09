@@ -8,6 +8,7 @@
 // conversation back.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:bark_app/alerts.dart';
 import 'package:bark_app/app.dart';
@@ -70,6 +71,9 @@ class FakeNotifier implements Notifier {
   Future<void> askBatteryExempt() async => log.add('ask exempt');
   @override
   Future<void> openLink(String url) async => log.add('open $url');
+  @override
+  Future<void> share(String text, Uint8List png) async =>
+      log.add('share $text');
 }
 
 void main() {
@@ -260,7 +264,7 @@ void main() {
       expect(n.log, ['let go']);
       app.session.attach(node.connect());
       async.flushMicrotasks();
-      expect(n.log, ['let go', 'hold Connected to bark-fa4e00000001']);
+      expect(n.log, ['let go', 'hold Connected to ID FA4E00000001']);
       node.dispose();
     });
   });
@@ -268,7 +272,7 @@ void main() {
   test('the app starts with the phone while the paired node is its own '
       'and the person has not stopped looking', () {
     run((async, app, n) {
-      const looking = 'Looking for bark-fa4e00000001';
+      const looking = 'Looking for ID FA4E00000001';
       expect(n.boot, [null, looking]);
       app.disconnect();
       async.flushMicrotasks();
@@ -337,7 +341,7 @@ void main() {
     await t.pumpAndSettle();
     expect(n.asked, 1);
     expect(app.me.askedToNotify, isTrue);
-    expect(find.text('bark-fa4e00000001'), findsOneWidget);
+    expect(find.text('ID FA4E00000001'), findsOneWidget);
 
     await app.session.disconnect();
     await t.pump();
