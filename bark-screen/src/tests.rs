@@ -395,14 +395,14 @@ fn the_buttons_labelled() {
     let label = |state: State| labels(&state).map(|l| l.map(|(t, _)| t));
     assert_eq!(
         label(State::default()),
-        [Some("<-REBOOT"), Some("<-SLEEP 3S")]
+        [Some("<-REBOOT"), Some("<-SLEEP (3s)")]
     );
     let sleepy = State {
         sleepy: true,
         battery: Battery::Percent(50),
         ..State::default()
     };
-    assert_eq!(label(sleepy), [Some("<-REBOOT"), Some("<-WAKE 3S")]);
+    assert_eq!(label(sleepy), [Some("<-REBOOT"), Some("<-WAKE (3s)")]);
     let low = State {
         battery: Battery::Low,
         ..sleepy
@@ -412,7 +412,7 @@ fn the_buttons_labelled() {
         forced: true,
         ..sleepy
     };
-    assert_eq!(label(forced)[1], Some("<-WAKE 3S"));
+    assert_eq!(label(forced)[1], Some("<-WAKE (3s)"));
     for (t, _) in labels(&State::default()).iter().flatten() {
         assert!(t.bytes().all(|c| glyph(c).is_some()));
     }
@@ -430,4 +430,11 @@ fn the_buttons_labelled() {
     with.bytes = q.bytes;
     with.text_at(b"<-REBOOT", LABEL_SCALE, LABEL_LEFT, REBOOT_TOP);
     assert!(with.bytes != q.bytes, "the code shows no label");
+}
+
+/// The one lowercase letter is its own, not the capital.
+#[test]
+fn a_lowercase_s() {
+    assert_ne!(glyph(b's'), glyph(b'S'));
+    assert_eq!(glyph(b'a'), glyph(b'A'));
 }

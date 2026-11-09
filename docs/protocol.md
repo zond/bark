@@ -3877,7 +3877,7 @@ the lines, so that the person holding it sees the role it took; a
 shorter press does nothing. A press of the reset button resets the
 chip, and the node boots the image it ran. The lines label both at
 their left edge, each on the margin nearer its button: `<-REBOOT` at
-the top, and at the bottom `<-SLEEP 3S` on a relay or `<-WAKE 3S`
+the top, and at the bottom `<-SLEEP (3s)` on a relay or `<-WAKE (3s)`
 on a sleepy node, none where the force would not be taken, a sleepy
 node on battery at its low level. The code shows no labels.
 

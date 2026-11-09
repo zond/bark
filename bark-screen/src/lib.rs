@@ -4,7 +4,8 @@
 //! no hardware, so it is tested here; the firmware sends it.
 //!
 //! Text is drawn from a 5 × 7 bitmap font of the digits, the capital
-//! letters and a few signs, scaled up by whole pixels.
+//! letters, one lowercase letter and a few signs, scaled up by whole
+//! pixels.
 
 #![no_std]
 
@@ -128,9 +129,14 @@ pub const fn line_chars(scale: usize) -> usize {
 }
 
 /// The glyph of `c`, seven rows, the leftmost pixel in bit 4; `None` for
-/// a character the font lacks. Lowercase is drawn as capitals: the ID's
-/// hex is lowercase in the log and on the bus.
+/// a character the font lacks. Lowercase is drawn as capitals, the ID's
+/// hex being lowercase in the log and on the bus, but for `s`, the one
+/// lowercase letter, five rows tall on the baseline, for the seconds
+/// in the buttons' labels (`labels`).
 pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
+    if c == b's' {
+        return Some([0x00, 0x00, 0x0F, 0x10, 0x0E, 0x01, 0x1E]);
+    }
     Some(match c.to_ascii_uppercase() {
         b' ' => [0; GLYPH_HEIGHT],
         b'0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
@@ -175,6 +181,8 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
         b'<' => [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
+        b'(' => [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
+        b')' => [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
         _ => return None,
     })
 }
@@ -355,9 +363,9 @@ const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
 /// (spec "Screen and buttons").
 pub fn labels(state: &State) -> [Option<(&'static str, usize)>; 2] {
     let role = match (state.sleepy, state.battery) {
-        (false, _) => Some("<-SLEEP 3S"),
+        (false, _) => Some("<-SLEEP (3s)"),
         (true, Battery::Low) => None,
-        (true, _) => Some("<-WAKE 3S"),
+        (true, _) => Some("<-WAKE (3s)"),
     };
     [Some(("<-REBOOT", REBOOT_TOP)), role.map(|r| (r, ROLE_TOP))]
 }
