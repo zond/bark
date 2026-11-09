@@ -399,12 +399,12 @@ pub async fn run(
             {
                 match lines {
                     true => schedule.lines(Instant::now().as_millis()),
-                    false => schedule.touched(Instant::now().as_millis()),
+                    false => schedule.touched(&state, Instant::now().as_millis()),
                 }
             }
             continue;
         }
-        let face = schedule.face(ms);
+        let face = schedule.face(&state, ms);
         picture.clear();
         match face {
             Face::Lines => {

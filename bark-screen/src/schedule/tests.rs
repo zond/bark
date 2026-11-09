@@ -34,7 +34,7 @@ fn shown(state: State) -> Schedule {
 /// A schedule showing the lines of `state`, touched at `at`.
 fn lines(state: State, at: u64) -> Schedule {
     let mut s = shown(state);
-    s.touched(at);
+    s.touched(&state, at);
     assert_eq!(s.due(&state, at), Some(at));
     s.drawn(Face::Lines, state);
     s
@@ -44,7 +44,7 @@ fn lines(state: State, at: u64) -> Schedule {
 fn the_first_picture_at_once_and_the_code() {
     let mut s = Schedule::new();
     assert_eq!(s.due(&usb(), 5_000), Some(5_000));
-    assert_eq!(s.face(5_000), Face::Code);
+    assert_eq!(s.face(&battery(), 5_000), Face::Code);
 }
 
 /// The code shows nothing that changes but the pairing code: no other
@@ -77,21 +77,21 @@ fn the_code_waits_for_nothing_else() {
 #[test]
 fn a_touch_shows_the_lines_for_a_while() {
     let mut s = lines(battery(), 10_000);
-    assert_eq!(s.face(10_000 + LINES_MS - 1), Face::Lines);
+    assert_eq!(s.face(&battery(), 10_000 + LINES_MS - 1), Face::Lines);
     assert_eq!(s.due(&battery(), 12_000), Some(10_000 + LINES_MS));
     let back = 10_000 + LINES_MS;
-    assert_eq!(s.face(back), Face::Code);
+    assert_eq!(s.face(&battery(), back), Face::Code);
     assert_eq!(s.due(&battery(), back), Some(back));
     s.drawn(Face::Code, battery());
     assert_eq!(s.due(&battery(), back + 1), None);
     // Touched again while the lines show.
     let mut s = lines(battery(), 10_000);
-    s.touched(15_000);
-    assert_eq!(s.face(15_000), Face::Code);
+    s.touched(&battery(), 15_000);
+    assert_eq!(s.face(&battery(), 15_000), Face::Code);
     assert_eq!(s.due(&battery(), 15_000), Some(15_000));
     s.drawn(Face::Code, battery());
     // And the next touch shows the lines again.
-    s.touched(20_000);
+    s.touched(&battery(), 20_000);
     assert_eq!(s.due(&battery(), 20_000), Some(20_000));
 }
 
@@ -127,25 +127,36 @@ fn the_lines_keep_the_urgent_changes() {
     assert_eq!(s.due(&counted, 5_000), Some(1_000 + LINES_MS));
 }
 
-/// A new pairing code is drawn at once on either picture, and the end of
-/// the pairing one refresh after.
+/// A pairing code turns the screen to the lines at once, from either
+/// picture, and keeps them while it shows, past the touch's 30 s; a new
+/// code is drawn at once; when the pairing ends the screen goes back to
+/// the code at once, or stays on the lines a touch asked for, and the end
+/// is drawn one refresh after it.
 #[test]
-fn a_pairing_code_at_once() {
+fn a_pairing_code_shows_the_lines() {
+    let paired = State {
+        phone: Phone::Private,
+        ..battery()
+    };
     for mut s in [shown(battery()), lines(battery(), 1_000)] {
         assert_eq!(s.due(&code(123_456), 5_000), Some(5_000));
-        let face = s.face(5_000);
-        s.drawn(face, code(123_456));
+        assert_eq!(s.face(&code(123_456), 5_000), Face::Lines);
+        s.drawn(Face::Lines, code(123_456));
         assert_eq!(s.due(&code(7), 6_000), Some(6_000));
-        s.drawn(face, code(7));
-        let paired = State {
-            phone: Phone::Private,
-            ..battery()
-        };
-        assert_eq!(s.due(&paired, 7_000), Some(7_000 + REFRESH_MS));
+        s.drawn(Face::Lines, code(7));
+        let late = 1_000 + 2 * LINES_MS;
+        assert_eq!(s.face(&code(7), late), Face::Lines);
+        assert_eq!(s.due(&code(7), late), None);
+        // A touch does not take the code away from the person typing it.
+        s.touched(&code(7), late);
+        assert_eq!(s.face(&code(7), late), Face::Lines);
+        assert_eq!(s.face(&paired, late + 1), Face::Code);
+        assert_eq!(s.due(&paired, late + 1), Some(late + 1));
     }
-    // The code line shows on the code too: drawn after the refresh.
-    let mut s = shown(code(5));
-    assert_eq!(s.due(&code(5), 9_000), None);
+    let mut s = lines(battery(), 1_000);
+    s.drawn(Face::Lines, code(7));
+    assert_eq!(s.face(&paired, 2_000), Face::Lines, "the touch's 30 s");
+    assert_eq!(s.due(&paired, 2_000), Some(2_000 + REFRESH_MS));
 }
 
 #[test]
@@ -198,7 +209,7 @@ fn a_change_undone_within_the_refresh_is_not_drawn() {
 fn a_flip_draws_the_lines_at_once() {
     let mut s = lines(battery(), 1_000);
     s.lines(9_000);
-    assert_eq!(s.face(9_000), Face::Lines);
+    assert_eq!(s.face(&battery(), 9_000), Face::Lines);
     assert_eq!(s.due(&battery(), 9_000), Some(9_000));
     s.drawn(Face::Lines, battery());
     assert_eq!(s.due(&battery(), 9_500), Some(9_000 + LINES_MS));

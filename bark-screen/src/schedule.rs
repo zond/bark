@@ -1,6 +1,7 @@
 //! When the screen is drawn, and which picture (`bark-fw/README.md`,
 //! Display; roadmap D160). The code is the default; a touch shows the
-//! lines for [`LINES_MS`] or until the next touch. A change of picture is
+//! lines for [`LINES_MS`] or until the next touch, and a pairing code
+//! shows them for as long as it does. A change of picture is
 //! drawn at once, and so is a new pairing code, since a person stands at
 //! the node for each; a change of what the picture shows that a person
 //! acts on is drawn about one refresh after it; nothing else is drawn.
@@ -66,10 +67,10 @@ impl Schedule {
         }
     }
 
-    /// The pad was touched at `now`: the lines, or the code if the lines
-    /// show.
-    pub fn touched(&mut self, now: u64) {
-        self.touched = match self.face(now) {
+    /// The pad was touched at `now`, the node's state being `state`: the
+    /// lines, or the code if the lines show.
+    pub fn touched(&mut self, state: &State, now: u64) {
+        self.touched = match self.face(state, now) {
             Face::Code => Some(now),
             Face::Lines => None,
         };
@@ -81,8 +82,14 @@ impl Schedule {
         self.flipped = true;
     }
 
-    /// The picture the screen is to show at `now`.
-    pub fn face(&self, now: u64) -> Face {
+    /// The picture the screen is to show at `now`: the lines while a
+    /// pairing code shows, since the person typing it stands at the node
+    /// and may want the rest, else the code but for a while after a
+    /// touch.
+    pub fn face(&self, state: &State, now: u64) -> Face {
+        if pairing(state).is_some() {
+            return Face::Lines;
+        }
         match self.touched {
             Some(t) if now < t + LINES_MS => Face::Lines,
             _ => Face::Code,
@@ -93,7 +100,7 @@ impl Schedule {
     /// `state` at `now`: at or before `now` means at once, `None` not
     /// until something changes.
     pub fn due(&mut self, state: &State, now: u64) -> Option<u64> {
-        let face = self.face(now);
+        let face = self.face(state, now);
         let Some((shown_face, shown)) = self.shown else {
             return Some(now);
         };
@@ -118,7 +125,7 @@ impl Schedule {
         };
         let urgent = self.urgent_since.map(|since| since + REFRESH_MS);
         let back = match face {
-            Face::Lines => self.touched.map(|t| t + LINES_MS),
+            Face::Lines => self.touched.map(|t| t + LINES_MS).filter(|&t| t > now),
             Face::Code => None,
         };
         urgent.into_iter().chain(back).min()

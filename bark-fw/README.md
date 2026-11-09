@@ -856,7 +856,9 @@ python3 -m venv .venv
 ```
 
 A touch of the pad (P0.11, `src/button.rs`) shows the node's state for
-30 s, or until the next touch, then the code again. The state is built
+30 s, or until the next touch, then the code again; a pairing code
+shows the lines by itself for as long as it shows
+(spec "Screen and buttons"). The state is built
 from what its core says after each step (`src/node.rs`, `screen`) by
 `bark-screen`, which is tested on the host. Sixteen characters to a
 line, every line from the left margin. A header says what the node is, as a word or two at the left,
@@ -911,10 +913,11 @@ the node is not running.
 *When it redraws.* At boot, the code, once the node's loop has run (at
 most 5 s). After that, a change of picture, a touch or the 30 s ending,
 and a new pairing code are drawn at once, since a person stands at the
-node for each (spec "Phone link", Pairing). On the code nothing else
-changes but the end of a pairing, drawn one refresh after it, 2 s (the
-board's label). While the lines show, a change a person acts on is
-drawn one refresh after it: the header (the role, or `STARTING`
+node for each (spec "Phone link", Pairing); a pairing code turns the
+screen to the lines, and the pairing's end back to the code unless a
+touch's 30 s still run. On the code nothing else changes. While the
+lines show, a change a person acts on is drawn one refresh after it,
+2 s (the board's label): the header (the role, or `STARTING`
 ending), the rest of the phone's line, and the power, USB or battery.
 Changes within those 2 s, such as the power and the role of a sleepy
 node when the cable goes in, are drawn in one picture, and a change
