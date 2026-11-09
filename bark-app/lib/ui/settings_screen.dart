@@ -562,7 +562,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('Node image'),
+        title: const Text('Node firmware'),
         subtitle: Text(
           n == null
               ? 'No node linked'
@@ -582,7 +582,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     builder: (_) => UpdateScreen(app, release: latest),
                   ),
                 ),
-                child: const Text('Send to node'),
+                child: const Text('Send to the node'),
               )
             : null,
       ),
@@ -593,7 +593,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => UpdateScreen(app, pick: true)),
             ),
-            child: const Text('Pick an image file (bench)'),
+            child: const Text('Pick a firmware file (bench)'),
           ),
         ),
     ];

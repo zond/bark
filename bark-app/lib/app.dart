@@ -395,8 +395,8 @@ class AppModel extends ChangeNotifier {
     final n = session.node;
     if (n == null) return 'Not connected to a node';
     if (n.version < homeVersion) {
-      return 'This node\'s firmware has no mailbox (link version '
-          '${n.version}): update it to make it a home. Nothing changed.';
+      return 'This node\'s firmware, version ${n.image}, has no mailbox: '
+          'update it to make it a home. Nothing changed.';
     }
     final h = await session.writeHome(me.keys.mailbox.extractBytes());
     if (!h.set) {

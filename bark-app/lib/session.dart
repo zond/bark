@@ -486,8 +486,8 @@ class Session extends ChangeNotifier {
     if (n.version > linkVersion) {
       await link.close();
       _tell(
-        'This node speaks link version ${n.version}, this app $linkVersion: '
-        'the node\'s firmware is newer. Update the app.',
+        'This node\'s firmware is newer than this app understands: update '
+        'the app.',
       );
       return false;
     }

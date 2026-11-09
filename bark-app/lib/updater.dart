@@ -205,7 +205,7 @@ class Updater extends ChangeNotifier {
     final n = session.node;
     if (n == null || latest != null) return null;
     if (r == null) return 'No release known yet.';
-    if (r.image == null) return 'Release ${r.n} carries no node image.';
+    if (r.image == null) return 'Release ${r.n} carries no node firmware.';
     if (r.n == n.image) return 'The node already runs the latest release.';
     return 'The node runs a newer version than the latest release, ${r.n}.';
   }
@@ -238,8 +238,8 @@ class Updater extends ChangeNotifier {
     }
     if (n.version < updateVersion) {
       throw StateError(
-        'the node speaks link version ${n.version}, before updates over '
-        'Bluetooth: update it by USB once',
+        'the node\'s firmware is from before updates over Bluetooth: '
+        'update it by USB once',
       );
     }
     return l;
@@ -302,7 +302,7 @@ class Updater extends ChangeNotifier {
         _set(Phase.committed, 'The node holds version ${img.version}');
       case Step.begin || Step.send:
         // The node forgot the image: a flash that failed.
-        _set(Phase.failed, p.refused?.why ?? 'The node lost the image');
+        _set(Phase.failed, p.refused?.why ?? 'The node lost the firmware');
     }
   }
 
@@ -372,7 +372,7 @@ class Updater extends ChangeNotifier {
       session.note('Update: reboot asked');
       _set(
         Phase.rebooting,
-        'The node swaps the new image in, about a minute; the app '
+        'The node swaps the new firmware in, about a minute; the app '
         'connects again when it is back',
       );
     } on AttException catch (e) {
@@ -420,7 +420,7 @@ class Updater extends ChangeNotifier {
       _set(
         Phase.failed,
         'The node came back on version ${n.image}, not $want: the '
-        'new image did not start, and the node swapped '
+        'new firmware did not start, and the node swapped '
         'version ${_before ?? n.image} back',
       );
     }

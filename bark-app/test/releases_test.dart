@@ -345,10 +345,10 @@ void main() {
     testWidgets('up to date', (t) async {
       final a = await settings(t, app: 5, image: 5);
       expect(
-        find.text('App up to date (5); node image up to date (5)'),
+        find.text('App up to date (5); node firmware up to date (5)'),
         findsOneWidget,
       );
-      expect(find.text('Send to node'), findsNothing);
+      expect(find.text('Send to the node'), findsNothing);
       await shut(t, a);
     });
 
@@ -368,17 +368,17 @@ void main() {
       await shut(t, a);
     });
 
-    testWidgets('a newer node image, sent from Node image', (t) async {
+    testWidgets('a newer node firmware, sent from Node firmware', (t) async {
       final a = await settings(t, app: 5, image: 1);
       expect(
         find.text(
-          'App up to date (5); node image 1, release 5 has 5: send it '
-          'under Node image below',
+          'App up to date (5); node firmware 1; release 5 is newer: send '
+          'it under Node firmware below',
         ),
         findsOneWidget,
       );
-      expect(find.text('Send to node'), findsOneWidget);
-      expect(find.text('Pick an image file (bench)'), findsOneWidget);
+      expect(find.text('Send to the node'), findsOneWidget);
+      expect(find.text('Pick a firmware file (bench)'), findsOneWidget);
       await shut(t, a);
     });
 

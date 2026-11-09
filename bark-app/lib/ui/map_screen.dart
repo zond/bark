@@ -291,8 +291,8 @@ class _MapScreenState extends State<MapScreen> {
     }
     if (n.version < neighboursVersion) {
       return _say(
-        'This node\'s firmware cannot tell its neighbours (link version '
-        '${n.version}): update it to see the map.',
+        'This node\'s firmware, version ${n.image}, cannot tell its '
+        'neighbours: update it to see the map.',
       );
     }
     final t = _s.neighbours;

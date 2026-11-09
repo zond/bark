@@ -509,8 +509,8 @@ no one after its update (Updating a node) can be seen.
 A node out of reach, on a roof, is updated from the phone over the link
 (spec "Phone link", Updates; roadmap D145). Settings, under
 **Updates**, says the version the connected node runs on the **Node
-image** row; its **Send to node**, when the latest release has a newer
-image, and the smaller **Pick an image file (bench)** open the update
+firmware** row; its **Send to the node**, when the latest release has a newer
+image, and the smaller **Pick a firmware file (bench)** open the update
 screen, which takes the image from **Latest release**,
 the `bark-fw-<N>.img` of the latest release the app knows of (Newer
 releases), signed by the release, or from **Pick a file**, an image
@@ -531,7 +531,7 @@ from the bytes the node holds, not from the start. Once every byte is
 there the app commits: the node checks the image and answers, and the
 screen says it keeps it for its next boot, or why it refused, in words.
 A refusal for a low battery keeps the image on the node, and
-**Commit** tries again once the node is on USB. **Reboot into version
+**Try again** asks the node to check it again once it is on USB. **Reboot into version
 N** then restarts the node, which swaps the image in, about a minute.
 The node answers and ends the link, and Android may report the write
 failed when the end overtakes the answer; a link that ends after such a
@@ -581,13 +581,13 @@ app asks again.
 Settings' **Updates** section has **Check for updates**, which asks at
 once by the same check, with a spinner while it runs, and then says in
 one line how this app and the node stand against the latest release,
-such as "App up to date (9); node image 18, release 20 has 20: send it
-under Node image below", "A newer app is available, release 20: get it
+such as "App up to date (9); node firmware 18; release 20 is newer: send
+it under Node firmware below", "A newer app is available, release 20: get it
 under App below; no node linked", or "Could not reach the release list"
 without a network. Under it the **App** row gives the app's version and,
-when the release is newer, a tap downloads it; the **Node image** row
+when the release is newer, a tap downloads it; the **Node firmware** row
 gives the node's version and, when the release's image is newer, **Send
-to node**; last, smaller, **Pick an image file (bench)**. A dismissed
+to the node**; last, smaller, **Pick a firmware file (bench)**. A dismissed
 bar does not hide a newer version here.
 
 ## The payload
@@ -826,9 +826,9 @@ a phone (Trying it, With a node).
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
-15. **Settings**, under **Updates**: **Node image** says the fake runs
-    version 1. **Pick an image file (bench)**, or with a release known
-    **Send to node**, then **Latest release** (or **Pick a file** with a signed
+15. **Settings**, under **Updates**: **Node firmware** says the fake runs
+    version 1. **Pick a firmware file (bench)**, or with a release known
+    **Send to the node**, then **Latest release** (or **Pick a file** with a signed
     image; the fake refuses one whose header names no key):
     the image's version and size. **Send to the node**: the bar fills at
     once, the fake has no radio to wait for; then "The node checked
@@ -927,8 +927,8 @@ a phone (Trying it, With a node).
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
     target/vN+1.img`, then sign it with the bench key, which an open
     build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
-    --key-id 255`. In **Settings**, **Updates**, **Node image** says
-    version N. **Pick an image file (bench)**, the image: "Version N+1".
+    --key-id 255`. In **Settings**, **Updates**, **Node firmware** says
+    version N. **Pick a firmware file (bench)**, the image: "Version N+1".
     **Send to the node**: the node logs `update: receiving version=N+1`
     and then nothing while the bar fills, about 20 s; half way, switch
     the phone's Bluetooth off and on: the node logs `update: link closed

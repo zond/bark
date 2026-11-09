@@ -52,7 +52,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
       final (image, from) = await f();
       u.choose(image, from);
     } catch (e) {
-      if (mounted) say(context, 'No image: $e');
+      if (mounted) say(context, 'No firmware: $e');
     } finally {
       if (mounted) setState(() => _getting = false);
     }
@@ -182,7 +182,9 @@ class _UpdateScreenState extends State<UpdateScreen> {
       ],
       Phase.sending || Phase.committing => [
         Text(
-          u.phase == Phase.sending ? 'Sending…' : 'The node checks the image…',
+          u.phase == Phase.sending
+              ? 'Sending…'
+              : 'The node checks the firmware…',
         ),
       ],
       Phase.paused => [
@@ -194,7 +196,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
       Phase.staged => [
         FilledButton(
           onPressed: connected ? u.commit : null,
-          child: const Text('Commit'),
+          child: const Text('Try again'),
         ),
       ],
       Phase.committed => [

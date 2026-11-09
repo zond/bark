@@ -283,7 +283,7 @@ void main() {
         expect(u.noLatest, 'The node already runs the latest release.');
         known = const Release(2);
         expect(u.latest, isNull);
-        expect(u.noLatest, 'Release 2 carries no node image.');
+        expect(u.noLatest, 'Release 2 carries no node firmware.');
         known = const Release(2, image: 'https://x/img2');
         expect(u.latest?.n, 2);
         expect(u.noLatest, isNull);

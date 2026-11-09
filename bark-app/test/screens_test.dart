@@ -1089,8 +1089,8 @@ void main() {
     await t.pump();
     expect(find.text(public), findsNothing);
     expect(find.textContaining('Connected as a guest'), findsOneWidget);
-    expect(find.text('Send to node'), findsNothing);
-    expect(find.text('Pick an image file (bench)'), findsNothing);
+    expect(find.text('Send to the node'), findsNothing);
+    expect(find.text('Pick a firmware file (bench)'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
     expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));
