@@ -29,7 +29,8 @@ pub struct Image {
     pub name: ImageTag,
     /// The signed version number; only the policy test reads it.
     pub version: u32,
-    /// Blocks the image travels in, block 0 the block table, 2 to 255.
+    /// Blocks the image travels in, block 0 the block table: 2 to 255 on
+    /// the wire, and a node takes at most [`MAX_BLOCKS`].
     pub blocks: u8,
     /// Pieces in the last block, 1 to [`BLOCK_PIECES`]: with `blocks`, the
     /// pieces of every block ([`Image::pieces`]).
@@ -98,9 +99,10 @@ pub const MAX_BLOCKS: usize = 48;
 /// The airtime of a full frame, a piece's, 138.6 ms.
 pub const FULL_FRAME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
 
-/// The pace of update frames: at most one a channel in this time, a full
-/// frame's airtime a hundred times over, so that a node's update frames
-/// take at most 1 % of a channel's time (spec "Updates over the mesh").
+/// The pace: a full frame's airtime a hundred times over, 1 % of a
+/// channel. A node sends its pieces on a channel at most this often when
+/// it shares the channel or has other frames to send, and otherwise at
+/// most every [`GAP`] (spec "Updates over the mesh").
 pub const PACE: Duration = FULL_FRAME.mul(100);
 
 /// The fastest the duty cap lets a holder send pieces: one a refill of a
