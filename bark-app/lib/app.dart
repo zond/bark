@@ -248,6 +248,22 @@ class AppModel extends ChangeNotifier {
   /// gone; where Android keeps it, the person forgets the node in the
   /// phone's Bluetooth settings, and [staleBond] says so meanwhile.
   Future<bool> unpair() async {
+    _unpairing = true;
+    notifyListeners();
+    try {
+      return await _unpair();
+    } finally {
+      _unpairing = false;
+      notifyListeners();
+    }
+  }
+
+  /// An unpairing is under way: the search waits, as the node ends the
+  /// link while the phone still holds the bond, and a connect with it
+  /// then would find the node no longer this phone's.
+  bool _unpairing = false;
+
+  Future<bool> _unpair() async {
     final device = linkDevice;
     final n = session.node;
     await session.unpair();
@@ -582,7 +598,8 @@ class AppModel extends ChangeNotifier {
     await _connectGuest(n);
   }
 
-  /// A guest's errand at `n`: connect without pairing, write the tag and
+  /// A guest's errand at `n`: connect without pairing, after having
+  /// Android remove a bond with it that it refuses ([StaleBond]), write the tag and
   /// read the ring's items for the person ([Session.attach]), send what
   /// waits while Ready comes, and leave, as the node shares its one guest
   /// link among every guest in reach (spec "Phone link", Public).
@@ -590,7 +607,18 @@ class AppModel extends ChangeNotifier {
     await _open(n.deviceId, () async {
       await _searchStopped();
       await stopScan();
-      return BleLink.connect(n.deviceId, name: n.name, guest: true);
+      try {
+        return await BleLink.connect(n.deviceId, name: n.name, guest: true);
+      } on StaleBond {
+        // The bond is of no use with a node that refuses it: Android is
+        // asked to remove it, as on unpairing, and the node is tried
+        // again, after a scan, as the bond went with what Android knew of
+        // the address's type.
+        if (!await BleLink.forget(n.deviceId)) rethrow;
+        session.note('Pairing: the phone forgot its old bond with ${n.name}');
+        if (!await seen(n.deviceId)) throw NotSeen(n.name);
+        return BleLink.connect(n.deviceId, name: n.name, guest: true);
+      }
     }, guest: true);
     if (!session.connected || !session.guest) return;
     _guestAt = n.name;
@@ -819,9 +847,9 @@ class AppModel extends ChangeNotifier {
   String? get pairedNode => session.pairingLost ? null : session.pairedWith;
 
   /// Whether the search runs: not once the person stopped it, nor with the
-  /// fake node in use, nor on the paired node.
+  /// fake node in use, nor on the paired node, nor while unpairing.
   bool get searchOn {
-    if (!_searchStarted || fake || session.stopped) return false;
+    if (!_searchStarted || fake || session.stopped || _unpairing) return false;
     return !session.connected || session.guest;
   }
 

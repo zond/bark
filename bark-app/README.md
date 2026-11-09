@@ -305,8 +305,15 @@ beyond its link.
 
 **Unpairing.** The node forgets its bond when its owner unpairs, but
 Android keeps its own, and encrypts every later link to the node with
-it, a guest's too, which the node ends (spec "Phone link", Public). So
-once the node has answered, the app has Android remove the bond, by the
+it, a guest's too, which the node ends (spec "Phone link", Public). The
+node answers the write and ends the link, and Android may report the
+write as failed when the end overtakes the answer (its catch-all GATT
+error 133), so a failed write after which the link ends within 32 s,
+the longest supervision timeout, counts as done; only a write that
+failed while the link stayed up says "Unpairing failed", and then the
+app forgets nothing. The search waits meanwhile, as a connect with the
+bond still held would find the node no longer the phone's. Once the
+node has answered, the app has Android remove the bond, by the
 Bluetooth plugin's `UniversalBle.unpair`, and waits up to 2 s for
 Android to list it no more. Android hides the removal from apps
 (`BluetoothDevice.removeBond`, which the plugin calls by reflection and
@@ -326,8 +333,10 @@ A phone can hold such a stale bond in other ways too: unpaired by an
 older app, or with a node another phone has paired with since. A
 guest's link to a node that fails before the app has read it, or whose
 first read is refused, while Android lists a bond with the node, is
-taken as the node refusing that bond. The app then shows one line on the
-first screen and in Settings, "ID … no longer knows this phone's old
+taken as the node refusing that bond. The app then has Android remove
+the bond, as on unpairing, scans until it sees the node again and
+connects once more. Only where Android keeps the bond does it show one
+line on the first screen and in Settings, "ID … no longer knows this phone's old
 pairing. Forget it in the phone's Bluetooth settings, then try again.",
 with the same **Bluetooth settings** button, and a tap on the node in
 the scan says the same in a dialog. The search passes the node over,
@@ -797,10 +806,12 @@ another guest, and move to the paired node once it is heard; with a
 paired node, go to a public node only after two rounds without it,
 send through it as a guest, name it on the card and on the first
 screen's line, come back to the paired node in the round that hears it
-and say so, and stay with a paired node heard every other round; pass
-over a public node that refuses the phone's old bond, saying so once,
-until the bond is forgotten; on unpairing, have Android forget its bond
-too, and say what to do where it keeps it; read the fake
+and say so, and stay with a paired node heard every other round; have
+Android remove an old bond a public node refuses and connect again,
+and where Android keeps it, pass the node over, saying so once, until
+the bond is forgotten; on unpairing, have Android forget its bond too,
+also when the link ends under the write, say what to do where it keeps
+it, and forget nothing when the write fails with the link up; read the fake
 node's neighbours, in one page and across several, and not from a node
 before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;

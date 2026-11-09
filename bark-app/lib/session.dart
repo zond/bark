@@ -253,6 +253,12 @@ typedef LogLine = ({DateTime at, String text});
 /// A log line's local time of day, to the millisecond.
 String logTime(DateTime at) => at.toLocal().toIso8601String().substring(11, 23);
 
+/// How long the app waits for the link to end after an unpairing write
+/// failed: the longest supervision timeout, 32 s (Bluetooth Core
+/// Specification 5.0, Vol 6 Part B §4.5.2), by which a link the node
+/// ended is over for the phone too.
+const Duration unpairEnd = Duration(seconds: 32);
+
 class Session extends ChangeNotifier {
   final Store store;
   final DateTime Function() now;
@@ -618,11 +624,22 @@ class Session extends ChangeNotifier {
   }
 
   /// Has the node forget this phone's bond, and forgets the node here:
-  /// the app no longer looks for it (spec "Phone link", Public).
+  /// the app no longer looks for it (spec "Phone link", Public). Throws
+  /// only when the write failed and the link stayed up: the node then
+  /// keeps the phone.
   Future<void> unpair() async {
     final link = _owned(unpairVersion, 'Unpairing');
     final name = pairedWith;
-    await link.unpair();
+    try {
+      await link.unpair();
+    } catch (e) {
+      // The node answers the write, then ends the link, and Android may
+      // report the write failed as that end overtakes the answer, with its
+      // catch-all GATT error 133, as at a reboot (`updater.dart`): a link
+      // that ends is the node having forgotten the phone.
+      if (!await _ends(link)) rethrow;
+      note('Unpairing: the link ended under the write ($e), taken as done');
+    }
     pairedWith = null;
     pairingLost = false;
     note('Pairing: unpaired${name == null ? '' : ' from $name'}');
@@ -630,6 +647,10 @@ class Session extends ChangeNotifier {
     await save();
     await link.close();
   }
+
+  /// Whether `link` ends within [unpairEnd].
+  static Future<bool> _ends(NodeLink link) =>
+      link.closed.then((_) => true).timeout(unpairEnd, onTimeout: () => false);
 
   /// Gives the person's home its key, silently, and reads Home. A home
   /// may have been reflashed, or the identity restored from its words;

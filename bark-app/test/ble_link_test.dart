@@ -363,6 +363,13 @@ class FakeNodes extends UniversalBlePlatform {
   @override
   Future<bool> isPaired(String deviceId) async => bonds.contains(deviceId);
 
+  /// The node ends the link at once after the unpairing write, and
+  /// Android reports the write as failed.
+  bool dropsOnUnpair = false;
+
+  /// The node refuses the unpairing write.
+  bool refusesUnpair = false;
+
   /// Android keeps the bonds the app asks it to remove, as a phone whose
   /// hidden removal fails does.
   bool keepsBonds = false;
@@ -436,7 +443,22 @@ class FakeNodes extends UniversalBlePlatform {
       case Uuids.recipient:
         await n.setRecipient(value.single);
       case Uuids.public when value.single == encodeUnpair().single:
+        if (refusesUnpair) {
+          throw UniversalBleException(
+            code: UniversalBleErrorCode.failed,
+            message: 'Write failed',
+            details: '${0x80}',
+          );
+        }
         await n.unpair();
+        if (dropsOnUnpair) {
+          drop(deviceId);
+          throw UniversalBleException(
+            code: UniversalBleErrorCode.failed,
+            message: 'Write failed',
+            details: '133',
+          );
+        }
       case Uuids.public:
         await n.setPublic(value.single == 1);
       case Uuids.guest:
@@ -1020,11 +1042,24 @@ void main() {
       });
     });
 
-    test('a public node that refuses the phone\'s old bond: told once, with '
-        'the way out, and passed over until the bond is forgotten', () {
+    test('a public node that refuses the phone\'s old bond: the bond is '
+        'removed and the errand goes on', () {
       run(bonds: {strong}, (async, app, ble) {
         ble.nodes[strong]!.paired = false;
-        async.elapse(round);
+        async.elapse(round + seenWait);
+        expect(ble.connects, [strong, strong]);
+        expect(ble.bonds, isEmpty);
+        expect(app.staleBond, isNull);
+        expect(app.guestNode, nodeName(strongId));
+      });
+    });
+
+    test('a public node that refuses an old bond the phone keeps: told '
+        'once, with the way out, and passed over until it is forgotten', () {
+      run(bonds: {strong}, (async, app, ble) {
+        ble.nodes[strong]!.paired = false;
+        ble.keepsBonds = true;
+        async.elapse(round + const Duration(seconds: 3));
         expect(ble.connects, [strong]);
         expect(app.session.connected, isFalse);
         expect(app.staleBond, nodeName(strongId));
@@ -1066,6 +1101,52 @@ void main() {
         expect(ble.connects.last, paired);
         expect(app.guestNode, nodeName(FakeNode.id));
         expect(app.staleBond, isNull);
+      });
+    });
+
+    test('the owner unpairs and the link ends under the write: done all '
+        'the same, the phone forgets its bond, and the node serves it as a '
+        'guest', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        ble
+          ..inReach.removeAll({weak, strong})
+          ..dropsOnUnpair = true;
+        Object? failed;
+        bool? forgotten;
+        app.unpair().then(
+          (v) => forgotten = v,
+          onError: (Object e) {
+            failed = e;
+          },
+        );
+        async.elapse(const Duration(seconds: 1));
+        expect(failed, isNull);
+        expect(forgotten, isTrue);
+        expect(ble.nodes[paired]!.paired, isFalse);
+        expect(ble.bonds, isEmpty);
+        expect(app.session.pairedWith, isNull);
+        async.elapse(lookRound * 3);
+        expect(ble.connects.last, paired);
+        expect(app.guestNode, nodeName(FakeNode.id));
+      });
+    });
+
+    test('the node refuses the unpairing: an error, and nothing forgotten', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        ble.refusesUnpair = true;
+        Object? failed;
+        app.unpair().then<void>((_) {}, onError: (Object e) => failed = e);
+        // Not before the link could have ended.
+        async.elapse(unpairEnd - const Duration(seconds: 1));
+        expect(failed, isNull);
+        async.elapse(const Duration(seconds: 2));
+        expect(failed, isA<AttException>());
+        expect(ble.nodes[paired]!.paired, isTrue);
+        expect(ble.bonds, {paired});
+        expect(app.session.pairedWith, nodeName(FakeNode.id));
+        expect(app.session.connected, isTrue);
       });
     });
 
