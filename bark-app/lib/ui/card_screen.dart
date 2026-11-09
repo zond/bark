@@ -123,23 +123,20 @@ class CardScreen extends StatelessWidget {
   ];
 
   List<Widget> _card(PersonCard card) => [
-    Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Text(
-        card.temporary
-            ? 'Temporary card: you have no home node, so it names the node '
-                  'you use now, which keeps your mail only while you come '
-                  'back to it. Set a node that stays where it is as your home '
-                  'in Settings.'
-            : 'It carries your home node\'s address, whose mailbox keeps '
-                  'your mail.',
-      ),
-    ),
-    const SizedBox(height: 16),
     Center(
       child: card.temporary
           ? TemporaryFrame(child: _qr(card.toText()))
           : _qr(card.toText()),
+    ),
+    const SizedBox(height: 16),
+    Text(
+      card.temporary
+          ? 'Temporary card: you have no home node, so it names the node '
+                'you use now, which keeps your mail only while you come '
+                'back to it. Set a node that stays where it is as your home '
+                'in Settings.'
+          : 'It carries your home node\'s address, whose mailbox keeps '
+                'your mail.',
     ),
   ];
 

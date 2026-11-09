@@ -174,16 +174,16 @@ void main() {
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
     // No home: a temporary card, marked so on the code.
-    expect(find.textContaining('Temporary card:'), findsOneWidget);
     expect(find.byType(TemporaryFrame), findsOneWidget);
     expect(find.text('TEMPORARY'), findsOneWidget);
     // The code first, then Share and the rest; the hex in Details.
-    expect(t.getTopLeft(find.byType(QrImageView)).dy, lessThan(200));
+    expect(t.getTopLeft(find.byType(QrImageView)).dy, lessThan(120));
     await t.scrollUntilVisible(
       find.text('Share'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
+    expect(find.textContaining('Temporary card:'), findsOneWidget);
     final mine = app.me.card;
     expect(mine.home, isNull);
     expect(find.text(mine.toText()), findsNothing);
