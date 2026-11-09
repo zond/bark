@@ -342,6 +342,38 @@ pub fn piece_offset(block: u8, i: usize) -> u32 {
     ((u32::from(block) - 1) * DATA as u32 + i as u32) * PIECE as u32
 }
 
+/// Data piece `i` of block `block`, 1 or later, of an image a node
+/// holds as its `header` and `length` bytes of firmware, which `read`
+/// gives from the firmware's start: the header's bytes, then the
+/// firmware's, then zeros to the piece's end.
+pub fn held_piece<E>(
+    header: &[u8; HEADER_LEN],
+    length: u32,
+    block: u8,
+    i: usize,
+    out: &mut [u8; PIECE],
+    mut read: impl FnMut(u32, &mut [u8]) -> Result<(), E>,
+) -> Result<(), E> {
+    let at = piece_offset(block, i);
+    let end = at + PIECE as u32;
+    out.fill(0);
+    // The header's part.
+    let head = (HEADER_LEN as u32).clamp(at, end);
+    if at < head {
+        out[..(head - at) as usize].copy_from_slice(&header[at as usize..head as usize]);
+    }
+    // The firmware's part, from where the header ends to the image's end.
+    let to = (HEADER_LEN as u32 + length).clamp(head, end);
+    if head < to {
+        let o = (head - at) as usize;
+        read(
+            head - HEADER_LEN as u32,
+            &mut out[o..o + (to - head) as usize],
+        )?;
+    }
+    Ok(())
+}
+
 /// Block 0 of an image a node holds: the name, then 8 bytes of the
 /// SHA-256 of each other block's pieces, the last padded with zeros as it
 /// travels, made by a [`Tabling`].

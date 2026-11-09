@@ -576,3 +576,67 @@ fn the_record_keeps_the_version_and_key() {
     let again = Store::open(&mut flash).unwrap();
     assert_eq!(again.image(), Some(built.image));
 }
+
+/// A holder makes every coded piece of a one-piece table, of full blocks
+/// and of a short last block, as the gatherer's blocks are, and any of
+/// them gives the block back.
+#[test]
+fn a_holder_serves_every_piece_of_every_block() {
+    // Pieces 64 + 64 + 53 behind the table, the last padded.
+    let firmware = 181 * PIECE - HEADER_LEN - 100;
+    let built = build(firmware, 23, None, false);
+    let header: &[u8; HEADER_LEN] = built.stream[..HEADER_LEN].try_into().unwrap();
+    let image = held(header, firmware as u32, 7, 1).unwrap();
+    assert_eq!(image, built.image);
+    assert_eq!(
+        (0..image.blocks)
+            .map(|b| image.pieces(b))
+            .collect::<Vec<_>>(),
+        [1, 64, 64, 53]
+    );
+    let mut table = Table::new(image, &name(header));
+    let mut tabling = Tabling::new();
+    tabling.feed(&mut table, &built.stream[..HEADER_LEN + firmware]);
+    tabling.finish(&mut table);
+    let body = &built.stream[HEADER_LEN..HEADER_LEN + firmware];
+    let data = |b: u8, i: usize| -> [u8; PIECE] {
+        match b {
+            0 => *table.piece(i).unwrap(),
+            _ => {
+                let mut out = [0u8; PIECE];
+                held_piece(header, firmware as u32, b, i, &mut out, |at, bytes| {
+                    let at = at as usize;
+                    bytes.copy_from_slice(&body[at..at + bytes.len()]);
+                    Ok::<(), ()>(())
+                })
+                .unwrap();
+                out
+            }
+        }
+    };
+    for b in 0..image.blocks {
+        let n = image.pieces(b);
+        let block = &built.blocks[usize::from(b)];
+        let mut coded = Vec::new();
+        for k in 0..CODED as u8 {
+            let mut e = crate::code::Encoder::new(n, k).unwrap();
+            for i in 0..n {
+                if e.wants(i) {
+                    e.add(i, &data(b, i));
+                }
+            }
+            let piece = e.finish();
+            assert_eq!(
+                piece,
+                encode_piece(block, k).unwrap(),
+                "block {b} piece {k}"
+            );
+            coded.push(piece);
+        }
+        // The last n pieces, none of them data, give the block back.
+        let indices: Vec<u8> = (CODED - n..CODED).map(|k| k as u8).collect();
+        let mut out = vec![[0u8; PIECE]; n];
+        crate::code::decode(&indices, &coded[CODED - n..], &mut out).unwrap();
+        assert_eq!(&out, block, "block {b}");
+    }
+}

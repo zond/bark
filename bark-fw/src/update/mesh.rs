@@ -320,28 +320,10 @@ fn running_piece(flash: &super::Flash, block: u8, i: usize, out: &mut [u8; PIECE
         if block == 0 {
             return r.table.piece(i).map(|p| *out = *p).is_some();
         }
-        let at = pieces::piece_offset(block, i);
-        let end = HEADER_LEN as u32 + r.length;
-        out.fill(0);
-        for (o, x) in out.iter_mut().zip(at..end) {
-            if x < HEADER_LEN as u32 {
-                *o = r.header[x as usize];
-            }
-        }
-        let from = at.max(HEADER_LEN as u32);
-        if from < end {
-            let to = (at + PIECE as u32).min(end);
-            let o = (from - at) as usize;
-            let slot = ACTIVE.start + from - HEADER_LEN as u32;
-            let n = (to - from) as usize;
-            if flash
-                .lock(|f| f.borrow_mut().read(slot, &mut out[o..o + n]))
-                .is_err()
-            {
-                return false;
-            }
-        }
-        true
+        pieces::held_piece(&r.header, r.length, block, i, out, |at, bytes| {
+            flash.lock(|f| f.borrow_mut().read(ACTIVE.start + at, bytes))
+        })
+        .is_ok()
     })
 }
 
