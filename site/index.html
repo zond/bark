@@ -25,6 +25,9 @@
   details { border-top: 1px solid var(--rule); padding-top: 1rem; }
   summary { cursor: pointer; color: var(--text); font-weight: 600; }
   details p { color: var(--muted); }
+  .mesh { margin: 2rem 0 0; }
+  .mesh canvas { display: block; width: 100%; aspect-ratio: 4 / 3; }
+  .mesh figcaption { color: var(--muted); font-size: .9rem; margin-top: .5rem; }
   footer {
     max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 2rem;
     border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem;
@@ -53,6 +56,87 @@
     <p>In the same way, a police station, a fire station, a hospital or another emergency service with a node at a fixed place is reachable at its address for good.</p>
     <p>Every message carries, encrypted with the rest, the address of the node its sender writes from. A reply sent soon after goes the shortest way to where the sender is now, not to where they were or to their home node, so a person on the move can be answered wherever they last wrote from.</p>
   </details>
+  <figure class="mesh">
+    <canvas id="mesh" aria-label="A small mesh of nodes passing a message from node to node"></canvas>
+    <figcaption>Nodes announce themselves with heartbeats; a message hops toward the recipient's place, each hop acknowledged. The dim node is sleepy: it beats seldom and is never a hop.</figcaption>
+  </figure>
+<script>
+(() => {
+// Places on a 400 × 300 field, with a gap in the middle that some messages go around.
+const P = [[30,40],[95,25],[160,60],[60,120],[130,140],[40,220],[110,260],[250,40],[330,70],[370,150],[300,170],[240,250],[340,260],[190,200],[200,110]];
+const SLEEPY = 14, RANGE = 105, RED = '#c62828';
+const c = document.getElementById('mesh'), g = c.getContext('2d');
+const d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
+const nb = P.map((_, i) => P.map((_, j) => j).filter(j => j != i && d(i, j) < RANGE));
+const relay = i => i != SLEEPY;
+// A heartbeat every 1 to 3 s on screen, the spec's 5 to 15 s scaled; the sleepy node's far seldom.
+const beat = P.map((_, i) => ({ every: relay(i) ? 1 + 2 * Math.random() : 9, at: 3 * Math.random() }));
+// The search: each hop to the untried relay neighbour nearest the recipient's place, back to the parent at a dead end.
+function route(s, t) {
+  const hops = [], seen = new Set([s]), stack = [s];
+  while (stack.length) {
+    const u = stack[stack.length - 1];
+    if (u == t) return hops;
+    const n = nb[u].filter(v => relay(v) && !seen.has(v)).sort((a, b) => d(a, t) - d(b, t))[0];
+    if (n === undefined) { stack.pop(); if (stack.length) hops.push([u, stack[stack.length - 1]]); continue; }
+    seen.add(n); stack.push(n); hops.push([u, n]);
+  }
+  return null;
+}
+let W, S, msg = null, next = 1;
+function size() {
+  const r = devicePixelRatio || 1; W = c.clientWidth; S = W / 400;
+  c.width = W * r; c.height = W * 0.75 * r; g.setTransform(r * S, 0, 0, r * S, 0, 0);
+}
+function pick(t) {
+  const far = [[0, 12], [5, 8], [3, 9], [1, 11], [6, 7], [0, 10]];
+  const [s, e] = far[Math.floor(Math.random() * far.length)];
+  const [a, b] = Math.random() < .5 ? [s, e] : [e, s];
+  msg = { to: b, hops: route(a, b), t0: t };
+}
+function draw(t, still) {
+  g.clearRect(0, 0, 400, 300);
+  g.strokeStyle = '#e4e4e4'; g.lineWidth = 1;
+  nb.forEach((n, i) => n.forEach(j => { if (j > i) { g.beginPath(); g.moveTo(...P[i]); g.lineTo(...P[j]); g.stroke(); } }));
+  if (!still) beat.forEach((b, i) => {
+    const age = (t - b.at) % b.every;
+    if (t > b.at && age < 1) { g.strokeStyle = `rgba(136,136,136,${1 - age})`; g.beginPath(); g.arc(...P[i], 6 + 30 * age, 0, 7); g.stroke(); }
+  });
+  let glow = -1;
+  if (msg) {
+    const HOP = .6, ACK = .3, k = (t - msg.t0) / (HOP + ACK), h = Math.floor(k), f = (k - h) * (HOP + ACK);
+    g.strokeStyle = RED; g.fillStyle = RED;
+    if (h < msg.hops.length) {
+      const [u, v] = msg.hops[h];
+      if (f < HOP) { const q = f / HOP; g.beginPath(); g.arc(P[u][0] + (P[v][0] - P[u][0]) * q, P[u][1] + (P[v][1] - P[u][1]) * q, 4, 0, 7); g.fill(); }
+      else { g.globalAlpha = 1 - (f - HOP) / ACK; g.lineWidth = 2; g.beginPath(); g.moveTo(...P[v]); g.lineTo(...P[u]); g.stroke(); g.globalAlpha = 1; }
+    } else if (h < msg.hops.length + 2) glow = msg.to;
+    else msg = null;
+  }
+  P.forEach((p, i) => {
+    g.fillStyle = i == glow ? RED : relay(i) ? '#777' : '#c4c4c4';
+    g.beginPath(); g.arc(...p, i == glow ? 7 : 5, 0, 7); g.fill();
+  });
+}
+function still() {
+  draw(0, true);
+  const hops = route(0, 12);
+  g.strokeStyle = RED; g.lineWidth = 2; g.setLineDash([4, 4]);
+  hops.forEach(([u, v]) => { g.beginPath(); g.moveTo(...P[u]); g.lineTo(...P[v]); g.stroke(); });
+  g.setLineDash([]);
+}
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+function frame(ms) {
+  const t = ms / 1000;
+  if (calm.matches) return still();
+  if (!msg && t > next) { pick(t); next = t + 3 + 3 * Math.random(); }
+  draw(t, false); requestAnimationFrame(frame);
+}
+addEventListener('resize', () => { size(); if (calm.matches) still(); });
+size(); calm.matches ? still() : requestAnimationFrame(frame);
+calm.addEventListener('change', () => { if (!calm.matches) requestAnimationFrame(frame); else still(); });
+})();
+</script>
 </main>
 <footer>
   <a href="https://github.com/zond/bark">The source code and the design, on GitHub</a>
