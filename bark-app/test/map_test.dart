@@ -302,8 +302,9 @@ void main() {
     expect(find.text('CARRIED RELAY'), findsOneWidget);
     expect(find.text('SLEEPY ANCHORED'), findsOneWidget);
 
-    // The sleepy one's details say its screen's lines, one a row right
-    // under its distance, in place of the flags they repeat.
+    // The sleepy one's details: its screen's first line under its ID,
+    // then a row a fact, an icon named for screen readers and the value,
+    // in a fixed order.
     Finder icon(String label) =>
         find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
     final sleepy = list.singleWhere((n) => n.sleepy);
@@ -312,12 +313,21 @@ void main() {
     final sheet = find.byType(BottomSheet);
     Finder line(String text) =>
         find.descendant(of: sheet, matching: find.text(text));
+    Finder named(String label) =>
+        find.descendant(of: sheet, matching: icon(label));
+    expect(
+      t.getTopLeft(line(nodeLabel(sleepy.id))).dy,
+      lessThan(t.getTopLeft(line('SLEEPY ANCHORED')).dy),
+    );
     final rows = [
-      find.descendant(of: sheet, matching: find.textContaining('m away')),
       line('SLEEPY ANCHORED'),
-      line('BATTERY 57%'),
-      line('KNOWN 4/2/1'),
-      line('V9'),
+      named('link strength, good'),
+      named('last heard'),
+      named('distance'),
+      named('battery'),
+      named('neighbours known'),
+      named('firmware version'),
+      named('position from a map point'),
     ];
     for (final r in rows) {
       expect(r, findsOneWidget);
@@ -326,12 +336,13 @@ void main() {
     for (var i = 1; i < ys.length; i++) {
       expect(ys[i], greaterThan(ys[i - 1]));
     }
-    expect(line('sleepy'), findsNothing);
-    // This node's view of it stays, after its screen's lines.
-    final mapPoint = line('position from a map point');
-    expect(mapPoint, findsOneWidget);
-    expect(t.getTopLeft(mapPoint).dy, greaterThan(ys.last));
-    expect(find.textContaining('Its screen'), findsNothing);
+    expect(line('57%'), findsOneWidget);
+    expect(line('4/2/1'), findsOneWidget);
+    expect(find.byTooltip('heard / strong / proven'), findsOneWidget);
+    expect(line('V9'), findsOneWidget);
+    expect(line('40 s ago'), findsOneWidget);
+    expect(line('KNOWN 4/2/1'), findsNothing);
+    expect(named('proven'), findsNothing);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
 
@@ -347,6 +358,14 @@ void main() {
         matching: find.text('banned for now: it refused or failed a hand-over'),
       ),
       findsOneWidget,
+    );
+    // Its header from its heartbeats; no row its answer would give.
+    expect(
+      find.descendant(
+        of: find.byType(BottomSheet),
+        matching: icon('neighbours known'),
+      ),
+      findsNothing,
     );
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
@@ -446,12 +465,19 @@ void main() {
     await t.tap(icon(nodeLabel(demoted.id)));
     await t.pumpAndSettle();
     expect(find.text('ID FA4E00000103'), findsOneWidget);
-    expect(
-      find.textContaining('Link fragile: -115.0 dBm, 3.0 dB'),
-      findsOneWidget,
-    );
+    expect(find.text('\u2212115 dBm \u00b7 +3 dB'), findsOneWidget);
+    expect(icon('link strength, fragile'), findsOneWidget);
     expect(find.textContaining('demoted'), findsOneWidget);
-    expect(find.textContaining('m away'), findsOneWidget);
+    expect(icon('distance'), findsOneWidget);
+    await t.tapAt(Offset.zero);
+    await t.pumpAndSettle();
+
+    // This node's own: the KNOWN row from the table read, no relays line.
+    await t.tap(icon('this node'));
+    await t.pumpAndSettle();
+    expect(find.text('Relays known: 3'), findsNothing);
+    expect(icon('neighbours known'), findsOneWidget);
+    expect(icon('paired'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     debugPrint = print;

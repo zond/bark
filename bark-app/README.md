@@ -179,20 +179,31 @@ is a prototype for the bench, not the app people will carry.
   demoted or banned. A legend says the bands in dB and the icons: a
   relay is a tower, a node on power; a sleepy node a battery, a node on
   battery; a carried one a walker; each in its link's colour;
-  the node itself is a target. Tapping one shows its name, RSSI,
-  margin, quality, when it was last heard, how far it is from the node,
-  and its flags. The map reads Neighbours when it opens, at every
+  the node itself is a target. Tapping one shows its ID, under it what
+  it is in its screen's words, such as `FIXED RELAY` or `SLEEPY
+  ANCHORED`, and then one row a fact, an icon on the left and the value
+  on the right, always in this order: the link (an antenna, the RSSI
+  and its margin over the noise floor, such as `−71 dBm · +19 dB`, in
+  the link's colour), when it was last heard (a clock), how far it is
+  (a ruler), its power (a plug on USB, a battery with its percent),
+  the neighbours it knows (a hub, heard/strong/proven, such as `3/3/0`,
+  named in a tooltip), its firmware version (a price tag, the Material
+  set having no version icon, such as `V18 · getting V19 14/32` while
+  it gathers an image), its position (a satellite for GPS, a pin for a
+  map point a person set, a crossed-out pin with no place) and a ticked
+  box if it has taken a message from this node; then this node's own
+  view of it, its anchor, a demotion or a ban. Each icon is named for a
+  screen reader. Its power, neighbours and version come from its answer
+  (below); before one, what it is comes from its heartbeats. This
+  node's own sheet says the same of it from its status, its neighbours
+  counted from the table read. The map reads Neighbours when it opens, at every
   status the node gives, and when the refresh button is pressed. When
   it opens and when refreshed, on a node of link version 9 or later, it
   also asks each neighbour that has not answered within the last 10 s,
   through Ask, what its own screen shows;
   a neighbour that answers has its role under its marker in its
-  screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
-  details show its screen's lines one a row under the distance (the
-  role, its power, the neighbours it knows, its firmware version and,
-  from link version 10, the image it gathers, such as `GET V14 14/31`)
-  in place of the sleepy and carried flags they repeat, then this
-  node's own view of it, such as its anchor or a ban. An ask or its
+  screen's words, and its details the rows its answer gives, the image
+  it gathers from link version 10. An ask or its
   answer is lost now and then on a busy channel, so a neighbour that
   has not answered within 2 s is asked again, a round at a time, up to
   three asks while the map is open (spec "Neighbour status"). The

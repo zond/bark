@@ -48,18 +48,82 @@ String qualityName(Quality q) => switch (q) {
   Quality.fragile => 'fragile',
 };
 
-/// The flags of a neighbour, in words; with `answered`, only this node's
-/// relation to it and view of it, as its answer says the rest.
-List<String> neighbourFlags(Neighbour n, {bool answered = false}) => [
-  if (n.anchor) 'this node\'s anchor',
-  if (n.sleepy && !answered) 'sleepy',
-  if (n.carried && !answered) 'carried',
-  if (n.mapPoint) 'position from a map point',
-  if (n.anchorless) 'anchorless',
-  if (n.demoted) 'demoted: its last hand-overs failed',
-  if (n.banned) 'banned for now: it refused or failed a hand-over',
-  if (n.proven) 'has taken a message from this node',
-];
+/// What a node is, in the words of its screen's first line, from what
+/// its heartbeats say when it has not answered: sleepy, its anchor
+/// heard or not; or a relay with no place, carried or fixed.
+String roleOf({
+  required bool sleepy,
+  required bool anchored,
+  required bool placed,
+  required bool carried,
+}) => sleepy
+    ? (anchored ? 'SLEEPY ANCHORED' : 'SLEEPY NO ANCHOR')
+    : !placed
+    ? 'RELAY NO PLACE'
+    : carried
+    ? 'CARRIED RELAY'
+    : 'FIXED RELAY';
+
+bool _placed(Position p) => p.lat != 0 || p.lon != 0;
+
+/// A signed number with the minus sign typography uses.
+String _signed(num v, {bool plus = false}) {
+  final r = v.round();
+  return r < 0 ? '\u2212${-r}' : (plus ? '+$r' : '$r');
+}
+
+/// A distance in metres, in kilometres from 1 km.
+String distance(double m) =>
+    m < 1000 ? '${m.round()} m' : '${(m / 1000).toStringAsFixed(1)} km';
+
+/// Seconds since, as a person says it.
+String secondsAgo(int s) => s < 60 ? '$s s ago' : ago(Duration(seconds: s));
+
+/// A position to five decimals, about a metre.
+String _where(Position p) =>
+    '${p.latDeg.toStringAsFixed(5)}, ${p.lonDeg.toStringAsFixed(5)}';
+
+/// The neighbours a node knows as its screen's KNOWN line counts them:
+/// heard, heard with the margin a full frame needs through a fade, and
+/// proven to hear it (spec "Neighbour status").
+String knownOf(NeighbourTable t) {
+  final strong = t.list.where((n) => n.quality(t.floorDbm) != Quality.fragile);
+  return '${t.list.length}/${strong.length}/'
+      '${t.list.where((n) => n.proven).length}';
+}
+
+/// One fact of a sheet: an icon named for screen readers, and its value.
+class Fact {
+  final IconData icon;
+  final String name;
+  final String value;
+  final Color? color;
+
+  /// Said on a long press, for a value whose parts need naming.
+  final String? tooltip;
+  const Fact(this.icon, this.name, this.value, {this.color, this.tooltip});
+}
+
+/// The facts of a node's power, as its answer or status says it.
+Fact _power({required bool usb, String? battery}) => usb
+    ? const Fact(Icons.power, 'power', 'USB')
+    : Fact(
+        switch (battery) {
+          null => Icons.battery_unknown,
+          'low' => Icons.battery_alert,
+          _ => Icons.battery_std,
+        },
+        'battery',
+        battery ?? 'not read',
+      );
+
+/// Where a node's position comes from: GPS, or a map point a person set;
+/// none without a place.
+Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
+    ? const Fact(Icons.location_off, 'position', 'no place')
+    : mapPoint
+    ? Fact(Icons.push_pin, 'position from a map point', _where(p))
+    : Fact(Icons.satellite_alt, 'position from GPS', _where(p));
 
 LatLng _at(Position p) => LatLng(p.latDeg, p.lonDeg);
 
@@ -238,7 +302,7 @@ class _MapScreenState extends State<MapScreen> {
                     point: own,
                     width: 44,
                     height: 44,
-                    child: _NodeMarker(_s),
+                    child: _NodeMarker(_s, t),
                   ),
               ],
             ),
@@ -337,19 +401,45 @@ class _MapScreenState extends State<MapScreen> {
 
 class _NodeMarker extends StatelessWidget {
   final Session s;
-  const _NodeMarker(this.s);
+  final NeighbourTable t;
+  const _NodeMarker(this.s, this.t);
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: () => showModalBottomSheet<void>(
-      context: context,
-      builder: (_) => _Sheet(nodeLabel(s.node!.id), [
-        'The node this phone is paired with',
-        if (s.status?.sleepy ?? false) 'Sleepy',
-        if (s.status?.carried ?? false) 'Carried',
-        'Relays known: ${s.status?.relays ?? 0}',
-      ]),
-    ),
+    onTap: () {
+      final st = s.status ?? const Status();
+      showModalBottomSheet<void>(
+        context: context,
+        builder: (_) => _Sheet(
+          nodeLabel(s.node!.id),
+          roleOf(
+            sleepy: st.sleepy,
+            anchored: !st.anchorless,
+            placed: st.placed,
+            carried: st.carried,
+          ),
+          [
+            const Fact(
+              Icons.smartphone,
+              'paired',
+              'the node this phone is paired with',
+            ),
+            _power(
+              usb: st.externalPower,
+              battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
+            ),
+            Fact(
+              Icons.hub,
+              'neighbours known',
+              knownOf(t),
+              tooltip: 'heard / strong / proven',
+            ),
+            Fact(Icons.sell, 'firmware version', 'V${s.node!.image}'),
+            _position(t.own, mapPoint: st.mapPoint),
+          ],
+        ),
+      );
+    },
     child: Icon(
       Icons.my_location,
       size: 36,
@@ -376,13 +466,77 @@ class _NeighbourMarker extends StatelessWidget {
   static const labelledWidth = 120.0;
   static const labelledHeight = size + 2 * _label;
 
-  @override
-  Widget build(BuildContext context) {
+  /// Its facts, in an order that does not change: what this node hears
+  /// of it, then what its answer says, then this node's view of it,
+  /// which its screen cannot say.
+  List<Fact> facts() {
     final q = n.quality(t.floorDbm);
-    final margin = n.rssiDbm - t.floorDbm;
     final far = own == null
         ? null
         : const Distance().as(LengthUnit.Meter, own!, _at(n.position));
+    final s = said;
+    return [
+      Fact(
+        Icons.settings_input_antenna,
+        'link strength, ${qualityName(q)}',
+        '${_signed(n.rssiDbm)} dBm \u00b7 '
+            '${_signed(n.rssiDbm - t.floorDbm, plus: true)} dB',
+        color: qualityColor(q),
+        tooltip: 'signal, and its margin over the noise floor',
+      ),
+      Fact(Icons.schedule, 'last heard', secondsAgo(n.ageS)),
+      if (far != null) Fact(Icons.straighten, 'distance', distance(far)),
+      if (s != null) ...[
+        _power(
+          usb: s.usb,
+          battery: s.battery == NeighbourStatus.batteryLow
+              ? 'low'
+              : s.percent == null
+              ? null
+              : '${s.percent}%',
+        ),
+        Fact(
+          Icons.hub,
+          'neighbours known',
+          '${s.heard}/${s.strong}/${s.proven}',
+          tooltip: 'heard / strong / proven',
+        ),
+        if (s.version != 0)
+          Fact(
+            Icons.sell,
+            'firmware version',
+            s.gathers == 0
+                ? 'V${s.version}'
+                : 'V${s.version} \u00b7 getting V${s.gathers} '
+                      '${s.complete}/${s.blocks}',
+          ),
+      ],
+      _position(n.position, mapPoint: n.mapPoint),
+      if (n.proven)
+        const Fact(
+          Icons.check_box,
+          'proven',
+          'has taken a message from this node',
+        ),
+      if (n.anchor) const Fact(Icons.anchor, 'anchor', 'this node\'s anchor'),
+      if (n.demoted)
+        const Fact(
+          Icons.trending_down,
+          'demoted',
+          'demoted: its last hand-overs failed',
+        ),
+      if (n.banned)
+        const Fact(
+          Icons.block,
+          'banned',
+          'banned for now: it refused or failed a hand-over',
+        ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = n.quality(t.floorDbm);
     final icon = Icon(
       n.carried
           ? Icons.directions_walk
@@ -397,16 +551,17 @@ class _NeighbourMarker extends StatelessWidget {
     return GestureDetector(
       onTap: () => showModalBottomSheet<void>(
         context: context,
-        builder: (_) => _Sheet(nodeLabel(n.id), [
-          'Link ${qualityName(q)}: ${n.rssiDbm.toStringAsFixed(1)} dBm, '
-              '${margin.toStringAsFixed(1)} dB over the noise floor',
-          'Last heard ${n.ageS} s ago',
-          if (far != null) '${far.round()} m away',
-          // Its own screen's lines, one a row, then this node's relation
-          // to it, which its screen cannot say.
-          ...?s?.lines,
-          ...neighbourFlags(n, answered: s != null),
-        ]),
+        builder: (_) => _Sheet(
+          nodeLabel(n.id),
+          s?.role ??
+              roleOf(
+                sleepy: n.sleepy,
+                anchored: !n.anchorless,
+                placed: _placed(n.position),
+                carried: n.carried,
+              ),
+          facts(),
+        ),
       ),
       child: s == null
           ? icon
@@ -433,24 +588,52 @@ class _NeighbourMarker extends StatelessWidget {
   }
 }
 
+/// A node's details: its ID, what it is in its screen's words, and a row
+/// a fact.
 class _Sheet extends StatelessWidget {
   final String title;
-  final List<String> lines;
-  const _Sheet(this.title, this.lines);
+  final String role;
+  final List<Fact> facts;
+  const _Sheet(this.title, this.role, this.facts);
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(title, style: text.titleLarge),
+            Text(role, style: text.titleSmall),
+            const SizedBox(height: 8),
+            for (final f in facts) _row(f),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(Fact f) {
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
         children: [
-          Text(title, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          for (final l in lines) Text(l),
+          Icon(f.icon, color: f.color, semanticLabel: f.name),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              f.value,
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
-    ),
-  );
+    );
+    return f.tooltip == null ? row : Tooltip(message: f.tooltip, child: row);
+  }
 }
