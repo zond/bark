@@ -679,6 +679,41 @@ section carries no bitmap of the blocks held, and a slot carries one
 piece.
 
 
+## The pace as a floor (2026-11-09)
+
+The user made the pace a floor (roadmap D156): an idle holder with
+nothing else to send and no other sender heard on the channel sends its
+next piece as soon as its bucket allows, about every 1.41 s; and a quota
+cut short by lost pieces goes on at the pace until the block is
+complete, after a bench run in which a holder fell silent waiting for
+the gatherer's section.
+
+The district, 36 h, seed 1, with the update and without it:
+
+| | ×1 without | ×1 with | ×2 without | ×2 with |
+|---|---|---|---|---|
+| relays holding 50 / 90 / 100 % | | 2.3 / 2.8 / 5.8 h | | 2.2 / 2.7 / 4.5 h |
+| channel busy, mean over the run | 1.13 % | 2.92 % | 1.52 % | 3.30 % |
+| texts delivered, 0–12 / 12–24 / 24–36 h | 99.63 / 99.73 / 99.45 % | 99.48 / 99.65 / 99.44 % | 99.72 / 99.70 / 99.43 % | 99.52 / 99.65 / 99.37 % |
+| latency p90, 0–12 h | 17.8 s | 40.9 s | 18.0 s | 42.6 s |
+| latency p99, 0–12 h | 1 053 s | 1 389 s | 1 103 s | 1 777 s |
+| latency p50 / p90, 24–36 h | 1.0 / 16.3 s | 1.0 / 16.5 s | 1.0 / 16.6 s | 1.0 / 16.6 s |
+| pieces within a pace of the sender's last there / after | | 2.92 M / 0.90 M | | 2.87 M / 0.91 M |
+
+Of the pieces a pace or more apart, 0.67 M were slot pieces, so tails
+and fallbacks to the pace were at most 0.24 M at ×1, 32 700 s of air, 6 %
+of the pieces'. The pieces took 530 000 s of the run's 839 000 s of air
+at ×1, most of it in the first three hours: about 30 000 s each ten
+minutes then, 50 s a second across the district, the relays' channels
+reading busy near 5 %; from the fourth hour about 450 s each ten
+minutes. Relays missed 35.9 % of the pieces sent to them that they
+lacked, against 18 % at the pace.
+
+```
+bark-sim district-x1-update.toml --duration-s 129600 --update f1.upd.csv --messages f1.msgs.csv
+bark-sim district-x1.toml --duration-s 129600 --messages b1.msgs.csv
+```
+
 ## What is left
 
 - **The firmware's side**: the driver's answers to the update's

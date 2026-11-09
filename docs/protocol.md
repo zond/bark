@@ -3881,10 +3881,12 @@ bytes and 14.4 ms.
    for loss: that count over 1 − 20 %, the share of pieces a
    gatherer missed in the simulator (20.5 % of the pieces sent to
    relays that lacked them, in the district at the design rate over an
-   update's first 6 hours, `mesh-update-2026-11-07.md`). Then it moves
-   to the next block that a neighbour there lacks, skipping the blocks none
-   lacks, and after the last starts the sweep again while any lacks
-   something.
+   update's first 6 hours, `mesh-update-2026-11-07.md`). If that block
+   is the lowest a neighbour there lacks, it goes on with fresh pieces
+   of it, at the pace, until the neighbour's section shows it complete:
+   the block's **tail**. Then it moves to the next block that a
+   neighbour there lacks, skipping the blocks none lacks, and after the
+   last starts the sweep again while any lacks something.
 5. On its home channel, where it hears the others, a node that heard k
    pieces from other nodes since its last there sends its next there
    k + 1 paces after its last; on another channel, one a pace. The
@@ -3917,7 +3919,14 @@ the channel at once, so it stays on a block until the neighbour that
 lacks most of it should have enough; with fewer, it would leave that
 neighbour a block short until the next sweep, a sweep later. The
 margin makes up the pieces lost on the way on average; a neighbour
-that lost more takes the rest in the next sweep. *Why a random first
+that lost more takes the rest in the block's tail, if it is the lowest
+it lacks, else in the next sweep. *Why a tail.* A neighbour's section
+rides only when its blocks held from the first change, or hourly
+([what a node tells](#updates-over-the-mesh)), so a holder that waited
+for it after a quota cut short could fall silent for up to an hour a
+block, as one did on the bench; the tail keeps the stream going until
+the section shows the block, and at the pace it costs at most 1 % of the
+channel. *Why a random first
 piece.* Two helpers of a block then seldom send the same piece.
 
 *Why the helpers share the pace.* Every helper keeps its own pace, so a
@@ -3943,10 +3952,17 @@ channel to one.* Every helper keeps streaming, each from the blocks it
 holds, so a neighbour that lacks a block one helper does not hold still
 has it from another, and the channel loses nothing when a helper goes.
 
-**Pace and priority.** A node sends pieces at a fixed pace, busy or
-not: at most one on a channel in 13.86 s, a full frame's 138.6 ms a
-hundred times over, so that one node's pieces take at most 1 % of a
-channel's time; and on at most two channels in any one pace. They wait
+**Pace and priority.** The pace is a floor, not the rate. A node sends
+its next piece on a channel as soon as its last there has gone and the
+bucket allows it with the reply reserve kept, while its send queue holds
+nothing else and it has heard no other node's piece on that channel
+since its own last; otherwise at the pace: at most one on a channel in
+13.86 s, a full frame's 138.6 ms a hundred times over, so that one
+node's pieces take at most 1 % of a channel's time. An idle channel
+then carries a piece about every 1.41 s, the time the bucket takes to
+refill a full frame at the cap, 138.6 ms × 600 / 59
+([duty cycle cap](#duty-cycle-cap)), after a first run of the bucket's
+6 s. A node sends pieces on at most two channels in any one pace. They wait
 behind the frames of the send queue ([send queue](#send-queue)) and go
 after the sweep's readings, but at most 9 frames of the send queue go
 before a piece that is due; then it goes before the next. Each is paid
@@ -3954,10 +3970,30 @@ from the bucket as a forward is, leaving the reply reserve
 ([duty cycle cap](#duty-cycle-cap)), and listens before it talks as a
 heartbeat does ([heartbeat](#heartbeat)): up to three checks, and if
 every one is busy the piece waits its pace. The pieces go on whichever
-channel the pace frees first. Each pace ends a random time within two
+channel the pace frees first. A wait for the bucket ends a random time
+within two frames later too, so that two holders the bucket holds alike
+do not send together. Each pace ends a random time within two
 frames, 277 ms, after the piece: two senders that start a pace
 together then part by more than a frame, and hear each other, a quarter
 of the time each pace.
+
+*Why a floor.* The mechanism is the same at any rate: the sweep, the
+sections and the sharing do not change with how fast the pieces go.
+The duty cap already bounds a relay's air, and a text never waits
+behind a piece: a piece goes only when the send queue is empty, and
+the reply reserve stays in the bucket. Where another sender is heard,
+or texts are queued, the pieces fall back to the pace, which keeps a
+loaded channel as before. Measured in the district: at the design rate, 36 hours, seed 1, the relays held
+the image 50 / 90 / 100 % after 2.3 / 2.8 / 5.8 hours, against 13.8 /
+14.5 / 21.7 at the pace, and at twice the rate after 2.2 / 2.7 / 4.5.
+The price is the channels' while the relays gather: for about three
+hours the pieces took about 50 s of air a second across the district,
+the relays' channels read busy near 5 %, and the texts sent in the
+first 12 hours waited longer, 41 s at the 90th percentile against 18 s
+without the update, 99.48 % delivered against 99.63 %; the texts sent
+after matched (`mesh-update-2026-11-07.md`, roadmap D156). A text at a
+relay never waits behind a piece, but on a loaded channel it meets
+them.
 
 *Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
 to 1.4 % of the time at the design rate of
@@ -3988,10 +4024,12 @@ time. While one runs, a relay's count of blocks grows at most once in
 most 4.1 rotations an hour more, 5.1 in all, 0.34 % of each channel's
 time, so the heartbeats take at most 3.3 % against 3.0 % without. Were
 the section in every heartbeat while an update runs, they would take
-270 × 23.36 ms / (10 s × 13) = 4.9 %. A channel that gathers adds a piece a
-pace, 1 % of its time, however many help. Today's image takes a sweep
-of 2 133 paces from a helper that holds it to a neighbour that holds
-none, 8.2 hours, at the margin of rule 4.
+270 × 23.36 ms / (10 s × 13) = 4.9 %. A busy channel that gathers adds
+a piece a pace, 1 % of its time, however many help; an idle one as many
+as its sender's bucket allows. Today's image takes a sweep of 2 133
+pieces from a helper that holds it to a neighbour that holds none, at
+the margin of rule 4: 50 minutes at the bucket's rate on an idle
+channel, 8.2 hours at the pace.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes
