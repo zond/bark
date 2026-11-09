@@ -29,17 +29,17 @@ It checks the model and writes to `hardware/enclosure/out/`:
   antenna's axis with the T-Echo inside.
 
 The checks: each part is one valid solid; the lid does not touch the
-body; nothing but the crush ribs reaches into the case, adapter, antenna
-or plug; every latch beam's strain is under the limit. The parameters at
+body; nothing but the crush ribs reaches into the case, antenna, plug or
+the cable's curve; every latch beam's strain is under the limit. The parameters at
 the top of the script marked ESTIMATE are not in any source: measure
 them on the parts in hand and rerun before printing.
 
 ## Parts
 
-- The T-Echo in its stock case, with its stock 433 MHz antenna.
-- A right-angle SMA adapter, male to female, which stands the antenna
-  upright.
-- A USB-A to USB-C cable from the panel's controller.
+- The T-Echo in its stock case, with its stock 433 MHz antenna screwed
+  straight onto the jack.
+- A USB-A to USB-C cable with a straight plug, from the panel's
+  controller; its minimum bend radius goes in `BEND_R`.
 - Two 12 mm stainless hose clamps for a pole or railing, or four 4 mm
   stainless screws for a wall.
 
@@ -66,12 +66,13 @@ fits inside the body's bottom edge with 0.25 mm a side.
 
 1. On the bench, flash and test the board; the reset button cannot be
    reached once the case is in the body.
-2. Screw the adapter onto the jack and the antenna onto the adapter,
-   standing up beside the case.
-3. Plug the cable into the USB-C port and slide it into the lid's slot
-   from the front edge.
+2. Screw the antenna onto the jack.
+3. Plug the cable into the USB-C port, turn it down in an even curve no
+   tighter than its bend radius, and slide it into the lid's slot from
+   the front edge.
 4. Push the case, antenna first, up into the body from below until it
-   stops; then press the lid in until all four latches click.
+   stops, the cable's curve in the bay beside it; then press the lid in
+   until all six latches click.
 5. Mount the box upright with the lid at the bottom, its bottom clear of
    the snow, and lead the cable down in a loop below the box before it
    goes to the panel.
