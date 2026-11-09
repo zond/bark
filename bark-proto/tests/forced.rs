@@ -168,10 +168,10 @@ fn a_low_battery_turns_a_forced_relay_sleepy() {
     assert!(h.nodes[r].core.sleepy());
 }
 
-/// Each press flips the role, and the node stays forced; a relay flipped
+/// Each flip turns the role, and the node stays forced; a relay flipped
 /// back within its flush relays on, with what it flushed still queued.
 #[test]
-fn each_press_flips_the_role() {
+fn each_flip_turns_the_role_and_keeps_it_forced() {
     let r = 0;
     let mut h = pair(51, Some(LEVELS));
     force(&mut h, r);
@@ -195,7 +195,7 @@ fn each_press_flips_the_role() {
     assert_eq!(forced, [true, false, true, false]);
 }
 
-/// A relay that leaves is a relay still: a press keeps it turning sleepy,
+/// A relay that leaves is a relay still: a flip keeps it turning sleepy,
 /// now forced.
 #[test]
 fn a_leaving_relay_flips_to_sleepy() {
