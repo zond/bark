@@ -30,7 +30,7 @@ deliberate jamming; it is designed for infrastructure loss.
 | Phones | Bluetooth LE (BLE) GATT link to the node; the app encrypts end to end; the sender's position travels encrypted in the payload |
 | Position | From GPS unless a fix fails the checks or the app sets a map point, and a sleepy node's anchor's while it has one; WGS-84 in 7 bytes (≈0.6 m), the same everywhere on Earth; distances in a flat local plane at each node |
 | Time | No network time, and GPS time is not used |
-| Updates | A new firmware image passes from relay to relay as coded pieces: heartbeats tell what each node holds and lacks, and a relay streams the blocks it holds where a neighbour lacks them, block by block, the senders on a channel sharing one piece in 13.86 s, 1 % of its time; the node's firmware decides which images it takes ([updates over the mesh](#updates-over-the-mesh)) |
+| Updates | A new firmware image passes from relay to relay as coded pieces: heartbeats tell what each node holds and lacks, and a relay streams the blocks it holds where a neighbour lacks them, block by block, at most one piece in 4.16 s from a sender alone on a channel, 3.3 % of its time, and one in 13.86 s, 1 %, shared by senders that hear each other or have texts to send; the node's firmware decides which images it takes ([updates over the mesh](#updates-over-the-mesh)) |
 
 ---
 
@@ -905,7 +905,7 @@ Per node, up to 64 entries, by node ID:
 | banned_until | when its ban ends ([bans](#bans)) |
 | service, last take, told | how long this relay takes to get one message through to it, when it last took one, and the waits its refusals have told since ([service time](#neighbour-table)) |
 | line end | when the line of senders refused for want of it as the way on ends ([bans](#bans)) |
-| update | the section of its last heartbeat that carried one: the version it runs, the newest image it holds or gathers and how much of it it holds ([updates over the mesh](#updates-over-the-mesh)) |
+| update | the section of its last heartbeat that carried one: the version it runs, the newest image it holds or gathers and how much of it it holds, and when it was heard, for a helper's lease ([updates over the mesh](#updates-over-the-mesh)) |
 | last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 **Expiry.** An entry expires after a time without a heartbeat or an
@@ -3876,10 +3876,10 @@ bytes, the last block shorter and its last piece padded (`bark-image`,
 the name. Each block is sent as up to 255 coded pieces, and any 64
 distinct ones of a block, or as many as it has, give it back (a
 Reed-Solomon code over GF(2⁸), the firmware's, `code.rs`). Today's node
-image, 420 552 bytes (built from main `ea1141f` on 2026-11-08 as
-`bark-fw/README.md`, "Build and package", says), packs to 420 808
-bytes, 1704 pieces in 27 blocks, 26 of 64 and one of 40; its table is
-two pieces, 28 blocks in all. An image has at most 48 blocks, the
+image, 478 704 bytes (the open build of main `9b693a0` on 2026-11-09,
+`bark-fw/README.md`, "Build and package"), packs to 478 960 bytes,
+1 940 pieces in 31 blocks, 30 of 64 and one of 20; its table is two
+pieces, 32 blocks in all. An image has at most 48 blocks, the
 table's among them, one for each lane the firmware keeps pieces in
 (`pieces.rs`): 47 blocks of packed image, 743 KB, which
 `bark-fw/scripts/image.py pack` refuses to pass.
@@ -3939,8 +3939,8 @@ the gatherer's section shows it complete (rule 4), and a rotation after
 a change reaches a channel only if that heartbeat finds it free. On the
 bench a gatherer completed a block while three of its heartbeats were
 skipped for busy channels, then moved home twice, and its holder,
-hearing no section, streamed that block's tail for over an hour
-(roadmap D158). Said once a rotation on the helper's own channel, the
+hearing no section, streamed that block's tail, over 370 pieces, for
+more than an hour (roadmap D158). Said once a rotation on the helper's own channel, the
 section reaches the helper within a rotation of any change. It costs one
 section a rotation for each gatherer: with a domain's 270 relays
 ([capacity and sizing](#capacity-and-sizing)) all gathering, 270 ×
@@ -3966,8 +3966,7 @@ version, and the sections that named that one name none; one older than
 the four is kept as naming none. No node that runs a newer image
 gathers the lowest.
 
-*Why in the heartbeat.* One frame kind, the piece, instead of an
-announcement, a request and a piece: the neighbour table knows what
+*Why in the heartbeat.* One frame kind, the piece: the neighbour table knows what
 each neighbour holds and lacks as it knows its channel, and there is
 nothing to ask, to answer or to time. The cost is that a node learns of
 a new image within a rotation of its heartbeats, 130 s, where a frame
@@ -3993,8 +3992,8 @@ bytes and 14.4 ms.
    block's pieces again, and does not count it held.
 3. A relay **helps** a channel where a neighbour's section says it
    gathers the image the relay gathers or holds and lacks a block the
-   relay holds: it **streams** there, one piece a pace (below), from the
-   blocks it holds. On its home channel it streams to every gatherer
+   relay holds: it **streams** there, at the gap or the pace (below),
+   from the blocks it holds. On its home channel it streams to every gatherer
    at home there. On another channel it streams only the blocks past
    those a relay at home there holds, by that relay's section, and to a
    gatherer only if it is the best holder it hears for it: no relay it
@@ -4024,7 +4023,8 @@ bytes and 14.4 ms.
    last starts the sweep again while any lacks something.
 5. On its home channel, where it hears the others, a node that heard k
    pieces from other nodes since its last there sends its next there
-   k + 1 paces after its last; on another channel, one a pace. The
+   k + 1 paces after its last; having heard none, and on another
+   channel, at the gap or the pace (pace and priority, below). The
    piece after a slot heartbeat is apart from this (sleepy nodes,
    below).
 
@@ -4032,7 +4032,7 @@ bytes and 14.4 ms.
 lacks its block, whenever that node began, so the nodes of a channel
 are in step by construction and need no agreement on a block. *Why not
 one code over the whole image.* A receiver would have to solve for
-1 704 unknowns at once from pieces read over the external flash's bus,
+1 940 unknowns at once from pieces read over the external flash's bus,
 which its bit-banged bus makes slow, and a bad piece would show only at
 the end; blocks of 64 decode as they complete and fail alone. *Why a
 node serves the blocks it holds.* An image then moves through a chain
@@ -4060,9 +4060,8 @@ after a quota cut short would wait for the neighbour's next section to
 learn what is still missing; the tail keeps the stream going until the
 section shows the block, and at the pace it costs at most 1 % of the
 channel. *Why a lease.* Without one the tail runs on while the
-gatherer's sections go unheard: on the bench a holder streamed one
-block's tail, over 370 pieces, for more than an hour to a gatherer that
-had completed it (roadmap D158). The gatherer says its section once a
+gatherer's sections go unheard, as on the bench (why a gatherer says it
+every rotation, above). The gatherer says its section once a
 rotation where its helper hears it, so two rotations ride out one lost
 or skipped, and a stream to a gatherer that fell silent, moved away or
 completed stops within two; a gatherer heard again is served again at
@@ -4180,9 +4179,9 @@ section in every heartbeat while an update runs, they would take
 270 × 23.36 ms / (10 s × 13) = 4.9 %. A boot, and an answer to a
 neighbour that lags, each add a rotation of sections, 116.5 ms. A busy channel that gathers adds
 a piece a pace, 1 % of its time, however many help; an idle one a piece
-a gap, 3.3 %. Today's image takes a sweep of 2 133 pieces from a helper
+a gap, 3.3 %. Today's image takes a sweep of 2 428 pieces from a helper
 that holds it to a neighbour that holds none, at the margin of rule 4:
-2.5 hours a gap apart on an idle channel, 8.2 hours at the pace.
+2.8 hours a gap apart on an idle channel, 9.3 hours at the pace.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes
@@ -4210,14 +4209,14 @@ wakes for anyway. A sleepy node without an anchor takes no part.
 
 *What it costs a sleepy node.* One piece a rotation of its anchor, 13
 of its heartbeats, 130 s at the mean interval
-([heartbeat](#heartbeat)): today's image takes 2 133 rotations at
-the margin of rule 4, 77 hours, 3.2 days, and as many
-listens of 143.6 ms, 306 s, at the 5.8 mA of listening
+([heartbeat](#heartbeat)): today's image takes 2 428 rotations at
+the margin of rule 4, 88 hours, 3.7 days, and as many
+listens of 143.6 ms, 349 s, at the 5.8 mA of listening
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
-0.49 mAh, 0.06 % of the 850 mAh battery
+0.56 mAh, 0.07 % of the 850 mAh battery
 ([hardware](#hardware)). Its beats carry the section while it gathers,
 8.96 ms more on each of its 16 beats an hour, 143 ms an hour on the
-230 ms of its beats ([beats](#beats)): 11 s over the 77 hours, 0.1 mAh
+230 ms of its beats ([beats](#beats)): 13 s over the 88 hours, 0.1 mAh
 at the 32 mA of transmitting
 ([sleepy nodes alone](#sleepy-nodes-alone)).
 The pieces it hears in its windows shorten its time. The nodes of an
@@ -4511,7 +4510,8 @@ on external power nothing limits it (roadmap D143). A cell that gives
 out in the middle of a swap leaves the node with no image to run until
 it is charged, where without the swap it would run on asleep for days.
 A node stages only an image above its own version and signed by a key
-it was built with (roadmap D144).
+it was built with, the project's and, on a bench build, the bench key
+(roadmap D144, D154).
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay
@@ -4593,14 +4593,17 @@ are those of the bring-up order, `roadmap.md` Phase 2.
   of `CONNECTION_PRIORITY_BALANCED`, 30 to 50 ms.
 - Nordic SoftDevice Controller, `sdc_hci_vs.h`: a connection event of
   7.5 ms by default.
-  Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
+- Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
   hash (Vol 3 Part G §7.3).
 - libsodium documentation: "Public-key authenticated encryption"
   (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
   (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic
   hashing" (`crypto_generichash`).
 - RFC 4648, "The Base16, Base32, and Base64 Data Encodings": base32.
-- FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum.
+- FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum and
+  an image's hash and name.
+- RFC 8032, "Edwards-Curve Digital Signature Algorithm (EdDSA)":
+  Ed25519, an image's signature.
 - Nordic nRF52840 Product Specification: the radio's transmit and
   receive currents.
 - Apple, Accessory Design Guidelines for Apple Devices, "Advertising

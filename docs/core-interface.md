@@ -351,14 +351,16 @@ medium access, the hand-over in flight, its owed reply with the DATA it takes (r
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 1 888 B (spec "Updates over the mesh"), with 16 B of each neighbour's entry for its heartbeats' section and when it was heard and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+of the update, 1 888 B, with 16 B of each neighbour's entry for its heartbeats' section and
+when it was heard, and the four images the sections name kept once in the table, 64 B (spec
+"Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
 `SleepyNode` is 76 000 B (74.2 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
 (`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 112 008 B,
-`bark-fw/scripts/uf2.py --stack` on the open release build of version 14 (roadmap D158): 87 352 B more than the 24 656 B it
-left with 254 hop places held at once and 1613 records (roadmap D155), against a floor of 24 576 B.
+`bark-fw/scripts/uf2.py --stack` on the open release build of version 14 (roadmap D158), against a
+floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
