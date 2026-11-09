@@ -51,6 +51,9 @@ class Me extends ChangeNotifier {
   /// The app has asked the person to let it use Bluetooth.
   bool askedBluetooth = false;
 
+  /// The person has tapped Got it once, so the hint is no longer needed.
+  bool gotItHinted = false;
+
   /// A fetch the person asked for while no node was linked: it goes out
   /// from the next node the phone links to.
   bool fetchQueued = false;
@@ -98,6 +101,7 @@ class Me extends ChangeNotifier {
       // none queued.
       final askedBluetooth = j['askedBluetooth'] as bool? ?? false;
       final fetchQueued = j['fetchQueued'] as bool? ?? false;
+      final gotItHinted = j['gotItHinted'] as bool? ?? false;
       // Added after the format's first version: absent means none told.
       final remaining = j['remaining'] as int? ?? 0;
       final rounds = (j['rounds'] as List).cast<int>().toList();
@@ -113,6 +117,7 @@ class Me extends ChangeNotifier {
         this.askedToNotify = askedToNotify;
         this.askedBluetooth = askedBluetooth;
         this.fetchQueued = fetchQueued;
+        this.gotItHinted = gotItHinted;
         this.remaining = remaining;
         this.rounds.addAll(rounds);
       };
@@ -141,6 +146,7 @@ class Me extends ChangeNotifier {
     'askedToNotify': askedToNotify,
     'askedBluetooth': askedBluetooth,
     'fetchQueued': fetchQueued,
+    'gotItHinted': gotItHinted,
     'remaining': remaining,
     'rounds': rounds,
   });
@@ -180,6 +186,12 @@ class Me extends ChangeNotifier {
 
   Future<void> setAskedBluetooth() async {
     askedBluetooth = true;
+    await _changed();
+  }
+
+  Future<void> setGotItHinted() async {
+    if (gotItHinted) return;
+    gotItHinted = true;
     await _changed();
   }
 

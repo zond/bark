@@ -32,6 +32,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:sodium/sodium.dart';
 
+/// The one check's words: no news from the network past it.
+const sentTip = 'Sent into the network; no further news until they confirm';
+
 void main() {
   late Sodium sodium;
   setUpAll(() async => sodium = await SodiumInit.init());
@@ -98,7 +101,7 @@ void main() {
     await t.pump();
     await t.pump();
     expect(find.text('hello'), findsOneWidget);
-    expect(find.byTooltip('Taken by the node'), findsOneWidget);
+    expect(find.byTooltip(sentTip), findsOneWidget);
     await t.pump(FakeNode.echoAfter + const Duration(seconds: 1));
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
@@ -113,16 +116,20 @@ void main() {
     final mark = find.byWidgetPredicate(
       (w) => w is Icon && w.icon == Icons.done_all && w.semanticLabel != null,
     );
-    final taken = find.byTooltip('Taken by the node');
-    final button = find.byTooltip('Acknowledge');
+    final taken = find.byTooltip(sentTip);
+    final button = find.byTooltip('Tell the sender you read it');
     expect(inBubble('Echo: hello', button), findsOneWidget);
     expect(inBubble('Echo: hello', mark), findsNothing);
     expect(inBubble('hello', mark), findsNothing);
     expect(inBubble('hello', taken), findsOneWidget);
-    // The button keeps the small line one line of small text tall.
-    Finder line(Finder f) =>
-        find.ancestor(of: f, matching: find.byType(Row)).first;
-    final withButton = t.getSize(line(inBubble('Echo: hello', button))).height;
+    // A labelled chip with a tap target of 48 dp, and a hint, once.
+    expect(inBubble('Echo: hello', find.text('Got it')), findsOneWidget);
+    expect(
+      t.getSize(inBubble('Echo: hello', find.byType(ActionChip))).height,
+      greaterThanOrEqualTo(48),
+    );
+    const hint = 'Tap Got it so the sender sees you read it.';
+    expect(find.text(hint), findsOneWidget);
     app.session.outbox.singleWhere((o) => o.body == 'hello').acked = true;
     await t.tap(inBubble('Echo: hello', button));
     await t.pump();
@@ -135,8 +142,17 @@ void main() {
       (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
     );
     expect(inBubble('Echo: hello', check), findsOneWidget);
-    final withCheck = t.getSize(line(inBubble('Echo: hello', check))).height;
-    expect(withButton, closeTo(withCheck, 1));
+    expect(find.text(hint), findsNothing);
+    // A tap on a state explains them all.
+    await t.tap(inBubble('hello', mark));
+    await t.pumpAndSettle();
+    expect(find.text('Confirmed by the recipient'), findsOneWidget);
+    expect(
+      find.textContaining('The network gives no further news'),
+      findsOneWidget,
+    );
+    await t.tapAt(Offset.zero);
+    await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();
 
@@ -465,7 +481,7 @@ void main() {
     final out = app.session.outbox;
     expect(out.map((o) => o.part), [1, 2]);
     expect(find.text(long), findsOneWidget);
-    expect(find.byTooltip('Queued'), findsOneWidget);
+    expect(find.byTooltip('Waiting on this phone'), findsOneWidget);
 
     Future<void> redraw() async {
       app.session.dismissNotice();
@@ -475,17 +491,17 @@ void main() {
     // They differ: in words.
     out[0].state = OutState.taken;
     await redraw();
-    expect(find.text('1 of 2 taken'), findsOneWidget);
-    expect(find.byTooltip('Queued'), findsNothing);
+    expect(find.text('1 of 2 sent'), findsOneWidget);
+    expect(find.byTooltip('Waiting on this phone'), findsNothing);
     out[1].state = OutState.taken;
     await redraw();
-    expect(find.byTooltip('Taken by the node'), findsOneWidget);
+    expect(find.byTooltip(sentTip), findsOneWidget);
     final both = find.byWidgetPredicate(
       (w) => w is Icon && w.icon == Icons.done_all,
     );
     out[0].acked = true;
     await redraw();
-    expect(find.text('2 of 2 taken, 1 acknowledged'), findsOneWidget);
+    expect(find.text('2 of 2 sent, 1 confirmed'), findsOneWidget);
     expect(both, findsNothing);
     out[1].acked = true;
     await redraw();
@@ -511,17 +527,17 @@ void main() {
     await t.runAsync(() => receive(7000, 1, 'one '));
     await t.pump();
     expect(find.textContaining('part 2 of 3 not yet here'), findsOneWidget);
-    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
     for (final r in app.session.received) {
       r.acked = true;
     }
     await redraw();
-    expect(find.byTooltip('Acknowledge'), findsNothing);
+    expect(find.byTooltip('Tell the sender you read it'), findsNothing);
     await t.runAsync(() => receive(7001, 2, 'two '));
     await t.pump();
     expect(find.textContaining('not yet here'), findsNothing);
     expect(find.text('one two three'), findsOneWidget);
-    expect(find.byTooltip('Acknowledge'), findsOneWidget);
+    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

@@ -109,7 +109,7 @@ class Outgoing {
 
   String get text => switch (kind) {
     OutKind.text => body ?? '',
-    OutKind.ack => 'Acknowledged',
+    OutKind.ack => 'Got it',
     OutKind.card => 'Your card',
     OutKind.fetch => 'Fetch from your mailbox',
   };

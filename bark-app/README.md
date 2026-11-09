@@ -67,15 +67,21 @@ is a prototype for the bench, not the app people will carry.
   order, and a field at the bottom to write the next. Each text's small
   line has its time, then where it went, then its state, as icons the
   text's size whose tooltips give the words: a house, to their home; a
-  pin, to where they were; a mailbox, from your mailbox; a clock, not
-  yet with the node; one check, taken by the node; two checks in the
-  theme's colour, acknowledged by the other person. A given-back text
-  says so in words with its wait counting down, and can be sent again
-  once the wait is over, or dropped; a refused text says why in words.
-  The top line says when the contact last wrote, and, when their card
-  names a home, whether from it. A received text has a small filled
-  check-mark button, **Acknowledge**; nothing is acknowledged by itself.
-  Once pressed, the button turns into one plain check, and the two
+  pin, to where they were; an hourglass, to the node on a temporary
+  card; a mailbox, from your mailbox. A sent text's states: a clock,
+  waiting on this phone; two arrows, being handed to the node; one
+  check, sent into the network, whose tooltip says the network gives no
+  further news until they confirm, as it sends none (spec
+  "Addresses"); two checks in the theme's colour, confirmed by the
+  recipient. A text the network gave back shows an hourglass and
+  "network busy, try again in m:ss", and can be sent again once the
+  wait is over, or cancelled; a refused text says why in words. A tap
+  on a state opens a sheet that explains them all. The top line says
+  when the contact last wrote, and, when their card names a home,
+  whether from it. A received text has a labelled chip, **Got it**,
+  48 dp tall; nothing is confirmed by itself, and until the person
+  first taps one, a line says "Tap Got it so the sender sees you read
+  it." Once pressed, the chip turns into one plain check, and the two
   checks appear on the sender's copy.
   A text longer than one message holds, 156 bytes in a box without an
   address, goes as parts of up to 155 bytes, 16 at most (roadmap D137):
@@ -85,12 +91,12 @@ is a prototype for the bench, not the app people will carry.
   near the end of each part, and queues the parts in order. The sent
   text is one bubble with the parts' state on its small line: the usual
   icons while every part is in the same state, else words such as
-  "2 of 3 taken"; the two checks once every part is acknowledged. A
+  "2 of 3 sent"; the two checks once every part is confirmed. A
   received text in parts is one bubble with the parts that have come,
   in order, and "part 2 of 3 not yet here" in place of one that has
-  not, until all are in. **Acknowledge** acknowledges every part that
-  has come; a part that comes after the tap brings the button back and
-  is acknowledged with the next tap.
+  not, until all are in. **Got it** confirms every part that has come;
+  a part that comes after the tap brings the chip back and is confirmed
+  with the next tap.
   A contact whose first message has come but no
   sealed reply is marked not verified; once it is verified, a text
   that came in a first message has a mark of its own, as anyone could
@@ -118,7 +124,7 @@ is a prototype for the bench, not the app people will carry.
   The archived conversations, then the archived contacts, each with an
   unarchive button. Unarchiving either brings back both: a person whose
   conversation is back is one you talk to again. A conversation opens
-  read-only, with no field, acknowledge buttons or menu, and
+  read-only, with no field, Got it chips or menu, and
   **Unarchive** at the bottom. An archived contact is still known: its
   card and keys are kept, its messages open, and **Send my card** still
   goes to it. A new text from an archived conversation brings it, and
@@ -679,11 +685,11 @@ a phone (Trying it, With a node).
    messages read and confirmed.
 4. Open the conversation: it says not verified, and the top line "Last
    wrote just now, away from home". Write a text and send it. It shows
-   as taken by the node, "to where they were"; 5 s later "Echo: " and
+   as sent into the network, "to where they were"; 5 s later "Echo: " and
    your text appears, and the note goes: the echo was sealed by the
    fake friend.
-5. Press the check-mark button **Acknowledge** on the echo: it becomes
-   a plain check mark, and Debug lists an `ack` sent.
+5. Press **Got it** on the echo: it becomes a plain check mark, and
+   Debug lists an `ack` sent.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
@@ -772,7 +778,7 @@ a phone (Trying it, With a node).
    and falls to 0 as the app reads it. Answer it: the answer is boxed,
    and the phone that wrote first shows the other as verified. Write
    again from that phone: the phone with the home shows it as verified
-   too. Press **Acknowledge** on the answer: the other phone shows a
+   too. Press **Got it** on the answer: the other phone shows a
    check mark on its text.
 6. Switch off the receiving phone's Bluetooth, send two texts to it,
    switch it back on and connect: both arrive, oldest first, and the

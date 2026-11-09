@@ -167,6 +167,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   'Once a reply of theirs opens here, it is theirs.',
                 ),
               ),
+            if (!app.me.gotItHinted &&
+                !archived &&
+                c.entries.any(
+                  (e) => !e.mine && !e.arrived.every((r) => r.acked),
+                ))
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Text('Tap Got it so the sender sees you read it.'),
+              ),
             Expanded(
               child: ListView(
                 reverse: true,
@@ -346,7 +355,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
         const SizedBox(width: 4),
         Flexible(child: Text(partsLabel(app.session, outs), style: small)),
       ] else if (o.acked)
-        _mark(Icons.done_all, 'Acknowledged', small, scheme.primary)
+        _stateMark(
+          Icons.done_all,
+          'Confirmed by the recipient',
+          small,
+          scheme.primary,
+        )
       else
         ..._state(o, small, color),
     ];
@@ -371,7 +385,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     if (e.arrived.every((r) => r.acked))
       // One plain check: the person knows they have it, so the two
       // coloured ones would say nothing.
-      _mark(Icons.check, 'Acknowledged', small, color)
+      _mark(Icons.check, 'You tapped Got it', small, color)
     else if (!archived)
       _acknowledge(e.arrived.first, small),
   ];
@@ -405,57 +419,70 @@ class _ThreadScreenState extends State<ThreadScreen> {
     ),
   };
 
-  /// A sent text's state short of acknowledged. Not yet with the node
-  /// shows a clock rather than nothing, so a missing mark never means two
-  /// things. A state that is a problem keeps its words, which say why.
+  /// A sent text's state short of confirmed, each its own icon (common.dart
+  /// [sentStates]). Not yet with the node shows a clock rather than
+  /// nothing, so a missing mark never means two things. A state that is a
+  /// problem keeps its words, which say why.
   List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
       switch (o.state) {
-        OutState.queued => [_mark(Icons.schedule, 'Queued', small, color)],
+        OutState.queued => [
+          _stateMark(Icons.schedule, 'Waiting on this phone', small, color),
+        ],
         OutState.writing => [
-          _mark(Icons.schedule, 'Offering to the node', small, color),
+          _stateMark(Icons.sync, 'Being handed to the node', small, color),
         ],
         OutState.taken => [
-          _mark(Icons.check, 'Taken by the node', small, color),
+          _stateMark(
+            Icons.check,
+            'Sent into the network; no further news until they confirm',
+            small,
+            color,
+          ),
         ],
-        OutState.givenBack || OutState.refused => [
+        OutState.givenBack => [
+          _stateMark(Icons.hourglass_bottom, 'Network busy', small, color),
+          const SizedBox(width: 4),
+          Flexible(child: Text(stateLabel(app.session, o), style: small)),
+        ],
+        OutState.refused => [
           const SizedBox(width: 4),
           Flexible(child: Text(stateLabel(app.session, o), style: small)),
         ],
       };
 
-  /// A filled button, unlike the plain check it turns into, so "tap to
-  /// acknowledge" cannot be mistaken for "acknowledged".
-  ///
-  /// One line of small text tall, so the line keeps its height with the
-  /// button in it.
-  Widget _acknowledge(Received r, TextStyle small) {
-    final line = small.fontSize! * (small.height ?? 1);
-    return Padding(
-      padding: const EdgeInsets.only(left: 4),
-      child: SizedBox.square(
-        dimension: line,
-        child: IconButton.filled(
-          tooltip: 'Acknowledge',
-          icon: const Icon(Icons.check),
-          iconSize: small.fontSize,
-          padding: EdgeInsets.zero,
-          constraints: BoxConstraints.tight(Size.square(line)),
-          style: IconButton.styleFrom(
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-          onPressed: () async {
-            try {
-              await app.messenger.acknowledge(r);
-            } on BadPayload catch (e) {
-              if (mounted) say(context, 'Not sent: $e');
-            }
-          },
-        ),
-      ),
-    );
-  }
+  /// A sent text's state mark, which a tap explains with the others.
+  Widget _stateMark(
+    IconData icon,
+    String words,
+    TextStyle small,
+    Color color,
+  ) => InkWell(
+    onTap: () => explainStates(context),
+    child: _mark(icon, words, small, color),
+  );
 
-  /// Send again and Drop, for the parts each applies to.
+  /// A labelled chip, unlike the plain check it turns into, so "tap to
+  /// confirm" cannot be mistaken for "confirmed", with a tap target of
+  /// 48 dp, the least Material asks for.
+  Widget _acknowledge(Received r, TextStyle small) => Padding(
+    padding: const EdgeInsets.only(left: 4),
+    child: ActionChip(
+      avatar: const Icon(Icons.check),
+      label: const Text('Got it'),
+      tooltip: 'Tell the sender you read it',
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      onPressed: () async {
+        await app.me.setGotItHinted();
+        try {
+          await app.messenger.acknowledge(r);
+        } on BadPayload catch (e) {
+          if (mounted) say(context, 'Not sent: $e');
+        }
+      },
+    ),
+  );
+
+  /// Send again and Cancel, for the parts each applies to.
   Widget _actions(List<Outgoing> outs) {
     final s = app.session;
     final back = [
@@ -488,7 +515,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 await s.drop(o);
               }
             },
-            child: const Text('Drop'),
+            child: const Text('Cancel'),
           ),
       ],
     );
