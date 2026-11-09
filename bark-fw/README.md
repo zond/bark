@@ -538,14 +538,14 @@ sector of the staged slot is erased twice, in staging and in the swap,
 three times with a swap back: the external flash's 100 000 (datasheet,
 "Features") last 33 000.
 
-**Staging** takes two paths, the same steps on each
-(`bark_image::boot::Stager`): the phone link, in the node build, and the
-serial port, in a console build. Both begin through `update::stage`,
-which checks the version and the header's signature against the keys
-the image holds, commit through `update::commit`, which checks that
-every byte came, the battery (below), the hash, records the header and
-asks for the swap, and reboot through `update::reboot`, so that a check
-added there applies to both. `scripts/image.py pack` makes the image
+**Staging** takes three paths, the same steps on each
+(`bark_image::boot::Stager`): the phone link and the mesh, in the node
+build, and the serial port, in a console build. Each begins with the
+checks of `update::stage`, the version and the header's signature
+against the keys the image holds, commits through `update::commit`,
+which checks that every byte came, the battery (below), the hash,
+records the header and asks for the swap, and reboots through
+`update::reboot`, so that a check added there applies to all. `scripts/image.py pack` makes the image
 either takes and `scripts/image.py sign` signs it; a release carries it,
 signed, as `bark-fw-<N>.img`.
 
@@ -612,6 +612,95 @@ low_mv=3741`, and over its USB cable it is never on battery; the phone
 link answers refused, battery, and the node keeps the image staged, to
 commit once it is on USB or charged. The node reads its battery as the
 core does, calibrated; the console, without a core, uncalibrated.
+
+**Over the mesh** (spec "Updates over the mesh"; roadmap D151, D153):
+`src/update/mesh.rs`, a task of its own, which starts once the image has
+confirmed itself.
+
+- *What it holds.* The record keeps the header of the image swapped in.
+  If that header is the running version's and the active slot hashes to
+  it, the node holds the image: it makes block 0, the table, from the
+  slot, tells the core (`Holds`) and serves its pieces. A UF2 leaves no
+  header, and a swap back leaves the newer image's, so such a node
+  serves nothing until it takes an image over the mesh or the phone.
+- *What it gathers.* When a neighbour's heartbeat names a newer image,
+  the node gathers it if the version is above its own, the key the
+  heartbeat names is one it holds, and neither the phone's update nor a
+  swap holds the staged slot (`bark_image::policy::takes`). The pieces go
+  into the store on the external flash (`bark_image::pieces`), one flash
+  operation or one piece read a step, the executor free between and the
+  chip's erases and programs waited out with a timer. A reset keeps what
+  was gathered, and the node goes on with it unless it is no longer
+  newer than the running image.
+- *What it serves.* A piece of the running image is coded from the
+  slot's bytes, memory-mapped in the internal flash; one of a block it
+  gathered and decoded, from the external flash. A piece not filled
+  within 372.8 ms, the longest a check of the channel may be held
+  (`docs/core-interface.md` §3 rule 8), is not sent: it would go on an
+  older check than the core allows for. The task fills pieces between
+  the store's steps, so one asked for while a whole image is checked and
+  staged, about 3 s, is not sent. The 10 s line counts them,
+  `unserved=`.
+- *The swap.* Once every block is decoded, the header's version and
+  signature are checked as `update::stage` does, the slot is hashed
+  against the header, the record written and the swap asked for
+  (`Stager::written`, `update::commit`). The node then reboots at the
+  first quiet moment (`bark_image::policy::quiet`): no phone link open,
+  no message held that a reset would lose, in its send queue, its
+  delivery queue, its inbox or a mailbox write, no phone update under
+  way, and the power a swap needs. The loader's trial and the
+  confirmation follow as from the phone.
+- *With the phone's update.* A phone's begin gives up an image the node
+  gathers, and is refused, Busy, while a gathered image is being staged
+  or is staged; the mesh takes no image while the phone's is staged or
+  committed.
+
+The 10 s line ends in `update=`: `idle`, `holds:8 serving:B:N` (the last
+block served and its pieces so far), `gathering:8 blocks:K/B`,
+`installing:8` or `staged:8`.
+
+A bench of two boards: A holds version 8, B runs version 7, or 0, a UF2
+bench build, which takes any. A holds an image only with its header in
+the record, as a swap into it leaves it: from the phone, the console's
+`stage`, or, without staging, `scripts/uf2.py --header`, which writes
+the header of the packed, signed image into the record of the UF2 that
+carries the same build, with the word that says the loader checked it,
+and refuses an image of another version or hash:
+
+```
+BARK_OPEN=1 BARK_IMAGE_VERSION=8 cargo build --release
+scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v8.img
+scripts/image.py sign target/v8.img keys/bench.pem --key-id 255
+scripts/uf2.py --header target/v8.img target/thumbv7em-none-eabihf/release/bark-fw target/v8.uf2
+```
+
+A board given `v8.uf2` boots with no swap asked for and logs `update:
+holds version=8`; a UF2 without `--header` leaves the record erased, and
+the board serves nothing. Both hold the key image 8 is signed with: the project's, ids
+1 and 2, or, in open builds, the bench key, id 255 (roadmap D154). Image
+8 of 471 064 bytes travels in 31 blocks, the last of 53 pieces:
+
+```
+A: update: holds version=8 blocks=31 name=[..] key=255
+B: update: offered version=8 blocks=31 key=255 name=[..]: taken
+B: update: gathering version=8 blocks=31 (Started)
+A: update: serving block=0 piece=113 (1 of this block)
+B: update: block 0 decoded and written, 1 of 31
+B: update: block 7 failed its check; gathered again
+B: update: version=8 length=471064 whole and checked: the loader swaps it in at the next boot
+B: update: rebooting into version 8 at a quiet moment
+B: reboot
+B: update: version 8 confirmed
+B: update: holds version=8 blocks=31 name=[..] key=255
+```
+
+A full block takes at least a holder's 80 pieces, its 64 and the loss
+margin, at one a pace of 13.86 s on the gatherer's channel: 18.5
+minutes. The 31 blocks take about 2 390 pieces, 9.2 hours, and each
+block's decode about 8.6 s of reads more. A line `update: piece ... not
+filled; not sent` or a rising `unserved=` says the holder could not fill
+a piece in time; `block N failed its check` more than now and then, that
+pieces arrive wrong.
 
 **A bench loader**, built with `BARK_LOADER_BENCH=reset`, resets the
 chip once in each swap and once in each swap back, at a moment drawn
@@ -1008,7 +1097,7 @@ task of its own, spawned by the main task, which sets up the chip, the
 board, USB and the log, spawns, and ends: the USB device, the log, the
 bootloader touch, the watchdog, the LED and crystal, the MPSL, the
 phone link, the radio and the core on it, the store, the mailbox's
-flash writes, the GPS, the screen and the user button. A task's future lies in its own static storage, and the
+flash writes, the update over the mesh, the GPS, the screen and the user button. A task's future lies in its own static storage, and the
 executor polls one task at a time, so the stack needs only the deepest
 task's poll and the interrupts above it, not the sum of everything
 joined into one future. Futures stay what a task waits on for a while,

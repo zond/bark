@@ -22,7 +22,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::neighbours::Neighbour;
 use crate::time::{Duration, Instant};
 use crate::update::{
-    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, MAX_BLOCKS, PACE, PASS, PIECES,
+    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, GAP, MAX_BLOCKS, PACE, PASS, PIECES,
     SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
@@ -367,7 +367,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let anchor = self.anchor().and_then(|a| self.neighbours.get(a.id));
         let helps = anchor
-            .and_then(|n| n.update)
+            .and_then(|n| self.neighbours.section(n))
             .and_then(|u| u.image.map(|i| (i, u.complete)))
             .is_some_and(|(i, complete)| i.tag() == g.image.tag() && complete > g.block);
         if helps {
@@ -423,7 +423,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The blocks from the first of the image it streams that `m` holds,
     /// by its section.
     fn complete_of(&self, m: &Neighbour, image: Image) -> u8 {
-        m.update
+        self.neighbours
+            .section(m)
             .filter(|u| u.image.is_some_and(|i| i.tag() == image.tag()))
             .map_or(0, |u| u.complete)
     }
@@ -451,7 +452,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if n.home == self.home {
             return true;
         }
-        let Some(u) = n.update else {
+        let Some(u) = self.neighbours.section(n) else {
             return false;
         };
         let mine = self.section().map_or(0, |s| s.complete);
@@ -475,7 +476,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let held = self.held_at_home(image, now);
         for (_, n) in self.neighbours.live(now) {
-            let Some(u) = n.update.filter(|u| u.gathers(image.tag())) else {
+            let Some(u) = self
+                .neighbours
+                .section(n)
+                .filter(|u| u.gathers(image.tag()))
+            else {
                 continue;
             };
             if !self.streams_to(n, image, now) {
@@ -537,7 +542,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours
             .live(now)
             .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
-            .filter_map(|(_, n)| n.update.filter(|u| u.gathers(image.tag())))
+            .filter_map(|(_, n)| {
+                self.neighbours
+                    .section(n)
+                    .filter(|u| u.gathers(image.tag()))
+            })
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
                 core::cmp::Ordering::Equal => k.saturating_sub(u.have),
@@ -562,9 +571,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if s.sent_cur[i] < s.target[i] && wanted(cur) {
             return Some(cur);
         }
+        if let Some(b) = self.tail(c, now) {
+            return Some(b);
+        }
         (cur.saturating_add(1)..blocks)
             .find(|&b| wanted(b))
             .or_else(|| (0..blocks.min(cur.saturating_add(1))).find(|&b| wanted(b)))
+    }
+
+    /// The block whose quota went on `c` while a neighbour there still
+    /// lacks it, the lowest such: the stream goes on with fresh pieces of
+    /// it, at the pace, until the neighbour's section shows it complete,
+    /// so that a quota cut short by lost pieces never leaves the channel
+    /// silent (spec "Updates over the mesh").
+    fn tail(&self, c: Channel, now: Instant) -> Option<u8> {
+        let image = self.streams()?;
+        let s = &self.spread;
+        let i = usize::from(c.index());
+        let cur = s.cur[i];
+        if cur == u8::MAX || s.sent_cur[i] < s.target[i] {
+            return None;
+        }
+        let there = self.held_at_home(image, now)[i];
+        let lowest =
+            (there..image.blocks).find(|&b| self.holds_block(b) && self.deficit(c, b, now) > 0)?;
+        (lowest == cur).then_some(cur)
     }
 
     /// Whether the channel's pace lets a piece go on `c` at `t`, and if not,
@@ -583,7 +614,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 } else {
                     0
                 };
-                at = at.max(*x + PACE.mul(k + 1));
+                // The pace is a floor: with no other sender heard there
+                // since its last piece and nothing else to send, the next
+                // goes as soon as the bucket lets it.
+                let alone = k == 0 && self.queue.is_empty() && self.tail(c, t).is_none();
+                at = at.max(if alone {
+                    *x + GAP
+                } else {
+                    *x + PACE.mul(k + 1)
+                });
             }
         }
         let mut ends = [Instant::ZERO; SERVED_CHANNELS];
@@ -721,11 +760,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let airtime = mac::airtime(&f);
         if !self.affordable(airtime, now) {
             self.slot_end(SlotPiece::Bucket, emit);
+            // Two holders the bucket holds alike would wait out the same
+            // refill and send together: each waits a random time more,
+            // within two frames, as after a piece.
+            let jitter = self.rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
             self.spread.ready_at = self
                 .radio
                 .budget
                 .allowed_at(airtime, REPLY_RESERVE, now)
-                .unwrap_or(now + PACE);
+                .map_or(now + PACE, |t| t + jitter);
             return false;
         }
         self.radio.excursion.check(Job::Update, c, emit);
@@ -840,8 +883,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let at = &mut s.index[usize::from(b)];
             *at = ((usize::from(*at) + 1) % PIECES) as u8;
             let i = usize::from(c.index());
-            if s.cur[i] == b && s.sent_cur[i] < s.target[i] {
-                s.sent_cur[i] += 1;
+            if s.cur[i] == b {
+                // Within the quota, or past it in the block's tail.
+                s.sent_cur[i] = s.sent_cur[i].saturating_add(1);
             } else {
                 // A new block of the sweep: what the neighbour furthest
                 // behind on it lacks, and the margin for loss.
@@ -850,5 +894,53 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 s.target[i] = sweep_pieces(deficit);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::Config;
+    use crate::tables::send_queue::Outgoing;
+
+    /// The pace is a floor: alone on a channel and with nothing else to
+    /// send, the next piece may go after the gap; with a frame of the send
+    /// queue waiting, or another sender heard there since, it keeps the
+    /// pace (spec "Updates over the mesh").
+    #[test]
+    fn the_pace_is_a_floor() {
+        let mut r = crate::Relay::new(Config::default(), 1);
+        let c = r.home;
+        let x = Instant::ZERO + Duration::from_secs(100);
+        r.spread.sent[0] = Some((c, x));
+        assert_eq!(
+            r.pace_allows(c, x),
+            x + GAP,
+            "idle and alone: after the gap"
+        );
+        let frame = mac::frame(
+            &Packet::Update(Update::Piece {
+                tag: ImageTag([1; 4]),
+                block: 0,
+                index: 0,
+                bytes: &[0; PIECE_BYTES],
+            }),
+            c,
+            MIN_PREAMBLE_SYMBOLS,
+        );
+        r.queue
+            .push(Outgoing::new(
+                frame,
+                crate::tables::send_queue::Kind::Forward,
+            ))
+            .unwrap();
+        assert_eq!(r.pace_allows(c, x), x + PACE, "busy: the pace");
+        r.queue.clear();
+        r.spread.others[0] = x + Duration::from_secs(1);
+        assert_eq!(
+            r.pace_allows(c, x),
+            x + PACE.mul(2),
+            "another heard: shared"
+        );
     }
 }

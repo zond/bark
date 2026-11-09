@@ -1099,7 +1099,7 @@ async fn slot(
 }
 
 /// Links up now.
-fn links() -> usize {
+pub fn links() -> usize {
     LINK.lock(|l| l.borrow().phones.iter().filter(|p| p.live).count())
 }
 

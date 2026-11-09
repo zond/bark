@@ -263,7 +263,13 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   the image the driver said it holds or of the one it gathers, a block it said
   decoded and passed; completes with `TxDone`. The driver holds the
   bytes, so the core needs no copy of a piece to send one, and a coded piece is
-  made only when it goes.
+  made only when it goes. A piece the driver cannot fill in time it does not send,
+  and still completes with `TxDone`: to the core it is a piece lost on the air.
+
+`bark-driver` hands these to its application, `App::offered`, `App::store_piece` and
+`App::serve`, and the application's answers come back as `Request::Holds`,
+`Request::Gather` and `Request::Block`, which the driver delivers as the commands.
+The firmware's application is `bark-fw/src/update/mesh.rs` (§5).
 
 `AppEvent::Boot { relays, ends }` tells the application how the node's first rotation goes
 (spec "Channel at boot", "Phone link"): at boot, with no relay known and when the rotation
@@ -298,7 +304,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
 | GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
-| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | none yet: `Offered` and `StorePiece` go unanswered and `Holds` is never said, so the core never serves; the decoder, the flash and the signature check come later (`bark-driver/src/lib.rs`) |
+| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment (`bark-fw/src/update/mesh.rs`, `bark-fw/README.md` "Updates") |
 | Inbox (§4) | the application reads and confirms each message at once | the phone link reads the oldest and confirms it when the phone writes its ID back (`bark-fw/src/ble.rs`, spec "Phone link") |
 
 ## 6. Memory
@@ -308,7 +314,7 @@ test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 128 B | 8.0 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 112 B, and 4 × 16 B for the images their sections name | 7.1 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 667 × 40 B | 26.1 KiB |
@@ -316,7 +322,7 @@ test in `tables/mod.rs`:
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **90.3 KiB** |
+| **All** | | **89.4 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -325,11 +331,11 @@ hold the 564 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-95 416 B (93.2 KiB): the tables and, in under 1 KiB around them, the
+94 456 B (92.2 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 1 864 B (spec "Updates over the mesh"), with 24 B of each neighbour's entry for its heartbeats' section; its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 76 400 B (74.6 KiB), without the heard table and the delivery
+of the update, 1 864 B (spec "Updates over the mesh"), with 8 B of each neighbour's entry for its heartbeats' section and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 75 440 B (73.7 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM

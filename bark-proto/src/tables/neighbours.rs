@@ -162,8 +162,9 @@ pub struct Neighbour {
     /// heartbeat (spec "Neighbour table"); shown, used by no rule yet.
     pub map_point: bool,
     /// What the last heartbeat that carried a section said of its images
-    /// (spec "Updates over the mesh").
-    pub update: Option<crate::update::Section>,
+    /// (spec "Updates over the mesh"), its image kept once in the table
+    /// ([`Neighbours::section`]).
+    pub update: Told,
     /// When its last heartbeat was heard.
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
@@ -265,6 +266,44 @@ impl Neighbour {
         self.alone() && self.beats >= BEATS
     }
 }
+
+/// A neighbour's section as its entry keeps it: the image it names is
+/// kept once in the table, among [`IMAGES`], by its place there. In 8
+/// bytes, so that the entry is 16 bytes less than with the section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Told {
+    /// A heartbeat with a section was heard.
+    heard: bool,
+    runs: u32,
+    /// The image's place in the table, [`NO_IMAGE`] for none.
+    image: u8,
+    complete: u8,
+    have: u8,
+}
+
+const NO_IMAGE: u8 = u8::MAX;
+
+impl Told {
+    /// No section heard.
+    pub const NONE: Told = Told {
+        heard: false,
+        runs: 0,
+        image: NO_IMAGE,
+        complete: 0,
+        have: 0,
+    };
+}
+
+/// Distinct images the neighbours' sections name that a node keeps at
+/// once. A section names the newest image its node holds or gathers: the
+/// release spreading, the one before it, run by those that have not heard
+/// of it yet, and the older one of a node that was away through a
+/// release; a release follows the last no sooner than the day it takes to
+/// reach every relay (roadmap D151), so a fourth is room for an image of
+/// another key, a bench's. A fifth takes the place of the lowest version,
+/// which no neighbour that runs a newer one gathers
+/// (spec "Updates over the mesh").
+pub const IMAGES: usize = 4;
 
 /// The unit of a service time: 1/1024 of a ban, 1.5 ms, far below the
 /// ban in which waits are told (spec "Neighbour table").
@@ -372,6 +411,8 @@ impl Heard {
 #[derive(Clone)]
 pub struct Neighbours {
     slots: [Option<Neighbour>; NEIGHBOURS],
+    /// The images the entries' sections name ([`Told`]).
+    images: [Option<crate::update::Image>; IMAGES],
     params: NeighbourParams,
     /// The entry kept whatever its age (module documentation).
     pinned: Option<NodeId>,
@@ -382,6 +423,7 @@ impl Neighbours {
     pub const fn new(params: NeighbourParams) -> Neighbours {
         Neighbours {
             slots: [None; NEIGHBOURS],
+            images: [None; IMAGES],
             params,
             pinned: None,
         }
@@ -391,6 +433,7 @@ impl Neighbours {
     /// no copy of it on the stack.
     pub fn reset(&mut self, params: NeighbourParams) {
         self.slots.fill(None);
+        self.images.fill(None);
         self.params = params;
         self.pinned = None;
     }
@@ -435,11 +478,73 @@ impl Neighbours {
 
     /// A heartbeat of `id` carried `section`.
     pub fn section_heard(&mut self, id: NodeId, section: crate::update::Section) {
-        if let Some(i) = self.slot_of(id) {
-            if let Some(n) = &mut self.slots[i] {
-                n.update = Some(section);
-            }
+        let Some(i) = self.slot_of(id) else {
+            return;
+        };
+        // Its own image no longer counts as named while its new one is placed.
+        if let Some(n) = &mut self.slots[i] {
+            n.update = Told::NONE;
         }
+        let image = section.image.map_or(NO_IMAGE, |m| self.place(m));
+        if let Some(n) = &mut self.slots[i] {
+            n.update = Told {
+                heard: true,
+                runs: section.runs,
+                image,
+                complete: section.complete,
+                have: section.have,
+            };
+        }
+    }
+
+    /// The place of `image` among the images kept: its own, a free one, or
+    /// the lowest version's if that is below it, whose entries then name
+    /// none; else none.
+    fn place(&mut self, image: crate::update::Image) -> u8 {
+        if let Some(k) = self.images.iter().position(|m| *m == Some(image)) {
+            return k as u8;
+        }
+        let named = |k: usize| {
+            self.slots
+                .iter()
+                .flatten()
+                .any(|n| n.update.heard && usize::from(n.update.image) == k)
+        };
+        let free = (0..IMAGES).find(|&k| self.images[k].is_none() || !named(k));
+        let k = match free {
+            Some(k) => k,
+            None => {
+                let (k, lowest) = self
+                    .images
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, m)| m.map(|m| (k, m.version)))
+                    .min_by_key(|x| x.1)
+                    .unwrap_or((0, 0));
+                if lowest >= image.version {
+                    return NO_IMAGE;
+                }
+                for n in self.slots.iter_mut().flatten() {
+                    if usize::from(n.update.image) == k {
+                        n.update.image = NO_IMAGE;
+                    }
+                }
+                k
+            }
+        };
+        self.images[k] = Some(image);
+        k as u8
+    }
+
+    /// The section `n`'s last heartbeat that carried one said.
+    pub fn section(&self, n: &Neighbour) -> Option<crate::update::Section> {
+        let t = n.update;
+        t.heard.then_some(crate::update::Section {
+            runs: t.runs,
+            image: self.images.get(usize::from(t.image)).copied().flatten(),
+            complete: t.complete,
+            have: t.have,
+        })
     }
 
     /// The entry for `id`.
@@ -558,7 +663,7 @@ impl Neighbours {
             home: hb.home,
             format: hb.format,
             map_point: hb.map_point,
-            update: None,
+            update: Told::NONE,
             last_heard: now,
             demoted_at: Instant::ZERO,
             banned_until: Instant::ZERO,
@@ -1378,5 +1483,51 @@ mod tests {
             hear(&mut t, i, 0, -80, at(390));
         }
         assert_eq!(hear(&mut t, 100, 0, -80, at(391)), Heard::Rejected);
+    }
+
+    /// The sections' images are kept once, at most [`IMAGES`]: a newer one
+    /// takes the place of the lowest version, whose namers then name none,
+    /// and an older one than all kept is kept by no entry.
+    #[test]
+    fn the_images_named_are_kept_once_and_at_most_four() {
+        use crate::update::{Image, ImageTag, Section};
+        let image = |v: u32| Image {
+            name: ImageTag([v as u8; 4]),
+            version: v,
+            blocks: 26,
+            last: 61,
+            key: 1,
+        };
+        let section = |v: u32| Section {
+            runs: 1,
+            image: Some(image(v)),
+            complete: 3,
+            have: 9,
+        };
+        let mut t = Neighbours::new(params());
+        for i in 1..=7 {
+            hear(&mut t, i, 1, -80, at(0));
+        }
+        let named = |t: &Neighbours, i: i32| t.section(t.get(id(i)).unwrap()).and_then(|s| s.image);
+        assert_eq!(t.section(t.get(id(1)).unwrap()), None);
+        for (i, v) in [(1, 5), (2, 5), (3, 6), (4, 7), (5, 8)] {
+            t.section_heard(id(i), section(v));
+        }
+        assert_eq!(t.section(t.get(id(1)).unwrap()), Some(section(5)));
+        assert_eq!(named(&t, 2), Some(image(5)));
+        // A fifth, newer: version 5's place, and its namers name none.
+        t.section_heard(id(6), section(9));
+        assert_eq!(named(&t, 6), Some(image(9)));
+        assert_eq!(named(&t, 1), None);
+        assert_eq!(named(&t, 2), None);
+        assert_eq!(t.section(t.get(id(1)).unwrap()).unwrap().complete, 3);
+        // An older one than every image kept is kept by none.
+        t.section_heard(id(7), section(4));
+        assert_eq!(named(&t, 7), None);
+        // A place no entry names is free again.
+        t.section_heard(id(3), section(8));
+        t.section_heard(id(7), section(4));
+        assert_eq!(named(&t, 7), Some(image(4)));
+        assert_eq!(named(&t, 3), Some(image(8)));
     }
 }

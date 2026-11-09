@@ -103,6 +103,24 @@ pub const FULL_FRAME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBO
 /// take at most 1 % of a channel's time (spec "Updates over the mesh").
 pub const PACE: Duration = FULL_FRAME.mul(100);
 
+/// The fastest the duty cap lets a holder send pieces: one a refill of a
+/// full frame, 138.6 ms × 600 / 59 = 1.41 s (spec "Duty cycle cap").
+pub const FASTEST: Duration = budget::refill_time(FULL_FRAME);
+
+const _: () = assert!(FASTEST.as_micros() / 10_000 == 140);
+
+/// The share of a channel one holder's pieces may take at most when it
+/// sends faster than the pace, as an inverse: a piece's full frame in
+/// every this many, 3.3 %. In the district it kept the relays' channels
+/// at 2.0 % busy in the update's first hours, clear of the 3 to 4 % where
+/// the network collapses (spec "Updates over the mesh").
+pub const GAP_FRAMES: u64 = 30;
+
+/// The least time between a node's pieces on a channel: a full frame
+/// [`GAP_FRAMES`] times over, 4.16 s, so that one holder takes at most
+/// 3.3 % of an idle channel, against the pace's 1 %.
+pub const GAP: Duration = FULL_FRAME.mul(GAP_FRAMES);
+
 /// How many frames of the send queue may go before an update frame that
 /// is due: the full frames the bucket refills in one [`PACE`], 9.83,
 /// rounded, less the update frame itself. A node at its cap then sends an

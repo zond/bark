@@ -44,8 +44,18 @@ pub fn note_power(power: Power) {
     POWER.lock(|p| p.set(power));
 }
 
-fn power() -> Power {
+pub(super) fn power() -> Power {
     POWER.lock(|p| p.get())
+}
+
+/// Whether the phone's update holds the staged slot: an image staged or
+/// committed, which the mesh's update leaves alone (`mesh.rs`).
+static TAKEN: Mutex<CriticalSectionRawMutex, core::cell::Cell<bool>> =
+    Mutex::new(core::cell::Cell::new(false));
+
+/// See [`TAKEN`].
+pub fn holds_slot() -> bool {
+    TAKEN.lock(|t| t.get())
 }
 
 /// The update the phone link runs, kept across its connections, so that
@@ -68,13 +78,15 @@ impl Phone {
             Ok(true) => recorded(flash),
             _ => None,
         };
-        Phone {
+        let phone = Phone {
             internal,
             flash,
             staging: None,
             committed,
             refused: None,
-        }
+        };
+        phone.publish();
+        phone
     }
 
     /// Where the update stands, as the phone reads it.
@@ -100,6 +112,11 @@ impl Phone {
     /// before.
     pub async fn begin(&mut self, header: &[u8; HEADER_LEN]) -> Result<(), Refusal> {
         self.staging = None;
+        self.publish();
+        if !super::mesh::yield_to_phone().await {
+            log::warn!("update: begin refused=Busy: an image from the mesh is being staged");
+            return Err(self.refuse(Refusal::Busy));
+        }
         let internal = self.internal;
         let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
         let begun = super::stage(part(RECORD), part(STATE), Dfu, header).await;
@@ -112,6 +129,7 @@ impl Phone {
                 );
                 self.staging = Some(s);
                 self.refused = None;
+                self.publish();
                 Ok(())
             }
             Err(e) => {
@@ -143,6 +161,7 @@ impl Phone {
             Err(e) => {
                 log::error!("update: staging stopped={:?}", e);
                 self.staging = None;
+                self.publish();
                 self.refuse(refusal(Refused::Stage(e)));
                 false
             }
@@ -161,6 +180,7 @@ impl Phone {
                 );
                 self.committed = Some(h);
                 self.refused = None;
+                self.publish();
                 Ok(())
             }
             Err(e) => {
@@ -199,6 +219,11 @@ impl Phone {
                 p.version
             );
         }
+    }
+
+    fn publish(&self) {
+        let taken = self.staging.is_some() || self.committed.is_some();
+        TAKEN.lock(|t| t.set(taken));
     }
 
     fn refuse(&mut self, why: Refusal) -> Refusal {

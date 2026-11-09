@@ -338,6 +338,10 @@ pub struct Stager<R, S, D> {
     state: S,
     dfu: D,
     header: Header,
+    /// The header as it came, its signatures among it: what the record
+    /// keeps, so that the image swapped in still names the key that
+    /// signed it.
+    signed: [u8; HEADER_LEN],
     next: u32,
 }
 
@@ -377,8 +381,26 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
             state,
             dfu,
             header,
+            signed: *bytes,
             next: 0,
         })
+    }
+
+    /// [`Stager::begin`] for an image already written into the staged
+    /// slot by other means, the mesh's store (`crate::pieces`), with the
+    /// same checks; [`Stager::finish`] then hashes it, records it and asks
+    /// for the swap.
+    pub async fn written(
+        record: R,
+        state: S,
+        dfu: D,
+        bytes: &[u8; HEADER_LEN],
+        running: u32,
+        keys: &[Key; SLOTS],
+    ) -> Result<Self, StageError> {
+        let mut s = Self::begin(record, state, dfu, bytes, running, keys).await?;
+        s.next = s.header.length;
+        Ok(s)
     }
 
     /// Where the next chunk starts.
@@ -447,7 +469,7 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
             return Err(StageError::Hash);
         }
         self.record
-            .write(HEADER_AT, &self.header.encode())
+            .write(HEADER_AT, &self.signed)
             .await
             .map_err(flash_error)?;
         let mut word = AlignedBuffer([0u8; 4]);

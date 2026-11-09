@@ -71,27 +71,29 @@ impl App for LinkApp<'_> {
     /// otherwise takes it and waits on: the driver offers a message that
     /// waits, the mailbox's reply among them, by itself.
     async fn ready(&mut self, offer: bool) {
-        use embassy_futures::select::{select4, Either4};
+        use embassy_futures::select::{select5, Either5};
         loop {
             let fix = crate::gps::FOR_CORE.wait();
-            let new = match select4(
+            let new = match select5(
                 crate::power::FOR_CORE.wait(),
                 crate::ble::FOR_CORE.wait(),
                 fix,
                 crate::mailbox::FOR_CORE.wait(),
+                crate::update::mesh::ready(),
             )
             .await
             {
-                Either4::First(()) => Some(crate::power::reported()) != self.power,
-                Either4::Second(()) => {
+                Either5::First(()) => Some(crate::power::reported()) != self.power,
+                Either5::Second(()) => {
                     self.serving = self.serve_own(offer);
                     self.serving
                 }
-                Either4::Third(()) => crate::gps::waiting(),
-                Either4::Fourth(()) => {
+                Either5::Third(()) => crate::gps::waiting(),
+                Either5::Fourth(()) => {
                     self.follow_home();
                     self.placed().is_some()
                 }
+                Either5::Fifth(()) => true,
             };
             if new {
                 return;
@@ -112,6 +114,9 @@ impl App for LinkApp<'_> {
 
     fn request(&mut self) -> Option<Request> {
         use crate::ble::Request as Link;
+        if let Some(r) = crate::update::mesh::request() {
+            return Some(r);
+        }
         if crate::gps::take_lost() {
             return Some(Request::NoFix);
         }
@@ -210,6 +215,18 @@ impl App for LinkApp<'_> {
 
     fn gps(&mut self, gps: bark_driver::Gps) {
         crate::gps::want(gps);
+    }
+
+    fn offered(&mut self, image: &bark_proto::update::Image) {
+        crate::update::mesh::offered(image);
+    }
+
+    fn store_piece(&mut self, piece: &bark_proto::update::Piece) {
+        crate::update::mesh::store_piece(piece);
+    }
+
+    async fn serve(&mut self, frame: &mut bark_proto::Frame) -> bool {
+        crate::update::mesh::serve(frame).await
     }
 }
 
@@ -627,6 +644,20 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
+        // An image gathered over the mesh and staged: the reboot into it
+        // waits for a moment that loses nothing (`update::mesh::quiet`).
+        if let Some(version) = crate::update::mesh::staged() {
+            let core = &driver.core().0;
+            let holding =
+                core.holding().next().is_some() || core.inbox_len() > 0 || !crate::mailbox::idle();
+            if crate::update::mesh::quiet(holding) {
+                log::info!(
+                    "update: rebooting into version {} at a quiet moment",
+                    version
+                );
+                crate::update::reboot().await;
+            }
+        }
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {
@@ -642,7 +673,7 @@ pub async fn run<'a>(
             let t = driver.radio().tcxo();
             log::info!(
                 "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}{}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -658,6 +689,8 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={}{}
                 t.delay.as_micros(),
                 t.errors,
                 crate::stack::used(),
+                s.unserved,
+                crate::update::mesh::phase(),
                 Time(crate::utc::time())
             );
         }

@@ -473,6 +473,78 @@ fn staging_refuses_what_it_cannot_stage() {
     );
 }
 
+#[test]
+fn an_image_written_by_other_means_is_checked_and_swapped_in() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    let (i, e) = (&board.internal, &board.external);
+    let dfu = || part(e, DFU);
+    let write = |bytes: &[u8]| {
+        let mut d = dfu();
+        d.erase(0, (bytes.len() as u32).div_ceil(PAGE) * PAGE)
+            .unwrap();
+        d.write(0, bytes).unwrap();
+    };
+    let written = |header: &[u8; HEADER_LEN]| {
+        let (record, state, dfu) = blocking(i, e);
+        now(Stager::written(
+            record,
+            state,
+            dfu,
+            header,
+            RUNNING,
+            &keys(),
+        ))
+    };
+    // Its signature and version as from the phone, its bytes when it is
+    // finished.
+    write(&b);
+    assert_eq!(
+        written(&unsigned_for(&b, RUNNING + 1)).err(),
+        Some(StageError::Signature(SignatureError::Unsigned))
+    );
+    assert!(matches!(
+        written(&header_for(&b, RUNNING)).err(),
+        Some(StageError::Version { .. })
+    ));
+    let other = image(3, b.len());
+    write(&other);
+    let s = written(&header_for(&b, RUNNING + 1)).unwrap();
+    assert_eq!(now(s.finish()).err(), Some(StageError::Hash));
+    write(&b);
+    let s = written(&header_for(&b, RUNNING + 1)).unwrap();
+    now(s.finish()).unwrap();
+    // The record keeps the header as signed, as from the phone.
+    let signed = recorded(&board);
+    assert_eq!(signed, header_for(&b, RUNNING + 1));
+    assert_eq!(sign::verify(&signed, &keys()), Ok(1));
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(active(&board, b.len()), b);
+}
+
+/// The header in the record.
+fn recorded(board: &Board) -> [u8; HEADER_LEN] {
+    let mut h = [0u8; HEADER_LEN];
+    part(&board.internal, RECORD)
+        .read(crate::record::HEADER_AT, &mut h)
+        .unwrap();
+    h
+}
+
+#[test]
+fn the_record_keeps_the_header_as_signed() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    stage(&board, &b).unwrap();
+    let signed = recorded(&board);
+    assert_eq!(signed, header_for(&b, RUNNING + 1));
+    // The key that signed it, which the node names once it runs it.
+    assert_eq!(sign::verify(&signed, &keys()), Ok(1));
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(confirm(&board.internal), Ok(Started::Confirmed));
+    assert_eq!(recorded(&board), header_for(&b, RUNNING + 1));
+}
+
 /// Run `step` with the power cut at its first, second, ... flash
 /// operation, on either flash, each time on a board `setup` made, until
 /// it runs whole; `after` sees the board once the power is back. Returns

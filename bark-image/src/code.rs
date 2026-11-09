@@ -154,6 +154,13 @@ pub struct At {
 }
 
 impl Points {
+    /// No points.
+    pub const EMPTY: Points = Points {
+        x: [0; DATA],
+        log_w: [0; DATA],
+        len: 0,
+    };
+
     /// The points, each a piece index below [`CODED`], all distinct.
     pub fn new(points: &[u8]) -> Result<Points, CodeError> {
         if points.len() > DATA {

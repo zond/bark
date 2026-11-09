@@ -182,6 +182,8 @@ fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>, resigned: boo
         tag,
         blocks: blocks.len() as u8,
         last: blocks.last().unwrap().len() as u8,
+        version: 7,
+        key: 1,
     };
     for (b, data) in blocks.iter().enumerate() {
         assert_eq!(image.pieces(b as u8), data.len());
@@ -317,11 +319,11 @@ fn an_image_is_gathered() {
     assert_eq!(feeder.events, decoded);
     // Clearing: the head, the three blocks' lanes and the 5 sectors of the
     // image, 18;
-    // the record; the table's piece, page and byte; block 1's 64 slots, 70
-    // writes of header and image, each group's bytes split where a page
-    // or the header ends, and its byte; block 2's 5 slots, 5 writes and
-    // byte; the lanes of the three blocks erased, 12.
-    assert_eq!(flash.ops, 18 + 1 + 3 + (64 + 70 + 1) + (5 + 5 + 1) + 12);
+    // the record; the table's piece, page and byte; block 1's 64 slots and
+    // its byte, block 2's 5 slots and its byte, and 101 writes of the two
+    // blocks' header and image, each group's two pieces split where a page
+    // or the header ends; the lanes of the three blocks erased, 12.
+    assert_eq!(flash.ops, 18 + 1 + 3 + (64 + 1) + (5 + 1) + 101 + 12);
 }
 
 #[test]
@@ -369,7 +371,7 @@ fn a_power_cut_at_every_operation_loses_nothing() {
         tested += 1;
         check(&built, &store, &mut flash);
     }
-    assert_eq!(tested, 180);
+    assert_eq!(tested, 206);
 }
 
 #[test]
@@ -503,9 +505,138 @@ fn an_image_is_gathered_through_the_driver() {
 }
 
 #[test]
-fn the_store_takes_about_7_kib() {
+fn the_store_takes_under_4_kib() {
     // On this 64-bit host; the decode's factors take half as many bytes on
-    // the chip. The lanes' piece indices are 48 × 64 B of it.
+    // the chip. The lanes' sets of pieces held are 48 × 32 B of it.
     std::println!("Store {} B", core::mem::size_of::<Store>());
-    assert!(core::mem::size_of::<Store>() <= 7400);
+    assert!(core::mem::size_of::<Store>() <= 4000);
+}
+
+#[test]
+fn a_holder_makes_the_blocks_a_gatherer_takes() {
+    let firmware = 3 * DATA * PIECE + 1234;
+    let built = build(firmware, 21, None, false);
+    let header: &[u8; HEADER_LEN] = built.stream[..HEADER_LEN].try_into().unwrap();
+    let image = held(header, firmware as u32, 7, 1).unwrap();
+    assert_eq!(image, built.image);
+    let mut table = Table::new(image, &name(header));
+    let mut tabling = Tabling::new();
+    for chunk in built.stream[..HEADER_LEN + firmware].chunks(1000) {
+        tabling.feed(&mut table, chunk);
+    }
+    let hash = tabling.finish(&mut table);
+    assert_eq!(hash, sha(&built.stream[HEADER_LEN..HEADER_LEN + firmware]));
+    assert_eq!(table.image(), image);
+    for (i, piece) in built.blocks[0].iter().enumerate() {
+        assert_eq!(table.piece(i), Some(piece));
+    }
+    assert_eq!(table.piece(built.blocks[0].len()), None);
+    for b in 1..image.blocks {
+        for i in 0..image.pieces(b) {
+            let at = piece_offset(b, i) as usize;
+            assert_eq!(
+                &built.stream[at..at + PIECE],
+                &built.blocks[usize::from(b)][i]
+            );
+        }
+    }
+    // One block more than the lanes is not held.
+    let largest = ((MAX_BLOCKS - 1) * DATA * PIECE - HEADER_LEN) as u32;
+    assert!(held(header, largest, 7, 1).is_some());
+    assert_eq!(held(header, largest + 1, 7, 1), None);
+}
+
+#[test]
+fn a_gatherer_sends_the_blocks_it_decoded() {
+    let built = small();
+    let (mut flash, _) = gathered(&built, 22);
+    let mut store = Store::open(&mut flash).unwrap();
+    while store.poll(&mut flash).unwrap() != Poll::Idle {}
+    let mut out = [0u8; PIECE];
+    for (b, block) in built.blocks.iter().enumerate() {
+        for (i, piece) in block.iter().enumerate() {
+            assert!(store.data_piece(&mut flash, b as u8, i, &mut out).unwrap());
+            assert_eq!(&out, piece, "block {b} piece {i}");
+        }
+        let past = block.len();
+        assert!(!store
+            .data_piece(&mut flash, b as u8, past, &mut out)
+            .unwrap());
+    }
+}
+
+#[test]
+fn the_record_keeps_the_version_and_key() {
+    let built = small();
+    let mut flash = Ram::new();
+    let mut store = Store::open(&mut flash).unwrap();
+    store.begin(built.image);
+    while store.poll(&mut flash).unwrap() != Poll::Idle {}
+    assert!(store.ready());
+    let again = Store::open(&mut flash).unwrap();
+    assert_eq!(again.image(), Some(built.image));
+}
+
+/// A holder makes every coded piece of a one-piece table, of full blocks
+/// and of a short last block, as the gatherer's blocks are, and any of
+/// them gives the block back.
+#[test]
+fn a_holder_serves_every_piece_of_every_block() {
+    // Pieces 64 + 64 + 53 behind the table, the last padded.
+    let firmware = 181 * PIECE - HEADER_LEN - 100;
+    let built = build(firmware, 23, None, false);
+    let header: &[u8; HEADER_LEN] = built.stream[..HEADER_LEN].try_into().unwrap();
+    let image = held(header, firmware as u32, 7, 1).unwrap();
+    assert_eq!(image, built.image);
+    assert_eq!(
+        (0..image.blocks)
+            .map(|b| image.pieces(b))
+            .collect::<Vec<_>>(),
+        [1, 64, 64, 53]
+    );
+    let mut table = Table::new(image, &name(header));
+    let mut tabling = Tabling::new();
+    tabling.feed(&mut table, &built.stream[..HEADER_LEN + firmware]);
+    tabling.finish(&mut table);
+    let body = &built.stream[HEADER_LEN..HEADER_LEN + firmware];
+    let data = |b: u8, i: usize| -> [u8; PIECE] {
+        match b {
+            0 => *table.piece(i).unwrap(),
+            _ => {
+                let mut out = [0u8; PIECE];
+                held_piece(header, firmware as u32, b, i, &mut out, |at, bytes| {
+                    let at = at as usize;
+                    bytes.copy_from_slice(&body[at..at + bytes.len()]);
+                    Ok::<(), ()>(())
+                })
+                .unwrap();
+                out
+            }
+        }
+    };
+    for b in 0..image.blocks {
+        let n = image.pieces(b);
+        let block = &built.blocks[usize::from(b)];
+        let mut coded = Vec::new();
+        for k in 0..CODED as u8 {
+            let mut e = crate::code::Encoder::new(n, k).unwrap();
+            for i in 0..n {
+                if e.wants(i) {
+                    e.add(i, &data(b, i));
+                }
+            }
+            let piece = e.finish();
+            assert_eq!(
+                piece,
+                encode_piece(block, k).unwrap(),
+                "block {b} piece {k}"
+            );
+            coded.push(piece);
+        }
+        // The last n pieces, none of them data, give the block back.
+        let indices: Vec<u8> = (CODED - n..CODED).map(|k| k as u8).collect();
+        let mut out = vec![[0u8; PIECE]; n];
+        crate::code::decode(&indices, &coded[CODED - n..], &mut out).unwrap();
+        assert_eq!(&out, block, "block {b}");
+    }
 }

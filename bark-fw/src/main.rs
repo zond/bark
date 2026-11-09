@@ -440,6 +440,7 @@ async fn main(spawner: Spawner) {
         spawner.spawn(
             phone(spawner, ble_parts, p.RNG, mpsl, mpsl_flash, shared).expect("spawned once"),
         );
+        spawner.spawn(mesh(shared, mpsl_flash).expect("spawned once"));
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The bond with the paired phone, to the phone link, and its line
@@ -601,6 +602,13 @@ async fn phone(
     }
 }
 
+/// The update over the mesh (`update::mesh`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn mesh(flash: &'static update::Flash, internal: &'static store::SharedFlash) {
+    update::mesh::run(flash, internal).await
+}
+
 /// What the radio's task takes.
 #[cfg(not(feature = "console"))]
 struct NodeRadio {
@@ -649,6 +657,7 @@ async fn node_radio(n: NodeRadio) {
             mailbox::open();
             update::started(n.shared);
             ble::START.signal(());
+            update::mesh::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
         }
         // Without a radio USB and the log keep running so the error can be

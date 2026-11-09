@@ -4,7 +4,7 @@
 
 mod common;
 
-use bark_proto::update::{sweep_pieces, Image, ImageTag, PACE, SERVED_CHANNELS};
+use bark_proto::update::{sweep_pieces, Image, ImageTag, FASTEST, GAP, PACE, SERVED_CHANNELS};
 use bark_proto::wire::{Packet, Update};
 use bark_proto::{AppCommand, Config, Instant, Position, Relay};
 use common::{at, secs, Harness, Updates};
@@ -110,17 +110,19 @@ fn every_relay_comes_to_hold_the_image() {
             assert!(seen.insert((p.block, p.index)), "piece handed twice");
         }
     }
-    // The 72 pieces at most one a pace on a channel: at least 71 paces.
+    // The 72 pieces at most one a gap apart.
     let took = h.now.since(start);
-    assert!(took >= PACE.mul(71), "faster than the pace: {took:?}");
+    assert!(took >= GAP.mul(71), "faster than the gap: {took:?}");
     // Each learned of the image from a heartbeat's section.
     for i in 1..4 {
         assert!(h.nodes[i].sent.iter().any(|(_, f)| f.len > 13));
     }
 }
 
+/// A holder sends pieces on at most two channels in a pace
+/// (spec "Updates over the mesh").
 #[test]
-fn update_frames_keep_the_pace() {
+fn update_frames_go_on_at_most_two_channels_in_a_pace() {
     let mut h = mesh(5);
     let start = h.now;
     h.run_until(start + secs(3 * 3600), |_| false);
@@ -133,10 +135,6 @@ fn update_frames_keep_the_pace() {
                 if u.since(t) >= PACE {
                     break;
                 }
-                assert_ne!(
-                    c, d,
-                    "node {i}: two update frames on a channel within a pace"
-                );
                 channels.insert(d);
             }
             assert!(
@@ -158,19 +156,24 @@ fn a_node_that_holds_the_image_is_offered_nothing_and_two_holders_share_the_pace
     assert!(h.nodes[1].updates.as_ref().unwrap().offered.is_empty());
     // Node 2 gathers it from both.
     assert!(h.nodes[2].updates.as_ref().unwrap().holds_at.is_some());
-    // The two holders share one piece a pace on node 2's channel: together
-    // they send at most a pace's worth, and a little over for the moment
-    // each takes to hear the other.
+    // On node 2's channel, home to all three, a holder that hears the
+    // other's piece falls back to the pace: together they send at most
+    // what one sends alone a gap apart, and a little over.
     let home = h.nodes[2].core.home();
     let done = h.nodes[2].updates.as_ref().unwrap().holds_at.unwrap();
-    let pieces = (0..2)
-        .flat_map(|i| update_frames(&h, i))
-        .filter(|f| f.1 == home && f.0 < done)
-        .count() as u64;
-    let paces = done.since(start).as_micros() / PACE.as_micros();
+    let frames: Vec<_> = (0..2).map(|i| update_frames(&h, i)).collect();
+    let on = |i: usize| {
+        frames[i]
+            .iter()
+            .filter(|f| f.1 == home && f.0 < done)
+            .count() as u64
+    };
+    let fastest = done.since(start).as_micros() / GAP.as_micros();
     assert!(
-        pieces <= paces + paces / 4 + 2,
-        "{pieces} pieces in {paces} paces"
+        on(0) + on(1) <= fastest + fastest / 4 + 2,
+        "{} + {} in {fastest} refills",
+        on(0),
+        on(1)
     );
 }
 
@@ -190,10 +193,9 @@ fn todays_image() -> (Image, Vec<usize>) {
     (image, needs)
 }
 
-/// Today's image crosses one hop without loss within one sweep: each
-/// block's pieces at the pace at least, and no more than the loss margin,
-/// since the neighbours' sections say when a block is done; and to the
-/// other nodes too within twelve hours.
+/// Today's image crosses one hop without loss far faster than a sweep at
+/// the pace, the holders idle; and to the other nodes too within twelve
+/// hours.
 #[test]
 fn todays_image_crosses_a_hop_in_about_one_sweep() {
     let (image, needs) = todays_image();
@@ -231,10 +233,41 @@ fn todays_image_crosses_a_hop_in_about_one_sweep() {
         .filter_map(|n| n.updates.as_ref().unwrap().holds_at)
         .min()
         .unwrap();
-    let paces = first.since(start).as_micros() / PACE.as_micros();
+    // Idle, the holders send as fast as their buckets refill, a full
+    // frame's airtime at the cap, sharing them among the channels they
+    // serve: no faster than the pieces at that rate, and far faster than
+    // a sweep at the pace.
+    let took = first.since(start).as_micros();
     assert!(
-        (pieces..=sweep).contains(&paces),
-        "{paces} paces, {pieces} pieces, a sweep {sweep}"
+        took >= FASTEST.mul(pieces).as_micros() * 9 / 10,
+        "{took} µs"
+    );
+    assert!(took < PACE.mul(sweep).as_micros() / 2, "{took} µs");
+}
+
+/// An idle holder alone on its home channel sends its pieces about a gap
+/// apart, not a pace (spec "Updates over the mesh").
+#[test]
+fn an_idle_holder_alone_sends_a_gap_apart() {
+    let mut h = mesh(2);
+    let start = h.now;
+    h.run_until(start + secs(1800), |_| false);
+    let home = h.nodes[0].core.home();
+    let times: Vec<Instant> = update_frames(&h, 0)
+        .into_iter()
+        .filter(|f| f.1 == home)
+        .map(|f| f.0)
+        .collect();
+    assert!(times.len() > 20, "{}", times.len());
+    let mut gaps: Vec<u64> = times
+        .windows(2)
+        .map(|w| w[1].since(w[0]).as_micros())
+        .collect();
+    gaps.sort_unstable();
+    let median = gaps[gaps.len() / 2];
+    assert!(
+        median >= GAP.as_micros() && median < PACE.as_micros() / 2,
+        "{median} µs"
     );
 }
 
@@ -431,4 +464,43 @@ fn a_section_rides_one_rotation_an_hour_when_nothing_changes() {
     // A rotation in each of the three hours begun, 13 heartbeats each.
     assert_eq!(beats(true), 39);
     assert!(beats(false) > 600, "{}", beats(false));
+}
+
+/// A quota that falls short by lost pieces is made up: the holder goes on
+/// with fresh pieces of the block until the gatherer's section shows it
+/// complete, and is never silent while it lacks a block the holder has
+/// (spec "Updates over the mesh").
+#[test]
+fn a_quota_short_by_lost_pieces_is_made_up() {
+    let mut h = mesh(2);
+    // Lose the first 30 pieces of block 1 on their way to node 1.
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let piece = matches!(
+            Packet::decode(bytes),
+            Ok(Packet::Update(Update::Piece { block: 1, .. }))
+        );
+        if from == 0 && to == 1 && piece && lost < 30 {
+            lost += 1;
+            return true;
+        }
+        false
+    }));
+    let start = h.now;
+    let done = h.run_until(start + secs(3600), |h| {
+        h.nodes[1].updates.as_ref().unwrap().holds_at.is_some()
+    });
+    assert!(done, "the gatherer does not hold the image within an hour");
+    let frames = update_frames(&h, 0);
+    let longest = frames
+        .windows(2)
+        .map(|w| w[1].0.since(w[0].0))
+        .max()
+        .unwrap();
+    assert!(longest <= PACE.mul(2), "silent for {longest:?}");
+    // Block 1's quota, 80, and its tail at the pace until it decoded.
+    let ones: Vec<Instant> = frames.iter().filter(|f| f.2 == 1).map(|f| f.0).collect();
+    let quota = usize::from(sweep_pieces(64));
+    assert!(ones.len() > quota, "{} of block 1", ones.len());
+    assert!(ones[quota..].windows(2).all(|w| w[1].since(w[0]) >= PACE));
 }
