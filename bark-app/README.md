@@ -132,10 +132,12 @@ is a prototype for the bench, not the app people will carry.
   goes to it. A new text from an archived conversation brings it, and
   its contact, back to the first screen, with the usual notification;
   an acknowledgement or a card does not.
-- **My card**, the QR button. Your identity, the card as a QR code for
-  another phone to scan, **Scan their card** to add theirs as in
-  Contacts, and the home's address and the card as text to copy and
-  send. Without a home the card is temporary: a dashed frame around
+- **My card**, the QR button. It opens with the card as a QR code for
+  another phone to scan, then **Share**, which hands the card as text
+  and the code as an image to Android's share sheet, **Scan their
+  card** to add theirs as in Contacts, and your name. A **Details**
+  fold holds your identity, the home's address, the node's, and the
+  card as text, each to copy. Without a home the card is temporary: a dashed frame around
   the code, an hourglass in its corner outside the code's quiet zone
   and the word TEMPORARY under it, and a line that says so. Without a
   name it shows no card: it says "Set your
@@ -709,9 +711,10 @@ a phone (Trying it, With a node).
    state in words while they differ. When both are taken, 5 s later the
    echo's last part arrives with "part 1 of 2 not yet here" in its
    place, and 5 s after that the whole echo.
-9. The QR button, **My card**: set a name. Your identity, a QR code
-   and the card as text, `BARK:` and capitals, appear; without a home
-   the code is marked temporary.
+9. The QR button, **My card**: set a name. A QR code appears, marked
+   temporary without a home; **Share** opens Android's share sheet with
+   the card's text and the code's image, and **Details** your identity
+   and the card as text, `BARK:` and capitals.
 10. Menu, **Settings**, under **Map point**: press **Phone location**
     (allow location), then **Set**: Debug's address changes, and the
     next text to the fake friend names it. **Clear** brings back the

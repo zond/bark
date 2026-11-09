@@ -1,6 +1,8 @@
 // The person's own card, for another phone to scan or paste, and theirs
 // to scan back.
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -19,8 +21,20 @@ class CardScreen extends StatelessWidget {
   Widget build(BuildContext context) => Watch(app, (context) {
     final me = app.me;
     final card = me.shownCard;
-    final home = me.home;
     final mono = const TextStyle(fontFamily: 'monospace');
+    Widget copyable(String title, String value, String what) => ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(title),
+      subtitle: SelectableText(value, style: mono),
+      trailing: IconButton(
+        tooltip: 'Copy $what',
+        icon: const Icon(Icons.copy),
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: value));
+          say(context, '${what[0].toUpperCase()}${what.substring(1)} copied');
+        },
+      ),
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('My card')),
       body: SafeArea(
@@ -28,6 +42,26 @@ class CardScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (card == null) ..._noName(context) else ..._card(card),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (card != null)
+                  FilledButton.icon(
+                    icon: const Icon(Icons.share),
+                    label: const Text('Share'),
+                    onPressed: () => _share(context, card),
+                  ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.qr_code_scanner),
+                  label: const Text('Scan their card'),
+                  onPressed: () => _scan(context),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('My name'),
@@ -38,55 +72,35 @@ class CardScreen extends StatelessWidget {
                 onPressed: () => askMyName(context, app),
               ),
             ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('My identity'),
-              subtitle: SelectableText(me.key, style: mono),
+            ExpansionTile(
+              title: const Text('Details'),
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              children: [
+                copyable('My identity', me.key, 'the identity'),
+                if (card?.home case final h?)
+                  copyable('Home address', h.toString(), 'the address'),
+                if (card?.now case final n?)
+                  copyable('The node I use now', n.toString(), 'the node'),
+                if (card != null) copyable('Card', card.toText(), 'the card'),
+              ],
             ),
-            if (card == null) ..._noName(context) else ..._card(card),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan their card'),
-                onPressed: () => _scan(context),
-              ),
-            ),
-            const SizedBox(height: 8),
-            if (home != null)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Home address'),
-                subtitle: SelectableText(home.toString(), style: mono),
-                trailing: IconButton(
-                  tooltip: 'Copy the address',
-                  icon: const Icon(Icons.copy),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: home.toString()));
-                    say(context, 'Address copied');
-                  },
-                ),
-              ),
-            if (card != null)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Card'),
-                subtitle: SelectableText(card.toText(), style: mono),
-                trailing: IconButton(
-                  tooltip: 'Copy the card',
-                  icon: const Icon(Icons.copy),
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: card.toText()));
-                    say(context, 'Card copied');
-                  },
-                ),
-              ),
           ],
         ),
       ),
     );
   });
+
+  /// The card as text and its QR code as an image, through the phone's
+  /// share sheet.
+  Future<void> _share(BuildContext context, PersonCard card) async {
+    try {
+      final text = card.toText();
+      await app.notifier.share(text, await qrPng(text));
+    } catch (e) {
+      if (context.mounted) say(context, 'Sharing failed: $e');
+    }
+  }
 
   /// In place of the card while the person has no name.
   List<Widget> _noName(BuildContext context) => [
@@ -135,7 +149,7 @@ class CardScreen extends StatelessWidget {
   }
 
   /// Dark on white whatever the theme, as scanners expect, with the
-  /// quiet zone of four modules the QR code standard asks for.
+  /// quiet zone of four modules the QR code standard asks for ([quiet]).
   Widget _qr(String data) => LayoutBuilder(
     builder: (context, box) {
       final qr = QrCode.fromData(
@@ -143,7 +157,6 @@ class CardScreen extends StatelessWidget {
         errorCorrectLevel: QrErrorCorrectLevel.M,
       );
       final side = box.maxWidth;
-      const quiet = 4;
       return QrImageView.withQr(
         qr: qr,
         size: side,
@@ -242,4 +255,40 @@ class _Dashed extends CustomPainter {
 
   @override
   bool shouldRepaint(_Dashed old) => old.color != color;
+}
+
+/// The quiet zone around a QR code, in modules, which the standard asks
+/// for (ISO/IEC 18004, 4 modules).
+const quiet = 4;
+
+/// `data` as a QR code in a PNG, dark on white with its quiet zone, for
+/// the share sheet; [moduleSide] pixels a module, enough for a scanner
+/// reading it off another screen.
+Future<Uint8List> qrPng(String data, {int moduleSide = 8}) async {
+  final qr = QrCode.fromData(
+    data: data,
+    errorCorrectLevel: QrErrorCorrectLevel.M,
+  );
+  final modules = qr.moduleCount + 2 * quiet;
+  final side = (modules * moduleSide).toDouble();
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawRect(
+    Offset.zero & Size.square(side),
+    Paint()..color = Colors.white,
+  );
+  canvas.translate(
+    quiet * moduleSide.toDouble(),
+    quiet * moduleSide.toDouble(),
+  );
+  QrPainter.withQr(
+    qr: qr,
+    gapless: true,
+  ).paint(canvas, Size.square(qr.moduleCount * moduleSide.toDouble()));
+  final image = await recorder.endRecording().toImage(
+    side.toInt(),
+    side.toInt(),
+  );
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  return bytes!.buffer.asUint8List();
 }

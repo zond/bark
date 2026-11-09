@@ -8,6 +8,7 @@
 // conversation back.
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:bark_app/alerts.dart';
 import 'package:bark_app/app.dart';
@@ -70,6 +71,9 @@ class FakeNotifier implements Notifier {
   Future<void> askBatteryExempt() async => log.add('ask exempt');
   @override
   Future<void> openLink(String url) async => log.add('open $url');
+  @override
+  Future<void> share(String text, Uint8List png) async =>
+      log.add('share $text');
 }
 
 void main() {

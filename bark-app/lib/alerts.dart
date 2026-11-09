@@ -2,6 +2,8 @@
 // the link to a node or looks for it, and which texts came while they
 // were not looking.
 
+import 'dart:typed_data';
+
 import 'contacts.dart';
 import 'conversations.dart';
 import 'session.dart';
@@ -52,6 +54,9 @@ abstract interface class Notifier {
 
   /// Opens `url` in the browser.
   Future<void> openLink(String url);
+
+  /// Opens the system's share sheet with `text` and the PNG image `png`.
+  Future<void> share(String text, Uint8List png);
 }
 
 /// A text a notification shows: as far as it has come, and when its first
@@ -92,6 +97,8 @@ class NoNotifier implements Notifier {
   Future<void> askBatteryExempt() async {}
   @override
   Future<void> openLink(String url) async {}
+  @override
+  Future<void> share(String text, Uint8List png) async {}
 }
 
 /// Decides what to notify: each new text, unless its thread is in front

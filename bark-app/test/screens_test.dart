@@ -164,18 +164,32 @@ void main() {
     expect(find.textContaining('Temporary card:'), findsOneWidget);
     expect(find.byType(TemporaryFrame), findsOneWidget);
     expect(find.text('TEMPORARY'), findsOneWidget);
+    // The code first, then Share and the rest; the hex in Details.
+    expect(t.getTopLeft(find.byType(QrImageView)).dy, lessThan(200));
     await t.scrollUntilVisible(
-      find.text('Scan their card'),
+      find.text('Share'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
     final mine = app.me.card;
     expect(mine.home, isNull);
+    expect(find.text(mine.toText()), findsNothing);
+    await t.scrollUntilVisible(
+      find.text('Details'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Details'));
+    await t.pumpAndSettle();
     await t.scrollUntilVisible(
       find.text(mine.toText()),
       100,
       scrollable: find.byType(Scrollable).first,
     );
+    expect(find.text(app.me.key), findsOneWidget);
+    // What Share hands the share sheet: a PNG of the code.
+    final png = (await t.runAsync(() => qrPng(mine.toText())))!;
+    expect(png.sublist(0, 4), [0x89, 0x50, 0x4e, 0x47]);
     await t.pageBack();
     await t.pumpAndSettle();
 
