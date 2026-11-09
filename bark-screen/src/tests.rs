@@ -75,7 +75,6 @@ fn a_sleepy_carried_node_on_battery() {
         sleepy: true,
         anchored: true,
         carried: true,
-        forced: false,
         battery: Battery::Percent(73),
         heard: 5,
         strong: 4,
@@ -199,19 +198,6 @@ fn the_role_and_the_place() {
         assert_eq!(role(true, true, placed, carried), "SLEEPY ANCHORED");
         assert_eq!(role(true, false, placed, carried), "SLEEPY NO ANCHOR");
     }
-    // A forced role says so in place of the rest.
-    let forced = |sleepy| {
-        let state = State {
-            sleepy,
-            forced: true,
-            anchored: true,
-            placed: true,
-            ..State::default()
-        };
-        String::from(texts(&state, 0)[0].trim_end())
-    };
-    assert_eq!(forced(true), "SLEEPY FORCED");
-    assert_eq!(forced(false), "RELAY FORCED");
 }
 
 #[test]
@@ -388,32 +374,19 @@ fn the_phone_paired_or_its_code() {
 }
 
 /// Beside each button that changes something, what it does: the reset
-/// button reboots; the user button, held, forces the other role, none
-/// where that would not be taken. Only on the lines.
+/// button reboots; the user button, held, flips the role. Only on the
+/// lines.
 #[test]
 fn the_buttons_labelled() {
-    let label = |state: State| labels(&state).map(|l| l.map(|(t, _)| t));
-    assert_eq!(
-        label(State::default()),
-        [Some("<-REBOOT"), Some("<-SLEEP (3s)")]
-    );
+    let label = |state: State| labels(&state).map(|(t, _)| t);
+    assert_eq!(label(State::default()), ["REBOOT", "SLEEP (3s)"]);
     let sleepy = State {
         sleepy: true,
-        battery: Battery::Percent(50),
+        battery: Battery::Low,
         ..State::default()
     };
-    assert_eq!(label(sleepy), [Some("<-REBOOT"), Some("<-WAKE (3s)")]);
-    let low = State {
-        battery: Battery::Low,
-        ..sleepy
-    };
-    assert_eq!(label(low), [Some("<-REBOOT"), None]);
-    let forced = State {
-        forced: true,
-        ..sleepy
-    };
-    assert_eq!(label(forced)[1], Some("<-WAKE (3s)"));
-    for (t, _) in labels(&State::default()).iter().flatten() {
+    assert_eq!(label(sleepy), ["REBOOT", "WAKE (3s)"]);
+    for (t, _) in labels(&State::default()) {
         assert!(t.bytes().all(|c| glyph(c).is_some()));
     }
     // At the left edge, in the margins; and not on the code.
@@ -428,7 +401,7 @@ fn the_buttons_labelled() {
     draw(&mut q, Face::Code, &FIXED, &State::default(), 3, None);
     let mut with = Picture::white();
     with.bytes = q.bytes;
-    with.text_at(b"<-REBOOT", LABEL_SCALE, LABEL_LEFT, REBOOT_TOP);
+    with.label(b"REBOOT", REBOOT_TOP);
     assert!(with.bytes != q.bytes, "the code shows no label");
 }
 

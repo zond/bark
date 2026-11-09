@@ -64,10 +64,6 @@ fn the_code_waits_for_nothing_else() {
             phone: Phone::Private,
             ..battery()
         },
-        State {
-            forced: true,
-            ..battery()
-        },
         usb(),
     ];
     for c in changes {
@@ -106,10 +102,6 @@ fn the_lines_keep_the_urgent_changes() {
     let changes = [
         State {
             sleepy: true,
-            ..battery()
-        },
-        State {
-            forced: true,
             ..battery()
         },
         State {
@@ -198,4 +190,16 @@ fn a_change_undone_within_the_refresh_is_not_drawn() {
     assert_eq!(s.due(&battery(), 6_000), Some(1_000 + LINES_MS));
     // Undone and done again: counted from the second time.
     assert_eq!(s.due(&usb(), 6_500), Some(6_500 + REFRESH_MS));
+}
+
+/// A flip of the role redraws the lines at once, even while they show,
+/// and the 30 s count from it.
+#[test]
+fn a_flip_draws_the_lines_at_once() {
+    let mut s = lines(battery(), 1_000);
+    s.lines(9_000);
+    assert_eq!(s.face(9_000), Face::Lines);
+    assert_eq!(s.due(&battery(), 9_000), Some(9_000));
+    s.drawn(Face::Lines, battery());
+    assert_eq!(s.due(&battery(), 9_500), Some(9_000 + LINES_MS));
 }

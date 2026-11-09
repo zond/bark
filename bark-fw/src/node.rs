@@ -509,16 +509,12 @@ fn screen(core: &Role, now: Instant) -> bark_screen::State {
         Told::Low => Battery::Low,
         Told::Percent(p) => Battery::Percent(p),
     };
-    // A forced role shows as the role turned to, while a relay forced
-    // sleepy still flushes.
-    let forced = core.forced();
     bark_screen::State {
         starting: core.booting(),
         placed: s.placed,
-        sleepy: forced.map_or(s.sleepy, |f| f == bark_proto::Forced::Sleepy),
+        sleepy: s.sleepy,
         anchored: s.anchored,
         carried: s.carried,
-        forced: forced.is_some(),
         battery,
         heard: s.neighbours.heard,
         strong: s.neighbours.strong,

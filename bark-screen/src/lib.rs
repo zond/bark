@@ -76,6 +76,22 @@ impl Picture {
         self.text_at(text, scale, WIDTH.saturating_sub(width) / 2, y);
     }
 
+    /// A button's label at the left edge, its top at row `y`: an arrow
+    /// pointing left, a filled head the font's height on a one-pixel
+    /// shaft, then `text` in the small font.
+    pub fn label(&mut self, text: &[u8], y: usize) {
+        let mid = GLYPH_HEIGHT / 2;
+        for col in 0..=mid {
+            for row in mid - col..=mid + col {
+                self.plot(LABEL_LEFT + col, y + row);
+            }
+        }
+        for col in mid + 1..ARROW {
+            self.plot(LABEL_LEFT + col, y + mid);
+        }
+        self.text_at(text, LABEL_SCALE, LABEL_LEFT + ARROW + 2, y);
+    }
+
     /// `text` with its top left corner at `(x0, y)`.
     pub fn text_at(&mut self, text: &[u8], scale: usize, x0: usize, y: usize) {
         for (i, &c) in text.iter().enumerate() {
@@ -180,7 +196,6 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
-        b'<' => [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
         b'(' => [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02],
         b')' => [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
         _ => return None,
@@ -273,10 +288,6 @@ pub struct State {
     /// Sleepy, with a relay that holds its mail.
     pub anchored: bool,
     pub carried: bool,
-    /// Its role, sleepy or a relay, is the one a person forced with the
-    /// button, until its power changes (`bark_proto::Forced`): `sleepy`
-    /// says which.
-    pub forced: bool,
     pub battery: Battery,
     /// Neighbours whose heartbeats it hears now.
     pub heard: u8,
@@ -344,6 +355,9 @@ const GAP: usize = 8;
 /// press's length is `bark-fw`'s `button::LONG_PRESS`.
 pub const LABEL_SCALE: usize = 1;
 pub const LABEL_LEFT: usize = 2;
+/// The label's arrow's width, pixels: its head, as wide as half the
+/// font's height, and as much again of shaft.
+const ARROW: usize = 2 * (GLYPH_HEIGHT / 2 + 1);
 pub const REBOOT_TOP: usize = 1;
 pub const ROLE_TOP: usize = HEIGHT - 1 - GLYPH_HEIGHT * LABEL_SCALE;
 
@@ -356,18 +370,16 @@ const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= ROLE_TOP);
 const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
 
 /// The labels the lines show beside the buttons that change something,
-/// each with its top row, the arrow pointing at the button: the reset
-/// button reboots; the user button held forces the other role, so it
-/// says what it would turn the node to, and nothing when that would not
-/// be taken, a sleepy node on battery at its low level
+/// each with its top row, drawn after an arrow pointing at the button
+/// ([`Picture::label`]): the reset button reboots; the user button held
+/// flips the role, so it says the role it would turn the node to
 /// (spec "Screen and buttons").
-pub fn labels(state: &State) -> [Option<(&'static str, usize)>; 2] {
-    let role = match (state.sleepy, state.battery) {
-        (false, _) => Some("<-SLEEP (3s)"),
-        (true, Battery::Low) => None,
-        (true, _) => Some("<-WAKE (3s)"),
+pub fn labels(state: &State) -> [(&'static str, usize); 2] {
+    let role = match state.sleepy {
+        false => "SLEEP (3s)",
+        true => "WAKE (3s)",
     };
-    [Some(("<-REBOOT", REBOOT_TOP)), role.map(|r| (r, ROLE_TOP))]
+    [("REBOOT", REBOOT_TOP), (role, ROLE_TOP)]
 }
 
 /// The screen's lines, each with the row its top edge is at, for `state`
@@ -448,13 +460,6 @@ pub fn lines(
 
 /// What the node is, the header's first line.
 pub fn role(state: &State) -> &'static str {
-    if state.forced {
-        return if state.sleepy {
-            "SLEEPY FORCED"
-        } else {
-            "RELAY FORCED"
-        };
-    }
     match (state.sleepy, state.anchored, state.placed, state.carried) {
         (true, true, _, _) => "SLEEPY ANCHORED",
         (true, false, _, _) => "SLEEPY NO ANCHOR",
@@ -552,8 +557,8 @@ pub fn draw(
             for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
                 picture.text(text.bytes(), SCALE, *y);
             }
-            for (label, y) in labels(state).iter().flatten() {
-                picture.text_at(label.as_bytes(), LABEL_SCALE, LABEL_LEFT, *y);
+            for (label, y) in labels(state) {
+                picture.label(label.as_bytes(), y);
             }
         }
         Face::Code => {

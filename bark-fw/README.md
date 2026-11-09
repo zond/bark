@@ -807,7 +807,7 @@ its value flush right. Top to bottom:
 
 | line | says | from |
 |---|---|---|
-| role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR`; `SLEEPY FORCED` or `RELAY FORCED` while a role forced by the button lasts, a relay forced sleepy shown so through its flush | the core's sleepy, anchorless, placed and carried flags, and its `forced()` |
+| role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy, anchorless, placed and carried flags |
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
@@ -866,14 +866,17 @@ drawn to its end before the next is considered, so none starts while a
 refresh runs. `bark_screen::schedule` decides, tested on the host.
 
 *The buttons.* Held 3 s, the user button (P1.10, `src/button.rs`)
-forces the other role (spec "Nodes", "Screen and buttons") and shows the
-lines; a shorter press does nothing. A press of the reset button resets
+flips the role (spec "Nodes", "Screen and buttons") at the moment the
+3 s have passed, while still held; once the core has taken it, within
+milliseconds, the lines are drawn at once with the new role. The
+release does nothing, and a shorter press nothing either. A press of the reset button resets
 the chip into the image it ran; a double tap within half a second
 enters the bootloader instead (Flash, above), which the screen does not
 say. The lines label both at their left edge, in 1-pixel text on the
-margin nearer each: `<-REBOOT` at the top, `<-SLEEP (3s)` or
-`<-WAKE (3s)` at the bottom; the ten lines start 10 px down to make
-room.
+margin nearer each, after an arrow pointing at the button: `REBOOT`
+at the top, and at the bottom the role a hold would give, `SLEEP (3s)`
+or `WAKE (3s)`. The screen says nothing of a forced role. The ten lines
+start 10 px down to make room.
 
 *The pad.* A TTP223 touch sensor on the chip's own supply drives P0.11
 both ways (`docs/touch-pad-2026-11-09.md`), so the pin has no pull. The

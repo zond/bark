@@ -1,5 +1,5 @@
 //! The board's two inputs a person uses: the user button
-//! (`board::Buttons`, P1.10), held for [`LONG_PRESS`] to force the other
+//! (`board::Buttons`, P1.10), held for [`LONG_PRESS`] to flip the
 //! role (spec "Nodes", roadmap D160), and the touch pad (P0.11), whose
 //! touch flips the screen between the code and the lines
 //! (`bark_screen::schedule`).
@@ -30,18 +30,24 @@ use embassy_time::{with_timeout, Duration, Timer};
 /// fifth of the other.
 const DEBOUNCE: Duration = Duration::from_millis(20);
 
-/// How long the button is held to force the other role: a choice, thirty
+/// How long the button is held to flip the role: a choice, thirty
 /// times a person's ordinary press of about 100 ms, so that a bump, a
 /// press in a bag or a curious finger does not change what the node does
 /// for its neighbours, and short enough to hold on purpose.
 const LONG_PRESS: Duration = Duration::from_secs(3);
+
+/// How often, and how many times, the button looks whether the core has
+/// taken its flip before it shows the lines: up to 200 ms, far longer
+/// than a step of the core (`longest_handle_us` in the node's log).
+const TAKEN_POLL: Duration = Duration::from_millis(10);
+const TAKEN_POLLS: u32 = 20;
 
 /// A long press waits for the core (`node.rs`, `LinkApp::request`).
 static FORCE: AtomicBool = AtomicBool::new(false);
 /// Wakes the core's application for a long press.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Whether the button asked to force the other role since the last call.
+/// Whether the button asked to flip the role since the last call.
 pub fn take_force() -> bool {
     FORCE.swap(false, Ordering::Relaxed)
 }
@@ -58,12 +64,19 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
                 .await
                 .is_err()
         {
-            log::info!(
-                "button: held {} s, forcing the other role",
-                LONG_PRESS.as_secs()
-            );
+            log::info!("button: held {} s, flipping the role", LONG_PRESS.as_secs());
             FORCE.store(true, Ordering::Relaxed);
             FOR_CORE.signal(());
+            // The core takes it at its next step, within milliseconds;
+            // the lines are drawn once it has, so that they show the
+            // role it took, while the button is still held.
+            for _ in 0..TAKEN_POLLS {
+                if !FORCE.load(Ordering::Relaxed) {
+                    break;
+                }
+                Timer::after(TAKEN_POLL).await;
+            }
+            Timer::after(TAKEN_POLL).await;
             // So that the person holding it sees the role line.
             crate::display::lines();
         }

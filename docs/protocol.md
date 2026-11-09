@@ -81,18 +81,18 @@ its own, and its heartbeat publishes each as a flag
 *Why nothing to set.* The nRF52840 detects USB power itself, so a
 person's node relays on its charger and sleeps in a pocket.
 
-**A forced role.** A person at the node may force the other role by
-holding its button ([screen and buttons](#screen-and-buttons)): a
-relay turns sleepy, leaving as a relay at its low battery does
+**A forced role.** A person at the node may flip its role by holding
+its button ([screen and buttons](#screen-and-buttons)): a relay turns
+sleepy, leaving as a relay at its low battery does
 ([sleepy nodes](#sleepy-nodes)), and a sleepy node turns relay at once;
-held again, it forces the other. The forced role holds against the
-grace, the carried flag and the battery's high level until the external
-power next changes, plugged in or unplugged; from then the rules of
-this section decide again. A forced relay on battery still turns sleepy
-at its low battery level, which ends the force, and on battery at that
-level a force to relay is not taken. A reboot forgets it, and a node
-built only to be sleepy takes none. The heartbeat's flags say the role
-as it is, forced or not (roadmap D160).
+each hold flips it again. The node then keeps the role it was given
+against the grace, the carried flag and the battery's high level until
+the external power next changes, plugged in or unplugged; from then the
+rules of this section decide again, at once. A forced relay on battery
+still turns sleepy at its low battery level, which returns it to those
+rules, and on battery at that level a flip to relay is not taken. A
+reboot forgets the force, and a node built only to be sleepy takes
+none. The heartbeat's flags say the role as it is (roadmap D160).
 
 *Why a forced role.* The power tells the node what it is on, not what
 its owner knows: a node on a power bank looks plugged in, and one on
@@ -3850,8 +3850,7 @@ line of text, and phones' readers take 2.
 text for 30 s, or until the next touch, and then the code again: what
 the node is, its ID and image, the image it gathers, the phone, its
 neighbours, its power, its uptime and the time of day
-(`bark-fw/README.md`, Display). A role forced by the button says so on
-the first line, as `SLEEPY FORCED` or `RELAY FORCED`.
+(`bark-fw/README.md`, Display).
 
 *Why 30 s.* A choice: ten lines of two or three words each take under
 10 s to read at a usual pace, and 30 s is three times that, short
@@ -3872,14 +3871,15 @@ grow stale.
 
 **The buttons.** Both are on the case's left side as the screen reads:
 the reset button nearer the top, the user button below the glass. Held
-3 s, the user button forces the other role ([nodes](#nodes)) and shows
-the lines, so that the person holding it sees the role it took; a
-shorter press does nothing. A press of the reset button resets the
-chip, and the node boots the image it ran. The lines label both at
-their left edge, each on the margin nearer its button: `<-REBOOT` at
-the top, and at the bottom `<-SLEEP (3s)` on a relay or `<-WAKE (3s)`
-on a sleepy node, none where the force would not be taken, a sleepy
-node on battery at its low level. The code shows no labels.
+3 s, the user button flips the role ([nodes](#nodes)) the moment the 3 s
+have passed, while it is still held, and the lines are drawn at once
+with the role it took; the release does nothing, and a shorter press
+nothing either. A press of the reset button resets the chip, and the
+node boots the image it ran. The lines label both at their left edge,
+each on the margin nearer its button, after an arrow pointing at it:
+`REBOOT` at the top, and at the bottom the role a hold would turn the
+node to, `SLEEP (3s)` on a relay and `WAKE (3s)` on a sleepy node. The
+screen says nothing of a forced role, and the code shows no labels.
 
 *Why the reset button only resets.* It is wired to the chip's reset
 pin, and reading a long press from it would take that pin over, which

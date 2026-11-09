@@ -51,6 +51,9 @@ pub struct Schedule {
     urgent_since: Option<u64>,
     /// When a touch last asked for the lines.
     touched: Option<u64>,
+    /// A person flipped the role: the lines are drawn at once, whatever
+    /// shows.
+    flipped: bool,
 }
 
 impl Schedule {
@@ -59,6 +62,7 @@ impl Schedule {
             shown: None,
             urgent_since: None,
             touched: None,
+            flipped: false,
         }
     }
 
@@ -71,9 +75,10 @@ impl Schedule {
         };
     }
 
-    /// A person forced the role at `now`: the lines, to show it.
+    /// A person flipped the role at `now`: the lines, to show it.
     pub fn lines(&mut self, now: u64) {
         self.touched = Some(now);
+        self.flipped = true;
     }
 
     /// The picture the screen is to show at `now`.
@@ -94,7 +99,10 @@ impl Schedule {
         };
         // A person touched the pad, or one is to type a new pairing code
         // into the waiting phone: neither waits.
-        if shown_face != face || (pairing(state).is_some() && state.phone != shown.phone) {
+        if self.flipped
+            || shown_face != face
+            || (pairing(state).is_some() && state.phone != shown.phone)
+        {
             return Some(now);
         }
         let differs = match face {
@@ -120,6 +128,7 @@ impl Schedule {
     pub fn drawn(&mut self, face: Face, state: State) {
         self.shown = Some((face, state));
         self.urgent_since = None;
+        self.flipped = false;
     }
 }
 
