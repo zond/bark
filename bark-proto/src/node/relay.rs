@@ -53,6 +53,7 @@ use update::Spread;
 
 use forward::{Forwarding, OwnMessage};
 use power::Battery;
+pub use power::Forced;
 
 use crate::event::{Action, AppCommand, Event};
 use crate::geo::LocalPlane;
@@ -1050,6 +1051,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 payload,
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
+            AppCommand::ForceRole => self.force(now, emit),
             AppCommand::Battery { millivolts } => self.battery_read(millivolts, now),
             AppCommand::ClearMapPoint => self.clear_map_point(),
             AppCommand::Fix { position } => {

@@ -228,6 +228,9 @@ pub enum Request {
     /// Ask this neighbour for its status (`AppCommand::Ask`); its answer
     /// comes back to [`App::message`] as `AppEvent::Status`.
     Ask(NodeId),
+    /// A person at the node forces the other role
+    /// (`AppCommand::ForceRole`).
+    ForceRole,
 }
 
 /// What the GPS is to do (core-interface §4): rest in standby, search
@@ -664,6 +667,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                     self.deliver(Event::App(AppCommand::Ask { neighbour }))
                         .await?
                 }
+                Request::ForceRole => self.deliver(Event::App(AppCommand::ForceRole)).await?,
             }
         }
         Ok(any)
