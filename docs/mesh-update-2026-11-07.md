@@ -722,14 +722,14 @@ seed 1, at four gaps and the pace, all with the tail:
 |---|---|---|---|---|---|---|---|
 | 1.41 s | 9.8 % | 2.3 / 2.8 / 5.8 h | 40.9 / 1 389 s | 4.3 % | 38.9 s/s | 2.92 % | 35.9 % |
 | 2.77 s | 5 % | 4.0 / 5.3 / 10.3 h | 21.7 / 1 377 s | 2.8 % | 22.1 s/s | 2.49 % | 23.8 % |
-| 4.16 s | 3.3 % | 5.3 / 6.3 / 11.5 h | 21.3 / 1 290 s | 2.0 % | 14.9 s/s | 2.34 % | 20.5 % |
+| **4.16 s, chosen** | **3.3 %** | **5.3 / 6.3 / 11.5 h** | **21.3 / 1 290 s** | **2.0 %** | **14.9 s/s** | **2.34 %** | **20.5 %** |
 | 6.93 s | 2 % | 7.5 / 8.5 / 14.2 h | 20.2 / 1 267 s | 1.2 % | 7.8 s/s | 2.25 % | 18.7 % |
 | 13.86 s, the pace | 1 % | 15.5 / 16.3 / 23.5 h | 19.6 / 1 268 s | 0.8 % | 3.7 s/s | 2.38 % | 17.1 % |
 
-Without the update: 17.8 / 1 053 s, channels 1.13 %. The gap is 2.77 s,
-the widest that keeps the first 12 hours' p90 within a quarter of that
-and every relay holding the image in under half the 21.7 h of the pace
-on main. The 100 % times are set by a few people's nodes that turn
+Without the update: 17.8 / 1 053 s, channels 1.13 %. The gap is 4.16 s:
+the first 12 hours' p90 hardly moves from 2.77 s to 6.93 s, and at
+4.16 s the channels read 2.0 % busy in the first hours, clear of the
+collapse zone that starts at 3 to 4 %, against 2.8 % at 2.77 s. The 100 % times are set by a few people's nodes that turn
 relay late; the 90 % times fall evenly with the gap.
 
 ## What is left

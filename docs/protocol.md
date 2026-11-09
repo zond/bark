@@ -3953,12 +3953,12 @@ holds, so a neighbour that lacks a block one helper does not hold still
 has it from another, and the channel loses nothing when a helper goes.
 
 **Pace and priority.** The pace is a floor, not the rate. A node sends
-its next piece on a channel a **gap** after its last there, 2.77 s, a
-full frame's 138.6 ms twenty times over, if the bucket allows it with
+its next piece on a channel a **gap** after its last there, 4.16 s, a
+full frame's 138.6 ms thirty times over, if the bucket allows it with
 the reply reserve kept, its send queue holds nothing else and it has
 heard no other node's piece on that channel since its own last;
 otherwise at the pace: at most one on a channel in 13.86 s, a full
-frame a hundred times over. One node's pieces take at most 5 % of an
+frame a hundred times over. One node's pieces take at most 3.3 % of an
 idle channel's time, and 1 % of a loaded one's. A node sends pieces on
 at most two channels in any one pace. They wait
 behind the frames of the send queue ([send queue](#send-queue)) and go
@@ -3982,7 +3982,7 @@ waits behind a piece: a piece goes only when the send queue is empty,
 and the reply reserve stays in the bucket. Where another sender is
 heard, or texts are queued, the pieces fall back to the pace.
 
-*Why 2.77 s.* With no gap an idle holder sends as fast as its bucket
+*Why 4.16 s.* With no gap an idle holder sends as fast as its bucket
 refills a full frame, 138.6 ms × 600 / 59 = 1.41 s
 ([duty cycle cap](#duty-cycle-cap)), and texts in the update's first
 hours meet the pieces on the channels. The gap trades how soon the
@@ -3994,15 +3994,17 @@ seed 1 (`mesh-update-2026-11-07.md`, roadmap D156):
 |---|---|---|---|---|---|
 | 1.41 s, the bucket | 9.8 % | 2.3 / 2.8 / 5.8 h | 40.9 / 1 389 s | 4.3 % | 35.9 % |
 | 2.77 s | 5 % | 4.0 / 5.3 / 10.3 h | 21.7 / 1 377 s | 2.8 % | 23.8 % |
-| 4.16 s | 3.3 % | 5.3 / 6.3 / 11.5 h | 21.3 / 1 290 s | 2.0 % | 20.5 % |
+| **4.16 s, chosen** | **3.3 %** | **5.3 / 6.3 / 11.5 h** | **21.3 / 1 290 s** | **2.0 %** | **20.5 %** |
 | 6.93 s | 2 % | 7.5 / 8.5 / 14.2 h | 20.2 / 1 267 s | 1.2 % | 18.7 % |
 | 13.86 s, the pace | 1 % | 15.5 / 16.3 / 23.5 h | 19.6 / 1 268 s | 0.8 % | 17.1 % |
 
 Without the update the texts of the first 12 hours wait 17.8 s at the
-90th percentile and 1 053 s at the 99th. 2.77 s is the widest gap that
-keeps that 90th percentile within a quarter of it and has every relay
-hold the image in under half the time at the pace; at 4.16 s the
-relays reach 90 % an hour later, and the last of them after 11.5 hours.
+90th percentile and 1 053 s at the 99th. From 2.77 s to 6.93 s that
+90th percentile hardly moves, so the gap buys margin on the channels
+rather than latency: at 4.16 s the relays' channels read 2.0 % busy in
+the update's first hours, clear of the 3 to 4 % where the network
+collapses, against 2.8 % at 2.77 s, for the relays reaching 90 % an hour
+later.
 
 *Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
 to 1.4 % of the time at the design rate of
@@ -4035,9 +4037,9 @@ time, so the heartbeats take at most 3.3 % against 3.0 % without. Were
 the section in every heartbeat while an update runs, they would take
 270 × 23.36 ms / (10 s × 13) = 4.9 %. A busy channel that gathers adds
 a piece a pace, 1 % of its time, however many help; an idle one a piece
-a gap, 5 %. Today's image takes a sweep of 2 133 pieces from a helper
+a gap, 3.3 %. Today's image takes a sweep of 2 133 pieces from a helper
 that holds it to a neighbour that holds none, at the margin of rule 4:
-98 minutes a gap apart on an idle channel, 8.2 hours at the pace.
+2.5 hours a gap apart on an idle channel, 8.2 hours at the pace.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes

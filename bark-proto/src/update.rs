@@ -111,15 +111,14 @@ const _: () = assert!(FASTEST.as_micros() / 10_000 == 140);
 
 /// The share of a channel one holder's pieces may take at most when it
 /// sends faster than the pace, as an inverse: a piece's full frame in
-/// every this many, 5 %. Of the gaps measured in the district, the
-/// widest that kept the first 12 hours' text latency within a quarter of
-/// the run without the update and had every relay hold the image in
-/// under half the time at the pace (spec "Updates over the mesh").
-pub const GAP_FRAMES: u64 = 20;
+/// every this many, 3.3 %. In the district it kept the relays' channels
+/// at 2.0 % busy in the update's first hours, clear of the 3 to 4 % where
+/// the network collapses (spec "Updates over the mesh").
+pub const GAP_FRAMES: u64 = 30;
 
 /// The least time between a node's pieces on a channel: a full frame
-/// [`GAP_FRAMES`] times over, 2.77 s, so that one holder takes at most
-/// 5 % of an idle channel, against the pace's 1 %.
+/// [`GAP_FRAMES`] times over, 4.16 s, so that one holder takes at most
+/// 3.3 % of an idle channel, against the pace's 1 %.
 pub const GAP: Duration = FULL_FRAME.mul(GAP_FRAMES);
 
 /// How many frames of the send queue may go before an update frame that
