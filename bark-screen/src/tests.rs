@@ -198,7 +198,8 @@ fn the_role_and_the_place() {
     for (placed, carried) in [(false, false), (true, false), (true, true)] {
         assert_eq!(role(true, true, placed, carried), "SLEEPY ANCHORED");
         assert_eq!(role(true, false, placed, carried), "SLEEPY NO ANCHOR");
-    }    // A forced role says so in place of the rest.
+    }
+    // A forced role says so in place of the rest.
     let forced = |sleepy| {
         let state = State {
             sleepy,
