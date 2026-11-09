@@ -676,7 +676,8 @@ a phone (Trying it, With a node).
    to write down your 12 backup words. Tap the line "Not connected",
    turn on **Fake node**, press **Connect**. The first time, the app
    says why it notifies: **Continue**, and allow it. It shows
-   `ID FA4E00000001`, connected, MTU 247. Further down, **Show my
+   `ID FA4E00000001`, connected, "Starting up, 3:14" counting down, then
+   "Hears 3 nodes". Further down, **Show my
    words**, write them down, **I wrote them down**.
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
@@ -757,7 +758,9 @@ a phone (Trying it, With a node).
    digits, as its screen shows them. Tap it: a public node asks whether
    it is yours; **Pair**. The first time, Android asks for a code and the
    node's screen shows `PAIR CODE` and six digits within a few seconds:
-   type them. Settings then says "Connected and paired, MTU 247", and
+   type them. Settings then says "Connected and paired." and how the node
+   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes", or
+   "Hears no other node yet: texts wait here"; and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
 3. **Debug** shows link version 10, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node

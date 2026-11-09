@@ -16,6 +16,7 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/messenger.dart';
 import 'package:bark_app/node_link.dart';
 import 'package:bark_app/session.dart';
+import 'package:bark_app/ui/common.dart';
 import 'package:bark_app/store.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -128,6 +129,14 @@ void main() {
       rs,
     ),
   );
+
+  test('the node\'s health in words: starting up, then the nodes it hears', () {
+    run((async, p, node) {
+      expect(health(p.session), startsWith('Starting up, '));
+      async.elapse(FakeNode.firstRotation);
+      expect(health(p.session), 'Hears ${FakeNode.relaysHeard} nodes');
+    });
+  });
 
   test('attach drains the inbox: two first messages from the fake friend', () {
     run((async, p, node) {

@@ -818,6 +818,10 @@ void main() {
     expect(app.session.connected, isTrue);
     expect(app.session.pairingLost, isFalse);
     expect(find.textContaining('Connected and paired'), findsOneWidget);
+    // The node's health in words, not the link's MTU: the fake is in its
+    // first rotation.
+    expect(find.textContaining('Starting up, '), findsOneWidget);
+    expect(find.textContaining('MTU'), findsNothing);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

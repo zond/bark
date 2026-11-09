@@ -244,9 +244,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           subtitle: Text(
             s.guest
                 ? 'Connected as a guest: a public node, someone else\'s, '
-                      'which passes on your texts without pairing. MTU '
-                      '${app.mtu ?? '?'}'
-                : 'Connected and paired, MTU ${app.mtu ?? '?'}',
+                      'which passes on your texts without pairing. '
+                      '${health(s)}'
+                : 'Connected and paired. ${health(s)}',
           ),
           trailing: OutlinedButton(
             onPressed: app.disconnect,

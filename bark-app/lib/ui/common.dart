@@ -382,3 +382,13 @@ Future<bool> confirm(
       ),
     ) ??
     false;
+
+/// How the connected node fares, in words: still in its first rotation,
+/// or how many other nodes it hears (spec "Phone link", Status).
+String health(Session s) {
+  final left = s.bootLeftS;
+  if (left > 0) return 'Starting up, ${clock(left)}';
+  final n = s.status?.relays ?? 0;
+  if (n == 0) return 'Hears no other node yet: texts wait here';
+  return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
+}
