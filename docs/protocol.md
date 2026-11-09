@@ -3953,16 +3953,14 @@ holds, so a neighbour that lacks a block one helper does not hold still
 has it from another, and the channel loses nothing when a helper goes.
 
 **Pace and priority.** The pace is a floor, not the rate. A node sends
-its next piece on a channel as soon as its last there has gone and the
-bucket allows it with the reply reserve kept, while its send queue holds
-nothing else and it has heard no other node's piece on that channel
-since its own last; otherwise at the pace: at most one on a channel in
-13.86 s, a full frame's 138.6 ms a hundred times over, so that one
-node's pieces take at most 1 % of a channel's time. An idle channel
-then carries a piece about every 1.41 s, the time the bucket takes to
-refill a full frame at the cap, 138.6 ms × 600 / 59
-([duty cycle cap](#duty-cycle-cap)), after a first run of the bucket's
-6 s. A node sends pieces on at most two channels in any one pace. They wait
+its next piece on a channel a **gap** after its last there, 2.77 s, a
+full frame's 138.6 ms twenty times over, if the bucket allows it with
+the reply reserve kept, its send queue holds nothing else and it has
+heard no other node's piece on that channel since its own last;
+otherwise at the pace: at most one on a channel in 13.86 s, a full
+frame a hundred times over. One node's pieces take at most 5 % of an
+idle channel's time, and 1 % of a loaded one's. A node sends pieces on
+at most two channels in any one pace. They wait
 behind the frames of the send queue ([send queue](#send-queue)) and go
 after the sweep's readings, but at most 9 frames of the send queue go
 before a piece that is due; then it goes before the next. Each is paid
@@ -3979,21 +3977,32 @@ of the time each pace.
 
 *Why a floor.* The mechanism is the same at any rate: the sweep, the
 sections and the sharing do not change with how fast the pieces go.
-The duty cap already bounds a relay's air, and a text never waits
-behind a piece: a piece goes only when the send queue is empty, and
-the reply reserve stays in the bucket. Where another sender is heard,
-or texts are queued, the pieces fall back to the pace, which keeps a
-loaded channel as before. Measured in the district: at the design rate, 36 hours, seed 1, the relays held
-the image 50 / 90 / 100 % after 2.3 / 2.8 / 5.8 hours, against 13.8 /
-14.5 / 21.7 at the pace, and at twice the rate after 2.2 / 2.7 / 4.5.
-The price is the channels' while the relays gather: for about three
-hours the pieces took about 50 s of air a second across the district,
-the relays' channels read busy near 5 %, and the texts sent in the
-first 12 hours waited longer, 41 s at the 90th percentile against 18 s
-without the update, 99.48 % delivered against 99.63 %; the texts sent
-after matched (`mesh-update-2026-11-07.md`, roadmap D156). A text at a
-relay never waits behind a piece, but on a loaded channel it meets
-them.
+The duty cap already bounds a relay's air, and a text at a relay never
+waits behind a piece: a piece goes only when the send queue is empty,
+and the reply reserve stays in the bucket. Where another sender is
+heard, or texts are queued, the pieces fall back to the pace.
+
+*Why 2.77 s.* With no gap an idle holder sends as fast as its bucket
+refills a full frame, 138.6 ms × 600 / 59 = 1.41 s
+([duty cycle cap](#duty-cycle-cap)), and texts in the update's first
+hours meet the pieces on the channels. The gap trades how soon the
+relays hold the image against what the pieces take of a channel,
+138.6 ms over the gap. In the district at the design rate, 36 hours,
+seed 1 (`mesh-update-2026-11-07.md`, roadmap D156):
+
+| gap | a channel at most | relays holding 50 / 90 / 100 % | texts of the first 12 h, latency p90 / p99 | relays' busy estimate, hours 1–3 | pieces lost by relays that lacked them |
+|---|---|---|---|---|---|
+| 1.41 s, the bucket | 9.8 % | 2.3 / 2.8 / 5.8 h | 40.9 / 1 389 s | 4.3 % | 35.9 % |
+| 2.77 s | 5 % | 4.0 / 5.3 / 10.3 h | 21.7 / 1 377 s | 2.8 % | 23.8 % |
+| 4.16 s | 3.3 % | 5.3 / 6.3 / 11.5 h | 21.3 / 1 290 s | 2.0 % | 20.5 % |
+| 6.93 s | 2 % | 7.5 / 8.5 / 14.2 h | 20.2 / 1 267 s | 1.2 % | 18.7 % |
+| 13.86 s, the pace | 1 % | 15.5 / 16.3 / 23.5 h | 19.6 / 1 268 s | 0.8 % | 17.1 % |
+
+Without the update the texts of the first 12 hours wait 17.8 s at the
+90th percentile and 1 053 s at the 99th. 2.77 s is the widest gap that
+keeps that 90th percentile within a quarter of it and has every relay
+hold the image in under half the time at the pace; at 4.16 s the
+relays reach 90 % an hour later, and the last of them after 11.5 hours.
 
 *Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
 to 1.4 % of the time at the design rate of
@@ -4025,11 +4034,10 @@ most 4.1 rotations an hour more, 5.1 in all, 0.34 % of each channel's
 time, so the heartbeats take at most 3.3 % against 3.0 % without. Were
 the section in every heartbeat while an update runs, they would take
 270 × 23.36 ms / (10 s × 13) = 4.9 %. A busy channel that gathers adds
-a piece a pace, 1 % of its time, however many help; an idle one as many
-as its sender's bucket allows. Today's image takes a sweep of 2 133
-pieces from a helper that holds it to a neighbour that holds none, at
-the margin of rule 4: 50 minutes at the bucket's rate on an idle
-channel, 8.2 hours at the pace.
+a piece a pace, 1 % of its time, however many help; an idle one a piece
+a gap, 5 %. Today's image takes a sweep of 2 133 pieces from a helper
+that holds it to a neighbour that holds none, at the margin of rule 4:
+98 minutes a gap apart on an idle channel, 8.2 hours at the pace.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes

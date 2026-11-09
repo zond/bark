@@ -22,7 +22,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::neighbours::Neighbour;
 use crate::time::{Duration, Instant};
 use crate::update::{
-    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, MAX_BLOCKS, PACE, PASS, PIECES,
+    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, GAP, MAX_BLOCKS, PACE, PASS, PIECES,
     SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
@@ -618,7 +618,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // since its last piece and nothing else to send, the next
                 // goes as soon as the bucket lets it.
                 let alone = k == 0 && self.queue.is_empty() && self.tail(c, t).is_none();
-                at = at.max(if alone { *x } else { *x + PACE.mul(k + 1) });
+                at = at.max(if alone {
+                    *x + GAP
+                } else {
+                    *x + PACE.mul(k + 1)
+                });
             }
         }
         let mut ends = [Instant::ZERO; SERVED_CHANNELS];
@@ -900,7 +904,7 @@ mod tests {
     use crate::tables::send_queue::Outgoing;
 
     /// The pace is a floor: alone on a channel and with nothing else to
-    /// send, the next piece may go at once; with a frame of the send
+    /// send, the next piece may go after the gap; with a frame of the send
     /// queue waiting, or another sender heard there since, it keeps the
     /// pace (spec "Updates over the mesh").
     #[test]
@@ -909,7 +913,11 @@ mod tests {
         let c = r.home;
         let x = Instant::ZERO + Duration::from_secs(100);
         r.spread.sent[0] = Some((c, x));
-        assert_eq!(r.pace_allows(c, x), x, "idle and alone: at once");
+        assert_eq!(
+            r.pace_allows(c, x),
+            x + GAP,
+            "idle and alone: after the gap"
+        );
         let frame = mac::frame(
             &Packet::Update(Update::Piece {
                 tag: ImageTag([1; 4]),

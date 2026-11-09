@@ -4,7 +4,7 @@
 
 mod common;
 
-use bark_proto::update::{sweep_pieces, Image, ImageTag, FASTEST, PACE, SERVED_CHANNELS};
+use bark_proto::update::{sweep_pieces, Image, ImageTag, FASTEST, GAP, PACE, SERVED_CHANNELS};
 use bark_proto::wire::{Packet, Update};
 use bark_proto::{AppCommand, Config, Instant, Position, Relay};
 use common::{at, secs, Harness, Updates};
@@ -110,9 +110,9 @@ fn every_relay_comes_to_hold_the_image() {
             assert!(seen.insert((p.block, p.index)), "piece handed twice");
         }
     }
-    // The 72 pieces at most one a bucket refill of a full frame.
+    // The 72 pieces at most one a gap apart.
     let took = h.now.since(start);
-    assert!(took >= FASTEST.mul(71), "faster than the bucket: {took:?}");
+    assert!(took >= GAP.mul(71), "faster than the gap: {took:?}");
     // Each learned of the image from a heartbeat's section.
     for i in 1..4 {
         assert!(h.nodes[i].sent.iter().any(|(_, f)| f.len > 13));
@@ -158,8 +158,7 @@ fn a_node_that_holds_the_image_is_offered_nothing_and_two_holders_share_the_pace
     assert!(h.nodes[2].updates.as_ref().unwrap().holds_at.is_some());
     // On node 2's channel, home to all three, a holder that hears the
     // other's piece falls back to the pace: together they send at most
-    // what one sends alone at the bucket's rate from a full bucket, and a
-    // little over.
+    // what one sends alone a gap apart, and a little over.
     let home = h.nodes[2].core.home();
     let done = h.nodes[2].updates.as_ref().unwrap().holds_at.unwrap();
     let frames: Vec<_> = (0..2).map(|i| update_frames(&h, i)).collect();
@@ -169,9 +168,7 @@ fn a_node_that_holds_the_image_is_offered_nothing_and_two_holders_share_the_pace
             .filter(|f| f.1 == home && f.0 < done)
             .count() as u64
     };
-    let depth =
-        bark_proto::tables::budget::DEPTH.as_micros() / bark_proto::update::FULL_FRAME.as_micros();
-    let fastest = done.since(start).as_micros() / FASTEST.as_micros() + depth;
+    let fastest = done.since(start).as_micros() / GAP.as_micros();
     assert!(
         on(0) + on(1) <= fastest + fastest / 4 + 2,
         "{} + {} in {fastest} refills",
@@ -248,10 +245,10 @@ fn todays_image_crosses_a_hop_in_about_one_sweep() {
     assert!(took < PACE.mul(sweep).as_micros() / 2, "{took} µs");
 }
 
-/// An idle holder alone on its home channel sends its pieces about one a
-/// bucket refill apart, not a pace (spec "Updates over the mesh").
+/// An idle holder alone on its home channel sends its pieces about a gap
+/// apart, not a pace (spec "Updates over the mesh").
 #[test]
-fn an_idle_holder_alone_sends_at_the_bucket_s_rate() {
+fn an_idle_holder_alone_sends_a_gap_apart() {
     let mut h = mesh(2);
     let start = h.now;
     h.run_until(start + secs(1800), |_| false);
@@ -269,7 +266,7 @@ fn an_idle_holder_alone_sends_at_the_bucket_s_rate() {
     gaps.sort_unstable();
     let median = gaps[gaps.len() / 2];
     assert!(
-        median >= FASTEST.as_micros() * 9 / 10 && median < PACE.as_micros() / 4,
+        median >= GAP.as_micros() && median < PACE.as_micros() / 2,
         "{median} µs"
     );
 }
