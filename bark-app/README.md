@@ -179,24 +179,30 @@ is a prototype for the bench, not the app people will carry.
   demoted or banned. A legend says the bands in dB and the icons: a
   relay is a tower, a node on power; a sleepy node a battery, a node on
   battery; a carried one a walker; each in its link's colour;
-  the node itself is a target. Tapping one shows its ID, under it what
-  it is in its screen's words, such as `FIXED RELAY` or `SLEEPY
-  ANCHORED`, and then one row a fact, an icon and a short label on the
-  left and the value on the right, always in this order: Link (an
-  antenna, the RSSI and its margin over the noise floor, such as
-  `−71 dBm · +19 dB`, in the link's colour), Last heard (a clock),
-  Distance (a ruler), Power (a plug on USB, a battery with its
-  percent), Moving (a walker, `carried` or `stays put`), Known (a hub, the neighbours it knows, such as `3 heard ·
-  3 strong · 0 exchanged`), Version (a price tag, the
-  Material set having no version icon, such as `V18 · getting V19
-  14/32` while it gathers an image), Place (a satellite for GPS, a pin
-  for a map point a person set, a crossed-out pin with no place) and
-  Exchanged (a ticked box) if it has taken a message from this node;
-  then this node's own view of it, Anchor, Demoted or Banned, each with
-  its icon. Each icon is named for a screen reader. Its power, neighbours and version come from its answer
-  (below); before one, what it is comes from its heartbeats. This
-  node's own sheet says the same of it from its status, its neighbours
-  counted from the table read. The map reads Neighbours when it opens, at every
+  the node itself is a target. Tapping one shows the contact's name if
+  the node is a contact's home or the node they last used, its ID, and
+  then one row a fact in plain words, none of its screen's, an icon and
+  a short label on the left and the value on the right, always in this
+  order: Role (a tower, `relay: passes on others' texts`, or a moon,
+  `sleepy: wakes in windows, speaks through its anchor`), Moving (a
+  walker, `carried`, or a house, `stays put`), Anchor, for a sleepy
+  node only (`anchored`, or `no anchor yet`; on this node's own sheet
+  the anchor's ID, as the link names no neighbour's anchor), Place (a
+  satellite, `from GPS`, a pin, `set by a person`, with the
+  coordinates under it, or a crossed-out pin, `no place yet`), Power (a
+  plug on USB, a battery with its percent), Link (an antenna, the RSSI
+  and its margin over the noise floor, such as `−71 dBm · +19 dB`, in
+  the link's colour), Last heard (a clock), Distance (a ruler), Known
+  (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
+  exchanged`), Version (a price tag, the Material set having no version
+  icon, such as `V18 · getting V19 14/32` while it gathers an image)
+  and Exchanged (a ticked box) if it has taken a message from this
+  node; then this node's own view of it: Anchor, `this node's anchor`,
+  for the relay this sleepy node sends through, Demoted or Banned. Each
+  icon is named for a screen reader. Its power, neighbours and version
+  come from its answer (below); before one, what it is comes from its
+  heartbeats. This node's own sheet says the same of it from its
+  status, its neighbours counted from the table read. The map reads Neighbours when it opens, at every
   status the node gives, and when the refresh button is pressed. When
   it opens and when refreshed, on a node of link version 9 or later, it
   also asks each neighbour that has not answered within the last 10 s,

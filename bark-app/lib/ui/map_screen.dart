@@ -13,6 +13,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../app.dart';
+import '../contacts.dart';
 import '../link.dart';
 import '../session.dart';
 import 'common.dart';
@@ -47,22 +48,6 @@ String qualityName(Quality q) => switch (q) {
   Quality.fair => 'fair',
   Quality.fragile => 'fragile',
 };
-
-/// What a node is, in the words of its screen's first line, from what
-/// its heartbeats say when it has not answered: sleepy, its anchor
-/// heard or not; or a relay with no place, carried or fixed.
-String roleOf({
-  required bool sleepy,
-  required bool anchored,
-  required bool placed,
-  required bool carried,
-}) => sleepy
-    ? (anchored ? 'SLEEPY ANCHORED' : 'SLEEPY NO ANCHOR')
-    : !placed
-    ? 'RELAY NO PLACE'
-    : carried
-    ? 'CARRIED RELAY'
-    : 'FIXED RELAY';
 
 bool _placed(Position p) => p.lat != 0 || p.lon != 0;
 
@@ -132,22 +117,68 @@ Fact _power({required bool usb, String? battery}) => usb
         battery ?? 'not read',
       );
 
-/// Whether a node is carried, said whatever its header's words leave
-/// out, as a sleepy node's do (spec "Nodes").
-Fact _moving(bool carried) => Fact(
-  Icons.directions_walk,
-  'Moving',
-  'moving',
-  carried ? 'carried' : 'stays put',
-);
+/// What a node does for others: a relay passes texts on; a sleepy node
+/// sleeps between windows and sends and receives through its anchor
+/// (spec "Nodes").
+Fact _role(bool sleepy) => sleepy
+    ? const Fact(
+        Icons.bedtime,
+        'Role',
+        'role, sleepy',
+        'sleepy: wakes in windows, speaks through its anchor',
+      )
+    : const Fact(
+        Icons.cell_tower,
+        'Role',
+        'role, relay',
+        'relay: passes on others\' texts',
+      );
 
-/// Where a node's position comes from: GPS, or a map point a person set;
-/// none without a place.
+/// Whether a node is carried (spec "Nodes").
+Fact _moving(bool carried) => carried
+    ? const Fact(Icons.directions_walk, 'Moving', 'moving', 'carried')
+    : const Fact(Icons.house, 'Moving', 'moving', 'stays put');
+
+/// A sleepy node's anchor: `to` names it when known, as for this node's
+/// own, whose anchor is the neighbour the table marks; a neighbour's
+/// anchor the link does not name (spec "Phone link", Neighbours).
+Fact _anchored(bool anchored, {String? to}) => anchored
+    ? Fact(
+        Icons.anchor,
+        'Anchor',
+        'anchor',
+        to == null ? 'anchored' : 'anchored to $to',
+      )
+    : const Fact(Icons.link_off, 'Anchor', 'anchor', 'no anchor yet');
+
+/// Where a node's position comes from, GPS or a map point a person set,
+/// and the position on a second line; none without a place.
 Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
-    ? const Fact(Icons.location_off, 'Place', 'position', 'no place')
+    ? const Fact(Icons.location_off, 'Place', 'place', 'no place yet')
     : mapPoint
-    ? Fact(Icons.push_pin, 'Place', 'position from a map point', _where(p))
-    : Fact(Icons.satellite_alt, 'Place', 'position from GPS', _where(p));
+    ? Fact(
+        Icons.push_pin,
+        'Place',
+        'place, set by a person',
+        'set by a person\n${_where(p)}',
+      )
+    : Fact(
+        Icons.satellite_alt,
+        'Place',
+        'place, from GPS',
+        'from GPS\n${_where(p)}',
+      );
+
+/// The names of the contacts whose home, or node last used, has `id`:
+/// a node on the map is often a person's.
+String? contactsAt(Contacts contacts, List<int> id) {
+  bool at(Address? a) => a != null && hex(a.id) == hex(id);
+  final names = [
+    for (final c in contacts.active)
+      if (at(c.card.home) || at(c.place)) c.name,
+  ];
+  return names.isEmpty ? null : names.join(', ');
+}
 
 LatLng _at(Position p) => LatLng(p.latDeg, p.lonDeg);
 
@@ -326,7 +357,7 @@ class _MapScreenState extends State<MapScreen> {
                     point: own,
                     width: 44,
                     height: 44,
-                    child: _NodeMarker(_s, t),
+                    child: _NodeMarker(widget.app, t),
                   ),
               ],
             ),
@@ -372,7 +403,7 @@ class _MapScreenState extends State<MapScreen> {
       height: said == null
           ? _NeighbourMarker.size
           : _NeighbourMarker.labelledHeight,
-      child: _NeighbourMarker(m, t, own, said),
+      child: _NeighbourMarker(m, t, own, said, widget.app.contacts),
     );
   }
 
@@ -424,45 +455,46 @@ class _MapScreenState extends State<MapScreen> {
 }
 
 class _NodeMarker extends StatelessWidget {
-  final Session s;
+  final AppModel app;
   final NeighbourTable t;
-  const _NodeMarker(this.s, this.t);
+  const _NodeMarker(this.app, this.t);
+
+  /// Its facts from its status, in the order a neighbour's take.
+  List<Fact> facts() {
+    final s = app.session;
+    final st = s.status ?? const Status();
+    final anchor = t.list.where((n) => n.anchor).firstOrNull;
+    return [
+      _role(st.sleepy),
+      _moving(st.carried),
+      if (st.sleepy)
+        _anchored(
+          !st.anchorless,
+          to: anchor == null ? null : nodeLabel(anchor.id),
+        ),
+      _position(t.own, mapPoint: st.mapPoint),
+      _power(
+        usb: st.externalPower,
+        battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
+      ),
+      Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
+      Fact(Icons.sell, 'Version', 'firmware version', 'V${s.node!.image}'),
+      const Fact(Icons.smartphone, 'Paired', 'paired', 'with this phone'),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: () {
-      final st = s.status ?? const Status();
-      showModalBottomSheet<void>(
-        context: context,
-        // Taller than half the screen when its rows need it.
-        isScrollControlled: true,
-        builder: (_) => _Sheet(
-          nodeLabel(s.node!.id),
-          roleOf(
-            sleepy: st.sleepy,
-            anchored: !st.anchorless,
-            placed: st.placed,
-            carried: st.carried,
-          ),
-          [
-            const Fact(Icons.smartphone, 'Paired', 'paired', 'with this phone'),
-            _power(
-              usb: st.externalPower,
-              battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
-            ),
-            _moving(st.carried),
-            Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
-            Fact(
-              Icons.sell,
-              'Version',
-              'firmware version',
-              'V${s.node!.image}',
-            ),
-            _position(t.own, mapPoint: st.mapPoint),
-          ],
-        ),
-      );
-    },
+    onTap: () => showModalBottomSheet<void>(
+      context: context,
+      // Taller than half the screen when its rows need it.
+      isScrollControlled: true,
+      builder: (_) => _Sheet(
+        contactsAt(app.contacts, app.session.node!.id),
+        nodeLabel(app.session.node!.id),
+        facts(),
+      ),
+    ),
     child: Icon(
       Icons.my_location,
       size: 36,
@@ -479,7 +511,8 @@ class _NeighbourMarker extends StatelessWidget {
 
   /// What it answered when asked, if it did.
   final NeighbourStatus? said;
-  const _NeighbourMarker(this.n, this.t, this.own, this.said);
+  final Contacts contacts;
+  const _NeighbourMarker(this.n, this.t, this.own, this.said, this.contacts);
 
   static const size = 40.0;
   static const _label = 14.0;
@@ -489,16 +522,34 @@ class _NeighbourMarker extends StatelessWidget {
   static const labelledWidth = 120.0;
   static const labelledHeight = size + 2 * _label;
 
-  /// Its facts, in an order that does not change: what this node hears
-  /// of it, then what its answer says, then this node's view of it,
-  /// which its screen cannot say.
+  /// Its facts, in an order that does not change: what it is, from its
+  /// answer or else its heartbeats, then what this node hears of it and
+  /// what its answer says, then this node's view of it, which its screen
+  /// cannot say.
   List<Fact> facts() {
     final q = n.quality(t.floorDbm);
     final far = own == null
         ? null
         : const Distance().as(LengthUnit.Meter, own!, _at(n.position));
     final s = said;
+    final sleepy = s?.sleepy ?? n.sleepy;
     return [
+      _role(sleepy),
+      _moving(s?.carried ?? n.carried),
+      if (sleepy)
+        _anchored(s?.anchored ?? !n.anchorless)
+      else if (n.anchor)
+        const Fact(Icons.anchor, 'Anchor', 'anchor', 'this node\'s anchor'),
+      _position(n.position, mapPoint: n.mapPoint),
+      if (s != null)
+        _power(
+          usb: s.usb,
+          battery: s.battery == NeighbourStatus.batteryLow
+              ? 'low'
+              : s.percent == null
+              ? null
+              : '${s.percent}%',
+        ),
       Fact(
         Icons.settings_input_antenna,
         'Link',
@@ -511,16 +562,6 @@ class _NeighbourMarker extends StatelessWidget {
       Fact(Icons.schedule, 'Last heard', 'last heard', secondsAgo(n.ageS)),
       if (far != null)
         Fact(Icons.straighten, 'Distance', 'distance', distance(far)),
-      if (s != null)
-        _power(
-          usb: s.usb,
-          battery: s.battery == NeighbourStatus.batteryLow
-              ? 'low'
-              : s.percent == null
-              ? null
-              : '${s.percent}%',
-        ),
-      _moving(s?.carried ?? n.carried),
       if (s != null) ...[
         Fact(
           Icons.hub,
@@ -539,7 +580,6 @@ class _NeighbourMarker extends StatelessWidget {
                       '${s.complete}/${s.blocks}',
           ),
       ],
-      _position(n.position, mapPoint: n.mapPoint),
       if (n.proven)
         const Fact(
           Icons.check_box,
@@ -547,8 +587,6 @@ class _NeighbourMarker extends StatelessWidget {
           'exchanged',
           'it took a message from this node',
         ),
-      if (n.anchor)
-        const Fact(Icons.anchor, 'Anchor', 'anchor', 'this node\'s'),
       if (n.demoted)
         const Fact(
           Icons.trending_down,
@@ -585,17 +623,8 @@ class _NeighbourMarker extends StatelessWidget {
         context: context,
         // Taller than half the screen when its rows need it.
         isScrollControlled: true,
-        builder: (_) => _Sheet(
-          nodeLabel(n.id),
-          s?.role ??
-              roleOf(
-                sleepy: n.sleepy,
-                anchored: !n.anchorless,
-                placed: _placed(n.position),
-                carried: n.carried,
-              ),
-          facts(),
-        ),
+        builder: (_) =>
+            _Sheet(contactsAt(contacts, n.id), nodeLabel(n.id), facts()),
       ),
       child: s == null
           ? icon
@@ -622,13 +651,13 @@ class _NeighbourMarker extends StatelessWidget {
   }
 }
 
-/// A node's details: its ID, what it is in its screen's words, and a row
-/// a fact.
+/// A node's details: whose it is, if a contact's, its ID, and a row a
+/// fact, in plain words, none of its screen's.
 class _Sheet extends StatelessWidget {
-  final String title;
-  final String role;
+  final String? whose;
+  final String id;
   final List<Fact> facts;
-  const _Sheet(this.title, this.role, this.facts);
+  const _Sheet(this.whose, this.id, this.facts);
 
   @override
   Widget build(BuildContext context) {
@@ -640,8 +669,8 @@ class _Sheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(title, style: text.titleLarge),
-            Text(role, style: text.titleSmall),
+            if (whose != null) Text(whose!, style: text.titleLarge),
+            Text(id, style: whose == null ? text.titleLarge : text.titleSmall),
             const SizedBox(height: 8),
             for (final f in facts) _row(f),
           ],
@@ -660,7 +689,7 @@ class _Sheet extends StatelessWidget {
           // The icon names the fact to a screen reader already.
           ExcludeSemantics(child: Text(f.label)),
           const SizedBox(width: 16),
-          Expanded(child: Text(f.value, textAlign: TextAlign.end, maxLines: 2)),
+          Expanded(child: Text(f.value, textAlign: TextAlign.end, maxLines: 3)),
         ],
       ),
     );

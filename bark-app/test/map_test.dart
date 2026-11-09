@@ -9,6 +9,7 @@
 // neighbours' screens, and a node before link version 9 not asked.
 
 import 'package:bark_app/app.dart';
+import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
@@ -302,12 +303,26 @@ void main() {
     expect(find.text('CARRIED RELAY'), findsOneWidget);
     expect(find.text('SLEEPY ANCHORED'), findsOneWidget);
 
-    // The sleepy one's details: its screen's first line under its ID,
-    // then a row a fact, an icon named for screen readers and the value,
-    // in a fixed order.
+    // The sleepy one's details: whose node it is, a contact's home, over
+    // its ID, then a row a fact in plain words, an icon named for screen
+    // readers, a label and the value, in a fixed order; none of its
+    // screen's words.
     Finder icon(String label) =>
         find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
     final sleepy = list.singleWhere((n) => n.sleepy);
+    await t.runAsync(
+      () => app.contacts.put(
+        Contact(
+          PersonCard(
+            List.filled(32, 7),
+            Address(sleepy.position, sleepy.id),
+            0,
+            'Olena',
+          ),
+          '',
+        ),
+      ),
+    );
     await t.tap(icon(nodeLabel(sleepy.id)));
     await t.pumpAndSettle();
     final sheet = find.byType(BottomSheet);
@@ -316,49 +331,57 @@ void main() {
     Finder named(String label) =>
         find.descendant(of: sheet, matching: icon(label));
     expect(
-      t.getTopLeft(line(nodeLabel(sleepy.id))).dy,
-      lessThan(t.getTopLeft(line('SLEEPY ANCHORED')).dy),
+      t.getTopLeft(line('Olena')).dy,
+      lessThan(t.getTopLeft(line(nodeLabel(sleepy.id))).dy),
     );
+    expect(line('SLEEPY ANCHORED'), findsNothing);
     final rows = [
-      line('SLEEPY ANCHORED'),
-      named('link strength, good'),
-      named('last heard'),
-      named('distance'),
-      named('battery'),
-      named('moving'),
-      named('neighbours known'),
-      named('firmware version'),
-      named('position from a map point'),
+      ('Role', named('role, sleepy')),
+      ('Moving', named('moving')),
+      ('Anchor', named('anchor')),
+      ('Place', named('place, set by a person')),
+      ('Power', named('battery')),
+      ('Link', named('link strength, good')),
+      ('Last heard', named('last heard')),
+      ('Distance', named('distance')),
+      ('Known', named('neighbours known')),
+      ('Version', named('firmware version')),
     ];
-    for (final r in rows) {
-      expect(r, findsOneWidget);
+    final ys = <double>[];
+    for (final (label, row) in rows) {
+      expect(row, findsOneWidget);
+      // Its plain label beside its icon, on the same line.
+      expect(line(label), findsOneWidget);
+      expect(t.getCenter(line(label)).dy, closeTo(t.getCenter(row).dy, 1));
+      ys.add(t.getTopLeft(row).dy);
     }
-    final ys = [for (final r in rows) t.getTopLeft(r).dy];
     for (var i = 1; i < ys.length; i++) {
       expect(ys[i], greaterThan(ys[i - 1]));
     }
+    expect(
+      line('sleepy: wakes in windows, speaks through its anchor'),
+      findsOneWidget,
+    );
+    expect(line('stays put'), findsOneWidget);
+    expect(named('moving').evaluate().single.widget, isA<Icon>());
+    expect(
+      (named('moving').evaluate().single.widget as Icon).icon,
+      Icons.house,
+    );
+    expect(line('anchored'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: sheet,
+        matching: find.textContaining('set by a person\n'),
+      ),
+      findsOneWidget,
+    );
     expect(line('57%'), findsOneWidget);
     expect(line('4 heard \u00b7 2 strong \u00b7 1 exchanged'), findsOneWidget);
     expect(line('V9'), findsOneWidget);
-    expect(line('stays put'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
-    expect(line('KNOWN 4/2/1'), findsNothing);
     expect(named('exchanged'), findsNothing);
-    // Each row's plain label beside its icon, on the same line.
-    for (final (label, row) in [
-      ('Link', rows[1]),
-      ('Last heard', rows[2]),
-      ('Distance', rows[3]),
-      ('Power', rows[4]),
-      ('Moving', rows[5]),
-      ('Known', rows[6]),
-      ('Version', rows[7]),
-      ('Place', rows[8]),
-    ]) {
-      expect(line(label), findsOneWidget);
-      expect(t.getCenter(line(label)).dy, closeTo(t.getCenter(row).dy, 1));
-    }
-    await t.tapAt(Offset.zero);
+    await closeSheet(t);
     await t.pumpAndSettle();
 
     // One whose answer says carried, though its heartbeats did not.
@@ -368,7 +391,11 @@ void main() {
     await t.tap(icon(nodeLabel(carried.id)));
     await t.pumpAndSettle();
     expect(line('carried'), findsOneWidget);
-    await t.tapAt(Offset.zero);
+    expect(
+      (named('moving').evaluate().single.widget as Icon).icon,
+      Icons.directions_walk,
+    );
+    await closeSheet(t);
     await t.pumpAndSettle();
 
     // The one that never answers keeps the app's flags.
@@ -384,7 +411,12 @@ void main() {
       ),
       findsOneWidget,
     );
-    // Its header from its heartbeats; no row its answer would give.
+    // A relay: no Anchor row, and no contact's name.
+    expect(named('role, relay'), findsOneWidget);
+    expect(line("relay: passes on others' texts"), findsOneWidget);
+    expect(named('anchor'), findsNothing);
+    expect(line('Olena'), findsNothing);
+    // Its rows from its heartbeats; none its answer would give.
     expect(
       find.descendant(
         of: find.byType(BottomSheet),
@@ -392,7 +424,7 @@ void main() {
       ),
       findsNothing,
     );
-    await t.tapAt(Offset.zero);
+    await closeSheet(t);
     await t.pumpAndSettle();
 
     // The silent one asked twice more, then, refreshed once the answers
@@ -406,6 +438,38 @@ void main() {
     await t.pump(FakeNode.answerAfter);
     expect(fake.asked.length, 2 * list.length + 2);
     expect(find.text('RELAY NO PLACE'), findsNWidgets(4));
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('a sleepy node\'s own sheet names its anchor', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final a = fake.neighbours[0]!;
+    fake.neighbours[0] = Neighbour(
+      a.id,
+      a.position,
+      rssiDdbm: a.rssiDdbm,
+      ageS: a.ageS,
+      anchor: true,
+    );
+    fake.sleepy = true;
+    fake.changed();
+    await t.pump(FakeNode.answerAfter);
+    await t.tap(
+      find.byWidgetPredicate(
+        (w) => w is Icon && w.semanticLabel == 'this node',
+      ),
+    );
+    await t.pumpAndSettle();
+    expect(find.text('anchored to ${nodeLabel(a.id)}'), findsOneWidget);
+    expect(
+      find.text('sleepy: wakes in windows, speaks through its anchor'),
+      findsOneWidget,
+    );
+    await closeSheet(t);
     await shut(t, app);
     debugPrint = print;
   });
@@ -495,7 +559,7 @@ void main() {
     expect(find.text('Demoted'), findsOneWidget);
     expect(find.text('its last hand-overs failed'), findsOneWidget);
     expect(icon('distance'), findsOneWidget);
-    await t.tapAt(Offset.zero);
+    await closeSheet(t);
     await t.pumpAndSettle();
 
     // This node's own: the KNOWN row from the table read, no relays line.
@@ -512,4 +576,10 @@ void main() {
     await t.pump();
     app.dispose();
   });
+}
+
+/// Closes the open bottom sheet, which may cover the whole screen.
+Future<void> closeSheet(WidgetTester t) async {
+  Navigator.pop(t.element(find.byType(BottomSheet)));
+  await t.pumpAndSettle();
 }
