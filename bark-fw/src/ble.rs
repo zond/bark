@@ -1386,7 +1386,17 @@ async fn serve(
                 return;
             }
             GattConnectionEvent::PassKeyDisplay(key) => {
-                log::info!("ble: pairing, the code shown");
+                // The code only in an open build, for the bench: a
+                // protected node's log must not let a USB cable stand in
+                // for being at the node (spec "Phone link", Pairing).
+                match crate::protect::BUILD {
+                    bark_image::protect::Build::Open => {
+                        log::info!("ble: pairing, the code shown: {:06}", key.value())
+                    }
+                    bark_image::protect::Build::Protected => {
+                        log::info!("ble: pairing, the code shown")
+                    }
+                }
                 LINK.lock(|l| l.borrow_mut().phones[slot].pairing = true);
                 crate::display::phone(Phone::Code(key.value()));
                 continue;
