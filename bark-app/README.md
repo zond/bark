@@ -123,14 +123,14 @@ is a prototype for the bench, not the app people will carry.
   guest, **Pair** pairs with it instead) and the node the phone is
   paired with, the fake node switch, on the paired node of link version
   7 or later the switch **Public: serve phones without pairing**, on
-  unless the owner turns it off (Public nodes, below), the
-  version of the connected node's firmware and **Update firmware**
-  (Updating a node, below), whether the app is exempt from battery
-  optimisation (next section), your name, the home node (make the
-  connected node your home if it is not, or none; the dialog says so,
-  and on **Go ahead** your new card goes to every contact; **Send my
-  card**, as on the first screen; clear the mailbox key of a node that
-  holds one and is not your home), your 12
+  unless the owner turns it off (Public nodes, below), the home node
+  (make the connected node your home if it is not, or none; the dialog
+  says so, and on **Go ahead** your new card goes to every contact;
+  **Send my card**, as on the first screen; clear the mailbox key of a
+  node that holds one and is not your home), the version of the
+  connected node's firmware and **Update firmware** (Updating a node,
+  below), whether the app is exempt from battery optimisation (next
+  section), your name, your 12
   words (show them, or restore an identity from them), and the node's
   map point: set from typed degrees or the phone's location, or
   cleared.

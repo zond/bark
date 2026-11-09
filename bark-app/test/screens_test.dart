@@ -556,6 +556,9 @@ void main() {
         100,
         scrollable: find.byType(Scrollable).first,
       );
+      // Built below the screen's edge already, it is found, not shown.
+      await t.ensureVisible(find.text(button));
+      await t.pumpAndSettle();
       await t.tap(find.text(button));
       await t.pumpAndSettle();
       expect(find.textContaining(told), findsOneWidget);
@@ -696,6 +699,12 @@ void main() {
     await t.pump();
     const public = 'Public: serve phones without pairing';
     expect(find.text(public), findsOneWidget);
+    // The home node second, right under the node.
+    final ys = [
+      for (final h in ['Node', 'Home node', 'Firmware'])
+        t.getTopLeft(find.text(h, skipOffstage: false)).dy,
+    ];
+    expect(ys, [...ys]..sort());
     // On by default; the owner turns it off.
     final toggle = find.widgetWithText(SwitchListTile, public);
     expect(t.widget<SwitchListTile>(toggle).value, isTrue);
