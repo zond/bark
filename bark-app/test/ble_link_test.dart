@@ -7,7 +7,9 @@
 // update going on from what the node holds, but not after the person
 // disconnected, not to a node no longer theirs, and gives way to the
 // person's tap on another node; and with no paired node, or while it
-// is not heard, the strongest public node, joined as a guest.
+// is not heard, the strongest public node, joined as a guest, but not
+// one that refuses the phone's old bond until the bond is forgotten; and
+// the owner's unpairing, after which Android forgets its bond too.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -361,14 +363,25 @@ class FakeNodes extends UniversalBlePlatform {
   @override
   Future<bool> isPaired(String deviceId) async => bonds.contains(deviceId);
 
+  /// Android keeps the bonds the app asks it to remove, as a phone whose
+  /// hidden removal fails does.
+  bool keepsBonds = false;
+
+  @override
+  Future<void> unpair(String deviceId) async {
+    if (!keepsBonds) bonds.remove(deviceId);
+  }
+
   /// Pairs, which makes a guest's link the owner's.
   @override
   Future<bool> pair(String deviceId) async {
     bonds.add(deviceId);
     final n = nodes[deviceId]!..pair();
-    if (_links[deviceId] is FakeGuest) {
-      await _links[deviceId]!.close();
+    final guest = _links[deviceId];
+    if (guest is FakeGuest) {
+      // The owner's link first, so that the guest's end is not the link's.
       _links[deviceId] = n.connect();
+      await guest.close();
     }
     return true;
   }
@@ -422,6 +435,8 @@ class FakeNodes extends UniversalBlePlatform {
     switch (characteristic) {
       case Uuids.recipient:
         await n.setRecipient(value.single);
+      case Uuids.public when value.single == encodeUnpair().single:
+        await n.unpair();
       case Uuids.public:
         await n.setPublic(value.single == 1);
       case Uuids.guest:
@@ -765,6 +780,12 @@ void main() {
       expect(chooseNode(heard, lost: 'lost')?.name, 'a');
       expect(chooseNode([n('lost', -40)], lost: 'lost'), isNull);
     });
+
+    test('never a node that refuses the phone\'s old bond', () {
+      final heard = [n('old', -40), n('a', -80)];
+      expect(chooseNode(heard, stale: {'old'})?.name, 'a');
+      expect(chooseNode([n('old', -40)], stale: {'old'}), isNull);
+    });
   });
 
   group('the search for a public node', () {
@@ -784,6 +805,7 @@ void main() {
       bool withPaired = false,
       bool pairedInReach = false,
       bool allowed = true,
+      Set<String> bonds = const {},
     }) {
       fakeAsync((async) {
         DateTime now() => start.add(async.elapsed);
@@ -806,7 +828,7 @@ void main() {
             strong: other(strongId)..owned = false,
             shut: other([0x0c, 0xe4, 0, 0, 0, 5])..public = false,
           },
-          bonds: {if (withPaired) paired},
+          bonds: {if (withPaired) paired, ...bonds},
         );
         ble.rssi.addAll({weak: -70, strong: -50, shut: -40, paired: -90});
         ble.allowed = allowed;
@@ -998,6 +1020,121 @@ void main() {
       });
     });
 
+    test('a public node that refuses the phone\'s old bond: told once, with '
+        'the way out, and passed over until the bond is forgotten', () {
+      run(bonds: {strong}, (async, app, ble) {
+        ble.nodes[strong]!.paired = false;
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        expect(app.session.connected, isFalse);
+        expect(app.staleBond, nodeName(strongId));
+        expect(
+          staleBondLine(app.staleBond!),
+          'ID 0CE400000004 no longer knows this phone\'s old pairing. '
+          'Forget it in the phone\'s Bluetooth settings, then try again.',
+        );
+        // Not tried again every round: the next public node instead.
+        async.elapse(lookRound * 2);
+        expect(ble.connects.where((d) => d == strong), hasLength(1));
+        expect(ble.connects.last, weak);
+        final log = [for (final l in app.session.log) l.text];
+        expect(log.where((l) => l.contains('old bond')), hasLength(1));
+        // The person forgets it in the phone's settings.
+        ble.bonds.remove(strong);
+        async.elapse(lookRound * 4);
+        expect(app.staleBond, isNull);
+        expect(ble.connects.last, strong);
+        expect(ble.bonds, isEmpty);
+      });
+    });
+
+    test('the owner unpairs: the node forgets the phone, then the phone its '
+        'bond, and the node serves it as a guest after', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        expect((app.session.guest, app.linkDevice), (false, paired));
+        ble.inReach.removeAll({weak, strong});
+        bool? forgotten;
+        app.unpair().then((v) => forgotten = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(forgotten, isTrue);
+        expect(ble.nodes[paired]!.paired, isFalse);
+        expect(ble.bonds, isEmpty);
+        expect(app.session.pairedWith, isNull);
+        expect(app.staleBond, isNull);
+        async.elapse(lookRound * 5);
+        expect(ble.connects.last, paired);
+        expect(app.guestNode, nodeName(FakeNode.id));
+        expect(app.staleBond, isNull);
+      });
+    });
+
+    test('the owner unpairs on a phone that keeps its bond: the person is '
+        'told to forget the node, which is passed over until then', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        ble
+          ..inReach.removeAll({weak, strong})
+          ..keepsBonds = true;
+        bool? forgotten;
+        app.unpair().then((v) => forgotten = v);
+        async.elapse(const Duration(seconds: 3));
+        expect(forgotten, isFalse);
+        expect(ble.bonds, {paired});
+        expect(app.staleBond, nodeName(FakeNode.id));
+        final connects = ble.connects.length;
+        async.elapse(lookRound * 4);
+        expect(ble.connects, hasLength(connects));
+        ble.bonds.remove(paired);
+        async.elapse(lookRound * 2);
+        expect(app.staleBond, isNull);
+        expect(ble.connects.last, paired);
+        expect(app.guestNode, nodeName(FakeNode.id));
+      });
+    });
+
+    test('after unpairing, the node is used as a guest without asking '
+        'whether it is the person\'s', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        var asked = 0;
+        app.askOwner = (n) async {
+          asked++;
+          return true;
+        };
+        async.elapse(round);
+        ble.inReach.removeAll({weak, strong});
+        app.unpair();
+        async.elapse(lookRound * 3);
+        expect(asked, 0);
+        expect(ble.connects.last, paired);
+        expect(app.guestNode, nodeName(FakeNode.id));
+        expect(app.session.pairedWith, isNull);
+      });
+    });
+
+    test('a node no longer this phone\'s, its bond forgotten in the phone\'s '
+        'settings: used as a guest like any public node', () {
+      // As an older app left it: a Pair on the unpaired node, refused for
+      // the bond Android kept, marked the node lost, and the mark outlived
+      // the bond.
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        ble
+          ..inReach.removeAll({weak, strong})
+          ..bonds.remove(paired);
+        ble.nodes[paired]!.paired = false;
+        app.session.setPaired(nodeName(FakeNode.id), lost: true);
+        async.elapse(lookRound * 2);
+        expect(ble.connects, [paired]);
+        expect(app.guestNode, nodeName(FakeNode.id));
+        expect(ble.bonds, isEmpty);
+        // While Android still holds the bond, the node is passed over.
+        ble.bonds.add(paired);
+        final connects = ble.connects.length;
+        async.elapse(guestCheck * 2);
+        expect(ble.connects, hasLength(connects));
+      });
+    });
+
     test('the paired node before a stronger public node', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         async.elapse(round);
@@ -1108,6 +1245,20 @@ void main() {
         async.elapse(round);
         expect(ble.connects, [strong]);
         expect(ble.bonds, {strong});
+      });
+    });
+
+    test('yours, with the phone\'s old bond for it: the bond is forgotten '
+        'and the pairing makes a new one', () {
+      run(bonds: {strong}, (async, app, ble) {
+        ble.nodes[strong]!.paired = false;
+        app.askOwner = (n) async => true;
+        async.elapse(round + seenWait);
+        expect(ble.connects, [strong]);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(app.pairedNode, nodeName(strongId));
+        expect(app.session.pairingLost, isFalse);
+        expect(app.staleBond, isNull);
       });
     });
 

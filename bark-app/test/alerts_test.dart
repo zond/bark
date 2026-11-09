@@ -72,6 +72,8 @@ class FakeNotifier implements Notifier {
   @override
   Future<void> openLink(String url) async => log.add('open $url');
   @override
+  Future<void> openBluetoothSettings() async => log.add('Bluetooth settings');
+  @override
   Future<void> share(String text, Uint8List png) async =>
       log.add('share $text');
 }

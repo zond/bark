@@ -241,9 +241,11 @@ class BleLink implements NodeLink {
   /// the person for the code on the node's screen, and `paired` once the
   /// bond is made; returns the MTU agreed.
   ///
-  /// As a `guest` of a public node it neither pairs nor reads to check a
-  /// bond: Android may start a pairing by itself on a read the node
-  /// refuses for want of one, and the node is not the person's.
+  /// As a `guest` of a public node it does not pair, and reads to check a
+  /// bond only where the phone holds one: without, Android may start a
+  /// pairing by itself on a read the node refuses for want of one, and
+  /// the node is not the person's. Throws [StaleBond] for a guest's link
+  /// the node refuses for the phone's bond, as for [NotOurs] below.
   ///
   /// Throws [NotOurs] for a node, `name`, that no longer holds the
   /// phone's bond: one that ends the link it took before the app has
@@ -288,13 +290,16 @@ class BleLink implements NodeLink {
       mtu = await UniversalBle.requestMtu(deviceId, attMtu);
     } catch (e) {
       await link.close();
-      if (!guest && await setUpRefused(deviceId, hadBond: hadBond)) {
-        throw NotOurs(name);
+      if (await setUpRefused(deviceId, hadBond: hadBond)) {
+        throw guest ? StaleBond(name) : NotOurs(name);
       }
       rethrow;
     }
-    if (guest) return (link, mtu);
     try {
+      if (guest) {
+        if (await bonded(deviceId)) await link._probe(name, guest: true);
+        return (link, mtu);
+      }
       if (await UniversalBle.isPaired(deviceId) ?? false) {
         await link._probe(name);
       } else if (hadBond) {
@@ -319,12 +324,33 @@ class BleLink implements NodeLink {
   /// this waits for that, by [_forgetStep], at most [_forgetWait]. With
   /// the bond goes what Android knew of the address's type: the node is
   /// to be [seen] again before the connect.
-  static Future<void> forget(String deviceId) async {
-    await UniversalBle.unpair(deviceId);
-    final end = DateTime.now().add(_forgetWait);
-    while (await UniversalBle.isPaired(deviceId) ?? false) {
-      if (DateTime.now().isAfter(end)) break;
+  ///
+  /// Returns whether the bond is gone. Android removes a bond only by a
+  /// method it hides from apps, which the Bluetooth plugin calls by
+  /// reflection and whose failure it does not report, so the bond state
+  /// is the only answer; a phone that keeps the bond leaves the person to
+  /// forget the node in its Bluetooth settings.
+  static Future<bool> forget(String deviceId) async {
+    try {
+      await UniversalBle.unpair(deviceId);
+    } catch (_) {
+      // The bond state below says whether it went.
+    }
+    for (var waited = Duration.zero; await bonded(deviceId);) {
+      if (waited >= _forgetWait) return false;
       await Future<void>.delayed(_forgetStep);
+      waited += _forgetStep;
+    }
+    return true;
+  }
+
+  /// Whether Android lists a bond with the node; false where it cannot
+  /// say.
+  static Future<bool> bonded(String deviceId) async {
+    try {
+      return await UniversalBle.isPaired(deviceId) ?? false;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -346,21 +372,18 @@ class BleLink implements NodeLink {
     String deviceId, {
     required bool hadBond,
   }) async {
-    if (hadBond) return true;
-    try {
-      return await UniversalBle.isPaired(deviceId) ?? false;
-    } catch (_) {
-      return false;
-    }
+    return hadBond || await bonded(deviceId);
   }
 
   /// A bonded phone's first read, which shows whether the node still
-  /// holds its bond.
-  Future<void> _probe(String name) async {
+  /// holds its bond: [NotOurs] if not, or for a `guest`, [StaleBond].
+  Future<void> _probe(String name, {bool guest = false}) async {
     try {
       await _read(Uuids.node);
     } catch (e) {
-      if (bondRefused(e, closed: _closed.isCompleted)) throw NotOurs(name);
+      if (bondRefused(e, closed: _closed.isCompleted)) {
+        throw guest ? StaleBond(name) : NotOurs(name);
+      }
       rethrow;
     }
   }

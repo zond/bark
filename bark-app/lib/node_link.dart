@@ -25,6 +25,24 @@ class NotOurs implements Exception {
       'with it';
 }
 
+/// The phone still holds a bond for the node `node` that the node no
+/// longer has: its owner unpaired it, or another phone paired with it.
+/// Android encrypts every link to it with that bond, which the node
+/// refuses, so the phone cannot use it even as a guest until the bond is
+/// forgotten (spec "Phone link", Public).
+class StaleBond implements Exception {
+  final String node;
+  const StaleBond(this.node);
+  @override
+  String toString() => staleBondLine(node);
+}
+
+/// What the person reads of a [StaleBond] at `node`: what happened and the
+/// way out.
+String staleBondLine(String node) =>
+    '${shownName(node)} no longer knows this phone\'s old pairing. Forget '
+    'it in the phone\'s Bluetooth settings, then try again.';
+
 /// The pairing did not complete: it was cancelled, or the code typed was
 /// not the one on the node's screen.
 class NotPaired implements Exception {
