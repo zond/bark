@@ -193,8 +193,7 @@ is a prototype for the bench, not the app people will carry.
   by the margin of the link's averaged RSSI over the node's noise floor
   (spec "Phone link", Neighbours), dashed while the node avoids it,
   demoted or banned. A legend says the bands in dB and the icons: a
-  relay is a tower, a node on power; a sleepy node a battery, a node on
-  battery; a carried one a walker; each in its link's colour;
+  relay is a tower; a sleepy node a battery; a carried one a walker; each in its link's colour;
   the node itself is a target. Tapping one shows the contact's name if
   the node is a contact's home or the node they last used, its ID, and
   then one row a fact in plain words, none of its screen's, an icon and
@@ -564,7 +563,7 @@ newer than the app, a bar at the top of the conversations says "A newer
 app, version N, is available"; a tap opens the APK's download in the
 browser, and Android asks before it installs it over the app. When the
 connected node runs a version below N, a bar says "Your node runs
-version M, version N is available"; a tap opens **Update firmware**
+version M; version N is available"; a tap opens **Update firmware**
 with the release's image downloaded and chosen (Updating a node), and
 for a node from before link version 6 the bar says to update it by USB
 once. A bar's × hides it until a newer version, the node's for that
@@ -958,7 +957,7 @@ a phone (Trying it, With a node).
     bar "A newer app, version N, is available" opens the APK in the
     browser, and its × hides it, also after the app is closed and
     opened again. Connected to the node, the bar "Your node runs
-    version 1, version N is available" opens **Update firmware** with
+    version 1; version N is available" opens **Update firmware** with
     "Version N" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
 15. A public node, on link version 8 or later, with two phones. On the owner's

@@ -225,7 +225,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         _bar(
           context,
           title:
-              'Your node runs version ${node.image}, version ${i.n} is '
+              'Your node runs version ${node.image}; version ${i.n} is '
               'available',
           subtitle: node.version < updateVersion
               ? 'Its firmware is from before updates over Bluetooth: '

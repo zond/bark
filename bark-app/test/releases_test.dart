@@ -243,7 +243,7 @@ void main() {
     }
 
     const appBar = 'A newer app, version 5, is available';
-    const nodeBar = 'Your node runs version 1, version 5 is available';
+    const nodeBar = 'Your node runs version 1; version 5 is available';
 
     testWidgets('a newer app: opened in the browser, or dismissed', (t) async {
       final (app, n) = await model(t, 3);
