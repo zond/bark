@@ -199,6 +199,7 @@ class DebugScreen extends StatelessWidget {
       ),
       _row('Anchorless', _yes(st.anchorless)),
       _row('Relays known', '${st.relays}'),
+      _row('Neighbours heard', '${st.heard}'),
       _row('Address position', st.placed ? '${st.address}' : 'none'),
       _row(
         'Battery',

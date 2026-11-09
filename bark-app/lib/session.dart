@@ -803,7 +803,7 @@ class Session extends ChangeNotifier {
   void _onStatus(Status s) {
     note(
       'Status: ready ${s.ready}, inbox ${s.inbox}, relays ${s.relays}, '
-      'boot left ${s.bootLeftS} s',
+      'heard ${s.heard}, boot left ${s.bootLeftS} s',
     );
     status = s;
     _statusAt = now();

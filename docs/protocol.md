@@ -3450,7 +3450,7 @@ link version 6 (roadmap D145).
 An image from the phone keeps itself once the node has started, whether
 or not the node then hears anyone: the node may be the only one in
 reach. So the app, after an update it drove, reads Status's count of
-relays known, and if the node still knows none 585.9 s after it came
+neighbours heard, and if the node still hears none 585.9 s after it came
 back, as long as an image from the mesh listens before it gives itself
 up ([updates over the mesh](#updates-over-the-mesh), the install), it
 tells the person plainly that the node hears no one and that the new

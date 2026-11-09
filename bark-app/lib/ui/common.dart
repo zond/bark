@@ -388,7 +388,7 @@ Future<bool> confirm(
 String health(Session s) {
   final left = s.bootLeftS;
   if (left > 0) return 'Starting up, ${clock(left)}';
-  final n = s.status?.relays ?? 0;
+  final n = s.status?.heard ?? 0;
   if (n == 0) return 'Hears no other node yet: texts wait here';
   return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
 }

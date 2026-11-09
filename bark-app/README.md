@@ -505,14 +505,16 @@ its progress and its buttons go until another is picked. If the new
 image did not start, the node swapped the old one back, and the screen
 says the version it came back on. An image from the phone keeps itself
 whatever the node hears, since the node may stand alone
-(spec "Phone link", Updates). So if the node still knows no relay 585.9 s after it
-came back, as long as an image from the mesh would listen, the update
-screen and a bar at the top of the conversations say that the node hears
-no one and that the new firmware may have broken its radio, and how to
-bring it back: the release it ran before, `bark-fw-<M>.uf2`, copied to
+(spec "Phone link", Updates). So if the node still hears no other node,
+sleepy ones counted, 585.9 s after it came back, as long as an image
+from the mesh would listen, the update screen and a bar at the top of
+the conversations say that the node hears no one and that the new
+firmware may have broken its radio, and how to bring it back: the release it ran before, `bark-fw-<M>.uf2`, copied to
 it over USB after a double tap of its reset button, since the node
 takes no older version from the phone; or a newer release, once there
-is one. The bar's × hides it until the next update. A node from
+is one. The bar's × hides it until the next update. A node from before
+link version 11 says only the relays it knows, which the app counts
+instead, so it may warn of one that hears only sleepy nodes. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").
 
@@ -716,11 +718,11 @@ a phone (Trying it, With a node).
    them down**.
    A conversation with **Fake friend** holds their two
    messages.
-3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 10,
+3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 11,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
-   the relays known rising from 0 to 3. The log shows the two inbox
+   the relays known and the neighbours heard rising from 0 to 3. The log shows the two inbox
    messages read and confirmed.
 4. Open the conversation: it says not verified, and the top line "Last
    wrote just now, away from home". Write a text and send it. It shows
@@ -794,14 +796,16 @@ a phone (Trying it, With a node).
    it is yours; **Pair**. The first time, Android asks for a code and the
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired." and how the node
-   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes", or
-   "Hears no other node yet: texts wait here"; and
+   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes",
+   sleepy ones counted, or "Hears no other node yet: texts wait here";
+   and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
-3. **Debug** shows link version 10, the node's clock (from its GPS if it
+3. **Debug** shows link version 11, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
-   node), and the relays it hears.
+   node), the relays it knows and the neighbours it hears, sleepy ones
+   too.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
    address, and **Nearby nodes** draws it with the relays it hears, each line's
    colour its link's quality. Without one, Settings under **Home node**
