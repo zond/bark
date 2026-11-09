@@ -436,6 +436,11 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('Where Olena was 1 h ago'), findsOneWidget);
       expect(find.text('Their home mailbox'), findsOneWidget);
+      expect(find.text('Fast if they are still near there'), findsOneWidget);
+      expect(
+        find.text('Waits at their home until they fetch it'),
+        findsOneWidget,
+      );
       await t.tap(find.text(choice));
       await t.pumpAndSettle();
     }

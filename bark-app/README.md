@@ -573,8 +573,9 @@ on foot, at a brisk 1.5 m/s, moves about 90 m, within the ≈750 m a
 relay hears a handheld in the street (`docs/protocol.md`, "Physical
 layer"), while a driver has already left that reach, so no longer wait
 makes the guess better. Older, the send
-button asks, for that text only: "Where <name> was <age> ago" or "Their
-home mailbox". Without a home it goes where they were, without asking;
+button asks, for that text only: "Where <name> was <age> ago", "Fast if
+they are still near there", or "Their home mailbox", "Waits at their
+home until they fetch it". Without a home it goes where they were, without asking;
 with a home and nothing written from yet, to the home; with neither,
 to the node on their card, where it waits for them (roadmap D162). Acknowledgements and
 cards go without asking, to the home's mailbox when there is a choice.

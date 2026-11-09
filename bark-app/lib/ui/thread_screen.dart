@@ -59,7 +59,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 for (final t in options)
                   SimpleDialogOption(
                     onPressed: () => Navigator.pop(context, t),
-                    child: Text(_option(to, t)),
+                    child: ListTile(
+                      title: Text(_option(to, t)),
+                      subtitle: Text(switch (t) {
+                        Toward.there => 'Fast if they are still near there',
+                        Toward.home =>
+                          'Waits at their home until they fetch it',
+                        Toward.node => 'Waits there until they come back',
+                      }),
+                    ),
                   ),
               ],
             ),
