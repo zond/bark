@@ -121,7 +121,17 @@ class ConversationsScreen extends StatelessWidget {
     final node = app.session.node;
     // Only the paired phone updates a node.
     final i = app.session.guest ? null : r.newerImage(node);
+    final updated = app.updater.updated;
     return [
+      if (updated != null && app.updater.hearsNoOne && node != null)
+        _bar(
+          context,
+          title: '${nodeName(node.id)} hears no one since its update',
+          subtitle: app.updater.hearsNoOneWarning(updated),
+          onTap: () => _open(context, UpdateScreen(app)),
+          dismiss: app.updater.dismissHearsNoOne,
+          warning: true,
+        ),
       if (a != null)
         _bar(
           context,
@@ -156,10 +166,13 @@ class ConversationsScreen extends StatelessWidget {
     required String subtitle,
     required VoidCallback? onTap,
     required VoidCallback dismiss,
+    bool warning = false,
   }) => Card(
-    color: Theme.of(context).colorScheme.secondaryContainer,
+    color: warning
+        ? Theme.of(context).colorScheme.errorContainer
+        : Theme.of(context).colorScheme.secondaryContainer,
     child: ListTile(
-      leading: const Icon(Icons.system_update),
+      leading: Icon(warning ? Icons.portable_wifi_off : Icons.system_update),
       title: Text(title),
       subtitle: Text(subtitle),
       onTap: onTap,

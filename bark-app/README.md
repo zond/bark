@@ -423,7 +423,10 @@ writes to Guest; a test can make a node nobody has paired with
 (`owned`), whose messages all go to the ring. Its turns are Ready: set for one phone at a time, in the
 order of their links, passing on when the node takes that phone's
 message, when its link ends, or after a ban unused; a Send out of turn
-is answered 0x80, not ready.
+is answered 0x80, not ready. It takes an update as a node does, and its
+new image hears no relay, unless a test says so
+(`FakeNode.hearsAfterUpdate`), so that the warning of a node that hears
+no one after its update (Updating a node) can be seen.
 
 ## Updating a node
 
@@ -459,7 +462,16 @@ connects again by itself, and the screen says the node runs version N,
 updated from version M just now, or so many minutes ago; the image,
 its progress and its buttons go until another is picked. If the new
 image did not start, the node swapped the old one back, and the screen
-says the version it came back on. A node from
+says the version it came back on. An image from the phone keeps itself
+whatever the node hears, since the node may stand alone
+(spec "Phone link", Updates). So if the node still knows no relay 585.9 s after it
+came back, as long as an image from the mesh would listen, the update
+screen and a bar at the top of the conversations say that the node hears
+no one and that the new firmware may have broken its radio, and how to
+bring it back: the release it ran before, `bark-fw-<M>.uf2`, copied to
+it over USB after a double tap of its reset button, since the node
+takes no older version from the phone; or a newer release, once there
+is one. The bar's × hides it until the next update. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").
 

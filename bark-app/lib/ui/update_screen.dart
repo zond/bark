@@ -111,6 +111,15 @@ class _UpdateScreenState extends State<UpdateScreen> {
                   ),
               ],
             ),
+            if (updated != null && u.hearsNoOne)
+              Card(
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: ListTile(
+                  leading: const Icon(Icons.portable_wifi_off),
+                  title: const Text('The node hears no one'),
+                  subtitle: Text(u.hearsNoOneWarning(updated)),
+                ),
+              ),
             if (noLatest != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
