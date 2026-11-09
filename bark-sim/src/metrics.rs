@@ -707,7 +707,8 @@ pub struct TypeAirtime {
     pub to_dst_us: u64,
     /// The update's frames (spec "Updates over the mesh").
     pub update_us: u64,
-    /// Anything else: a scripted test signal.
+    /// Anything else: a status asked or told, which no scenario asks
+    /// for, or a scripted test signal.
     pub other_us: u64,
 }
 
@@ -733,7 +734,7 @@ impl TypeAirtime {
                 &mut self.data_us
             }
             Some(Packet::Update(_)) => &mut self.update_us,
-            None => &mut self.other_us,
+            Some(Packet::Status(_)) | None => &mut self.other_us,
         };
         *c += us;
     }

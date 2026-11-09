@@ -1533,6 +1533,37 @@ fn an_update_goes_between_the_core_and_the_application() {
     );
 }
 
+/// The application's ask reaches the core as a command, and a
+/// neighbour's status the core hands reaches the application
+/// (core-interface §4).
+#[test]
+fn a_status_goes_between_the_core_and_the_application() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(500)]);
+    let neighbour = NodeId([7; 6]);
+    let status = bark_proto::status::Status {
+        sleepy: true,
+        version: 9,
+        ..Default::default()
+    };
+    let told = AppEvent::Status {
+        from: neighbour,
+        status,
+    };
+    core.then.push((at_ms(10), Action::App(told)));
+    let mut d = driver(core, &world, Duration::ZERO);
+    run_until(&mut d, &world, at_ms(100));
+    assert_eq!(d.app().messages, [told]);
+    d.app_mut().push_request(Request::Ask(neighbour));
+    step(&mut d, &world);
+    let asked: Vec<&str> = seen(&d)
+        .into_iter()
+        .map(|(_, s)| s)
+        .filter(|s| s.starts_with("App"))
+        .collect();
+    assert_eq!(asked, [format!("App(Ask {{ neighbour: {neighbour:?} }})")]);
+}
+
 /// A piece frame goes with the bytes the application wrote into it; one
 /// it could not fill is not sent, and still completes.
 #[test]

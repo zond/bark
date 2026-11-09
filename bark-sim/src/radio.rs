@@ -182,7 +182,7 @@ impl Sim {
             Some(WirePacket::Ack(_)) => 1,
             Some(WirePacket::Heartbeat(h)) if !h.sleepy => 2,
             Some(WirePacket::Heartbeat(_)) => 3,
-            Some(WirePacket::Update(_)) | None => 6,
+            Some(WirePacket::Update(_) | WirePacket::Status(_)) | None => 6,
         };
         self.air_kinds.insert(tx_key, (kind, src));
         if let Some(WirePacket::Heartbeat(h)) = decoded {

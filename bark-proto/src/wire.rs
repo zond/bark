@@ -34,12 +34,16 @@
 //! HEARTBEAT  + section: runs version tag key blocks last complete
 //!            have                                                 = 30
 //! PIECE      first format tag block index bytes                   = 255
+//! ASK        first format to from                                 = 14
+//! STATUS     first format to from flags battery heard strong
+//!            proven version                                       = 23
 //! ```
 //!
 //! DATA's `aux` 13 to 63, above every home channel, names a frame from
 //! node to node, one value a kind: plain, one hop, not routed and not
 //! acknowledged unless its kind says so. 15 is the update's piece (spec
-//! "Updates over the mesh"); 13, 14 and 16 to 63 are reserved, and a node
+//! "Updates over the mesh"), 16 and 17 a neighbour's status asked and
+//! told (spec "Neighbour status"); 13, 14 and 18 to 63 are reserved, and a node
 //! rejects them. A heartbeat may carry an update section after its first
 //! 13 bytes, which a node that knows none ignores. Such a frame keeps the first
 //! two bytes and lays out the rest for its kind: none of them has a hop,
@@ -83,8 +87,10 @@
 
 use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
+use crate::node::NeighbourCounts;
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
+use crate::status::{Battery, Status};
 use crate::update::{Image, ImageTag, Section, SECTION_LEN, TAG_LEN};
 
 /// The wire format this code speaks, and so sends and reads (spec
@@ -178,6 +184,49 @@ pub const PIECE_HEADER_LEN: usize = PIECE_INDEX + 1;
 pub const PIECE_BYTES: usize = MAX_FRAME - PIECE_HEADER_LEN;
 
 const _: () = assert!(PIECE_HEADER_LEN == 8 && PIECE_BYTES == 247);
+
+/// DATA `aux` of a neighbour's status asked, and told (spec "Neighbour status").
+pub const ASK_AUX: u8 = 16;
+/// See [`ASK_AUX`].
+pub const STATUS_AUX: u8 = 17;
+// The node asked or answered first, so that every other node on the
+// channel can stop reading after 8 bytes, as at a DATA's `dst_hop`.
+const STATUS_TO: usize = BODY;
+const STATUS_FROM: usize = STATUS_TO + ID_LEN;
+/// A status asked's length: whom, and who asks (spec "Neighbour status").
+pub const ASK_LEN: usize = STATUS_FROM + ID_LEN;
+const STATUS_FLAGS: usize = ASK_LEN;
+const STATUS_BATTERY: usize = STATUS_FLAGS + FLAGS_LEN;
+const STATUS_HEARD: usize = STATUS_BATTERY + 1;
+const STATUS_STRONG: usize = STATUS_HEARD + 1;
+const STATUS_PROVEN: usize = STATUS_STRONG + 1;
+const STATUS_VERSION: usize = STATUS_PROVEN + 1;
+/// Bytes of the status itself, after whom and from whom: what the phone
+/// link passes on as it is (spec "Phone link", Ask).
+pub const STATUS_LEN: usize = STATUS_VERSION + VERSION_LEN - ASK_LEN;
+/// A status told's length (spec "Neighbour status").
+pub const STATUS_FRAME_LEN: usize = ASK_LEN + STATUS_LEN;
+// An image's version is 4 bytes, as in a heartbeat's section.
+const VERSION_LEN: usize = 4;
+// The status's flags.
+const PLACED: u8 = 0x01;
+const STATUS_SLEEPY: u8 = 0x02;
+const ANCHORED: u8 = 0x04;
+const STATUS_CARRIED: u8 = 0x08;
+const USB: u8 = 0x10;
+// The battery byte: at or below the low level, and not read. A percent
+// above the low level is never 0, and never above 100.
+const BATTERY_LOW: u8 = 0;
+const BATTERY_NOT_READ: u8 = u8::MAX;
+const _: () = assert!(
+    crate::tables::neighbours::NEIGHBOURS <= u8::MAX as usize,
+    "a neighbour count fits a byte"
+);
+const _: () = assert!(ASK_LEN == 14 && STATUS_LEN == 9 && STATUS_FRAME_LEN == 23);
+const _: () = assert!(
+    free(STATUS_FRAME_LEN, 1) && !free(STATUS_FRAME_LEN + 1, 1),
+    "spec \"Neighbour status\": the status's last byte, the proven count, costs no airtime"
+);
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
 const _: () = assert!(DATA_HEADER_LEN == 28);
@@ -306,6 +355,72 @@ pub enum Update<'a> {
     },
 }
 
+/// A neighbour's status asked or told (spec "Neighbour status").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusFrame {
+    /// `from` asks `to` for its status.
+    Ask {
+        /// The node asked.
+        to: NodeId,
+        /// The node that asks.
+        from: NodeId,
+    },
+    /// `from` tells `to`, which asked, its status.
+    Tell {
+        /// The node that asked.
+        to: NodeId,
+        /// The node that answers.
+        from: NodeId,
+        /// What it says of itself.
+        status: Status,
+    },
+}
+
+/// Encode `s` into the [`STATUS_LEN`] bytes of a status told after whom
+/// and from whom (spec "Neighbour status"): the version big-endian.
+pub fn encode_status(s: &Status, b: &mut [u8; STATUS_LEN]) {
+    let flag = |set: bool, bit: u8| if set { bit } else { 0 };
+    b[0] = flag(s.placed, PLACED)
+        | flag(s.sleepy, STATUS_SLEEPY)
+        | flag(s.anchored, ANCHORED)
+        | flag(s.carried, STATUS_CARRIED)
+        | flag(s.battery == Battery::Usb, USB);
+    b[1] = match s.battery {
+        Battery::Usb | Battery::NotRead => BATTERY_NOT_READ,
+        Battery::Low => BATTERY_LOW,
+        Battery::Percent(p) => p.clamp(1, 100),
+    };
+    b[2] = s.neighbours.heard;
+    b[3] = s.neighbours.strong;
+    b[4] = s.neighbours.both_ways;
+    b[5..].copy_from_slice(&s.version.to_be_bytes());
+}
+
+/// The status in the [`STATUS_LEN`] bytes `b`; flag bits it does not
+/// know are ignored, and a battery byte that is no percent is not read.
+pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
+    let flags = b[0];
+    let battery = match (flags & USB != 0, b[1]) {
+        (true, _) => Battery::Usb,
+        (false, BATTERY_LOW) => Battery::Low,
+        (false, p @ 1..=100) => Battery::Percent(p),
+        (false, _) => Battery::NotRead,
+    };
+    Status {
+        placed: flags & PLACED != 0,
+        sleepy: flags & STATUS_SLEEPY != 0,
+        anchored: flags & ANCHORED != 0,
+        carried: flags & STATUS_CARRIED != 0,
+        battery,
+        neighbours: NeighbourCounts {
+            heard: b[2],
+            strong: b[3],
+            both_ways: b[4],
+        },
+        version: u32::from_be_bytes([b[5], b[6], b[7], b[8]]),
+    }
+}
+
 /// Encode `s` as a heartbeat's section, into the [`SECTION_LEN`] bytes
 /// after its first [`HEARTBEAT_LEN`]: multi-byte numbers big-endian.
 pub fn encode_section(s: &Section, b: &mut [u8; SECTION_LEN]) {
@@ -356,6 +471,8 @@ pub enum Packet<'a> {
     Data(Data<'a>),
     /// An update frame.
     Update(Update<'a>),
+    /// A neighbour's status asked or told.
+    Status(StatusFrame),
 }
 
 /// Why a frame did not decode.
@@ -375,7 +492,7 @@ pub enum DecodeError {
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
     /// A frame from node to node of a kind reserved for later, DATA `aux`
-    /// 16 to 63.
+    /// 13, 14 or 18 to 63.
     Reserved(u8),
 }
 
@@ -518,20 +635,41 @@ impl Packet<'_> {
                     }
                 }
             }
+            Packet::Status(f) => {
+                buf[VERSION] = FORMAT;
+                let (aux, to, from, status) = match f {
+                    StatusFrame::Ask { to, from } => (ASK_AUX, to, from, None),
+                    StatusFrame::Tell { to, from, status } => (STATUS_AUX, to, from, Some(status)),
+                };
+                buf[FIRST] = aux;
+                put(buf, STATUS_TO, &to.0);
+                put(buf, STATUS_FROM, &from.0);
+                let Some(status) = status else {
+                    return Ok(ASK_LEN);
+                };
+                let b = (&mut buf[ASK_LEN..STATUS_FRAME_LEN])
+                    .try_into()
+                    .expect("STATUS_LEN bytes");
+                encode_status(status, b);
+                Ok(STATUS_FRAME_LEN)
+            }
         }
     }
 }
 
 impl Packet<'_> {
     /// The node that sent the frame, if it names it: a heartbeat its
-    /// sender, an ACK the answering node and a DATA `src_hop`; a piece
-    /// does not.
+    /// sender, an ACK the answering node, a DATA `src_hop` and a status
+    /// frame `from`; a piece does not.
     pub fn sender(&self) -> Option<NodeId> {
         match self {
             Packet::Heartbeat(h) => Some(h.id),
             Packet::Ack(a) => Some(a.from),
             Packet::Data(d) => Some(d.src_hop),
             Packet::Update(_) => None,
+            Packet::Status(StatusFrame::Ask { from, .. } | StatusFrame::Tell { from, .. }) => {
+                Some(*from)
+            }
         }
     }
 }
@@ -579,6 +717,9 @@ impl<'a> Packet<'a> {
             }));
         }
         let aux = first & AUX_MASK;
+        if aux == ASK_AUX || aux == STATUS_AUX {
+            return Self::decode_status(aux, b).map(Packet::Status);
+        }
         if Channel::new(aux).is_none() {
             return Self::decode_update(aux, b).map(Packet::Update);
         }
@@ -593,6 +734,24 @@ impl<'a> Packet<'a> {
             hops: b[DATA_HOPS],
             payload,
         }))
+    }
+}
+
+impl Packet<'_> {
+    fn decode_status(aux: u8, b: &[u8]) -> Result<StatusFrame, DecodeError> {
+        let len = if aux == ASK_AUX {
+            ASK_LEN
+        } else {
+            STATUS_FRAME_LEN
+        };
+        exact(b, len)?;
+        format(b)?;
+        let (to, from) = (get_id(b, STATUS_TO), get_id(b, STATUS_FROM));
+        if aux == ASK_AUX {
+            return Ok(StatusFrame::Ask { to, from });
+        }
+        let status = decode_status(b[ASK_LEN..].try_into().expect("STATUS_LEN bytes"));
+        Ok(StatusFrame::Tell { to, from, status })
     }
 }
 
@@ -659,6 +818,8 @@ mod tests {
             Packet::Ack(_) => 18,
             Packet::Data(d) => 28 + d.payload.len(),
             Packet::Update(Update::Piece { .. }) => 255,
+            Packet::Status(StatusFrame::Ask { .. }) => 14,
+            Packet::Status(StatusFrame::Tell { .. }) => 23,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -691,6 +852,42 @@ mod tests {
                 prop_assert_eq!(decode_section(&hb), Some(section));
                 prop_assert_eq!(decode_section(&hb[..HEARTBEAT_LEN + 3]), None);
             }
+        }
+
+        #[test]
+        fn status_frames_round_trip(
+            to in id(),
+            from in id(),
+            flags in 0..32u8,
+            battery in prop_oneof![
+                Just(Battery::NotRead),
+                Just(Battery::Low),
+                (1..=100u8).prop_map(Battery::Percent),
+            ],
+            heard: u8,
+            strong: u8,
+            both_ways: u8,
+            version: u32,
+        ) {
+            let ask = Packet::Status(StatusFrame::Ask { to, from });
+            round_trip(&ask);
+            prop_assert_eq!(ask.sender(), Some(from));
+            let usb = flags & 0x10 != 0;
+            let status = Status {
+                placed: flags & 0x01 != 0,
+                sleepy: flags & 0x02 != 0,
+                anchored: flags & 0x04 != 0,
+                carried: flags & 0x08 != 0,
+                battery: if usb { Battery::Usb } else { battery },
+                neighbours: NeighbourCounts { heard, strong, both_ways },
+                version,
+            };
+            let tell = Packet::Status(StatusFrame::Tell { to, from, status });
+            round_trip(&tell);
+            prop_assert_eq!(tell.sender(), Some(from));
+            let mut buf = [0; MAX_FRAME];
+            tell.encode(&mut buf).unwrap();
+            prop_assert_eq!(buf[ASK_LEN], flags, "the flags in their bits");
         }
 
         #[test]
@@ -779,10 +976,48 @@ mod tests {
             let mut bytes = std::vec![first];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 2, 3, 7, 8, 12, 13, 14, 17, 18, 19, 27, 28, 29] {
+            for cut in [0, 1, 2, 3, 7, 8, 12, 13, 14, 15, 17, 18, 19, 22, 23, 24, 27, 28, 29] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }
+    }
+
+    /// What a status's battery byte says (spec "Neighbour status"), and that the
+    /// flag bits no format defines are ignored.
+    #[test]
+    fn a_status_battery_byte() {
+        let read = |flags: u8, battery: u8| {
+            let mut b = [0; STATUS_LEN];
+            (b[0], b[1]) = (flags, battery);
+            decode_status(&b)
+        };
+        assert_eq!(read(0, 0).battery, Battery::Low);
+        assert_eq!(read(0, 1).battery, Battery::Percent(1));
+        assert_eq!(read(0, 100).battery, Battery::Percent(100));
+        for no_percent in [101, 200, 254, 255] {
+            assert_eq!(read(0, no_percent).battery, Battery::NotRead);
+        }
+        assert_eq!(read(USB, 57).battery, Battery::Usb);
+        assert_eq!(read(0xe0, 57), read(0, 57));
+        let mut b = [0; STATUS_LEN];
+        let usb = Status {
+            battery: Battery::Usb,
+            ..Status::default()
+        };
+        encode_status(&usb, &mut b);
+        assert_eq!((b[0], b[1]), (USB, BATTERY_NOT_READ));
+        // Each frame has one length, and a status frame in another format
+        // is not read.
+        let ask = Packet::Status(StatusFrame::Ask {
+            to: NodeId([1; ID_LEN]),
+            from: NodeId([2; ID_LEN]),
+        });
+        let mut buf = [0; MAX_FRAME];
+        let len = ask.encode(&mut buf).unwrap();
+        assert_eq!(Packet::decode(&buf[..len - 1]), Err(DecodeError::Short));
+        assert_eq!(Packet::decode(&buf[..len + 1]), Err(DecodeError::BadLength));
+        buf[VERSION] = 2;
+        assert_eq!(Packet::decode(&buf[..len]), Err(DecodeError::Format(2)));
     }
 
     #[test]
@@ -845,7 +1080,7 @@ mod tests {
 
         let mut data = [0u8; DATA_HEADER_LEN];
         data[VERSION] = FORMAT;
-        for aux in [13, 14, 16, 17, 0x23, AUX_MASK] {
+        for aux in [13, 14, 18, 0x23, AUX_MASK] {
             data[FIRST] = aux;
             assert_eq!(Packet::decode(&data), Err(Reserved(aux)), "reserved");
         }

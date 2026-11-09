@@ -1052,6 +1052,53 @@ sleepy. At a node that is not sleepy it fills the heard table too if the
 sleepy bit is alone ([heard table](#heard-table)); a node without an
 anchor has no window to deliver in.
 
+### Neighbour status
+
+A person who looks at a map of their node's neighbours in the app sees
+what each neighbour's own screen shows, as if standing at it: the node
+asks each neighbour shown for its status, and each answers.
+
+The **ask** names the node asked and the node asking, and nothing else.
+The **answer**, the status, says ([packet formats](#packet-formats)):
+
+| field | bytes | content |
+|---|---|---|
+| flags | 1 | bit 0 placed, it has a place ([position](#position)); bit 1 sleepy and bit 3 carried ([nodes](#nodes)); bit 2 anchored, sleepy with an anchor ([relay choice](#relay-choice)); bit 4 on external power, USB; bits 5 to 7 zero, ignored |
+| battery | 1 | 0 at or below the low level, about 20 % ([sleepy nodes](#sleepy-nodes)); 1 to 100 about that share of its charge left, from its last reading; 255 not read, and on USB, where the reading is the charger's |
+| heard | 1 | its live neighbours, at most 64 ([neighbour table](#neighbour-table)) |
+| strong | 1 | of them, those heard with the margin a full frame needs through a fade, likely to hear it too |
+| proven | 1 | of them, those that have taken a message from it, proven to hear it |
+| version | 4 | the version of the firmware image it runs, 0 if not known, 4 bytes as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
+
+Each is a frame from node to node ([packet formats](#packet-formats)):
+one hop, and neither answered nor sent again. A node:
+
+- asks a live neighbour only when its app asks, as a person opens or
+  refreshes the map;
+- answers an ask addressed to it from a live neighbour, once; one from
+  a node it does not hear it leaves unanswered, since that node's home
+  channel is not known to it and its answer would likely not arrive;
+- sends each on the other node's home channel, with the long preamble
+  to a sleepy one, which receives duty-cycled
+  ([duty-cycled receive](#duty-cycled-receive-and-the-long-preamble)),
+  after a listen-before-talk as a heartbeat's, given up after its three
+  checks, and paid from the bucket with the reply reserve kept, as an
+  update's piece is ([duty cycle cap](#duty-cycle-cap)); after the
+  hand-overs, so that a text never waits behind one, an answer before
+  an ask;
+- hands every answer addressed to it to its app.
+
+The ask is 14 bytes, 15.68 ms on air, the answer 23, 19.52 ms; with the
+long preamble 249.92 and 253.76 ms.
+
+*Why only on a look.* Said in every heartbeat, the same would cost
+every node every rotation, for a map that is seldom open; asked, it
+costs the network nothing between looks. A lost ask or answer costs the
+person a refresh.
+
+*Why proven.* The status fills 10 blocks of symbols at SF5 exactly
+with it, so its byte costs no airtime, and the screen shows it.
+
 ---
 
 ## Forwarding
@@ -4231,14 +4278,16 @@ its kind says otherwise, and `aux` names its kind:
 |---|---|
 | 13, 14 | free: an update's announcement and request had them, and the heartbeat's section replaced both |
 | 15 | an update's piece ([updates over the mesh](#updates-over-the-mesh)) |
-| 16 to 63 | reserved for later kinds |
+| 16 | a neighbour's status asked ([neighbour status](#neighbour-status)) |
+| 17 | a neighbour's status told, the answer to 16 |
+| 18 to 63 | reserved for later kinds |
 
 Such a frame keeps the first two bytes and lays out the rest for its
 kind: none has a hop, a destination or a count, and the piece needs
 every byte. It has lost the sender's home channel that `aux` carries in
-a message, so a kind that expects an answer carries it in a byte of its
-own; the neighbour table has it too, from the sender's heartbeats
-([neighbour table](#neighbour-table)).
+a message, so a kind that expects an answer finds it in the neighbour
+table, from the sender's heartbeats ([neighbour table](#neighbour-table)),
+as a status asked does, or carries it in a byte of its own.
 
 **The heartbeat's section.** In format 1 a heartbeat is 13 bytes, or 30
 with an update's section after the first 13
@@ -4282,9 +4331,16 @@ DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
           aux = sender's home channel, so the receiver knows where to ACK
 PIECE     first(1) format(1) image(4) block(1) index(1) piece(247)          = 255
           aux = 15; index = which coded piece of the block, 0 to 254
+ASK       first(1) format(1) to(6) from(6)                                  = 14
+          aux = 16; to, from = the IDs of the node asked and the node asking
+STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
+          strong(1) proven(1) version(4)                                    = 23
+          aux = 17; to, from = the IDs of the node that asked and the node
+          answering; the rest as [neighbour status](#neighbour-status) says
 ```
 
-Multi-byte numbers in the section, the versions, are big-endian.
+Multi-byte numbers in the section and the status, the versions, are
+big-endian.
 
 *Why the wait in the first byte.* Every answer is then one packet, of
 one length and one airtime, 17.0 ms, and the reply reserve counts one

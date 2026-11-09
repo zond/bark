@@ -99,6 +99,9 @@ pub(super) struct Battery {
     /// Since when it has been on external power as last reported, or
     /// when on battery its next reading is taken as a full cell's.
     pub(super) charge: Charge,
+    /// The driver's last reading on battery, uncalibrated; 0 before the
+    /// first. Its status tells it (spec "Neighbour status").
+    pub(super) last_mv: u16,
 }
 
 impl Battery {
@@ -109,6 +112,7 @@ impl Battery {
             low: false,
             scale,
             charge: Charge::Battery,
+            last_mv: 0,
         }
     }
 }
@@ -210,13 +214,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// charge calibrates the readings, and the levels apply to the
     /// calibrated one (module documentation).
     pub(super) fn battery_read(&mut self, raw_mv: u16, now: Instant) {
-        let Some(levels) = self.config.battery else {
-            return;
-        };
         if matches!(self.battery.charge, Charge::Usb(_)) || raw_mv == 0 {
             // On external power the reading is the charger's.
             return;
         }
+        self.battery.last_mv = raw_mv;
+        let Some(levels) = self.config.battery else {
+            return;
+        };
         if matches!(self.battery.charge, Charge::Rested(t) if Charge::secs(now) >= t) {
             self.battery.charge = Charge::Battery;
             let scale = u32::from(BATTERY_FULL_MV) * BATTERY_SCALE_ONE / u32::from(raw_mv);
@@ -230,6 +235,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.battery.low = true;
         } else if millivolts >= levels.high_mv {
             self.battery.low = false;
+        }
+    }
+
+    /// The battery as the node's screen says it: on USB, else its last
+    /// reading's charge left (spec "Neighbour status").
+    pub(super) fn battery_status(&self) -> crate::status::Battery {
+        use crate::status::Battery;
+        if matches!(self.battery.charge, Charge::Usb(_)) {
+            return Battery::Usb;
+        }
+        if self.battery.last_mv == 0 {
+            return Battery::NotRead;
+        }
+        match crate::node::battery_percent(self.battery_millivolts(self.battery.last_mv)) {
+            Some(p) => Battery::Percent(p),
+            None => Battery::Low,
         }
     }
 

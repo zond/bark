@@ -89,6 +89,7 @@ impl Tracer {
                 )
             }
             Ok(Packet::Update(u)) => format!("UPDATE {u:?}"),
+            Ok(Packet::Status(s)) => format!("STATUS {s:?}"),
             Ok(Packet::Data(d)) => {
                 let src = n.node(d.src_hop);
                 format!(
@@ -266,6 +267,9 @@ impl Tracer {
                         t.as_micros() as f64 / 1e6
                     );
                 }
+            }
+            Action::App(AppEvent::Status { from, status }) => {
+                let _ = write!(what, "app status of {}: {status:?}", self.names.node(*from));
             }
             Action::Store(s) => {
                 let _ = write!(what, "store {s:?}");

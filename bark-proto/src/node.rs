@@ -134,6 +134,10 @@ pub struct Config {
     /// relay then turns sleepy at its grace's end, since it would
     /// otherwise relay until its battery browns out.
     pub battery: Option<BatteryLevels>,
+    /// The version of the firmware image the node runs, which its status
+    /// tells (spec "Neighbour status"): the firmware's from its build, 0 where
+    /// none is known, as in the simulator.
+    pub version: u32,
 }
 
 /// A battery's open-circuit voltage, millivolts, at which a fixed relay
@@ -366,6 +370,7 @@ impl Config {
         fixed_after: Duration::from_secs(4 * 3600),
         grace: Duration::from_secs(3600),
         battery: None,
+        version: 0,
     };
 }
 

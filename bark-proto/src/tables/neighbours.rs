@@ -226,6 +226,11 @@ pub struct Neighbour {
     /// long preamble went unanswered since it was last heard: it is not
     /// sent to at once again until it beats (spec "Next hop").
     pub unanswered: bool,
+    /// This node's application asked for its status, and the question
+    /// has not gone (spec "Neighbour status").
+    pub ask: bool,
+    /// It asked for this node's status, and the answer has not gone.
+    pub tell: bool,
 }
 
 impl Neighbour {
@@ -683,6 +688,8 @@ impl Neighbours {
             taken_at: Instant::ZERO,
             line_end: Instant::ZERO,
             unanswered: false,
+            ask: false,
+            tell: false,
         };
         if let Some(i) = self.slots.iter().position(Option::is_none) {
             self.slots[i] = Some(new);
@@ -962,6 +969,51 @@ impl Neighbours {
     pub fn replane(&mut self, plane: &LocalPlane) {
         for n in self.slots.iter_mut().flatten() {
             n.local = plane.point(n.position);
+        }
+    }
+
+    /// Mark live neighbour `id` to be asked for its status, `tell` false,
+    /// or told this node's, `tell` true (spec "Neighbour status"); whether it is
+    /// one.
+    pub fn status_due(&mut self, id: NodeId, tell: bool, now: Instant) -> bool {
+        let live = self.get(id).is_some_and(|n| !self.is_expired(n, now));
+        match self.entry_mut(id).filter(|_| live) {
+            Some(n) if tell => n.tell = true,
+            Some(n) => n.ask = true,
+            None => return false,
+        }
+        true
+    }
+
+    /// The next status frame due: to a live neighbour, an answer before a
+    /// question, as `(id, tell)`. Marks of neighbours expired are
+    /// cleared.
+    pub fn next_status(&mut self, now: Instant) -> Option<(NodeId, bool)> {
+        let mut next = None;
+        for i in 0..NEIGHBOURS {
+            let Some(n) = self.slots[i].as_ref().filter(|n| n.ask || n.tell) else {
+                continue;
+            };
+            if self.is_expired(n, now) {
+                let n = self.slots[i].as_mut().expect("an entry");
+                (n.ask, n.tell) = (false, false);
+                continue;
+            }
+            if n.tell {
+                return Some((n.id, true));
+            }
+            next = next.or(Some((n.id, false)));
+        }
+        next
+    }
+
+    /// The status frame to `id` went, or was given up.
+    pub fn status_gone(&mut self, id: NodeId, tell: bool) {
+        if let Some(n) = self.entry_mut(id) {
+            match tell {
+                true => n.tell = false,
+                false => n.ask = false,
+            }
         }
     }
 
