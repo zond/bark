@@ -295,17 +295,17 @@ void main() {
         from(s0, there);
         var f = friendOf(p, node);
         expect(f.card.home.toString(), card);
-        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.place.toString(), there.toString());
         expect(f.heardSent, s0);
         // Without an address: unchanged, and heard later.
         from(s0 + 5, null);
         f = friendOf(p, node);
-        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.place.toString(), there.toString());
         expect(f.heardSent, s0 + 5);
         // An older message, as out of a mailbox, changes nothing.
         from(s0 + 1, elsewhere);
         f = friendOf(p, node);
-        expect(f.wroteFrom.toString(), there.toString());
+        expect(f.place.toString(), there.toString());
         expect(f.heardSent, s0 + 5);
         expect(f.card.home.toString(), card);
       });
@@ -316,7 +316,7 @@ void main() {
     run((async, p, node) {
       var f = friendOf(p, node);
       expect(f.card.home.toString(), FakeNode.friendHome.toString());
-      final first = f.wroteFrom.toString();
+      final first = f.place.toString();
       expect(first, isNot(FakeNode.friendHome.toString()));
       expect(f.towards(start.add(async.elapsed)), [Toward.there]);
 
@@ -328,8 +328,8 @@ void main() {
       // The echo comes from a node that has moved on.
       async.elapse(FakeNode.echoAfter + const Duration(seconds: 1));
       f = friendOf(p, node);
-      expect(f.wroteFrom.toString(), isNot(first));
-      expect(f.wroteFrom.toString(), node.friendAway.toString());
+      expect(f.place.toString(), isNot(first));
+      expect(f.place.toString(), node.friendAway.toString());
 
       async.elapse(Contact.fresh);
       f = friendOf(p, node);

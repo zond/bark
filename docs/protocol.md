@@ -1142,9 +1142,10 @@ A person's card, which people exchange as a QR code
 ([phone link](#phone-link), The payload), carries two addresses: their
 home node's, if they have one, whose mailbox keeps their mail until
 they fetch it ([mailbox](#mailbox)), and that of the node their phone
-was linked to when the card was made, their own or a public one, where
-to reach them now; a public node keeps a guest's mail by its recipient
-tag ([phone link](#phone-link), Public). A card without a home is
+is linked to, or was last, their own or a public one, where to reach
+them now, with when the phone was last linked to it; a public node
+keeps a guest's mail by its recipient tag ([phone link](#phone-link),
+Public). A card without a home is
 **temporary**: the node on it keeps their mail only for as long as they
 come back to that node (roadmap D162).
 
@@ -3663,7 +3664,7 @@ has verified is dropped. Payloads are not padded.
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-| card | 1 + 1 + 38 to 96 | type 4, the card's length, then the card |
+| card | 1 + 1 + 38 to 100 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
@@ -3688,9 +3689,12 @@ flags (1), bit 0 set when a home address follows, bit 1 when the
 node's address follows, the others zero; the identity (32); when the
 home was set or cleared, as `sent` (4); the home node's address (0 or
 13); the address of the node the phone is linked to, or was last, when
-the card is made or shown (0 or 13); and a display name in UTF-8 (0 to
-32): 38 to 96 bytes. A card of version 2, without the node's address
-and bit 1, is still read. As text, `BARK:` and the bytes in base32
+the card is made or shown, unless it is the home, then when the phone
+was last linked to it, as `sent` (0 or 13 + 4): now, to the minute,
+while it is linked, else when the link ended; and a display name in
+UTF-8 (0 to 32): 38 to 100 bytes. 4 bytes of seconds hold 136 years
+from the epoch of `sent`. A card of version 2, without the node and
+bit 1, is still read. As text, `BARK:` and the bytes in base32
 (RFC 4648, its base32 alphabet) without padding. A card with a later
 time replaces a contact's card, as does one of the same time, which
 may name another node; the person sends their card to their contacts
@@ -3708,15 +3712,16 @@ says it is temporary, so nobody takes it for a home.
 and a card that drops it must replace an older one only if it is later.
 
 **Where a text goes.** The app keeps a contact's home, from their card,
-apart from the address their messages were last written from, with the
-age of the newest message from them, counted from its `sent`, or from
-its arrival when `sent` is ahead of the phone's clock. While that age
-is under a minute, a text goes to where they write from; past
-it, with a home, the person chooses between where they were and the
-home's mailbox, for each text, and without one it goes to where they
-were. With a home and nothing written from, it goes to the home;
-without a home and nothing written from, to the node on their card
-(roadmap D132, D162).
+apart from one place they were last known at, and when: the address a
+message from them was written from, at its `sent`, or at its arrival
+when `sent` is ahead of the phone's clock, and the node on a card of
+theirs, at its link time; the newer wins, and a message without an
+address keeps the place and moves its time. While the place is under
+a minute old, a text goes there; past it, with a home, the person
+chooses between where they were and the home's mailbox, for each text,
+and without one it goes there, as nothing else is, the app saying how
+old it is. With a home and no place, or the place the home, it goes to
+the home (roadmap D132, D162).
 
 *Why where they write from.* A reply goes straight to where the person
 is, rather than to their home's mailbox to wait for a fetch, at

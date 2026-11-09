@@ -257,7 +257,7 @@ void main() {
       expect(intro(b, 'forged'), isTrue);
       final after = b.of(a);
       expect(after.verified, isTrue);
-      expect(after.wroteFrom.toString(), before.wroteFrom.toString());
+      expect(after.place.toString(), before.place.toString());
       expect(after.heardSent, before.heardSent);
       expect(mine.acked, isFalse);
     });

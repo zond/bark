@@ -125,14 +125,20 @@ pub fn json() -> String {
     let alice_card = Card {
         identity: f.alice.identity,
         home: Some(f.home),
-        now: Some(f.away),
+        now: Some(card::Linked {
+            address: f.away,
+            at: 90_000,
+        }),
         time: 86_400,
         name: "Аліса",
     };
     let bob_card = Card {
         identity: f.bob.identity,
         home: None,
-        now: Some(f.away),
+        now: Some(card::Linked {
+            address: f.away,
+            at: 3_600,
+        }),
         time: 0,
         name: "Bob",
     };
@@ -146,7 +152,14 @@ pub fn json() -> String {
             &[
                 ("identity", h(&c.identity.0)),
                 ("home", c.home.map_or("null".into(), |a| h(&a.encode()))),
-                ("now", c.now.map_or("null".into(), |a| h(&a.encode()))),
+                (
+                    "now",
+                    c.now.map_or("null".into(), |n| h(&n.address.encode())),
+                ),
+                (
+                    "now_at",
+                    c.now.map_or("null".into(), |n| format!("{}", n.at)),
+                ),
                 ("time", format!("{}", c.time)),
                 ("name", q(c.name)),
                 ("bytes", h(&cb[..n])),

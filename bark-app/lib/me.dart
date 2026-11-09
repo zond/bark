@@ -30,6 +30,13 @@ class Me extends ChangeNotifier {
   /// The address of the node the phone is connected to, as last read.
   Address? nodeAddress;
 
+  /// When the phone was last linked to [nodeAddress], as `sent`, set as
+  /// the link begins and ends.
+  int nodeAt = 0;
+
+  /// The phone is linked to [nodeAddress] now.
+  bool linked = false;
+
   /// When the home was set or cleared, as `sent`.
   int cardTime = 0;
 
@@ -72,8 +79,21 @@ class Me extends ChangeNotifier {
   List<String> get phrase => phraseOf(keys.seed);
 
   /// The card, with the node the phone is linked to, or was last.
-  PersonCard get card =>
-      PersonCard(identity, home, cardTime, name, now: nodeAddress);
+  PersonCard get card {
+    final n = nodeAddress;
+    final atHome = n != null && n.toString() == home?.toString();
+    return PersonCard(
+      identity,
+      home,
+      cardTime,
+      name,
+      now: atHome ? null : n,
+      // While linked, now, to the minute, the span within which a sender
+      // takes a place as fresh (`Contact.fresh`), so that the code shown
+      // does not change every second.
+      nowAt: linked ? sentOf(now()) ~/ 60 * 60 : nodeAt,
+    );
+  }
 
   /// The card to show or share: none until the person has a name, as a
   /// contact made from a nameless card is one its holder cannot tell
@@ -89,6 +109,8 @@ class Me extends ChangeNotifier {
       final name = j['name'] as String;
       final home = _address(j['home']);
       final nodeAddress = _address(j['nodeAddress']);
+      // Added with D162: absent, the link's time is not known.
+      final nodeAt = j['nodeAt'] as int? ?? 0;
       final cardTime = j['cardTime'] as int;
       // Added after the format's first version: before it, every changed
       // card was sent at once, so absent means sent.
@@ -110,6 +132,7 @@ class Me extends ChangeNotifier {
         this.name = name;
         this.home = home;
         this.nodeAddress = nodeAddress;
+        this.nodeAt = nodeAt;
         this.cardTime = cardTime;
         this.cardSentTime = cardSentTime;
         this.lastSent = lastSent;
@@ -139,6 +162,7 @@ class Me extends ChangeNotifier {
     'name': name,
     'home': home?.toString(),
     'nodeAddress': nodeAddress?.toString(),
+    'nodeAt': nodeAt,
     'cardTime': cardTime,
     'cardSentTime': cardSentTime,
     'lastSent': lastSent,
@@ -229,8 +253,16 @@ class Me extends ChangeNotifier {
 
   /// The connected node's address: where the person writes from.
   Future<void> setNodeAddress(Address a) async {
-    if (a.toString() == nodeAddress?.toString()) return;
     nodeAddress = a;
+    nodeAt = sentOf(now());
+    linked = true;
+    await _changed();
+  }
+
+  /// The link to the node ended now.
+  Future<void> unlinked() async {
+    linked = false;
+    nodeAt = sentOf(now());
     await _changed();
   }
 

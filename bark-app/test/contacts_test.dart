@@ -1,7 +1,7 @@
-// Where a text to a contact may go: where they last wrote from while that
-// is fresh, else the person chooses between that and their home's
-// mailbox, or the one address there is; without a home and before they
-// write, the node on their card.
+// Where a text to a contact may go: the one place they were last known
+// at, from their messages or their card, the newer winning, while that is
+// fresh; else the person chooses between that and their home's mailbox,
+// or the one address there is.
 
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
@@ -17,10 +17,19 @@ void main() {
 
   final node = Address(Position.fromDegrees(50.44, 30.50), List.filled(6, 3));
 
-  Contact contact(Address? home, {Address? at}) => Contact(
-    PersonCard(List.filled(32, 5), home, 0, 'Olena', now: at),
-    'Olena',
-  );
+  /// Olena's contact from her card, which names `at` as linked `linked`
+  /// ago.
+  Contact contact(Address? home, {Address? at, Duration? linked}) {
+    final c = PersonCard(
+      List.filled(32, 5),
+      home,
+      0,
+      'Olena',
+      now: at,
+      nowAt: sentOf(now.subtract(linked ?? const Duration(hours: 1))),
+    );
+    return Contact(c, 'Olena').withCard(c);
+  }
 
   /// Heard from at `there`, `age` ago.
   Contact wrote(Contact c, Duration age) {
@@ -29,19 +38,54 @@ void main() {
   }
 
   test('nothing written from: the home, else the node on the card', () {
-    expect(contact(home, at: node).towards(now), [Toward.home]);
+    expect(contact(home).towards(now), [Toward.home]);
     expect(contact(home).addressOf(Toward.home).toString(), home.toString());
     final temporary = contact(null, at: node);
-    expect(temporary.towards(now), [Toward.node]);
-    expect(temporary.addressOf(Toward.node).toString(), node.toString());
+    expect(temporary.towards(now), [Toward.there]);
+    expect(temporary.addressOf(Toward.there).toString(), node.toString());
+    expect(temporary.stale(now), const Duration(hours: 1));
     // Only a card from before D162 names no node.
     expect(contact(null).towards(now), isEmpty);
     expect(contact(null).unasked(now), isNull);
   });
 
-  test('without a home, where they wrote from over the card\'s node', () {
-    final c = wrote(contact(null, at: node), const Duration(hours: 2));
+  test('one last known place: the newer of a message and a card wins', () {
+    // A message newer than the card's link time moves the place.
+    var c = wrote(contact(null, at: node), const Duration(minutes: 30));
+    expect(c.place.toString(), there.toString());
+    expect(c.placeAt, now.subtract(const Duration(minutes: 30)));
+    // An older card does not move it back; a newer one does.
+    final card = c.card;
+    PersonCard linked(Duration ago) => PersonCard(
+      card.identity,
+      null,
+      0,
+      'Olena',
+      now: node,
+      nowAt: sentOf(now.subtract(ago)),
+    );
+    c = c.withCard(linked(const Duration(hours: 2)));
+    expect(c.place.toString(), there.toString());
+    c = c.withCard(linked(const Duration(minutes: 5)));
+    expect(c.place.toString(), node.toString());
+    expect(c.placeAt, now.subtract(const Duration(minutes: 5)));
+    // A message older than the card's link time does not move it.
+    c = wrote(c, const Duration(minutes: 10));
+    expect(c.place.toString(), node.toString());
+    // A newer message without an address: still there, known later.
+    final later = now.subtract(const Duration(minutes: 1));
+    c = c.heard(sentOf(later), null, later);
+    expect(c.place.toString(), node.toString());
+    expect(c.placeAt, later);
+  });
+
+  test('a card with a home over a fresh place: there while fresh', () {
+    final c = contact(home, at: node, linked: const Duration(seconds: 30));
     expect(c.towards(now), [Toward.there]);
+    expect(
+      contact(home, at: node, linked: const Duration(hours: 1)).towards(now),
+      [Toward.there, Toward.home],
+    );
   });
 
   test('where they wrote from, while fresh, wins', () {

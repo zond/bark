@@ -39,9 +39,11 @@ class Contact {
   final String? knowsMine;
   final String? sentMine;
 
-  /// The address this contact's messages were last written from, from
-  /// their headers; kept apart from the card's, which may be a home's.
-  final Address? wroteFrom;
+  /// The node they were last known at, and when: the newer of their
+  /// messages' origin and their card's node with its link time (roadmap
+  /// D162); kept apart from the card's home.
+  final Address? place;
+  final DateTime? placeAt;
 
   /// The `sent` of the newest message from them, and when it was written
   /// by this phone's clock: no later than it arrived.
@@ -66,7 +68,8 @@ class Contact {
     this.verified = false,
     this.knowsMine,
     this.sentMine,
-    this.wroteFrom,
+    this.place,
+    this.placeAt,
     this.heardSent,
     this.heardAt,
     this.archived = false,
@@ -80,22 +83,28 @@ class Contact {
   /// a longer wait would not make the guess any better.
   static const fresh = Duration(seconds: 60);
 
-  /// Where a text to them may go at `now`: where they last wrote from
-  /// while that is fresh; past it, that or their home's mailbox, for the
-  /// person to choose. Without a home, where they last wrote from, or
-  /// before they write, the node on their card (roadmap D162). None only
-  /// for a card from before D162 without a home, from one who has not
-  /// written.
+  /// Where a text to them may go at `now`, by the one place they were
+  /// last known at (roadmap D132, D162): there while that is fresh; past
+  /// it, with a home, there or the home's mailbox, for the person to
+  /// choose; without one, there, as nothing else is. With a home and no
+  /// place, or the place the home, the home. None only for a card from
+  /// before D162 without a home, from one who has not written.
   List<Toward> towards(DateTime now) {
-    final from = wroteFrom, at = heardAt, home = card.home;
-    if (from == null || at == null) {
-      if (home != null) return [Toward.home];
-      return [if (card.now != null) Toward.node];
-    }
+    final at = place, when = placeAt, home = card.home;
+    if (at == null || when == null) return [if (home != null) Toward.home];
     if (home == null) return [Toward.there];
-    if (from.toString() == home.toString()) return [Toward.home];
-    if (now.difference(at) < fresh) return [Toward.there];
+    if (at.toString() == home.toString()) return [Toward.home];
+    if (stale(now) == null) return [Toward.there];
     return [Toward.there, Toward.home];
+  }
+
+  /// How long ago they were last known at their place, once that is past
+  /// [fresh]; null while it is fresh or unknown.
+  Duration? stale(DateTime now) {
+    final when = placeAt;
+    if (when == null) return null;
+    final age = now.difference(when);
+    return age < fresh ? null : age;
   }
 
   /// Where a message the person does not place goes: the only choice, or
@@ -103,10 +112,22 @@ class Contact {
   Toward? unasked(DateTime now) => towards(now).lastOrNull;
 
   Address addressOf(Toward t) => switch (t) {
-    Toward.there => wroteFrom!,
+    Toward.there => place!,
     Toward.home => card.home!,
-    Toward.node => card.now!,
   };
+
+  /// With `c`, a card of theirs as new as the one held or newer: its node
+  /// is their place if it is newer than the one known.
+  Contact withCard(PersonCard c) {
+    final n = c.now;
+    final t = timeOfSent(c.nowAt);
+    final newer = n != null && (placeAt == null || t.isAfter(placeAt!));
+    return copyWith(
+      card: c,
+      place: newer ? n : null,
+      placeAt: newer ? t : null,
+    );
+  }
 
   String get key => card.key;
 
@@ -116,7 +137,8 @@ class Contact {
     bool? verified,
     String? knowsMine,
     String? sentMine,
-    Address? wroteFrom,
+    Address? place,
+    DateTime? placeAt,
     int? heardSent,
     DateTime? heardAt,
     bool? archived,
@@ -127,7 +149,8 @@ class Contact {
     verified: verified ?? this.verified,
     knowsMine: knowsMine ?? this.knowsMine,
     sentMine: sentMine ?? this.sentMine,
-    wroteFrom: wroteFrom ?? this.wroteFrom,
+    place: place ?? this.place,
+    placeAt: placeAt ?? this.placeAt,
     heardSent: heardSent ?? this.heardSent,
     heardAt: heardAt ?? this.heardAt,
     archived: archived ?? this.archived,
@@ -140,11 +163,17 @@ class Contact {
   Contact heard(int sent, Address? address, DateTime arrived) {
     final last = heardSent;
     if (last != null && sent <= last) return this;
-    final written = timeOfSent(sent);
+    final w = timeOfSent(sent);
+    final written = w.isAfter(arrived) ? arrived : w;
+    // A message without an address says they are still where they were;
+    // an older one than the place known, from a newer card, changes it not.
+    // Not before: of two messages, heardSent has put them in order.
+    final newer = placeAt == null || !written.isBefore(placeAt!);
     return copyWith(
-      wroteFrom: address,
+      place: newer ? address : null,
+      placeAt: newer && (address != null || place != null) ? written : null,
       heardSent: sent,
-      heardAt: written.isAfter(arrived) ? arrived : written,
+      heardAt: written,
     );
   }
 
@@ -154,7 +183,8 @@ class Contact {
     'verified': verified,
     'knowsMine': knowsMine,
     'sentMine': sentMine,
-    'wroteFrom': wroteFrom?.toString(),
+    'place': place?.toString(),
+    'placeAt': placeAt?.toIso8601String(),
     'heardSent': heardSent,
     'heardAt': heardAt?.toIso8601String(),
     'archived': archived,
@@ -172,9 +202,16 @@ class Contact {
     verified: j['verified'] as bool,
     knowsMine: j['knowsMine'] as String?,
     sentMine: j['sentMine'] as String?,
-    wroteFrom: j['wroteFrom'] == null
-        ? null
-        : Address.parse(j['wroteFrom'] as String),
+    // Before D162 the place was where their messages came from, as of
+    // the newest.
+    place: switch (j['place'] ?? j['wroteFrom']) {
+      null => null,
+      final a => Address.parse(a as String),
+    },
+    placeAt: switch (j['placeAt'] ?? j['heardAt']) {
+      null => null,
+      final t => DateTime.parse(t as String),
+    },
     heardSent: j['heardSent'] as int?,
     heardAt: j['heardAt'] == null
         ? null
@@ -280,10 +317,10 @@ class Contacts extends ChangeNotifier {
     final known = byKey(card.key);
     final c =
         (known == null
-                ? Contact(card, '')
-                : known.copyWith(
-                    card: card.time >= known.card.time ? card : null,
-                  ))
+                ? Contact(card, '').withCard(card)
+                : card.time >= known.card.time
+                ? known.withCard(card)
+                : known)
             .copyWith(name: name.isEmpty ? null : name);
     await put(c);
     await unarchive(c.key);

@@ -348,7 +348,8 @@ class Messenger {
       return true;
     }
     await contacts.put(
-      (known?.copyWith(card: card) ?? Contact(card, '', cameByMessage: true))
+      (known ?? Contact(card, '', cameByMessage: true))
+          .withCard(card)
           .heard(h.sent, h.address, now()),
     );
     await _records(m, card.key, h, rs.skip(1), mailbox, intro: true);
@@ -414,11 +415,11 @@ class Messenger {
     final c = contacts.byKey(card.key);
     if (c == null) {
       if (card.key != me.key) {
-        await contacts.put(Contact(card, ''));
+        await contacts.put(Contact(card, '').withCard(card));
       }
     } else if (card.time >= c.card.time) {
       // Of the same time, it may name the node they use now.
-      await contacts.put(c.copyWith(card: card));
+      await contacts.put(c.withCard(card));
     }
   }
 }

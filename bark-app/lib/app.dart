@@ -198,8 +198,14 @@ class AppModel extends ChangeNotifier {
   /// Keeps the node's address for the card, and the home's.
   void _nodeAddress() {
     final a = session.address;
-    if (a == null) return;
-    if (a.toString() != me.nodeAddress?.toString()) me.setNodeAddress(a);
+    if (a == null || !session.connected) {
+      // The link ended: the card says when it was last up.
+      if (!session.connected && me.linked) unawaited(me.unlinked());
+      return;
+    }
+    if (!me.linked || a.toString() != me.nodeAddress?.toString()) {
+      unawaited(me.setNodeAddress(a));
+    }
     // The home is the node, not the spot: a fixed, awake node's address is
     // its stored place, which moves only at boot or when it turns fixed,
     // and the card and texts to the old one would miss it. A carried

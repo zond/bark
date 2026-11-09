@@ -1,8 +1,8 @@
 // A card: what two people exchange so that each can reach the other,
 // shown and scanned as a QR code (spec "Phone link"): an identity, the
-// home node's address if the person has one, the address of the node the
-// phone was linked to when the card was made, when the home was set or
-// cleared, and a name. A card without a home is temporary.
+// home node's address if the person has one, the node the phone is linked
+// to, or was last, and when, when the home was set or cleared, and a name.
+// A card without a home is temporary.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -36,11 +36,15 @@ class PersonCard {
   /// Their home node's address, whose mailbox keeps their mail.
   final Address? home;
 
-  /// The address of the node their phone was linked to when the card was
-  /// made, their own or a public one: where to reach them now. A public
-  /// node keeps a guest's mail by its recipient tag (spec "Phone link",
-  /// Public), so a text there waits for them.
+  /// The node their phone is linked to, or was last, their own or a
+  /// public one: where to reach them now; none when it is the home. A
+  /// public node keeps a guest's mail by its recipient tag (spec "Phone
+  /// link", Public), so a text there waits for them.
   final Address? now;
+
+  /// When the phone was last linked to [now], as `sent`: seconds since
+  /// 2026-01-01 00:00 UTC, as [time], which 4 bytes hold for 136 years.
+  final int nowAt;
 
   /// When the home was set or cleared, as `sent`: a later card replaces
   /// an earlier one, also one that drops the home.
@@ -49,8 +53,14 @@ class PersonCard {
   /// The name its owner chose.
   final String name;
 
-  PersonCard(List<int> identity, this.home, this.time, this.name, {this.now})
-    : identity = Uint8List.fromList(identity);
+  PersonCard(
+    List<int> identity,
+    this.home,
+    this.time,
+    this.name, {
+    this.now,
+    this.nowAt = 0,
+  }) : identity = Uint8List.fromList(identity);
 
   /// The identity in hex: what a contact and a conversation are known by.
   String get key => hex(identity);
@@ -69,7 +79,7 @@ class PersonCard {
       ...identity,
       ...be(time, 4),
       ...?h?.encode(),
-      ...?w?.encode(),
+      if (w != null) ...[...w.encode(), ...be(nowAt, 4)],
       ...n,
     ]);
   }
@@ -96,6 +106,11 @@ class PersonCard {
 
     final home = address(_flagHome);
     final now = address(_flagNow);
+    var nowAt = 0;
+    if (now != null) {
+      if (b.length < at + 4) throw const BadCard('Not a card');
+      nowAt = fromBe(b.sublist(at, at += 4));
+    }
     if (b.length > at + maxName) throw const BadCard('Not a card');
     try {
       return PersonCard(
@@ -104,6 +119,7 @@ class PersonCard {
         fromBe(b.sublist(2 + keyLen, fixedLen)),
         utf8.decode(b.sublist(at)),
         now: now,
+        nowAt: nowAt,
       );
     } on FormatException {
       throw const BadCard('Not a card: the name is not UTF-8');

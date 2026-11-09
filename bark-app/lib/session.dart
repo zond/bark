@@ -45,16 +45,12 @@ enum OutKind {
 
 /// Which of a contact's addresses a message went to.
 enum Toward {
-  /// Where they last wrote from.
+  /// The node they were last known at, from their messages or their
+  /// card (roadmap D162).
   there,
 
   /// Their home's mailbox, the address on their card.
   home,
-
-  /// The node on their card, for a contact without a home who has not
-  /// written: where they were linked when the card was made (roadmap
-  /// D162).
-  node,
 }
 
 class Outgoing {

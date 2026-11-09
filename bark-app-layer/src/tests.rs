@@ -35,8 +35,8 @@ fn the_sizes_are_the_notes() {
     assert_eq!(seal::NOTHING_NEW_LEN, 18);
     assert_eq!(Fetch::LEN, 60);
     assert_eq!(card::FIXED_LEN, 38);
-    assert_eq!(card::MAX_LEN, 96);
-    assert_eq!(card::MAX_TEXT_LEN, 5 + 154);
+    assert_eq!(card::MAX_LEN, 100);
+    assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
     // The longest text: 204 less the box, the header and the record's type.
     assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 156);
     // A part's: one byte more, its number and the count.
@@ -341,25 +341,35 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     // A card of version 2 reads as one without the node's address.
     b[0] = 2;
     assert_eq!(Card::decode(&b[..n]), Ok(c));
+    let away = card::Linked {
+        address: f.away,
+        at: 0x0102_0304,
+    };
     let both = Card {
-        now: Some(f.away),
+        now: Some(away),
         ..c
     };
     let n = both.encode(&mut b).unwrap();
-    assert_eq!(n, 64 + 7);
+    assert_eq!(n, 68 + 7);
     assert_eq!(b[1], 3);
     assert_eq!(&b[51..64], &f.away.encode());
+    assert_eq!(&b[64..68], &[1, 2, 3, 4]);
     assert_eq!(Card::decode(&b[..n]), Ok(both));
     // Version 2 knew no node's address.
     b[0] = 2;
     assert_eq!(Card::decode(&b[..n]), Err(Error::Malformed));
     let temporary = Card {
         home: None,
-        now: Some(f.away),
+        now: Some(away),
         ..c
     };
     let n = temporary.encode(&mut b).unwrap();
-    assert_eq!(n, 51 + 7);
+    assert_eq!(n, 55 + 7);
+    // A node flag without room for the time.
+    assert_eq!(
+        Card::decode(&b[..card::FIXED_LEN + 15]),
+        Err(Error::Malformed)
+    );
     assert_eq!(b[1], 2);
     assert_eq!(Card::decode(&b[..n]), Ok(temporary));
     let homeless = Card { home: None, ..c };
@@ -441,7 +451,10 @@ fn records_read_back_in_order() {
     let c = Card {
         identity: f.bob.identity,
         home: None,
-        now: Some(f.away),
+        now: Some(card::Linked {
+            address: f.away,
+            at: 1,
+        }),
         time: 1,
         name: "",
     };
@@ -462,7 +475,7 @@ fn records_read_back_in_order() {
     w.push(&t).unwrap();
     assert_eq!(w.push(&t), Err(Error::Malformed));
     let n = w.finish();
-    assert_eq!(n, 5 + 13 + 5 + 2 + 38 + 13 + 4);
+    assert_eq!(n, 5 + 13 + 5 + 2 + 38 + 17 + 4);
     let (got, r) = plain::read(&b[..n]).unwrap();
     assert_eq!(got, h);
     let rs: Vec<_> = r.collect();

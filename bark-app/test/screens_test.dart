@@ -486,35 +486,65 @@ void main() {
     app.dispose();
   });
 
-  testWidgets('a temporary contact: marked in its row until a card with a '
-      'home, and written to at the node on its card', (t) async {
+  testWidgets('a temporary contact: marked with its age until a card with a '
+      'home; written to at its node, fresh without asking, old after saying '
+      'so', (t) async {
     final app = await model(t);
     final home = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
     final node = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
     final id = List.filled(32, 5);
+    PersonCard card(Address? h, int time, Duration linked) => PersonCard(
+      id,
+      h,
+      time,
+      'Olena',
+      now: node,
+      nowAt: sentOf(DateTime.now().subtract(linked)),
+    );
     await t.runAsync(
-      () => app.contacts.add(PersonCard(id, null, 1, 'Olena', now: node)),
+      () => app.contacts.add(card(null, 1, const Duration(minutes: 20))),
     );
     await t.pumpWidget(MaterialApp(home: ContactsScreen(app)));
     expect(
-      find.text('temporary: reach them at the node they last used'),
+      find.text('temporary: at the node they used 20 min ago'),
       findsOneWidget,
     );
     expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
 
-    // Writable: no dead end, and the text goes to the node on the card.
+    // Old: the dialog says so, and its one choice sends there.
     await t.runAsync(() => app.me.setNodeAddress(home));
     await t.pumpWidget(MaterialApp(home: ThreadScreen(app, hex(id))));
-    expect(find.byType(TextField), findsOneWidget);
     await t.enterText(find.byType(TextField), 'hi');
     await t.tap(find.byTooltip('Send'));
     await t.pumpAndSettle();
+    expect(
+      find.text(
+        'Last seen there 20 min ago: it keeps their mail only while they '
+        'come back',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Their home mailbox'), findsNothing);
+    await t.tap(find.text('Where Olena was 20 min ago'));
+    await t.pumpAndSettle();
     final out = app.session.outbox.single;
     expect(out.dst.toString(), node.toString());
-    expect(out.toward, Toward.node);
+    expect(out.toward, Toward.there);
+
+    // Fresh: there without asking.
+    await t.runAsync(
+      () => app.contacts.add(card(null, 1, const Duration(seconds: 10))),
+    );
+    await t.pump();
+    await t.enterText(find.byType(TextField), 'again');
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    expect(find.text('Send to'), findsNothing);
+    expect(app.session.outbox.last.body, 'again');
+    expect(app.session.outbox.last.dst.toString(), node.toString());
 
     await t.runAsync(
-      () => app.contacts.add(PersonCard(id, home, 2, 'Olena', now: node)),
+      () => app.contacts.add(card(home, 2, const Duration(seconds: 10))),
     );
     await t.pumpWidget(MaterialApp(home: ContactsScreen(app)));
     expect(find.text('Has a home node'), findsOneWidget);
@@ -550,6 +580,8 @@ void main() {
         find.text('Waits at their home until they fetch it'),
         findsOneWidget,
       );
+      // With a home there is a choice, so no warning.
+      expect(find.textContaining('Last seen there'), findsNothing);
       await t.tap(find.text(choice));
       await t.pumpAndSettle();
     }

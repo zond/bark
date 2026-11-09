@@ -16,9 +16,9 @@ is a prototype for the bench, not the app people will carry.
   them on another phone. Texts are sealed to an identity.
 - **Card**: what two people exchange so that each can reach the other:
   an identity, the name its owner chose, their home node's address
-  when the person has set one, and the address of the node their
-  phone is linked to, or was last, where to reach them now (roadmap
-  D162). Without a home the card is temporary: the node on it keeps
+  when the person has set one, and, unless it is the home, the
+  address of the node their phone is linked to, or was last, where to
+  reach them now, with when it was last linked to it (roadmap D162). Without a home the card is temporary: the node on it keeps
   their mail only while they come back to it.
 - **Contact**: a card with the name this phone gives it, or else the
   card's own, known by its identity. A card from an older app may have
@@ -118,7 +118,7 @@ is a prototype for the bench, not the app people will carry.
   connected.
 - **Contacts**, the head button beside the QR button. Each row says
   "Has a home node", or for a temporary card an hourglass and
-  "temporary: reach them at the node they last used"; the mark goes
+  "temporary: at the node they used 20 min ago"; the mark goes
   when a card with a home comes. With none, it says how to add one.
   Adding one: scan their card with the camera, and the new contact's thread opens at once, so you see where
   it went and can write; or paste the card and save it, with a name of
@@ -573,11 +573,13 @@ theirs.
 ## Where a text goes
 
 A message names the node its sender writes from, while the other side
-may not know it, so the app knows two addresses for a contact: the
-home on their card, if they have one, and the one they last wrote from, with
-the age of their newest message, counted from the time it was written,
-or from when it arrived if that is earlier. While that age is under a
-minute, a text goes where they wrote from without asking, straight to
+may not know it, and a card names the node its owner's phone uses, with
+when it was last linked to it, so the app knows two addresses for a
+contact: the home on their card, if they have one, and one place they
+were last known at, from whichever of their messages and cards is
+newest: a message counted from the time it was written, or from when
+it arrived if that is earlier, a card from its link time. While that
+place is under a minute old, a text goes there without asking, straight to
 where they are, with no fetch from their mailbox: in a minute a person
 on foot, at a brisk 1.5 m/s, moves about 90 m, within the ≈750 m a
 relay hears a handheld in the street (`docs/protocol.md`, "Physical
@@ -585,9 +587,11 @@ layer"), while a driver has already left that reach, so no longer wait
 makes the guess better. Older, the send
 button asks, for that text only: "Where <name> was <age> ago", "Fast if
 they are still near there", or "Their home mailbox", "Waits at their
-home until they fetch it". Without a home it goes where they were, without asking;
-with a home and nothing written from yet, to the home; with neither,
-to the node on their card, where it waits for them (roadmap D162). Acknowledgements and
+home until they fetch it". Without a home it goes where they were, as
+nothing else is; when that is old, the dialog says "Last seen there 2 h
+ago: it keeps their mail only while they come back" and still sends
+there. With a home and no place known yet, it goes to the home (roadmap
+D132, D162). Acknowledgements and
 cards go without asking, to the home's mailbox when there is a choice.
 
 ## Plugins

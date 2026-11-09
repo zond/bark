@@ -44,18 +44,33 @@ class _ThreadScreenState extends State<ThreadScreen> {
     super.dispose();
   }
 
-  /// Sends the text where the contact is, or, when that may be stale,
-  /// where the person chooses, this once.
+  /// Sends the text where the contact is while that is fresh; when it
+  /// may be stale, with a home, where the person chooses, this once;
+  /// without one, there after saying it is old, as nothing else is
+  /// (roadmap D132, D162).
   Future<void> _send(Contact to) async {
     if (text.text.isEmpty) return;
-    final options = to.towards(app.now());
-    final toward = options.length == 1
-        ? options.single
+    final now = app.now();
+    final options = to.towards(now);
+    final stale = to.stale(now);
+    final ask =
+        options.length > 1 ||
+        (options.length == 1 && stale != null && to.card.home == null);
+    final toward = !ask
+        ? options.firstOrNull
         : await showDialog<Toward>(
             context: context,
             builder: (context) => SimpleDialog(
               title: const Text('Send to'),
               children: [
+                if (to.card.home == null && stale != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                    child: Text(
+                      'Last seen there ${ago(stale)}: it keeps their mail '
+                      'only while they come back',
+                    ),
+                  ),
                 for (final t in options)
                   SimpleDialogOption(
                     onPressed: () => Navigator.pop(context, t),
@@ -65,7 +80,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
                         Toward.there => 'Fast if they are still near there',
                         Toward.home =>
                           'Waits at their home until they fetch it',
-                        Toward.node => 'Waits there until they come back',
                       }),
                     ),
                   ),
@@ -83,16 +97,15 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   String _option(Contact c, Toward t) => switch (t) {
     Toward.there =>
-      'Where ${c.name} was ${ago(app.now().difference(c.heardAt!))}',
+      'Where ${c.name} was ${ago(app.now().difference(c.placeAt!))}',
     Toward.home => 'Their home mailbox',
-    Toward.node => 'The node they last used',
   };
 
   /// When they last wrote, and whether from their home.
   String _heard(Contact c) {
     final at = c.heardAt;
     if (at == null) return 'Has not written yet';
-    final from = c.wroteFrom;
+    final from = c.place;
     final home = c.card.home;
     final where = home == null || from == null
         ? ''
@@ -435,12 +448,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Widget _where(Toward t, TextStyle small, Color color) => switch (t) {
     Toward.there => _mark(Icons.place, 'To where they were', small, color),
     Toward.home => _mark(Icons.home, 'To their home', small, color),
-    Toward.node => _mark(
-      Icons.hourglass_empty,
-      'To the node they last used',
-      small,
-      color,
-    ),
   };
 
   /// A sent text's state short of confirmed, each its own icon (common.dart

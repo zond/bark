@@ -12,7 +12,7 @@
 //! | text | 1 + rest | type 1 (UTF-8) or 2 (windows-1251); last |
 //! | text part | 1 + 1 + rest | type 5 (UTF-8) or 6 (windows-1251), the part's number and the parts' count less one in the high and low four bits; last |
 //! | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-//! | card | 1 + 1 + 38 to 96 | type 4, the card's length, its bytes |
+//! | card | 1 + 1 + 38 to 100 | type 4, the card's length, its bytes |
 
 use crate::card::{self, Card};
 use crate::text::Encoding;

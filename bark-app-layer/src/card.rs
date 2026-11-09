@@ -1,8 +1,8 @@
 //! The card: what people exchange so that each can reach the other
 //! (spec "Phone link"). It carries the person's home node's address when
-//! they have one, and the address of the node their phone was linked to
-//! when the card was made, where to reach them now; a card without a home
-//! is temporary (roadmap D162).
+//! they have one, and the address of the node their phone is linked to,
+//! or was last, with when it was last linked to it, where to reach them
+//! now; a card without a home is temporary (roadmap D162).
 //!
 //! | field | bytes |
 //! |---|---|
@@ -12,6 +12,7 @@
 //! | when the home was set or cleared, as `sent` | 4 |
 //! | home address | 0 or 13 |
 //! | the node's address | 0 or 13 |
+//! | when the phone was last linked to it, as `sent` | 0 or 4 |
 //! | display name, UTF-8 | 0 to 32 |
 //!
 //! A card of version 2, before the node's address, is still read.
@@ -28,15 +29,31 @@ pub struct Card<'a> {
     pub identity: Identity,
     /// Their home node's address, whose mailbox keeps their mail.
     pub home: Option<Address>,
-    /// The address of the node their phone was linked to when the card
-    /// was made, their own or a public one, which keeps their mail by
-    /// its recipient tag.
-    pub now: Option<Address>,
+    /// The node their phone is linked to, or was last, their own or a
+    /// public one, which keeps their mail by its recipient tag; none when
+    /// it is the home.
+    pub now: Option<Linked>,
     /// When the home was set or cleared, as `sent`: a later card replaces
     /// an earlier one, also one that drops the home.
     pub time: u32,
     /// The name they chose.
     pub name: &'a str,
+}
+
+/// A node a phone was linked to, and when.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Linked {
+    /// The node's address.
+    pub address: Address,
+    /// When the phone was last linked to it, as `sent`: seconds since
+    /// 2026-01-01 00:00 UTC, as the card's time, which 4 bytes hold for
+    /// 136 years.
+    pub at: u32,
+}
+
+impl Linked {
+    /// Its bytes: the address, then the time.
+    pub const LEN: usize = Address::LEN + 4;
 }
 
 /// The card layout's version.
@@ -47,8 +64,8 @@ pub const OLDEST_VERSION: u8 = 2;
 pub const MAX_NAME: usize = 32;
 /// Bytes before the addresses: the shortest card.
 pub const FIXED_LEN: usize = 1 + 1 + Identity::LEN + 4;
-/// The longest card, with both addresses.
-pub const MAX_LEN: usize = FIXED_LEN + 2 * Address::LEN + MAX_NAME;
+/// The longest card, with the home and the node.
+pub const MAX_LEN: usize = FIXED_LEN + Address::LEN + Linked::LEN + MAX_NAME;
 
 /// What a card's text begins with.
 pub const PREFIX: &str = "BARK:";
@@ -64,8 +81,9 @@ impl<'a> Card<'a> {
     /// The card's bytes into `out`; their length.
     pub fn encode(&self, out: &mut [u8]) -> Result<usize, Error> {
         let name = self.name.as_bytes();
-        let addresses = usize::from(self.home.is_some()) + usize::from(self.now.is_some());
-        let at = FIXED_LEN + addresses * Address::LEN;
+        let at = FIXED_LEN
+            + if self.home.is_some() { Address::LEN } else { 0 }
+            + if self.now.is_some() { Linked::LEN } else { 0 };
         let len = at + name.len();
         if name.len() > MAX_NAME || out.len() < len {
             return Err(Error::TooLong);
@@ -76,9 +94,13 @@ impl<'a> Card<'a> {
         out[2..34].copy_from_slice(&self.identity.0);
         out[34..FIXED_LEN].copy_from_slice(&self.time.to_be_bytes());
         let mut i = FIXED_LEN;
-        for a in [self.home, self.now].into_iter().flatten() {
-            out[i..i + Address::LEN].copy_from_slice(&a.encode());
+        if let Some(h) = self.home {
+            out[i..i + Address::LEN].copy_from_slice(&h.encode());
             i += Address::LEN;
+        }
+        if let Some(n) = self.now {
+            out[i..i + Address::LEN].copy_from_slice(&n.address.encode());
+            out[i + Address::LEN..i + Linked::LEN].copy_from_slice(&n.at.to_be_bytes());
         }
         out[at..len].copy_from_slice(name);
         Ok(len)
@@ -95,16 +117,23 @@ impl<'a> Card<'a> {
             return Err(Error::Malformed);
         }
         let mut at = FIXED_LEN;
-        let mut address = |flag: u8| -> Result<Option<Address>, Error> {
-            if b[1] & flag == 0 {
-                return Ok(None);
-            }
+        let home = if b[1] & FLAG_HOME != 0 {
             let a = Address::decode(b.get(at..).ok_or(Error::Malformed)?)?;
             at += Address::LEN;
-            Ok(Some(a))
+            Some(a)
+        } else {
+            None
         };
-        let home = address(FLAG_HOME)?;
-        let now = address(FLAG_NOW)?;
+        let now = if b[1] & FLAG_NOW != 0 {
+            let l = b.get(at..at + Linked::LEN).ok_or(Error::Malformed)?;
+            at += Linked::LEN;
+            Some(Linked {
+                address: Address::decode(l)?,
+                at: be(&l[Address::LEN..]),
+            })
+        } else {
+            None
+        };
         if b.len() < at || b.len() > at + MAX_NAME {
             return Err(Error::Malformed);
         }
