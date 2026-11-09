@@ -3039,7 +3039,9 @@ the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it, on the line `PAIR CODE`; the
 same line says `PHONE UNPAIRED` before any phone has paired, when the
 node is public all the same, then `PHONE PUBLIC`, or `PHONE PRIVATE` on
-a node its owner has made private. The node keeps
+a node its owner has made private. Only an open build, for the bench,
+also writes the passkey to its USB log, as a protected node's log must
+not let a cable stand in for being at the node (roadmap D138). The node keeps
 one bond in flash across reboots: the phone's identity address, the
 identity resolving key by which it knows the phone's changing address
 (Vol 6 Part B §1.3.2.2), and the long-term key. A new pairing replaces

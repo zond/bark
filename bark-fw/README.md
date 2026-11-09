@@ -857,7 +857,10 @@ node its owner has made private.
 The controller is built with LE privacy, as the host puts the bonded
 phone in its resolving list.
 
-The log says `ble: pairing, the code shown`, then `ble: paired; the bond
+The log says `ble: pairing, the code shown`, in an open build with the
+code, `ble: pairing, the code shown: 123456`, so that the bench pairs a
+phone without reading the screen, and never in a protected build, whose
+cable must not stand in for being at the node; then `ble: paired; the bond
 replaces any before it` or `ble: pairing failed ..`, and at boot `ble:
 bond kept` for a node with one; each names the bond's phone by its
 identity address, kind and an IRK fingerprint, and each connection says
