@@ -38,6 +38,7 @@ mod stack;
 mod store;
 mod touch;
 mod update;
+mod usb_log;
 #[cfg(not(feature = "console"))]
 mod utc;
 
@@ -54,8 +55,6 @@ use embassy_nrf::usb::vbus_detect::{self, HardwareVbusDetect};
 use embassy_nrf::{bind_interrupts, peripherals, spim, usb};
 use embassy_time::Instant;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
-// The input handler is constructed through this trait.
-use embassy_usb_logger::ReceiverHandler as _;
 use panic_persist as _;
 // The critical section, in both builds: it masks every interrupt but the
 // MPSL's radio timing (`ble.rs`); the console links it for that alone.
@@ -92,12 +91,6 @@ bind_interrupts!(struct Irqs {
 #[cfg(not(feature = "console"))]
 const APP_PRIORITY: embassy_nrf::interrupt::Priority = embassy_nrf::interrupt::Priority::P2;
 
-/// What the host types: commands for the console, or nothing to the node.
-#[cfg(feature = "console")]
-use console::HostInput as Input;
-#[cfg(not(feature = "console"))]
-use node::IgnoreInput as Input;
-
 /// USB vendor ID of pid.codes, the open-source VID registry.
 const USB_VID: u16 = 0x1209;
 /// pid.codes test PID 0x0001, "reserved for use in private testing"; it must
@@ -106,10 +99,6 @@ const USB_PID: u16 = 0x0001;
 
 /// Full-speed bulk and control endpoint size (USB 2.0 §5.5.3, §5.8.3).
 const USB_PACKET: u16 = 64;
-
-/// Log ring size in bytes. Lines logged before the host opens the port wait
-/// here; once it is full, new lines are dropped, so the banner survives.
-const LOG_BUFFER: usize = 2048;
 
 /// Which image this is, for the display and the log.
 #[cfg(feature = "console")]
@@ -313,16 +302,11 @@ async fn main(spawner: Spawner) {
 
     // The global logger, installed now; its task drains it to the host
     // once the host asserts DTR (opens the port), and feeds what the host
-    // sends to the console. Built here rather than as a constant so that
-    // flash holds no copy of its initial value.
-    static LOGGER: static_cell::StaticCell<Logger> = static_cell::StaticCell::new();
-    let logger = LOGGER.init(Logger::with_custom_style(log_line));
-    logger.with_handler(Input::new());
-    let logger: &'static Logger = logger;
-    if log::set_logger(logger).is_ok() {
+    // sends to the console.
+    if log::set_logger(&LOGGER).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
     }
-    spawner.spawn(log_sink(logger, class).expect("spawned once"));
+    spawner.spawn(log_sink(class).expect("spawned once"));
 
     log::info!(
         "bark-fw {} on LILYGO T-Echo, {} image version {}, id={}",
@@ -508,21 +492,25 @@ struct UsbParts {
 }
 
 type UsbDriver = usb::Driver<'static, HardwareVbusDetect>;
-type Logger = embassy_usb_logger::UsbLogger<LOG_BUFFER, Input>;
 
-/// One log line as the host reads it: the time since boot, the level and
-/// the message; in the console, the host's own command echoed.
-fn log_line(record: &log::Record<'_>, writer: &mut embassy_usb_logger::Writer<'_, LOG_BUFFER>) {
+/// The log (`usb_log.rs`). All zeros, so it lies in .bss and flash holds no
+/// copy of it.
+static LOGGER: usb_log::Logger = usb_log::Logger::new();
+
+/// One log line as the host reads it, before its line end: the time since
+/// boot, the level and the message; in the console, the host's own command
+/// echoed.
+fn log_line(record: &log::Record<'_>, line: &mut bark_driver::record::Line<{ usb_log::RECORD }>) {
     use core::fmt::Write as _;
     #[cfg(feature = "console")]
     if record.target() == console::ECHO {
-        let _ = write!(writer, "> {}\r\n", record.args());
+        let _ = write!(line, "> {}", record.args());
         return;
     }
     let ms = Instant::now().as_millis();
     let _ = write!(
-        writer,
-        "[{:>6}.{:03} {:<5}] {}\r\n",
+        line,
+        "[{:>6}.{:03} {:<5}] {}",
         ms / 1000,
         ms % 1000,
         record.level(),
@@ -536,10 +524,15 @@ async fn usb_device(mut device: embassy_usb::UsbDevice<'static, UsbDriver>) {
     device.run().await
 }
 
-/// The log, to the host.
+/// The log, to the host, and what the host types: commands for the
+/// console, nothing to the node.
 #[embassy_executor::task]
-async fn log_sink(logger: &'static Logger, class: CdcAcmClass<'static, UsbDriver>) {
-    logger.create_future_from_class(class).await
+async fn log_sink(class: CdcAcmClass<'static, UsbDriver>) {
+    #[cfg(feature = "console")]
+    let input = console::host_input;
+    #[cfg(not(feature = "console"))]
+    let input = async |_: &[u8]| {};
+    LOGGER.run(class, input).await
 }
 
 /// The bootloader from the serial port (`touch.rs`).
