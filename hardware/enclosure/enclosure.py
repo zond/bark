@@ -12,7 +12,7 @@ screwed straight on, so the antenna is upright like every other node's.
 The USB-C port then faces sideways; a straight plug stays in it and the
 cable turns down to the lid in a bay beside the case.
 
-World axes, in mm: z up as mounted, y from the wall (y-) to the screen
+World axes, in mm: z up as mounted, y from the pole (y-) to the screen
 (y+), x across. The case is measured in the axes of its maker's 3D file
 (dimensions/t-echo_3d.stl), here called the file's: world (x, y, z) =
 file (z, y, -x).
@@ -93,9 +93,6 @@ STRAIN_LIMIT = 0.5 * 0.6 * 0.7 * 0.034
 
 # --- Mounting ------------------------------------------------------------------------
 PAD_T = 8.0           # back pad: bands pass through it, behind the body
-EAR_W = 14.0          # ears beyond the body for wall screws
-SCREW_D = 4.5         # M4 or 4 mm stainless wood screw
-SCREW_HEAD_D = 8.5
 BAND_W, BAND_T = 14.0, 3.5  # tunnels for 12 mm stainless hose clamps
 # Pole saddle: a 90 deg V that seats broom handles of 23 to 28 mm (the
 # shop sizes) and larger poles, the hose clamps pulling the pole into it.
@@ -104,15 +101,14 @@ SADDLE_W = 40.0       # across
 SADDLE_D = 18.0       # out from the pad
 V_DEPTH = 13.0        # of the V, 26 mm open
 SADDLE_R = 3.0        # round edges where the band turns
-# Panel pad on the bay's top, for a small panel's own base.
-PANEL_PAD = 70.0      # ESTIMATE: square, for a base about 60 mm across
-PANEL_T = 3.0         # plate
-PANEL_RISE = 9.0      # ribs and bosses under the plate, room for the inserts
-PANEL_PCD = 45.0      # ESTIMATE: the base's screw holes lie on this circle
-PANEL_HOLES = 4       # ESTIMATE: three or four
-INSERT_HOLE = 5.6     # ESTIMATE: hole for an M4 heat-set brass insert, from its maker
-INSERT_L = 8.1        # ESTIMATE: that insert's length
-RIB = 3.0             # rib thickness under the plate
+# The bay's front wall is a flat square that a panel's own round foot is
+# screwed to with self-tapping screws, no holes made ready. A
+# thread-forming screw in a thermoplastic wants to be engaged two
+# diameters deep (EJOT EVO PT flyer).
+PANEL_FOOT_D = 70.0   # ESTIMATE: the foot, about 5 mm wider each side than the case
+PANEL_SCREW_D = 3.0   # ESTIMATE: its screws
+PLATE_T = 2 * PANEL_SCREW_D                    # that wall's thickness
+PLATE_W = PANEL_FOOT_D + 2 * WALL              # its flat face: a wall's width round the foot
 
 OUT = Path(__file__).resolve().parent / "out"
 
@@ -144,20 +140,23 @@ BEND_BOT = USB_Z - BEND_R                      # where that run starts
 # Three spaces, each open down to the lid so that the case slides in from
 # below with antenna and cable on: the column round the case, the tower
 # over the antenna, and the bay beside the port where the cable turns down.
-CX0 = CABLE_X - CABLE_D / 2 - 3.0              # bay's outer wall, a solid lid beyond the slot
 MX0 = min(CASE_L - CLEAR, ANT_X - ANT_R)       # column's left wall, above the bay
+# Bay's outer wall: a solid lid beyond the cable's slot, and the bay's
+# front flat for PLATE_W beside its round outer edge.
+CX0 = min(CABLE_X - CABLE_D / 2 - 3.0, MX0 - PLATE_W - EDGE_R)
 CX1 = BUTTON_R + BUTTON_GAP
 CY0 = min(CASE_Y[0] - CLEAR, ANT_Y - ANT_R)
 CY1 = max(CASE_Y[1] + CLEAR, ANT_Y + ANT_R)
 CEIL_Z = LOGO_TOP + 0.8                        # over the case; the jack's ring sits in the tower
 TOWER_CEIL_Z = ANT_TOP + ANT_GAP
 TX0, TX1 = ANT_X - ANT_R, ANT_X + ANT_R
-BAY_TOP = USB_Z + PLUG_W / 2 + 1.0
 # The lid floor sits below the latch beams' tops under the case and below
 # the cable's bend.
 FLOOR_Z = min(CASE_BOT - STOP_GAP - (BEAM_H - LID_T) - 1.0, BEND_BOT - LID_FALL - 1.0)
 LID_BOT_Z = FLOOR_Z - LID_T
 BODY_BOT_Z = LID_BOT_Z - DRIP
+# The bay's roof: over the plug, and high enough that its front is square.
+BAY_TOP = max(USB_Z + PLUG_W / 2 + 1.0, BODY_BOT_Z + PLATE_W - WALL)
 
 OX0, OX1 = CX0 - WALL, CX1 + WALL
 OY0, OY1 = CY0 - WALL, CY1 + WALL
@@ -262,21 +261,15 @@ def make_body(ribs=True):
                                   TOOTH_Z - 2, TOOTH_Z + TOOTH_FLAT + 4))
         body = body.cut(prism_x(tx0 - 1.0, tx1 + 1.0, groove_profile(side)))
 
-    # Back pad: wall ears with screw holes, upright tunnels for bands round
-    # a horizontal rail. (The XZ workplane faces -y, so its offsets are minus y.)
+    # Back pad: upright tunnels for bands round a horizontal rail.
     py0, py1 = OY0 - PAD_T, OY0 + 0.01
     pz0, pz1 = BODY_BOT_Z, CEIL_Z + WALL
-    pad = rbox(OX0 - EAR_W, OX1 + EAR_W, py0, py1, pz0, pz1, 2.0)
+    pad = rbox(OX0, OX1, py0, py1, pz0, pz1, 2.0)
     mid_y = (py0 + OY0) / 2
     h = pz1 - pz0
     for xc in (OX0 + 15.0, OX1 - 15.0):
         pad = pad.cut(box(xc - BAND_W / 2, xc + BAND_W / 2, mid_y - BAND_T / 2, mid_y + BAND_T / 2,
                           pz0 - 1, pz1 + 1))
-    for xc in (OX0 - EAR_W / 2, OX1 + EAR_W / 2):
-        for zc in (pz0 + 8.0, pz1 - 8.0):
-            hole = cq.Workplane("XZ").workplane(offset=-py1 - 1).center(xc, zc).circle(SCREW_D / 2).extrude(PAD_T + 2)
-            head = cq.Workplane("XZ").workplane(offset=-py1 - 0.01).center(xc, zc).circle(SCREW_HEAD_D / 2).extrude(3.0)
-            pad = pad.cut(hole).cut(head)
 
     # Pole saddle behind the pad. The bands run across through the pad
     # behind it, come out past its sides and round the pole, so the
@@ -293,43 +286,12 @@ def make_body(ribs=True):
         for xe in (sx0 - BAND_T - 1, sx1 + 1):
             pad = pad.cut(box(xe, xe + BAND_T, py0 - 1, mid_y + BAND_T / 2, z0, z1))
     body = body.union(pad)
-    return body.union(panel_pad())
 
-
-def panel_pad():
-    """Flat plate on the bay's top for a small panel's base: ribs under it,
-    bosses for M4 heat-set inserts, gussets under the part beyond the front."""
-    zb = BAY_TOP + WALL                      # the bay's outer top
-    zp = zb + PANEL_RISE                     # underside of the plate
-    x1 = TX0 - WALL                          # stop at the tower
-    x0 = x1 - PANEL_PAD
-    y0 = OY0                                 # in front of the back pad
-    y1 = y0 + PANEL_PAD
-    xc, yc = (x0 + x1) / 2, (y0 + y1) / 2
-    plate = box(x0, x1, y0, y1, zp, zp + PANEL_T).edges("|Z").fillet(3.0)
-    drop = y1 - OY1                          # overhang beyond the front wall
-    # Upright ribs at the plate's ends and under the screw holes.
-    hole_xs = sorted({round(xc + PANEL_PCD / 2 * math.cos(2 * math.pi * (i + 0.5) / PANEL_HOLES), 6)
-                      for i in range(PANEL_HOLES)})
-    for x in [x0 + RIB / 2, *hole_xs, x1 - RIB / 2]:
-        pts = [(y0, zb - 0.01), (OY1 - 0.01, zb - 0.01), (OY1 - 0.01, zp - drop), (y1, zp + 0.01), (y0, zp + 0.01)]
-        plate = plate.union(prism_x(x - RIB / 2, x + RIB / 2, pts))
-    for y in (y0 + RIB / 2, OY1 - RIB / 2):
-        plate = plate.union(box(x0, x1, y - RIB / 2, y + RIB / 2, zb - 0.01, zp + 0.01))
-    for i in range(PANEL_HOLES):
-        a = 2 * math.pi * (i + 0.5) / PANEL_HOLES
-        hx, hy = xc + PANEL_PCD / 2 * math.cos(a), yc + PANEL_PCD / 2 * math.sin(a)
-        if OY0 < hy < OY1:
-            plate = plate.union(cyl_z(hx, hy, zb - 0.01, zp + 0.01, 11.0))
-        else:
-            # Beyond the wall the boss hangs from the plate; a 45 deg cone
-            # under it, down onto its rib, prints without support.
-            bot = zp - INSERT_L - 2.0
-            plate = plate.union(cyl_z(hx, hy, bot, zp + 0.01, 11.0))
-            plate = plate.union(cq.Workplane("XY").center(hx, hy).circle(RIB / 2 - 0.2).workplane(offset=4.0)
-                                .circle(5.5).loft().translate((0, 0, bot - 4.0)))
-        plate = plate.cut(cyl_z(hx, hy, zp + PANEL_T - INSERT_L - 1.0, zp + PANEL_T + 1, INSERT_HOLE))
-    return plate
+    # The bay's front wall, thickened outward to PLATE_T for the panel's
+    # screws; the column's front stays WALL thick.
+    face = box(OX0, MX0 - WALL, OY1 - 0.01, CY1 + PLATE_T, BODY_BOT_Z, BAY_TOP + WALL)
+    face = face.edges("|Z and <X and >Y").fillet(EDGE_R)
+    return body.union(face)
 
 
 def make_lid():
@@ -421,6 +383,24 @@ def check(body, bare, lid, techo):
     print(f"  latch strain {max(beam_strain(abs(b - a)) for a, b, _ in BEAMS):.2%}, limit {STRAIN_LIMIT:.2%}")
 
 
+def watertight(path):
+    """Every edge of the STL's mesh is shared by exactly two triangles."""
+    import vtk
+
+    read = vtk.vtkSTLReader()
+    read.SetFileName(str(path))
+    clean = vtk.vtkCleanPolyData()
+    clean.SetInputConnection(read.GetOutputPort())
+    edges = vtk.vtkFeatureEdges()
+    edges.SetInputConnection(clean.GetOutputPort())
+    edges.FeatureEdgesOff()
+    edges.ManifoldEdgesOff()
+    edges.BoundaryEdgesOn()
+    edges.NonManifoldEdgesOn()
+    edges.Update()
+    return edges.GetOutput().GetNumberOfCells() == 0
+
+
 def png(parts, path, direction, title):
     """Shaded parallel view of (workplane, rgb) pairs, looking along direction."""
     import vtk
@@ -480,7 +460,10 @@ def main():
     body, lid, techo = make_body(), make_lid(), make_techo()
     print(f"outside: {OX1 - OX0:.1f} x {OY1 - OY0:.1f} mm, {BODY_BOT_Z:.1f} to {TOWER_CEIL_Z + WALL:.1f} "
           f"({TOWER_CEIL_Z + WALL - BODY_BOT_Z:.1f} mm tall); the bay adds {MX0 - CX0:.1f} mm; "
-          f"pad {OX1 - OX0 + 2 * EAR_W:.1f} x {CEIL_Z + WALL - BODY_BOT_Z:.1f} mm")
+          f"{OY1 - OY0 + PAD_T + SADDLE_D:.1f} mm deep at the saddle, {PLATE_T - WALL:.1f} more at the bay")
+    print(f"  the bay's front, for a panel's foot: {MX0 - WALL - OX0 - EDGE_R:.1f} mm flat x "
+          f"{BAY_TOP + WALL - BODY_BOT_Z:.1f} mm tall, {PLATE_T:.1f} mm thick, "
+          f"{PLATE_T - WALL:.1f} mm proud of the column's front")
     check(body, make_body(ribs=False), lid, techo)
 
     # Both print as mounted, standing on the bed: the body on its open end,
@@ -490,6 +473,7 @@ def main():
         solid = solid.translate(cq.Vector(0, 0, -solid.BoundingBox().zmin))
         assert solid.isValid()
         cq.exporters.export(cq.Workplane().add(solid), str(OUT / f"{name}.stl"), tolerance=0.02, angularTolerance=0.1)
+        assert watertight(OUT / f"{name}.stl"), f"{name}.stl has open or non-manifold edges"
 
     asm = cq.Assembly()
     asm.add(body, name="body", color=cq.Color(0.85, 0.85, 0.82))
@@ -505,8 +489,8 @@ def main():
     png([(body.cut(cut), shell), (lid.cut(cut), cover), (techo.cut(cut), board)],
         OUT / "view-section.png", (0, 1, 0), "Section through the antenna axis, seen from behind (x+ to the right)")
     png([(lid, cover)], OUT / "view-lid.png", (0.5, -1, -0.9), "Lid: latch beams, posts, drains")
-    png([(body, shell)], OUT / "view-back.png", (-0.5, 1, -0.3), "Back: wall ears, pole saddle, band tunnels")
-    png([(body, shell), (lid, cover)], OUT / "view-top.png", (0.5, -0.8, -1), "From above: the panel pad on the bay")
+    png([(body, shell)], OUT / "view-back.png", (-0.5, 1, -0.3), "Back: pole saddle, band tunnels")
+    png([(body, shell), (lid, cover)], OUT / "view-top.png", (0.5, -0.8, -1), "From above: the bay, its front for a panel's foot")
     print(f"wrote {OUT}")
 
 

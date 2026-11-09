@@ -178,11 +178,11 @@ the lid goes on, and the box is shut indoors, warm.
 (Boverket's EKS, municipal table; Stockholm's own value to be read
 there). At 26 m/s the basic pressure is ½ × 1.25 kg/m³ × 26² = 420 Pa;
 at 20 m over open ground the gust factor raises it to about 1.2 kPa
-(EN 1991-1-4, exposure factor about 2.8). The box with its pad shows
-0.018 m² to the wind, so with a force coefficient of 2 it takes about
-42 N. A 10 W panel, about 0.09 m², takes about 210 N; on its ball
-joint about 0.1 m above a base, that is 21 N·m on the base's screws.
-Where the panel goes is under "The panel" below.
+(EN 1991-1-4, exposure factor about 2.8). The box shows 0.016 m² to
+the wind from the front, more than from the side, so with a force
+coefficient of 2 it takes about 38 N. A 10 W panel, about 0.09 m²,
+takes about 210 N; on its ball joint about 0.1 m from its foot, that is
+21 N·m on the foot's screws. Where the panel goes is under "The panel" below.
 
 **Condensation.** The air in the box cools every night and its
 moisture condenses on the walls. A box sealed tight still breathes,
@@ -213,14 +213,16 @@ Type-C cable (32005) gives a 3.8 mm jacket and a 38 mm minimum bend
 radius, ten diameters; the rule of thumb of five diameters, 20 mm for a
 4 mm cable, is half that. The model follows the maker: the bay reaches
 28 mm of plug, 38 mm of bend and the cable's radius and a margin beyond
-the case, and adds 68.7 mm to the box's width. At 20 mm it would add
-50.7 mm. `BEND_R` takes the figure for the cable actually used.
+the case, 68.7 mm; at 20 mm it would be 50.7 mm. `BEND_R` takes the
+figure for the cable actually used. The bay is made larger still, so
+that its front is a square for the panel's foot (under "The panel"
+below).
 
-**Size.** With a 38 mm bend: 131 mm wide, 30 mm deep, 164 mm tall over
-the antenna's tower; without the bay the box would be 62 mm wide. With
-the back pad and its ears it is 159 mm wide; 56 mm deep at the pole
-saddle, and 96 mm from the saddle to the front of the panel pad. At 20 mm:
-113 mm wide and 146 mm tall, the lid also coming up as the bend shortens.
+**Size.** With a 38 mm bend: 140 mm wide, 30 mm deep (34 mm at the
+bay's front), 164 mm tall over the antenna's tower; without the bay the
+box would be 62 mm wide. With the back pad and the pole saddle it is
+60 mm deep. At 20 mm: as wide, the panel's square setting the bay's
+width, and 146 mm tall, the lid coming up as the bend shortens.
 
 **Antennas inside.** Nothing goes through the walls, the antenna
 included: it stands in a tower of the body with 4 mm of air around it.
@@ -281,9 +283,12 @@ cable, holds it lightly. Outside, the cable hangs down in a drip loop
 below the box before it goes to the panel, so water running along it
 drips off the bottom of the loop.
 
-**Mounting.** A pad on the back carries four screw holes in ears beyond
-the body, for a wall, and a pair of upright tunnels for hose clamps
-round a horizontal railing. For a pole, a saddle on the pad.
+**Mounting.** On a pole, in a saddle on the back, with two hose clamps.
+The saddle stands on an 8 mm pad across the whole back, which carries
+the clamps' tunnels and keeps the back wall full thickness beside the
+latch grooves. Two upright tunnels through the pad's ends take hose
+clamps round a horizontal railing instead; they are cut out of a pad
+that is there anyway, so they cost no size and no print time.
 
 **The pole saddle.** Wooden broom handles in shops are 23 to 28 mm
 across: Faithfull sells 23 mm, Hillbrush 23.5 and 28 mm. The saddle is
@@ -300,9 +305,9 @@ one range of diameters; here the steel band takes the tension and the
 plastic is only pressed. The band turns round 3 mm rounded edges of the
 saddle. What it must hold: with a friction coefficient of 0.3 assumed
 between ASA and wood, and the V pressing the pole 1.41 times as hard as
-the band pulls, two clamps hold 1.7 times the band's tension; 42 N of
-wind on the box needs 25 N in each band, and 250 N with a panel on the
-box needs 150 N. A band tightened snug, about 300 N, presses the
+the band pulls, two clamps hold 1.7 times the band's tension; 38 N of
+wind on the box needs 22 N in each band, and 250 N with a panel on the
+box needs 145 N. A band tightened snug, about 300 N, presses the
 rounded edge with about 12.5 MPa over a 12 × 2 mm contact, a strain of
 0.7 % in compression, against a yield of 3.4 % and a strength of 40 MPa
 in tension (Prusament ASA data sheet). Nothing in it is in tension or
@@ -315,22 +320,30 @@ quarter wavelength from the antenna, 17 cm at 433 MHz (a rule of thumb
 for keeping a conductor from detuning an antenna), and lower than the
 antenna's tip, so the antenna sees over the panel's frame and cells,
 which are metal and shade the radio toward the panel's side. Below the
-box suits the cable too, which leaves the lid downward. Where there is
-no room on the pole, a pad on the bay's top takes the panel's own base:
-a 70 mm square plate (`PANEL_PAD`, an estimate for a base about 60 mm
-across), 3 mm thick on 9 mm of ribs, with four M4 holes on a 45 mm
-circle (`PANEL_PCD`, `PANEL_HOLES`, estimates: measure the base). The
-holes take heat-set brass inserts, set with a soldering iron after the
-print, and not printed threads or screws cut into the plastic: brass
-threads hold the screws' preload where plastic threads creep, and take
-the screws out and in again. The plate stands 40 mm beyond the front
-wall on 45° ribs, so it prints without support. It sits beside the
-tower, not on it: a panel there would put its metal at the antenna's
-tip. Beside it, the panel's edge is a few centimetres from the antenna,
-well inside that quarter wavelength, so this place costs the antenna
-something; how much is a bench measurement. In a design gust the pad's
-21 N·m pulls about 210 N out of the worst insert (pivoting on the base's
-far edge); the inserts' pull-out in ASA was not found, and the first
+box suits the cable too, which leaves the lid downward. Where the pole
+has no room, the panel's own foot is screwed to the front of the
+cable's bay, beside the tower, as such a foot is screwed to a wall. That
+face is a flat square with no holes made ready, since every panel's
+foot differs. A round foot about 5 mm wider each side than the case, 63
+to 75 mm across, is assumed 70 mm (`PANEL_FOOT_D`, an estimate: measure
+it), and the square is a wall's width wider all round, 74.8 mm; the bay
+is made that wide and that tall, beyond what the cable needs. The foot's
+own self-tapping screws cut their thread in the wall. A thread-forming
+screw in a thermoplastic wants to be engaged two diameters deep (EJOT,
+EVO PT flyer, 08.23: installation depth 2 × d or deeper), so the wall
+is 6 mm thick, for screws of 3 mm (`PANEL_SCREW_D`, an estimate: check
+the foot's), and stands 3.6 mm proud of the column's front. The screws
+must end in the wall: the cable lies behind it. A foot on an upright
+face holds the panel out from that face, and its joint tilts the panel
+from upright: the box's front then faces where the panel should, south,
+and the joint leans the panel back 15° to the 75° chosen above. The
+panel stands beside the tower, not over it: there it would put its
+metal at the antenna's tip. Beside it, the panel's edge is a few
+centimetres from the antenna, well inside that quarter wavelength, so
+this place costs the antenna something; how much is a bench
+measurement. In a design gust the panel's 21 N·m, taken by two screws
+5 cm from the foot's far edge, pulls about 210 N out of each; what a
+self-tapped screw holds in printed ASA was not found, and the first
 print tests it.
 
 **Material.** ASA, not PETG: ASA is made for UV, and it holds its shape
@@ -351,8 +364,9 @@ lid and body. Prusament ASA prints at 260 ± 10 °C on a bed at
 warps when its surroundings are cool (Prusa's ASA article). The body
 prints standing on its open end, as mounted: the ceilings bridge the
 box's 25 mm depth, the grooves' upper faces are at 45°, and nothing
-needs support. The lid prints on its floor, the beams flexing in the
-layer plane as above.
+needs support. The bay's 6 mm front wall prints solid, so the panel's
+screws cut into plastic and not into infill. The lid prints on its
+floor, the beams flexing in the layer plane as above.
 
 ## Open questions
 
@@ -365,8 +379,8 @@ layer plane as above.
   cell's temperature, keeps charge off below the cell's floor.
 - **The screen in the cold.** Whether the firmware stops drawing the
   screen below its 0 °C rating, or on a roof node at all.
-- **The bend.** The cable's real minimum bend radius sets a third of the
-  box's width; a thin, flexible cable shrinks the bay.
+- **The bend.** The cable's real minimum bend radius sets the box's
+  height; a thin, flexible cable shortens it.
 - **Sealing of the lid.** No gasket, for the reasons above. If the first
   winter shows water inside, a soft seal in the joint is the next step.
 - **Insects.** The slots, 4 mm wide, let small insects in. A stainless
@@ -378,7 +392,7 @@ layer plane as above.
 - **Hold-down of the cable.** The slot pinches the cable lightly; a hard
   pull on the cable pulls on the plug in the board.
 - **The panel on the box.** What a panel beside the tower does to the
-  antenna's match and pattern, and whether the inserts hold its gusts.
+  antenna's match and pattern, and whether the screws hold its gusts.
 
 ## What the first print must verify
 
@@ -399,7 +413,8 @@ layer plane as above.
    place with and without the box.
 7. The saddle on a 23 mm and a 28 mm handle: the box does not turn on
    it when pushed by hand with the clamps snug.
-8. The inserts: an M4 screw in each, pulled to 400 N, twice the design
-   gust's load, at room temperature and from the freezer.
+8. The bay's front: a 3 mm self-tapping screw driven 6 mm into it, pulled
+   to 400 N, twice the design gust's load, at room temperature and from
+   the freezer.
 9. A winter's log from the roof: the die temperature, the cell's
    voltage, and whether any water stands in the lid.

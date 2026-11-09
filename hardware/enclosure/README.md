@@ -28,11 +28,12 @@ It checks the model and writes to `hardware/enclosure/out/`:
 - `view-*.png`: views for review, among them a section through the
   antenna's axis with the T-Echo inside.
 
-The checks: each part is one valid solid; the lid does not touch the
-body; nothing but the crush ribs reaches into the case, antenna, plug or
-the cable's curve; every latch beam's strain is under the limit. The parameters at
-the top of the script marked ESTIMATE are not in any source: measure
-them on the parts in hand and rerun before printing.
+The checks: each part is one valid solid and its STL is watertight;
+the lid does not touch the body; nothing but the crush ribs reaches
+into the case, antenna, plug or the cable's curve; every latch beam's
+strain is under the limit. The parameters at the top of the script
+marked ESTIMATE are not in any source: measure them on the parts in
+hand and rerun before printing.
 
 ## Parts
 
@@ -41,12 +42,12 @@ them on the parts in hand and rerun before printing.
 - A USB-A to USB-C cable with a straight plug, from the panel's
   controller; its minimum bend radius goes in `BEND_R`.
 - Two 12 mm stainless hose clamps for a pole (a broom handle of 23 to
-  28 mm or larger, in the saddle) or a railing, or four 4 mm stainless
-  screws for a wall.
-- For a panel on the box: M4 heat-set brass inserts, set in the panel
-  pad's holes with a soldering iron, and M4 stainless screws. The panel
-  is better on the pole, a quarter wavelength (17 cm) or more below the
-  antenna; the note says why.
+  28 mm or larger, in the saddle) or a railing.
+- The panel goes on the pole, a quarter wavelength (17 cm) or more below
+  the antenna; the note says why. Where the pole has no room, its round
+  foot, `PANEL_FOOT_D` across, is screwed to the flat square front of
+  the bay with its own self-tapping screws, of about 3 mm, that end
+  within the 6 mm wall.
 
 ## Print
 
@@ -61,6 +62,7 @@ ASA guidance:
 | enclosure | closed, no draught |
 | walls | 6 perimeters of 0.4 mm, so the 2.4 mm walls are solid |
 | top and bottom | solid, at least 5 layers |
+| bay's front wall | 100 % infill, by a modifier over it |
 | supports | none |
 
 The body stands on its open end, as mounted; the lid on its floor. Keep
