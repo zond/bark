@@ -897,7 +897,7 @@ links on one channel are mostly symmetric, and a neighbour heard with
 margin will likely hear a frame at the same power. A refusal or an ACK that has seen the packet also prove the
 neighbour hears this node; the table keeps neither per neighbour. A
 bit for "answered" would cost no RAM, since it fits the padding of the
-104-byte entry (measured), and would count those two as well; it is
+120-byte entry (`docs/core-interface.md` §6), and would count those two as well; it is
 left out while the display is its only reader, since on a quiet network
 neither comes before a take does.
 
