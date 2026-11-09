@@ -1163,13 +1163,14 @@ provides no lookup. Sending to an area is open item O7.
 A person's card, which people exchange as a QR code
 ([phone link](#phone-link), The payload), carries two addresses: their
 home node's, if they have one, whose mailbox keeps their mail until
-they fetch it ([mailbox](#mailbox)), and that of the node their phone
-is linked to, or was last, their own or a public one, where to reach
-them now, with when the phone was last linked to it; a public node
-keeps a guest's mail by its recipient tag ([phone link](#phone-link),
-Public). A card without a home is
+they fetch it ([mailbox](#mailbox)), and, unless it is the home, that
+of the node their phone is linked to, or was last, their own or a
+public one, where to reach them now, with when the phone was last
+linked to it; a public node keeps a guest's mail by its recipient tag
+([phone link](#phone-link), Public). A card without a home is
 **temporary**: the node on it keeps their mail only for as long as they
-come back to that node (roadmap D162).
+come back to that node. Which of the two a text goes to is the app's
+choice ([phone link](#phone-link), Where a text goes; roadmap D162).
 
 The network carries no sender address and sends no failure notices. Its
 only acknowledgement is the per-hop ACK ([hand-over](#hand-over));
@@ -3927,8 +3928,7 @@ neighbours, its power, its uptime and the time of day
 shows the lines by itself, as a touch would, and keeps them, past the
 30 s and whatever is touched, until the pairing ends or is abandoned;
 then the usual rule holds again: the code, or the lines for what is
-left of a touch's 30 s. The code's line under the code says the
-pairing code too.
+left of a touch's 30 s.
 
 *Why the lines while pairing.* The person typing the code stands at
 the node, and is the one who wants to see the node's state.
