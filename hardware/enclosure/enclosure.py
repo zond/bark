@@ -13,9 +13,10 @@ The USB-C port then faces sideways; a straight plug stays in it and the
 cable turns down to the lid in a bay beside the case.
 
 World axes, in mm: z up as mounted, y from the pole (y-) to the screen
-(y+), x across. The case is measured in the axes of its maker's 3D file
-(dimensions/t-echo_3d.stl), here called the file's: world (x, y, z) =
-file (z, y, -x).
+(y+), x across. The case's outline is measured by caliper; the places of
+its buttons, port and jack come from its maker's 3D file
+(dimensions/t-echo_3d.stl), whose axes are called the file's: world
+(x, y, z) = file (z, y, -x).
 """
 
 import math
@@ -23,7 +24,25 @@ from pathlib import Path
 
 import cadquery as cq
 
-# --- The cased T-Echo, measured in the maker's 3D file (file axes) ---------
+# --- The cased T-Echo, measured by caliper on a bench board ------------------
+# MEASURED 2026-11-09 with the caliper. The maker's 3D file is 2.4 mm short
+# across the screen part, and the first print, cut to it, would not take
+# the case; the outline comes from these readings only.
+CASE_LEN = 65.68       # MEASURED 2026-11-09: the length, logo part included
+SCREEN_LEN = 51.02     # MEASURED 2026-11-09: the screen part along that length
+CASE_W = 53.15         # MEASURED 2026-11-09: USB-C face to button face, buttons not included
+CASE_T = 23.88         # MEASURED 2026-11-09: back to screen bezel
+LOGO_W = 33.07         # MEASURED 2026-11-09: the logo part, from the USB-C face across
+ANT_D = 17.55          # MEASURED 2026-11-09: the stock antenna's knuckle, its widest
+ANT_SHAFT_D = 13.43    # MEASURED 2026-11-09: its shaft
+ANT_END_TO_END = 126.93  # MEASURED 2026-11-09: antenna tip to the case's far end
+
+# --- Positions on the case, from the maker's 3D file ---------------------------
+# dimensions/t-echo_3d.stl in the maker's repository, in its own axes:
+# x along the case with the antenna end at x-, y from the back to the
+# screen, z from the USB-C face to the button face. Only positions of
+# features on the case are taken from it, each mapped onto the measured
+# outline below.
 F_MAIN_X = (-24.0, 24.61)      # the screen part
 F_CASE_Y = (5.48, 29.72)       # back to screen bezel
 F_LOGO_FRONT_Y = 27.63         # the logo part's front face
@@ -31,27 +50,48 @@ F_CASE_Z = (-24.64, 28.66)     # USB-C face to the button face
 F_BUTTON_TOP_Z = 29.65         # reset and user buttons stand proud of their face
 F_BUTTONS_X = ((-13.5, -9.3), (16.0, 20.4))
 F_BUTTONS_Y = (20.25, 24.66)
-F_LOGO_X = (-40.67, -24.0)     # the narrower part that carries the antenna jack
-F_LOGO_TOP_Z = 6.36
+F_LOGO_X = -40.67              # end face of the logo part, which carries the antenna jack
 F_SMA_X = -42.39               # end face of the jack's flange ring, Ø16.1
 F_SMA_Y, F_SMA_Z = 18.43, -14.9
 F_USB_X, F_USB_Y = 11.3, 19.8  # centre of the USB-C opening in the z- face
+SMA_RING_D = 16.1
 
-# The same in world axes.
-CASE_L, CASE_R = F_CASE_Z                      # left (USB-C) and right (button) faces
-BUTTON_R = F_BUTTON_TOP_Z
-BUTTONS_Z = tuple(sorted((-b, -a)) for a, b in F_BUTTONS_X)
-CASE_Y = F_CASE_Y
-CASE_BOT, SCREEN_TOP = -F_MAIN_X[1], -F_MAIN_X[0]
-LOGO_TOP = -F_LOGO_X[0]
-LOGO_R = F_LOGO_TOP_Z                          # the logo part spans x CASE_L..LOGO_R
-SMA_TOP = -F_SMA_X
-ANT_X, ANT_Y = F_SMA_Z, F_SMA_Y                # antenna axis
-USB_Z, USB_Y = -F_USB_X, F_USB_Y
+# The measured outline in world axes, its corners where the file's are
+# at the USB-C face, the back and the screen part's far end.
+CASE_L = F_CASE_Z[0]                           # USB-C face
+CASE_R = CASE_L + CASE_W                       # button face
+CASE_Y = (F_CASE_Y[0], F_CASE_Y[0] + CASE_T)
+CASE_BOT = -F_MAIN_X[1]                        # the screen part's far end
+SCREEN_TOP = CASE_BOT + SCREEN_LEN
+LOGO_TOP = CASE_BOT + CASE_LEN
+LOGO_R = CASE_L + LOGO_W                       # the logo part spans x CASE_L..LOGO_R
+
+
+# A feature's place: its distance from the USB-C face, the back or the far
+# end in the file, scaled by measured over file size along that axis. Along
+# the case the screen part is scaled; the logo part is all measured.
+def across(fz):
+    return CASE_L + (fz - F_CASE_Z[0]) * CASE_W / (F_CASE_Z[1] - F_CASE_Z[0])
+
+
+def deep(fy):
+    return CASE_Y[0] + (fy - F_CASE_Y[0]) * CASE_T / (F_CASE_Y[1] - F_CASE_Y[0])
+
+
+def along(fx):
+    return CASE_BOT + (F_MAIN_X[1] - fx) * SCREEN_LEN / (F_MAIN_X[1] - F_MAIN_X[0])
+
+
+# The buttons stand proud of the measured face by as much as in the file.
+BUTTON_R = CASE_R + F_BUTTON_TOP_Z - F_CASE_Z[1]
+BUTTONS_Z = tuple(sorted((along(a), along(b))) for a, b in F_BUTTONS_X)
+BUTTONS_Y = tuple(deep(y) for y in F_BUTTONS_Y)
+LOGO_FRONT_Y = deep(F_LOGO_FRONT_Y)
+SMA_TOP = LOGO_TOP + F_LOGO_X - F_SMA_X        # the jack's ring stands proud by the file's 1.72
+ANT_X, ANT_Y = across(F_SMA_Z), deep(F_SMA_Y)  # antenna axis
+USB_Z, USB_Y = along(F_USB_X), deep(F_USB_Y)
 
 # --- Estimates: measure these on the parts in hand --------------------------
-ANT_LEN = 60.0        # ESTIMATE: stock 433 MHz antenna above the jack, from photo scale
-ANT_D = 16.0          # ESTIMATE: its widest, at the base
 PLUG_LEN = 28.0       # ESTIMATE: straight USB-C plug, case face to where the cable is free
 PLUG_W = 12.0         # ESTIMATE: plug body across the port's long side (vertical here)
 PLUG_T = 7.0          # ESTIMATE: plug body across the short side
@@ -61,11 +101,15 @@ CABLE_D = 4.0         # ESTIMATE: the panel's USB-A-to-C cable
 BEND_R = 38.0
 
 # --- Fit ---------------------------------------------------------------------
-CLEAR = 0.4           # case to wall: covers the file's tolerance and print error
+# Case to wall. The first print, at 0.4 from the file's outline, would not
+# take the case; this is the gap over the measured outline: a printed
+# wall's error of about 0.2 mm, the caliper's reading against a flat jaw
+# where the case is not flat, and the 0.15 to 0.4 mm by which measurement
+# and file differ along the axes that agree.
+CLEAR = 0.6
 RIB_BITE = 0.15       # crush ribs press this far into the case: no rattle
 ANT_GAP = 4.0         # air around the antenna, so the shell barely detunes it
 LID_CLEAR = 0.25      # lid to body, each side: a sliding fit
-STOP_GAP = 0.2        # case to top stops and to lid posts
 BUTTON_GAP = 0.8      # wall beside the buttons: never pressed by the shell
 
 # --- Walls and print -----------------------------------------------------------
@@ -131,6 +175,7 @@ def cyl_z(x, y, z0, z1, d):
 
 
 # --- Derived layout ------------------------------------------------------------------
+ANT_LEN = ANT_END_TO_END - CASE_LEN - (SMA_TOP - LOGO_TOP)  # antenna above the jack's ring
 ANT_TOP = SMA_TOP + ANT_LEN
 ANT_R = ANT_D / 2 + ANT_GAP
 PLUG_END = CASE_L - PLUG_LEN                   # where the cable leaves the plug
@@ -147,12 +192,12 @@ CX0 = min(CABLE_X - CABLE_D / 2 - 3.0, MX0 - PLATE_W - EDGE_R)
 CX1 = BUTTON_R + BUTTON_GAP
 CY0 = min(CASE_Y[0] - CLEAR, ANT_Y - ANT_R)
 CY1 = max(CASE_Y[1] + CLEAR, ANT_Y + ANT_R)
-CEIL_Z = LOGO_TOP + 0.8                        # over the case; the jack's ring sits in the tower
+CEIL_Z = LOGO_TOP + CLEAR                      # over the case; the jack's ring sits in the tower
 TOWER_CEIL_Z = ANT_TOP + ANT_GAP
 TX0, TX1 = ANT_X - ANT_R, ANT_X + ANT_R
 # The lid floor sits below the latch beams' tops under the case and below
 # the cable's bend.
-FLOOR_Z = min(CASE_BOT - STOP_GAP - (BEAM_H - LID_T) - 1.0, BEND_BOT - LID_FALL - 1.0)
+FLOOR_Z = min(CASE_BOT - CLEAR - (BEAM_H - LID_T) - 1.0, BEND_BOT - LID_FALL - 1.0)
 LID_BOT_Z = FLOOR_Z - LID_T
 BODY_BOT_Z = LID_BOT_Z - DRIP
 # The bay's roof: over the plug, and high enough that its front is square.
@@ -178,8 +223,12 @@ BEAMS = (
     (LX0 + ROOT, LX0 + ROOT + BEAM_L, -1),
 )
 POST_Y = (CASE_Y[0] + CASE_Y[1]) / 2
-POSTS = ((-15.0, POST_Y), (20.0, POST_Y))
-DRAINS_X = (CABLE_X + 6.0, 0.0)
+POSTS = ((CASE_L + 0.2 * CASE_W, POST_Y), (CASE_R - 0.2 * CASE_W, POST_Y))
+DRAINS_X = (CABLE_X + 6.0, (CASE_L + CASE_R) / 2)
+# Crush ribs: on front and back across the case, on the sides at the
+# thirds of its depth, clear of the buttons and the port's height.
+RIBS_X = tuple(CASE_L + f * CASE_W for f in (0.2, 0.5, 0.8))
+RIB_W = 1.6
 
 
 def beam_strain(length):
@@ -225,32 +274,32 @@ def make_body(ribs=True):
     cavity = cavity.union(box(CX0, MX0 + 0.01, CY0, CY1, BODY_BOT_Z - 1, BAY_TOP))
     body = outer.cut(cavity)
 
-    # Shoulder over the screen part beside the logo part, and a stop over
-    # the logo part beside the tower: they hold the case from above.
-    body = body.union(box(LOGO_R + CLEAR, CX1, CY0, CY1, SCREEN_TOP + STOP_GAP, CEIL_Z))
-    body = body.union(box(TX1, LOGO_R + CLEAR + 0.01, CY0, CY1, LOGO_TOP + STOP_GAP, CEIL_Z))
+    # Shoulder over the screen part beside the logo part; over the logo part
+    # the ceiling beside the tower is the stop. They hold the case from above.
+    body = body.union(box(LOGO_R + CLEAR, CX1, CY0, CY1, SCREEN_TOP + CLEAR, CEIL_Z))
 
     # Crush ribs: vertical, chamfered at the bottom so the case slides in.
     def rib(x, y_wall, y_case, side, z0, z1):
         reach = abs(y_wall - y_case) + RIB_BITE
         y_tip = y_wall - side * reach
         pts = [(y_wall + side * 0.01, z0 - 3.0), (y_wall + side * 0.01, z1), (y_tip, z1), (y_tip, z0 - 3.0 + reach * 2)]
-        return prism_x(x - 0.8, x + 0.8, pts)
+        return prism_x(x - RIB_W / 2, x + RIB_W / 2, pts)
 
     if ribs:
-        for x in (-15.0, 0.0, 15.0):
+        for x in RIBS_X:
             body = body.union(rib(x, CY1, CASE_Y[1], +1, CASE_BOT, SCREEN_TOP))
-        for x in (-15.0, 0.0):
-            body = body.union(rib(x, CY0, CASE_Y[0], -1, CASE_BOT, LOGO_TOP))
-        body = body.union(rib(15.0, CY0, CASE_Y[0], -1, CASE_BOT, SCREEN_TOP))
+            # The back runs up the logo part too where it is behind it.
+            top = LOGO_TOP if x + RIB_W / 2 < LOGO_R else SCREEN_TOP
+            body = body.union(rib(x, CY0, CASE_Y[0], -1, CASE_BOT, top))
         # On the button side, below the buttons' band; on the port side,
         # above the bay.
-        for y in (9.0, 15.0):
+        y_band = (CASE_Y[0] + CASE_T / 3, BUTTONS_Y[0] - RIB_W)
+        for y in y_band:
             reach = CX1 - CASE_R + RIB_BITE
-            body = body.union(box(CX1 - reach, CX1 + 0.01, y - 0.8, y + 0.8, CASE_BOT, SCREEN_TOP))
-        for y in (9.0, 26.0):
+            body = body.union(box(CX1 - reach, CX1 + 0.01, y - RIB_W / 2, y + RIB_W / 2, CASE_BOT, SCREEN_TOP))
+        for y in (CASE_Y[0] + CASE_T / 3, CASE_Y[1] - CASE_T / 6):
             reach = CASE_L - MX0 + RIB_BITE
-            body = body.union(box(MX0 - 0.01, MX0 + reach, y - 0.8, y + 0.8, BAY_TOP + 1.0, LOGO_TOP))
+            body = body.union(box(MX0 - 0.01, MX0 + reach, y - RIB_W / 2, y + RIB_W / 2, BAY_TOP + 1.0, LOGO_TOP))
 
     # Latch grooves. The front wall is thickened outside each so it stays WALL
     # thick; at the back the pad does that.
@@ -330,7 +379,7 @@ def make_lid():
 
     # Posts hold the case up against the stops once the lid is in.
     for x, y in POSTS:
-        lid = lid.union(cyl_z(x, y, FLOOR_Z - 1, CASE_BOT - STOP_GAP, POST_D))
+        lid = lid.union(cyl_z(x, y, FLOOR_Z - 1, CASE_BOT - CLEAR, POST_D))
     return lid
 
 
@@ -338,12 +387,13 @@ def make_techo(through_lid=True):
     """The cased T-Echo with antenna, plug and cable, as blocks: for the fit
     check and the views. through_lid: the cable's run down through the lid."""
     t = box(CASE_L, CASE_R, CASE_Y[0], CASE_Y[1], CASE_BOT, SCREEN_TOP)
-    t = t.union(box(CASE_L, LOGO_R, CASE_Y[0], F_LOGO_FRONT_Y, SCREEN_TOP - 0.5, LOGO_TOP))
+    t = t.union(box(CASE_L, LOGO_R, CASE_Y[0], LOGO_FRONT_Y, SCREEN_TOP - 0.5, LOGO_TOP))
     for z0, z1 in BUTTONS_Z:
-        t = t.union(box(CASE_R - 0.1, BUTTON_R, F_BUTTONS_Y[0], F_BUTTONS_Y[1], z0, z1))
-    t = t.union(cyl_z(ANT_X, ANT_Y, LOGO_TOP - 0.1, SMA_TOP, 16.1))
+        t = t.union(box(CASE_R - 0.1, BUTTON_R, BUTTONS_Y[0], BUTTONS_Y[1], z0, z1))
+    t = t.union(cyl_z(ANT_X, ANT_Y, LOGO_TOP - 0.1, SMA_TOP, SMA_RING_D))
+    # The antenna as a cone from its knuckle to its shaft: an envelope.
     t = t.union(cq.Workplane("XY").center(ANT_X, ANT_Y).circle(ANT_D / 2).workplane(offset=ANT_LEN)
-                .circle(ANT_D / 2 - 3).loft().translate((0, 0, SMA_TOP)))
+                .circle(ANT_SHAFT_D / 2).loft().translate((0, 0, SMA_TOP)))
     t = t.union(box(PLUG_END, CASE_L + 0.1, USB_Y - PLUG_T / 2, USB_Y + PLUG_T / 2,
                     USB_Z - PLUG_W / 2, USB_Z + PLUG_W / 2))
     # The cable's turn: a quarter circle from the plug's end down to its run.
@@ -376,6 +426,13 @@ def check(body, bare, lid, techo):
     for name, part in (("body without ribs", bare), ("lid", lid)):
         v = volume(part.intersect(make_techo(through_lid=False)))
         assert v < 1e-3, f"{name} clashes with the T-Echo: {v:.3f} mm3"
+    # The measured outline grown by the clearance touches no wall, stop or post.
+    g = CLEAR - 0.01
+    grown = box(CASE_L - g, CASE_R + g, CASE_Y[0] - g, CASE_Y[1] + g, CASE_BOT - g, SCREEN_TOP + g)
+    grown = grown.union(box(CASE_L - g, LOGO_R + g, CASE_Y[0] - g, LOGO_FRONT_Y + g, SCREEN_TOP, LOGO_TOP + g))
+    for name, part in (("body without ribs", bare), ("lid", lid)):
+        v = volume(part.intersect(grown))
+        assert v < 1e-3, f"{name} is within {CLEAR} mm of the case: {v:.3f} mm3"
     print(f"  crush ribs bite {volume(body.intersect(techo)):.0f} mm3 of the case")
     for x_root, x_free, _ in BEAMS:
         e = beam_strain(abs(x_free - x_root))

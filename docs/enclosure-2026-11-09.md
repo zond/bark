@@ -16,13 +16,39 @@ stays, screwed straight onto the jack: the firmware's 10 dBm cap meets
 the 10 mW ERP limit only because that antenna has no gain over a dipole
 (`bark-fw/README.md`).
 
-Sizes below are read from the board maker's 3D model of the cased T-Echo,
-`dimensions/t-echo_3d.stl` in its repository
-(<https://github.com/Xinyuan-LilyGO/T-Echo>, fetched 2026-11-09), by
-taking the extent of its triangles in each region, in the model's own
-axes: x along the case with the antenna end at x−, y from the back (y−)
-to the screen (y+), z from the USB-C face (z−) to the button face (z+),
-in mm.
+The case's outline and the antenna were measured with a caliper on a
+bench board, 2026-11-09, and the script takes its sizes from these
+readings alone:
+
+| What | Measured (mm) | Maker's 3D model (mm) |
+|---|---:|---:|
+| length, logo part included | 65.68 | 65.28 |
+| screen part along that length | 51.02 | 48.61 |
+| logo part's width, from the USB-C face across | 33.07 | 31.00 |
+| USB-C face to button face, buttons not included | 53.15 | 53.30 |
+| back to screen bezel | 23.88 | 24.24 |
+| antenna's knuckle, its widest; its shaft | 17.55; 13.43 | |
+| antenna tip to the case's far end | 126.93 | |
+
+**The first print, 2026-11-09**, was cut to the maker's model with
+0.4 mm of clearance and did not take the case: it would not slide all
+the way in. The screen part is 2.4 mm longer than in the model and the
+logo part 2.1 mm wider, so the shoulder over the screen part met the
+case early. The script now takes the outline above, keeps the model
+only for where the buttons, port and jack sit, and leaves 0.6 mm round
+the case, for the reasons under "Walls, fit and print". The antenna
+stands 126.93 − 65.68 − 1.72 = 59.5 mm above the jack's ring, 1.72 mm
+being how far the ring stands proud of the logo part in the model.
+
+The places of the buttons, port and jack are read from the board
+maker's 3D model of the cased T-Echo, `dimensions/t-echo_3d.stl` in its
+repository (<https://github.com/Xinyuan-LilyGO/T-Echo>, fetched
+2026-11-09), by taking the extent of its triangles in each region, in
+the model's own axes: x along the case with the antenna end at x−, y
+from the back (y−) to the screen (y+), z from the USB-C face (z−) to
+the button face (z+), in mm. The script keeps each feature's distance
+from the USB-C face, the back and the screen part's far end, scaled by
+the measured over the model's size along that axis.
 
 | What | Where (mm) | How it was read |
 |---|---|---|
@@ -45,7 +71,6 @@ each to be measured on the parts in hand before the first print:
 
 | Parameter | Estimate | Measure |
 |---|---|---|
-| `ANT_LEN`, `ANT_D` | 60 mm above the jack, 16 mm at the base | the stock 433 MHz antenna, by caliper; the estimate is from the pin map photo's scale |
 | `PLUG_LEN` | 28 mm | the straight USB-C plug from the case face to where the cable is free; one maker's plug body is 23.7 mm long (Lindy 32005 data sheet) |
 | `PLUG_W`, `PLUG_T` | 12 × 7 mm | the plug body across the port's long and short sides; that maker's is 10.9 × 6.5 mm |
 | `CABLE_D` | 4.0 mm | the panel's USB cable |
@@ -213,16 +238,16 @@ Type-C cable (32005) gives a 3.8 mm jacket and a 38 mm minimum bend
 radius, ten diameters; the rule of thumb of five diameters, 20 mm for a
 4 mm cable, is half that. The model follows the maker: the bay reaches
 28 mm of plug, 38 mm of bend and the cable's radius and a margin beyond
-the case, 68.7 mm; at 20 mm it would be 50.7 mm. `BEND_R` takes the
+the case, 71 mm; at 20 mm it would be 53 mm. `BEND_R` takes the
 figure for the cable actually used. The bay is made larger still, so
 that its front is a square for the panel's foot (under "The panel"
 below).
 
-**Size.** With a 38 mm bend: 140 mm wide, 30 mm deep (34 mm at the
-bay's front), 164 mm tall over the antenna's tower; without the bay the
-box would be 62 mm wide. With the back pad and the pole saddle it is
-60 mm deep. At 20 mm: as wide, the panel's square setting the bay's
-width, and 146 mm tall, the lid coming up as the bend shortens.
+**Size.** With a 38 mm bend: 141 mm wide, 31 mm deep (34.5 mm at the
+bay's front), 163.5 mm tall over the antenna's tower; without the bay the
+box would be 63 mm wide. With the back pad and the pole saddle it is
+60.5 mm deep. At 20 mm: as wide, the panel's square setting the bay's
+width, and 145.5 mm tall, the lid coming up as the bend shortens.
 
 **Antennas inside.** Nothing goes through the walls, the antenna
 included: it stands in a tower of the body with 4 mm of air around it.
@@ -358,7 +383,12 @@ the colour.
 lines and no infill, so no path for water runs between them. ASA
 shrinks: 0.4 to 0.7 % for the moulding grade above (INEOS flyer), so
 the script scales its STL by 0.5 % and the first print tunes that.
-Clearances: 0.4 mm from the case to the walls, 0.25 mm each side between
+Clearances: 0.6 mm from the case's measured outline to the walls,
+the stops and the posts, since the first print at 0.4 from the maker's
+model would not take the case: a printed wall is out by about 0.2 mm,
+a caliper's flat jaw reads the widest point of a case that is not
+flat, and the readings and the model differ by 0.15 to 0.4 mm even
+along the axes where they agree; and 0.25 mm each side between
 lid and body. Prusament ASA prints at 260 ± 10 °C on a bed at
 110 ± 5 °C with the fan at 30 % (data sheet), in an enclosure, since ASA
 warps when its surroundings are cool (Prusa's ASA article). The body

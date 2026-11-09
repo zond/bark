@@ -31,9 +31,23 @@ It checks the model and writes to `hardware/enclosure/out/`:
 The checks: each part is one valid solid and its STL is watertight;
 the lid does not touch the body; nothing but the crush ribs reaches
 into the case, antenna, plug or the cable's curve; every latch beam's
-strain is under the limit. The parameters at the top of the script
-marked ESTIMATE are not in any source: measure them on the parts in
-hand and rerun before printing.
+strain is under the limit, and the case's measured outline grown by
+the clearance touches no wall, stop or post. The parameters at the top
+of the script marked MEASURED were read with a caliper on a bench
+board; those marked ESTIMATE are not in any source: measure them on the
+parts in hand and rerun before printing.
+
+## Sizes
+
+| What | mm |
+|---|---|
+| case, measured: screen part long × across × deep | 51.02 × 53.15 × 23.88 |
+| case with the logo part, long; the logo part across | 65.68; 33.07 |
+| antenna above the jack's ring; its knuckle, its shaft | 59.5; 17.55, 13.43 |
+| clearance round the case | 0.6 |
+| case plus clearance, stop to posts × across × deep | 52.2 × 54.4 × 25.1 |
+| outside, with a 38 mm cable bend: wide × deep × tall | 140.6 × 30.9 × 163.5 |
+| deep at the pole saddle, plus the bay's thicker front | 56.9 + 3.6 |
 
 ## Parts
 
