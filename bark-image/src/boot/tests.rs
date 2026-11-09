@@ -14,6 +14,7 @@ use super::*;
 use crate::boot::cut::{operations, Op, Phase, Side};
 use crate::ext_flash;
 use crate::ext_flash::fake;
+use crate::given_up;
 use crate::layout::external::END;
 use crate::layout::FLASH_END;
 
@@ -307,9 +308,9 @@ fn a_staged_image_is_swapped_in_and_kept_once_confirmed() {
     stage(&board, &b).unwrap();
     assert_eq!(boot(&board), Ok(Boot::Trial));
     assert_eq!(active(&board, b.len()), b);
-    assert_eq!(confirm(&board.internal), Ok(Started::Confirmed));
+    assert_eq!(start(&board.internal), Ok(Started::Confirmed));
     assert_eq!(boot(&board), Ok(Boot::Normal));
-    assert_eq!(confirm(&board.internal), Ok(Started::Normal));
+    assert_eq!(start(&board.internal), Ok(Started::Normal));
     assert_eq!(active(&board, b.len()), b);
 }
 
@@ -326,7 +327,12 @@ fn an_image_that_does_not_confirm_is_swapped_back() {
     });
     assert_eq!(boot(&board), Ok(Boot::Reverted));
     assert_eq!(active(&board, a.len()), a);
-    assert_eq!(confirm(&board.internal), Ok(Started::Reverted));
+    assert_eq!(
+        start(&board.internal),
+        Ok(Started::Reverted {
+            gave_up: Some(RUNNING + 1)
+        })
+    );
     assert_eq!(boot(&board), Ok(Boot::Normal));
     assert_eq!(active(&board, a.len()), a);
 }
@@ -347,8 +353,8 @@ fn a_staged_image_that_went_bad_is_refused() {
     assert_eq!(boot(&board), Ok(Boot::Refused(Refusal::Hash)));
     assert_eq!(active(&board, a.len()), a);
     assert_eq!(boot(&board), Ok(Boot::Normal));
-    assert_eq!(confirm(&board.internal), Ok(Started::Refused));
-    assert_eq!(confirm(&board.internal), Ok(Started::Normal));
+    assert_eq!(start(&board.internal), Ok(Started::Refused));
+    assert_eq!(start(&board.internal), Ok(Started::Normal));
 }
 
 #[test]
@@ -375,7 +381,7 @@ fn a_swap_with_no_external_flash_is_cancelled() {
     assert_eq!(boot_without_chip(&board), Ok(Boot::Refused(Refusal::Chip)));
     assert_eq!(active(&board, a.len()), a);
     assert_eq!(boot(&board), Ok(Boot::Normal));
-    assert_eq!(confirm(&board.internal), Ok(Started::Refused));
+    assert_eq!(start(&board.internal), Ok(Started::Refused));
     assert_eq!(boot_without_chip(&board), Ok(Boot::Normal));
 }
 
@@ -541,7 +547,7 @@ fn the_record_keeps_the_header_as_signed() {
     // The key that signed it, which the node names once it runs it.
     assert_eq!(sign::verify(&signed, &keys()), Ok(1));
     assert_eq!(boot(&board), Ok(Boot::Trial));
-    assert_eq!(confirm(&board.internal), Ok(Started::Confirmed));
+    assert_eq!(start(&board.internal), Ok(Started::Confirmed));
     assert_eq!(recorded(&board), header_for(&b, RUNNING + 1));
 }
 
@@ -583,7 +589,7 @@ fn a_power_cut_anywhere_in_a_swap_leaves_the_new_image_whole() {
         |f, k| {
             assert_eq!(boot(f), Ok(Boot::Trial), "cut at {k}");
             assert_eq!(active(f, b.len()), b, "cut at {k}");
-            assert_eq!(confirm(&f.internal), Ok(Started::Confirmed), "cut at {k}");
+            assert_eq!(start(&f.internal), Ok(Started::Confirmed), "cut at {k}");
             assert_eq!(boot(f), Ok(Boot::Normal), "cut at {k}");
         },
     );
@@ -614,7 +620,7 @@ fn a_power_cut_anywhere_in_a_swap_back_leaves_the_old_image_whole() {
                 "cut at {k}: {again:?}"
             );
             assert_eq!(active(f, a.len()), a, "cut at {k}");
-            confirm(&f.internal).unwrap();
+            start(&f.internal).unwrap();
             assert_eq!(boot(f), Ok(Boot::Normal), "cut at {k}");
             assert_eq!(active(f, a.len()), a, "cut at {k}");
         },
@@ -660,17 +666,180 @@ fn a_power_cut_in_a_confirmation_leaves_one_image_whole() {
     cut_everywhere(
         setup,
         |f| {
-            let _ = confirm(&f.internal);
+            let _ = start(&f.internal);
         },
         |f, k| {
             boot(f).unwrap();
-            confirm(&f.internal).unwrap();
+            start(&f.internal).unwrap();
             assert_eq!(boot(f), Ok(Boot::Normal), "cut at {k}");
             let is_a = active(f, a.len()) == a;
             let is_b = active(f, b.len()) == b;
             assert!(is_a || is_b, "cut at {k}: neither image whole");
         },
     );
+}
+
+/// Stage `b` as the mesh does: its bytes written into the staged slot by
+/// the store, then checked and recorded ([`Stager::written`]).
+fn stage_gathered(board: &Board, b: &[u8]) -> Result<Header, StageError> {
+    board.external.lock(|f| {
+        let at = DFU.start as usize;
+        f.borrow_mut().bytes[at..at + b.len()].copy_from_slice(b)
+    });
+    let (record, state, dfu) = blocking(&board.internal, &board.external);
+    let header = header_for(b, RUNNING + 1);
+    now(now(Stager::written(
+        record,
+        state,
+        dfu,
+        &header,
+        RUNNING,
+        &keys(),
+    ))?
+    .finish())
+}
+
+/// The record's word that says how the image came.
+fn origin(board: &Board) -> u32 {
+    let mut w = [0u8; 4];
+    part(&board.internal, RECORD)
+        .read(crate::record::ORIGIN_AT, &mut w)
+        .unwrap();
+    u32::from_le_bytes(w)
+}
+
+/// Keep the image on trial, as the firmware does once it hears a node.
+fn confirm_on(board: &Board) -> Result<bool, FlashError> {
+    now(confirm(BlockingAsync::new(part(&board.internal, STATE))))
+}
+
+#[test]
+fn the_record_says_how_the_image_came() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    stage(&board, &b).unwrap();
+    assert_eq!(origin(&board), u32::MAX);
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(start(&board.internal), Ok(Started::Confirmed));
+    stage_gathered(&board, &a).unwrap();
+    assert_eq!(origin(&board), crate::record::FROM_MESH);
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(start(&board.internal), Ok(Started::OnTrial));
+    assert_eq!(confirm_on(&board), Ok(true));
+    // A person's staging after it forgets it with the record.
+    stage(&board, &b).unwrap();
+    assert_eq!(origin(&board), u32::MAX);
+}
+
+#[test]
+fn an_image_gathered_over_the_mesh_keeps_itself_once_it_hears_a_node() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    stage_gathered(&board, &b).unwrap();
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(start(&board.internal), Ok(Started::OnTrial));
+    // A reset while it waits, before it has heard anyone, is no swap
+    // back yet: the loader swaps back only at the boot after the trial's.
+    assert_eq!(start(&board.internal), Ok(Started::OnTrial));
+    assert_eq!(confirm_on(&board), Ok(true));
+    assert_eq!(boot(&board), Ok(Boot::Normal));
+    assert_eq!(start(&board.internal), Ok(Started::Normal));
+    assert_eq!(active(&board, b.len()), b);
+    // Nothing on trial to end.
+    assert_eq!(confirm_on(&board), Ok(false));
+}
+
+#[test]
+fn an_image_gathered_over_the_mesh_that_hears_no_one_is_swapped_back_and_given_up() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    stage_gathered(&board, &b).unwrap();
+    let name = crate::pieces::name(&header_for(&b, RUNNING + 1));
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(start(&board.internal), Ok(Started::OnTrial));
+    // The deadline: it resets itself without confirming.
+    assert_eq!(boot(&board), Ok(Boot::Reverted));
+    assert_eq!(active(&board, a.len()), a);
+    assert_eq!(given_up::contains(&board.internal, &name), Ok(false));
+    assert_eq!(
+        start(&board.internal),
+        Ok(Started::Reverted {
+            gave_up: Some(RUNNING + 1)
+        })
+    );
+    assert_eq!(given_up::contains(&board.internal, &name), Ok(true));
+    assert_eq!(given_up::contains(&board.internal, &name[..4]), Ok(true));
+    assert_eq!(boot(&board), Ok(Boot::Normal));
+    assert_eq!(start(&board.internal), Ok(Started::Normal));
+    // A release after it is another name.
+    let c = image(3, 20_001);
+    let next = crate::pieces::name(&header_for(&c, RUNNING + 2));
+    assert_eq!(given_up::contains(&board.internal, &next[..4]), Ok(false));
+}
+
+#[test]
+fn a_power_cut_after_a_swap_back_still_gives_the_image_up() {
+    let (a, b) = (a(), b());
+    let name = crate::pieces::name(&header_for(&b, RUNNING + 1));
+    let setup = || {
+        let board = board(&a);
+        stage_gathered(&board, &b).unwrap();
+        assert_eq!(boot(&board), Ok(Boot::Trial));
+        assert_eq!(start(&board.internal), Ok(Started::OnTrial));
+        assert_eq!(boot(&board), Ok(Boot::Reverted));
+        board
+    };
+    let cuts = cut_everywhere(
+        setup,
+        |f| {
+            let _ = start(&f.internal);
+        },
+        |f, k| {
+            assert_eq!(boot(f), Ok(Boot::Normal), "cut at {k}");
+            start(&f.internal).unwrap();
+            assert_eq!(start(&f.internal), Ok(Started::Normal), "cut at {k}");
+            assert_eq!(
+                given_up::contains(&f.internal, &name),
+                Ok(true),
+                "cut at {k}"
+            );
+            assert_eq!(active(f, a.len()), a, "cut at {k}");
+        },
+    );
+    // The name's write, then the state page's progress word, erase and
+    // magic.
+    assert_eq!(cuts, 4);
+}
+
+#[test]
+fn the_names_given_up_round_trip_and_start_again_on_a_full_page() {
+    let board = board(&a());
+    let name = |i: u32| {
+        let mut n = [0u8; crate::HASH_LEN];
+        n[..4].copy_from_slice(&i.to_be_bytes());
+        n[4] = 0x5a;
+        n
+    };
+    for i in 0..given_up::SLOTS {
+        given_up::add(&board.internal, &name(i)).unwrap();
+        // Twice is once.
+        given_up::add(&board.internal, &name(i)).unwrap();
+    }
+    for i in 0..given_up::SLOTS {
+        assert_eq!(given_up::contains(&board.internal, &name(i)[..4]), Ok(true));
+    }
+    assert_eq!(
+        given_up::contains(&board.internal, &name(given_up::SLOTS)[..4]),
+        Ok(false)
+    );
+    given_up::add(&board.internal, &name(given_up::SLOTS)).unwrap();
+    assert_eq!(
+        given_up::contains(&board.internal, &name(given_up::SLOTS)),
+        Ok(true)
+    );
+    assert_eq!(given_up::contains(&board.internal, &name(0)), Ok(false));
+    given_up::add(&board.internal, &name(0)).unwrap();
+    assert_eq!(given_up::contains(&board.internal, &name(0)), Ok(true));
 }
 
 mod cut;

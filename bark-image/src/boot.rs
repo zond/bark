@@ -1,6 +1,6 @@
 //! Both sides of a swap, on any two flashes: what the loader does at each
 //! boot ([`prepare`]), and what the application does to stage an image
-//! ([`Stager`]) and to keep the one it runs ([`confirm`]). The internal
+//! ([`Stager`]) and to keep the one it runs ([`start`], [`confirm`]). The internal
 //! flash holds the running image, the loader's state and the record; the
 //! external one the staged image (`crate::layout`).
 //!
@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 
 use crate::layout::external::DFU;
 use crate::layout::{Region, ACTIVE, PAGE, RECORD, STATE};
-use crate::record::{CHECKED, CHECKED_AT, HEADER_AT};
+use crate::record::{CHECKED, CHECKED_AT, FROM_MESH, HEADER_AT, ORIGIN_AT};
 use crate::sign::{self, Key, SignatureError, SLOTS};
 use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN, MAGIC};
 
@@ -42,7 +42,7 @@ pub type Shared<F> = Mutex<NoopRawMutex, RefCell<F>>;
 /// One region of a shared blocking flash.
 pub type Part<'a, F> = BlockingPartition<'a, NoopRawMutex, F>;
 
-fn part<F: NorFlash>(flash: &Shared<F>, r: Region) -> Part<'_, F> {
+pub(crate) fn part<F: NorFlash>(flash: &Shared<F>, r: Region) -> Part<'_, F> {
     BlockingPartition::new(flash, r.start, r.len)
 }
 
@@ -68,7 +68,7 @@ impl From<FirmwareUpdaterError> for FlashError {
     }
 }
 
-fn flash_error<E: embedded_storage::nor_flash::NorFlashError>(e: E) -> FlashError {
+pub(crate) fn flash_error<E: embedded_storage::nor_flash::NorFlashError>(e: E) -> FlashError {
     FlashError(e.kind())
 }
 
@@ -223,43 +223,84 @@ fn hash<F: NorFlash>(
 pub enum Started {
     /// An ordinary boot.
     Normal,
-    /// The first boot of a new image, now confirmed: the loader will not
-    /// swap it back.
+    /// The first boot of a new image a person staged, now confirmed: the
+    /// loader will not swap it back.
     Confirmed,
-    /// The previous image is back: the new one did not confirm itself.
-    Reverted,
+    /// The first boot of a new image gathered over the mesh, not yet
+    /// confirmed: it keeps itself only once it hears a node ([`confirm`]),
+    /// and a reset before then swaps the previous image back (spec
+    /// "Updates over the mesh", the install).
+    OnTrial,
+    /// The previous image is back: the new one did not confirm itself,
+    /// and is given up ([`crate::given_up`]).
+    Reverted {
+        /// The version given up, if the record still names it.
+        gave_up: Option<u32>,
+    },
     /// The loader refused the staged image (`Boot::Refused`), whose record
     /// is now forgotten.
     Refused,
 }
 
-/// Mark the running image as the one to keep. Called once the node has
-/// started; until then a reset swaps the previous image back. Only the
-/// internal flash takes part.
-pub fn confirm<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
+/// What the running image does at its start, once the node has started:
+/// keep itself if a person staged it, or wait to hear a node if it came
+/// over the mesh; after a swap back, give up the image that failed and
+/// keep the one it runs. Only the internal flash takes part.
+pub fn start<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
     let found = state(flash)?;
+    let mut record = part(flash, RECORD);
+    let mut bytes = [0u8; HEADER_LEN];
+    record.read(HEADER_AT, &mut bytes).map_err(flash_error)?;
+    let word = |record: &mut Part<'_, F>, at| -> Result<u32, FlashError> {
+        let mut w = [0u8; 4];
+        record.read(at, &mut w).map_err(flash_error)?;
+        Ok(u32::from_le_bytes(w))
+    };
     if found == State::Boot {
         // A record never checked, with no swap asked for, is one the
         // loader refused: it cancels the swap before it checks anything
         // else.
-        let mut record = part(flash, RECORD);
-        let mut bytes = [0u8; HEADER_LEN];
-        let mut word = [0u8; 4];
-        record.read(HEADER_AT, &mut bytes).map_err(flash_error)?;
-        record.read(CHECKED_AT, &mut word).map_err(flash_error)?;
-        if bytes[..MAGIC.len()] == MAGIC && u32::from_le_bytes(word) != CHECKED {
+        if bytes[..MAGIC.len()] == MAGIC && word(&mut record, CHECKED_AT)? != CHECKED {
             record.erase(0, RECORD.len).map_err(flash_error)?;
             return Ok(Started::Refused);
         }
         return Ok(Started::Normal);
     }
+    let started = match found {
+        State::Swap if word(&mut record, ORIGIN_AT)? == FROM_MESH => return Ok(Started::OnTrial),
+        State::Swap => Started::Confirmed,
+        State::Revert => {
+            // Before the image it runs is kept, so that a reset between
+            // the two gives it up at the next start all the same.
+            let gave_up = match Header::decode(&bytes) {
+                Ok(h) => {
+                    crate::given_up::add(flash, &crate::pieces::name(&bytes))?;
+                    Some(h.version)
+                }
+                Err(_) => None,
+            };
+            Started::Reverted { gave_up }
+        }
+        _ => Started::Normal,
+    };
     let mut word = AlignedBuffer([0u8; 4]);
     BlockingFirmwareState::new(part(flash, STATE), &mut word.0).mark_booted()?;
-    Ok(match found {
-        State::Swap => Started::Confirmed,
-        State::Revert => Started::Reverted,
-        _ => Started::Normal,
-    })
+    Ok(started)
+}
+
+/// Keep the running image, on trial since [`start`] said
+/// [`Started::OnTrial`]: it has heard a node. `state` is the loader's
+/// [`STATE`] page, a flash that may wait, so that a firmware that writes
+/// its internal flash between radio events confirms with the same steps.
+/// Whether there was a trial to end.
+pub async fn confirm<S: AsyncNorFlash>(mut state: S) -> Result<bool, FlashError> {
+    let mut word = AlignedBuffer([0u8; 4]);
+    let mut s = FirmwareState::new(&mut state, &mut word.0);
+    if s.get_state().await.map_err(FlashError::from)? != State::Swap {
+        return Ok(false);
+    }
+    s.mark_booted().await.map_err(FlashError::from)?;
+    Ok(true)
 }
 
 /// Bytes [`Stager::write`] takes at once.
@@ -325,6 +366,19 @@ pub fn blocking<'a, I: NorFlash, E: NorFlash>(
     )
 }
 
+/// How a staged image came, which decides how it keeps itself at its
+/// first boot ([`start`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// A person staged it, from the phone or over USB, and is there to see
+    /// whether it works: it keeps itself at once, and the app warns if the
+    /// node then hears no one (spec "Phone link", Updates).
+    Person,
+    /// It was gathered over the mesh, so the node had a neighbour to take
+    /// it from: it keeps itself only once it hears a node.
+    Mesh,
+}
+
 /// An image being written into [`DFU`], in order, a chunk at a time.
 ///
 /// It takes its three regions as flashes that may wait, so that a
@@ -337,6 +391,7 @@ pub struct Stager<R, S, D> {
     record: R,
     state: S,
     dfu: D,
+    origin: Origin,
     header: Header,
     /// The header as it came, its signatures among it: what the record
     /// keeps, so that the image swapped in still names the key that
@@ -380,6 +435,7 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
             record,
             state,
             dfu,
+            origin: Origin::Person,
             header,
             signed: *bytes,
             next: 0,
@@ -388,8 +444,8 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
 
     /// [`Stager::begin`] for an image already written into the staged
     /// slot by other means, the mesh's store (`crate::pieces`), with the
-    /// same checks; [`Stager::finish`] then hashes it, records it and asks
-    /// for the swap.
+    /// same checks; [`Stager::finish`] then hashes it, records it as
+    /// gathered over the mesh ([`Origin::Mesh`]) and asks for the swap.
     pub async fn written(
         record: R,
         state: S,
@@ -400,6 +456,7 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
     ) -> Result<Self, StageError> {
         let mut s = Self::begin(record, state, dfu, bytes, running, keys).await?;
         s.next = s.header.length;
+        s.origin = Origin::Mesh;
         Ok(s)
     }
 
@@ -472,6 +529,12 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
             .write(HEADER_AT, &self.signed)
             .await
             .map_err(flash_error)?;
+        if self.origin == Origin::Mesh {
+            self.record
+                .write(ORIGIN_AT, &FROM_MESH.to_le_bytes())
+                .await
+                .map_err(flash_error)?;
+        }
         let mut word = AlignedBuffer([0u8; 4]);
         FirmwareState::new(&mut self.state, &mut word.0)
             .mark_updated()

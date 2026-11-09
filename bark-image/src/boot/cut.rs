@@ -40,7 +40,7 @@ use embedded_storage::nor_flash::{
 use super::{part, prepare_with, state, Boot, FlashError, Shared};
 use crate::ext_flash::{Bus, Chip, ERASE_TYP_US, PROGRAM_PAGE, PROGRAM_TYP_US};
 use crate::layout::{ACTIVE, PAGE, RECORD, STATE};
-use crate::record::CUTS_AT;
+use crate::record::{CUTS_AT, CUTS_LEN};
 use embassy_boot::State;
 
 /// An erase of a page of the internal flash, tERASEPAGE (nRF52840 Product
@@ -512,6 +512,9 @@ fn write_word<F: NorFlash>(internal: &Shared<F>, at: u32, w: u32) -> Result<(), 
 fn at_of(phase: Phase) -> u32 {
     CUTS_AT + 8 * phase.index()
 }
+
+// Both phases' words lie within the record's room for them.
+const _: () = assert!(8 * 2 == CUTS_LEN);
 
 /// Draw the phase's moment, if no earlier boot did and none was chosen,
 /// note it, and arm the plan.

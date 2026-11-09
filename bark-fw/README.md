@@ -126,10 +126,10 @@ Verified on the host:
   each build, plain, with `--features console` and with `BARK_OPEN=1`.
 - The ELF's first loadable byte (the vector table) is at `0x06000`, the
   initial stack pointer is `0x20040000`. The open node image of version
-  14 is 478 704 B of flash (`.vector_table`, `.text`, `.rodata` and
-  `.data`) of the 929 792 B slot, and uses 149 112 B of RAM before the
-  stack (`.data` and `.bss`), which leaves the stack 112 008 B
-  (2026-11-09, `size -A`, `scripts/uf2.py --stack`). The relay,
+  16 is 481 464 B of flash (`.vector_table`, `.text`, `.rodata` and
+  `.data`) of the 929 792 B slot, and uses 149 592 B of RAM before the
+  stack (`.data` and `.bss`), which leaves the stack 111 528 B
+  (2026-11-09 with roadmap D159, `size -A`, `scripts/uf2.py --stack`). The relay,
   95 016 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. The
   stack's depth is in "Tasks and the stack", below.
@@ -171,6 +171,9 @@ Unverified, in the order they will fail if wrong:
   Product Specification, ACL).
 - The watchdog: started by the loader for a trial, it resets a firmware
   that never confirms, or hangs, after 600 s.
+- An image gathered over the mesh that hears no node resets itself
+  585.9 s after its start, and the image back gives it up (roadmap D159;
+  the revert in Updates, below); on the host only so far.
 - Whether USB enumerates when the cable comes after a boot on battery,
   the 32 MHz crystal then asked of the MPSL (`src/main.rs`,
   `src/ble.rs`).
@@ -263,7 +266,8 @@ Inside:
 | loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 910 of its 1024); a UF2 writes it erased |
 | firmware, running | `0x06000` | 908 KiB, 227 pages | the CPU runs from internal flash; everything up to the record |
 | staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
-| spare | `0xEA000` | 32 KiB, 8 pages | unused, outside every UF2: for secrets to come |
+| given up | `0xEA000` | 4 KiB | the names of the images the node swapped back, 128, which it never gathers again (Updates, below); outside every UF2, so a copy over USB keeps them |
+| spare | `0xEB000` | 28 KiB, 7 pages | unused, outside every UF2: for secrets to come |
 | mailbox state | `0xF2000` | 4 KiB | the mailbox key, the last fetch and the phone's last confirmed item; secret, so above `0xEA000` |
 | stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the bond's keys with the paired phone; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
@@ -501,14 +505,31 @@ A bench build, version 0, takes any signed version.
    (Product Specification, ACL).
 7. It jumps to the firmware at `0x06000`.
 
-**The firmware** confirms itself once its core is set up and its radio
-is up (`update::started`), and from then on feeds the watchdog twice a
-period, since a started watchdog cannot be stopped before a reset
-(Product Specification, WDT). An image that hangs before then is reset
-by the watchdog; one that panics resets itself through `panic-persist`,
-and the watchdog runs on through that soft reset (Product Specification,
-POWER, reset behaviour); either way the loader swaps the previous image
-back, which logs `update: the new image did not confirm itself`.
+**The firmware** at its start, once its core is set up and its radio is
+up (`update::started`, `bark_image::boot::start`), reads in the record
+how the image came (spec "Updates over the mesh", the install; roadmap
+D159). An image a person staged, from the phone or over USB, confirms
+itself at once. An image gathered over the mesh, whose record has the
+word `FROM_MESH` after the bench loader's, logs `update: version N on
+trial: it confirms once it hears a node, within 585 s`, and confirms
+only at the core's `AppEvent::Heard`, the first frame from another node
+that decodes, through the MPSL's flash timeslots (`update::trial`),
+logging `update: version N confirmed, a node heard S s after its
+start`; with none 585.9 s after its start
+(`bark_proto::update::heard_within`) it logs `heard no node within 585
+s` and resets itself. From the confirmation on it feeds the watchdog
+twice a period, since a started watchdog cannot be stopped before a
+reset (Product Specification, WDT); not before, so the loader's 600 s
+still ends a trial. An image that hangs before then is reset by the
+watchdog; one that panics resets itself through `panic-persist`, and the
+watchdog runs on through that soft reset (Product Specification, POWER,
+reset behaviour); either way the loader swaps the previous image back,
+which logs `update: the new image did not confirm itself` and, before
+it confirms itself, gives the failed image up: it writes its name, from
+the header the swap back left in the record, into the given-up page and
+logs `update: version N given up: never gathered again`
+(`bark_image::given_up`). The mesh then never gathers an image of that
+name, and so never serves it; a later release is another name.
 
 Each update erases each page of the running slot once, twice if it is
 swapped back, and the state page twice: the internal flash's 10 000
@@ -580,7 +601,12 @@ would confirm, `hang` spins there with everything else stopped; and
 `erase-loader` tries to erase the loader's first page, which the write
 protection must stop with a bus fault (should it get through, the board's
 bootloader finds nothing to start and waits for a UF2, so the test costs
-at most a copy). Every image logs the two protected regions as the ACL
+at most a copy). `deaf` drops every frame it receives on the boot that
+swapped it in, and on no other: gathered over the mesh it hears no node
+and resets itself 585.9 s after its start, to be swapped back and given
+up; staged from the phone it confirms and stays deaf until a reset, for
+the app's warning; flashed by UF2 it hears, so a board holds and serves
+it. Every image logs the two protected regions as the ACL
 reads them back, `update: acl 0 start=0x0 len=0x5000 write=Disable`
 and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 
@@ -627,8 +653,11 @@ confirmed itself.
   first quiet moment (`bark_image::policy::quiet`): no phone link open,
   no message held that a reset would lose, in its send queue, its
   delivery queue, its inbox or a mailbox write, no phone update under
-  way, and the power a swap needs. The loader's trial and the
-  confirmation follow as from the phone.
+  way, and the power a swap needs. The loader's trial follows as from
+  the phone, but the image confirms itself only once it hears a node,
+  and is swapped back and given up if it hears none within 585.9 s
+  (The firmware, above). An offer of an image given up is logged
+  `not taken, given up`.
 - *With the phone's update.* A phone's begin gives up an image the node
   gathers, and is refused, Busy, while a gathered image is being staged
   or is staged; the mesh takes no image while the phone's is staged or
@@ -681,6 +710,35 @@ block's decode about 8.6 s of reads more. A line `update: piece ... not
 filled; not sent` or a rising `unserved=` says the holder could not fill
 a piece in time; `block N failed its check` more than now and then, that
 pieces arrive wrong.
+
+The revert, on the same two boards: A holds version 9 built deaf, and B,
+running version 8, gathers it (roadmap Phase 2, "An image that hears no
+one"):
+
+```
+BARK_OPEN=1 BARK_IMAGE_VERSION=9 BARK_UPDATE_BENCH=deaf cargo build --release
+scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v9.img
+scripts/image.py sign target/v9.img keys/bench.pem --key-id 255
+scripts/uf2.py --header target/v9.img target/thumbv7em-none-eabihf/release/bark-fw target/v9.uf2
+```
+
+A, given `v9.uf2`, boots with no swap and hears as any node. B gathers
+version 9 and reboots into it:
+
+```
+B: update: version 9 on trial: it confirms once it hears a node, within 585 s
+B: bench image: deaf to every frame until the next reset
+B: update: version 9 heard no node within 585 s; resetting so that the loader swaps the previous image back
+B: reboot
+B: update: the new image did not confirm itself; version 8 is back
+B: update: version 9 given up: never gathered again
+B: heard a node
+B: update: offered version=9 blocks=31 key=255 name=[..]: not taken, given up
+```
+
+The last line comes again after a reset, and after a UF2 of version 8
+copied over USB, which leaves the given-up page. A build of version 10
+is taken as usual.
 
 **A bench loader**, built with `BARK_LOADER_BENCH=reset`, resets the
 chip once in each swap and once in each swap back, at a moment drawn
@@ -1151,7 +1209,8 @@ confirmation takes, not 8.
 
 Since the send queue holds 64 of its hop places at once (roadmap D155),
 the relay is 95 600 B smaller: the open release image of version 14
-leaves the stack 112 008 B (2026-11-09, `uf2.py --stack`).
+left the stack 112 008 B, and with the trial of roadmap D159 version 16
+leaves it 111 528 B (2026-11-09, `uf2.py --stack`).
 
 ## Radio power
 

@@ -423,9 +423,10 @@ async fn main(spawner: Spawner) {
             p.PPI_CH25, p.PPI_CH26, p.PPI_CH27, p.PPI_CH28, p.PPI_CH29,
         );
         // The node's flash: the stored state through the MPSL's timeslots
-        // (`store.rs`), and the update's confirmation through the NVMC
-        // driver directly, which runs once at boot before the BLE
-        // controller starts (`ble::START`).
+        // (`store.rs`), and the update's start through the NVMC driver
+        // directly, which runs once at boot before the BLE controller
+        // starts (`ble::START`); a gathered image's later confirmation
+        // goes through the timeslots (`update::trial`).
         let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
         // SAFETY: a second handle on the NVMC, which writes only in
         // `update::started`, before the controller starts and so before
@@ -441,6 +442,7 @@ async fn main(spawner: Spawner) {
             phone(spawner, ble_parts, p.RNG, mpsl, mpsl_flash, shared).expect("spawned once"),
         );
         spawner.spawn(mesh(shared, mpsl_flash).expect("spawned once"));
+        spawner.spawn(trial(mpsl_flash).expect("spawned once"));
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The bond with the paired phone, to the phone link, and its line
@@ -609,6 +611,13 @@ async fn mesh(flash: &'static update::Flash, internal: &'static store::SharedFla
     update::mesh::run(flash, internal).await
 }
 
+/// A gathered image's trial (`update::trial`).
+#[cfg(not(feature = "console"))]
+#[embassy_executor::task]
+async fn trial(internal: &'static store::SharedFlash) {
+    update::trial(internal).await
+}
+
 /// What the radio's task takes.
 #[cfg(not(feature = "console"))]
 struct NodeRadio {
@@ -657,7 +666,6 @@ async fn node_radio(n: NodeRadio) {
             mailbox::open();
             update::started(n.shared);
             ble::START.signal(());
-            update::mesh::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
         }
         // Without a radio USB and the log keep running so the error can be

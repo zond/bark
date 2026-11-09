@@ -118,7 +118,7 @@ Every node has the same application interface: the readiness query
 `accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
 `AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power` and
 `AppCommand::Battery`, the events
-`AppEvent::Message`, `AppEvent::GivenBack` and `AppEvent::Boot`, the store,
+`AppEvent::Message`, `AppEvent::GivenBack`, `AppEvent::Boot` and `AppEvent::Heard`, the store,
 `Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
 the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
 `AppCommand::Holds`, `AppCommand::Gather` and `AppCommand::Block` and the actions
@@ -267,6 +267,12 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   made only when it goes. A piece the driver cannot fill in time it does not send,
   and still completes with `TxDone`: to the core it is a piece lost on the air.
 
+- `AppEvent::Heard`: the first frame from another node since boot that decoded, a
+  heartbeat, a DATA, an ACK, a piece or a status; once a boot. An image gathered over
+  the mesh keeps itself only once it has heard a node, and the driver waits for this
+  to confirm it (spec "Updates over the mesh", the install). `update::heard_within`
+  is how long it waits, from its start.
+
 `bark-driver` hands these to its application, `App::offered`, `App::store_piece` and
 `App::serve`, and the application's answers come back as `Request::Holds`,
 `Request::Gather` and `Request::Block`, which the driver delivers as the commands.
@@ -319,7 +325,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
 | GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
-| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment (`bark-fw/src/update/mesh.rs`, `bark-fw/README.md` "Updates") |
+| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment; at its first boot the image confirms itself at `AppEvent::Heard`, or, with none within `update::heard_within` of its start, resets for the swap back, and the image back gives it up (`bark-fw/src/update/mesh.rs`, `update.rs` `trial`, `bark-fw/README.md` "Updates") |
 | Inbox (§4) | the application reads and confirms each message at once | the phone link reads the oldest and confirms it when the phone writes its ID back (`bark-fw/src/ble.rs`, spec "Phone link") |
 
 ## 6. Memory
@@ -358,8 +364,8 @@ when it was heard, and the four images the sections name kept once in the table,
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 112 008 B,
-`bark-fw/scripts/uf2.py --stack` on the open release build of version 14 (roadmap D158), against a
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 111 528 B,
+`bark-fw/scripts/uf2.py --stack` on the open release build of version 16 (roadmap D159), against a
 floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 

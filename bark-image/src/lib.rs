@@ -7,7 +7,8 @@
 //! of the 32.768 kHz clock the loader's watchdog holds (`lfclk`); and the
 //! code an update's blocks travel in over the mesh ([`code`]), the
 //! store of the pieces a node gathers on its external flash (`pieces`),
-//! and what the firmware decides of such an image ([`policy`]).
+//! what the firmware decides of such an image ([`policy`]), and the
+//! images it gave up (`given_up`).
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
 
@@ -23,6 +24,8 @@ pub mod boot;
 pub mod code;
 #[cfg(feature = "boot")]
 pub mod ext_flash;
+#[cfg(feature = "boot")]
+pub mod given_up;
 pub mod layout;
 #[cfg(feature = "lfclk")]
 pub mod lfclk;
@@ -35,10 +38,13 @@ pub mod sign;
 
 /// Seconds a new image has to confirm itself before the watchdog resets
 /// the node and the loader swaps the previous image back: the 10 minutes
-/// of the note ("Revert"), two worst-case rotations and a margin, within
-/// which an image will also have to hear a neighbour once the confirmation
-/// asks for it. The loader is the part that is not updated, so it gives
-/// the longest time the confirmation will need, not the time it needs now.
+/// of the note ("Revert"), within which an image gathered over the mesh
+/// must hear a node, three worst-case rotations of heartbeats and a
+/// heartbeat's lateness, 585.9 s (`bark_proto::update::heard_within`;
+/// spec "Updates over the mesh", the install). The loader is the part
+/// that is not updated, so it gives the longest time the confirmation
+/// needs, and the watchdog, fed only once the image has confirmed
+/// itself, ends a trial whose image hangs or never checks its time.
 pub const TRIAL_SECONDS: u32 = 600;
 
 /// Bytes of a header: 48 of fields, then three signatures, each an

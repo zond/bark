@@ -211,6 +211,10 @@ impl App for LinkApp<'_> {
                 log::info!("boot relays={} first_rotation_left_s={:?}", relays, left);
                 crate::ble::booting(*ends);
             }
+            AppEvent::Heard => {
+                log::info!("heard a node");
+                crate::update::heard();
+            }
             AppEvent::Status { from, status } => {
                 log::info!("status of {:02x?}: {:?}", from.0, status);
                 crate::ble::told_status(bark_link::Answer {
@@ -751,6 +755,10 @@ struct Static(&'static mut Role);
 
 impl Core for Static {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(bark_proto::Action)) {
+        // A bench image's deafness: the frame never reached the core.
+        if crate::update::deaf() && matches!(event, Event::Received { .. }) {
+            return;
+        }
         self.0.handle(event, now, emit)
     }
 

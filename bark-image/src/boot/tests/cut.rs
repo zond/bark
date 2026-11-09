@@ -176,7 +176,7 @@ fn each_phase_is_stopped_once_and_ends_at_the_next_boot() {
         assert_eq!(noted[0].unwrap().fell, Some(swap));
         assert_eq!(noted[1], None);
         if i % 2 == 0 {
-            assert_eq!(confirm(&board.internal), Ok(Started::Confirmed));
+            assert_eq!(start(&board.internal), Ok(Started::Confirmed));
             assert_eq!(boot_cut(&board, draw), (Ok(Boot::Normal), None));
             assert_eq!(active(&board, b.len()), b);
             continue;
@@ -193,7 +193,12 @@ fn each_phase_is_stopped_once_and_ends_at_the_next_boot() {
             recorded(&board.internal).unwrap()[1].unwrap().fell,
             Some(back)
         );
-        assert_eq!(confirm(&board.internal), Ok(Started::Reverted));
+        assert_eq!(
+            start(&board.internal),
+            Ok(Started::Reverted {
+                gave_up: Some(RUNNING + 1)
+            })
+        );
         assert_eq!(boot_cut(&board, draw), (Ok(Boot::Normal), None));
     }
     // The cuts fell on both flashes, in erases and in writes.

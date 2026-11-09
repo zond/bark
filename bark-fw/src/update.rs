@@ -1,8 +1,10 @@
 //! The running image's side of an update (`bark_image::boot`,
-//! `docs/mesh-update-2026-10-25.md`): it confirms itself once the node
-//! has started, so that the loader keeps it, and it feeds the watchdog
-//! the loader started for its trial, which runs on until the next reset
-//! (nRF52840 Product Specification, WDT: once started it cannot be
+//! `docs/mesh-update-2026-10-25.md`): it confirms itself, so that the
+//! loader keeps it, once the node has started if a person staged it, and
+//! once the node has heard another node if it came over the mesh ([`trial`];
+//! spec "Updates over the mesh", the install); from then on it feeds the
+//! watchdog the loader started for its trial, which runs on until the next
+//! reset (nRF52840 Product Specification, WDT: once started it cannot be
 //! stopped). An image is staged on the external flash through the
 //! console (`console.rs`, `stage`) or the phone link ([`Phone`];
 //! `ble.rs`), or gathered over the mesh (`mesh`), and all commit and
@@ -11,7 +13,7 @@
 
 use core::cell::RefCell;
 
-use bark_image::boot::{confirm, cut, swap_requested, Shared, StageError, Stager, Started};
+use bark_image::boot::{cut, start, swap_requested, Shared, StageError, Stager, Started};
 use bark_image::layout::{LOADER, PAGE};
 use bark_image::sign::{Key, SLOTS};
 use bark_image::{Header, HEADER_LEN};
@@ -22,6 +24,9 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
+
+#[cfg(not(feature = "console"))]
+use core::sync::atomic::{AtomicBool, Ordering};
 use embedded_storage::nor_flash::NorFlash;
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 
@@ -57,6 +62,13 @@ enum Bench {
     /// protection must stop with a bus fault. Should it get through, the
     /// board's bootloader finds nothing to start and waits for a UF2.
     EraseLoader,
+    /// On the boot that swapped it in, drops every frame it receives
+    /// ([`deaf`]): gathered over the mesh, it hears no node and resets
+    /// itself, so that the loader swaps the previous image back, which
+    /// gives it up; staged from the phone, it keeps itself and hears no one
+    /// until the next reset, for the app's warning. Any other boot hears,
+    /// so a holder flashed by UF2 serves it.
+    Deaf,
 }
 
 const BENCH: Option<Bench> = match option_env!("BARK_UPDATE_BENCH") {
@@ -65,7 +77,8 @@ const BENCH: Option<Bench> = match option_env!("BARK_UPDATE_BENCH") {
     Some(v) if same(v, "panic") => Some(Bench::Panic),
     Some(v) if same(v, "hang") => Some(Bench::Hang),
     Some(v) if same(v, "erase-loader") => Some(Bench::EraseLoader),
-    Some(_) => panic!("BARK_UPDATE_BENCH is unconfirmed, panic, hang or erase-loader"),
+    Some(v) if same(v, "deaf") => Some(Bench::Deaf),
+    Some(_) => panic!("BARK_UPDATE_BENCH is unconfirmed, panic, hang, erase-loader or deaf"),
 };
 
 const fn same(a: &str, b: &str) -> bool {
@@ -129,7 +142,10 @@ pub fn external() -> &'static External {
 static CONFIRMED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The node has started, its core set up and its radio up: keep this
-/// image. Until this runs, a reset swaps the previous image back.
+/// image, if a person staged it, or wait for the node to hear another
+/// ([`trial`]), if it came over the mesh. Until it is kept, a reset swaps
+/// the previous image back. It writes the internal flash through the
+/// NVMC directly, so it runs before the phone link's controller starts.
 pub fn started(flash: &Flash) {
     // What the loader protected, as the ACL reads back (nRF52840 Product
     // Specification, ACL): all zeros if this image runs without it.
@@ -144,7 +160,7 @@ pub fn started(flash: &Flash) {
         );
     }
     match BENCH {
-        None => {}
+        None | Some(Bench::Deaf) => {}
         Some(Bench::EraseLoader) => {
             log::warn!("bench image: erasing the loader's first page");
             let page = LOADER.start..LOADER.start + PAGE;
@@ -167,16 +183,42 @@ pub fn started(flash: &Flash) {
             }
         }
     }
-    match confirm(flash) {
-        Ok(Started::Normal) => {}
-        Ok(Started::Confirmed) => log::info!("update: version {} confirmed", BARK_IMAGE_VERSION),
-        Ok(Started::Reverted) => log::warn!(
-            "update: the new image did not confirm itself; version {} is back",
-            BARK_IMAGE_VERSION
-        ),
-        Ok(Started::Refused) => log::warn!("update: the loader refused the staged image"),
-        Err(e) => log::error!("update: confirming failed: {:?}", e),
-    }
+    let on_trial = match start(flash) {
+        Ok(Started::Normal) => false,
+        Ok(Started::Confirmed) => {
+            log::info!("update: version {} confirmed", BARK_IMAGE_VERSION);
+            swapped_in();
+            false
+        }
+        Ok(Started::OnTrial) => {
+            log::info!(
+                "update: version {} on trial: it confirms once it hears a node, within {} s",
+                BARK_IMAGE_VERSION,
+                HEARD_WITHIN.as_secs()
+            );
+            swapped_in();
+            true
+        }
+        Ok(Started::Reverted { gave_up }) => {
+            log::warn!(
+                "update: the new image did not confirm itself; version {} is back",
+                BARK_IMAGE_VERSION
+            );
+            match gave_up {
+                Some(v) => log::warn!("update: version {} given up: never gathered again", v),
+                None => log::warn!("update: the image swapped back is not named; none given up"),
+            }
+            false
+        }
+        Ok(Started::Refused) => {
+            log::warn!("update: the loader refused the staged image");
+            false
+        }
+        Err(e) => {
+            log::error!("update: confirming failed: {:?}", e);
+            false
+        }
+    };
     // What a bench loader noted in the record of the last update's resets;
     // nothing from any other loader.
     match cut::recorded(flash) {
@@ -186,11 +228,133 @@ pub fn started(flash: &Flash) {
             .for_each(|c| log::info!("update: {}", c)),
         Err(e) => log::error!("update: reading the record failed: {:?}", e),
     }
+    match on_trial {
+        true => on_trial_now(flash),
+        false => kept(),
+    }
+}
+
+/// The image is kept: the watchdog is fed from now on, and the update over
+/// the mesh starts, which must not ask for a swap while one is on trial.
+fn kept() {
     CONFIRMED.signal(());
+    #[cfg(not(feature = "console"))]
+    mesh::START.signal(());
+}
+
+/// How long an image gathered over the mesh waits to hear a node, from its
+/// start (`bark_proto::update::heard_within`): 585.9 s.
+const HEARD_WITHIN: Duration = Duration::from_micros(
+    bark_proto::update::heard_within(&bark_proto::Config::DEFAULT).as_micros(),
+);
+
+// The watchdog, fed only once the image is kept, bounds the wait: it
+// resets an image that hangs, or whose own deadline never fires, 600 s
+// after the loader's last feed, just before the jump.
+const _: () = assert!(HEARD_WITHIN.as_micros() < bark_image::TRIAL_SECONDS as u64 * 1_000_000);
+
+/// The image on trial, for [`trial`].
+#[cfg(not(feature = "console"))]
+static ON_TRIAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// A node was heard (`AppEvent::Heard`), for [`trial`].
+#[cfg(not(feature = "console"))]
+static HEARD: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Set on the boot that swapped in a [`Bench::Deaf`] image.
+#[cfg(not(feature = "console"))]
+static DEAF: AtomicBool = AtomicBool::new(false);
+
+/// This is the boot that swapped the image in.
+fn swapped_in() {
+    #[cfg(not(feature = "console"))]
+    if matches!(BENCH, Some(Bench::Deaf)) {
+        log::warn!("bench image: deaf to every frame until the next reset");
+        DEAF.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the node drops every frame it receives ([`Bench::Deaf`]).
+#[cfg(not(feature = "console"))]
+pub fn deaf() -> bool {
+    DEAF.load(Ordering::Relaxed)
+}
+
+/// The core heard another node (`node.rs`).
+#[cfg(not(feature = "console"))]
+pub fn heard() {
+    HEARD.signal(());
+}
+
+#[cfg(not(feature = "console"))]
+fn on_trial_now(_: &Flash) {
+    ON_TRIAL.signal(());
+}
+
+/// The console has no core to hear with: it keeps itself. No console
+/// image comes over the mesh, as no console gathers or serves one.
+#[cfg(feature = "console")]
+fn on_trial_now(flash: &Flash) {
+    use bark_image::boot::Part;
+    use bark_image::layout::STATE;
+    use embassy_embedded_hal::adapter::BlockingAsync;
+    let state = BlockingAsync::new(Part::new(flash, STATE.start, STATE.len));
+    match embassy_futures::block_on(bark_image::boot::confirm(state)) {
+        Ok(_) => log::info!("update: version {} confirmed", BARK_IMAGE_VERSION),
+        Err(e) => log::error!("update: confirming failed: {:?}", e),
+    }
+    kept();
+}
+
+/// An image gathered over the mesh, on trial: keep it once the core has
+/// heard a node, through the MPSL's flash timeslots now that the phone
+/// link may run; reset, for the loader to swap the previous image back,
+/// if it hears none within [`HEARD_WITHIN`] of its start
+/// (spec "Updates over the mesh", the install).
+#[cfg(not(feature = "console"))]
+pub async fn trial(internal: &'static crate::store::SharedFlash) {
+    use bark_image::layout::STATE;
+    use embassy_embedded_hal::flash::partition::Partition;
+    use embassy_futures::select::{select, Either};
+    ON_TRIAL.wait().await;
+    let deadline = embassy_time::Instant::from_micros(HEARD_WITHIN.as_micros());
+    if let Either::Second(()) = select(HEARD.wait(), Timer::at(deadline)).await {
+        log::warn!(
+            "update: version {} heard no node within {} s; resetting so that the loader swaps the previous image back",
+            BARK_IMAGE_VERSION,
+            HEARD_WITHIN.as_secs()
+        );
+        reboot().await;
+    }
+    loop {
+        let state = Partition::new(internal, STATE.start, STATE.len);
+        match bark_image::boot::confirm(state).await {
+            Ok(_) => {
+                log::info!(
+                    "update: version {} confirmed, a node heard {} s after its start",
+                    BARK_IMAGE_VERSION,
+                    embassy_time::Instant::now().as_secs()
+                );
+                kept();
+                return;
+            }
+            // Again a second later, until the deadline.
+            Err(e) => log::error!("update: confirming failed: {:?}", e),
+        }
+        if embassy_time::Instant::now() >= deadline {
+            log::warn!(
+                "update: version {} not confirmed in time; resetting",
+                BARK_IMAGE_VERSION
+            );
+            reboot().await;
+        }
+        Timer::after_secs(1).await;
+    }
 }
 
 /// Feed the watchdog, if the loader started one, from the confirmation on:
-/// twice a period, so that one late wakeup still passes.
+/// twice a period, so that one late wakeup still passes. Not before: the
+/// loader's watchdog is what ends a trial whose image hangs.
 pub async fn watchdog(dog: Peri<'static, peripherals::WDT>) {
     CONFIRMED.wait().await;
     let Some(config) = wdt::Config::try_new(&dog) else {
