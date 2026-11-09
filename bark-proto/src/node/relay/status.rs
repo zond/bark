@@ -5,11 +5,11 @@
 //! question: on the neighbour's home channel, with the long preamble to
 //! a sleepy one, which receives duty-cycled, after a listen-before-talk
 //! and paid from the bucket with the reply reserve kept, as a piece is.
-//! Neither is answered or sent again: a person who sees no answer asks
-//! again.
+//! Neither is answered or sent again: the app asks again a neighbour
+//! that has not answered.
 
 use super::{Job, Node};
-use crate::event::{Action, AppEvent, Frame};
+use crate::event::{Action, AppEvent, Frame, Trace};
 use crate::ids::NodeId;
 use crate::node::mac;
 use crate::radio::MIN_PREAMBLE_SYMBOLS;
@@ -163,6 +163,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.radio.asking.current = Some((to, tell, checks));
             if checks >= self.config.lbt_attempts {
                 self.status_done(to, tell);
+                emit(Action::Trace(Trace::StatusGivenUp { to, answer: tell }));
             } else {
                 self.radio.asking.ready_at = now
                     + self
