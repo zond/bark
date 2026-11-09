@@ -39,7 +39,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
     final r = widget.release;
     // Not over an update under way, nor again for an image chosen.
     final idle = u.phase == Phase.idle || u.phase == Phase.failed;
-    if (r != null && idle && u.image?.version != r.n) {
+    if (r != null && idle && u.image?.version != r.firmware) {
       _get(() => downloadImage(r, app.releases.download));
     } else if (widget.pick && idle) {
       _get(_pick);

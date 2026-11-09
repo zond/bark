@@ -4,7 +4,8 @@ Firmware for the LILYGO T-Echo (nRF52840 + SX1262, 433 MHz build). Its own
 Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
 Current state (2026-11-09). It runs on four boards on the bench and is
-released as `bark-fw-<N>`, v8 the latest (`README.md`, "Releases";
+released as `bark-fw-<F>`, F the firmware's version in a release, which
+stays when only the app changed (`README.md`, "Releases";
 Verified and unverified, below). It starts behind a loader of its own,
 which swaps in a staged image, from the phone, the mesh or the console,
 and swaps it back if it does not confirm itself (Updates, below). The
@@ -554,9 +555,13 @@ which checks that every byte came, the battery (below), the hash,
 records the header and asks for the swap, and reboots through
 `update::reboot`, so that a check added there applies to all. `scripts/image.py pack` makes the image
 either takes and `scripts/image.py sign` signs it; a release carries it,
-signed, as `bark-fw-<N>.img`, and writes its header into the record of
+signed, as `bark-fw-<F>.img`, and writes its header into the record of
 both its UF2s (`uf2.py --header`, Over the mesh, below), so that a node
-flashed with a release holds it and serves it.
+flashed with a release holds it and serves it. F is the release's
+number N when the firmware changed since the previous release, and the
+previous release's F, its files carried on unchanged, when it did not
+(`README.md`, "Releases"), so nodes gather a new image only for a new
+firmware.
 
 From the phone (spec "Phone link", Updates; roadmap D145): the app
 writes the header to Update, the image to Image in pieces of 240 bytes

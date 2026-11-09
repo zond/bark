@@ -214,18 +214,18 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       if (a != null)
         _bar(
           context,
-          title: 'A newer app, version ${a.n}, is available',
+          title: 'A newer app, version ${a.app}, is available',
           subtitle:
               'Tap to download it in the browser; Android asks before it '
               'installs it over this one.',
           onTap: () => app.notifier.openLink(a.apk!),
-          dismiss: () => r.dismissApp(a.n),
+          dismiss: () => r.dismissApp(a.app),
         ),
       if (i != null && node != null)
         _bar(
           context,
           title:
-              'Your node runs version ${node.image}; version ${i.n} is '
+              'Your node runs version ${node.image}; version ${i.firmware} is '
               'available',
           subtitle: node.version < updateVersion
               ? 'Its firmware is from before updates over Bluetooth: '
@@ -234,7 +234,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           onTap: node.version < updateVersion
               ? null
               : () => _open(context, UpdateScreen(app, release: i)),
-          dismiss: () => r.dismissImage(node, i.n),
+          dismiss: () => r.dismissImage(node, i.firmware),
         ),
     ];
   }

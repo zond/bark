@@ -195,7 +195,7 @@ class Updater extends ChangeNotifier {
     final r = release();
     final n = session.node;
     if (r == null || r.image == null || n == null) return null;
-    return r.n > n.image ? r : null;
+    return r.firmware > n.image ? r : null;
   }
 
   /// Why there is no [latest], for the person; null when there is one,
@@ -206,8 +206,12 @@ class Updater extends ChangeNotifier {
     if (n == null || latest != null) return null;
     if (r == null) return 'No release known yet.';
     if (r.image == null) return 'Release ${r.n} carries no node firmware.';
-    if (r.n == n.image) return 'The node already runs the latest release.';
-    return 'The node runs a newer version than the latest release, ${r.n}.';
+    if (r.firmware == n.image) {
+      return 'The node already runs the latest release\'s firmware, '
+          'version ${r.firmware}.';
+    }
+    return 'The node runs a newer version than the latest release\'s '
+        'firmware, ${r.firmware}.';
   }
 
   /// The link has closed since the reboot was asked for.
