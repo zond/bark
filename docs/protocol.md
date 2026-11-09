@@ -3902,7 +3902,15 @@ line of text, and phones' readers take 2.
 text for 30 s, or until the next touch, and then the code again: what
 the node is, its ID and image, the image it gathers, the phone, its
 neighbours, its power, its uptime and the time of day
-(`bark-fw/README.md`, Display).
+(`bark-fw/README.md`, Display). While a pairing code shows, the screen
+shows the lines by itself, as a touch would, and keeps them, past the
+30 s and whatever is touched, until the pairing ends or is abandoned;
+then the usual rule holds again: the code, or the lines for what is
+left of a touch's 30 s. The code's line under the code says the
+pairing code too.
+
+*Why the lines while pairing.* The person typing the code stands at
+the node, and is the one who wants to see the node's state.
 
 *Why 30 s.* A choice: ten lines of two or three words each take under
 10 s to read at a usual pace, and 30 s is three times that, short
@@ -3910,8 +3918,7 @@ enough that the next person to pass finds the code again.
 
 **When it is drawn.** A change of picture, a touch or the 30 s ending,
 is drawn at once, and so is a new pairing code, since a person stands at
-the node waiting for each. On the code nothing else changes but the
-end of a pairing, drawn one refresh after it, 2 s. While the lines show,
+the node waiting for each. On the code nothing else changes. While the lines show,
 a change of the role, of the phone's line or of the power is drawn one
 refresh after it, and changes within one refresh are drawn together;
 the neighbour counts and the battery's level wait for the next touch.
