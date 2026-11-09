@@ -18,6 +18,7 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/node_link.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/ui/fact_help.dart';
 import 'package:bark_app/ui/map_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -438,6 +439,62 @@ void main() {
     await t.pump(FakeNode.answerAfter);
     expect(fake.asked.length, 2 * list.length + 2);
     expect(find.text('RELAY NO PLACE'), findsNWidgets(4));
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  test('every fact has its help, two to four sentences', () {
+    for (final MapEntry(:key, :value) in factHelp.entries) {
+      final sentences = RegExp(r'[.!?](\s|$)').allMatches(value).length;
+      expect(sentences, inInclusiveRange(2, 4), reason: key);
+    }
+  });
+
+  testWidgets('every row of a sheet opens its help', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    // A tall screen, so that no marker is under the legend.
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    await t.pump(FakeNode.answerAfter);
+    final seen = <String>{};
+    Future<void> each(Finder marker) async {
+      await t.tap(marker);
+      await t.pumpAndSettle();
+      final sheet = find.byType(BottomSheet);
+      final rows = find.descendant(of: sheet, matching: find.byType(InkWell));
+      for (var i = 0; i < rows.evaluate().length; i++) {
+        final row = rows.at(i);
+        final label = factHelp.keys.singleWhere(
+          (l) => find
+              .descendant(of: row, matching: find.text(l))
+              .evaluate()
+              .isNotEmpty,
+        );
+        await t.ensureVisible(row);
+        await t.tap(row);
+        await t.pumpAndSettle();
+        expect(find.byType(BottomSheet), findsNWidgets(2));
+        expect(find.text(factHelp[label]!), findsOneWidget);
+        seen.add(label);
+        Navigator.pop(t.element(find.byType(BottomSheet).last));
+        await t.pumpAndSettle();
+      }
+      await closeSheet(t);
+    }
+
+    Finder icon(String label) =>
+        find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
+    for (final n in fake.neighbours.values) {
+      await each(icon(nodeLabel(n.id)));
+    }
+    await each(icon('this node'));
+    // All but the anchor's own note, as the fake's node is a relay.
+    expect(seen, containsAll(factHelp.keys.toSet()..remove('Anchor')));
+    expect(seen, contains('Anchor'));
     await shut(t, app);
     debugPrint = print;
   });

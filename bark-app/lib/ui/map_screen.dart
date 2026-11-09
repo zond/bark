@@ -17,6 +17,7 @@ import '../contacts.dart';
 import '../link.dart';
 import '../session.dart';
 import 'common.dart';
+import 'fact_help.dart';
 
 /// OpenStreetMap's tiles, as its tile usage policy asks to be named.
 const osmTiles = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -672,25 +673,49 @@ class _Sheet extends StatelessWidget {
             if (whose != null) Text(whose!, style: text.titleLarge),
             Text(id, style: whose == null ? text.titleLarge : text.titleSmall),
             const SizedBox(height: 8),
-            for (final f in facts) _row(f),
+            for (final f in facts) _row(context, f),
           ],
         ),
       ),
     );
   }
 
-  Widget _row(Fact f) {
-    final row = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(f.icon, color: f.color, semanticLabel: f.name),
-          const SizedBox(width: 12),
-          // The icon names the fact to a screen reader already.
-          ExcludeSemantics(child: Text(f.label)),
-          const SizedBox(width: 16),
-          Expanded(child: Text(f.value, textAlign: TextAlign.end, maxLines: 3)),
-        ],
+  /// A row, tapped anywhere, opens what its fact means.
+  Widget _row(BuildContext context, Fact f) {
+    final row = InkWell(
+      onTap: () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(f.label, style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(factHelp[f.label]!),
+              ],
+            ),
+          ),
+        ),
+      ),
+      // The least tap target Material asks for.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: kMinInteractiveDimension),
+        child: Row(
+          children: [
+            Icon(f.icon, color: f.color, semanticLabel: f.name),
+            const SizedBox(width: 12),
+            // The icon names the fact to a screen reader already.
+            ExcludeSemantics(child: Text(f.label)),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(f.value, textAlign: TextAlign.end, maxLines: 3),
+            ),
+          ],
+        ),
       ),
     );
     return f.tooltip == null ? row : Tooltip(message: f.tooltip, child: row);

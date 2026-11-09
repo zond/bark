@@ -199,7 +199,9 @@ is a prototype for the bench, not the app people will carry.
   and Exchanged (a ticked box) if it has taken a message from this
   node; then this node's own view of it: Anchor, `this node's anchor`,
   for the relay this sleepy node sends through, Demoted or Banned. Each
-  icon is named for a screen reader. Its power, neighbours and version
+  icon is named for a screen reader. A tap anywhere on a row opens a
+  few plain sentences on what that fact is, how the node knows it and
+  what it means for the person, all in `lib/ui/fact_help.dart`. Its power, neighbours and version
   come from its answer (below); before one, what it is comes from its
   heartbeats. This node's own sheet says the same of it from its
   status, its neighbours counted from the table read. The map reads Neighbours when it opens, at every
