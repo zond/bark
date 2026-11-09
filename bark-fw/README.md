@@ -30,7 +30,10 @@ at boot and at every change (`AppCommand::Power`, `src/power.rs`). On
 battery it reads the cell once a minute between radio operations
 (`AppCommand::Battery`, `src/battery.rs`). The core is a relay on USB; on
 battery a carried one turns sleepy at once and a fixed one when its
-battery is low (spec "Sleepy nodes"; roadmap D152). For bench work,
+battery is low (spec "Sleepy nodes"; roadmap D152). A person at the
+board may force the other role by holding the user button 3 s, until
+USB is next plugged in or pulled (`AppCommand::ForceRole`; Display,
+below). For bench work,
 `BARK_ON_BATTERY=1` at build time reports battery whatever USB says and
 leaves the battery levels off, so that a board on the bench's USB runs
 sleepy and still logs (`scripts/measure.md` step 5).
@@ -777,16 +780,34 @@ twelve hex digits, then the image's name, `CONSOLE` or `SURVEY`, and its
 version as `V` and `BARK_IMAGE_VERSION`, a survey's with its channel as
 `CH`.
 
-The node image draws its state, built from what its core says after
-each step (`src/node.rs`, `screen`) by `bark-screen`, which is tested on
-the host. Sixteen characters to a line, every line from the left
-margin. A header says what the node is, as a word or two at the left,
+The node image shows a QR code of the project's page,
+`zond.github.io/bark` (`site/`, published by
+`.github/workflows/pages.yml`), with a small orb web in its centre and
+the web's threads in the margin, and under it the node's ID, or the
+pairing code while a phone pairs (spec "Screen and buttons", roadmap
+D160). `bark-screen/src/qr.rs` draws it from the modules
+`bark-screen/scripts/qr.py generate` wrote, which a host test checks
+against the address encoded again; another host test decodes the drawn
+picture, and `qr.py check` decodes it with two more decoders and writes
+it as `target/bark-screen/code.png`:
+
+```
+python3 -m venv .venv
+.venv/bin/pip install qrcodegen zxing-cpp opencv-python-headless pillow
+.venv/bin/python bark-screen/scripts/qr.py check
+```
+
+A touch of the pad (P0.11, `src/button.rs`) shows the node's state for
+30 s, or until the next touch, then the code again. The state is built
+from what its core says after each step (`src/node.rs`, `screen`) by
+`bark-screen`, which is tested on the host. Sixteen characters to a
+line, every line from the left margin. A header says what the node is, as a word or two at the left,
 and a gap sets it apart; every line below it is a label at the left and
 its value flush right. Top to bottom:
 
 | line | says | from |
 |---|---|---|
-| role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR` | the core's sleepy, anchorless, placed and carried flags |
+| role | `FIXED RELAY`, `CARRIED RELAY`, `RELAY NO PLACE` (before its first place), `SLEEPY ANCHORED` or `SLEEPY NO ANCHOR`; `SLEEPY FORCED` or `RELAY FORCED` while a role forced by the button lasts, a relay forced sleepy shown so through its flush | the core's sleepy, anchorless, placed and carried flags, and its `forced()` |
 | `STARTING` | while the first rotation runs, under the role in the header | booting |
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
@@ -824,53 +845,47 @@ and a coarse guess between 30 % and full, where a cell's curve is not
 straight. At or below 20 % it says `LOW`: the curve falls steeply there,
 and a fixed relay turns sleepy.
 
-*Why the uptime.* A picture stays on the glass when the node stops,
-so a stale one would lie. The node redraws at least once an hour on
-battery and every ten minutes on USB; an uptime that has not moved
-after that long means the node is not running.
+*Why the uptime.* A picture stays on the glass when the node stops.
+The lines are drawn at the touch that asks for them, so their uptime is
+of that moment; a touch that brings no lines within a few seconds means
+the node is not running.
 
-*When it redraws.* At boot, once the node's loop has run (at most 5 s).
-After that, a new pairing code is drawn at once, since a person stands
-at the node to type it while the phone waits (spec "Phone link",
-Pairing). Any other change a person acts on at once is drawn one
-refresh after it, 2 s (the board's label): the header (the role, or
-`STARTING` ending), the rest of the phone's line, and the power, USB or
-battery. Changes within those 2 s, such as the power and the role of a
-sleepy node when the cable goes in, are drawn in one picture, and a change undone
-within them is not drawn. Any other change, of the neighbour counts or
-the battery's level, is drawn no sooner than 5 minutes after the last
-picture on battery and a minute after it on USB, and the screen is drawn
-at least once an hour on battery and every ten minutes on USB. Every
-picture restarts those times, since it shows everything as it then is.
-Each picture is drawn to its end before the next is considered, so none
-starts while a refresh runs. A press of the user button (P1.10,
-`src/button.rs`) redraws at once, a bench aid that leaves the schedule
-as it was. `bark_screen::schedule` decides, tested on the host.
+*When it redraws.* At boot, the code, once the node's loop has run (at
+most 5 s). After that, a change of picture, a touch or the 30 s ending,
+and a new pairing code are drawn at once, since a person stands at the
+node for each (spec "Phone link", Pairing). On the code nothing else
+changes but the end of a pairing, drawn one refresh after it, 2 s (the
+board's label). While the lines show, a change a person acts on is
+drawn one refresh after it: the header (the role, or `STARTING`
+ending), the rest of the phone's line, and the power, USB or battery.
+Changes within those 2 s, such as the power and the role of a sleepy
+node when the cable goes in, are drawn in one picture, and a change
+undone within them is not drawn. The neighbour counts and the battery's
+level wait for the next touch. Nothing else is drawn. Each picture is
+drawn to its end before the next is considered, so none starts while a
+refresh runs. `bark_screen::schedule` decides, tested on the host.
+
+*The button.* Held 3 s, the user button (P1.10, `src/button.rs`) forces
+the other role (spec "Nodes", "Screen and buttons") and shows the lines;
+a shorter press does nothing.
+
+*The pad.* A touch sensor chip on the board gives a level on P0.11
+while touched. Its polarity is not in the repository's notes; such
+chips drive high while touched by default, so the firmware takes high
+as touched, with the pin's pull-down so that a floating pin reads
+untouched, and logs at boot what it reads untouched (`pad: reads low
+untouched`), for the bench to confirm.
 
 The cost on battery: a full refresh holds BUSY high for 2 s (the
-board's label). The panel's
-current during a refresh is not in the repository's notes, nor its
-datasheet; taking 10 mA, an assumption to be replaced by a measurement
-with `scripts/measure.md`, a refresh is 20 mAs, 5.6 µAh,
-of the 850 mAh cell (spec "Hardware") one part in 150 000. At the
-5-minute floor, with something changing all the time, that is 0.067 mA
-on average, a tenth of a sleepy node's 0.65 mA
-(`docs/battery-role-2026-10-25.md`); with the hourly redraw alone,
-0.006 mA, under 1 %. So 5 minutes is the floor at which the display
-costs a sleepy node at most a tenth of its battery life, and the
-hourly redraw is the price of knowing the node runs. A change drawn
-early adds a picture, and such changes are rare: the power changes
-when a person plugs the node in or unplugs it; the role when the node
-turns relay or sleepy, finds its place, or takes or gives up an anchor,
-each of which the spec keeps from switching to and fro (the hour's
-grace in spec "Sleepy nodes", four hours still before the carried flag
-clears in "Heartbeat", a node that hears no relay keeping its anchor in
-"Relay choice"); and the phone's line when a person pairs the
-node or makes it public. Ten a day cost 10 × 5.6 µAh = 56 µAh a day,
-0.0023 mA on average, under 0.4 % of a sleepy node's 0.65 mA; and since
-the gap restarts from such a picture, a scheduled picture it already
-shows is not drawn as well. On USB the
-energy is the charger's; a minute keeps the picture current enough.
+board's label). The panel's current during a refresh is not in the
+repository's notes, nor its datasheet; taking 10 mA, an assumption to
+be replaced by a measurement with `scripts/measure.md`, a refresh is
+20 mAs, 5.6 µAh, of the 850 mAh cell (spec "Hardware") one part in
+150 000. The screen draws when a person acts, two pictures a touch, and
+for a pairing; twenty touches a day cost 40 × 5.6 µAh = 224 µAh a day,
+0.009 mA on average, under 1.5 % of a sleepy node's 0.65 mA
+(`docs/battery-role-2026-10-25.md`). A node nobody touches draws its
+code once at boot and then nothing. On USB the energy is the charger's.
 Between refreshes the controller is in deep sleep, holding the picture
 and drawing nothing measurable; each refresh wakes it with a hardware
 reset.
@@ -1087,7 +1102,7 @@ task of its own, spawned by the main task, which sets up the chip, the
 board, USB and the log, spawns, and ends: the USB device, the log, the
 bootloader touch, the watchdog, the LED and crystal, the MPSL, the
 phone link, the radio and the core on it, the store, the mailbox's
-flash writes, the update over the mesh, the GPS, the screen and the user button. A task's future lies in its own static storage, and the
+flash writes, the update over the mesh, the GPS, the screen, the user button and the touch pad. A task's future lies in its own static storage, and the
 executor polls one task at a time, so the stack needs only the deepest
 task's poll and the interrupts above it, not the sum of everything
 joined into one future. Futures stay what a task waits on for a while,
