@@ -72,12 +72,19 @@ without the `central` feature, 6 KB the image has no room for
   longer sends LE Rand, so a controller need not support it. The
   `rand_chacha` crate stays for the tests, which define the function over
   the operating system's generator. 6 372 B of flash less.
+- `src/connection_manager.rs`: a link whose peer address the host, not the
+  controller, resolves to a bond's identity keeps that address, an RPA, as
+  the peer's address on the link, which pairing's key check uses (Vol 3
+  Part H §2.2.7, §2.2.8). As published, the bond's identity address took
+  its place, and a phone the node held a bond with failed every new
+  pairing at the DHKey check (bench, 2026-11-10). A test in
+  `src/security_manager/mod.rs` connects such a peer.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
   central's side, so they run only with `central`.
 
-The tests: `cargo test --lib --features security` runs all 62, and
+The tests: `cargo test --lib --features security` runs all 63, and
 `cargo test --lib --no-default-features --features
-peripheral,gatt,derive,default-packet-pool,security` the 48 without
+peripheral,gatt,derive,default-packet-pool,security` the 49 without
 `central`. The integration tests in `tests/` do not build with
 `security`, as published.
 

@@ -1021,7 +1021,10 @@ identity resolving key and the long-term key, as a 64-byte record of two
 slots of the stored-state page (`src/store.rs`, `bark_link::bond`), and
 forgets any other: one phone at a time, and a new pairing replaces the
 last. A pairing that is not authenticated or does not bond leaves the
-bond as it was and its link is closed. The screen says `PHONE UNPAIRED`
+bond as it was and its link is closed. The phone whose bond the node
+keeps pairs anew with a code like any other once it has forgotten the
+node, the log first saying `ble: a phone the node holds a bond with pairs
+again`; a pairing that fails leaves the old bond in place. The screen says `PHONE UNPAIRED`
 until a phone has paired, then `PHONE PUBLIC`, or `PHONE PRIVATE` on a
 node its owner has made private.
 The controller is built with LE privacy, as the host puts the bonded
