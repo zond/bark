@@ -6,7 +6,8 @@
 // writes from a node away from it, which moves between their messages.
 // Somewhere away is the person's home node, whose mailbox answers a
 // fetch as the spec's "Mailbox" says. Around it stand a few neighbours,
-// one of each link quality and of each kind a map draws apart. It takes
+// one of each link quality and of each kind a map draws apart, all but
+// one answering an ask with a status of their own. It takes
 // a firmware update as the node does, and comes back from its reboot
 // running the new version. Public unless its owner makes it private, it
 // also takes guests' links, as the spec's "Phone link", Public, says.
@@ -132,6 +133,48 @@ class FakeNode implements NodeLink {
   }
 
   int _neighboursFrom = 0;
+
+  /// What each neighbour answers an ask with, by its ID in hex: one of
+  /// each kind its screen names apart. The one left out never answers,
+  /// as a neighbour whose question or answer is lost; a test may change
+  /// them.
+  final Map<String, NeighbourStatus> statuses = {
+    _neighbourHex(1): const NeighbourStatus(
+      placed: true,
+      usb: true,
+      heard: 6,
+      strong: 4,
+      proven: 3,
+      version: 9,
+    ),
+    _neighbourHex(2): const NeighbourStatus(placed: true, heard: 3, strong: 1),
+    _neighbourHex(3): const NeighbourStatus(
+      placed: true,
+      carried: true,
+      battery: 82,
+      heard: 2,
+      version: 8,
+    ),
+    _neighbourHex(4): const NeighbourStatus(
+      placed: true,
+      sleepy: true,
+      anchored: true,
+      battery: 57,
+      heard: 4,
+      strong: 2,
+      proven: 1,
+      version: 9,
+    ),
+  };
+
+  static String _neighbourHex(int n) => hex([0xfa, 0x4e, 0, 0, 1, n]);
+
+  /// The IDs, in hex, of the neighbours asked, in order.
+  final List<String> asked = [];
+
+  /// How long after an ask the answer arrives: half the second within
+  /// which an answer comes (spec "Phone link", Ask).
+  static const answerAfter = Duration(milliseconds: 500);
 
   /// The shortest wait a refusal tells, one ban (spec "Bans").
   static const ban = Duration(milliseconds: 1580);
@@ -777,10 +820,35 @@ class FakeNode implements NodeLink {
   Future<void> setPublic(bool v) => _answer(() => public = v);
 
   @override
+  Future<void> subscribeAsk() => _answer(() {});
+
+  /// Sends the question only to a neighbour in its table, as the node
+  /// does; the answer is the owner's, notified if its link is still up.
+  @override
+  Future<void> ask(List<int> id) => _answer(() {
+    if (id.length != nodeIdLen) {
+      throw const AttException(AttError.invalidLength);
+    }
+    final key = hex(id);
+    asked.add(key);
+    if (!neighbours.values.any((n) => hex(n.id) == key)) return;
+    final s = statuses[key];
+    if (s == null) return;
+    _timers.add(
+      Timer(answerAfter, () {
+        if (_owner.connected) _owner.answer.add(Answer(id, s));
+      }),
+    );
+  });
+
+  @override
   Stream<Status> get statusNotified => _owner.status.stream;
 
   @override
   Stream<GivenBack?> get givenBackNotified => _owner.given.stream;
+
+  @override
+  Stream<Answer?> get answerNotified => _owner.answer.stream;
 
   /// Whether it serves phones that have not paired, as a node does
   /// unless its owner makes it private; kept across connections and
@@ -945,6 +1013,7 @@ class _Phone {
   (int, DateTime)? givenBack;
   final status = StreamController<Status>.broadcast();
   final given = StreamController<GivenBack?>.broadcast();
+  final answer = StreamController<Answer?>.broadcast();
 }
 
 /// A guest's link to a public [FakeNode]: Node, Status, Send, Inbox, Given
@@ -1049,6 +1118,10 @@ class FakeGuest implements NodeLink {
   Future<bool> readPublic() => _bonded();
   @override
   Future<void> setPublic(bool public) => _bonded();
+  @override
+  Future<void> subscribeAsk() => _bonded();
+  @override
+  Future<void> ask(List<int> id) => _bonded();
 
   @override
   Future<void> hurry() => _open(() {});
@@ -1058,6 +1131,9 @@ class FakeGuest implements NodeLink {
 
   @override
   Stream<GivenBack?> get givenBackNotified => _phone.given.stream;
+
+  @override
+  Stream<Answer?> get answerNotified => _phone.answer.stream;
 
   @override
   Future<void> get closed => _closed.future;

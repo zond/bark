@@ -307,6 +307,10 @@ class Session extends ChangeNotifier {
   /// The node's neighbour table as last read, from link version 4.
   NeighbourTable? neighbours;
   Future<NeighbourTable>? _readingNeighbours;
+
+  /// What each neighbour answered since they were last asked, by its ID
+  /// in hex, from link version 9.
+  final Map<String, NeighbourStatus> answers = {};
   final _statusSeen = StreamController<Status>.broadcast();
 
   /// Each status the node gives, read or notified: when what it knows
@@ -483,7 +487,8 @@ class Session extends ChangeNotifier {
     );
     _subs
       ..add(link.statusNotified.listen(_onStatus, onError: _badValue))
-      ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue));
+      ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue))
+      ..add(link.answerNotified.listen(_onAnswer, onError: _badValue));
     unawaited(link.closed.then((_) => _detach(link)));
     if (n.version >= publicVersion) await _setRecipient(link, n);
     try {
@@ -500,6 +505,7 @@ class Session extends ChangeNotifier {
     if (n.version >= clockVersion) await _setClock(link);
     if (n.version >= homeVersion) await _keepHome(link, n);
     if (n.version >= publicVersion) await _readPublic(link);
+    if (n.version >= askVersion) await _subscribeAsk(link);
     return true;
   }
 
@@ -650,6 +656,44 @@ class Session extends ChangeNotifier {
     return t;
   }
 
+  /// Subscribes to Ask with the others, at every connection: an answer
+  /// comes within a second of its ask, and a subscription first made by
+  /// the map would be one more write before the first ask. The node
+  /// notifies only answers to asks, so it costs nothing while the map is
+  /// shut.
+  Future<void> _subscribeAsk(NodeLink link) async {
+    try {
+      await link.subscribeAsk();
+    } catch (e) {
+      note('Ask: $e');
+    }
+  }
+
+  /// Asks each of `list` once for its status, forgetting the answers to
+  /// the last asks: the person sees what the neighbours say now. A lost
+  /// question or answer is not asked again, as each costs airtime; the
+  /// person asks again.
+  Future<void> askNeighbours(List<Neighbour> list) async {
+    final link = _owned(askVersion, 'Ask');
+    answers.clear();
+    notifyListeners();
+    for (final n in list) {
+      try {
+        await link.ask(n.id);
+      } catch (e) {
+        note('Ask: ${nodeName(n.id)}: $e');
+        if (_link != link) return;
+      }
+    }
+    note('Ask: asked ${list.length} neighbours');
+  }
+
+  void _onAnswer(Answer? a) {
+    if (a == null) return;
+    answers[hex(a.id)] = a.status;
+    note('Ask: ${nodeName(a.id)} answers ${a.status.lines.join(', ')}');
+  }
+
   /// Gives the node the phone's time and UTC offset, silently: a node
   /// without them only shows no time.
   Future<void> _setClock(NodeLink link) async {
@@ -683,6 +727,7 @@ class Session extends ChangeNotifier {
     nodePublic = null;
     guest = false;
     neighbours = null;
+    answers.clear();
     note('Disconnected');
   }
 

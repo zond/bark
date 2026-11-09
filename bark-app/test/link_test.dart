@@ -104,7 +104,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [8, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [9, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
@@ -221,6 +221,77 @@ void main() {
     expect(q(-1139), Quality.fair);
     expect(q(-1112), Quality.fair);
     expect(q(-1110), Quality.good);
+  });
+
+  test('ask and its answer', () {
+    expect(encodeAsk(to), to);
+    expect(() => encodeAsk([1, 2, 3]), throwsA(isA<Malformed>()));
+    final s = NeighbourStatus(
+      placed: true,
+      sleepy: true,
+      anchored: true,
+      battery: 57,
+      heard: 5,
+      strong: 3,
+      proven: 2,
+      version: 0x01020304,
+    );
+    final b = Answer(to, s).encode();
+    expect(b, [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4]);
+    expect(Answer.len, 15);
+    final d = Answer.decode(b)!;
+    expect(d.id, to);
+    expect(d.status.encode(), s.encode());
+    expect(d.status.lines, [
+      'SLEEPY ANCHORED',
+      'BATTERY 57%',
+      'KNOWN 5/3/2',
+      'V16909060',
+    ]);
+    // Empty before the first answer; short is malformed; the flags'
+    // spare bits and what a later version appends are ignored.
+    expect(Answer.decode([]), isNull);
+    expect(() => Answer.decode(b.sublist(0, 14)), throwsA(isA<Malformed>()));
+    final later = [...b.sublist(0, 6), 0xe7, ...b.sublist(7), 0xaa];
+    expect(Answer.decode(later)!.status.encode(), s.encode());
+    // Each flag is its own bit.
+    for (var bit = 0; bit < 5; bit++) {
+      final one = NeighbourStatus.decode([1 << bit, ...List.filled(8, 0)]);
+      expect(one.encode()[0], 1 << bit);
+    }
+  });
+
+  test('a neighbour\'s status in its screen\'s words', () {
+    String role(bool placed, bool sleepy, bool anchored, bool carried) =>
+        NeighbourStatus(
+          placed: placed,
+          sleepy: sleepy,
+          anchored: anchored,
+          carried: carried,
+        ).role;
+    expect(role(true, true, true, false), 'SLEEPY ANCHORED');
+    expect(role(false, true, false, true), 'SLEEPY NO ANCHOR');
+    expect(role(false, false, false, true), 'RELAY NO PLACE');
+    expect(role(true, false, false, true), 'CARRIED RELAY');
+    expect(role(true, false, false, false), 'FIXED RELAY');
+    String power(int battery, {bool usb = false}) =>
+        NeighbourStatus(battery: battery, usb: usb).power;
+    expect(power(0), 'BATTERY LOW');
+    expect(power(1), 'BATTERY 1%');
+    expect(power(100), 'BATTERY 100%');
+    expect(power(101), 'BATTERY NOT READ');
+    expect(power(254), 'BATTERY NOT READ');
+    expect(power(255), 'BATTERY NOT READ');
+    // On USB the reading is the charger's, whatever byte comes.
+    expect(power(255, usb: true), 'POWER USB');
+    expect(power(40, usb: true), 'POWER USB');
+    expect(NeighbourStatus(battery: 40, usb: true).percent, isNull);
+    // An unknown version is not shown.
+    expect(const NeighbourStatus().lines, [
+      'RELAY NO PLACE',
+      'BATTERY NOT READ',
+      'KNOWN 0/0/0',
+    ]);
   });
 
   test('a guest item, and after in three bytes', () {

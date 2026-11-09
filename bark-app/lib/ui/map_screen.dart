@@ -1,7 +1,9 @@
 // The paired node and the neighbours it knows on a street map, a line to
 // each coloured by the link's quality (spec "Phone link", Neighbours).
 // Read when the screen opens, at every status the node gives and when
-// the person asks.
+// the person asks. When it opens and when the person asks, each
+// neighbour is also asked what its own screen shows (spec "Phone link",
+// Ask), and its marker says it in those words.
 
 import 'dart:async';
 
@@ -82,6 +84,16 @@ class _MapScreenState extends State<MapScreen> {
 
   Session get _s => widget.app.session;
 
+  /// The neighbours are to be asked for their status after the next read
+  /// that succeeds: once when the map opens, perhaps before the node is
+  /// connected, and once each time the person refreshes it. Not at every
+  /// status, as each ask costs airtime.
+  bool _ask = true;
+
+  /// The link they were last asked on: the answers go with it, so a new
+  /// connection asks again.
+  Object? _askedOn;
+
   @override
   void initState() {
     super.initState();
@@ -101,11 +113,24 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _read() async {
     if (!_readable) return;
     try {
-      await _s.readNeighbours();
+      final t = await _s.readNeighbours();
       if (mounted) setState(() => _error = null);
+      final link = _s.link;
+      if ((_ask || link != _askedOn) &&
+          mounted &&
+          (_s.node?.version ?? 0) >= askVersion) {
+        _ask = false;
+        _askedOn = link;
+        await _s.askNeighbours(t.list);
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
+  }
+
+  Future<void> _refresh() {
+    _ask = true;
+    return _read();
   }
 
   @override
@@ -117,7 +142,7 @@ class _MapScreenState extends State<MapScreen> {
           IconButton(
             tooltip: 'Read again',
             icon: const Icon(Icons.refresh),
-            onPressed: _readable ? _read : null,
+            onPressed: _readable ? _refresh : null,
           ),
         ],
       ),
@@ -203,13 +228,7 @@ class _MapScreenState extends State<MapScreen> {
               ),
             MarkerLayer(
               markers: [
-                for (final m in t.list)
-                  Marker(
-                    point: _at(m.position),
-                    width: 40,
-                    height: 40,
-                    child: _NeighbourMarker(m, t, own),
-                  ),
+                for (final m in t.list) _neighbour(m, t, own),
                 if (own != null)
                   Marker(
                     point: own,
@@ -248,6 +267,20 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Marker _neighbour(Neighbour m, NeighbourTable t, LatLng? own) {
+    final said = _s.answers[hex(m.id)];
+    return Marker(
+      point: _at(m.position),
+      width: said == null
+          ? _NeighbourMarker.size
+          : _NeighbourMarker.labelledWidth,
+      height: said == null
+          ? _NeighbourMarker.size
+          : _NeighbourMarker.labelledHeight,
+      child: _NeighbourMarker(m, t, own, said),
     );
   }
 
@@ -315,7 +348,18 @@ class _NeighbourMarker extends StatelessWidget {
   final Neighbour n;
   final NeighbourTable t;
   final LatLng? own;
-  const _NeighbourMarker(this.n, this.t, this.own);
+
+  /// What it answered when asked, if it did.
+  final NeighbourStatus? said;
+  const _NeighbourMarker(this.n, this.t, this.own, this.said);
+
+  static const size = 40.0;
+  static const _label = 14.0;
+
+  /// With its answer's first line under the icon; as much again above,
+  /// so that the icon stays centred on its place.
+  static const labelledWidth = 120.0;
+  static const labelledHeight = size + 2 * _label;
 
   @override
   Widget build(BuildContext context) {
@@ -324,6 +368,17 @@ class _NeighbourMarker extends StatelessWidget {
     final far = own == null
         ? null
         : const Distance().as(LengthUnit.Meter, own!, _at(n.position));
+    final icon = Icon(
+      n.carried
+          ? Icons.directions_walk
+          : n.sleepy
+          ? Icons.battery_std
+          : Icons.cell_tower,
+      size: 32,
+      color: qualityColor(q),
+      semanticLabel: nodeName(n.id),
+    );
+    final s = said;
     return GestureDetector(
       onTap: () => showModalBottomSheet<void>(
         context: context,
@@ -333,18 +388,30 @@ class _NeighbourMarker extends StatelessWidget {
           'Last heard ${n.ageS} s ago',
           if (far != null) '${far.round()} m away',
           ...neighbourFlags(n),
+          if (s != null) 'Its screen: ${s.lines.join(', ')}',
         ]),
       ),
-      child: Icon(
-        n.carried
-            ? Icons.directions_walk
-            : n.sleepy
-            ? Icons.battery_std
-            : Icons.cell_tower,
-        size: 32,
-        color: qualityColor(q),
-        semanticLabel: nodeName(n.id),
-      ),
+      child: s == null
+          ? icon
+          : Column(
+              children: [
+                const SizedBox(height: _label),
+                SizedBox(
+                  height: size,
+                  child: Center(child: icon),
+                ),
+                Container(
+                  height: _label,
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  color: Theme.of(context).colorScheme.surface,
+                  child: Text(
+                    s.role,
+                    style: const TextStyle(fontSize: 10),
+                    maxLines: 1,
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }

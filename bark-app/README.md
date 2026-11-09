@@ -144,7 +144,14 @@ is a prototype for the bench, not the app people will carry.
   the node itself is a target. Tapping one shows its name, RSSI,
   margin, quality, when it was last heard, how far it is from the node,
   and its flags. The map reads Neighbours when it opens, at every
-  status the node gives, and when the refresh button is pressed. The
+  status the node gives, and when the refresh button is pressed. When
+  it opens and when refreshed, on a node of link version 9 or later, it
+  also asks each neighbour once, through Ask, what its own screen shows;
+  a neighbour that answers has its role under its marker in its
+  screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
+  details add the role, its power, the neighbours it knows and its
+  firmware version, as its screen says them. An ask costs airtime, so
+  one lost is not repeated: the person refreshes. The
   node is drawn at its own position, not its address, so a sleepy node
   is not drawn on its anchor; a node without a place has its
   neighbours drawn with no lines. Tiles come from the network and are

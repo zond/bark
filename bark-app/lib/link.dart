@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 8;
+const int linkVersion = 9;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -50,6 +50,9 @@ class Uuids {
   /// From link version 8, write only: a guest reads its items through
   /// [inbox].
   static const guest = '28bc000f-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 9, the paired phone's alone.
+  static const ask = '28bc0010-a1b8-4893-9537-2ee3559d7644';
 
   /// What a public node advertises in place of [service], which no
   /// attribute has (spec "Phone link", Public).
@@ -848,6 +851,153 @@ class GuestItem {
     return GuestItem(
       (b[0] << 16) | (b[1] << 8) | b[2],
       InboxMessage(_u32(b, itemNumberLen), b.sublist(header)),
+    );
+  }
+}
+
+/// The link version that has Ask.
+const int askVersion = 9;
+
+/// Ask, write: the neighbour, by its node ID, that the node asks for its
+/// status.
+Uint8List encodeAsk(List<int> id) {
+  if (id.length != nodeIdLen) throw const Malformed('node ID');
+  return Uint8List.fromList(id);
+}
+
+/// What a neighbour's own screen shows, as it answers an ask (spec
+/// "Phone link", Ask).
+class NeighbourStatus {
+  static const len = 1 + 1 + 1 + 1 + 1 + 4;
+
+  /// The battery byte at or below the level at which a fixed relay turns
+  /// sleepy.
+  static const batteryLow = 0;
+
+  /// The highest battery byte that is a percentage.
+  static const batteryFull = 100;
+
+  /// The battery byte while the level has not been read, and on USB.
+  static const batteryNotRead = 255;
+
+  final bool placed;
+  final bool sleepy;
+
+  /// Sleepy, with a relay that holds its mail.
+  final bool anchored;
+  final bool carried;
+  final bool usb;
+
+  /// The battery byte as sent; any byte from 101 to 254 means not read.
+  final int battery;
+
+  /// Neighbours whose heartbeats it hears now.
+  final int heard;
+
+  /// Of them, those heard loudly enough that a full frame reaches it
+  /// through a fade.
+  final int strong;
+
+  /// Of them, those that have taken a message from it.
+  final int proven;
+
+  /// The firmware image's version it runs; 0 when unknown.
+  final int version;
+
+  const NeighbourStatus({
+    this.placed = false,
+    this.sleepy = false,
+    this.anchored = false,
+    this.carried = false,
+    this.usb = false,
+    this.battery = batteryNotRead,
+    this.heard = 0,
+    this.strong = 0,
+    this.proven = 0,
+    this.version = 0,
+  });
+
+  /// The percentage left; null while low, not read or on USB, as the
+  /// reading on USB is the charger's.
+  int? get percent =>
+      !usb && battery > batteryLow && battery <= batteryFull ? battery : null;
+
+  int get _flags => [
+    placed,
+    sleepy,
+    anchored,
+    carried,
+    usb,
+  ].indexed.fold(0, (f, e) => f | ((e.$2 ? 1 : 0) << e.$1));
+
+  Uint8List encode() => Uint8List.fromList([
+    _flags,
+    battery,
+    heard,
+    strong,
+    proven,
+    ..._be32(version),
+  ]);
+
+  /// The flags' spare bits, for a later version, are ignored.
+  static NeighbourStatus decode(List<int> b) {
+    if (b.length < len) throw const Malformed('neighbour status');
+    bool flag(int bit) => b[0] & (1 << bit) != 0;
+    return NeighbourStatus(
+      placed: flag(0),
+      sleepy: flag(1),
+      anchored: flag(2),
+      carried: flag(3),
+      usb: flag(4),
+      battery: b[1],
+      heard: b[2],
+      strong: b[3],
+      proven: b[4],
+      version: _u32(b, 5),
+    );
+  }
+
+  /// What it is, in the words of its screen's first line.
+  String get role => sleepy
+      ? (anchored ? 'SLEEPY ANCHORED' : 'SLEEPY NO ANCHOR')
+      : !placed
+      ? 'RELAY NO PLACE'
+      : carried
+      ? 'CARRIED RELAY'
+      : 'FIXED RELAY';
+
+  /// Its power, as its screen says it.
+  String get power {
+    if (usb) return 'POWER USB';
+    if (battery == batteryLow) return 'BATTERY LOW';
+    final p = percent;
+    return p == null ? 'BATTERY NOT READ' : 'BATTERY $p%';
+  }
+
+  /// The neighbours it knows, as its screen says them.
+  String get known => 'KNOWN $heard/$strong/$proven';
+
+  /// The lines of its screen that an answer carries; the version only
+  /// when known.
+  List<String> get lines => [role, power, known, if (version != 0) 'V$version'];
+}
+
+/// Ask, read and notify: the latest answer, a neighbour's ID and status;
+/// null before the first since the node booted.
+class Answer {
+  static const len = nodeIdLen + NeighbourStatus.len;
+  final Uint8List id;
+  final NeighbourStatus status;
+  Answer(List<int> id, this.status) : id = Uint8List.fromList(id);
+
+  Uint8List encode() => Uint8List.fromList([...id, ...status.encode()]);
+
+  static Answer? decode(List<int> b) {
+    if (b.isEmpty) return null;
+    if (b.length < len) throw const Malformed('Ask');
+    return Answer(
+      b.sublist(0, nodeIdLen),
+      NeighbourStatus.decode(b.sublist(nodeIdLen)),
     );
   }
 }
