@@ -348,11 +348,8 @@ class Messenger {
       return true;
     }
     await contacts.put(
-      (known?.copyWith(card: card) ?? Contact(card, '')).heard(
-        h.sent,
-        h.address,
-        now(),
-      ),
+      (known?.copyWith(card: card) ?? Contact(card, '', cameByMessage: true))
+          .heard(h.sent, h.address, now()),
     );
     await _records(m, card.key, h, rs.skip(1), mailbox, intro: true);
     return true;

@@ -143,6 +143,8 @@ void main() {
       final f = friendOf(p, node);
       expect(f.name, 'Fake friend');
       expect(f.verified, isFalse);
+      expect(f.cameByMessage, isTrue);
+      expect(f.unverified, isTrue);
       expect(s.received.map((r) => r.from), [f.key, f.key]);
       expect((p.sessionStore.state!['received'] as List).length, 2);
       expect(s.address.toString(), '${Address(FakeNode.gps, FakeNode.id)}');

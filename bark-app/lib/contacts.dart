@@ -52,6 +52,14 @@ class Contact {
   /// messages still open, but out of the contacts list.
   final bool archived;
 
+  /// Made from a first message that came, not from a card the person
+  /// scanned or pasted: until verified, anyone could have sent it.
+  final bool cameByMessage;
+
+  /// Whether to say it is not verified: only a contact that came by
+  /// message, as a card taken from its holder's hand needs no proof.
+  bool get unverified => cameByMessage && !verified;
+
   Contact(
     this.card,
     this.chosen, {
@@ -62,6 +70,7 @@ class Contact {
     this.heardSent,
     this.heardAt,
     this.archived = false,
+    this.cameByMessage = false,
   });
 
   /// How long where they wrote from is taken as where they are: in a
@@ -111,6 +120,7 @@ class Contact {
     int? heardSent,
     DateTime? heardAt,
     bool? archived,
+    bool? cameByMessage,
   }) => Contact(
     card ?? this.card,
     name ?? chosen,
@@ -121,6 +131,7 @@ class Contact {
     heardSent: heardSent ?? this.heardSent,
     heardAt: heardAt ?? this.heardAt,
     archived: archived ?? this.archived,
+    cameByMessage: cameByMessage ?? this.cameByMessage,
   );
 
   /// After a message from them, written at `sent` with `address` in its
@@ -147,6 +158,7 @@ class Contact {
     'heardSent': heardSent,
     'heardAt': heardAt?.toIso8601String(),
     'archived': archived,
+    'cameByMessage': cameByMessage,
   };
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
@@ -169,6 +181,9 @@ class Contact {
         : DateTime.parse(j['heardAt'] as String),
     // Absent in a file from before archiving: nothing was archived.
     archived: j['archived'] as bool? ?? false,
+    // Absent in a file from before the flag: taken as scanned, so no
+    // contact gains a warning it did not have reason for.
+    cameByMessage: j['cameByMessage'] as bool? ?? false,
   );
 }
 

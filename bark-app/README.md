@@ -97,8 +97,10 @@ is a prototype for the bench, not the app people will carry.
   not, until all are in. **Got it** confirms every part that has come;
   a part that comes after the tap brings the chip back and is confirmed
   with the next tap.
-  A contact whose first message has come but no
-  sealed reply is marked not verified; once it is verified, a text
+  A contact made from a first message that came, with no sealed reply
+  yet, is marked not verified, in its thread and its row; one from a
+  card the person scanned or pasted is not, as the card came from its
+  holder. Once it is verified, or for a scanned one, a text
   that came in a first message has a mark of its own, as anyone could
   have made it. A contact whose card is from an app before D162, with
   no home and no node, and who has not written yet, cannot be written

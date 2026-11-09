@@ -430,11 +430,27 @@ void main() {
     expect(find.byTooltip(unverifiedText), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Unverified, the line above the thread says it of every text.
-    await t.runAsync(() => app.contacts.put(olena.copyWith(verified: false)));
+    // Unverified and made from a first message, the line above the
+    // thread says it of every text.
+    await t.runAsync(
+      () => app.contacts.put(
+        olena.copyWith(verified: false, cameByMessage: true),
+      ),
+    );
     await t.pump();
     expect(find.byTooltip(unverifiedText), findsNothing);
     expect(find.textContaining('Not verified yet'), findsOneWidget);
+
+    // Unverified but from a card the person scanned: no line, as the card
+    // came from its holder's hand; a first message is still marked.
+    await t.runAsync(
+      () => app.contacts.put(
+        olena.copyWith(verified: false, cameByMessage: false),
+      ),
+    );
+    await t.pump();
+    expect(find.textContaining('Not verified yet'), findsNothing);
+    expect(find.byTooltip(unverifiedText), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

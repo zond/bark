@@ -69,7 +69,9 @@ class ContactsScreen extends StatelessWidget {
     child: ListTile(
       leading: const CircleAvatar(child: Icon(Icons.person)),
       title: Text(c.name),
-      subtitle: c.card.temporary
+      subtitle: c.unverified
+          ? const Text('Not verified yet')
+          : c.card.temporary
           ? const TemporaryLine()
           : const Text('Has a home node'),
       onTap: () => Navigator.of(context).pushReplacement(

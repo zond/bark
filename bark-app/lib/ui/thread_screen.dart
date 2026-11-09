@@ -159,7 +159,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
         child: Column(
           children: [
             NoticeCard(app),
-            if (contact != null && !contact.verified)
+            if (contact != null && contact.unverified)
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Text(
@@ -182,7 +182,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 padding: const EdgeInsets.all(8),
                 children: [
                   for (final e in c.entries.reversed)
-                    _bubble(context, e, contact?.verified ?? true, archived),
+                    _bubble(
+                      context,
+                      e,
+                      !(contact?.unverified ?? false),
+                      archived,
+                    ),
                 ],
               ),
             ),
