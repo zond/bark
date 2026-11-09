@@ -22,17 +22,17 @@
 //! each entry waiting out one ban (spec "Bans", roadmap D31):
 //!
 //! ```text
-//! (39 + 254) places × 1.58 s = 463.4 s
+//! (39 + 64) places × 1.58 s = 162.9 s
 //! ```
 //!
 //! The most messages a relay can touch in that time within its duty
 //! cycle (spec "Duty cycle cap"): each costs at least an ACK (18 bytes, 16.96 ms) and one
 //! DATA packet with no payload (28 bytes, 22.08 ms), together 39.04 ms;
-//! any 463.4 s carries at most a full bucket and its refill,
-//! 6 s + 9.83 % × 463.4 s = 51.57 s of airtime ([`most_on_air`]), and
-//! ⌊51.57 s / 39.04 ms⌋ = 1320. The records of held messages are not
+//! any 162.9 s carries at most a full bucket and its refill,
+//! 6 s + 9.83 % × 162.9 s = 22.02 s of airtime ([`most_on_air`]), and
+//! ⌊22.02 s / 39.04 ms⌋ = 564. The records of held messages are not
 //! evicted and may be older than that, so the table has room for them on
-//! top: 1320 + 293 = 1613.
+//! top: 564 + 103 = 667.
 //!
 //! # The tried set
 //!
@@ -57,7 +57,7 @@ use crate::ids::NodeId;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::{most_on_air, BAN};
 use crate::tables::neighbours::NEIGHBOURS;
-use crate::tables::send_queue::{HOP_PLACES, SEND_QUEUE};
+use crate::tables::send_queue::{HOP_SLOTS, SEND_QUEUE};
 use crate::time::{Duration, Instant};
 use crate::wire::{ACK_LEN, DATA_HEADER_LEN};
 
@@ -66,12 +66,12 @@ pub const MAX_HOPS: u8 = u8::MAX;
 
 /// How long a full send queue takes to drain with each entry waiting out
 /// one ban; see the module documentation.
-pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_PLACES) as u64);
+pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_SLOTS) as u64);
 
 /// The most messages a relay holds at once: one per place in its send
 /// queue. A message set aside for the delivery queue keeps its place
 /// (`relay/forward.rs`).
-pub const HELD: usize = SEND_QUEUE + HOP_PLACES;
+pub const HELD: usize = SEND_QUEUE + HOP_SLOTS;
 
 /// The most messages a relay can touch in `span`; see the module
 /// documentation.
@@ -85,7 +85,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// Record bound; see the module documentation.
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 1613);
+const _: () = assert!(RECORDS == 667);
 const _: () = assert!(RECORDS <= u16::MAX as usize, "a hint holds a place");
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
@@ -390,11 +390,11 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        // 293 places × one ban, 1.58 s.
-        assert_eq!(DRAIN, BAN.mul(293));
-        assert_eq!(DRAIN.as_millis(), 463_397);
-        assert_eq!(HELD, 293);
-        assert_eq!(RECORDS, 1320 + 293);
+        // 103 places × one ban, 1.58 s.
+        assert_eq!(DRAIN, BAN.mul(103));
+        assert_eq!(DRAIN.as_millis(), 162_900);
+        assert_eq!(HELD, 103);
+        assert_eq!(RECORDS, 564 + 103);
         assert_eq!(core::mem::size_of::<Record>(), 40);
     }
 

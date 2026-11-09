@@ -22,7 +22,11 @@
 //! has made at least `k` hops and sends `k + 1` or more, and place `k + 1`
 //! is free everywhere, so its next hop can take it, unless the count is at
 //! the cap, where the message ends (spec "Hop count"). By induction downwards, every
-//! message held moves.
+//! message held moves. That holds while fewer than [`HOP_SLOTS`] places are
+//! held, which packets of count `c` or less, holding at most `c` places,
+//! cannot reach below count 64; with all held the relay refuses, and a
+//! stall is bounded by the gate's budget and the return to the parent
+//! (roadmap D155).
 //!
 //! Each entry is a frame, what kind of hand-over it is, which decides
 //! what happens when the hand-over fails (spec "Hand-over"), and where
@@ -78,6 +82,13 @@ pub const HOP_WAIT: Duration = Duration::from_secs(30);
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
 pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
+
+/// Hop places held at once: the queue's room beyond the regular room
+/// (spec "Send queue", roadmap D155). The simulated city at the design
+/// rate held at most 3 at once, the district none at once and twice that
+/// rate; holding 64 needs packets of count 64 or more, since packets of
+/// count `c` or less hold at most `c` places.
+pub const HOP_SLOTS: usize = 64;
 
 /// What a queued frame is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,7 +275,7 @@ pub struct Full;
 pub struct SendQueue {
     /// The entry being handed over, or last chosen to be.
     current: Option<usize>,
-    frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_PLACES }>,
+    frames: FixedVec<Outgoing, { SEND_QUEUE + HOP_SLOTS }>,
 }
 
 impl SendQueue {
@@ -308,14 +319,20 @@ impl SendQueue {
     }
 
     /// The highest free hop place for a packet received with `hops`,
-    /// counting `freed` as free.
+    /// counting `freed` as free: none while [`HOP_SLOTS`] are held.
     pub fn free_place(&self, hops: u8, freed: Option<u8>) -> Option<u8> {
         let mut taken = [false; HOP_PLACES + 1];
-        for o in self.iter() {
+        let mut held = 0;
+        for o in self.iter().filter(|o| o.place > 0) {
             taken[o.place as usize] = true;
+            held += 1;
         }
-        if let Some(k) = freed {
+        if let Some(k) = freed.filter(|&k| k > 0) {
             taken[k as usize] = false;
+            held -= 1;
+        }
+        if held >= HOP_SLOTS {
+            return None;
         }
         let top = (hops as usize).min(HOP_PLACES);
         (1..=top).rev().find(|&k| !taken[k]).map(|k| k as u8)
@@ -325,8 +342,13 @@ impl SendQueue {
     /// higher finds one.
     pub fn lowest_free_place(&self) -> Option<u8> {
         let mut taken = [false; HOP_PLACES + 1];
-        for o in self.iter() {
+        let mut held = 0;
+        for o in self.iter().filter(|o| o.place > 0) {
             taken[o.place as usize] = true;
+            held += 1;
+        }
+        if held >= HOP_SLOTS {
+            return None;
         }
         (1..=HOP_PLACES).find(|&k| !taken[k]).map(|k| k as u8)
     }
@@ -564,13 +586,17 @@ mod tests {
         for i in 0..SEND_QUEUE {
             q.push(frame(i as u8)).unwrap();
         }
-        for k in (1..=HOP_PLACES as u8).rev() {
-            assert_eq!(q.free_place(MAX_HOPS, None), Some(k));
+        for k in (HOP_PLACES - HOP_SLOTS + 1..=HOP_PLACES).rev() {
+            assert_eq!(q.free_place(MAX_HOPS, None), Some(k as u8));
             let mut o = frame(0);
-            o.place = k;
+            o.place = k as u8;
             q.push(o).unwrap();
         }
+        // Every slot held: no place, though lower numbers are unheld.
         assert_eq!(q.free_place(MAX_HOPS, None), None);
+        assert_eq!(q.free_place(5, None), None);
+        assert_eq!(q.lowest_free_place(), None);
+        assert_eq!(q.free_place(5, Some(HOP_PLACES as u8)), Some(5));
         assert_eq!(q.push(frame(0)), Err(Full));
     }
 

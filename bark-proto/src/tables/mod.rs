@@ -130,6 +130,7 @@ pub(crate) mod sizes {
         // places from a full heard table over one TTL (spec "Delivery queue").
         assert_eq!(send_queue::SEND_QUEUE, 39);
         assert_eq!(send_queue::HOP_PLACES, 254);
+        assert_eq!(send_queue::HOP_SLOTS, 64);
         assert_eq!(delivery::DELIVERY_QUEUE, 41);
         assert_eq!(delivery::INBOX, 23);
         let sum = tables();
@@ -169,7 +170,7 @@ pub(crate) mod sizes {
             (
                 "send queue",
                 size_of::<send_queue::SendQueue>(),
-                (send_queue::SEND_QUEUE + send_queue::HOP_PLACES) * OUTGOING,
+                (send_queue::SEND_QUEUE + send_queue::HOP_SLOTS) * OUTGOING,
             ),
             (
                 "delivered",

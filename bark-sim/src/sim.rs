@@ -724,6 +724,11 @@ pub struct Sim {
     delivered_by: [u64; 4],
     /// Relay node by ID, as [`key`] gives it.
     pub(crate) relay_index: HashMap<u64, u32>,
+    /// Per node, the most entries its send queue held at once in its
+    /// regular room and in hop places; and every DATA received by the
+    /// node it was for, by its hop count.
+    queue_peaks: Vec<(u16, u16)>,
+    arrival_hops: [u64; 256],
     /// Each anchor's sleepy nodes, as of the update's last sample.
     sleepers: HashMap<u32, Vec<u32>>,
     /// The last heartbeat each node heard, its sender and when.
@@ -1308,6 +1313,8 @@ impl Sim {
             names,
             xy,
             relay_index: (0..n_relays).map(|i| (key(ids[i as usize]), i)).collect(),
+            queue_peaks: vec![(0, 0); ids.len()],
+            arrival_hops: [0; 256],
             sleepy_index: (n_relays..n as u32)
                 .map(|i| (key(ids[i as usize]), i))
                 .collect(),
@@ -1795,6 +1802,44 @@ impl Sim {
         Ok(())
     }
 
+    /// The send queue's peaks over relays and the hop counts DATA arrived
+    /// with (spec "Send queue"): the most, and the 99th and 99.9th
+    /// percentiles.
+    pub fn places_report(&self) -> String {
+        let pct = |v: &[u16], p: f64| v[((v.len() as f64 * p) as usize).min(v.len() - 1)];
+        let mut places: Vec<u16> = self.queue_peaks.iter().map(|p| p.1).collect();
+        let mut regular: Vec<u16> = self.queue_peaks.iter().map(|p| p.0).collect();
+        places.sort_unstable();
+        regular.sort_unstable();
+        let all: u64 = self.arrival_hops.iter().sum();
+        let count_at = |p: f64| {
+            let want = (all as f64 * p).ceil() as u64;
+            let mut seen = 0;
+            for (h, &n) in self.arrival_hops.iter().enumerate() {
+                seen += n;
+                if seen >= want {
+                    return h;
+                }
+            }
+            255
+        };
+        let most = self.arrival_hops.iter().rposition(|&n| n > 0).unwrap_or(0);
+        let busy = places.iter().filter(|&&p| p > 0).count();
+        format!(
+            "send queue peaks over {} nodes: hop places held at once max {} p99.9 {} p99 {} ({} nodes held any); regular room max {} p99.9 {} p99 {}\nDATA received by the node it was for: {all}, hop count p99 {} p99.9 {} max {most}\n",
+            places.len(),
+            places[places.len() - 1],
+            pct(&places, 0.999),
+            pct(&places, 0.99),
+            busy,
+            regular[regular.len() - 1],
+            pct(&regular, 0.999),
+            pct(&regular, 0.99),
+            count_at(0.99),
+            count_at(0.999),
+        )
+    }
+
     /// The update's series, and when each node came to hold the image.
     pub fn update_csv(&self) -> Option<String> {
         self.update.as_ref().map(|u| u.csv())
@@ -2187,6 +2232,13 @@ impl Sim {
             t.event(now, node, &ev, &self.msg_tags);
         }
         self.note_beat(node, &ev);
+        if let Event::Received { bytes, .. } = &ev {
+            if let Ok(bark_proto::wire::Packet::Data(d)) = bark_proto::wire::Packet::decode(bytes) {
+                if d.dst_hop == self.relays[node as usize].id() {
+                    self.arrival_hops[usize::from(d.hops)] += 1;
+                }
+            }
+        }
         if node < self.n_relays {
             self.rx_data = match ev {
                 Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
@@ -2223,6 +2275,10 @@ impl Sim {
         self.was_booting = c.booting();
         let received = matches!(ev, Event::Received { .. });
         c.handle(ev, clock.local(now), &mut |a| buf.push(a));
+        let (regular, places) = c.queue_use();
+        let peak = &mut self.queue_peaks[node as usize];
+        peak.0 = peak.0.max(regular as u16);
+        peak.1 = peak.1.max(places as u16);
         let relays = &self.relays;
         self.boots
             .after_event(node, &relays[node as usize], now, received, |n| {
