@@ -3925,8 +3925,9 @@ grow stale.
 the reset button nearer the top, the user button below the glass. Held
 3 s, the user button flips the role ([nodes](#nodes)) the moment the 3 s
 have passed, while it is still held, and the lines are drawn at once
-with the role it took; the release does nothing, and a shorter press
-nothing either. A press of the reset button resets the chip, and the
+with the role it took; the release does nothing. A shorter press, let
+go before the 3 s, flips the picture as a touch of the pad does, so a
+board whose pad does not answer still reaches its lines. A press of the reset button resets the chip, and the
 node boots the image it ran. The lines label both at their left edge,
 each on the margin nearer its button, after an arrow pointing at it:
 `REBOOT` at the top, and at the bottom the role a hold would turn the
