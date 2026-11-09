@@ -387,8 +387,9 @@ class _NeighbourMarker extends StatelessWidget {
               '${margin.toStringAsFixed(1)} dB over the noise floor',
           'Last heard ${n.ageS} s ago',
           if (far != null) '${far.round()} m away',
-          ...neighbourFlags(n),
-          if (s != null) 'Its screen: ${s.lines.join(', ')}',
+          // Its own screen's lines, one a row, say what the flags would,
+          // from the node itself.
+          if (s != null) ...s.lines else ...neighbourFlags(n),
         ]),
       ),
       child: s == null

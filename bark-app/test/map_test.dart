@@ -233,14 +233,47 @@ void main() {
     expect(find.text('CARRIED RELAY'), findsOneWidget);
     expect(find.text('SLEEPY ANCHORED'), findsOneWidget);
 
-    // The sleepy one's details say all its answer carries.
+    // The sleepy one's details say its screen's lines, one a row right
+    // under its distance, in place of the app's own flags.
     Finder icon(String label) =>
         find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
     final sleepy = list.singleWhere((n) => n.sleepy);
     await t.tap(icon(nodeName(sleepy.id)));
     await t.pumpAndSettle();
+    final sheet = find.byType(BottomSheet);
+    Finder line(String text) =>
+        find.descendant(of: sheet, matching: find.text(text));
+    final rows = [
+      find.descendant(of: sheet, matching: find.textContaining('m away')),
+      line('SLEEPY ANCHORED'),
+      line('BATTERY 57%'),
+      line('KNOWN 4/2/1'),
+      line('V9'),
+    ];
+    for (final r in rows) {
+      expect(r, findsOneWidget);
+    }
+    final ys = [for (final r in rows) t.getTopLeft(r).dy];
+    for (var i = 1; i < ys.length; i++) {
+      expect(ys[i], greaterThan(ys[i - 1]));
+    }
+    expect(line('sleepy'), findsNothing);
+    expect(line('position from a map point'), findsNothing);
+    expect(find.textContaining('Its screen'), findsNothing);
+    await t.tapAt(Offset.zero);
+    await t.pumpAndSettle();
+
+    // The one that never answers keeps the app's flags.
+    final silent = list.singleWhere(
+      (n) => !fake.statuses.containsKey(hex(n.id)),
+    );
+    await t.tap(icon(nodeName(silent.id)));
+    await t.pumpAndSettle();
     expect(
-      find.text('Its screen: SLEEPY ANCHORED, BATTERY 57%, KNOWN 4/2/1, V9'),
+      find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.text('banned for now: it refused or failed a hand-over'),
+      ),
       findsOneWidget,
     );
     await t.tapAt(Offset.zero);
