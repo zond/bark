@@ -241,6 +241,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               NoticeCard(app),
               ..._connection(),
               ..._public(),
+              ..._unpair(),
               ..._home(),
               ..._firmware(),
               ..._battery(),
@@ -422,6 +423,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onChanged: (v) => _try(() => s.writePublic(v), 'Setting Public failed'),
       ),
     ];
+  }
+
+  /// The owner's way to give the node up, from link version 12.
+  List<Widget> _unpair() {
+    final s = app.session;
+    final n = s.node;
+    if (n == null || s.guest || n.version < unpairVersion) return [];
+    return [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          icon: const Icon(Icons.link_off),
+          label: const Text('Unpair this node'),
+          onPressed: _askUnpair,
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _askUnpair() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unpair this node?'),
+        content: const Text(
+          'The node forgets this phone. Its screen then says UNPAIRED, '
+          'and it is public again, serving any phone nearby. Anyone at '
+          'the node can pair with it by the code on its screen.\n\n'
+          'Your texts and contacts stay on this phone.\n\n'
+          'The phone may still list the node in its Bluetooth settings; '
+          'you can remove it there.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Unpair'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _try(() async {
+      await app.session.unpair();
+      if (mounted) say(context, 'Unpaired: the node is public again');
+    }, 'Unpairing failed');
   }
 
   /// The search for the paired node, which the person can stop until

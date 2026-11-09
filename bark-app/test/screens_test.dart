@@ -989,6 +989,45 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('the owner unpairs, after the dialog says what follows', (
+    t,
+  ) async {
+    final app = await model(t);
+    app.setFake(true);
+    await app.connectFake();
+    await app.session.setPaired(nodeName(FakeNode.id));
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    final unpair = find.text('Unpair this node');
+    await t.ensureVisible(unpair);
+    await t.tap(unpair);
+    await t.pumpAndSettle();
+    expect(find.textContaining('forgets this phone'), findsOneWidget);
+    expect(find.textContaining('UNPAIRED'), findsOneWidget);
+    expect(find.textContaining('public again'), findsOneWidget);
+    expect(find.textContaining('code on its screen'), findsOneWidget);
+    expect(find.textContaining('texts and contacts stay'), findsOneWidget);
+    expect(find.textContaining('Bluetooth settings'), findsOneWidget);
+    // Cancel changes nothing.
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(app.fakeNode!.paired, isTrue);
+    await t.tap(unpair);
+    await t.pumpAndSettle();
+    await t.tap(find.widgetWithText(FilledButton, 'Unpair'));
+    await t.runAsync(() => Future<void>.delayed(Duration.zero));
+    await t.pumpAndSettle();
+    // The node forgot the bond and ended the link; the app forgot it.
+    expect(app.fakeNode!.paired, isFalse);
+    expect(app.fakeNode!.public, isTrue);
+    expect(app.session.connected, isFalse);
+    expect(app.session.pairedWith, isNull);
+    expect(app.pairedNode, isNull);
+    expect(find.text('Unpair this node'), findsNothing);
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets('the owner\'s Public switch; a guest\'s line, without the '
       'owner\'s settings', (t) async {
     final app = await model(t);

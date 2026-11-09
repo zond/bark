@@ -459,6 +459,9 @@ class BleLink implements NodeLink {
       _write(Uuids.public, encodePublic(public));
 
   @override
+  Future<void> unpair() => _write(Uuids.public, encodeUnpair());
+
+  @override
   Future<void> setGuestAfter(int number) =>
       _write(Uuids.guest, encodeAfter(number));
 

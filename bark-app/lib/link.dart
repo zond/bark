@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 11;
+const int linkVersion = 12;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -830,6 +830,13 @@ Uint8List encodeRecipient(int tag) {
 
 /// Public, write: whether the node serves phones that have not paired.
 Uint8List encodePublic(bool public) => Uint8List.fromList([public ? 1 : 0]);
+
+/// The link version whose Public takes the owner's unpairing.
+const int unpairVersion = 12;
+
+/// Public, write: the node is to forget its bond (spec "Phone link",
+/// Public).
+Uint8List encodeUnpair() => Uint8List.fromList([2]);
 
 /// Public, read.
 bool decodePublic(List<int> b) {

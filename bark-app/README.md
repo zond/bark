@@ -154,7 +154,14 @@ is a prototype for the bench, not the app people will carry.
   it**, as a guest), the node the phone is paired with, and how the
   connected node fares; on the paired node of link version 7 or later
   the switch **Public: serve phones without pairing**, on unless the
-  owner turns it off (Public nodes, below). Then the home node: make
+  owner turns it off (Public nodes, below), and from link version 12
+  **Unpair this node**: a dialog says that the node forgets this phone,
+  shows `UNPAIRED` and is public again, that anyone at the node can pair
+  with it by the code on its screen, that texts and contacts stay on the
+  phone, and that the phone may still list the node in its Bluetooth
+  settings, where it can be removed; on **Unpair** the node forgets its
+  bond and ends the link, and the app forgets the node and looks for it
+  no more. Then the home node: make
   the connected node your home if it is not, or none; the dialog says
   so, and on **Go ahead** your new card goes to every contact; **Send
   my card**, as on the first screen; clear the mailbox key of a node
@@ -737,7 +744,7 @@ a phone (Trying it, With a node).
    them down**.
    A conversation with **Fake friend** holds their two
    messages.
-3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 11,
+3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 12,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -819,7 +826,7 @@ a phone (Trying it, With a node).
    sleepy ones counted, or "Hears no other node yet: texts wait here";
    and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
-3. **Debug** shows link version 11, the node's clock (from its GPS if it
+3. **Debug** shows link version 12, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy

@@ -112,9 +112,15 @@ void main() {
     expect(() => GivenBack.decode([1, 2, 3]), throwsA(isA<Malformed>()));
   });
 
+  test('public and the unpairing', () {
+    expect(encodePublic(false), [0]);
+    expect(encodePublic(true), [1]);
+    expect(encodeUnpair(), [2]);
+  });
+
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [11, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);

@@ -616,6 +616,20 @@ class Session extends ChangeNotifier {
     return nodePublic!;
   }
 
+  /// Has the node forget this phone's bond, and forgets the node here:
+  /// the app no longer looks for it (spec "Phone link", Public).
+  Future<void> unpair() async {
+    final link = _owned(unpairVersion, 'Unpairing');
+    final name = pairedWith;
+    await link.unpair();
+    pairedWith = null;
+    pairingLost = false;
+    note('Pairing: unpaired${name == null ? '' : ' from $name'}');
+    notifyListeners();
+    await save();
+    await link.close();
+  }
+
   /// Gives the person's home its key, silently, and reads Home. A home
   /// may have been reflashed, or the identity restored from its words;
   /// the node changes nothing when it holds that key already.

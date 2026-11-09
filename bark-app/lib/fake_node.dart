@@ -879,6 +879,17 @@ class FakeNode implements NodeLink {
   @override
   Future<void> setPublic(bool v) => _answer(() => public = v);
 
+  /// Forgets this phone's bond, as the node does: public again, its
+  /// owner's tag gone, and this phone's next link refused, as the phone
+  /// still holds its half of the bond; the link ends after the answer.
+  @override
+  Future<void> unpair() => _answer(() {
+    public = true;
+    ownerTag = null;
+    paired = false;
+    scheduleMicrotask(close);
+  });
+
   @override
   Future<void> subscribeAsk() => _answer(() {});
 
@@ -1180,6 +1191,8 @@ class FakeGuest implements NodeLink {
   Future<bool> readPublic() => _bonded();
   @override
   Future<void> setPublic(bool public) => _bonded();
+  @override
+  Future<void> unpair() => _bonded();
   @override
   Future<void> subscribeAsk() => _bonded();
   @override
