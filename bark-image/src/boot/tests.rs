@@ -514,8 +514,35 @@ fn an_image_written_by_other_means_is_checked_and_swapped_in() {
     write(&b);
     let s = written(&header_for(&b, RUNNING + 1)).unwrap();
     now(s.finish()).unwrap();
+    // The record keeps the header as signed, as from the phone.
+    let signed = recorded(&board);
+    assert_eq!(signed, header_for(&b, RUNNING + 1));
+    assert_eq!(sign::verify(&signed, &keys()), Ok(1));
     assert_eq!(boot(&board), Ok(Boot::Trial));
     assert_eq!(active(&board, b.len()), b);
+}
+
+/// The header in the record.
+fn recorded(board: &Board) -> [u8; HEADER_LEN] {
+    let mut h = [0u8; HEADER_LEN];
+    part(&board.internal, RECORD)
+        .read(crate::record::HEADER_AT, &mut h)
+        .unwrap();
+    h
+}
+
+#[test]
+fn the_record_keeps_the_header_as_signed() {
+    let (a, b) = (a(), b());
+    let board = board(&a);
+    stage(&board, &b).unwrap();
+    let signed = recorded(&board);
+    assert_eq!(signed, header_for(&b, RUNNING + 1));
+    // The key that signed it, which the node names once it runs it.
+    assert_eq!(sign::verify(&signed, &keys()), Ok(1));
+    assert_eq!(boot(&board), Ok(Boot::Trial));
+    assert_eq!(confirm(&board.internal), Ok(Started::Confirmed));
+    assert_eq!(recorded(&board), header_for(&b, RUNNING + 1));
 }
 
 /// Run `step` with the power cut at its first, second, ... flash
