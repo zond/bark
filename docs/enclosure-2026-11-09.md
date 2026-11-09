@@ -12,16 +12,17 @@ from them, what is still open, and what the first print must show.
 The box holds the T-Echo in its own stock case, as the bench boards
 are: the case already holds the board, cell and screen together, carries
 the antenna jack, and has a published 3D model. The stock antenna
-stays: the firmware's 10 dBm cap meets the 10 mW ERP limit only because
-that antenna has no gain over a dipole (`bark-fw/README.md`).
+stays, screwed straight onto the jack: the firmware's 10 dBm cap meets
+the 10 mW ERP limit only because that antenna has no gain over a dipole
+(`bark-fw/README.md`).
 
 Sizes below are read from the board maker's 3D model of the cased T-Echo,
 `dimensions/t-echo_3d.stl` in its repository
 (<https://github.com/Xinyuan-LilyGO/T-Echo>, fetched 2026-11-09), by
-taking the extent of its triangles in each region. The model's axes are
-kept as the box's: x along the case with the antenna end at x−, y from
-the back (y−) to the screen (y+), z from the USB-C face (z−) to the
-button face (z+), in mm.
+taking the extent of its triangles in each region, in the model's own
+axes: x along the case with the antenna end at x−, y from the back (y−)
+to the screen (y+), z from the USB-C face (z−) to the button face (z+),
+in mm.
 
 | What | Where (mm) | How it was read |
 |---|---|---|
@@ -33,49 +34,70 @@ button face (z+), in mm.
 | screen window | y+ face, x about ±14.5, z about ±14 | unused here |
 
 The maker's pin map image (`image/T-ECHO.jpg`) labels the side buttons
-as reset (nearer the antenna end) and user (P1.10), and shows the
-touch pad at the top of the case. The schematic (`schematic/T-Echo_Schematic.pdf`)
-shows a TP4054 charger and a separate GPS antenna net; where the GPS
-antenna sits inside the case is not in any drawing found.
+as reset (nearer the antenna end) and user (P1.10), shows the touch pad
+at the top of the case, and marks a BME280 sensor as optional. The
+schematic (`schematic/T-Echo_Schematic.pdf`) shows a TP4054 charger and
+a separate GPS antenna net; where the GPS antenna sits inside the case
+is not in any drawing found.
 
 Not in any source, so estimated and named as parameters in the script,
 each to be measured on the parts in hand before the first print:
 
 | Parameter | Estimate | Measure |
 |---|---|---|
-| `ANT_LEN`, `ANT_D` | 60 mm long, 16 mm at the base | the stock 433 MHz antenna, by caliper; the estimate is from the pin map photo's scale |
-| `ADAPTER_REACH`, `ADAPTER_RISE` | 12 mm, 10 mm | the right-angle SMA adapter (below), from the jack's face to its upright axis, and from its horizontal axis to the face the antenna seats on |
-| `PLUG_LEN` | 28 mm | the USB-C plug's body and strain relief, from the case face to where the cable is free |
+| `ANT_LEN`, `ANT_D` | 60 mm above the jack, 16 mm at the base | the stock 433 MHz antenna, by caliper; the estimate is from the pin map photo's scale |
+| `PLUG_LEN` | 28 mm | the straight USB-C plug from the case face to where the cable is free; one maker's plug body is 23.7 mm long (Lindy 32005 data sheet) |
+| `PLUG_W`, `PLUG_T` | 12 × 7 mm | the plug body across the port's long and short sides; that maker's is 10.9 × 6.5 mm |
 | `CABLE_D` | 4.0 mm | the panel's USB cable |
+| `BEND_R` | 38 mm | the cable's smallest bend radius, from its maker if given (below) |
 
 ## On a Swedish roof
 
 **Temperature.** About −25 °C to +35 °C in the shade, more in sun on a
 roof. The box makes no heat of its own worth counting: a relay draws
-6.4 mA (D81), 24 mW, so the cell sits at the air's temperature by night
+6.4 mA (D81), 24 mW, so the case sits at the air's temperature by night
 and above it in sun.
 
-**The cell in the cold.** The T-Echo's cell is 850 mAh. Its maker's
-data sheet was not found; a cell of the same size, Grepow
-GRP704230 (835 mAh, specification approval sheet, rev. A), allows
-charge only from 10 to 45 °C and discharge from −20 to 60 °C, and gives
-at least 70 % of its capacity at −20 °C. The usual floor for charging
-Li-ion is 0 °C; below it, charging plates lithium on the anode. So below
-the cell's floor nothing may charge it. The board cannot see to that:
-the TP4054 has no temperature input and its supply is VBUS, so the board
-charges whenever USB power is there, at any temperature, and the
-firmware has no line to stop it. The cut must come before the USB: the
-panel's controller, or a switch in its output, must give no power while
-the cell is below its floor or above 45 °C. Below −20 °C the cell is
-outside its rating; at 6.4 mA, under a hundredth of its capacity an
-hour, it will most likely still deliver, with less capacity.
+**What each part is rated for.**
 
-**What this means in winter.** In a cold spell the relay lives on its
-cell, whatever the sun does: 80 % of 850 mAh lasts 106 h at 6.4 mA
-(D81), about 74 h at the 70 % the cell keeps at −20 °C. After that D81
-turns it sleepy. A roof relay on this cell is down in any cold spell
-longer than about three days. The panel cannot fix that; a larger cell
-that is kept warm enough to charge can (open questions).
+| Part | Runs | Stored | Source |
+|---|---|---|---|
+| nRF52840 | −40 to 85 °C | | nRF52840 Product Specification, recommended operating conditions |
+| SX1262 | −40 to 85 °C | | SX1261/2 data sheet, operating range |
+| L76K GPS | −40 to 85 °C | −40 to 90 °C | Quectel L76K specification V1.4 (in the maker's repository) |
+| e-paper | 0 to 50 °C | −25 to 70 °C | the panel is a GDEH0154D67 (`bark-fw/src/display.rs`); its sheet was not found, so these are from its sibling GDEY0154D67's Good Display data sheet |
+| cell, discharge | −20 to 60 °C, at least 70 % of capacity at −20 °C | | Grepow GRP704230 (below) |
+| cell, charge | 10 to 45 °C for that cell; 0 °C is the usual floor | | same |
+
+The T-Echo's cell is 850 mAh; its maker's data sheet was not found, and
+the figures are from a cell of the same size, Grepow GRP704230 (835 mAh,
+specification approval sheet, rev. A). Below the floor, charging plates
+lithium on the anode.
+
+So on its cell the node runs down to the cell's rated −20 °C, and below
+that most likely still, at a load under a hundredth of its capacity an
+hour, with less capacity; the chips are rated to −40 °C. The screen is
+the one part rated only from 0 °C. The roof node does not need it, and
+the firmware draws it at least once an hour on battery
+(`bark-fw/README.md`, "Display"); whether to stop drawing it in the
+cold is open. On panel power the node runs only while the cell is warm
+enough to charge, for the reason in the next paragraph: from 0 °C, or
+10 °C for a cell like the one above.
+
+**Nothing on the board stops the charge.** The TP4054 has no temperature
+input and its supply is VBUS, so the board charges the cell whenever USB
+power is there, at any temperature, and the firmware has no line to the
+charger. The board can read a temperature: the nRF52840's die sensor, to
+±5 °C in 0.25 °C steps over its operating range, that accuracy only
+with the 32 MHz crystal running (nRF52840 Product Specification, TEMP),
+which the firmware stops on battery (D71). It reads it already, for the
+radio's oscillator (`bark-driver/src/tcxo.rs`). The optional BME280 is
+not fitted on the bench boards: their factory firmware reports none
+(`docs/bench-2026-10-30.md`). Either way the firmware could know it is
+cold, and could not stop the charging. The cut must come before the USB:
+the panel's controller, or a switch in its output, must give no power
+while the cell is below its floor or above 45 °C. Since VBUS also runs
+the board, that cut leaves the node on its cell.
 
 **Sun in December.** Stockholm is at 59.3° N. On 21 December the sun is
 at most 90 − 59.3 − 23.4 = 7.2° above the horizon at noon and up for
@@ -91,39 +113,53 @@ south-facing surface:
 | January, mean | 9.1 | 27.3 | 28.5 | 27.9 |
 | February, mean | 25.6 | 54.6 | 55.0 | 52.1 |
 
-A steep panel gets four times the horizontal in December, and
-anything from 60 to 90° gets the same. 75° facing south is chosen: it
-sheds snow, and the summer it gives up does not matter.
+A steep panel gets four times the horizontal in December, and anything
+from 60 to 90° gets the same. 75° facing south is chosen: it sheds snow,
+and the summer it gives up does not matter.
 
-**Panel size.** A relay at 6.4 mA from a 3.7 V cell uses 0.57 Wh a day.
-Between the panel and the cell: the panel's USB regulator, assumed
-85 %; the TP4054, a linear charger from 5 V to about 3.9 V, 78 %; and
-low light and dirt, assumed 80 %; 53 % in all. A panel rated P watts at
-1000 W/m² gives P × H × 0.53 Wh a day, H the day's radiation in kWh/m².
+**The winter balance.** Between the panel and the cell: the panel's USB
+regulator, assumed 85 %; the TP4054, a linear charger from 5 V to about
+3.9 V, 78 %; low light and dirt, assumed 80 %; 53 % in all. A panel
+rated P watts at 1000 W/m² gives P × H × 0.53 Wh a day, H the day's
+radiation in kWh/m²: 0.69 in a mean December at 75°, 0.19 in the worst.
+The loads, at 3.7 V: a relay's radio, 6.4 mA (D81), 0.57 Wh a day; and
+with the GPS tracking as well, 6.4 + 29 = 35.4 mA (D82, L76K Hardware
+Design), 3.14 Wh a day. D82 runs the GPS whenever the node is on
+external power, and a panel's USB is that.
 
-| December at 75° | H, kWh/m² a day | panel for 6.4 mA | for 10 mA |
-|---|---:|---:|---:|
-| mean | 0.69 | 1.6 W | 2.4 W |
-| worst year 2010–2020 | 0.19 | 5.7 W | 8.8 W |
+| Wh a day | 10 W, mean Dec. | 10 W, worst Dec. | 20 W, mean Dec. | 20 W, worst Dec. |
+|---|---:|---:|---:|---:|
+| from the panel | 3.66 | 1.01 | 7.31 | 2.01 |
+| left, radio only (0.57) | +3.09 | +0.44 | +6.75 | +1.45 |
+| left, radio and GPS (3.14) | +0.52 | −2.13 | +4.17 | −1.13 |
 
-D81's 6.4 mA is the radio's average in the simulator's busiest city
-(S4); the rest of the board on battery has not been measured, so the
-10 mA column is a margin, not a measurement. A 10 W panel at 75° covers
-the worst December, when the cell is warm enough to take the charge.
+With no sun the cell carries the relay, from 80 % of 850 mAh (D81):
 
-Two more things follow for the firmware. Under D82 a relay on external
-power runs its GPS all the time, 29 mA, and under D71 its LED and
-crystal; a panel's USB looks like external power, so a solar relay would
-spend its sun on the GPS. Giving the roof node a map point puts its GPS
-in standby for good (D82). And the bench found that a USB-C-to-C cable
-may not power the board (`bark-fw/README.md`, "Flash"), so the panel's
-cable is USB-A to C.
+| Load | at room temperature | at −20 °C (70 %) |
+|---|---:|---:|
+| radio only, 6.4 mA | 106 h, 4.4 days | 74 h, 3.1 days |
+| radio and GPS, 35.4 mA | 19 h, 0.8 days | 13 h, 0.6 days |
+
+Without the panel's power D82 rests the GPS an hour after it goes, so a
+dark day costs the radio's figure after that first hour. What the GPS
+changes is the sunny side: it eats the 10 W panel's December surplus,
+and in the worst December neither panel keeps up. Giving the roof node
+a map point puts the GPS in standby for good (D82), which leaves the
+radio column: the 10 W panel covers even the worst December, the 20 W
+one with three times the margin. All of it holds only while the cell is
+warm enough to charge; in a cold spell the panel gives nothing (above)
+and the cell's days in the second table are all there is. D81's 6.4 mA
+is the radio's average in the simulator's busiest city (S4); the rest of
+the board on battery has not been measured.
+
+The bench found that a USB-C-to-C cable may not power the board
+(`bark-fw/README.md`, "Flash"), so the panel's cable is USB-A to C.
 
 **Snow and ice.** Snow can bury the box for weeks. Nothing on the node
 depends on seeing it: the screen stays inside, unseen, and the node is
 read through the phone and the mesh, which also removes the window's
 sealing and the question of snow over it. The openings are all in the
-lid, and there are several: two drain holes, four latch slots and the
+lid, and there are several: two drain holes, six latch slots and the
 cable slot, besides the joint itself. Ice may close some; it will
 rarely close all. The lid should hang clear of the snow: mount the box
 with its bottom well above the depth snow lies on that roof.
@@ -143,8 +179,8 @@ the lid goes on, and the box is shut indoors, warm.
 there). At 26 m/s the basic pressure is ½ × 1.25 kg/m³ × 26² = 420 Pa;
 at 20 m over open ground the gust factor raises it to about 1.2 kPa
 (EN 1991-1-4, exposure factor about 2.8). The box with its pad shows
-0.012 m² to the wind, so with a force coefficient of 2 it takes about
-30 N. Two 12 mm stainless hose clamps hold that many times over. A
+0.018 m² to the wind, so with a force coefficient of 2 it takes about
+42 N. Two 12 mm stainless hose clamps hold that many times over. A
 10 W panel, about 0.09 m², takes about 210 N and goes on its own
 bracket, never on the box.
 
@@ -158,33 +194,46 @@ the drains and out.
 ## The design
 
 **Shape and orientation.** One printed body, closed on every side but
-the bottom; a lid that snaps into the bottom. The case stands with its
-USB-C face down towards the lid, its back to the wall and its screen
-facing out. The cavity has one outline from the lid up to the case, so
-the case slides in from below with antenna and cable attached. Inside:
-crush ribs on the front, back and right walls that press 0.15 mm into
-the case, so it does not rattle; a shoulder over the logo part and three
-stops under the ceiling that hold it from above, clear of the two
-buttons, which the shell never presses; and two posts on the lid that
-hold it up against them. The box is 96 × 30 mm and 118 mm tall, 124 mm
-wide over its mounting ears and 38 mm deep with its back pad.
+the bottom; a lid that snaps into the bottom. The case stands on end,
+its antenna jack up, its back to the wall and its screen facing out, so
+the stock antenna stands straight up on the jack, polarised like every
+other node's. The USB-C port then faces sideways. Inside the body are
+three spaces, each open down to the lid, so that the case slides in from
+below with antenna and cable on: a column round the case, a tower over
+the antenna, and a bay beside the port where the cable turns down. In
+the column: crush ribs on the front, back and both side walls, clear of
+the buttons, that press 0.15 mm into the case so it does not rattle; a
+shoulder and a stop over the case's two upper faces that hold it from
+above; and two posts on the lid that hold it up against them. The
+shell never presses the buttons.
+
+**The cable's bay.** A straight plug stays in the port, and the cable
+turns 90° down to the lid beside it. Lindy's data sheet for a USB 2.0
+Type-C cable (32005) gives a 3.8 mm jacket and a 38 mm minimum bend
+radius, ten diameters; the rule of thumb of five diameters, 20 mm for a
+4 mm cable, is half that. The model follows the maker: the bay reaches
+28 mm of plug, 38 mm of bend and the cable's radius and a margin beyond
+the case, and adds 68.7 mm to the box's width. At 20 mm it would add
+50.7 mm. `BEND_R` takes the figure for the cable actually used.
+
+**Size.** With a 38 mm bend: 131 mm wide, 30 mm deep, 164 mm tall over
+the antenna's tower; without the bay the box would be 62 mm wide. With
+the back pad and its ears it is 159 mm wide and 38 mm deep. At 20 mm:
+113 mm wide and 146 mm tall, the lid also coming up as the bend shortens.
 
 **Antennas inside.** Nothing goes through the walls, the antenna
-included. With the USB-C face down, the antenna on the jack would lie
-on its side, polarised across every other node's upright antenna; a
-right-angle SMA adapter stands it upright, and it stands in a tower of
-the body with 4 mm of air around it. ASA's permittivity and loss at
-433 MHz and 1.575 GHz were not found. Taken anywhere in the range of
-the styrene plastics, a relative permittivity up to 3.5 and a loss
-tangent up to 0.02, a 2.4 mm wall absorbs under 0.01 dB at 433 MHz and
-under 0.05 dB at 1.575 GHz, and reflects under 0.1 dB, since the wall is
-a small fraction of a wavelength. The shell costs the signal nothing
-that matters; what it may do is detune the antenna a little, and so
-may a layer of wet snow or ice on it. That is a bench measurement:
-the antenna's match in the box and out of it. Where the GPS antenna
-sits in the case is unknown; nothing metal is between it and the sky
-in any direction, and with a map point (above) the roof node hardly
-needs it.
+included: it stands in a tower of the body with 4 mm of air around it.
+ASA's permittivity and loss at 433 MHz and 1.575 GHz were not found.
+Taken anywhere in the range of the styrene plastics, a relative
+permittivity up to 3.5 and a loss tangent up to 0.02, a 2.4 mm wall
+absorbs under 0.01 dB at 433 MHz and under 0.05 dB at 1.575 GHz, and
+reflects under 0.1 dB, since the wall is a small fraction of a
+wavelength. The shell costs the signal nothing that matters; what it may
+do is detune the antenna a little, and so may a layer of wet snow or ice
+on it. That is a bench measurement: the antenna's match in the box and
+out of it. Where the GPS antenna sits in the case is unknown; nothing
+metal is between it and the sky in any direction, and with a map point
+(above) the roof node hardly needs it.
 
 **Screen and buttons.** The screen is not exposed and not needed. The
 buttons are not reachable from outside. The reset double-tap that the
@@ -200,7 +249,7 @@ back to front, so water on it runs to the front, where the drains and
 the cable slot are. Whatever the mounting, the lid is the bottom: every
 mount below keeps the box upright.
 
-**Snap fit.** Four latch beams lie along the lid's long edges, each
+**Snap fit.** Six latch beams lie along the lid's long edges, each
 standing free of the floor over a slot 4 mm wide, with a tooth at its
 free end that catches a groove in the body wall. The beams bend in the
 plane of the print's layers, so the strain runs along the printed lines
@@ -208,15 +257,14 @@ and not across them: across layers printed ASA holds only 11 MPa, against
 42 MPa along them (Prusament ASA data sheet). The strain at a beam's
 root is 1.5 × thickness × deflection / length² (Bayer, "Snap-Fit Joints
 for Plastics – A Design Guide", Table 1, constant section): 2.0 mm thick,
-1.0 mm tooth, 22 to 25 mm long, 0.48 to 0.62 %. The guide lets an
-amorphous plastic go to about 70 % of its yield strain for one snap and
-60 % of that for snaps repeated; Prusament ASA yields at 3.4 %, so
-1.4 %. The script halves that for the cold and checks every beam
-against 0.71 %. A beam pushes back with about 2 to 2.5 N (modulus
-1.7 GPa); through the 30° lead-in, with a friction coefficient of 0.5
-assumed, the lid goes on with about 12 N. The catch is square; to open, push each beam in
-through its slot with a small screwdriver. The slots are drains as
-well.
+1.0 mm tooth, 25 mm long, 0.48 %. The guide lets an amorphous plastic go
+to about 70 % of its yield strain for one snap and 60 % of that for
+snaps repeated; Prusament ASA yields at 3.4 %, so 1.4 %. The script
+halves that for the cold and checks every beam against 0.71 %. A beam
+pushes back with about 1.7 N (modulus 1.7 GPa); through the 30° lead-in,
+with a friction coefficient of 0.5 assumed, the lid goes on with about
+16 N. The catch is square; to open, push each beam in through its slot
+with a small screwdriver. The slots are drains as well.
 
 **No gasket.** Water does not enter from below: rain falls on the top
 and runs off the walls past the joint, and only wind-driven spray
@@ -225,17 +273,17 @@ past. A gasket would make the box tight but for its openings, and so
 trap what the breathing draws in; at −25 °C a printed or rubber seal
 also stiffens. The joint stays a plain 0.25 mm gap.
 
-**Cable entry.** The cable comes up through a slot in the lid that runs
-from under the USB-C port to the lid's front edge; the cable is slid in
-from the side, before the lid goes on, and the slot, 0.3 mm narrower
-than the cable, holds it lightly. Outside, the cable hangs down in a
-drip loop below the box before it goes to the panel, so water running
-along it drips off the bottom of the loop.
+**Cable entry.** The cable comes down through a slot at the bay's outer
+end that runs to the lid's front edge; the cable is slid in from the
+side before the lid goes on, and the slot, 0.3 mm narrower than the
+cable, holds it lightly. Outside, the cable hangs down in a drip loop
+below the box before it goes to the panel, so water running along it
+drips off the bottom of the loop.
 
 **Mounting.** A pad on the back carries four screw holes in ears beyond
-the body, for a wall, and two pairs of tunnels for 12 mm stainless
-hose clamps behind the body: one pair across, for a vertical pole, one
-pair upright, for a horizontal railing. Steel clamps, not plastic ties,
+the body, for a wall, and two pairs of tunnels for 12 mm stainless hose
+clamps behind the body: one pair across, for a vertical pole, one pair
+upright, for a horizontal railing. Steel clamps, not plastic ties,
 which grow brittle in UV and cold.
 
 **Material.** ASA, not PETG: ASA is made for UV, and it holds its shape
@@ -267,9 +315,11 @@ layer plane as above.
   enough and a node that is down in the deepest cold. Which, and how a
   solar relay tells the mesh (O17, D81), is not settled.
 - **The cold cut-off.** Which panel controller, or which switch at the
-  cell's temperature, keeps charge off below the cell's floor. The
-  nRF52840's own temperature sensor could tell the firmware when to
-  report it, but cannot stop the charging on this board.
+  cell's temperature, keeps charge off below the cell's floor.
+- **The screen in the cold.** Whether the firmware stops drawing the
+  screen below its 0 °C rating, or on a roof node at all.
+- **The bend.** The cable's real minimum bend radius sets a third of the
+  box's width; a thin, flexible cable shrinks the bay.
 - **Sealing of the lid.** No gasket, for the reasons above. If the first
   winter shows water inside, a soft seal in the joint is the next step.
 - **Insects.** The slots, 4 mm wide, let small insects in. A stainless
@@ -283,18 +333,20 @@ layer plane as above.
 
 ## What the first print must verify
 
-1. The case slides in from below with the adapter, antenna and cable on,
+1. The case slides in from below with the antenna, plug and cable on,
    the crush ribs grip without forcing it, and the buttons are not
    pressed; measure the estimated parameters first and rerun the script.
-2. The lid snaps on by hand, holds, and comes off with a screwdriver
+2. The cable turns in the bay without being forced tighter than its
+   maker allows.
+3. The lid snaps on by hand, holds, and comes off with a screwdriver
    through the slots, at room temperature and after a night in a freezer.
-3. Shrinkage: the lid's fit in the body and the case's fit in the
+4. Shrinkage: the lid's fit in the body and the case's fit in the
    cavity; change `SHRINK` and the clearances to suit.
-4. Watertightness: mounted as on the roof, an hour of water from a
+5. Watertightness: mounted as on the roof, an hour of water from a
    shower head over the top and sides leaves the inside dry; a spoonful
    of water poured into the box upright drains out completely.
-5. The antenna's match at 433 MHz in the box and out of it, on the
+6. The antenna's match at 433 MHz in the box and out of it, on the
    bench's analyser, and the link's level to a second board at the same
    place with and without the box.
-6. A winter's log from the roof: the board's temperature, the cell's
+7. A winter's log from the roof: the die temperature, the cell's
    voltage, and whether any water stands in the lid.
