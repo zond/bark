@@ -33,16 +33,21 @@ String ago(Duration d) {
 /// What a sent text's state means to the person, in words that claim no
 /// more than the app knows: once the node has taken a message the network
 /// says nothing more until the recipient confirms (spec "Addresses").
+/// Lower case, as it follows other words; [capital] for a line of its own.
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
-  OutState.queued => 'Waiting for a node',
+  OutState.queued => 'waiting for a node',
   OutState.writing => 'being handed to the node',
   OutState.taken => 'sent into the network',
   OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => 'The network is busy, sending again now',
-    final w => 'The network is busy, sending again in ${clock(w)}',
+    0 => 'the network is busy, sending again now',
+    final w => 'the network is busy, sending again in ${clock(w)}',
   },
   OutState.refused => 'refused: ${o.error}',
 };
+
+/// `s` with its first letter a capital.
+String capital(String s) =>
+    s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 
 /// The states of a sent text, in the order it moves through them, each
 /// with its icon, for the sheet a tap on a state opens.
@@ -197,7 +202,7 @@ String partsLabel(Session s, List<Outgoing> outs) {
   return [
     '${taken.length} of ${outs.length} sent',
     if (acked.isNotEmpty) '${acked.length} confirmed',
-    if (problem != null) 'part ${problem.part} ${stateLabel(s, problem)}',
+    if (problem != null) 'part ${problem.part}: ${stateLabel(s, problem)}',
   ].join(', ');
 }
 

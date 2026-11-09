@@ -529,39 +529,42 @@ class _ThreadScreenState extends State<ThreadScreen> {
   /// [sentStates]). Not yet with the node shows a clock rather than
   /// nothing, so a missing mark never means two things. A state that is a
   /// problem keeps its words, which say why.
-  List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
-      switch (o.state) {
-        OutState.queued => [
-          _stateMark([o], Icons.schedule, 'Waiting for a node', small, color),
-        ],
-        OutState.writing => [
-          _stateMark([o], Icons.sync, 'Being handed to the node', small, color),
-        ],
-        OutState.taken => [
-          _stateMark(
-            [o],
-            Icons.check,
-            'Sent into the network; no further news until they confirm',
-            small,
-            color,
-          ),
-        ],
-        OutState.givenBack => [
-          _stateMark(
-            [o],
-            Icons.hourglass_bottom,
-            'The network is busy',
-            small,
-            color,
-          ),
-          const SizedBox(width: 4),
-          Flexible(child: Text(stateLabel(app.session, o), style: small)),
-        ],
-        OutState.refused => [
-          const SizedBox(width: 4),
-          Flexible(child: Text(stateLabel(app.session, o), style: small)),
-        ],
-      };
+  List<Widget> _state(
+    Outgoing o,
+    TextStyle small,
+    Color color,
+  ) => switch (o.state) {
+    OutState.queued => [
+      _stateMark([o], Icons.schedule, 'Waiting for a node', small, color),
+    ],
+    OutState.writing => [
+      _stateMark([o], Icons.sync, 'Being handed to the node', small, color),
+    ],
+    OutState.taken => [
+      _stateMark(
+        [o],
+        Icons.check,
+        'Sent into the network; no further news until they confirm',
+        small,
+        color,
+      ),
+    ],
+    OutState.givenBack => [
+      _stateMark(
+        [o],
+        Icons.hourglass_bottom,
+        'The network is busy',
+        small,
+        color,
+      ),
+      const SizedBox(width: 4),
+      Flexible(child: Text(capital(stateLabel(app.session, o)), style: small)),
+    ],
+    OutState.refused => [
+      const SizedBox(width: 4),
+      Flexible(child: Text(capital(stateLabel(app.session, o)), style: small)),
+    ],
+  };
 
   /// A sent text's state mark, which a tap explains with the others,
   /// under the details of `outs`, the text's parts.
