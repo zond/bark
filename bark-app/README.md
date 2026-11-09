@@ -15,9 +15,11 @@ is a prototype for the bench, not the app people will carry.
   start from 12 words the person writes down, and can restore it from
   them on another phone. Texts are sealed to an identity.
 - **Card**: what two people exchange so that each can reach the other:
-  an identity, the name its owner chose and, when the person has set
-  one, their home node's address; without a home it carries no
-  address, and they can be written to only once they have written.
+  an identity, the name its owner chose, their home node's address
+  when the person has set one, and the address of the node their
+  phone is linked to, or was last, where to reach them now (roadmap
+  D162). Without a home the card is temporary: the node on it keeps
+  their mail only while they come back to it.
 - **Contact**: a card with the name this phone gives it, or else the
   card's own, known by its identity. A card from an older app may have
   no name: its contact is listed as "Unnamed" with the first eight
@@ -85,16 +87,20 @@ is a prototype for the bench, not the app people will carry.
   A contact whose first message has come but no
   sealed reply is marked not verified; once it is verified, a text
   that came in a first message has a mark of its own, as anyone could
-  have made it. A contact without a home who
-  has not written yet cannot be written to: a line says so where the
-  field would be. The menu renames the contact,
+  have made it. A contact whose card is from an app before D162, with
+  no home and no node, and who has not written yet, cannot be written
+  to: a line says so where the field would be. The menu renames the
+  contact,
   sends them your card, archives the conversation or the contact (both
   leave the thread, with **Undo**), or removes them; a removed
   contact's thread has only **Archive conversation**. The bar has **Fetch my mail**
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
-- **Contacts**, the head button beside the QR button. Adding one: scan their card with the
-  camera, and the new contact's thread opens at once, so you see where
+- **Contacts**, the head button beside the QR button. Each row says
+  "Has a home node", or for a temporary card an hourglass and
+  "temporary: reach them at the node they last used"; the mark goes
+  when a card with a home comes. With none, it says how to add one.
+  Adding one: scan their card with the camera, and the new contact's thread opens at once, so you see where
   it went and can write; or paste the card and save it, with a name of
   your choosing if you like. An address alone is not enough: a text is
   sealed to the identity on the card. Adding an archived contact brings
@@ -114,8 +120,10 @@ is a prototype for the bench, not the app people will carry.
 - **My card**, the QR button. Your identity, the card as a QR code for
   another phone to scan, **Scan their card** to add theirs as in
   Contacts, and the home's address and the card as text to copy and
-  send. Without a home it says that people can answer you only after
-  you write to them. Without a name it shows no card: it says "Set your
+  send. Without a home the card is temporary: a dashed frame around
+  the code, an hourglass in its corner outside the code's quiet zone
+  and the word TEMPORARY under it, and a line that says so. Without a
+  name it shows no card: it says "Set your
   name first", with **Set my name**, as whoever scans a card needs to
   know whose it is.
 - **Settings**, from the menu. The node to connect to (scan, then tap
@@ -547,8 +555,8 @@ layer"), while a driver has already left that reach, so no longer wait
 makes the guess better. Older, the send
 button asks, for that text only: "Where <name> was <age> ago" or "Their
 home mailbox". Without a home it goes where they were, without asking;
-with a home and nothing written from yet, to the home. A contact with
-neither cannot be written to until they write. Acknowledgements and
+with a home and nothing written from yet, to the home; with neither,
+to the node on their card, where it waits for them (roadmap D162). Acknowledgements and
 cards go without asking, to the home's mailbox when there is a choice.
 
 ## Plugins
@@ -683,8 +691,8 @@ a phone (Trying it, With a node).
    echo's last part arrives with "part 1 of 2 not yet here" in its
    place, and 5 s after that the whole echo.
 9. The QR button, **My card**: set a name. Your identity, a QR code
-   and the card as text, `BARK:` and capitals, appear, with a line that
-   without a home people can answer you only after you write to them.
+   and the card as text, `BARK:` and capitals, appear; without a home
+   the code is marked temporary.
 10. Menu, **Settings**, under **Map point**: press **Phone location**
     (allow location), then **Set**: Debug's address changes, and the
     next text to the fake friend names it. **Clear** brings back the
@@ -747,8 +755,8 @@ a phone (Trying it, With a node).
    answer, and `StatusGivenUp` for an ask or answer given up on a busy
    channel, which tells it from one lost on the air.
 5. With a second node and a second phone, make one phone's node its
-   home (step 9 below; a card without a home cannot be written to
-   first), then each phone scans the other's card from **My card**,
+   home (step 9 below; without one the card is temporary, and texts
+   to it wait at the node it names), then each phone scans the other's card from **My card**,
    **Scan their card** (allow the camera). Send a text from the other
    phone to the one with the home: it shows as taken, and the other phone shows
    it in the sender's conversation within the time the network takes.

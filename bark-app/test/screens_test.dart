@@ -144,7 +144,10 @@ void main() {
     await t.tap(find.byTooltip('My card'));
     await t.pumpAndSettle();
     expect(find.byType(QrImageView), findsOneWidget);
-    expect(find.textContaining('only after you write to them'), findsOneWidget);
+    // No home: a temporary card, marked so on the code.
+    expect(find.textContaining('Temporary card:'), findsOneWidget);
+    expect(find.byType(TemporaryFrame), findsOneWidget);
+    expect(find.text('TEMPORARY'), findsOneWidget);
     await t.scrollUntilVisible(
       find.text('Scan their card'),
       100,
@@ -272,6 +275,43 @@ void main() {
     expect(find.byType(ContactsScreen), findsOneWidget);
     expect(find.text(unnamed), findsOneWidget);
 
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
+  testWidgets('a temporary contact: marked in its row until a card with a '
+      'home, and written to at the node on its card', (t) async {
+    final app = await model(t);
+    final home = Address(Position.fromDegrees(50, 30), [1, 2, 3, 4, 5, 6]);
+    final node = Address(Position.fromDegrees(50.1, 30.1), [6, 5, 4, 3, 2, 1]);
+    final id = List.filled(32, 5);
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(id, null, 1, 'Olena', now: node)),
+    );
+    await t.pumpWidget(MaterialApp(home: ContactsScreen(app)));
+    expect(
+      find.text('temporary: reach them at the node they last used'),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+
+    // Writable: no dead end, and the text goes to the node on the card.
+    await t.runAsync(() => app.me.setNodeAddress(home));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, hex(id))));
+    expect(find.byType(TextField), findsOneWidget);
+    await t.enterText(find.byType(TextField), 'hi');
+    await t.tap(find.byTooltip('Send'));
+    await t.pumpAndSettle();
+    final out = app.session.outbox.single;
+    expect(out.dst.toString(), node.toString());
+    expect(out.toward, Toward.node);
+
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(id, home, 2, 'Olena', now: node)),
+    );
+    await t.pumpWidget(MaterialApp(home: ContactsScreen(app)));
+    expect(find.text('Has a home node'), findsOneWidget);
+    expect(find.byIcon(Icons.hourglass_empty), findsNothing);
     await t.pumpWidget(const SizedBox());
     app.dispose();
   });

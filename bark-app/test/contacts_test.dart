@@ -1,6 +1,7 @@
 // Where a text to a contact may go: where they last wrote from while that
 // is fresh, else the person chooses between that and their home's
-// mailbox, or the one address there is.
+// mailbox, or the one address there is; without a home and before they
+// write, the node on their card.
 
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
@@ -14,8 +15,12 @@ void main() {
   final home = Address(Position.fromDegrees(50.45, 30.52), List.filled(6, 1));
   final there = Address(Position.fromDegrees(50.40, 30.60), List.filled(6, 2));
 
-  Contact contact(Address? home) =>
-      Contact(PersonCard(List.filled(32, 5), home, 0, 'Olena'), 'Olena');
+  final node = Address(Position.fromDegrees(50.44, 30.50), List.filled(6, 3));
+
+  Contact contact(Address? home, {Address? at}) => Contact(
+    PersonCard(List.filled(32, 5), home, 0, 'Olena', now: at),
+    'Olena',
+  );
 
   /// Heard from at `there`, `age` ago.
   Contact wrote(Contact c, Duration age) {
@@ -23,11 +28,20 @@ void main() {
     return c.heard(sentOf(at), there, at);
   }
 
-  test('nothing written from: the home, or no way to write', () {
-    expect(contact(home).towards(now), [Toward.home]);
+  test('nothing written from: the home, else the node on the card', () {
+    expect(contact(home, at: node).towards(now), [Toward.home]);
     expect(contact(home).addressOf(Toward.home).toString(), home.toString());
+    final temporary = contact(null, at: node);
+    expect(temporary.towards(now), [Toward.node]);
+    expect(temporary.addressOf(Toward.node).toString(), node.toString());
+    // Only a card from before D162 names no node.
     expect(contact(null).towards(now), isEmpty);
     expect(contact(null).unasked(now), isNull);
+  });
+
+  test('without a home, where they wrote from over the card\'s node', () {
+    final c = wrote(contact(null, at: node), const Duration(hours: 2));
+    expect(c.towards(now), [Toward.there]);
   });
 
   test('where they wrote from, while fresh, wins', () {

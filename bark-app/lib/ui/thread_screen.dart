@@ -77,6 +77,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     Toward.there =>
       'Where ${c.name} was ${ago(app.now().difference(c.heardAt!))}',
     Toward.home => 'Their home mailbox',
+    Toward.node => 'The node they last used',
   };
 
   /// When they last wrote, and whether from their home.
@@ -198,11 +199,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 child: Text('This contact was removed.'),
               )
             else if (contact.towards(app.now()).isEmpty)
+              // Only a card from an app before D162 names no node at all.
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  '${contact.name} has no home node and has not written yet: '
-                  'you can answer once they write to you.',
+                  '${contact.name}\'s card is from an older app and names '
+                  'no node: ask them for a new card.',
                 ),
               )
             else
@@ -395,6 +397,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
   Widget _where(Toward t, TextStyle small, Color color) => switch (t) {
     Toward.there => _mark(Icons.place, 'To where they were', small, color),
     Toward.home => _mark(Icons.home, 'To their home', small, color),
+    Toward.node => _mark(
+      Icons.hourglass_empty,
+      'To the node they last used',
+      small,
+      color,
+    ),
   };
 
   /// A sent text's state short of acknowledged. Not yet with the node

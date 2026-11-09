@@ -50,6 +50,11 @@ enum Toward {
 
   /// Their home's mailbox, the address on their card.
   home,
+
+  /// The node on their card, for a contact without a home who has not
+  /// written: where they were linked when the card was made (roadmap
+  /// D162).
+  node,
 }
 
 class Outgoing {

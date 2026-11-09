@@ -1,7 +1,8 @@
 // A card: what two people exchange so that each can reach the other,
 // shown and scanned as a QR code (spec "Phone link"): an identity, the
-// home node's address if the person has one, when it was set or cleared,
-// and a name.
+// home node's address if the person has one, the address of the node the
+// phone was linked to when the card was made, when the home was set or
+// cleared, and a name. A card without a home is temporary.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -18,20 +19,28 @@ class BadCard implements Exception {
 }
 
 class PersonCard {
-  static const version = 2;
+  /// 3 since the card carries the node it was made at; 2 is still read.
+  static const version = 3;
+  static const _oldest = 2;
 
-  /// Bytes before the home address: the shortest card.
+  /// Bytes before the addresses: the shortest card.
   static const fixedLen = 1 + 1 + keyLen + 4;
   static const _flagHome = 1;
+  static const _flagNow = 2;
   static const maxName = 32;
   static const prefix = 'BARK:';
   static const _base32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
   final Uint8List identity;
 
-  /// Their home node's address, whose mailbox keeps their mail; none
-  /// without a home, as any other node's is only where they were.
+  /// Their home node's address, whose mailbox keeps their mail.
   final Address? home;
+
+  /// The address of the node their phone was linked to when the card was
+  /// made, their own or a public one: where to reach them now. A public
+  /// node keeps a guest's mail by its recipient tag (spec "Phone link",
+  /// Public), so a text there waits for them.
+  final Address? now;
 
   /// When the home was set or cleared, as `sent`: a later card replaces
   /// an earlier one, also one that drops the home.
@@ -40,22 +49,27 @@ class PersonCard {
   /// The name its owner chose.
   final String name;
 
-  PersonCard(List<int> identity, this.home, this.time, this.name)
+  PersonCard(List<int> identity, this.home, this.time, this.name, {this.now})
     : identity = Uint8List.fromList(identity);
 
   /// The identity in hex: what a contact and a conversation are known by.
   String get key => hex(identity);
 
+  /// No home: they can be reached only at the node they last used, which
+  /// keeps their mail only while they come back to it.
+  bool get temporary => home == null;
+
   Uint8List encode() {
     final n = utf8.encode(name);
     if (n.length > maxName) throw const BadCard('The name is too long');
-    final h = home;
+    final h = home, w = now;
     return Uint8List.fromList([
       version,
-      h != null ? _flagHome : 0,
+      (h != null ? _flagHome : 0) | (w != null ? _flagNow : 0),
       ...identity,
       ...be(time, 4),
       ...?h?.encode(),
+      ...?w?.encode(),
       ...n,
     ]);
   }
@@ -65,26 +79,31 @@ class PersonCard {
     if (b[0] > version) {
       throw BadCard('A card from a newer app (card version ${b[0]})');
     }
-    if (b[0] < version) {
+    if (b[0] < _oldest) {
       throw BadCard('A card from an older app (card version ${b[0]})');
     }
-    if (b.length < fixedLen || b[1] & ~_flagHome != 0) {
+    final known = b[0] >= 3 ? _flagHome | _flagNow : _flagHome;
+    if (b.length < fixedLen || b[1] & ~known != 0) {
       throw const BadCard('Not a card');
     }
-    final hasHome = b[1] & _flagHome != 0;
-    final at = fixedLen + (hasHome ? Address.len : 0);
-    if (b.length < at || b.length > at + maxName) {
-      throw const BadCard('Not a card');
+    var at = fixedLen;
+    Address? address(int flag) {
+      if (b[1] & flag == 0) return null;
+      if (b.length < at + Address.len) throw const BadCard('Not a card');
+      final a = b.sublist(at, at += Address.len);
+      return Address(Position.decode(a), a.sublist(Position.wireLen));
     }
-    final a = b.sublist(fixedLen, at);
+
+    final home = address(_flagHome);
+    final now = address(_flagNow);
+    if (b.length > at + maxName) throw const BadCard('Not a card');
     try {
       return PersonCard(
         b.sublist(2, 2 + keyLen),
-        hasHome
-            ? Address(Position.decode(a), a.sublist(Position.wireLen))
-            : null,
+        home,
         fromBe(b.sublist(2 + keyLen, fixedLen)),
         utf8.decode(b.sublist(at)),
+        now: now,
       );
     } on FormatException {
       throw const BadCard('Not a card: the name is not UTF-8');

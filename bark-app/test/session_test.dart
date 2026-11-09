@@ -840,7 +840,7 @@ void main() {
     expect(() => PersonCard.decode(short), throwsA(isA<BadCard>()));
     // A card of version 1, before the flags, and an unknown flag.
     final b = PersonCard(k.identity, elsewhere, 7, '').encode();
-    for (final (at, v, why) in [(0, 1, 'older'), (1, 2, 'Not a card')]) {
+    for (final (at, v, why) in [(0, 1, 'older'), (1, 4, 'Not a card')]) {
       final bad = Uint8List.fromList(b)..[at] = v;
       expect(
         () => PersonCard.decode(bad),

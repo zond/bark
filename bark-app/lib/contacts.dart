@@ -73,10 +73,16 @@ class Contact {
 
   /// Where a text to them may go at `now`: where they last wrote from
   /// while that is fresh; past it, that or their home's mailbox, for the
-  /// person to choose. None when they have no home and have not written.
+  /// person to choose. Without a home, where they last wrote from, or
+  /// before they write, the node on their card (roadmap D162). None only
+  /// for a card from before D162 without a home, from one who has not
+  /// written.
   List<Toward> towards(DateTime now) {
     final from = wroteFrom, at = heardAt, home = card.home;
-    if (from == null || at == null) return [if (home != null) Toward.home];
+    if (from == null || at == null) {
+      if (home != null) return [Toward.home];
+      return [if (card.now != null) Toward.node];
+    }
     if (home == null) return [Toward.there];
     if (from.toString() == home.toString()) return [Toward.home];
     if (now.difference(at) < fresh) return [Toward.there];
@@ -87,7 +93,11 @@ class Contact {
   /// the home's mailbox, which keeps it; null when there is none.
   Toward? unasked(DateTime now) => towards(now).lastOrNull;
 
-  Address addressOf(Toward t) => t == Toward.there ? wroteFrom! : card.home!;
+  Address addressOf(Toward t) => switch (t) {
+    Toward.there => wroteFrom!,
+    Toward.home => card.home!,
+    Toward.node => card.now!,
+  };
 
   String get key => card.key;
 

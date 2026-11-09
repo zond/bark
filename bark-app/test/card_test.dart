@@ -1,12 +1,15 @@
 // The card is shown only once the person has a name; a scanned card
 // without one, as an older app may send, still makes a contact, listed
 // by the start of its identity until a name comes; and an archived
-// contact's card scanned again brings it back.
+// contact's card scanned again brings it back. A card carries a home and
+// the node it was made at, reads a card of version 2, and without a home
+// is temporary until a later card brings one.
 
 import 'dart:convert';
 
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
+import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -80,4 +83,58 @@ void main() {
     expect(cs.list.single.chosen, '');
     expect(cs.list.single.name, 'Unnamed (abababab…)');
   });
+
+  final home = Address(Position.fromDegrees(50.45, 30.52), List.filled(6, 1));
+  final node = Address(Position.fromDegrees(50.44, 30.50), List.filled(6, 3));
+
+  test('a card carries its home and the node it was made at', () {
+    final id = List.filled(32, 0xab);
+    for (final (h, n) in [(home, node), (null, node), (home, null)]) {
+      final c = PersonCard.parse(
+        PersonCard(id, h, 7, 'Olena', now: n).toText(),
+      );
+      expect(c.home?.toString(), h?.toString());
+      expect(c.now?.toString(), n?.toString());
+      expect(c.time, 7);
+      expect(c.name, 'Olena');
+      expect(c.temporary, h == null);
+    }
+    final b = PersonCard(id, home, 7, 'Olena', now: node).encode();
+    expect(b[0], 3);
+    expect(b[1], 3);
+    expect(b.length, PersonCard.fixedLen + 2 * Address.len + 5);
+  });
+
+  test('a card of version 2 is still read', () {
+    final id = List.filled(32, 0xab);
+    final v3 = PersonCard(id, home, 7, 'Olena').encode();
+    final v2 = [2, ...v3.sublist(1)];
+    final c = PersonCard.decode(v2);
+    expect(c.home.toString(), home.toString());
+    expect(c.now, isNull);
+    expect(c.name, 'Olena');
+    // Version 2 knew no node flag.
+    expect(
+      () => PersonCard.decode([2, 2, ...v3.sublist(2)]),
+      throwsA(isA<BadCard>()),
+    );
+  });
+
+  test(
+    'a temporary contact loses its mark with a later card with a home',
+    () async {
+      final me = Me(MemoryStore(), await SodiumInit.init(), DateTime.now);
+      await me.load();
+      await me.setName('Ana');
+      await me.setNodeAddress(node);
+      expect(me.card.temporary, isTrue);
+      expect(me.card.now.toString(), node.toString());
+      final cs = Contacts(MemoryStore());
+      await cs.add(me.card);
+      expect(cs.list.single.card.temporary, isTrue);
+      await me.setHome(home);
+      await cs.add(me.card);
+      expect(cs.list.single.card.temporary, isFalse);
+    },
+  );
 }

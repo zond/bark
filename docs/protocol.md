@@ -1138,6 +1138,16 @@ address from a previous message (the sender's address is carried in the
 encrypted payload), from a QR code, or from a directory; the network
 provides no lookup. Sending to an area is open item O7.
 
+A person's card, which people exchange as a QR code
+([phone link](#phone-link), The payload), carries two addresses: their
+home node's, if they have one, whose mailbox keeps their mail until
+they fetch it ([mailbox](#mailbox)), and that of the node their phone
+was linked to when the card was made, their own or a public one, where
+to reach them now; a public node keeps a guest's mail by its recipient
+tag ([phone link](#phone-link), Public). A card without a home is
+**temporary**: the node on it keeps their mail only for as long as they
+come back to that node (roadmap D162).
+
 The network carries no sender address and sends no failure notices. Its
 only acknowledgement is the per-hop ACK ([hand-over](#hand-over));
 whether a message arrived, and what to do if it did not, is the app's
@@ -3653,7 +3663,7 @@ has verified is dropped. Payloads are not padded.
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
 | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
-| card | 1 + 1 + 38 to 83 | type 4, the card's length, then the card |
+| card | 1 + 1 + 38 to 96 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
@@ -3673,20 +3683,26 @@ knows from the count which have not come, and needs no byte more for
 it. A part costs one byte over a whole text, 155 bytes of text in a box
 without an address; 16 parts hold about 2.5 KB (roadmap D137).
 
-*The card*, what people exchange, shown as a QR code: version (1), 2;
-flags (1), bit 0 set when a home address follows, the others zero; the
-identity (32); when the home was set or cleared, as `sent` (4); the
-home node's address (0 or 13); and a display name in UTF-8 (0 to 32):
-38 to 70 bytes without a home, 51 to 83 with one. As text, `BARK:` and
-the bytes in base32 (RFC 4648, its base32 alphabet) without padding. A
-card with a later time replaces a contact's card; the person sends
-their card to their contacts when it changes.
+*The card*, what people exchange, shown as a QR code: version (1), 3;
+flags (1), bit 0 set when a home address follows, bit 1 when the
+node's address follows, the others zero; the identity (32); when the
+home was set or cleared, as `sent` (4); the home node's address (0 or
+13); the address of the node the phone is linked to, or was last, when
+the card is made or shown (0 or 13); and a display name in UTF-8 (0 to
+32): 38 to 96 bytes. A card of version 2, without the node's address
+and bit 1, is still read. As text, `BARK:` and the bytes in base32
+(RFC 4648, its base32 alphabet) without padding. A card with a later
+time replaces a contact's card, as does one of the same time, which
+may name another node; the person sends their card to their contacts
+when it changes.
 
-*Why only a home.* A home's [mailbox](#mailbox) keeps a person's mail
-until they fetch it. Any other node's address is only where they were
-when the card was made, and where they write from reaches the other
-side in every message's header. A person without a home can be written
-to once they have written.
+*Why the node too.* A home's [mailbox](#mailbox) keeps a person's mail
+until they fetch it. A person without one could be written to only
+after they wrote, and someone handed their card could not start. The
+node their phone uses keeps mail for them in its ring, as its owner's
+inbox or by their recipient tag as a guest's ([phone link](#phone-link),
+Public), so a text there waits until they come back to it; the card
+says it is temporary, so nobody takes it for a home.
 
 *Why the time without a home.* Clearing the home changes the card too,
 and a card that drops it must replace an older one only if it is later.
@@ -3698,8 +3714,9 @@ its arrival when `sent` is ahead of the phone's clock. While that age
 is under a minute, a text goes to where they write from; past
 it, with a home, the person chooses between where they were and the
 home's mailbox, for each text, and without one it goes to where they
-were. With a home and nothing written from, it goes to the home; with
-neither, the contact cannot be written to yet (roadmap D132).
+were. With a home and nothing written from, it goes to the home;
+without a home and nothing written from, to the node on their card
+(roadmap D132, D162).
 
 *Why where they write from.* A reply goes straight to where the person
 is, rather than to their home's mailbox to wait for a fetch, at

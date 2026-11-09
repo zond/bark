@@ -61,7 +61,9 @@ class Me extends ChangeNotifier {
   String get key => hex(identity);
   List<String> get phrase => phraseOf(keys.seed);
 
-  PersonCard get card => PersonCard(identity, home, cardTime, name);
+  /// The card, with the node the phone is linked to, or was last.
+  PersonCard get card =>
+      PersonCard(identity, home, cardTime, name, now: nodeAddress);
 
   /// The card to show or share: none until the person has a name, as a
   /// contact made from a nameless card is one its holder cannot tell

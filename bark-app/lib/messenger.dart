@@ -405,8 +405,8 @@ class Messenger {
     }
   }
 
-  /// A card in a message: the sender's own replaces their address if it
-  /// is later; another's is a new contact, unless it is known.
+  /// A card in a message: the sender's own replaces their card unless it
+  /// is older; another's is a new contact, unless it is known.
   Future<void> _card(String from, Uint8List bytes) async {
     final PersonCard card;
     try {
@@ -419,7 +419,8 @@ class Messenger {
       if (card.key != me.key) {
         await contacts.put(Contact(card, ''));
       }
-    } else if (card.time > c.card.time) {
+    } else if (card.time >= c.card.time) {
+      // Of the same time, it may name the node they use now.
       await contacts.put(c.copyWith(card: card));
     }
   }
