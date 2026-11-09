@@ -504,3 +504,141 @@ fn a_quota_short_by_lost_pieces_is_made_up() {
     assert!(ones.len() > quota, "{} of block 1", ones.len());
     assert!(ones[quota..].windows(2).all(|w| w[1].since(w[0]) >= PACE));
 }
+
+/// A relay that runs version `version` and holds no image.
+fn relay_running(east: f64, seed: u64, home: u8, version: u32) -> Relay {
+    Relay::new(
+        Config {
+            position: pos(east),
+            home_override: bark_proto::Channel::new(home),
+            version,
+            ..Config::default()
+        },
+        seed,
+    )
+}
+
+/// The heartbeats node `i` sent that carried a section, and their channels.
+fn sectioned(h: &Harness<Relay>, i: usize) -> Vec<(Instant, bark_proto::Channel)> {
+    h.nodes[i]
+        .sent
+        .iter()
+        .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+        .filter(|(_, f)| bark_proto::wire::decode_section(f.payload()).is_some())
+        .map(|(t, f)| (*t, f.channel))
+        .collect()
+}
+
+/// The longest rotation of heartbeats, 13 of the longest interval, and
+/// the most a heartbeat waits behind its slot (spec "Heartbeat").
+fn longest_rotation() -> bark_proto::Duration {
+    let c = Config::default();
+    c.heartbeat_max.mul(13) + bark_proto::node::heartbeat_lag(&c)
+}
+
+/// Boot is a change: a node that knows the version it runs and holds no
+/// image tells it in every heartbeat of its first rotation, on every
+/// channel, and then not again within the hour
+/// (spec "Updates over the mesh").
+#[test]
+fn boot_carries_the_section_for_a_rotation() {
+    let mut h = Harness::new(vec![
+        relay_running(0.0, 31, 3, 13),
+        relay_running(100.0, 32, 5, 0),
+    ]);
+    h.link(0, 1);
+    h.run_until(at(3000), |_| false);
+    let told = sectioned(&h, 0);
+    let channels: std::collections::HashSet<_> = told.iter().map(|t| t.1).collect();
+    assert_eq!(told.len(), 13, "{told:?}");
+    assert_eq!(channels.len(), 13);
+    assert!(told.iter().all(|t| t.0 < at(200)), "{told:?}");
+    let s = h.nodes[0]
+        .sent
+        .iter()
+        .find_map(|(_, f)| bark_proto::wire::decode_section(f.payload()))
+        .unwrap();
+    assert_eq!((s.runs, s.image), (13, None));
+    // A node that knows nothing to tell tells nothing.
+    assert!(sectioned(&h, 1).is_empty());
+}
+
+/// A gatherer says what it lacks every rotation on its helper's home
+/// channel, and on the other channels only when it changes or hourly
+/// (spec "Updates over the mesh").
+#[test]
+fn a_gatherer_s_section_rides_on_its_helper_s_channel_each_rotation() {
+    let (image, needs) = todays_image();
+    let mut h = Harness::new(vec![relay_on(0.0, 41, 3), relay_on(100.0, 42, 5)]);
+    h.link(0, 1);
+    for n in &mut h.nodes {
+        n.updates = Some(Updates {
+            needs: needs.clone(),
+            ..Updates::default()
+        });
+    }
+    h.run_until(at(400), |_| false);
+    h.deliver_app(0, AppCommand::Holds(image));
+    let start = h.now;
+    let done = h.run_until(start + secs(12 * 3600), |h| {
+        h.nodes[1].updates.as_ref().unwrap().holds_at.is_some()
+    });
+    assert!(
+        done,
+        "the gatherer does not hold the image within twelve hours"
+    );
+    let u = h.nodes[1].updates.as_ref().unwrap();
+    let (first, held) = (u.pieces.first().unwrap().0, u.holds_at.unwrap());
+    let told = sectioned(&h, 1);
+    let on = |c: u8| {
+        told.iter()
+            .filter(|t| t.1 == common::ch(c) && t.0 > first && t.0 < held)
+            .map(|t| t.0)
+            .collect::<Vec<_>>()
+    };
+    let helper = on(3);
+    let gaps = helper.windows(2).map(|w| w[1].since(w[0]));
+    assert!(
+        gaps.clone().all(|g| g <= longest_rotation()),
+        "{:?}",
+        gaps.max()
+    );
+    // Elsewhere, a rotation for each block completed and hourly.
+    assert!(
+        on(7).len() * 2 < helper.len(),
+        "{} against {}",
+        on(7).len(),
+        helper.len()
+    );
+}
+
+/// A holder that hears sections naming nothing as new as its image
+/// answers with a rotation of its own, once a rotation however many lag
+/// (spec "Updates over the mesh").
+#[test]
+fn a_holder_answers_a_lagging_neighbour_once_a_rotation() {
+    let mut h = Harness::new(vec![
+        relay_on(0.0, 51, 3),
+        relay_running(100.0, 52, 5, 1),
+        relay_running(200.0, 53, 6, 1),
+        relay_running(300.0, 54, 7, 1),
+        relay_running(400.0, 55, 8, 1),
+    ]);
+    for a in 0..5 {
+        for b in a + 1..5 {
+            h.link(a, b);
+        }
+    }
+    // Three switched on together, one later, none taking images.
+    for (i, s) in [(1, 1000), (2, 1005), (3, 1010), (4, 2000)] {
+        h.start_at(i, at(s));
+    }
+    h.run_until(at(400), |_| false);
+    h.deliver_app(0, AppCommand::Holds(IMAGE));
+    h.run_until(at(3000), |_| false);
+    let told = sectioned(&h, 0);
+    let between = |a: u64, b: u64| told.iter().filter(|t| t.0 >= at(a) && t.0 < at(b)).count();
+    assert_eq!(between(400, 1000), 13, "the rotation after Holds");
+    assert_eq!(between(1000, 2000), 13, "one answer to the three");
+    assert_eq!(between(2000, 3000), 13, "one answer to the fourth");
+}

@@ -39,4 +39,20 @@ pub struct Status {
     /// The version of the firmware image it runs, 0 if not known
     /// ([`crate::Config::version`]).
     pub version: u32,
+    /// The image it gathers over the mesh, all zero when none.
+    pub gathering: Gathering,
+}
+
+/// How far a node is in gathering an image (spec "Neighbour status"), as
+/// its heartbeats' section says it (spec "Updates over the mesh").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Gathering {
+    /// The image's version, 0 when it gathers none.
+    pub version: u32,
+    /// The image's blocks, the table's among them.
+    pub blocks: u8,
+    /// The blocks it holds from the first.
+    pub complete: u8,
+    /// The pieces it holds of the block after them.
+    pub have: u8,
 }

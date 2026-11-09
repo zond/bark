@@ -22,8 +22,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
-/// Guest, 9 Ask.
-pub const VERSION: u8 = 9;
+/// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer.
+pub const VERSION: u8 = 10;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -781,7 +781,8 @@ impl Ask {
 /// Ask, read and notify: the last answer the node was given, the
 /// neighbour's ID and its status in the radio's encoding
 /// (`bark_proto::wire::encode_status`); empty before the first since
-/// the node booted.
+/// the node booted. A notification at the default MTU carries its first
+/// 20 bytes, all but the image the neighbour gathers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Answer {
     /// The neighbour that answered.
@@ -804,23 +805,30 @@ impl Answer {
     }
 
     /// Read a value, `None` when empty, ignoring what a later version
-    /// appends.
+    /// appends; one without the image gathered whole, link version 9's or
+    /// a notification's at the default MTU, as gathering none.
     pub fn decode(b: &[u8]) -> Result<Option<Answer>, Malformed> {
+        let mut status = [0u8; STATUS];
         match b.len() {
             0 => Ok(None),
-            n if n < Self::LEN => Err(Malformed::Length),
-            _ => Ok(Some(Answer {
-                from: node_id(b),
-                status: bark_proto::wire::decode_status(
-                    b[ID..Self::LEN].try_into().expect("STATUS bytes"),
-                ),
-            })),
+            n if n < ID + STATUS_9 => Err(Malformed::Length),
+            n => {
+                let whole = if n >= Self::LEN { STATUS } else { STATUS_9 };
+                status[..whole].copy_from_slice(&b[ID..ID + whole]);
+                Ok(Some(Answer {
+                    from: node_id(b),
+                    status: bark_proto::wire::decode_status(&status),
+                }))
+            }
         }
     }
 }
 
 /// Bytes of a status, as on the radio.
 const STATUS: usize = bark_proto::wire::STATUS_LEN;
+
+/// Bytes of a status before the image gathered, as link version 9 had it.
+const STATUS_9: usize = 9;
 
 // Every value the node or the app writes fits one ATT PDU at the MTU the
 // node offers; the status fits one at the default MTU.
@@ -829,7 +837,10 @@ const _: () = assert!(Message::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(GuestItem::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
-const _: () = assert!(Answer::LEN <= value_room(DEFAULT_ATT_MTU));
+// Ask's answer needs the MTU the app asks for; a notification at the
+// default one still carries all but the image gathered.
+const _: () = assert!(Answer::LEN <= value_room(ATT_MTU));
+const _: () = assert!(ID + STATUS_9 <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));

@@ -143,7 +143,13 @@ void main() {
       expect(s.answers.keys.toSet(), fake.statuses.keys.toSet());
       expect(s.answers.length, t.list.length - 1);
       final usb = s.answers[hex(t.list.first.id)]!;
-      expect(usb.lines, ['FIXED RELAY', 'POWER USB', 'KNOWN 6/4/3', 'V9']);
+      expect(usb.lines, [
+        'FIXED RELAY',
+        'POWER USB',
+        'KNOWN 6/4/3',
+        'V9',
+        'GET V10 14/31',
+      ]);
 
       // Asked again, the old answers go.
       fake.statuses.remove(hex(t.list.first.id));

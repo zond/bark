@@ -1069,6 +1069,10 @@ The **answer**, the status, says ([packet formats](#packet-formats)):
 | strong | 1 | of them, those heard with the margin a full frame needs through a fade, likely to hear it too |
 | proven | 1 | of them, those that have taken a message from it, proven to hear it |
 | version | 4 | the version of the firmware image it runs, 0 if not known, 4 bytes as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
+| gathers | 4 | the version of the image it gathers over the mesh, 0 if none |
+| blocks | 1 | that image's blocks, the table's among them; 0 if none |
+| complete | 1 | the blocks of it it holds from the first |
+| have | 1 | the pieces it holds of the block after them |
 
 Each is a frame from node to node ([packet formats](#packet-formats)):
 one hop, and neither answered nor sent again. A node:
@@ -1088,16 +1092,21 @@ one hop, and neither answered nor sent again. A node:
   an ask;
 - hands every answer addressed to it to its app.
 
-The ask is 14 bytes, 15.68 ms on air, the answer 23, 19.52 ms; with the
-long preamble 249.92 and 253.76 ms.
+The ask is 14 bytes, 15.68 ms on air, the answer 30, 23.36 ms; with the
+long preamble 249.92 and 257.60 ms.
 
 *Why only on a look.* Said in every heartbeat, the same would cost
 every node every rotation, for a map that is seldom open; asked, it
 costs the network nothing between looks. A lost ask or answer costs the
 person a refresh.
 
-*Why proven.* The status fills 10 blocks of symbols at SF5 exactly
-with it, so its byte costs no airtime, and the screen shows it.
+*Why the image gathered.* During an update a person at the map sees
+which neighbours still gather and how far they are, as each one's
+screen shows it, without a console at the node; the last three fields
+are its heartbeats' section's ([updates over the mesh](#updates-over-the-mesh)).
+*Why its blocks.* The status then fills 13 blocks of symbols at SF5
+exactly, so the byte costs no airtime, and the held blocks can be shown
+against all.
 
 ---
 
@@ -3132,7 +3141,9 @@ one link-layer packet. The node also
 takes long writes and serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5),
 so a phone that settles on less still works, in more round trips. A
 notified value fits the 20 bytes a notification carries at the default
-MTU of 23 (Vol 3 Part F §3.4.7.1) (roadmap D119).
+MTU of 23 (Vol 3 Part F §3.4.7.1) (roadmap D119), but Ask's, 22: at that
+MTU its notification carries all but what the neighbour gathers, which
+the app then shows as nothing gathered (roadmap D158).
 
 *Why both.* An Android app must ask for the MTU, and iOS chooses it
 itself, which the app cannot raise; a notification has no long form.
@@ -3163,7 +3174,7 @@ service and its characteristics:
 | Public | `28bc000e-…` | read, write | public(1) | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
 | Ask | `28bc0010-…` | write | id(6) | 6 |
-| | | read, notify | id(6) status(9), empty when none | 0, 15 |
+| | | read, notify | id(6) status(16), empty when none | 0, 22 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -3175,7 +3186,7 @@ which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 9 in this specification; the node's ID, the
+**Node.** The link version, 10 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3332,7 +3343,8 @@ neighbour's ID and its status as the radio carries it, is Ask's value
 from then on, notified to the paired phone; the value is empty before
 the first since the node booted. An answer comes within about a second
 of the ask, or not at all. The app shows it on the neighbour in the
-words of the neighbour's own screen. From link version 9.
+words of the neighbour's own screen. From link version 9; the image it
+gathers, the status's last 7 bytes, from 10.
 
 *Why a characteristic of its own.* The answer is notified, and a
 notified value is the characteristic's own: Neighbours' is a page of
@@ -3885,15 +3897,64 @@ blocks.
 
 **What a node tells.** A heartbeat may carry a **section** after its
 first 13 bytes ([packet formats](#packet-formats)): the version the
-node runs; the newest image it holds or gathers, by its version, the
-first 4 bytes of its name, the signer's key, its blocks and the pieces
-of its last; how many of its blocks the node holds from the first; and
-how many pieces it holds of the block after those. A relay's heartbeats
-carry it for the rotation after any of the first three changes, the
-version it runs, its newest image or its blocks held, so that every
-channel hears the change, and for one rotation an hour; the count of
-pieces goes as it stands when sent. A sleepy node's beats carry it for
-one beat after a change and one an hour: its anchor hears every beat.
+node runs, 0 if it knows none; the newest image it holds or gathers, by
+its version, the first 4 bytes of its name, the signer's key, its
+blocks and the pieces of its last, or none; how many of its blocks the
+node holds from the first; and how many pieces it holds of the block
+after those. A node that knows neither the version it runs nor an image
+tells no section. The count of pieces goes as it stands when sent.
+
+A relay's heartbeats carry the section in a **rotation of sections**:
+once on each channel, at its next heartbeat there, so that a heartbeat
+skipped for a busy channel leaves its channel to the next one there
+instead of missing it. A rotation of sections starts:
+
+- at boot, which is a change;
+- when any of the first three changes, the version it runs, its newest
+  image or its blocks held;
+- an hour after the last;
+- in answer to a neighbour that **lags**, one whose section names
+  neither an image nor a version run as new as the image the relay
+  streams: at the relay's next heartbeat, unless a rotation of sections
+  began within its own last rotation of heartbeats, however many lag.
+
+While a relay gathers, every heartbeat it sends on the home channel of
+its **helper** carries the section as well, which is once a rotation:
+the helper is the relay it last took a piece from, and before its first
+piece the best holder it hears. A piece does not name its sender, so
+the node takes for it the relay whose stream carries that block to it
+by rule 3 below: one at home on its own channel that holds the block,
+else the one that holds the most blocks from the first, then the lowest
+ID. A sleepy node's beats carry the section for one beat after a change,
+in every beat while it gathers, and in one an hour: its anchor hears
+every beat.
+
+*Why boot is a change.* A node that boots knows nothing of its
+neighbours' images, nor they of its, and telling them at once lets a
+holder answer it within a rotation (below). It costs a rotation's 13
+sections, 8.96 ms more each, once a boot.
+
+*Why a gatherer says it every rotation.* A helper streams a block until
+the gatherer's section shows it complete (rule 4), and a rotation after
+a change reaches a channel only if that heartbeat finds it free. On the
+bench a gatherer completed a block while three of its heartbeats were
+skipped for busy channels, then moved home twice, and its holder,
+hearing no section, streamed that block's tail for over an hour
+(roadmap D158). Said once a rotation on the helper's own channel, the
+section reaches the helper within a rotation of any change. It costs one
+section a rotation for each gatherer: with a domain's 270 relays
+([capacity and sizing](#capacity-and-sizing)) all gathering, 270 ×
+8.96 ms over 130 s and 13 channels, 0.14 % of each channel's time.
+
+*Why answer a node that lags.* A node that runs an older image learns
+of a new one only from a holder's section, which would otherwise ride
+hourly; answered, it learns within a rotation of telling its own,
+which it does at boot. Each answer costs a rotation's 13 sections,
+116.5 ms. Once a rotation however many lag bounds a relay to a section
+in every heartbeat; a neighbour that takes the image stops lagging,
+and one whose policy refuses it is answered at most each time it tells
+its section, once an hour.
+
 A node keeps each neighbour's last section in its neighbour table
 ([neighbour table](#neighbour-table)), as it keeps the rest of what the
 neighbour's heartbeats say, and the images the sections name once, at
@@ -3941,7 +4002,13 @@ bytes and 14.4 ms.
    no farther from it has more blocks from the first, or as many and a
    lower ID. It streams on at most two channels: its home, then those
    with the most neighbours lacking. It stops on a channel when no
-   neighbour there lacks a block it streams there.
+   neighbour there lacks a block it streams there. It streams to a
+   gatherer only on a **lease**: while it heard the gatherer's section
+   within the gatherer's last two rotations and a heartbeat's lag
+   ([heartbeat](#heartbeat)), 2 × 13 × T + 872.8 ms, 261 s at the mean
+   interval and 391 s at the longest; a sleepy gatherer's rotation is
+   its beat, so two beat periods and the lag, 601 s
+   ([beats](#beats)).
 4. A stream **sweeps** the blocks in order. Of the block at hand it
    sends fresh pieces, each block's index climbing from a random start
    and wrapping at 255, until it has sent what the neighbour there
@@ -3951,8 +4018,8 @@ bytes and 14.4 ms.
    relays that lacked them, in the district at the design rate over an
    update's first 6 hours, `mesh-update-2026-11-07.md`). If that block
    is the lowest a neighbour there lacks, it goes on with fresh pieces
-   of it, at the pace, until the neighbour's section shows it complete:
-   the block's **tail**. Then it moves to the next block that a
+   of it, at the pace, until the neighbour's section shows it complete
+   or its lease ends: the block's **tail**. Then it moves to the next block that a
    neighbour there lacks, skipping the blocks none lacks, and after the
    last starts the sweep again while any lacks something.
 5. On its home channel, where it hears the others, a node that heard k
@@ -3988,13 +4055,18 @@ lacks most of it should have enough; with fewer, it would leave that
 neighbour a block short until the next sweep, a sweep later. The
 margin makes up the pieces lost on the way on average; a neighbour
 that lost more takes the rest in the block's tail, if it is the lowest
-it lacks, else in the next sweep. *Why a tail.* A neighbour's section
-rides only when its blocks held from the first change, or hourly
-([what a node tells](#updates-over-the-mesh)), so a holder that waited
-for it after a quota cut short could fall silent for up to an hour a
-block, as one did on the bench; the tail keeps the stream going until
-the section shows the block, and at the pace it costs at most 1 % of the
-channel. *Why a random first
+it lacks, else in the next sweep. *Why a tail.* A holder that stopped
+after a quota cut short would wait for the neighbour's next section to
+learn what is still missing; the tail keeps the stream going until the
+section shows the block, and at the pace it costs at most 1 % of the
+channel. *Why a lease.* Without one the tail runs on while the
+gatherer's sections go unheard: on the bench a holder streamed one
+block's tail, over 370 pieces, for more than an hour to a gatherer that
+had completed it (roadmap D158). The gatherer says its section once a
+rotation where its helper hears it, so two rotations ride out one lost
+or skipped, and a stream to a gatherer that fell silent, moved away or
+completed stops within two; a gatherer heard again is served again at
+once. *Why a random first
 piece.* Two helpers of a block then seldom send the same piece.
 
 *Why the helpers share the pace.* Every helper keeps its own pace, so a
@@ -4101,9 +4173,12 @@ domain's 270 relays ([capacity and sizing](#capacity-and-sizing)),
 time. While one runs, a relay's count of blocks grows at most once in
 64 paces, 14.8 minutes, the fewest pieces of a block at the pace: at
 most 4.1 rotations an hour more, 5.1 in all, 0.34 % of each channel's
-time, so the heartbeats take at most 3.3 % against 3.0 % without. Were
-the section in every heartbeat while an update runs, they would take
-270 × 23.36 ms / (10 s × 13) = 4.9 %. A busy channel that gathers adds
+time, and each gatherer's section once a rotation on its helper's
+channel 0.14 % more ([what a node tells](#updates-over-the-mesh)), so
+the heartbeats take at most 3.5 % against 3.0 % without. Were the
+section in every heartbeat while an update runs, they would take
+270 × 23.36 ms / (10 s × 13) = 4.9 %. A boot, and an answer to a
+neighbour that lags, each add a rotation of sections, 116.5 ms. A busy channel that gathers adds
 a piece a pace, 1 % of its time, however many help; an idle one a piece
 a gap, 3.3 %. Today's image takes a sweep of 2 133 pieces from a helper
 that holds it to a neighbour that holds none, at the margin of rule 4:
@@ -4140,9 +4215,11 @@ the margin of rule 4, 77 hours, 3.2 days, and as many
 listens of 143.6 ms, 306 s, at the 5.8 mA of listening
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
 0.49 mAh, 0.06 % of the 850 mAh battery
-([hardware](#hardware)). Its beats carry the section once for each
-block it completes, 28 times, and once an hour, 8.96 ms more each on
-the 230 ms an hour of its beats ([beats](#beats)).
+([hardware](#hardware)). Its beats carry the section while it gathers,
+8.96 ms more on each of its 16 beats an hour, 143 ms an hour on the
+230 ms of its beats ([beats](#beats)): 11 s over the 77 hours, 0.1 mAh
+at the 32 mA of transmitting
+([sleepy nodes alone](#sleepy-nodes-alone)).
 The pieces it hears in its windows shorten its time. The nodes of an
 anchor gather together, so a district's sleepy nodes take days, not
 days for each.
@@ -4166,10 +4243,12 @@ pieces handed to its firmware of every block, a bit each, 48 × 32
 bytes; per channel, the block its sweep is at, the pieces of it sent
 and the pieces to send; each block's next piece; the last two channels
 it sent pieces on and when; the times of the last 8 pieces it heard
-from others on its home channel; and what its section last told,
-the heartbeats of its rotation left and when the hour's is due:
-1 856 bytes beside the tables, and 24 bytes in each neighbour's
-entry for its section (`core-interface.md`, Memory).
+from others on its home channel; what its section last told, the
+channels its rotation of sections has still to reach, when that
+rotation began and when the hour's is due, whether it owes a lagging
+neighbour an answer, and its helper's ID: 1 888 bytes beside the
+tables, and 16 bytes in each neighbour's entry for its section and
+when it was heard (`core-interface.md`, Memory).
 
 ---
 
@@ -4353,7 +4432,8 @@ PIECE     first(1) format(1) image(4) block(1) index(1) piece(247)          = 25
 ASK       first(1) format(1) to(6) from(6)                                  = 14
           aux = 16; to, from = the IDs of the node asked and the node asking
 STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
-          strong(1) proven(1) version(4)                                    = 23
+          strong(1) proven(1) version(4) gathers(4) blocks(1)
+          complete(1) have(1)                                               = 30
           aux = 17; to, from = the IDs of the node that asked and the node
           answering; the rest as [neighbour status](#neighbour-status) says
 ```

@@ -144,6 +144,14 @@ pub const SERVED_CHANNELS: usize = 2;
 /// each channel, once an hour (spec "Updates over the mesh").
 pub const SECTION_EVERY: Duration = Duration::from_secs(3600);
 
+/// How many of a gatherer's rotations of heartbeats a helper streams to it
+/// after it last heard its section. The gatherer says it once a rotation
+/// where its helper hears it, so two ride out one restatement lost or
+/// skipped for a busy channel, and a stream to a gatherer that fell
+/// silent, moved away or completed stops within two
+/// (spec "Updates over the mesh").
+pub const LEASE_ROTATIONS: u64 = 2;
+
 /// Bytes of a heartbeat's section: the version it runs (4), the newest
 /// image's version (4), name (4), key (1), blocks (1), last block's
 /// pieces (1), the blocks it holds from the first (1), and the pieces it

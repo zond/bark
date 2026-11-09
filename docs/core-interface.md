@@ -279,8 +279,11 @@ node it does not know. An answer addressed to the node comes back as
 `AppEvent::Status { from, status }`, at most once an ask and never if a frame was lost.
 `Node::status(now)` is what the node itself tells when asked: what its screen shows, so a
 driver draws its screen from it too. Two parts of it only the driver knows: the image
-version, `Config::version`, set at build (0 in the simulator), and the battery, the last
-`AppCommand::Battery` reading, which the core now keeps. `bark-driver` takes the
+version, `Config::version`, set at build (0 in the simulator), which the heartbeats'
+section also tells as the version run, and the battery, the last
+`AppCommand::Battery` reading, which the core now keeps. `Status::gathering` is the
+image the core gathers, its version and blocks, the blocks held from the first and the
+pieces of the next, all zero when none (roadmap D158). `bark-driver` takes the
 application's ask as `Request::Ask` and hands the answer to `App::message`.
 
 `AppEvent::Boot { relays, ends }` tells the application how the node's first rotation goes
@@ -326,7 +329,7 @@ test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 112 B, and 4 × 16 B for the images their sections name | 7.1 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 120 B, and 4 × 16 B for the images their sections name | 7.6 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 667 × 40 B | 26.1 KiB |
@@ -334,7 +337,7 @@ test in `tables/mod.rs`:
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **89.4 KiB** |
+| **All** | | **89.9 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
@@ -343,18 +346,18 @@ hold the 564 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-94 480 B (92.3 KiB): the tables and, in under 1 KiB around them, the
+95 016 B (92.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 1 864 B (spec "Updates over the mesh"), with 8 B of each neighbour's entry for its heartbeats' section and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 75 464 B (73.7 KiB), without the heard table and the delivery
+of the update, 1 888 B (spec "Updates over the mesh"), with 16 B of each neighbour's entry for its heartbeats' section and when it was heard and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 76 000 B (74.2 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 120 256 B,
-`bark-fw/scripts/uf2.py --stack` on the release build: 95 600 B more than the 24 656 B it
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 112 008 B,
+`bark-fw/scripts/uf2.py --stack` on the open release build of version 14 (roadmap D158): 87 352 B more than the 24 656 B it
 left with 254 hop places held at once and 1613 records (roadmap D155), against a floor of 24 576 B.
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
@@ -403,7 +406,7 @@ action at a time, and the core never allocates.
     header; the decoder rejects anything longer.
   - A DATA's `aux` 15 is the update's piece, 16 and 17 a neighbour's status asked and
     told, and 13, 14 and 18 to 63 are rejected (spec "Packet formats"); a piece is always a
-    full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 23. A
+    full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 30. A
     status's battery byte that is no percent, 101 to 254, is read as not read. A heartbeat of 30 bytes or more carries the update's section in bytes 13 to
     29, its versions big-endian (`wire::decode_section`).
   - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit

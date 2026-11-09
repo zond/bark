@@ -36,7 +36,7 @@
 //! PIECE      first format tag block index bytes                   = 255
 //! ASK        first format to from                                 = 14
 //! STATUS     first format to from flags battery heard strong
-//!            proven version                                       = 23
+//!            proven version gathers blocks complete have          = 30
 //! ```
 //!
 //! DATA's `aux` 13 to 63, above every home channel, names a frame from
@@ -201,9 +201,13 @@ const STATUS_HEARD: usize = STATUS_BATTERY + 1;
 const STATUS_STRONG: usize = STATUS_HEARD + 1;
 const STATUS_PROVEN: usize = STATUS_STRONG + 1;
 const STATUS_VERSION: usize = STATUS_PROVEN + 1;
+const STATUS_GATHERS: usize = STATUS_VERSION + VERSION_LEN;
+const STATUS_BLOCKS: usize = STATUS_GATHERS + VERSION_LEN;
+const STATUS_COMPLETE: usize = STATUS_BLOCKS + 1;
+const STATUS_HAVE: usize = STATUS_COMPLETE + 1;
 /// Bytes of the status itself, after whom and from whom: what the phone
 /// link passes on as it is (spec "Phone link", Ask).
-pub const STATUS_LEN: usize = STATUS_VERSION + VERSION_LEN - ASK_LEN;
+pub const STATUS_LEN: usize = STATUS_HAVE + 1 - ASK_LEN;
 /// A status told's length (spec "Neighbour status").
 pub const STATUS_FRAME_LEN: usize = ASK_LEN + STATUS_LEN;
 // An image's version is 4 bytes, as in a heartbeat's section.
@@ -222,10 +226,10 @@ const _: () = assert!(
     crate::tables::neighbours::NEIGHBOURS <= u8::MAX as usize,
     "a neighbour count fits a byte"
 );
-const _: () = assert!(ASK_LEN == 14 && STATUS_LEN == 9 && STATUS_FRAME_LEN == 23);
+const _: () = assert!(ASK_LEN == 14 && STATUS_LEN == 16 && STATUS_FRAME_LEN == 30);
 const _: () = assert!(
     free(STATUS_FRAME_LEN, 1) && !free(STATUS_FRAME_LEN + 1, 1),
-    "spec \"Neighbour status\": the status's last byte, the proven count, costs no airtime"
+    "spec \"Neighbour status\": the gathered image's block count costs no airtime"
 );
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
@@ -377,7 +381,7 @@ pub enum StatusFrame {
 }
 
 /// Encode `s` into the [`STATUS_LEN`] bytes of a status told after whom
-/// and from whom (spec "Neighbour status"): the version big-endian.
+/// and from whom (spec "Neighbour status"): the versions big-endian.
 pub fn encode_status(s: &Status, b: &mut [u8; STATUS_LEN]) {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
     b[0] = flag(s.placed, PLACED)
@@ -393,12 +397,23 @@ pub fn encode_status(s: &Status, b: &mut [u8; STATUS_LEN]) {
     b[2] = s.neighbours.heard;
     b[3] = s.neighbours.strong;
     b[4] = s.neighbours.both_ways;
-    b[5..].copy_from_slice(&s.version.to_be_bytes());
+    let at = |i: usize| i - ASK_LEN;
+    b[at(STATUS_VERSION)..at(STATUS_GATHERS)].copy_from_slice(&s.version.to_be_bytes());
+    let g = &s.gathering;
+    b[at(STATUS_GATHERS)..at(STATUS_BLOCKS)].copy_from_slice(&g.version.to_be_bytes());
+    b[at(STATUS_BLOCKS)] = g.blocks;
+    b[at(STATUS_COMPLETE)] = g.complete;
+    b[at(STATUS_HAVE)] = g.have;
 }
 
 /// The status in the [`STATUS_LEN`] bytes `b`; flag bits it does not
 /// know are ignored, and a battery byte that is no percent is not read.
 pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
+    let at = |i: usize| i - ASK_LEN;
+    let word = |i: usize| {
+        let i = at(i);
+        u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
+    };
     let flags = b[0];
     let battery = match (flags & USB != 0, b[1]) {
         (true, _) => Battery::Usb,
@@ -417,7 +432,13 @@ pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
             strong: b[3],
             both_ways: b[4],
         },
-        version: u32::from_be_bytes([b[5], b[6], b[7], b[8]]),
+        version: word(STATUS_VERSION),
+        gathering: crate::status::Gathering {
+            version: word(STATUS_GATHERS),
+            blocks: b[at(STATUS_BLOCKS)],
+            complete: b[at(STATUS_COMPLETE)],
+            have: b[at(STATUS_HAVE)],
+        },
     }
 }
 
@@ -819,7 +840,7 @@ mod tests {
             Packet::Data(d) => 28 + d.payload.len(),
             Packet::Update(Update::Piece { .. }) => 255,
             Packet::Status(StatusFrame::Ask { .. }) => 14,
-            Packet::Status(StatusFrame::Tell { .. }) => 23,
+            Packet::Status(StatusFrame::Tell { .. }) => 30,
         };
         assert_eq!(len, expected);
         assert_eq!(Packet::decode(&buf[..len]).as_ref(), Ok(p));
@@ -868,6 +889,7 @@ mod tests {
             strong: u8,
             both_ways: u8,
             version: u32,
+            gathering in (any::<u32>(), any::<u8>(), any::<u8>(), any::<u8>()),
         ) {
             let ask = Packet::Status(StatusFrame::Ask { to, from });
             round_trip(&ask);
@@ -881,6 +903,12 @@ mod tests {
                 battery: if usb { Battery::Usb } else { battery },
                 neighbours: NeighbourCounts { heard, strong, both_ways },
                 version,
+                gathering: crate::status::Gathering {
+                    version: gathering.0,
+                    blocks: gathering.1,
+                    complete: gathering.2,
+                    have: gathering.3,
+                },
             };
             let tell = Packet::Status(StatusFrame::Tell { to, from, status });
             round_trip(&tell);
@@ -888,6 +916,8 @@ mod tests {
             let mut buf = [0; MAX_FRAME];
             tell.encode(&mut buf).unwrap();
             prop_assert_eq!(buf[ASK_LEN], flags, "the flags in their bits");
+            prop_assert_eq!(&buf[STATUS_GATHERS..STATUS_BLOCKS], &gathering.0.to_be_bytes()[..]);
+            prop_assert_eq!(&buf[STATUS_BLOCKS..STATUS_FRAME_LEN], &[gathering.1, gathering.2, gathering.3][..]);
         }
 
         #[test]
@@ -976,7 +1006,7 @@ mod tests {
             let mut bytes = std::vec![first];
             bytes.extend_from_slice(&rest);
             let _ = Packet::decode(&bytes);
-            for cut in [0, 1, 2, 3, 7, 8, 12, 13, 14, 15, 17, 18, 19, 22, 23, 24, 27, 28, 29] {
+            for cut in [0, 1, 2, 3, 7, 8, 12, 13, 14, 15, 17, 18, 19, 22, 23, 24, 27, 28, 29, 30, 31] {
                 let _ = Packet::decode(&bytes[..cut.min(bytes.len())]);
             }
         }

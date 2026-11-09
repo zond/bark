@@ -268,6 +268,17 @@ pub struct State {
     /// Of them, those that have taken a message from it: proven to hear it.
     pub both_ways: u8,
     pub phone: Phone,
+    /// The image it gathers over the mesh, if any.
+    pub getting: Option<Getting>,
+}
+
+/// An image a node gathers over the mesh (`bark_proto::status::Gathering`):
+/// its version, and of its blocks how many the node holds from the first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Getting {
+    pub version: u32,
+    pub complete: u8,
+    pub blocks: u8,
 }
 
 /// The phone link as the screen says it (spec "Phone link", Pairing).
@@ -308,8 +319,9 @@ const TOP: usize = 6;
 const GAP: usize = 8;
 
 /// The most lines the screen takes: the role and `STARTING` as the
-/// header, the ID, the image, the phone, the state's three, and the time.
-pub const LINES: usize = 9;
+/// header, the ID, the image and the one it gathers, the phone, the
+/// state's three, and the time.
+pub const LINES: usize = 10;
 
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
 
@@ -344,6 +356,12 @@ pub fn lines(
     }
     put(row("ID", format_args!("{}", Hex(fixed.id))), 0);
     put(row(fixed.image, format_args!("V{}", fixed.version)), 0);
+    if let Some(g) = state.getting {
+        let mut label = Text::new();
+        let _ = write!(label, "GET V{}", g.version);
+        let label = core::str::from_utf8(label.bytes()).unwrap_or("GET");
+        put(row(label, format_args!("{}/{}", g.complete, g.blocks)), 0);
+    }
     put(
         match state.phone {
             Phone::Unpaired => row("PHONE", format_args!("UNPAIRED")),

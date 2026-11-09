@@ -294,6 +294,7 @@ static STATE: embassy_sync::blocking_mutex::Mutex<
     strong: 0,
     both_ways: 0,
     phone: bark_screen::Phone::Unpaired,
+    getting: None,
 }));
 
 /// The phone link's line (`ble.rs`), apart from the node's state, as it

@@ -160,7 +160,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [9, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [10, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -187,7 +187,8 @@ fn vectors() {
     assert_eq!(&name(to), b"bark-010203040506");
 
     // The app's vector: a sleepy node anchored, placed, at 57 %, hearing
-    // 5, 3 strong, 2 proven, running version 0x01020304.
+    // 5, 3 strong, 2 proven, running version 0x01020304, gathering
+    // version 14 of 31 blocks, holding 14 and 40 pieces of the next.
     assert_eq!(Ask(to).encode(), [1, 2, 3, 4, 5, 6]);
     let answer = Answer {
         from: to,
@@ -203,13 +204,34 @@ fn vectors() {
                 both_ways: 2,
             },
             version: 0x0102_0304,
+            gathering: bark_proto::status::Gathering {
+                version: 14,
+                blocks: 31,
+                complete: 14,
+                have: 40,
+            },
         },
     };
     assert_eq!(
         answer.encode(),
-        [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4]
+        [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
     );
     assert_eq!(Answer::decode(&answer.encode()), Ok(Some(answer)));
+    // Link version 9's answer, and a notification's 20 bytes at the
+    // default MTU: gathering none.
+    let gathers_none = Answer {
+        status: bark_proto::status::Status {
+            gathering: Default::default(),
+            ..answer.status
+        },
+        ..answer
+    };
+    for cut in [15, 20] {
+        assert_eq!(
+            Answer::decode(&answer.encode()[..cut]),
+            Ok(Some(gathers_none))
+        );
+    }
 }
 
 #[test]
@@ -321,10 +343,7 @@ fn reads_ignore_what_a_later_version_appends() {
     longer[..Answer::LEN].copy_from_slice(&a.encode());
     assert_eq!(Answer::decode(&longer), Ok(Some(a)));
     assert_eq!(Answer::decode(&[]), Ok(None));
-    assert_eq!(
-        Answer::decode(&longer[..Answer::LEN - 1]),
-        Err(Malformed::Length)
-    );
+    assert_eq!(Answer::decode(&longer[..14]), Err(Malformed::Length));
 }
 
 #[test]

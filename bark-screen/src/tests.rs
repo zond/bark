@@ -80,6 +80,7 @@ fn a_sleepy_carried_node_on_battery() {
         strong: 4,
         both_ways: 2,
         phone: Phone::Private,
+        getting: None,
     };
     assert_eq!(
         texts(&state, 12),
@@ -91,6 +92,35 @@ fn a_sleepy_carried_node_on_battery() {
             "KNOWN      5/4/2",
             "BATTERY      73%",
             "UP        12 MIN",
+        ]
+    );
+}
+
+/// The image a node gathers, under the one it runs: its version and the
+/// blocks it holds of all.
+#[test]
+fn a_relay_gathering_an_image() {
+    let state = State {
+        placed: true,
+        battery: Battery::Usb,
+        getting: Some(Getting {
+            version: 14,
+            complete: 14,
+            blocks: 31,
+        }),
+        ..State::default()
+    };
+    assert_eq!(
+        texts(&state, 0),
+        [
+            "FIXED RELAY     ",
+            "ID  BAE6E6CBF4F5",
+            "NODE         V12",
+            "GET V14    14/31",
+            "PHONE   UNPAIRED",
+            "KNOWN      0/0/0",
+            "POWER        USB",
+            "UP         0 MIN",
         ]
     );
 }
@@ -192,13 +222,19 @@ fn every_line_fits_and_is_drawable() {
         heard: 64,
         strong: 64,
         both_ways: 64,
+        getting: Some(Getting {
+            version: 999,
+            complete: 47,
+            blocks: 48,
+        }),
         ..State::default()
     };
     let relay = State {
         sleepy: false,
         ..widest
     };
-    assert_eq!(texts(&widest, 0)[5], "KNOWN   64/64/64");
+    assert_eq!(texts(&widest, 0)[4], "GET V999   47/48");
+    assert_eq!(texts(&widest, 0)[6], "KNOWN   64/64/64");
     let pairing = State {
         phone: Phone::Code(999_999),
         ..widest

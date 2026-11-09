@@ -146,6 +146,10 @@ class FakeNode implements NodeLink {
       strong: 4,
       proven: 3,
       version: 9,
+      gathers: 10,
+      blocks: 31,
+      complete: 14,
+      have: 40,
     ),
     _neighbourHex(2): const NeighbourStatus(placed: true, heard: 3, strong: 1),
     _neighbourHex(3): const NeighbourStatus(

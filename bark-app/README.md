@@ -150,8 +150,9 @@ is a prototype for the bench, not the app people will carry.
   a neighbour that answers has its role under its marker in its
   screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
   details show its screen's lines one a row under the distance, in
-  place of the flags: the role, its power, the neighbours it knows and
-  its firmware version. An ask costs airtime, so
+  place of the flags: the role, its power, the neighbours it knows, its
+  firmware version and, from link version 10, the image it gathers,
+  such as `GET V14 14/31`. An ask costs airtime, so
   one lost is not repeated: the person refreshes. The
   node is drawn at its own position, not its address, so a sleepy node
   is not drawn on its anchor; a node without a place has its
