@@ -657,27 +657,36 @@ confirmed itself.
 
 The 10 s line ends in `update=`: `idle`, `holds:8 serving:B:N` (the last
 block served and its pieces so far), `gathering:8 blocks:K/B`,
-`installing:8` or `staged:8`. On a bench of two boards built with the
-same key, one updated from the phone to version 8 and one running
-version 7:
+`installing:8` or `staged:8`.
+
+A bench of two boards: A takes version 8 from the phone or the console's
+`stage`, so that its record holds the header (a board flashed with a
+UF2 serves nothing); B runs version 7, or 0, a UF2 bench build, which
+takes any. Both hold the key image 8 is signed with: the project's, ids
+1 and 2, or, in open builds, the bench key, id 255 (roadmap D154). Image
+8 of 471 064 bytes travels in 31 blocks, the last of 53 pieces:
 
 ```
-A: update: holds version=8 blocks=26 name=[..] key=1
-B: update: offered version=8 blocks=26 key=1 name=[..]: taken
-B: update: gathering version=8 blocks=26 (Started)
+A: update: holds version=8 blocks=31 name=[..] key=255
+B: update: offered version=8 blocks=31 key=255 name=[..]: taken
+B: update: gathering version=8 blocks=31 (Started)
 A: update: serving block=0 piece=113 (1 of this block)
-B: update: block 0 decoded and written, 1 of 26
+B: update: block 0 decoded and written, 1 of 31
 B: update: block 7 failed its check; gathered again
-B: update: version=8 length=394112 whole and checked: the loader swaps it in at the next boot
+B: update: version=8 length=471064 whole and checked: the loader swaps it in at the next boot
 B: update: rebooting into version 8 at a quiet moment
 B: reboot
 B: update: version 8 confirmed
-B: update: holds version=8 blocks=26 name=[..] key=1
+B: update: holds version=8 blocks=31 name=[..] key=255
 ```
 
-A block takes a holder's 80 pieces, its 64 and the loss margin, at one a
-pace of 13.86 s on the gatherer's channel: 18.5 minutes, and an image of
-394 112 bytes, 26 blocks, about 8 hours.
+A full block takes at least a holder's 80 pieces, its 64 and the loss
+margin, at one a pace of 13.86 s on the gatherer's channel: 18.5
+minutes. The 31 blocks take about 2 390 pieces, 9.2 hours, and each
+block's decode about 8.6 s of reads more. A line `update: piece ... not
+filled; not sent` or a rising `unserved=` says the holder could not fill
+a piece in time; `block N failed its check` more than now and then, that
+pieces arrive wrong.
 
 **A bench loader**, built with `BARK_LOADER_BENCH=reset`, resets the
 chip once in each swap and once in each swap back, at a moment drawn
