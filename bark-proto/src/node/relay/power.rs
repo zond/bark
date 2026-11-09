@@ -47,14 +47,17 @@
 //! reboots. Before the first calibration it compares the driver's
 //! readings as they are.
 //!
-//! A person at the node may force the other role with the board's button
-//! (`AppCommand::ForceRole`): a relay leaves as at its battery's low
-//! level, flushing first, and a sleepy node turns relay at once. The
-//! forced role holds against the grace, the carried flag and a battery
-//! back at its high level, until the driver reports a change of external
-//! power; then the rules above decide again. A forced relay on battery
-//! still leaves at its low level, and the force ends there: the cell is
-//! the owner's, and an empty one serves nobody. A reboot forgets it.
+//! A person at the node may flip its role with the board's button
+//! (`AppCommand::ForceRole`): a relay, one that leaves among them, turns
+//! sleepy, leaving as at its battery's low level, flushing first; a
+//! sleepy node turns relay at once. Each press flips the role again. The
+//! node is then forced: its role holds against the grace, the carried
+//! flag and a battery back at its high level, until the driver reports a
+//! change of external power, which returns it to automatic, the rules
+//! above, at once. A forced relay on battery still leaves at its low
+//! level, and the force ends there: the cell is the owner's, and an
+//! empty one serves nobody; for the same reason a flip to relay is not
+//! taken on battery at that level. A reboot forgets the force.
 //!
 //! A [`SleepyNode`](super::SleepyNode) has no room for the mail a relay
 //! holds, and stays sleepy whatever its power.
@@ -246,18 +249,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A person forces the other role (module documentation): sleepy if
-    /// the node is a relay, or is forced one, else a relay.
+    /// A person presses the button: the node flips its role, and is
+    /// forced until the power changes (module documentation).
     pub(super) fn force(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.stage == Stage::Off {
             return;
         }
         let external = matches!(self.battery.charge, Charge::Usb(_));
         let booting = self.stage == Stage::Booting;
-        let sleepy = match self.battery.forced {
-            Some(f) => f == Forced::Relay,
-            None => !self.sleepy(),
-        };
+        let sleepy = !self.sleepy();
         if sleepy {
             match self.mode {
                 Mode::Relay(Power::Leaving(_)) | Mode::Sleepy(_) => {}
@@ -279,8 +279,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             };
             match self.mode {
                 Mode::Sleepy(_) if !booting => self.turn_relay(power, now, emit),
-                // Back from a flush, as at power back within it: what
-                // was flushed stays queued.
                 _ => self.mode = Mode::Relay(power),
             }
         }
@@ -391,7 +389,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     emit(Action::Trace(Trace::BatteryLow));
                     self.battery.forced = None;
                     true
-                } else if self.battery.forced == Some(Forced::Relay) {
+                } else if self.forced() == Some(Forced::Relay) {
                     false
                 } else if on_battery && self.motion.carried {
                     emit(Action::Trace(Trace::CarriedOnBattery));

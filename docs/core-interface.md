@@ -213,14 +213,14 @@ right after the boot wakeup and at every change, and may repeat it. On external 
 the node is a relay, on battery sleepy (spec "Nodes"): while it boots, from the report
 on; running, from the change on, as spec "Sleepy nodes" says.
 
-`AppCommand::ForceRole` forces the other role, for a person at the node who presses its
-button (spec "Nodes", roadmap D160): a relay leaves as at its low battery and turns
-sleepy, a sleepy node turns relay at once, and a press while a role is forced forces the
-other. `forced()` says which role is forced, if any, for the node's screen. The force
-lasts until an `AppCommand::Power` that changes the power, which ends it, and a forced
-relay on battery still turns sleepy at its low battery level, which ends it too. A node
-that cannot relay, or one on battery at its low level, does not take a force to relay. A
-reboot forgets it. `bark-driver` takes it as `Request::ForceRole`.
+`AppCommand::ForceRole` flips the node's role, for a person at the node who holds its
+button (spec "Nodes", roadmap D160): a relay, one that leaves among them, turns sleepy,
+leaving as at its low battery, and a sleepy node turns relay at once. The node is then
+forced, which `forced()` tells, until an `AppCommand::Power` that changes the power, and a
+forced relay on battery still turns sleepy at its low battery level, either of which
+returns it to the power's rules. A node that cannot relay, or one on battery at its low
+level, does not take a flip to relay. A reboot forgets it. `bark-driver` takes it as
+`Request::ForceRole`.
 
 `AppCommand::Battery` reports the battery's voltage in millivolts as the board's converter
 reads it, uncalibrated. The driver sends it only on battery, never on external power,

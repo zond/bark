@@ -1,4 +1,4 @@
-//! A role a person forces with the board's button (spec "Nodes",
+//! A role a person flips with the board's button (spec "Nodes",
 //! `relay/power.rs`, roadmap D160): it holds until the external power
 //! changes, then the power's rules decide again; a forced relay on
 //! battery still turns sleepy at its low battery level.
@@ -148,7 +148,8 @@ fn a_low_battery_turns_a_forced_relay_sleepy() {
     let r = 0;
     let mut h = pair(41, Some(LEVELS));
     power(&mut h, r, false);
-    force(&mut h, r);
+    battery(&mut h, r, LEVELS.high_mv + 300);
+    carry(&mut h, r);
     assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
     force(&mut h, r);
     assert_eq!(h.nodes[r].core.forced(), Some(Forced::Relay));
@@ -167,13 +168,14 @@ fn a_low_battery_turns_a_forced_relay_sleepy() {
     assert!(h.nodes[r].core.sleepy());
 }
 
-/// Each press forces the other role: a relay forced sleepy and pressed
-/// again in its flush or after it is a forced relay.
+/// Each press flips the role, and the node stays forced; a relay flipped
+/// back within its flush relays on, with what it flushed still queued.
 #[test]
-fn each_press_forces_the_other_role() {
+fn each_press_flips_the_role() {
     let r = 0;
     let mut h = pair(51, Some(LEVELS));
     force(&mut h, r);
+    assert_eq!(h.nodes[r].core.forced(), Some(Forced::Sleepy));
     force(&mut h, r);
     assert_eq!(h.nodes[r].core.forced(), Some(Forced::Relay));
     assert!(relaying(&h, r), "back from its flush");
@@ -191,6 +193,26 @@ fn each_press_forces_the_other_role() {
         })
         .collect();
     assert_eq!(forced, [true, false, true, false]);
+}
+
+/// A relay that leaves is a relay still: a press keeps it turning sleepy,
+/// now forced.
+#[test]
+fn a_leaving_relay_flips_to_sleepy() {
+    let r = 0;
+    let mut h = pair(57, Some(LEVELS));
+    power(&mut h, r, false);
+    battery(&mut h, r, LEVELS.high_mv + 300);
+    carry(&mut h, r);
+    assert!(h.nodes[r].core.leaving() || h.nodes[r].core.sleepy());
+    let leaving = h.nodes[r].core.leaving();
+    force(&mut h, r);
+    let want = if leaving {
+        Forced::Sleepy
+    } else {
+        Forced::Relay
+    };
+    assert_eq!(h.nodes[r].core.forced(), Some(want));
 }
 
 /// A node with no room for a relay's mail is never forced to relay.

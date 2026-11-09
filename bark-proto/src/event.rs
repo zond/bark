@@ -138,15 +138,14 @@ pub enum AppCommand<'a> {
         /// External power is present.
         external: bool,
     },
-    /// A person at the node forces the other role, with the board's
-    /// button: a relay turns sleepy, leaving as at its battery's low
-    /// level, and a sleepy node turns relay; a press while a role is
-    /// forced forces the other. The forced role lasts until the next
-    /// change of external power, after which [`AppCommand::Power`]'s
-    /// rules decide again, and a forced relay on battery still turns
-    /// sleepy at its low battery level (spec "Nodes", roadmap D160). A
-    /// node that cannot relay, or a relay forced on battery at its low
-    /// level, does not take it.
+    /// A person at the node presses the board's button: the node flips
+    /// its role, a relay turning sleepy, leaving as at its low battery,
+    /// and a sleepy node turning relay, and is forced until the next
+    /// change of external power, which returns it to the power's rules.
+    /// A forced relay on battery still turns sleepy at its low battery
+    /// level, which ends the force, and a flip to relay is not taken on
+    /// battery at that level (spec "Nodes", roadmap D160). A flip, not a
+    /// target, since the button is one input and the core knows the role.
     ForceRole,
     /// The battery's voltage as the driver reads it, uncalibrated, while
     /// the radio does not transmit, on battery, once a minute (spec
