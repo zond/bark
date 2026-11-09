@@ -375,6 +375,19 @@ class _ThreadScreenState extends State<ThreadScreen> {
     final small = Theme.of(context).textTheme.bodySmall!;
     final mine = e.mine;
     final color = scheme.onSurfaceVariant;
+    // A tap anywhere on the bubble says what it shows; the Got it chip and
+    // the buttons take their own, and a long press still selects text.
+    void help() => mine
+        ? explainMessage(
+            context,
+            details: sentDetails(e.outs),
+            marks: sentStates,
+          )
+        : explainMessage(
+            context,
+            details: receivedDetails(e),
+            marks: receivedMarks,
+          );
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
@@ -383,58 +396,54 @@ class _ThreadScreenState extends State<ThreadScreen> {
         ),
         child: Card(
           color: mine ? scheme.primaryContainer : scheme.surfaceContainerHigh,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (mine)
-                  SelectableText(e.text)
-                else
-                  SelectableText.rich(
-                    TextSpan(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: help,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (mine)
+                    SelectableText(e.text, onTap: help)
+                  else
+                    SelectableText.rich(
+                      onTap: help,
+                      TextSpan(
+                        children: [
+                          for (final p in e.pieces)
+                            TextSpan(
+                              text: p.text,
+                              style: p.missing
+                                  ? TextStyle(
+                                      fontStyle: FontStyle.italic,
+                                      color: color,
+                                    )
+                                  : null,
+                            ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 4),
+                  if (mine)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        for (final p in e.pieces)
-                          TextSpan(
-                            text: p.text,
-                            style: p.missing
-                                ? TextStyle(
-                                    fontStyle: FontStyle.italic,
-                                    color: color,
-                                  )
-                                : null,
-                          ),
+                        Text(when(e.at), style: small),
+                        ..._sentMarks(e.outs, small, scheme),
                       ],
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                if (mine)
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(when(e.at), style: small),
-                      ..._sentMarks(e.outs, small, scheme),
-                    ],
-                  )
-                else
-                  // A tap on the time or the marks says what they mean;
-                  // the Got it chip takes its own.
-                  InkWell(
-                    onTap: () => explainMessage(
-                      context,
-                      details: receivedDetails(e),
-                      marks: receivedMarks,
-                    ),
-                    child: Row(
+                    )
+                  else
+                    Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(when(e.at), style: small),
                         ..._receivedMarks(e, verified, small, color, archived),
                       ],
                     ),
-                  ),
-                if (mine && !archived) _actions(e.outs),
-              ],
+                  if (mine && !archived) _actions(e.outs),
+                ],
+              ),
             ),
           ),
         ),

@@ -172,18 +172,14 @@ void main() {
     expect(find.text('Sealed'), findsOneWidget);
     Navigator.pop(t.element(find.byType(BottomSheet)));
     await t.pumpAndSettle();
-    // A received text's time and marks explain theirs the same way.
-    await t.tap(
-      find
-          .descendant(
-            of: find.ancestor(
-              of: find.text('Echo: hello'),
-              matching: find.byType(Card),
-            ),
-            matching: find.byType(InkWell),
-          )
-          .last,
-    );
+    // A tap anywhere on a bubble, its text too, opens the same help:
+    // a sent one's, then a received one's.
+    await t.tap(find.text('hello').first);
+    await t.pumpAndSettle();
+    expect(find.text('To node'), findsOneWidget);
+    Navigator.pop(t.element(find.byType(BottomSheet)));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Echo: hello').first);
     await t.pumpAndSettle();
     expect(find.text('This message'), findsOneWidget);
     expect(find.text('Written'), findsOneWidget);
