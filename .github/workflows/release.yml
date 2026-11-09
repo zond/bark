@@ -287,6 +287,7 @@ jobs:
           | `bark-fw-@N@.img` | the node firmware as an image to stage through the console's serial port, signed with the project's key (`bark-fw/README.md`, "Updates") |
           | `bark-console-@N@.uf2` | the measurement console in place of the node, with the loader, for the bench (`bark-fw/README.md`, "Console") |
           | `bark-@N@.apk` | the Android app, which links a phone to its node over Bluetooth |
+          | `bark.apk`, `bark.uf2` | `bark-@N@.apk` and `bark-@N@.uf2` under names that stay the same, so that a link to the latest release's file always works (the project's page links `bark.apk`) |
 
           ## Flashing a T-Echo
 
@@ -322,6 +323,8 @@ jobs:
               --title "$GITHUB_REF_NAME" \
               --notes-file notes.md
           fi
+          cp "artifacts/android/bark-$N.apk" artifacts/android/bark.apk
+          cp "artifacts/firmware/bark-$N.uf2" artifacts/firmware/bark.uf2
           gh release upload "$GITHUB_REF_NAME" artifacts/*/* --clobber
           gh release edit "$GITHUB_REF_NAME" \
             --draft=false --notes-file notes.md
