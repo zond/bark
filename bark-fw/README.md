@@ -869,7 +869,9 @@ refresh runs. `bark_screen::schedule` decides, tested on the host.
 flips the role (spec "Nodes", "Screen and buttons") at the moment the
 3 s have passed, while still held; once the core has taken it, within
 milliseconds, the lines are drawn at once with the new role. The
-release does nothing, and a shorter press nothing either. A press of the reset button resets
+release does nothing. A shorter press, let go before the 3 s, flips the
+picture as a touch of the pad does, debounced as the pad, 40 ms: the
+bench found a board whose pad gives no edge. A press of the reset button resets
 the chip into the image it ran; a double tap within half a second
 enters the bootloader instead (Flash, above), which the screen does not
 say. The lines label both at their left edge, in 1-pixel text on the

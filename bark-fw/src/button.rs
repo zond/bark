@@ -1,8 +1,8 @@
 //! The board's two inputs a person uses: the user button
 //! (`board::Buttons`, P1.10), held for [`LONG_PRESS`] to flip the
-//! role (spec "Nodes", roadmap D160), and the touch pad (P0.11), whose
-//! touch flips the screen between the code and the lines
-//! (`bark_screen::schedule`).
+//! role (spec "Nodes", roadmap D160) and pressed shorter as a touch, and
+//! the touch pad (P0.11), whose touch flips the screen between the code
+//! and the lines (`bark_screen::schedule`).
 //!
 //! The board's UF2 bootloader reads its buttons through the internal
 //! pull-up, pressed pulling the pin to ground; P1.10 is wired the same
@@ -22,13 +22,6 @@ use embassy_nrf::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
-
-/// How long the pin must stay pressed, and stay released after, to count.
-/// The T-Echo's switch has no datasheet in this repository; tactile
-/// switches' datasheets give their contacts' bounce as 5 to 10 ms at most,
-/// and a person's press lasts about 100 ms. 20 ms is twice the one and a
-/// fifth of the other.
-const DEBOUNCE: Duration = Duration::from_millis(20);
 
 /// How long the button is held to flip the role: a choice, thirty
 /// times a person's ordinary press of about 100 ms, so that a bump, a
@@ -58,12 +51,19 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
     let mut button = Input::new(pin, Pull::Up);
     loop {
         button.wait_for_low().await;
-        Timer::after(DEBOUNCE).await;
-        if button.is_low()
-            && with_timeout(LONG_PRESS, button.wait_for_high())
-                .await
-                .is_err()
+        Timer::after(TOUCH_DEBOUNCE).await;
+        if !button.is_low() {
+            continue;
+        }
+        // Released before the hold: a touch, for a board whose pad does
+        // not answer.
+        if with_timeout(LONG_PRESS, button.wait_for_high())
+            .await
+            .is_ok()
         {
+            log::info!("button: pressed, as a touch");
+            crate::display::touched();
+        } else {
             log::info!("button: held {} s, flipping the role", LONG_PRESS.as_secs());
             FORCE.store(true, Ordering::Relaxed);
             FOR_CORE.signal(());
@@ -81,14 +81,16 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
             crate::display::lines();
         }
         button.wait_for_high().await;
-        Timer::after(DEBOUNCE).await;
+        Timer::after(TOUCH_DEBOUNCE).await;
     }
 }
 
 /// How long the pad must stay away from its idle level to count as a
-/// touch, and back at it to count as released: a choice. The sensor
-/// filters its own input, so its output does not bounce; this rejects a
-/// glitch, and is well under the 100 ms or so of a quick tap.
+/// touch, and back at it to count as released, and the button pressed
+/// and released alike: a choice. The sensor filters its own input, so its
+/// output does not bounce; tactile switches' datasheets give their
+/// contacts' bounce as 5 to 10 ms at most; this is four times that, and
+/// well under the 100 ms or so of a quick tap or press.
 const TOUCH_DEBOUNCE: Duration = Duration::from_millis(40);
 
 /// Wait for touches of the pad forever: each one flips the screen. No
