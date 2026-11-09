@@ -175,8 +175,6 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
         b'<' => [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
-        b'[' => [0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E],
-        b']' => [0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E],
         _ => return None,
     })
 }
@@ -357,9 +355,9 @@ const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
 /// (spec "Screen and buttons").
 pub fn labels(state: &State) -> [Option<(&'static str, usize)>; 2] {
     let role = match (state.sleepy, state.battery) {
-        (false, _) => Some("<-[SLEEP] 3S"),
+        (false, _) => Some("<-SLEEP 3S"),
         (true, Battery::Low) => None,
-        (true, _) => Some("<-[WAKE] 3S"),
+        (true, _) => Some("<-WAKE 3S"),
     };
     [Some(("<-REBOOT", REBOOT_TOP)), role.map(|r| (r, ROLE_TOP))]
 }

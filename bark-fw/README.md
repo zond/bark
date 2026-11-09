@@ -871,8 +871,8 @@ lines; a shorter press does nothing. A press of the reset button resets
 the chip into the image it ran; a double tap within half a second
 enters the bootloader instead (Flash, above), which the screen does not
 say. The lines label both at their left edge, in 1-pixel text on the
-margin nearer each: `<-REBOOT` at the top, `<-[SLEEP] 3S` or
-`<-[WAKE] 3S` at the bottom; the ten lines start 10 px down to make
+margin nearer each: `<-REBOOT` at the top, `<-SLEEP 3S` or
+`<-WAKE 3S` at the bottom; the ten lines start 10 px down to make
 room.
 
 *The pad.* A touch sensor chip on the board gives a level on P0.11

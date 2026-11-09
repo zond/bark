@@ -395,14 +395,14 @@ fn the_buttons_labelled() {
     let label = |state: State| labels(&state).map(|l| l.map(|(t, _)| t));
     assert_eq!(
         label(State::default()),
-        [Some("<-REBOOT"), Some("<-[SLEEP] 3S")]
+        [Some("<-REBOOT"), Some("<-SLEEP 3S")]
     );
     let sleepy = State {
         sleepy: true,
         battery: Battery::Percent(50),
         ..State::default()
     };
-    assert_eq!(label(sleepy), [Some("<-REBOOT"), Some("<-[WAKE] 3S")]);
+    assert_eq!(label(sleepy), [Some("<-REBOOT"), Some("<-WAKE 3S")]);
     let low = State {
         battery: Battery::Low,
         ..sleepy
@@ -412,7 +412,7 @@ fn the_buttons_labelled() {
         forced: true,
         ..sleepy
     };
-    assert_eq!(label(forced)[1], Some("<-[WAKE] 3S"));
+    assert_eq!(label(forced)[1], Some("<-WAKE 3S"));
     for (t, _) in labels(&State::default()).iter().flatten() {
         assert!(t.bytes().all(|c| glyph(c).is_some()));
     }
