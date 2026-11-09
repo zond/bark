@@ -3162,6 +3162,8 @@ service and its characteristics:
 | Recipient | `28bc000d-…` | write | tag(1) | 1 |
 | Public | `28bc000e-…` | read, write | public(1) | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
+| Ask | `28bc0010-…` | write | id(6) | 6 |
+| | | read, notify | id(6) status(9), empty when none | 0, 15 |
 
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
@@ -3173,7 +3175,7 @@ which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 8 in this specification; the node's ID, the
+**Node.** The link version, 9 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3320,6 +3322,23 @@ leaves between two reads the others stay where they were, and the next
 page skips none of them; counted from the first live one, they would
 shift down by one, and one would be skipped.
 
+**Ask.** The app writes a neighbour's ID, and the node asks that
+neighbour for its status ([neighbour status](#neighbour-status)); the
+write is answered once the node has taken it, whether or not the ID is
+a live neighbour's, as nobody answers an ask of anything else. The app
+asks each neighbour it shows, once, when the person opens or refreshes
+the map, never by itself. Each answer the node is given, the
+neighbour's ID and its status as the radio carries it, is Ask's value
+from then on, notified to the paired phone; the value is empty before
+the first since the node booted. An answer comes within about a second
+of the ask, or not at all. The app shows it on the neighbour in the
+words of the neighbour's own screen. From link version 9.
+
+*Why a characteristic of its own.* The answer is notified, and a
+notified value is the characteristic's own: Neighbours' is a page of
+the table. A write of an ID to Neighbours would also change what the
+app writes there, which only a new version may.
+
 **Updates.** The app stages a new firmware image on the node, which
 the node's loader swaps in at its next boot (roadmap D79;
 `bark-fw/README.md`, "Updates"): so a node on a roof is updated from
@@ -3386,7 +3405,7 @@ two events a piece, it would be 50 s at 15 ms.
 
 **Versions.** A later link version may add characteristics and append
 fields to the values the node writes, Node, Status, Given back, Update,
-and each neighbour of Neighbours; an app
+Ask, and each neighbour of Neighbours; an app
 reads the fields it knows and ignores the rest, as a node reads a
 heartbeat. The values the app writes change only with the version, and
 the app writes the form of the node's. A change to what a field means
@@ -3445,8 +3464,8 @@ On a public node:
   advertises while it has a link free.
 - *Node, Status, Send, Inbox, Given back, Recipient and Guest* take
   any link, encrypted or not, and so do the subscriptions to Status and
-  Given back; Map point, Clock, Home, Neighbours, Update, Image and
-  Public stay the paired phone's, as on any node.
+  Given back; Map point, Clock, Home, Neighbours, Update, Image,
+  Public and Ask stay the paired phone's, as on any node.
 - *It takes 2 links*, the owner's and one guest's, and keeps no state
   for a guest beyond its link. A guest's link is short: the guest
   connects, writes its recipient tag at the node to Recipient (The

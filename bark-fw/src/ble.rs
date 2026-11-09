@@ -246,6 +246,8 @@ pub struct Link {
     pub public: [u8; bark_link::Public::LEN],
     #[characteristic(uuid = le_bytes(uuid::GUEST), write)]
     pub guest: (),
+    #[characteristic(uuid = le_bytes(uuid::ASK), read, write, notify, permissions(authenticated))]
+    pub ask: heapless::Vec<u8, { bark_link::Answer::LEN }>,
 }
 
 /// What the MPSL takes.
@@ -403,6 +405,8 @@ pub enum Request {
     /// What the guest in this link's slot reads from Guest now: the oldest
     /// item after `after` for its tag.
     Guest { slot: usize, tag: u8, after: u32 },
+    /// Ask this neighbour for its status (spec "Neighbour status").
+    Ask(NodeId),
 }
 
 /// Which phone a request is from: its link's slot, and whether it is the
@@ -467,6 +471,9 @@ pub struct State {
     /// The paired phone's message last given back and the end of its
     /// wait, until the node takes another; kept across its links.
     pub given_back: Option<(MsgId, Instant)>,
+    /// The last neighbour's status the node was told, which Ask reads
+    /// (spec "Phone link", Ask).
+    told_status: Option<bark_link::Answer>,
     /// The phones, by their links' slots.
     phones: [Peer; LINKS],
     /// The message the node took last from a phone: its ID, slot and link,
@@ -589,6 +596,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     inbox: None,
     ring_head: None,
     given_back: None,
+    told_status: None,
     phones: [Peer::NONE; LINKS],
     took: None,
     turn: Turn {
@@ -625,6 +633,7 @@ pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 struct Notify {
     status: bool,
     given_back: bool,
+    answer: bool,
     close_guests: bool,
 }
 
@@ -640,6 +649,7 @@ fn notify_one(slot: usize, n: Notify) {
         Some(o) => Notify {
             status: o.status || n.status,
             given_back: o.given_back || n.given_back,
+            answer: o.answer || n.answer,
             close_guests: o.close_guests || n.close_guests,
         },
         None => n,
@@ -776,6 +786,33 @@ pub fn given_back(msg_id: MsgId, retry_at: Instant) {
             },
         );
     }
+}
+
+/// The node's side: a neighbour told its status, for the paired phone
+/// (spec "Phone link", Ask).
+pub fn told_status(answer: bark_link::Answer) {
+    let to = LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        l.told_status = Some(answer);
+        (0..LINKS).find(|&i| l.phones[i].live && l.phones[i].owner)
+    });
+    if let Some(slot) = to {
+        notify_one(
+            slot,
+            Notify {
+                answer: true,
+                ..Notify::default()
+            },
+        );
+    }
+}
+
+/// The last answer as Ask reads it: empty before the first.
+fn answer_now() -> heapless::Vec<u8, { bark_link::Answer::LEN }> {
+    LINK.lock(|l| match l.borrow().told_status {
+        Some(a) => heapless::Vec::from_slice(&a.encode()).expect("it fits"),
+        None => heapless::Vec::new(),
+    })
 }
 
 /// Whether a request waits for the node.
@@ -1361,6 +1398,9 @@ async fn serve(
                         .notify(conn, &given_back_now(slot), true)
                         .await;
                 }
+                if n.answer && owner(conn) {
+                    let _ = link.ask.notify(conn, &answer_now(), true).await;
+                }
                 continue;
             }
             Either3::Third(()) => {
@@ -1546,6 +1586,8 @@ async fn serve(
                     Some(write_home(&w))
                 } else if h == link.neighbours.handle {
                     Some(write_neighbours(slot, &w))
+                } else if h == link.ask.handle {
+                    Some(write_ask(from, &w).await)
                 } else if h == link.recipient.handle {
                     let r = write_recipient(from, &w);
                     close = r == Ok(true);
@@ -1866,6 +1908,7 @@ fn refresh(
         conn.set(&link.clock, &clock_now()).err(),
         conn.set(&link.home, &home_now().encode()).err(),
         conn.set(&link.neighbours, &neighbours_now()).err(),
+        conn.set(&link.ask, &answer_now()).err(),
         conn.set(&link.public, &bark_link::Public(public()).encode())
             .err(),
     ]
@@ -2136,6 +2179,20 @@ fn write_neighbours(
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
     LINK.lock(|l| l.borrow_mut().phones[slot].neighbours_from = from);
+    Ok(())
+}
+
+/// Ask, written: the node asks the neighbour for its status, and the
+/// answer, if one comes, is notified (spec "Phone link", Ask).
+async fn write_ask(
+    from: From,
+    w: &WriteEvent<'_, '_, DefaultPacketPool>,
+) -> Result<(), AttErrorCode> {
+    let a = w.with_data(|offset, data| match offset {
+        0 => bark_link::Ask::decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    ask(from, Request::Ask(a.0)).await;
     Ok(())
 }
 
