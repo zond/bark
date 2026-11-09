@@ -6,7 +6,7 @@
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 9;
+const int linkVersion = 10;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -868,7 +868,11 @@ Uint8List encodeAsk(List<int> id) {
 /// What a neighbour's own screen shows, as it answers an ask (spec
 /// "Phone link", Ask).
 class NeighbourStatus {
-  static const len = 1 + 1 + 1 + 1 + 1 + 4;
+  static const len = 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
+
+  /// Its bytes before the image gathered, as link version 9 had them; a
+  /// notification at the default MTU also carries no more of it.
+  static const len9 = 1 + 1 + 1 + 1 + 1 + 4;
 
   /// The battery byte at or below the level at which a fixed relay turns
   /// sleepy.
@@ -904,6 +908,14 @@ class NeighbourStatus {
   /// The firmware image's version it runs; 0 when unknown.
   final int version;
 
+  /// The image it gathers over the mesh, 0 when none: its version, its
+  /// blocks, the blocks it holds from the first and the pieces it holds
+  /// of the next.
+  final int gathers;
+  final int blocks;
+  final int complete;
+  final int have;
+
   const NeighbourStatus({
     this.placed = false,
     this.sleepy = false,
@@ -915,6 +927,10 @@ class NeighbourStatus {
     this.strong = 0,
     this.proven = 0,
     this.version = 0,
+    this.gathers = 0,
+    this.blocks = 0,
+    this.complete = 0,
+    this.have = 0,
   });
 
   /// The percentage left; null while low, not read or on USB, as the
@@ -937,12 +953,18 @@ class NeighbourStatus {
     strong,
     proven,
     ..._be32(version),
+    ..._be32(gathers),
+    blocks,
+    complete,
+    have,
   ]);
 
-  /// The flags' spare bits, for a later version, are ignored.
+  /// The flags' spare bits, for a later version, are ignored; without the
+  /// image gathered whole it gathers none.
   static NeighbourStatus decode(List<int> b) {
-    if (b.length < len) throw const Malformed('neighbour status');
+    if (b.length < len9) throw const Malformed('neighbour status');
     bool flag(int bit) => b[0] & (1 << bit) != 0;
+    final whole = b.length >= len;
     return NeighbourStatus(
       placed: flag(0),
       sleepy: flag(1),
@@ -954,6 +976,10 @@ class NeighbourStatus {
       strong: b[3],
       proven: b[4],
       version: _u32(b, 5),
+      gathers: whole ? _u32(b, 9) : 0,
+      blocks: whole ? b[13] : 0,
+      complete: whole ? b[14] : 0,
+      have: whole ? b[15] : 0,
     );
   }
 
@@ -977,9 +1003,18 @@ class NeighbourStatus {
   /// The neighbours it knows, as its screen says them.
   String get known => 'KNOWN $heard/$strong/$proven';
 
+  /// The image it gathers, as its screen says it.
+  String get getting => 'GET V$gathers $complete/$blocks';
+
   /// The lines of its screen that an answer carries; the version only
-  /// when known.
-  List<String> get lines => [role, power, known, if (version != 0) 'V$version'];
+  /// when known, and the image gathered only when there is one.
+  List<String> get lines => [
+    role,
+    power,
+    known,
+    if (version != 0) 'V$version',
+    if (gathers != 0) getting,
+  ];
 }
 
 /// Ask, read and notify: the latest answer, a neighbour's ID and status;
@@ -994,7 +1029,9 @@ class Answer {
 
   static Answer? decode(List<int> b) {
     if (b.isEmpty) return null;
-    if (b.length < len) throw const Malformed('Ask');
+    if (b.length < nodeIdLen + NeighbourStatus.len9) {
+      throw const Malformed('Ask');
+    }
     return Answer(
       b.sublist(0, nodeIdLen),
       NeighbourStatus.decode(b.sublist(nodeIdLen)),

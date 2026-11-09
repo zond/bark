@@ -47,11 +47,12 @@ String qualityName(Quality q) => switch (q) {
   Quality.fragile => 'fragile',
 };
 
-/// The flags of a neighbour, in words.
-List<String> neighbourFlags(Neighbour n) => [
+/// The flags of a neighbour, in words; with `answered`, only this node's
+/// relation to it and view of it, as its answer says the rest.
+List<String> neighbourFlags(Neighbour n, {bool answered = false}) => [
   if (n.anchor) 'this node\'s anchor',
-  if (n.sleepy) 'sleepy',
-  if (n.carried) 'carried',
+  if (n.sleepy && !answered) 'sleepy',
+  if (n.carried && !answered) 'carried',
   if (n.mapPoint) 'position from a map point',
   if (n.anchorless) 'anchorless',
   if (n.demoted) 'demoted: its last hand-overs failed',
@@ -387,8 +388,10 @@ class _NeighbourMarker extends StatelessWidget {
               '${margin.toStringAsFixed(1)} dB over the noise floor',
           'Last heard ${n.ageS} s ago',
           if (far != null) '${far.round()} m away',
-          ...neighbourFlags(n),
-          if (s != null) 'Its screen: ${s.lines.join(', ')}',
+          // Its own screen's lines, one a row, then this node's relation
+          // to it, which its screen cannot say.
+          ...?s?.lines,
+          ...neighbourFlags(n, answered: s != null),
         ]),
       ),
       child: s == null

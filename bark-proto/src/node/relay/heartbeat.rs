@@ -222,7 +222,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// "Updates over the mesh").
     pub(super) fn heartbeat_frame_at(&self, now: Instant) -> Frame {
         let mut f = self.heartbeat_frame();
-        if let Some(section) = self.heartbeat_section(now) {
+        if let Some(section) = self.heartbeat_section(now, f.channel) {
             let at = usize::from(f.len);
             let mut b = [0u8; crate::update::SECTION_LEN];
             crate::wire::encode_section(&section, &mut b);
@@ -335,7 +335,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.radio.budget.record(mac::airtime(&f), now);
         if usize::from(f.len) > HEARTBEAT_LEN {
-            self.section_sent(now);
+            self.section_sent(now, f.channel);
         }
         self.radio.excursion.transmit(Job::Heartbeat, f, emit);
     }

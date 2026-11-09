@@ -104,7 +104,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [9, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect(n.encode(), [10, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
     expect([d.version, d.image], [1, 7]);
     expect(d.id, to);
@@ -235,10 +235,17 @@ void main() {
       strong: 3,
       proven: 2,
       version: 0x01020304,
+      gathers: 14,
+      blocks: 31,
+      complete: 14,
+      have: 40,
     );
     final b = Answer(to, s).encode();
-    expect(b, [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4]);
-    expect(Answer.len, 15);
+    expect(b, [
+      1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4, //
+      0, 0, 0, 14, 31, 14, 40,
+    ]);
+    expect(Answer.len, 22);
     final d = Answer.decode(b)!;
     expect(d.id, to);
     expect(d.status.encode(), s.encode());
@@ -247,7 +254,18 @@ void main() {
       'BATTERY 57%',
       'KNOWN 5/3/2',
       'V16909060',
+      'GET V14 14/31',
     ]);
+    // Link version 9's answer, and a notification's 20 bytes at the
+    // default MTU: gathering none.
+    for (final cut in [15, 20]) {
+      expect(Answer.decode(b.sublist(0, cut))!.status.lines, [
+        'SLEEPY ANCHORED',
+        'BATTERY 57%',
+        'KNOWN 5/3/2',
+        'V16909060',
+      ]);
+    }
     // Empty before the first answer; short is malformed; the flags'
     // spare bits and what a later version appends are ignored.
     expect(Answer.decode([]), isNull);

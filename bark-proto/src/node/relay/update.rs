@@ -11,19 +11,24 @@
 //! between them; every piece is paid from the bucket as a forward is, and
 //! waits behind at most [`PASS`] frames of the send queue. A sleepy node only
 //! gathers; its anchor's frame after a slot heartbeat is the next piece of
-//! its stream on its home channel.
+//! its stream on its home channel. A node that gathers says so again every
+//! rotation where its helper hears it, and a helper streams to it only
+//! while it has heard that within [`LEASE_ROTATIONS`] of its rotations.
 
 use super::{Job, Node, Stage};
 use crate::event::{Action, Frame, SlotPiece, Trace};
 use crate::geo::Point;
-use crate::node::mac;
+use crate::ids::NodeId;
+use crate::node::{heartbeat_interval, heartbeat_lag, mac};
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
+use crate::status::Gathering;
 use crate::tables::budget::REPLY_RESERVE;
-use crate::tables::neighbours::Neighbour;
+use crate::tables::heard::beat_period;
+use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::time::{Duration, Instant};
 use crate::update::{
-    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, GAP, MAX_BLOCKS, PACE, PASS, PIECES,
-    SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
+    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, GAP, LEASE_ROTATIONS, MAX_BLOCKS,
+    PACE, PASS, PIECES, SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -41,6 +46,14 @@ const OTHERS: usize = 8;
 /// version the node runs, its newest image and the blocks of it held from
 /// the first.
 type Told = (u32, Option<(ImageTag, u32)>, u8);
+
+/// Every channel, as a mask of channel bits.
+const ALL_CHANNELS: u16 = (1 << CHANNELS) - 1;
+
+/// The bit of channel `c` in a mask of channels.
+fn bit(c: Channel) -> u16 {
+    1 << c.index()
+}
 
 /// What a node that gathers an image keeps.
 #[derive(Clone, Copy, Debug)]
@@ -112,15 +125,26 @@ pub(super) struct Spread {
     /// The piece of each block it streams next: from a random start,
     /// climbing, so a block's pieces repeat only after [`PIECES`].
     index: [u8; MAX_BLOCKS],
-    /// The heartbeats left that carry its section: of the rotation after
-    /// what it tells changed, or of the hour's.
-    section_left: u8,
+    /// The channels, a bit each, whose next heartbeat carries its section:
+    /// of the rotation after what it tells changed, of the hour's, or of
+    /// an answer to a neighbour that lags.
+    section_to: u16,
     /// When its heartbeats next start to carry it for a rotation, if
     /// nothing changes.
     section_at: Instant,
+    /// When the last such rotation began: an answer starts one at most a
+    /// rotation after it.
+    rotation_at: Option<Instant>,
+    /// A neighbour's section named nothing as new as what it streams: its
+    /// next heartbeat starts a rotation of its section.
+    answer: bool,
     /// What the last rotation of its section told: the version it runs,
     /// the newest image, and the blocks of it held from the first.
     told: Option<Told>,
+    /// The neighbour it last took a piece from, as far as it can tell: a
+    /// piece does not name its sender. Its section goes on that one's
+    /// home channel every rotation.
+    helper: Option<NodeId>,
     /// Until when the frame after its slot heartbeat on its home channel
     /// may start, where its sleepy nodes listen.
     slot_open: Option<Instant>,
@@ -149,9 +173,12 @@ impl Spread {
             sent_cur: [0; CHANNELS as usize],
             target: [0; CHANNELS as usize],
             index: [0; MAX_BLOCKS],
-            section_left: 0,
+            section_to: 0,
             section_at: Instant::ZERO,
+            rotation_at: None,
+            answer: false,
             told: None,
+            helper: None,
             slot_open: None,
             beat_heard: Instant::ZERO,
             others: [Instant::ZERO; OTHERS],
@@ -188,28 +215,50 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.stage == Stage::Running && !self.sleepy()
     }
 
-    /// What its section says: the version it runs, and the newest image it
-    /// holds or gathers with the blocks of it it holds from the first.
+    /// What its section says: the version it runs, from its build, else
+    /// the image it holds, and the newest image it holds or gathers with
+    /// the blocks of it it holds from the first. A node that knows neither
+    /// tells none.
     fn section(&self) -> Option<Section> {
         let s = &self.spread;
-        let runs = s.own.map_or(0, |o| o.version);
+        let runs = match self.config.version {
+            0 => s.own.map_or(0, |o| o.version),
+            v => v,
+        };
         let (image, complete, have) = match (s.gather, s.own) {
-            (Some(g), _) => {
-                let have: u32 = g
-                    .seen
-                    .get(usize::from(g.block))
-                    .map_or(0, |b| b.iter().map(|x| x.count_ones()).sum());
-                (g.image, g.block, have.min(255) as u8)
-            }
-            (None, Some(o)) => (o, o.blocks, 0),
-            (None, None) => return None,
+            (Some(g), _) => (Some(g.image), g.block, Self::have(&g)),
+            (None, Some(o)) => (Some(o), o.blocks, 0),
+            (None, None) if runs == 0 => return None,
+            (None, None) => (None, 0, 0),
         };
         Some(Section {
             runs,
-            image: Some(image),
+            image,
             complete,
             have,
         })
+    }
+
+    /// The pieces it holds of the first block it lacks.
+    fn have(g: &Gather) -> u8 {
+        let have: u32 = g
+            .seen
+            .get(usize::from(g.block))
+            .map_or(0, |b| b.iter().map(|x| x.count_ones()).sum());
+        have.min(255) as u8
+    }
+
+    /// How far it is in gathering an image, as its status tells
+    /// (spec "Neighbour status").
+    pub(super) fn gathering_status(&self) -> Gathering {
+        self.spread
+            .gather
+            .map_or(Gathering::default(), |g| Gathering {
+                version: g.image.version,
+                blocks: g.image.blocks,
+                complete: g.block,
+                have: Self::have(&g),
+            })
     }
 
     /// The image it streams and whether it holds block `b` of it: the one
@@ -236,30 +285,84 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|t| (t.runs, t.image.map(|i| (i.tag(), i.version)), t.complete))
     }
 
-    /// The section a heartbeat sent at `now` carries, if any: every
-    /// heartbeat and beat of the rotation after what it tells changed,
-    /// and of one rotation an hour, so that each channel hears it.
-    pub(super) fn heartbeat_section(&self, now: Instant) -> Option<Section> {
+    /// Whether a heartbeat now starts a rotation of its section: what it
+    /// tells changed, boot among the changes, the hour's is due, or a
+    /// neighbour that lags is answered.
+    fn rotation_due(&self, now: Instant) -> bool {
         let s = &self.spread;
-        let changed = self.told_now() != s.told;
-        let due = changed || s.section_left > 0 || now >= s.section_at;
+        self.told_now() != s.told || now >= s.section_at || s.answer
+    }
+
+    /// The section a heartbeat sent on `channel` at `now` carries, if any:
+    /// on each channel once in the rotation that a change, the hour or an
+    /// answer starts, so that every channel hears it, a heartbeat skipped
+    /// for a busy channel standing over to that channel's next; and while
+    /// it gathers, on the home channel of its helper every rotation.
+    pub(super) fn heartbeat_section(&self, now: Instant, channel: Channel) -> Option<Section> {
+        let due = self.rotation_due(now)
+            || self.spread.section_to & bit(channel) != 0
+            || self.restates_on(now) == Some(channel);
         self.section().filter(|_| due)
     }
 
-    /// A heartbeat with the section went: a rotation of them starts now
-    /// if what it tells changed or the hour's is due. A rotation is a
-    /// relay's 13 heartbeats, one on each channel, and a sleepy node's
-    /// one beat, which its anchor hears.
-    pub(super) fn section_sent(&mut self, now: Instant) {
-        let told = self.told_now();
-        let rotation = if self.sleepy() { 1 } else { CHANNELS };
-        let s = &mut self.spread;
-        if told != s.told || now >= s.section_at {
+    /// A heartbeat with the section went on `channel`: a rotation of them
+    /// starts now if one is due. A sleepy node's rotation is its one beat,
+    /// which its anchor hears.
+    pub(super) fn section_sent(&mut self, now: Instant, channel: Channel) {
+        if self.rotation_due(now) {
+            let told = self.told_now();
+            let s = &mut self.spread;
             s.told = told;
             s.section_at = now + SECTION_EVERY;
-            s.section_left = rotation;
+            s.section_to = ALL_CHANNELS;
+            s.rotation_at = Some(now);
+            s.answer = false;
         }
-        s.section_left = s.section_left.saturating_sub(1);
+        self.spread.section_to &= match self.sleepy() {
+            true => 0,
+            false => !bit(channel),
+        };
+    }
+
+    /// Its own rotation of heartbeats, one on each channel.
+    fn rotation(&self) -> Duration {
+        heartbeat_interval(self.id, &self.config).mul(u64::from(CHANNELS))
+    }
+
+    /// Where a node that gathers says so again each rotation: on the home
+    /// channel of the helper it last took a piece from, or before its
+    /// first piece of the best holder it hears; a sleepy node on its
+    /// anchor's, where all its beats go.
+    fn restates_on(&self, now: Instant) -> Option<Channel> {
+        let g = self.spread.gather.filter(|g| g.block < g.image.blocks)?;
+        if self.sleepy() {
+            return Some(self.home);
+        }
+        let helper = self
+            .spread
+            .helper
+            .and_then(|id| self.neighbours.get(id))
+            .or_else(|| self.holder_of(g.block, now))?;
+        Some(helper.home)
+    }
+
+    /// The neighbour whose stream carries block `b` of the image it
+    /// gathers to it, by the helpers' own rule: a relay at home on its
+    /// channel that holds the block, else the best holder elsewhere, most
+    /// blocks from the first, then the lowest ID.
+    fn holder_of(&self, b: u8, now: Instant) -> Option<&Neighbour> {
+        let image = self.spread.gather?.image;
+        self.neighbours
+            .live(now)
+            .map(|(_, m)| m)
+            .filter(|m| !m.sleepy && self.complete_of(m, image) > b)
+            .max_by_key(|m| {
+                (
+                    m.home == self.home,
+                    self.complete_of(m, image),
+                    core::cmp::Reverse(m.id.0),
+                )
+            })
     }
 
     /// `AppCommand::Holds`: its section tells it within a rotation.
@@ -318,14 +421,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// A heartbeat of `from` carried `section`: the neighbour table keeps
     /// it, and a newer image than this node runs or gathers is offered to
-    /// the driver's policy, once.
+    /// the driver's policy, once. A neighbour that names nothing as new as
+    /// what this relay streams is answered with a rotation of its section,
+    /// at most one a rotation, so that it learns of the image within one.
     pub(super) fn section_heard(
         &mut self,
-        from: crate::ids::NodeId,
+        from: NodeId,
         section: Section,
+        now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        self.neighbours.section_heard(from, section);
+        self.neighbours.section_heard(from, section, now);
+        let told = section.image.map_or(0, |i| i.version).max(section.runs);
+        let lags = self
+            .streams()
+            .is_some_and(|i| self.spreads() && told < i.version);
+        let rotated = self
+            .spread
+            .rotation_at
+            .is_some_and(|t| now < t + self.rotation());
+        if lags && !rotated {
+            self.spread.answer = true;
+        }
         let Some(image) = section.image else {
             return;
         };
@@ -418,6 +535,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         piece.bytes.copy_from_slice(bytes);
         emit(Action::StorePiece(piece));
+        self.spread.helper = self.holder_of(block, now).map(|m| m.id);
     }
 
     /// The blocks from the first of the image it streams that `m` holds,
@@ -467,6 +585,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         })
     }
 
+    /// The section of `n` if it gathers `image` and was heard within its
+    /// lease, [`LEASE_ROTATIONS`] of `n`'s rotations and a heartbeat's lag,
+    /// a sleepy node's rotation being its beat: a stream to a gatherer that
+    /// fell silent, moved away or completed then stops within that time,
+    /// and one whose restatement was lost once goes on
+    /// (spec "Updates over the mesh").
+    fn gatherer(&self, n: &Neighbour, image: Image, now: Instant) -> Option<Section> {
+        let rotation = match n.sleepy {
+            true => beat_period(self.config.delivery_ttl),
+            false => heartbeat_interval(n.id, &self.config).mul(u64::from(CHANNELS)),
+        };
+        let lease = rotation.mul(LEASE_ROTATIONS) + heartbeat_lag(&self.config);
+        let at = Neighbours::section_at(n)?;
+        if now > at + lease {
+            return None;
+        }
+        self.neighbours
+            .section(n)
+            .filter(|u| u.gathers(image.tag()))
+    }
+
     /// What each channel needs of what this node streams, from the
     /// sections of the neighbours it hears there.
     fn needs(&self, now: Instant) -> [Need; CHANNELS as usize] {
@@ -476,11 +615,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let held = self.held_at_home(image, now);
         for (_, n) in self.neighbours.live(now) {
-            let Some(u) = self
-                .neighbours
-                .section(n)
-                .filter(|u| u.gathers(image.tag()))
-            else {
+            let Some(u) = self.gatherer(n, image, now) else {
                 continue;
             };
             if !self.streams_to(n, image, now) {
@@ -542,11 +677,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours
             .live(now)
             .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
-            .filter_map(|(_, n)| {
-                self.neighbours
-                    .section(n)
-                    .filter(|u| u.gathers(image.tag()))
-            })
+            .filter_map(|(_, n)| self.gatherer(n, image, now))
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
                 core::cmp::Ordering::Equal => k.saturating_sub(u.have),
@@ -581,9 +712,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The block whose quota went on `c` while a neighbour there still
     /// lacks it, the lowest such: the stream goes on with fresh pieces of
-    /// it, at the pace, until the neighbour's section shows it complete,
-    /// so that a quota cut short by lost pieces never leaves the channel
-    /// silent (spec "Updates over the mesh").
+    /// it, at the pace, until the neighbour's section shows it complete or
+    /// its lease ends, so that a quota cut short by lost pieces never
+    /// leaves the channel silent (spec "Updates over the mesh").
     fn tail(&self, c: Channel, now: Instant) -> Option<u8> {
         let image = self.streams()?;
         let s = &self.spread;
@@ -942,5 +1073,76 @@ mod tests {
             x + PACE.mul(2),
             "another heard: shared"
         );
+    }
+
+    /// A helper streams to a gatherer only while it heard the gatherer's
+    /// section within two of its rotations and a heartbeat's lag: a gatherer
+    /// still heard but no longer saying what it lacks is served no more, and
+    /// is again once it says it (spec "Updates over the mesh").
+    #[test]
+    fn a_helper_streams_to_a_gatherer_on_a_lease() {
+        use crate::position::Position;
+        use crate::wire::Heartbeat;
+        let config = Config {
+            boot_listen: Duration::from_secs(1),
+            home_override: Channel::new(3),
+            ..Config::default()
+        };
+        let mut r = crate::Relay::new(config, 1);
+        let now = Instant::ZERO + Duration::from_secs(2);
+        let image = Image {
+            name: ImageTag([4; 4]),
+            version: 2,
+            blocks: 3,
+            last: 7,
+            key: 0,
+        };
+        r.holds_image(image, now);
+        let me = r.config.position;
+        let at = Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            id: crate::ids::NodeId::from_u64(at.short().0 as u64),
+            short: at.short(),
+        };
+        let section = Section {
+            runs: 1,
+            image: Some(image),
+            complete: 1,
+            have: 0,
+        };
+        let plane = r.plane;
+        let beat = |r: &mut crate::Relay, t: Instant| {
+            r.neighbours.heard(&hb, at, -80, &plane, t);
+        };
+        beat(&mut r, now);
+        r.neighbours.section_heard(hb.id, section, now);
+        let lacking = |r: &crate::Relay, t: Instant| r.needs(t)[5].count;
+        let lease = crate::node::heartbeat_interval(hb.id, &r.config)
+            .mul(2 * u64::from(crate::radio::CHANNELS))
+            + crate::node::heartbeat_lag(&r.config);
+        // Its plain heartbeats keep its entry; only its section renews the lease.
+        let told = now;
+        let mut t = now;
+        while t < told + lease {
+            beat(&mut r, t);
+            t += Duration::from_secs(60);
+        }
+        let before = told + lease - Duration::from_secs(1);
+        beat(&mut r, before);
+        assert_eq!(lacking(&r, before), 1, "within the lease");
+        let after = told + lease + Duration::from_secs(1);
+        beat(&mut r, after);
+        assert_eq!(lacking(&r, after), 0, "past the lease");
+        r.neighbours.section_heard(hb.id, section, after);
+        assert_eq!(lacking(&r, after), 1, "a section renews it");
     }
 }

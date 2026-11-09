@@ -58,6 +58,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             battery: self.battery_status(),
             neighbours: self.neighbour_counts(now),
             version: self.config.version,
+            gathering: self.gathering_status(),
         }
     }
 

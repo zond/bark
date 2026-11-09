@@ -1013,7 +1013,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.beat_heard(now);
                 self.heard(hb, rssi, now, emit);
                 if let Some(section) = crate::wire::decode_section(bytes) {
-                    self.section_heard(hb.id, section, emit);
+                    self.section_heard(hb.id, section, now, emit);
                 }
             }
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),

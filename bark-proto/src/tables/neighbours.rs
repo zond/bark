@@ -272,13 +272,16 @@ impl Neighbour {
     }
 }
 
-/// A neighbour's section as its entry keeps it: the image it names is
-/// kept once in the table, among [`IMAGES`], by its place there. In 8
-/// bytes, so that the entry is 16 bytes less than with the section.
+/// A neighbour's section as its entry keeps it, and when it was heard:
+/// the image it names is kept once in the table, among [`IMAGES`], by its
+/// place there, so that the entry is 16 bytes less than with the section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Told {
     /// A heartbeat with a section was heard.
     heard: bool,
+    /// When: a helper streams to a gatherer only while its section is
+    /// fresh (spec "Updates over the mesh").
+    at: Instant,
     runs: u32,
     /// The image's place in the table, [`NO_IMAGE`] for none.
     image: u8,
@@ -292,6 +295,7 @@ impl Told {
     /// No section heard.
     pub const NONE: Told = Told {
         heard: false,
+        at: Instant::ZERO,
         runs: 0,
         image: NO_IMAGE,
         complete: 0,
@@ -481,8 +485,8 @@ impl Neighbours {
         self.slots().find(|(_, n)| n.id == id).map(|(i, _)| i)
     }
 
-    /// A heartbeat of `id` carried `section`.
-    pub fn section_heard(&mut self, id: NodeId, section: crate::update::Section) {
+    /// A heartbeat of `id` carried `section`, at `now`.
+    pub fn section_heard(&mut self, id: NodeId, section: crate::update::Section, now: Instant) {
         let Some(i) = self.slot_of(id) else {
             return;
         };
@@ -494,6 +498,7 @@ impl Neighbours {
         if let Some(n) = &mut self.slots[i] {
             n.update = Told {
                 heard: true,
+                at: now,
                 runs: section.runs,
                 image,
                 complete: section.complete,
@@ -550,6 +555,11 @@ impl Neighbours {
             complete: t.complete,
             have: t.have,
         })
+    }
+
+    /// When `n`'s last heartbeat that carried a section was heard.
+    pub fn section_at(n: &Neighbour) -> Option<Instant> {
+        n.update.heard.then_some(n.update.at)
     }
 
     /// The entry for `id`.
@@ -1563,22 +1573,22 @@ mod tests {
         let named = |t: &Neighbours, i: i32| t.section(t.get(id(i)).unwrap()).and_then(|s| s.image);
         assert_eq!(t.section(t.get(id(1)).unwrap()), None);
         for (i, v) in [(1, 5), (2, 5), (3, 6), (4, 7), (5, 8)] {
-            t.section_heard(id(i), section(v));
+            t.section_heard(id(i), section(v), at(0));
         }
         assert_eq!(t.section(t.get(id(1)).unwrap()), Some(section(5)));
         assert_eq!(named(&t, 2), Some(image(5)));
         // A fifth, newer: version 5's place, and its namers name none.
-        t.section_heard(id(6), section(9));
+        t.section_heard(id(6), section(9), at(0));
         assert_eq!(named(&t, 6), Some(image(9)));
         assert_eq!(named(&t, 1), None);
         assert_eq!(named(&t, 2), None);
         assert_eq!(t.section(t.get(id(1)).unwrap()).unwrap().complete, 3);
         // An older one than every image kept is kept by none.
-        t.section_heard(id(7), section(4));
+        t.section_heard(id(7), section(4), at(0));
         assert_eq!(named(&t, 7), None);
         // A place no entry names is free again.
-        t.section_heard(id(3), section(8));
-        t.section_heard(id(7), section(4));
+        t.section_heard(id(3), section(8), at(0));
+        t.section_heard(id(7), section(4), at(0));
         assert_eq!(named(&t, 7), Some(image(4)));
         assert_eq!(named(&t, 3), Some(image(8)));
     }

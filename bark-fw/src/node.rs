@@ -515,6 +515,13 @@ fn screen(core: &Role, now: Instant) -> bark_screen::State {
         both_ways: s.neighbours.both_ways,
         // The phone link's, which the screen fills in (`display::phone`).
         phone: bark_screen::Phone::Unpaired,
+        // Not the pieces of the next block, which would redraw the
+        // screen each gap for a figure nobody acts on.
+        getting: (s.gathering.version != 0).then_some(bark_screen::Getting {
+            version: s.gathering.version,
+            complete: s.gathering.complete,
+            blocks: s.gathering.blocks,
+        }),
     }
 }
 

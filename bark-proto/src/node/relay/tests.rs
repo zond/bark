@@ -3363,6 +3363,35 @@ fn status_frames(sent: &[(Instant, Frame)]) -> Vec<(u8, u16, crate::wire::Status
         .collect()
 }
 
+/// A node's status tells the image it gathers: its version and blocks,
+/// the blocks it holds from the first and the pieces of the next
+/// (spec "Neighbour status").
+#[test]
+fn a_status_tells_the_image_gathered() {
+    use crate::status::Gathering;
+    use crate::update::{Image, ImageTag};
+    let (mut r, now, _, _) = with_two_neighbours();
+    assert_eq!(r.status(now).gathering, Gathering::default());
+    let image = Image {
+        name: ImageTag([3; 4]),
+        version: 14,
+        blocks: 31,
+        last: 20,
+        key: 0,
+    };
+    let gather = AppCommand::Gather { image, from: 14 };
+    r.handle(Event::App(gather), now, &mut |_| {});
+    assert_eq!(
+        r.status(now).gathering,
+        Gathering {
+            version: 14,
+            blocks: 31,
+            complete: 14,
+            have: 0,
+        }
+    );
+}
+
 /// A node asked for its status tells it once, on the asker's home
 /// channel, with what its screen shows (spec "Neighbour status").
 #[test]
@@ -3384,6 +3413,7 @@ fn a_status_asked_is_told_on_the_asker_s_channel() {
             both_ways: 0,
         },
         version: 9,
+        gathering: Default::default(),
     };
     let told = Tell {
         to: a,
