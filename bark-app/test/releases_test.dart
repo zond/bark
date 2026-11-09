@@ -378,7 +378,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Send to the node'), findsOneWidget);
-      expect(find.text('Pick a firmware file (bench)'), findsOneWidget);
+      // The bench's file is picked in Debug.
+      expect(find.text('Pick a firmware file'), findsNothing);
       await shut(t, a);
     });
 

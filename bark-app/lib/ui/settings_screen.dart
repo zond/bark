@@ -202,19 +202,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _phoneLocation() async {
-    final p = await _phonePosition();
-    if (p == null) return;
-    lat.text = p.latDeg.toStringAsFixed(6);
-    lon.text = p.lonDeg.toStringAsFixed(6);
-  }
+  /// The coordinates the phone's location last set as the node's place,
+  /// for the line that confirms it.
+  String? _placeSet;
 
-  /// Gives the node the phone's position as its place, so that it has an
-  /// address to be a home at.
+  /// Gives the node the phone's location as its place at once.
   Future<void> _placeHere() async {
     final p = await _phonePosition();
-    if (p != null) await app.session.setMapPoint(p);
+    if (p == null) return;
+    final la = p.latDeg.toStringAsFixed(6);
+    final lo = p.lonDeg.toStringAsFixed(6);
+    lat.text = la;
+    lon.text = lo;
+    await app.session.setMapPoint(p);
+    if (mounted) setState(() => _placeSet = '$la, $lo');
   }
+
+  /// The one action that sets the node's place from the phone, the same
+  /// wherever it shows, with the line that says what it set.
+  List<Widget> _placeHereButton() => [
+    Align(
+      alignment: Alignment.centerLeft,
+      child: OutlinedButton.icon(
+        icon: const Icon(Icons.my_location),
+        label: const Text('Use this phone\'s location'),
+        onPressed: _placeHere,
+      ),
+    ),
+    if (_placeSet != null)
+      Text(
+        'Place set to $_placeSet.',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+  ];
 
   Future<void> _setMapPoint() async {
     final la = double.tryParse(lat.text.trim());
@@ -371,6 +391,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         // it, closing the link to this one first: a public node not the
         // phone's as a guest, which **Pair** makes the phone's instead.
         for (final FoundNode n in app.found.values) _found(n),
+        if (app.noneFound) ...[
+          const SizedBox(height: 8),
+          const Text('No node found nearby.'),
+          Text(
+            'Switch a node on, or come closer to it.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         ..._looking(),
       ],
     ];
@@ -383,12 +411,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       contentPadding: EdgeInsets.zero,
       leading: Icon(n.public ? Icons.storefront : Icons.router),
       title: Text(shownName(n.name)),
-      subtitle: Text(
-        [
-          if (app.connectedTo(n.deviceId)) 'Connected',
-          if (n.public) 'public: serves phones without pairing',
-          '${n.rssi ?? '?'} dBm',
-        ].join(', '),
+      subtitle: Text.rich(
+        TextSpan(
+          text: [
+            if (app.connectedTo(n.deviceId)) 'Connected',
+            if (n.public) 'public: serves phones without pairing',
+            signalWord(n.rssi),
+          ].join(', '),
+          children: [
+            if (n.rssi != null)
+              TextSpan(
+                text: '  ${n.rssi} dBm',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
       ),
       onTap: busy
           ? null
@@ -505,7 +542,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// Updates: the check the person asks for, with its outcome; the app's
   /// version and the way to a newer one; the node's image and the way to
-  /// send it a newer one; and, smaller, an image file for the bench.
+  /// send it a newer one. A firmware file for the bench is picked in
+  /// Debug.
   List<Widget> _updates() {
     final r = app.releases;
     final s = app.session;
@@ -586,16 +624,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               )
             : null,
       ),
-      if (owner && n.version >= updateVersion)
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => UpdateScreen(app, pick: true)),
-            ),
-            child: const Text('Pick a firmware file (bench)'),
-          ),
-        ),
     ];
   }
 
@@ -652,14 +680,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           padding: EdgeInsets.only(top: 8),
           child: Text('This node has no place yet.'),
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: OutlinedButton.icon(
-            icon: const Icon(Icons.my_location),
-            label: const Text('Use this phone\'s location'),
-            onPressed: _placeHere,
-          ),
-        ),
+        ..._placeHereButton(),
       ],
       if (here != null && !atHome && !homeable)
         const Padding(
@@ -837,13 +858,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
       const SizedBox(height: 8),
+      ..._placeHereButton(),
+      const SizedBox(height: 8),
       Wrap(
         spacing: 8,
         children: [
-          OutlinedButton(
-            onPressed: _phoneLocation,
-            child: const Text('Phone location'),
-          ),
           FilledButton(onPressed: _setMapPoint, child: const Text('Set')),
           OutlinedButton(
             onPressed: () => s.setMapPoint(null),

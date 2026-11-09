@@ -178,6 +178,13 @@ class AppModel extends ChangeNotifier {
   FakeNode? fakeNode;
   final Map<String, FoundNode> found = {};
   bool scanning = false;
+
+  /// The last scan found nothing: it was stopped with none found, or has
+  /// run [seenWait], ten of a node's advertising intervals, without one.
+  bool get noneFound => found.isEmpty && (_scanEnded || _scanLong);
+  bool _scanEnded = false;
+  bool _scanLong = false;
+  Timer? _scanTimer;
   int? mtu;
 
   /// Where a connection stands until the link is attached.
@@ -453,6 +460,13 @@ class AppModel extends ChangeNotifier {
     }
     found.clear();
     scanning = true;
+    _scanEnded = false;
+    _scanLong = false;
+    _scanTimer?.cancel();
+    _scanTimer = Timer(seenWait, () {
+      _scanLong = scanning;
+      notifyListeners();
+    });
     notifyListeners();
     await _searchStopped();
     try {
@@ -462,6 +476,7 @@ class AppModel extends ChangeNotifier {
       });
     } catch (e) {
       scanning = false;
+      _scanTimer?.cancel();
       notifyListeners();
       rethrow;
     }
@@ -469,6 +484,8 @@ class AppModel extends ChangeNotifier {
 
   Future<void> stopScan() async {
     await stopBleScan();
+    _scanTimer?.cancel();
+    _scanEnded = scanning || _scanEnded;
     scanning = false;
     notifyListeners();
   }
@@ -851,6 +868,7 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _ticker.cancel();
+    _scanTimer?.cancel();
     _availability?.cancel();
     _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();

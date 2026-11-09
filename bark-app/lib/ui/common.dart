@@ -478,3 +478,22 @@ String health(Session s) {
   if (n == 0) return 'Hears no other node yet: texts wait here';
   return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
 }
+
+/// Strength, in dBm, at or above which a node's advertisement reads as
+/// strong. A choice: these are the advertisement's strength as the phone
+/// hears it before any link, so the node's noise floor, by which a link's
+/// quality is judged, does not apply.
+const int strongDbm = -70;
+
+/// Strength, in dBm, below which a node's advertisement reads as weak; a
+/// choice, as [strongDbm].
+const int weakDbm = -85;
+
+/// A found node's signal in a word: strong, fair or weak.
+String signalWord(int? rssi) => rssi == null
+    ? 'signal unknown'
+    : rssi >= strongDbm
+    ? 'strong signal'
+    : rssi < weakDbm
+    ? 'weak signal'
+    : 'fair signal';

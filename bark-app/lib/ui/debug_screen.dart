@@ -8,6 +8,7 @@ import '../app.dart';
 import '../link.dart';
 import '../session.dart';
 import 'common.dart';
+import 'update_screen.dart';
 
 class DebugScreen extends StatelessWidget {
   final AppModel app;
@@ -34,6 +35,8 @@ class DebugScreen extends StatelessWidget {
             ..._node(context),
             heading('Status'),
             ..._status(),
+            heading('Bench'),
+            ..._bench(context),
             heading('Given back'),
             _row(
               'Value',
@@ -74,6 +77,33 @@ class DebugScreen extends StatelessWidget {
       ),
     );
   });
+
+  /// Tools for the bench: a firmware file picked on the phone, sent to
+  /// the paired node as a release is (`bark-app/README.md`, "Updating a
+  /// node").
+  List<Widget> _bench(BuildContext context) {
+    final s = app.session;
+    final n = s.node;
+    if (n == null || s.guest || n.version < updateVersion) {
+      return [
+        const Text(
+          'Connect a node this phone is paired with to pick a firmware '
+          'file for it.',
+        ),
+      ];
+    }
+    return [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => UpdateScreen(app, pick: true)),
+          ),
+          child: const Text('Pick a firmware file'),
+        ),
+      ),
+    ];
+  }
 
   /// A contact's name and the start of its identity.
   String _who(String? key) {

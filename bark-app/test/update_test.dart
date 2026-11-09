@@ -391,6 +391,8 @@ void main() {
     final latest = find.widgetWithText(FilledButton, 'Latest release');
     final pick = find.widgetWithText(OutlinedButton, 'Pick a file');
     expect(t.widget<FilledButton>(latest).enabled, isTrue);
+    // Picking a file is the bench's, from Debug.
+    expect(pick, findsNothing);
 
     u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
     await u.send();
@@ -414,7 +416,6 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.textContaining('KiB'), findsNothing);
     expect(t.widget<FilledButton>(latest).enabled, isFalse);
-    expect(t.widget<OutlinedButton>(pick).enabled, isTrue);
     expect(
       find.text('The node already runs the latest release.'),
       findsOneWidget,

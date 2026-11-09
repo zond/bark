@@ -102,10 +102,12 @@ class _UpdateScreenState extends State<UpdateScreen> {
                         ),
                   child: const Text('Latest release'),
                 ),
-                OutlinedButton(
-                  onPressed: _getting || busy ? null : () => _get(_pick),
-                  child: const Text('Pick a file'),
-                ),
+                // Only for the bench, which comes here from Debug.
+                if (widget.pick)
+                  OutlinedButton(
+                    onPressed: _getting || busy ? null : () => _get(_pick),
+                    child: const Text('Pick a file'),
+                  ),
                 if (_getting)
                   const Padding(
                     padding: EdgeInsets.all(8),
