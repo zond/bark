@@ -560,6 +560,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _restore() async {
+    final go = await confirm(
+      context,
+      'Restore from words?',
+      'This phone takes the identity of the words in place of its own. '
+          'Contacts who hold the card of the identity it has now cannot '
+          'reach the new one until they get its card.',
+      'Restore',
+    );
+    if (!go || !mounted) return;
     final w = await askText(context, 'Your 12 words', '');
     if (w == null || w.isEmpty) return;
     final seed = seedOfPhrase(w);

@@ -321,6 +321,48 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('Remove contact and Restore from words ask first', (t) async {
+    final app = await model(t);
+    final olena = Contact(
+      PersonCard(List.filled(32, 5), null, 1, 'Olena'),
+      'Olena',
+    );
+    await t.runAsync(() => app.contacts.put(olena));
+    await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
+    Future<void> remove(String choice) async {
+      await t.tap(find.byType(PopupMenuButton<void Function()>));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Remove contact'));
+      await t.pumpAndSettle();
+      expect(find.text('Remove Olena?'), findsOneWidget);
+      await t.tap(find.text(choice));
+      await t.runAsync(() => Future<void>.delayed(Duration.zero));
+      await t.pumpAndSettle();
+    }
+
+    await remove('Cancel');
+    expect(app.contacts.byKey(olena.key), isNotNull);
+    await remove('Remove');
+    expect(app.contacts.byKey(olena.key), isNull);
+
+    final key = app.me.key;
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.scrollUntilVisible(
+      find.text('Restore from words'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Restore from words'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('cannot reach the new one'), findsOneWidget);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(find.text('Your 12 words'), findsNothing);
+    expect(app.me.key, key);
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets('a temporary contact: marked in its row until a card with a '
       'home, and written to at the node on its card', (t) async {
     final app = await model(t);

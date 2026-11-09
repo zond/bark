@@ -355,3 +355,30 @@ Future<bool> whyBluetooth(BuildContext context) async =>
       ),
     ) ??
     false;
+
+/// Asks the person to confirm `action`, which `body` explains; whether
+/// they did.
+Future<bool> confirm(
+  BuildContext context,
+  String title,
+  String body,
+  String action,
+) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    ) ??
+    false;

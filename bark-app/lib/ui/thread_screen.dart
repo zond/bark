@@ -146,7 +146,18 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     child: const Text('Archive contact'),
                   ),
                   PopupMenuItem(
-                    value: () => app.contacts.remove(contact),
+                    value: () async {
+                      if (await confirm(
+                        context,
+                        'Remove ${contact.name}?',
+                        'Their card goes from this phone. Their texts stay, '
+                            'but you cannot write to them until you add '
+                            'their card again.',
+                        'Remove',
+                      )) {
+                        await app.contacts.remove(contact);
+                      }
+                    },
                     child: const Text('Remove contact'),
                   ),
                 ],

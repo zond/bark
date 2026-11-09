@@ -107,7 +107,7 @@ is a prototype for the bench, not the app people will carry.
   to: a line says so where the field would be. The menu renames the
   contact,
   sends them your card, archives the conversation or the contact (both
-  leave the thread, with **Undo**), or removes them; a removed
+  leave the thread, with **Undo**), or removes them, after asking; a removed
   contact's thread has only **Archive conversation**. The bar has **Fetch my mail**
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
@@ -155,7 +155,9 @@ is a prototype for the bench, not the app people will carry.
   connected node's firmware and **Update firmware** (Updating a node,
   below), whether the app is exempt from battery optimisation (next
   section), your name, your 12
-  words (show them, or restore an identity from them), and the node's
+  words (show them, or restore an identity from them, after a warning
+  that contacts holding the current card cannot reach the restored
+  identity), and the node's
   map point: set from typed degrees or the phone's location, or
   cleared.
 - **Map**, from the menu. The connected node and every neighbour it
