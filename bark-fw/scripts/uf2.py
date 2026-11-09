@@ -9,6 +9,9 @@ here, so neither objcopy nor cargo-binutils is needed.
     # a board without it, or to replace it: the loader and the firmware
     scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader \\
         target/thumbv7em-none-eabihf/release/bark-fw bark.uf2
+    # a board that holds the image it runs, to serve it over the mesh,
+    # without staging: the header of its packed, signed image in the record
+    scripts/uf2.py --header target/v8.img target/thumbv7em-none-eabihf/release/bark-fw bark.uf2
     scripts/uf2.py --check bark.uf2
     # only that the firmware leaves its stack the room it needs
     scripts/uf2.py --stack target/thumbv7em-none-eabihf/release/bark-fw
@@ -29,6 +32,9 @@ The regions come from the symbols the linker scripts define, which
 bark-image/src/layout.rs writes. Every UF2 also writes the loader's state
 page and the staged image's record as erased, so that a copied firmware
 always boots as it is: no swap asked for before the copy takes place over it.
+With --header the record holds the header of the image the UF2 carries,
+as a swap into it leaves it, so that the node holds that image and serves
+it over the mesh (bark-fw/README.md, "Updates").
 """
 
 from __future__ import annotations
@@ -230,7 +236,45 @@ def key_name(key_id: int, public: bytes) -> str:
     return f"key {key_id}"
 
 
-def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str]]:
+# The record (bark-image/src/record.rs): the header at its start, then the
+# word the loader writes once it has checked the image, all bits cleared.
+# With the header and no such word, the firmware takes the record for one
+# the loader refused and erases it (bark-image/src/boot.rs, `confirm`).
+HEADER_LEN = 256
+RECORD_CHECKED_AT = HEADER_LEN
+RECORD_CHECKED = b"\0\0\0\0"
+# The header (bark-fw/README.md, "Updates"): magic, format, version,
+# length, the image's SHA-256, then the signatures' slots, each a byte
+# naming its key first.
+HEADER_MAGIC = b"bark"
+SIGNED_LEN = 48
+SIGNATURE_SLOT = 65
+
+
+def record_with(header: bytes, firmware: bytes, firmware_syms: dict[str, int], start: int, size: int) -> bytes:
+    """The record page holding `header`, if it heads `firmware`: its
+    version the firmware's, its hash the firmware's bytes', and signed."""
+    import hashlib
+
+    if len(header) < HEADER_LEN or header[:4] != HEADER_MAGIC:
+        sys.exit("--header: not an image from `image.py pack`")
+    header = header[:HEADER_LEN]
+    version, length = struct.unpack_from("<II", header, 8)
+    running = symbol_word(firmware, start, firmware_syms, "BARK_IMAGE_VERSION")
+    if version != running:
+        sys.exit(f"--header: the image is version {version}, the firmware {running}")
+    if length != len(firmware) or hashlib.sha256(firmware).digest() != header[16:48]:
+        sys.exit("--header: the image's hash is not the firmware's: packed from another build")
+    slots = range(SIGNED_LEN, SIGNED_LEN + 3 * SIGNATURE_SLOT, SIGNATURE_SLOT)
+    if all(header[at] == 0 for at in slots):
+        sys.exit("--header: the image is not signed (`image.py sign`): no node would take it")
+    page = bytearray([FLASH_ERASED]) * size
+    page[:HEADER_LEN] = header
+    page[RECORD_CHECKED_AT : RECORD_CHECKED_AT + 4] = RECORD_CHECKED
+    return bytes(page)
+
+
+def pack(firmware_elf: bytes, loader_elf: bytes | None, header: bytes | None = None) -> tuple[bytes, list[str]]:
     """The UF2, and a line for each region it writes."""
     syms = symbols(firmware_elf)
     payloads = []
@@ -243,14 +287,20 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
         bench = symbol_word(loader, start, symbols(loader_elf), "BARK_LOADER_BENCH")
         payloads += blocks(start, loader)
         lines.append(f"loader:   {len(loader)} bytes at {start:#x}")
+    active, active_end = region(syms, "__bootloader_active")
+    firmware = flash_image(load_segments(firmware_elf), active, active_end, "firmware")
     for name, what in (("__bootloader_state", "state"), ("__bark_record", "record")):
         start, end = region(syms, name)
+        if what == "record" and header is not None:
+            payloads += blocks(start, record_with(header, firmware, syms, active, end - start))
+            version = struct.unpack_from("<I", header, 8)[0]
+            lines.append(f"record:   {end - start} bytes at {start:#x}, the header of version {version}, checked")
+            continue
         payloads += blocks(start, bytes([FLASH_ERASED]) * (end - start))
         lines.append(f"{what + ':':<9} {end - start} bytes at {start:#x}, erased")
     room = check_stack(syms)
     lines.append(f"stack:    {room} bytes, the floor {STACK_FLOOR}")
-    start, end = region(syms, "__bootloader_active")
-    firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
+    start = active
     if loader_elf is not None and bench and symbol_word(firmware, start, syms, "BARK_OPEN") != 1:
         # The loader's reset is for the bench alone (roadmap D143).
         sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with an open firmware (BARK_OPEN=1)")
@@ -316,6 +366,10 @@ def main() -> int:
     ap.add_argument("--check", action="store_true", help="validate an existing UF2 instead")
     ap.add_argument("--stack", action="store_true", help="only check the firmware's room for its stack")
     ap.add_argument("--loader", help="the loader's ELF, to put in front of the firmware")
+    ap.add_argument(
+        "--header",
+        help="a packed, signed image of this firmware, whose header goes in the record: the node then holds it",
+    )
     ap.add_argument("input", help="the firmware's ELF, or a UF2 with --check")
     ap.add_argument("output", nargs="?", help="UF2 to write")
     args = ap.parse_args()
@@ -333,7 +387,11 @@ def main() -> int:
     if args.loader:
         with open(args.loader, "rb") as f:
             loader = f.read()
-    uf2, lines = pack(data, loader)
+    header = None
+    if args.header:
+        with open(args.header, "rb") as f:
+            header = f.read(HEADER_LEN)
+    uf2, lines = pack(data, loader, header)
     with open(args.output, "wb") as f:
         f.write(uf2)
     for line in lines:

@@ -659,10 +659,24 @@ The 10 s line ends in `update=`: `idle`, `holds:8 serving:B:N` (the last
 block served and its pieces so far), `gathering:8 blocks:K/B`,
 `installing:8` or `staged:8`.
 
-A bench of two boards: A takes version 8 from the phone or the console's
-`stage`, so that its record holds the header (a board flashed with a
-UF2 serves nothing); B runs version 7, or 0, a UF2 bench build, which
-takes any. Both hold the key image 8 is signed with: the project's, ids
+A bench of two boards: A holds version 8, B runs version 7, or 0, a UF2
+bench build, which takes any. A holds an image only with its header in
+the record, as a swap into it leaves it: from the phone, the console's
+`stage`, or, without staging, `scripts/uf2.py --header`, which writes
+the header of the packed, signed image into the record of the UF2 that
+carries the same build, with the word that says the loader checked it,
+and refuses an image of another version or hash:
+
+```
+BARK_OPEN=1 BARK_IMAGE_VERSION=8 cargo build --release
+scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v8.img
+scripts/image.py sign target/v8.img keys/bench.pem --key-id 255
+scripts/uf2.py --header target/v8.img target/thumbv7em-none-eabihf/release/bark-fw target/v8.uf2
+```
+
+A board given `v8.uf2` boots with no swap asked for and logs `update:
+holds version=8`; a UF2 without `--header` leaves the record erased, and
+the board serves nothing. Both hold the key image 8 is signed with: the project's, ids
 1 and 2, or, in open builds, the bench key, id 255 (roadmap D154). Image
 8 of 471 064 bytes travels in 31 blocks, the last of 53 pieces:
 
