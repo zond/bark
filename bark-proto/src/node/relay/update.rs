@@ -571,9 +571,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if s.sent_cur[i] < s.target[i] && wanted(cur) {
             return Some(cur);
         }
+        if let Some(b) = self.tail(c, now) {
+            return Some(b);
+        }
         (cur.saturating_add(1)..blocks)
             .find(|&b| wanted(b))
             .or_else(|| (0..blocks.min(cur.saturating_add(1))).find(|&b| wanted(b)))
+    }
+
+    /// The block whose quota went on `c` while a neighbour there still
+    /// lacks it, the lowest such: the stream goes on with fresh pieces of
+    /// it, at the pace, until the neighbour's section shows it complete,
+    /// so that a quota cut short by lost pieces never leaves the channel
+    /// silent (spec "Updates over the mesh").
+    fn tail(&self, c: Channel, now: Instant) -> Option<u8> {
+        let image = self.streams()?;
+        let s = &self.spread;
+        let i = usize::from(c.index());
+        let cur = s.cur[i];
+        if cur == u8::MAX || s.sent_cur[i] < s.target[i] {
+            return None;
+        }
+        let there = self.held_at_home(image, now)[i];
+        let lowest =
+            (there..image.blocks).find(|&b| self.holds_block(b) && self.deficit(c, b, now) > 0)?;
+        (lowest == cur).then_some(cur)
     }
 
     /// Whether the channel's pace lets a piece go on `c` at `t`, and if not,
@@ -595,7 +617,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // The pace is a floor: with no other sender heard there
                 // since its last piece and nothing else to send, the next
                 // goes as soon as the bucket lets it.
-                let alone = k == 0 && self.queue.is_empty();
+                let alone = k == 0 && self.queue.is_empty() && self.tail(c, t).is_none();
                 at = at.max(if alone { *x } else { *x + PACE.mul(k + 1) });
             }
         }
@@ -857,8 +879,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let at = &mut s.index[usize::from(b)];
             *at = ((usize::from(*at) + 1) % PIECES) as u8;
             let i = usize::from(c.index());
-            if s.cur[i] == b && s.sent_cur[i] < s.target[i] {
-                s.sent_cur[i] += 1;
+            if s.cur[i] == b {
+                // Within the quota, or past it in the block's tail.
+                s.sent_cur[i] = s.sent_cur[i].saturating_add(1);
             } else {
                 // A new block of the sweep: what the neighbour furthest
                 // behind on it lacks, and the margin for loss.

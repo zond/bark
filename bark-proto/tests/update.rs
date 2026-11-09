@@ -468,3 +468,42 @@ fn a_section_rides_one_rotation_an_hour_when_nothing_changes() {
     assert_eq!(beats(true), 39);
     assert!(beats(false) > 600, "{}", beats(false));
 }
+
+/// A quota that falls short by lost pieces is made up: the holder goes on
+/// with fresh pieces of the block until the gatherer's section shows it
+/// complete, and is never silent while it lacks a block the holder has
+/// (spec "Updates over the mesh").
+#[test]
+fn a_quota_short_by_lost_pieces_is_made_up() {
+    let mut h = mesh(2);
+    // Lose the first 30 pieces of block 1 on their way to node 1.
+    let mut lost = 0;
+    h.lose = Some(Box::new(move |_, from, to, bytes| {
+        let piece = matches!(
+            Packet::decode(bytes),
+            Ok(Packet::Update(Update::Piece { block: 1, .. }))
+        );
+        if from == 0 && to == 1 && piece && lost < 30 {
+            lost += 1;
+            return true;
+        }
+        false
+    }));
+    let start = h.now;
+    let done = h.run_until(start + secs(3600), |h| {
+        h.nodes[1].updates.as_ref().unwrap().holds_at.is_some()
+    });
+    assert!(done, "the gatherer does not hold the image within an hour");
+    let frames = update_frames(&h, 0);
+    let longest = frames
+        .windows(2)
+        .map(|w| w[1].0.since(w[0].0))
+        .max()
+        .unwrap();
+    assert!(longest <= PACE.mul(2), "silent for {longest:?}");
+    // Block 1's quota, 80, and its tail at the pace until it decoded.
+    let ones: Vec<Instant> = frames.iter().filter(|f| f.2 == 1).map(|f| f.0).collect();
+    let quota = usize::from(sweep_pieces(64));
+    assert!(ones.len() > quota, "{} of block 1", ones.len());
+    assert!(ones[quota..].windows(2).all(|w| w[1].since(w[0]) >= PACE));
+}
