@@ -215,6 +215,10 @@ class FakeNode implements NodeLink {
   /// node's is not its stored place either.
   bool carried = false;
   bool sleepy = false;
+
+  /// Whether its GPS has a fix; without one and no map point it has no
+  /// place. A test may change it.
+  bool fixed = true;
   Position _fix = gps;
 
   /// A new GPS fix, notified as the node does.
@@ -417,6 +421,9 @@ class FakeNode implements NodeLink {
     );
   }
 
+  /// Notifies the status after a test changed what it says.
+  void changed() => _notify();
+
   void _notify() {
     if (_owner.connected) _owner.status.add(_now());
     for (final g in guests) {
@@ -438,7 +445,7 @@ class FakeNode implements NodeLink {
       sleepy: sleepy,
       carried: carried,
       mapPoint: _mapPoint != null,
-      placed: true,
+      placed: fixed || _mapPoint != null,
       booting: left > Duration.zero,
       relays: _relays,
       bootLeftS: _ceilS(left),

@@ -95,18 +95,28 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       body: ListView(
         children: [
           ..._releases(context),
+          if (app.fake)
+            Card(
+              color: Theme.of(context).colorScheme.tertiaryContainer,
+              child: const ListTile(
+                leading: Icon(Icons.science_outlined),
+                title: Text('Demo: nothing leaves this phone'),
+              ),
+            ),
           NoticeCard(app),
           ..._gettingStarted(context),
-          if (!app.me.backedUp)
+          // Once there is a contact, there is someone to lose.
+          if (!app.me.backedUp && app.contacts.list.isNotEmpty)
             Card(
               child: ListTile(
                 leading: const Icon(Icons.key),
                 title: const Text('Write down your 12 backup words'),
                 subtitle: const Text(
-                  'They are your identity; without them a lost phone '
-                  'loses it. In Settings.',
+                  'If you lose this phone, these words are the only way to '
+                  'keep your contacts able to reach you.',
                 ),
-                onTap: () => _open(context, SettingsScreen(app)),
+                onTap: () =>
+                    _open(context, SettingsScreen(app, toBackup: true)),
               ),
             ),
           _connection(context),

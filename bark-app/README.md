@@ -43,7 +43,12 @@ is a prototype for the bench, not the app people will carry.
   guest" during an errand at a public node that is not yours, and, when
   none is, which
   node the phone is paired with or that it is no longer yours (next
-  section); tapping it opens Settings.
+  section); tapping it opens Settings. Once there is a contact and
+  until the backup words are written down, a card says "If you lose
+  this phone, these words are the only way to keep your contacts able
+  to reach you"; a tap opens Settings scrolled to the backup, which
+  shows tinted for a moment and is announced. While the demo is on, a
+  card says "Demo: nothing leaves this phone".
   A row swiped aside either way archives its conversation, with
   **Undo**; a line at the bottom then counts the archived ones, "2
   archived", and leads to Archived.
@@ -146,22 +151,26 @@ is a prototype for the bench, not the app people will carry.
 - **Settings**, from the menu. The node to connect to (scan, then tap
   one; a public node says so, with its RSSI, and a tap asks "Is it
   yours?": **Pair**, typing the code its screen shows, or **Just use
-  it**, as a guest) and the node the phone is
-  paired with, the fake node switch, on the paired node of link version
-  7 or later the switch **Public: serve phones without pairing**, on
-  unless the owner turns it off (Public nodes, below), the home node
-  (make the connected node your home if it is not, or none; the dialog
-  says so, and on **Go ahead** your new card goes to every contact;
-  **Send my card**, as on the first screen; clear the mailbox key of a
-  node that holds one and is not your home), the version of the
-  connected node's firmware and **Update firmware** (Updating a node,
-  below), whether the app is exempt from battery optimisation (next
-  section), your name, your 12
+  it**, as a guest), the node the phone is paired with, and how the
+  connected node fares; on the paired node of link version 7 or later
+  the switch **Public: serve phones without pairing**, on unless the
+  owner turns it off (Public nodes, below). Then the home node: make
+  the connected node your home if it is not, or none; the dialog says
+  so, and on **Go ahead** your new card goes to every contact; **Send
+  my card**, as on the first screen; clear the mailbox key of a node
+  that holds one and is not your home. A node without a place says
+  "This node has no place yet", with **Use this phone's location**,
+  which gives it the phone's position as its place; a sleepy or
+  carried node cannot be made home, and the button is off with "A home
+  must be a node that stays on power at a fixed place" (spec
+  "Mailbox"). Then the version of the connected node's firmware and
+  **Update firmware** (Updating a node, below), whether the app is
+  exempt from battery optimisation (next section), your name, your 12
   words (show them, or restore an identity from them, after a warning
   that contacts holding the current card cannot reach the restored
-  identity), and the node's
-  map point: set from typed degrees or the phone's location, or
-  cleared.
+  identity), and **Node's place**: set from typed degrees or the
+  phone's location, or cleared. At the bottom, **Try without a node
+  (demo)**, a node in the app, and **Debug**.
 - **Nearby nodes**, from the menu: a map. The connected node and every neighbour it
   knows on an OpenStreetMap street map, a line from the node to each
   coloured by the link's quality: green good, amber fair, red fragile,
@@ -676,14 +685,19 @@ a phone (Trying it, With a node).
 
 ### With the fake node
 
-1. Open the app. The first screen says no conversations and asks you
-   to write down your 12 backup words. Tap the line "Not connected",
-   turn on **Fake node**, press **Connect**. The first time, the app
-   says why it notifies: **Continue**, and allow it. It shows
+1. Open the app. It says why it needs Bluetooth, and Android asks. The
+   first screen says no conversations, with the **Get started** card.
+   Tap the line "Not connected", at the bottom turn on **Try without a
+   node (demo)**, and at the top press **Connect**. The first time, the
+   app says why it notifies: **Continue**, and allow it. It shows
    `ID FA4E00000001`, connected, "Starting up, 3:14" counting down, then
-   "Hears 3 nodes". Further down, **Show my
-   words**, write them down, **I wrote them down**.
-2. Go back. A notification of the fake friend's two messages has come.
+   "Hears 3 nodes".
+2. Go back. The first screen says "Demo: nothing leaves this phone". A
+   notification of the fake friend's two messages has come, and with
+   the fake friend a contact, the first screen asks you to write down
+   your 12 backup words: tap it, and Settings opens at **Backup**,
+   tinted for a moment. **Show my words**, write them down, **I wrote
+   them down**.
    A conversation with **Fake friend** holds their two
    messages.
 3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 10,
@@ -717,7 +731,7 @@ a phone (Trying it, With a node).
    temporary without a home; **Share** opens Android's share sheet with
    the card's text and the code's image, and **Details** your identity
    and the card as text, `BARK:` and capitals.
-10. Menu, **Settings**, under **Map point**: press **Phone location**
+10. Menu, **Settings**, under **Node's place**: press **Phone location**
     (allow location), then **Set**: Debug's address changes, and the
     next text to the fake friend names it. **Clear** brings back the
     fake's own fix.
@@ -758,7 +772,7 @@ a phone (Trying it, With a node).
 ### With a node
 
 1. Switch the node on and read the twelve hex digits on its display.
-2. In **Settings**, with **Fake node** off, press **Scan** and allow
+2. In **Settings**, with the demo off, press **Scan** and allow
    Bluetooth. The node shows within about a second as `ID` and those
    digits, as its screen shows them. Tap it: a public node asks whether
    it is yours; **Pair**. The first time, Android asks for a code and the
@@ -774,7 +788,9 @@ a phone (Trying it, With a node).
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
    address, and **Nearby nodes** draws it with the relays it hears, each line's
-   colour its link's quality. Without one, set a map point in Settings: Status changes to
+   colour its link's quality. Without one, Settings under **Home node**
+   says "This node has no place yet" with **Use this phone's location**,
+   or set a place under **Node's place**: Status changes to
    placed and map point. A text names the node's address only once it
    has one. With neighbours on link version 9 or later, each marker
    shows its screen's role within a second or, asked again, a few;

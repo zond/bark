@@ -29,6 +29,7 @@ import 'package:bark_app/ui/conversations_screen.dart';
 import 'package:bark_app/ui/settings_screen.dart';
 import 'package:bark_app/ui/thread_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:sodium/sodium.dart';
@@ -56,13 +57,24 @@ void main() {
     final app = await model(t);
     await t.pumpWidget(BarkApp(app));
     expect(find.textContaining('No conversations yet'), findsOneWidget);
-    expect(find.textContaining('12 backup words'), findsOneWidget);
+    // No contact yet, so nobody to lose: no backup banner.
+    expect(find.textContaining('these words'), findsNothing);
 
-    // Settings: the fake node, and the backup words.
+    // Settings: the demo at the bottom, and the backup words.
     await t.tap(find.textContaining('Not connected'));
     await t.pumpAndSettle();
-    await t.tap(find.text('Fake node'));
+    await t.scrollUntilVisible(
+      find.text('Try without a node (demo)'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Try without a node (demo)'));
     await t.pump();
+    await t.scrollUntilVisible(
+      find.text('Connect'),
+      -100,
+      scrollable: find.byType(Scrollable).first,
+    );
     await t.tap(find.text('Connect'));
     await t.pump();
     expect(find.text('ID FA4E00000001'), findsOneWidget);
@@ -81,7 +93,7 @@ void main() {
     await t.pumpAndSettle();
     expect(app.me.backedUp, isTrue);
     await t.scrollUntilVisible(
-      find.text('Map point'),
+      find.text('Node\'s place'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
@@ -347,6 +359,89 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('the home: a node without a place offers the phone\'s '
+      'location; a sleepy one cannot be made home', (t) async {
+    final app = await model(t);
+    await app.connectFake();
+    final fake = app.fakeNode!
+      ..fixed = false
+      ..changed();
+    await t.pump();
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.scrollUntilVisible(
+      find.text('This node has no place yet.'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Use this phone\'s location'), findsOneWidget);
+    expect(find.text('Make this node my home'), findsNothing);
+
+    fake
+      ..fixed = true
+      ..sleepy = true
+      ..changed();
+    await t.pump();
+    expect(find.text('This node has no place yet.'), findsNothing);
+    final make = find.widgetWithText(FilledButton, 'Make this node my home');
+    expect(t.widget<FilledButton>(make).enabled, isFalse);
+    expect(
+      find.text('A home must be a node that stays on power at a fixed place.'),
+      findsOneWidget,
+    );
+    fake
+      ..sleepy = false
+      ..changed();
+    await t.pump();
+    expect(t.widget<FilledButton>(make).enabled, isTrue);
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the backup banner shows once there is a contact, and lands '
+      'on the backup, tinted for a moment', (t) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    const banner = 'Write down your 12 backup words';
+    expect(find.text(banner), findsNothing);
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(List.filled(32, 5), null, 1, 'Olena')),
+    );
+    await t.pump();
+    expect(find.text(banner), findsOneWidget);
+    expect(
+      find.textContaining('the only way to keep your contacts'),
+      findsOneWidget,
+    );
+    await t.tap(find.text(banner));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 100));
+    expect(find.byType(SettingsScreen), findsOneWidget);
+    final words = find.text('Show my words');
+    Color? tint() {
+      final c = find.ancestor(
+        of: words,
+        matching: find.byType(AnimatedContainer),
+      );
+      final box = t.renderObject<RenderDecoratedBox>(
+        find.descendant(of: c.first, matching: find.byType(DecoratedBox)).first,
+      );
+      return (box.decoration as BoxDecoration).color;
+    }
+
+    // Tinted at first, the tint gone after the fade, and in view.
+    expect(tint()!.a, greaterThan(0));
+    await t.pumpAndSettle();
+    expect(tint()!.a, 0);
+    final view = t.view.physicalSize / t.view.devicePixelRatio;
+    final at = t.getRect(words);
+    expect(at.top, greaterThanOrEqualTo(0));
+    expect(at.bottom, lessThanOrEqualTo(view.height));
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets('Remove contact and Restore from words ask first', (t) async {
     final app = await model(t);
     final olena = Contact(
@@ -378,6 +473,8 @@ void main() {
       100,
       scrollable: find.byType(Scrollable).first,
     );
+    await t.ensureVisible(find.text('Restore from words'));
+    await t.pumpAndSettle();
     await t.tap(find.text('Restore from words'));
     await t.pumpAndSettle();
     expect(find.textContaining('cannot reach the new one'), findsOneWidget);
@@ -893,7 +990,7 @@ void main() {
     expect(find.textContaining('Connected as a guest'), findsOneWidget);
     expect(find.text('Update firmware'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
-    expect(find.text('Map point'), findsNothing);
+    expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));
     await t.pump();
     expect(
