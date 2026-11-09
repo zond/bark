@@ -1073,7 +1073,7 @@ void main() {
     expect(find.text(public), findsOneWidget);
     // The home node second, right under the node.
     final ys = [
-      for (final h in ['Node', 'Home node', 'Firmware'])
+      for (final h in ['Node', 'Home node', 'Updates'])
         t.getTopLeft(find.text(h, skipOffstage: false)).dy,
     ];
     expect(ys, [...ys]..sort());
@@ -1093,7 +1093,8 @@ void main() {
     await t.pump();
     expect(find.text(public), findsNothing);
     expect(find.textContaining('Connected as a guest'), findsOneWidget);
-    expect(find.text('Update firmware'), findsNothing);
+    expect(find.text('Send to node'), findsNothing);
+    expect(find.text('Pick an image file (bench)'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
     expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));

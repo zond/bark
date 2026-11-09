@@ -179,8 +179,7 @@ is a prototype for the bench, not the app people will carry.
   which gives it the phone's position as its place; a sleepy or
   carried node cannot be made home, and the button is off with "A home
   must be a node that stays on power at a fixed place" (spec
-  "Mailbox"). Then the version of the connected node's firmware and
-  **Update firmware** (Updating a node, below), whether the app is
+  "Mailbox"). Then **Updates** (Newer releases, below), whether the app is
   exempt from battery optimisation (next section), your name, your 12
   words (show them, or restore an identity from them, after a warning
   that contacts holding the current card cannot reach the restored
@@ -508,8 +507,10 @@ no one after its update (Updating a node) can be seen.
 
 A node out of reach, on a roof, is updated from the phone over the link
 (spec "Phone link", Updates; roadmap D145). Settings, under
-**Firmware**, says the version the connected node runs; **Update
-firmware** opens a screen that takes the image from **Latest release**,
+**Updates**, says the version the connected node runs on the **Node
+image** row; its **Send to node**, when the latest release has a newer
+image, and the smaller **Pick an image file (bench)** open the update
+screen, which takes the image from **Latest release**,
 the `bark-fw-<N>.img` of the latest release the app knows of (Newer
 releases), signed by the release, or from **Pick a file**, an image
 `bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
@@ -575,6 +576,18 @@ USB. Without a network nothing shows, and the app asks again at its
 next start. The last answer, its time and the versions hidden are kept
 in `release.json`, so the bars show at once at the next start while the
 app asks again.
+
+Settings' **Updates** section has **Check for updates**, which asks at
+once by the same check, with a spinner while it runs, and then says in
+one line how this app and the node stand against the latest release,
+such as "App up to date (9); node image 18, release 20 has 20: send it
+under Node image below", "A newer app is available, release 20: get it
+under App below; no node linked", or "Could not reach the release list"
+without a network. Under it the **App** row gives the app's version and,
+when the release is newer, a tap downloads it; the **Node image** row
+gives the node's version and, when the release's image is newer, **Send
+to node**; last, smaller, **Pick an image file (bench)**. A dismissed
+bar does not hide a newer version here.
 
 ## The payload
 
@@ -812,8 +825,9 @@ a phone (Trying it, With a node).
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
-15. **Settings**, under **Firmware**: the fake runs version 1. **Update
-    firmware**, **Latest release** (or **Pick a file** with a signed
+15. **Settings**, under **Updates**: **Node image** says the fake runs
+    version 1. **Pick an image file (bench)**, or with a release known
+    **Send to node**, then **Latest release** (or **Pick a file** with a signed
     image; the fake refuses one whose header names no key):
     the image's version and size. **Send to the node**: the bar fills at
     once, the fake has no radio to wait for; then "The node checked
@@ -912,8 +926,8 @@ a phone (Trying it, With a node).
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
     target/vN+1.img`, then sign it with the bench key, which an open
     build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
-    --key-id 255`. In **Settings**, **Firmware** says version N.
-    **Update firmware**, **Pick a file**, the image: "Version N+1".
+    --key-id 255`. In **Settings**, **Updates**, **Node image** says
+    version N. **Pick an image file (bench)**, the image: "Version N+1".
     **Send to the node**: the node logs `update: receiving version=N+1`
     and then nothing while the bar fills, about 20 s; half way, switch
     the phone's Bluetooth off and on: the node logs `update: link closed

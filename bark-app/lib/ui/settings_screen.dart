@@ -14,6 +14,7 @@ import '../app_layer.dart';
 import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
+import '../releases.dart';
 import 'common.dart';
 import 'debug_screen.dart';
 import 'update_screen.dart';
@@ -243,7 +244,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ..._public(),
               ..._unpair(),
               ..._home(),
-              ..._firmware(),
+              ..._updates(),
               ..._battery(),
               _heading('My name'),
               ListTile(
@@ -493,29 +494,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-  /// The connected node's firmware, and its update over the link.
-  List<Widget> _firmware() {
-    final n = app.session.node;
-    if (n == null || app.session.guest) return [];
+  /// The outcome of the last check the person asked for: null before
+  /// one, else whether the release list was reached.
+  bool? _reached;
+
+  Future<void> _check() async {
+    final ok = await app.releases.check(now: true);
+    if (mounted) setState(() => _reached = ok);
+  }
+
+  /// Updates: the check the person asks for, with its outcome; the app's
+  /// version and the way to a newer one; the node's image and the way to
+  /// send it a newer one; and, smaller, an image file for the bench.
+  List<Widget> _updates() {
+    final r = app.releases;
+    final s = app.session;
+    final n = s.node;
+    final latest = r.latest;
+    final newerApp =
+        latest != null && latest.apk != null && r.app != 0 && latest.n > r.app;
+    final owner = n != null && !s.guest;
+    final newerImage =
+        owner &&
+        latest != null &&
+        latest.image != null &&
+        n.image != 0 &&
+        latest.n > n.image;
+    final reached = _reached;
     return [
-      _heading('Firmware'),
-      Text(
-        n.version < updateVersion
-            ? 'The node runs version ${n.image}, from before updates over '
-                  'Bluetooth: update it by USB once.'
-            : 'The node runs version ${n.image}.',
+      _heading('Updates'),
+      Row(
+        children: [
+          OutlinedButton(
+            onPressed: r.checking || r.fetch == null ? null : _check,
+            child: const Text('Check for updates'),
+          ),
+          const SizedBox(width: 16),
+          if (r.checking)
+            const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+        ],
       ),
-      const SizedBox(height: 8),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: OutlinedButton(
-          onPressed: n.version < updateVersion
-              ? null
-              : () => Navigator.of(context)
-                    .push(MaterialPageRoute(builder: (_) => UpdateScreen(app))),
-          child: const Text('Update firmware'),
+      if (reached != null && !r.checking)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            reached
+                ? updatesLine(r, n, guest: s.guest)
+                : 'Could not reach the release list',
+          ),
         ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('App'),
+        subtitle: Text(
+          r.app == 0
+              ? 'A development build'
+              : newerApp
+              ? 'Version ${r.app}; version ${latest.n} is available: tap to '
+                    'download it in the browser, and Android asks before it '
+                    'installs it over this one'
+              : 'Version ${r.app}',
+        ),
+        onTap: newerApp ? () => app.notifier.openLink(latest.apk!) : null,
       ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Node image'),
+        subtitle: Text(
+          n == null
+              ? 'No node linked'
+              : s.guest
+              ? 'Only the phone paired with the node updates it'
+              : n.version < updateVersion
+              ? 'Version ${n.image}, from before updates over Bluetooth: '
+                    'update it by USB once'
+              : newerImage
+              ? 'Version ${n.image}; version ${latest.n} is available'
+              : 'Version ${n.image}',
+        ),
+        trailing: newerImage && n.version >= updateVersion
+            ? FilledButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => UpdateScreen(app, release: latest),
+                  ),
+                ),
+                child: const Text('Send to node'),
+              )
+            : null,
+      ),
+      if (owner && n.version >= updateVersion)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => UpdateScreen(app, pick: true)),
+            ),
+            child: const Text('Pick an image file (bench)'),
+          ),
+        ),
     ];
   }
 
