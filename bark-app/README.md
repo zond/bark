@@ -39,11 +39,14 @@ is a prototype for the bench, not the app people will carry.
   it is done; the card goes once all are. One row a conversation,
   newest first, with the last text and, for a sent one, its state. A
   line at
-  the top says whether a node is connected, "Connected to ID … as a
-  guest" during an errand at a public node that is not yours, and, when
-  none is, which
-  node the phone is paired with or that it is no longer yours (next
-  section); tapping it opens Settings. Once there is a contact and
+  the top says which node the phone is on and why: "Connected to ID …,
+  paired"; "Using ID … as a guest: a public node, not yours" during
+  errands at a public node and between them; "Using ID … as a guest:
+  your node is out of reach" while the paired node is, and "Back on
+  your node, ID …" for a minute after it is back (next section); and,
+  when it is on none, which node the phone is paired with or that it is
+  no longer yours. Settings' Node section says the same. Tapping the
+  line opens Settings. Once there is a contact and
   until the backup words are written down, a card says "If you lose
   this phone, these words are the only way to keep your contacts able
   to reach you"; a tap opens Settings scrolled to the backup, which
@@ -332,10 +335,16 @@ in the ring meanwhile, so the interval delays it and loses none.
 
 While it is not connected, the app looks for the node it is paired with
 and connects to it when it sees it, and, when it is not paired with a
-node, it is no longer its own, or the paired node is not heard in a
-round, goes on its errands at the public node heard strongest, by the
-best RSSI each node had over the round. The paired node always comes
-first, and the app moves to it once it hears it. Each errand takes the
+node, it is no longer its own, or the paired node is out of reach, goes
+on its errands at the public node heard strongest, by the best RSSI
+each node had over the round (spec "Phone link", Which node a phone
+uses). The paired node is out of reach once two rounds in a row, 30 s,
+have not reached it, heard or connected (`ownGone`): one round with the
+screen off may miss a node in reach. The paired node always comes
+first, and the app moves to it in the first round that hears it, so at
+the edge of its reach, heard every other round, the phone stays with
+it. A fetch sent from a public node brings the mail back there, read
+as a guest's. Each errand takes the
 strongest public node of its round, so the phone moves to a nearer one
 as it walks. The
 app never joins as a guest the node that is no longer its own: Android
@@ -740,7 +749,11 @@ guest's link after 30 s, and take turns as Ready;
 choose the paired node, else the strongest public node; go on a
 guest's errand (connect, tag, read, send, leave) when something waits
 to be sent and otherwise once a minute, try again after being closed for
-another guest, and move to the paired node once it is heard; read the fake
+another guest, and move to the paired node once it is heard; with a
+paired node, go to a public node only after two rounds without it,
+send through it as a guest, name it on the card and on the first
+screen's line, come back to the paired node in the round that hears it
+and say so, and stay with a paired node heard every other round; read the fake
 node's neighbours, in one page and across several, and not from a node
 before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
@@ -977,11 +990,15 @@ a phone (Trying it, With a node).
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its signal; or, with no paired node of
     its own in reach, the second phone asks whether the node is its own,
-    and after **Just use it** goes on an errand there within a round, its first screen saying "Connected to ID … as a guest" for
-    a few seconds, then again once a minute. No pairing dialog shows,
+    and after **Just use it** goes on an errand there within a round, its first screen saying "Using ID … as a guest: a
+    public node, not yours", with an errand once a minute. No pairing dialog shows,
     at the connect or later. Its log shows `Recipient: tag …`, a
     `Guest: item …` line for each item read, and `Disconnected`.
     A text between the two phones' contacts reaches each, and neither
     sees the other's; a text sent to the second phone while it is away
     from the node is read at its next errand there. Taken near its own
-    paired node, the guest phone moves to it within a round.
+    paired node, the guest phone moves to it within a round. The owner's
+    phone, its node switched off or carried away, says "Using ID … as a
+    guest: your node is out of reach" within about 30 s if another
+    public node is in reach, sends a text through it, and says "Back on
+    your node" within a round of the node's return.

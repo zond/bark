@@ -378,6 +378,40 @@ String? lookingLine(AppModel app) {
   return app.scanning ? null : 'Looking for $n…';
 }
 
+/// Which public node the phone uses as a guest, and why, during an errand
+/// there and between them; null while it uses none. A paired phone does
+/// so while its node is out of reach (spec "Phone link", Which node a
+/// phone uses).
+String? guestLine(AppModel app) {
+  final s = app.session;
+  final String? name = s.connected && s.guest
+      ? nodeName(s.node!.id)
+      : s.connected
+      ? null
+      : app.guestNode;
+  if (name == null) return null;
+  final why = app.ownAway
+      ? 'your node is out of reach'
+      : 'a public node, not yours';
+  return 'Using ${shownName(name)} as a guest: $why';
+}
+
+/// The first screen's line on the phone's node: which it is on, and why.
+String connectionLine(AppModel app) {
+  final s = app.session;
+  final n = s.node;
+  final looking = lookingLine(app);
+  return guestLine(app) ??
+      (app.backOnOwn
+          ? 'Back on your node, ${nodeLabel(n!.id)}'
+          : s.connected
+          ? 'Connected to ${nodeLabel(n!.id)}, paired'
+          : looking != null
+          ? '$looking Texts wait on the phone until it is in reach.'
+          : 'Not connected to a node: texts wait on the phone. '
+                '${pairedLine(s)}');
+}
+
 /// The phone's pairing as a person reads it while not connected (spec
 /// "Phone link", Pairing).
 String pairedLine(Session s) {

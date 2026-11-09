@@ -907,25 +907,91 @@ void main() {
       });
     });
 
-    test('the paired node not heard: errands at a public node, then the '
-        'paired node once heard', () {
+    test('the paired node not heard in two rounds: out of reach, errands '
+        'at a public node; heard again, back on it at once', () {
       run(withPaired: true, (async, app, ble) {
+        // One round's miss is no proof.
         async.elapse(round);
+        expect(ble.connects, isEmpty);
+        expect(app.ownAway, isFalse);
+        expect(connectionLine(app), startsWith('Looking for ID FA4E00000001…'));
+        // The second, 30 s at a round every 15 s.
+        async.elapse(lookRound);
+        expect(app.ownAway, isTrue);
         expect(ble.connects, [strong]);
+        expect(app.session.connected, isFalse);
+        const using =
+            'Using ID 0CE400000004 as a guest: your node is out of reach';
+        expect(connectionLine(app), using);
+        // The card's node is the one in use.
+        expect(app.me.nodeAddress!.id, strongId);
+        expect(app.session.pairedWith, nodeName(FakeNode.id));
         // Still a round every 15 s, for the paired node: two scans in
         // 30 s, within Android's five.
         final scans = ble.scans;
         async.elapse(const Duration(seconds: 30));
         expect(ble.scans - scans, 2);
+        expect(connectionLine(app), using);
         ble.inReach.add(paired);
         async.elapse(lookRound);
         expect((app.session.guest, app.linkDevice), (false, paired));
         expect(app.session.connected, isTrue);
         expect(ble.connects, [strong, paired]);
+        expect(app.ownAway, isFalse);
+        expect(app.guestNode, isNull);
+        expect(connectionLine(app), 'Back on your node, ID FA4E00000001');
+        expect(app.me.nodeAddress!.id, FakeNode.id);
+        async.elapse(backShown);
+        expect(connectionLine(app), 'Connected to ID FA4E00000001, paired');
         // On its paired node the search stops.
         final after = ble.scans;
         async.elapse(const Duration(minutes: 1));
         expect(ble.scans, after);
+      });
+    });
+
+    test('at the edge of the paired node\'s reach, heard every other round, '
+        'the phone stays with it; gone for good, it uses a public node', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        expect(ble.connects, [paired]);
+        for (var i = 0; i < 4; i++) {
+          // The link drops, and the next round misses the node.
+          ble.inReach.remove(paired);
+          ble.drop(paired);
+          async.elapse(lookRound);
+          ble.inReach.add(paired);
+          async.elapse(lookRound);
+          expect(app.linkDevice, paired);
+        }
+        expect(ble.connects.where((d) => d != paired), isEmpty);
+        expect(app.ownAway, isFalse);
+        ble.inReach.remove(paired);
+        ble.drop(paired);
+        async.elapse(lookRound * 2);
+        expect(app.ownAway, isTrue);
+        expect(ble.connects.last, strong);
+      });
+    });
+
+    test('something to send while the paired node is out of reach goes by '
+        'the public node, as a guest\'s', () {
+      run(withPaired: true, (async, app, ble) {
+        async.elapse(round + lookRound);
+        expect(ble.connects, [strong]);
+        final dst = Address(Position.fromDegrees(50, 30), [9, 9, 9, 9, 9, 9]);
+        final o = Outgoing(
+          dst,
+          mail(app, [9, 9, 9, 9, 9, 9], 7),
+          at: start,
+          kind: OutKind.text,
+          sent: 1,
+        );
+        app.session.queue(o);
+        async.elapse(lookRound);
+        expect(ble.connects, [strong, strong]);
+        expect(o.state, OutState.taken);
+        expect(ble.bonds, {paired});
       });
     });
 

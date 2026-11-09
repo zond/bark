@@ -265,20 +265,14 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   Widget _connection(BuildContext context) {
     final s = app.session;
-    final looking = lookingLine(app);
-    final text = s.connected && s.guest
-        ? 'Connected to ${nodeLabel(s.node!.id)} as a guest: a public node, '
-              'not yours'
-        : s.connected
-        ? 'Connected to ${nodeLabel(s.node!.id)}, paired'
-        : looking != null
-        ? '$looking Texts wait on the phone until it is in reach.'
-        : 'Not connected to a node: texts wait on the phone. '
-              '${pairedLine(s)}';
+    final guest = guestLine(app);
+    final text = connectionLine(app);
     return ListTile(
       dense: true,
       leading: Icon(
-        s.connected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+        s.connected || guest != null
+            ? Icons.bluetooth_connected
+            : Icons.bluetooth_disabled,
       ),
       title: Text(text),
       onTap: () => _open(context, SettingsScreen(app)),

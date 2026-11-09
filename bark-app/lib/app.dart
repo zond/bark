@@ -83,6 +83,24 @@ FoundNode? chooseNode(
 /// meanwhile, so a longer interval delays it and loses nothing.
 const Duration guestCheck = Duration(minutes: 1);
 
+/// The search's rounds in a row that must miss the paired node before the
+/// app calls it out of reach and goes on errands at a public node: two,
+/// 30 s at a round every [lookRound]. A round's scan of four advertising
+/// intervals hears a node in reach with the screen on, but with the screen
+/// off Android listens less and one round may miss it ([lookScan]), so one
+/// miss is no proof. A round that hears it moves the phone back at once,
+/// as the paired node serves the person whole. The two differ on purpose:
+/// at the edge of the paired node's reach, heard in some rounds and not
+/// others, the phone stays with it rather than going back and forth, and
+/// its texts and the replies to them do not go by a public node it then
+/// leaves (spec "Phone link", Which node a phone uses; roadmap D163).
+const int ownGone = 2;
+
+/// How long the first screen says the phone is back on its node: a
+/// minute, the span between errands at a public node ([guestCheck]), long
+/// enough to be read by someone who looks at the phone after walking in.
+const Duration backShown = Duration(minutes: 1);
+
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
   final Me me;
@@ -523,6 +541,7 @@ class AppModel extends ChangeNotifier {
       return BleLink.connect(n.deviceId, name: n.name, guest: true);
     }, guest: true);
     if (!session.connected || !session.guest) return;
+    _guestAt = n.name;
     if (session.guestRead) _guestChecked[n.name] = now();
     await _sendQueuedFetch();
     await _sent();
@@ -548,6 +567,38 @@ class AppModel extends ChangeNotifier {
 
   /// When each public node was last read through, by name.
   final Map<String, DateTime> _guestChecked = {};
+
+  /// The search's rounds in a row that have not reached the paired node.
+  int _ownMissed = 0;
+
+  /// The public node of the last errand, while no round has found none
+  /// and the phone has not reached its paired node since.
+  String? _guestAt;
+
+  /// When the phone came back to its paired node from public ones.
+  DateTime? _backAt;
+
+  /// The paired node is out of reach: [ownGone] rounds in a row have not
+  /// reached it, and the phone uses public nodes as a guest meanwhile.
+  bool get ownAway => pairedNode != null && _ownMissed >= ownGone;
+
+  /// Whether the search goes on errands at public nodes: without a paired
+  /// node, or while it is out of reach.
+  bool get usesPublic => pairedNode == null || ownAway;
+
+  /// The public node the phone uses as a guest, between its errands too:
+  /// the node of the last, while the search runs.
+  String? get guestNode => searchOn ? _guestAt : null;
+
+  /// The phone came back to its paired node from public ones within
+  /// [backShown], and is on it.
+  bool get backOnOwn {
+    final b = _backAt;
+    return b != null &&
+        session.connected &&
+        !session.guest &&
+        now().difference(b) < backShown;
+  }
 
   /// Whether a public node is due a guest's errand: something waits to be
   /// sent, or its ring has not been read for [guestCheck].
@@ -622,7 +673,14 @@ class AppModel extends ChangeNotifier {
       mtu = m;
       session.note('Connected, MTU $m');
       if (await session.attach(link, guest: guest) && !guest) {
-        await session.setPaired(nodeName(session.node!.id));
+        final name = nodeName(session.node!.id);
+        if (name == pairedNode && ownAway) {
+          _backAt = now();
+          session.note('Back on the paired node');
+        }
+        _ownMissed = 0;
+        _guestAt = null;
+        await session.setPaired(name);
       }
     } on NotOurs catch (e) {
       await session.setPaired(e.node, lost: true);
@@ -742,7 +800,8 @@ class AppModel extends ChangeNotifier {
   }
 
   /// Each round scans, then connects to the node [chooseNode] picks from
-  /// what it heard: the paired node, or the strongest public node.
+  /// what it heard: the paired node, or the strongest public node while
+  /// the phone has no paired node or it is out of reach ([ownGone]).
   Future<void> _rounds() async {
     try {
       while (_awake()) {
@@ -752,7 +811,10 @@ class AppModel extends ChangeNotifier {
         _round = round;
         final heard = await round;
         _round = null;
-        final n = lookingNow
+        // A round cut short by the person's scan or tap heard too little
+        // to call anything out of reach.
+        final looked = lookingNow;
+        final n = looked
             ? chooseNode(
                 heard.values,
                 paired: pairedNode,
@@ -760,9 +822,20 @@ class AppModel extends ChangeNotifier {
                 linked: session.connected,
               )
             : null;
-        if (n != null && n.name == paired) {
-          await _connectFound(n);
-        } else if (n != null && _guestDue(n)) {
+        if (n != null && n.name == paired) await _connectFound(n);
+        if (looked &&
+            paired != null &&
+            !(session.connected && !session.guest)) {
+          _ownMissed++;
+          if (_ownMissed == ownGone) {
+            session.note(
+              'Not reached $paired in $ownGone rounds: out of reach, '
+              'using public nodes as a guest',
+            );
+          }
+        }
+        if (looked && n == null) _guestAt = null;
+        if (n != null && n.name != paired && usesPublic && _guestDue(n)) {
           switch (await _isYours(n)) {
             case true:
               await _connectFound(n);
