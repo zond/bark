@@ -317,32 +317,32 @@ test in `tables/mod.rs`:
 | Neighbours (spec "Neighbour table") | 64 × 112 B, and 4 × 16 B for the images their sections name | 7.1 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 1613 × 40 B | 63.0 KiB |
-| Send queue (spec "Send queue") | (39 + 254) × 304 B | 87.0 KiB |
+| Message records (spec "Message records") | 667 × 40 B | 26.1 KiB |
+| Send queue (spec "Send queue") | (39 + 64) × 304 B | 30.6 KiB |
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate") | 16 B + 368 B | 0.4 KiB |
-| **All** | | **182.7 KiB** |
+| **All** | | **89.4 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
 for each hop count a message can be sent on with, keep overload from dropping messages
-(spec "Send queue", roadmap D31). The records hold the 1320 messages a relay can handle in the
-463.4 s a full send queue takes to drain at one ban per place, plus the 293 the send queue
+(spec "Send queue", roadmap D31); 64 of them can be held at once (roadmap D155). The records
+hold the 564 messages a relay can handle in the 162.9 s a full send queue takes to drain at one
+ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-190 056 B (185.6 KiB): the tables and, in under 1 KiB around them, the
+94 456 B (92.2 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
-of the update, 1 856 B (spec "Updates over the mesh"), with 8 B of each neighbour's entry for its heartbeats' section and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 171 040 B (167.0 KiB), without the heard table and the delivery
+of the update, 1 864 B (spec "Updates over the mesh"), with 8 B of each neighbour's entry for its heartbeats' section and the four images the sections name kept once in the table, 64 B (spec "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
+`SleepyNode` is 75 440 B (73.7 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image's static memory, the
-relay, Embassy, the USB log and the phone link with its BLE stack, was 217 504 B
-(`docs/phone-link-2026-11-05.md`, "Does it fit"), which with the update's 3 384 B since
-(`docs/mesh-update-2026-11-07.md`) is 220 888 B and leaves 40 232 B, 39.3 KiB, for
-the call stack. Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 120 256 B,
+`bark-fw/scripts/uf2.py --stack` on the release build: 95 600 B more than the 24 656 B it
+left with 254 hop places held at once and 1613 records (roadmap D155), against a floor of 24 576 B.
+Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
 value, and on the board's target building one took 174 KiB of stack in the

@@ -760,6 +760,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         !self.handover_idle()
     }
 
+    /// The send queue's entries in its regular room and in hop places,
+    /// for a driver to sample cheaply (spec "Send queue").
+    pub fn queue_use(&self) -> (usize, usize) {
+        let places = self.queue.iter().filter(|o| o.place > 0).count();
+        (self.queue.len() - places, places)
+    }
+
     /// How loaded the relay is at `now`, for a driver to sample. Reading
     /// it changes nothing.
     pub fn load(&self, now: Instant) -> Load {

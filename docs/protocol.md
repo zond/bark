@@ -1574,7 +1574,7 @@ of recent IDs.
 its place; a new record then replaces the least recently active one
 whose message the relay does not hold. A relay holds a message while it
 is in its send queue ([send queue](#send-queue)), the hand-over included,
-or set aside for a full delivery queue. The table holds 1613 records
+or set aside for a full delivery queue. The table holds 667 records
 ([bounds](#bounds)). Without its record the message could not be routed
 when its turn comes, so a message is never lost for want of room
 (roadmap D31).
@@ -1818,6 +1818,18 @@ highest free hop place numbered h or lower, and keeps it until it leaves
 the queue. A hop place holds its packet whatever the bucket holds; the
 bucket still decides when it is sent. A packet received at 255 ends at
 the cap ([hop count](#hop-count)), so 254 hop places are enough.
+
+Of the 254 places, 64 can be held at once: a place is free when its
+number is unheld and fewer than 64 places are held, and with 64 held the
+relay refuses the packet as any other refusal ([bans](#bans)). Packets
+with counts up to c hold at most c places, so holding 64 needs packets
+of count 64 or more, and while fewer are held the places behave as if
+all 254 were there. In the simulator they are almost never used: at
+the design rate and at twice it no relay of the district held one, and
+at the design rate in the city at most 3 at once, at 18 of 20 269 nodes.
+The 64 cut the send queue and the records it sets from 293 entries and
+1613 records to 103 and 667: 190 entries of 304 bytes and 946 records
+of 40 bytes, 95 600 bytes of RAM (roadmap D155).
 
 A message entering the network, a sleepy node's own with count 0 or a
 node's own app's, takes no hop place, so overload stops new messages
@@ -2161,7 +2173,14 @@ holds k or less, so the gate lets it in, and place k + 1 is free there
 as at every relay, since a place is never numbered above its message's
 count, so the queue takes it, unless its count is at the cap, where it
 ends. That message moves, then the next highest, and so on down to the
-regular room.
+regular room. With 64 places held at a relay the argument stops there:
+it refuses, and a stall is bounded by the gate's budget, after which the
+message goes round its refuser where another candidate is left
+([bans](#bans)), back to its parent once none is
+([return to parent](#return-to-parent)), or ends as
+[overload waits](#overload-waits) lists. That is the overload case
+only, past what the simulator has shown at twelve times the design
+rate (roadmap D155).
 
 *Why the gate does not lock up.* A send queue of one place per relay,
 which held whatever arrived first, locked up under crossing traffic
@@ -2255,7 +2274,7 @@ What breaks it:
 | a message held on one neighbour that does not answer | at most 14.2 s: two waits, of 1.58 and 3.16 s, the ban's first two steps, since the third failure in a row demotes the neighbour and moves the message on, and three hand-overs of at most 3.15 s on a free channel ([hand-over](#hand-over) step 6); one that answers this relay between failures holds it while its bans last ([bans](#bans)) |
 | life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
 | cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer |
-| message records | at most 1613 per relay ([message records](#message-records)) |
+| message records | at most 667 per relay ([message records](#message-records)) |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
 *What a neighbour that does not answer costs.* Each failed hand-over to
@@ -2288,8 +2307,8 @@ that led into the gap.
 *Why that many records.* A message sent on can come back, returned by a
 child or offered by a split copy, and its record must still be here
 then. On its way it may wait at each relay as long as a full send queue
-takes to drain, each of the 293 places waiting out one ban of 1.58 s:
-463.4 s. A ban after silence lasts up to 61 s, so where every way on is
+takes to drain, each of the 103 places, 39 regular and 64 hop places,
+waiting out one ban of 1.58 s: 162.9 s. A ban after silence lasts up to 61 s, so where every way on is
 silent a message can wait longer; its own record is kept while it is
 held, and this bound covers a wait of one ban per place behind
 refusals only (roadmap D42); a refusal may ask for more
@@ -2301,12 +2320,12 @@ Every message a relay handles costs at least an ACK (18 bytes, 17.0 ms)
 and one DATA packet with no payload (28 bytes, 22.1 ms,
 [physical layer](#physical-layer)), together 39.0 ms.
 
-Any 463.4 s carries at most a full bucket and its refill,
-6 s + 9.83% × 463.4 s = 51.6 s of airtime
-([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 1320
+Any 162.9 s carries at most a full bucket and its refill,
+6 s + 9.83% × 162.9 s = 22.0 s of airtime
+([duty cycle cap](#duty-cycle-cap)), so a relay handles at most 564
 messages in that time. The records of held messages are never evicted
-and may be older, so the table has room for the 293 a send queue holds
-on top: 1613.
+and may be older, so the table has room for the 103 a send queue holds
+on top: 667.
 
 ---
 
