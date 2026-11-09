@@ -741,18 +741,6 @@ impl core::fmt::Display for Time {
     }
 }
 
-/// Bytes the host types while the node runs: there is no console to take
-/// them, and they are dropped.
-pub struct IgnoreInput;
-
-impl embassy_usb_logger::ReceiverHandler for IgnoreInput {
-    async fn handle_data(&self, _: &[u8]) {}
-
-    fn new() -> Self {
-        IgnoreInput
-    }
-}
-
 /// The core in static memory: at 93 KiB a relay is kept out of every
 /// task's future and stack.
 struct Static(&'static mut Role);

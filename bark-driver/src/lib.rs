@@ -23,6 +23,7 @@
 extern crate std;
 
 pub mod gnss;
+pub mod record;
 pub mod sx1262;
 pub mod tcxo;
 pub mod utc;

@@ -1551,7 +1551,7 @@ hex digits, as its serial number. On Linux it appears as `/dev/ttyACM0`
 CDC-ACM is a USB bulk pipe: the baud rate, parity and stop bits a terminal
 sets are ignored, so any value works. What matters is that the terminal
 asserts DTR, because the firmware holds log output until the port is opened.
-Lines logged before that wait in a 2 KiB buffer (the banner is always
+Lines logged before that wait in a 2 KiB ring (the banner is always
 there); once it fills, newer lines are dropped until the port opens.
 
 ```
@@ -1575,3 +1575,28 @@ console's line: type a bare Enter before the first command.
 
 Each line is `[seconds.millis LEVEL] message`, seconds since boot; command
 echoes are `> command`.
+
+A line reaches the host whole or not at all (`src/usb_log.rs`,
+`bark_driver::record`). The logger formats each record into one line
+buffer, then copies it into the ring only if the ring has room for all
+of it; otherwise it drops the whole record and counts it, and once a
+minute logs the count as one line, `log: N records dropped`, so a loss
+is seen. Copied in pieces as it was formatted, a record would lose its
+tail when the ring filled part way and the next record would join the
+stump, a line missing and two merged, which `scripts/image.py stage`
+cannot read. The console's echoes and answers take the same path.
+
+The line buffer is 638 bytes, the longest line the firmware writes: the
+console's report of a received frame of 255 bytes in hex, with its time
+and fields. A longer line is cut and ends in `...`. It is the only static
+memory the change added: the open release image of version 19 leaves the
+stack 110 752 B against 111 392 B before (`uf2.py --stack`).
+
+Nothing waits on the log, and it masks interrupts for at most one
+64-byte copy. The buffer is held by a lock that masks nothing, which is
+enough because every task logs from thread mode, one poll at a time; a
+record logged from an interrupt, or while another record is being
+formatted, is dropped and counted rather than waited for. So the record
+in the buffer is the ring's only writer: the room it found only grows
+while it goes in, and it goes in 64 bytes, one USB packet, at a time,
+each copy inside a critical section of its own.

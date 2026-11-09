@@ -72,7 +72,6 @@ use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pipe::Pipe;
 use embassy_time::{Duration, Instant, Timer};
-use embassy_usb_logger::ReceiverHandler;
 
 use crate::clock::Clock;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
@@ -91,20 +90,14 @@ pub const ECHO: &str = "echo";
 static INPUT: Pipe<CriticalSectionRawMutex, 256> = Pipe::new();
 
 /// Feeds bytes the host sends into [`INPUT`].
-pub struct HostInput;
-
-impl ReceiverHandler for HostInput {
-    async fn handle_data(&self, data: &[u8]) {
-        INPUT.write_all(data).await;
-    }
-
-    fn new() -> Self {
-        HostInput
-    }
+pub async fn host_input(data: &[u8]) {
+    INPUT.write_all(data).await;
 }
 
 /// Longest command line, bytes.
 const LINE: usize = 600;
+// Its echo, `> ` and the line, is one log line, not cut.
+const _: () = assert!(LINE + 2 + 2 <= crate::usb_log::RECORD);
 
 /// Command lines assembled from [`INPUT`].
 pub struct Lines {
