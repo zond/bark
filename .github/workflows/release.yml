@@ -105,15 +105,6 @@ jobs:
       - name: Install the signing's Python package
         run: sudo apt-get update && sudo apt-get install -y python3-cryptography
 
-      - name: Package the node
-        working-directory: bark-fw
-        run: |
-          mkdir -p ../dist
-          python3 -I scripts/uf2.py --loader "$LOADER" "$ELF" "../dist/bark-$N.uf2"
-          python3 -I scripts/uf2.py "$ELF" "../dist/bark-fw-$N.uf2"
-          python3 -I scripts/uf2.py --check "../dist/bark-$N.uf2"
-          python3 -I scripts/uf2.py --check "../dist/bark-fw-$N.uf2"
-
       # Version 0 cannot be staged, and image.py refuses to pack it, so a
       # bench build has no image. Signed with the private key, a secret,
       # under the id this very firmware gives its public key: `--elf`
@@ -127,6 +118,7 @@ jobs:
         env:
           KEY: ${{ secrets.BARK_SIGNING_KEY }}
         run: |
+          mkdir -p ../dist
           python3 -I scripts/image.py pack "$ELF" "../dist/bark-fw-$N.img"
           umask 077
           printf '%s\n' "$KEY" > "$RUNNER_TEMP/signing.pem"
@@ -135,6 +127,24 @@ jobs:
       - name: Forget the image's signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/signing.pem"
+
+      # After the image: both UF2s write its signed header into the record,
+      # so that a node flashed with either holds the release and serves it
+      # over the mesh (bark-fw/README.md, "Updates"). Without it the record
+      # is left erased and the node serves nothing. A bench build has no
+      # image to name.
+      - name: Package the node
+        working-directory: bark-fw
+        run: |
+          mkdir -p ../dist
+          header=()
+          if [ "$N" != 0 ]; then
+            header=(--header "../dist/bark-fw-$N.img")
+          fi
+          python3 -I scripts/uf2.py "${header[@]}" --loader "$LOADER" "$ELF" "../dist/bark-$N.uf2"
+          python3 -I scripts/uf2.py "${header[@]}" "$ELF" "../dist/bark-fw-$N.uf2"
+          python3 -I scripts/uf2.py --check "../dist/bark-$N.uf2"
+          python3 -I scripts/uf2.py --check "../dist/bark-fw-$N.uf2"
 
       # The measurement console (bark-fw/README.md, "Console") is what the
       # bench flashes to measure the radio and to stage images. Shipping it
@@ -282,8 +292,8 @@ jobs:
 
           | File | For |
           |---|---|
-          | `bark-@N@.uf2` | a T-Echo's first flash: the loader and the node firmware |
-          | `bark-fw-@N@.uf2` | a T-Echo that already runs bark: the node firmware alone |
+          | `bark-@N@.uf2` | a T-Echo's first flash: the loader and the node firmware, which holds this release and serves it to other nodes over the mesh |
+          | `bark-fw-@N@.uf2` | a T-Echo that already runs bark: the node firmware alone, which holds and serves this release as `bark-@N@.uf2` does |
           | `bark-fw-@N@.img` | the node firmware as an image to stage through the console's serial port, signed with the project's key (`bark-fw/README.md`, "Updates") |
           | `bark-console-@N@.uf2` | the measurement console in place of the node, with the loader, for the bench (`bark-fw/README.md`, "Console") |
           | `bark-@N@.apk` | the Android app, which links a phone to its node over Bluetooth |

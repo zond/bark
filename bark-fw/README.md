@@ -554,7 +554,9 @@ which checks that every byte came, the battery (below), the hash,
 records the header and asks for the swap, and reboots through
 `update::reboot`, so that a check added there applies to all. `scripts/image.py pack` makes the image
 either takes and `scripts/image.py sign` signs it; a release carries it,
-signed, as `bark-fw-<N>.img`.
+signed, as `bark-fw-<N>.img`, and writes its header into the record of
+both its UF2s (`uf2.py --header`, Over the mesh, below), so that a node
+flashed with a release holds it and serves it.
 
 From the phone (spec "Phone link", Updates; roadmap D145): the app
 writes the header to Update, the image to Image in pieces of 240 bytes
@@ -632,9 +634,9 @@ confirmed itself.
 - *What it holds.* The record keeps the header of the image swapped in.
   If that header is the running version's and the active slot hashes to
   it, the node holds the image: it makes block 0, the table, from the
-  slot, tells the core (`Holds`) and serves its pieces. A UF2 leaves no
-  header, and a swap back leaves the newer image's, so such a node
-  serves nothing until it takes an image over the mesh or the phone.
+  slot, tells the core (`Holds`) and serves its pieces. A UF2 made
+  without `scripts/uf2.py --header` (below) leaves no header, and a
+  swap back leaves the newer image's, so such a node serves nothing until it takes an image over the mesh or the phone.
 - *What it gathers.* When a neighbour's heartbeat names a newer image,
   the node gathers it if the version is above its own, the key the
   heartbeat names is one it holds, and neither the phone's update nor a
@@ -680,7 +682,8 @@ the record, as a swap into it leaves it: from the phone, the console's
 `stage`, or, without staging, `scripts/uf2.py --header`, which writes
 the header of the packed, signed image into the record of the UF2 that
 carries the same build, with the word that says the loader checked it,
-and refuses an image of another version or hash:
+and refuses an image of another version or hash. It combines with
+`--loader`, and the release's UF2s are made this way:
 
 ```
 BARK_OPEN=1 BARK_IMAGE_VERSION=8 cargo build --release
