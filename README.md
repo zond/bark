@@ -134,14 +134,22 @@ node's screen shows its address as a QR code.
 A tag `v<N>`, N a positive integer, makes release N:
 `.github/workflows/release.yml` builds the firmware, the loader, the
 measurement console and the Android app, and attaches them to a GitHub
-Release whose notes say which file is for what. N is both the
-firmware's image version and the app's version, and a board or a phone
+Release whose notes say which file is for what. A board or a phone
 takes an update only above the version it runs, so each tag is above the
 last:
 
 ```
 git tag v1 && git push origin v1
 ```
+
+A release carries two versions, the node firmware's and the app's, and
+names them in `release.json`, `{"release": N, "app": A, "firmware":
+F}`. A side whose files changed since the previous release
+(`scripts/release-changed.sh` says which files count) is built as
+version N; one that did not keeps the previous release's files and
+version. So an app fix makes no new image for every node to gather and
+swap in, and a firmware fix makes no phone download the app again. A
+tag that changes neither makes no release.
 
 The app is signed with a release key held in three repository secrets.
 Android takes the key as the app's identity, so it is made once and kept,

@@ -127,7 +127,9 @@ class DebugScreen extends StatelessWidget {
       }),
       _row('Latest release', switch (app.releases.latest) {
         null => 'not known',
-        final r => '${r.n}, checked ${app.releases.checked?.toLocal()}',
+        final r =>
+          '${r.n}, app ${r.app}, firmware ${r.firmware}, checked '
+              '${app.releases.checked?.toLocal()}',
       }),
     ];
   }

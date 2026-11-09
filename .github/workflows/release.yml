@@ -5,10 +5,16 @@
 # builds what a person installs, with fat LTO and a signed APK, and
 # only a tag needs that.
 #
-# A tag is `v<N>`, N a positive integer. N is the release's one version
-# number: the firmware's image version (bark-fw/README.md, "Updates"),
-# which the update path only ever raises, and the app's version name and
-# code, which Android also only ever raises.
+# A tag is `v<N>`, N a positive integer, the release's number. A release
+# carries two versions that move apart (roadmap D164): the node firmware's
+# image version F (bark-fw/README.md, "Updates"), which the update path
+# only ever raises, and the app's version A, its version name and code,
+# which Android also only ever raises. A side that changed since the
+# previous release is built as version N; one that did not is carried on
+# from the previous release, files and version unchanged, so that an app
+# fix mints no image every node would gather and swap in for nothing, and
+# a firmware fix makes no phone download the app again. The release says
+# N, A and F in `release.json`, which the app reads.
 #
 # Nothing here may fail softly: a release missing a file, or carrying one
 # that did not pass its check, is worse than no release.
@@ -40,6 +46,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       n: ${{ steps.n.outputs.n }}
+      prev: ${{ steps.sides.outputs.prev }}
+      firmware: ${{ steps.sides.outputs.firmware }}
+      app: ${{ steps.sides.outputs.app }}
+      build_firmware: ${{ steps.sides.outputs.build_firmware }}
+      build_app: ${{ steps.sides.outputs.build_app }}
     steps:
       # Checked here, once, so that a tag like `v1.2` stops the release
       # before anything is built, rather than becoming an image version the
@@ -61,9 +72,85 @@ jobs:
           echo "version $n"
           echo "n=$n" >> "$GITHUB_OUTPUT"
 
+      # The whole history and its tags, to compare with the previous
+      # release's commit.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The previous release is the published one of the highest number
+      # below N. Each side is built if its files changed since it
+      # (scripts/release-changed.sh says which files), and otherwise
+      # taken from it at the version it carries: from its release.json,
+      # or, for a release from before the manifest, v21 and older, which
+      # carried one version, from its files' names. A tag that changes
+      # neither side makes no release. A bench build, N 0, builds both.
+      - id: sides
+        env:
+          N: ${{ steps.n.outputs.n }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prev=
+          if [ "$N" != 0 ]; then
+            prev=$(gh release list --exclude-drafts --exclude-pre-releases \
+                --limit 1000 --json tagName --jq '.[].tagName' \
+              | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' \
+              | awk -v n="$N" '$1 + 0 < n + 0' | sort -n | tail -1)
+          fi
+          firmware=$N app=$N build_firmware=true build_app=true
+          if [ -n "$prev" ]; then
+            tag=v$prev
+            names=$(gh release view "$tag" --json assets --jq '.assets[].name')
+            if grep -qx release.json <<<"$names"; then
+              gh release download "$tag" -p release.json -O "$RUNNER_TEMP/prev.json"
+              prev_firmware=$(jq -r '.firmware' "$RUNNER_TEMP/prev.json")
+              prev_app=$(jq -r '.app' "$RUNNER_TEMP/prev.json")
+            else
+              prev_firmware=$(sed -n 's/^bark-fw-\([1-9][0-9]*\)\.img$/\1/p' <<<"$names")
+              prev_app=$(sed -n 's/^bark-\([1-9][0-9]*\)\.apk$/\1/p' <<<"$names")
+            fi
+            # Exit 0 changed, 1 unchanged; anything else stops the release.
+            changed() {
+              local rc=0
+              scripts/release-changed.sh "$tag" HEAD "$1" || rc=$?
+              [ "$rc" -le 1 ] || { echo "release-changed.sh $1 failed"; exit 1; }
+              return "$rc"
+            }
+            # A version carried on is one the previous release names, a
+            # positive number no higher than its own.
+            carried() {
+              case "$2" in
+                '' | 0* | *[!0-9]*) echo "$tag names no $1 version: '$2'"; exit 1 ;;
+              esac
+              [ "$2" -le "$prev" ] || { echo "$tag names $1 version $2, above itself"; exit 1; }
+            }
+            if ! changed fw; then
+              carried firmware "$prev_firmware"
+              firmware=$prev_firmware build_firmware=false
+            fi
+            if ! changed app; then
+              carried app "$prev_app"
+              app=$prev_app build_app=false
+            fi
+            if [ "$build_firmware$build_app" = falsefalse ]; then
+              echo "neither the firmware nor the app changed since $tag: no release"
+              exit 1
+            fi
+          fi
+          echo "previous release ${prev:-none}; firmware $firmware, built: $build_firmware; app $app, built: $build_app"
+          {
+            echo "prev=$prev"
+            echo "firmware=$firmware"
+            echo "app=$app"
+            echo "build_firmware=$build_firmware"
+            echo "build_app=$build_app"
+          } >> "$GITHUB_OUTPUT"
+
   firmware:
     name: Firmware
     needs: version
+    if: needs.version.outputs.build_firmware == 'true'
     runs-on: ubuntu-latest
     env:
       N: ${{ needs.version.outputs.n }}
@@ -173,6 +260,7 @@ jobs:
   android:
     name: Android
     needs: version
+    if: needs.version.outputs.build_app == 'true'
     runs-on: ubuntu-latest
     env:
       N: ${{ needs.version.outputs.n }}
@@ -231,10 +319,12 @@ jobs:
             echo "keyAlias=$ALIAS"
           } > android/key.properties
 
-      # The app learns N from BARK_VERSION (lib/releases.dart, appVersion)
-      # rather than from the version code: a build from a checkout has
-      # pubspec.yaml's code 1 and no BARK_VERSION, which the app reads as
-      # 0, a development build that never asks to be updated.
+      # The app learns its version, N here, from BARK_VERSION
+      # (lib/releases.dart, appVersion) rather than from the version code:
+      # a build from a checkout has pubspec.yaml's code 1 and no
+      # BARK_VERSION, which the app reads as 0, a development build that
+      # never asks to be updated. Read again from the release's manifest
+      # as `app` while later releases carry this APK on.
       - run: flutter build apk --release --build-name="$N" --build-number="$N" --dart-define=BARK_VERSION="$N"
 
       # Proved, not assumed: compare the APK's certificate with the
@@ -268,45 +358,101 @@ jobs:
           path: bark-app/bark-${{ env.N }}.apk
           if-no-files-found: error
 
+  # Runs when a side was skipped as unchanged too, but not after a failure.
   release:
     name: GitHub Release
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' && !cancelled() && !failure()
     needs: [version, firmware, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       N: ${{ needs.version.outputs.n }}
+      F: ${{ needs.version.outputs.firmware }}
+      A: ${{ needs.version.outputs.app }}
+      PREV: ${{ needs.version.outputs.prev }}
+      BUILD_FIRMWARE: ${{ needs.version.outputs.build_firmware }}
+      BUILD_APP: ${{ needs.version.outputs.build_app }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
-      - name: Create the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      # The previous release's files of a side that did not change, the
+      # very bytes: the image is the one nodes already hold, signed then.
+      - name: Carry the unchanged side's files on
         run: |
+          if [ "$BUILD_FIRMWARE" != true ]; then
+            mkdir -p artifacts/firmware
+            gh release download "v$PREV" -D artifacts/firmware \
+              -p "bark-$F.uf2" -p "bark-fw-$F.uf2" -p "bark-fw-$F.img" \
+              -p "bark-console-$F.uf2"
+          fi
+          if [ "$BUILD_APP" != true ]; then
+            mkdir -p artifacts/android
+            gh release download "v$PREV" -D artifacts/android -p "bark-$A.apk"
+          fi
+          for f in "firmware/bark-$F.uf2" "firmware/bark-fw-$F.uf2" \
+            "firmware/bark-fw-$F.img" "firmware/bark-console-$F.uf2" \
+            "android/bark-$A.apk"; do
+            [ -s "artifacts/$f" ] || { echo "missing $f"; exit 1; }
+          done
+
+      # What the app reads to learn the versions (bark-app/lib/releases.dart).
+      - name: Write the manifest
+        run: |
+          mkdir -p artifacts/manifest
+          jq -n --argjson release "$N" --argjson app "$A" --argjson firmware "$F" \
+            '{release: $release, app: $app, firmware: $firmware}' \
+            > artifacts/manifest/release.json
+          cat artifacts/manifest/release.json
+
+      - name: Create the release
+        run: |
+          if [ "$BUILD_FIRMWARE" = true ]; then
+            fw_since=", new in this release"
+          else
+            fw_since=", unchanged since release $F"
+          fi
+          if [ "$BUILD_APP" = true ]; then
+            app_since=", new in this release"
+          else
+            app_since=", unchanged since release $A"
+          fi
           cat > notes.md <<'NOTES'
+          ## Versions
+
+          | Part | Version |
+          |---|---|
+          | Node firmware | @F@@FW_SINCE@ |
+          | App | @A@@APP_SINCE@ |
+
+          A part that did not change since an earlier release keeps that
+          release's files and version, so a node or a phone already on it
+          has nothing to update.
+
           ## Downloads
 
           | File | For |
           |---|---|
-          | `bark-@N@.uf2` | a T-Echo's first flash: the loader and the node firmware, which holds this release and serves it to other nodes over the mesh |
-          | `bark-fw-@N@.uf2` | a T-Echo that already runs bark: the node firmware alone, which holds and serves this release as `bark-@N@.uf2` does |
-          | `bark-fw-@N@.img` | the node firmware as an image to stage through the console's serial port, signed with the project's key (`bark-fw/README.md`, "Updates") |
-          | `bark-console-@N@.uf2` | the measurement console in place of the node, with the loader, for the bench (`bark-fw/README.md`, "Console") |
-          | `bark-@N@.apk` | the Android app, which links a phone to its node over Bluetooth |
-          | `bark.apk`, `bark.uf2` | `bark-@N@.apk` and `bark-@N@.uf2` under names that stay the same, so that a link to the latest release's file always works (the project's page links `bark.apk`) |
+          | `bark-@F@.uf2` | a T-Echo's first flash: the loader and the node firmware, which holds this firmware and serves it to other nodes over the mesh |
+          | `bark-fw-@F@.uf2` | a T-Echo that already runs bark: the node firmware alone, which holds and serves this firmware as `bark-@F@.uf2` does |
+          | `bark-fw-@F@.img` | the node firmware as an image to stage through the console's serial port, signed with the project's key (`bark-fw/README.md`, "Updates") |
+          | `bark-console-@F@.uf2` | the measurement console in place of the node, with the loader, for the bench (`bark-fw/README.md`, "Console") |
+          | `bark-@A@.apk` | the Android app, which links a phone to its node over Bluetooth |
+          | `bark.apk`, `bark.uf2` | `bark-@A@.apk` and `bark-@F@.uf2` under names that stay the same, so that a link to the latest release's file always works (the project's page links `bark.apk`) |
+          | `release.json` | this release's number and the app's and the firmware's versions, which the app reads to tell what is newer |
 
           ## Flashing a T-Echo
 
           1. Connect it over USB. Double-tap its reset button, the top-left
              one, within half a second: a drive named `TECHOBOOT` appears.
-          2. Copy `bark-@N@.uf2` to it. The board restarts into the firmware
+          2. Copy `bark-@F@.uf2` to it. The board restarts into the firmware
              when the copy is complete.
 
-          A board that already runs bark needs only `bark-fw-@N@.uf2`, and
+          A board that already runs bark needs only `bark-fw-@F@.uf2`, and
           enters the bootloader without the button when its serial port is
           set to 1200 baud (`stty -F /dev/ttyACM0 1200` on Linux).
           `bark-fw/README.md`, "Flash", has the details.
@@ -320,7 +466,8 @@ jobs:
           installs over the one before. An app built elsewhere is signed
           with another key: uninstall it first.
           NOTES
-          sed -i "s/@N@/$N/g" notes.md
+          sed -i -e "s/@F@/$F/g" -e "s/@A@/$A/g" \
+            -e "s/@FW_SINCE@/$fw_since/" -e "s/@APP_SINCE@/$app_since/" notes.md
           # Draft, upload, publish: three steps because `gh release create`
           # with the files on the end creates the release first and then
           # uploads one file at a time, so a failed upload leaves a public
@@ -333,8 +480,8 @@ jobs:
               --title "$GITHUB_REF_NAME" \
               --notes-file notes.md
           fi
-          cp "artifacts/android/bark-$N.apk" artifacts/android/bark.apk
-          cp "artifacts/firmware/bark-$N.uf2" artifacts/firmware/bark.uf2
+          cp "artifacts/android/bark-$A.apk" artifacts/android/bark.apk
+          cp "artifacts/firmware/bark-$F.uf2" artifacts/firmware/bark.uf2
           gh release upload "$GITHUB_REF_NAME" artifacts/*/* --clobber
           gh release edit "$GITHUB_REF_NAME" \
             --draft=false --notes-file notes.md

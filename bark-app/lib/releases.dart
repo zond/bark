@@ -1,6 +1,7 @@
 // The latest release on GitHub, checked at start and once a day after:
 // whether it carries a newer app than this one, or a newer image than the
-// connected node runs. The answer and what the person dismissed are kept
+// connected node runs. A release names the two versions apart, as one may
+// carry on the other's files unchanged (roadmap D164). The answer and what the person dismissed are kept
 // on disk, so that the home screen shows them at once at the next start.
 
 import 'dart:async';
@@ -12,9 +13,11 @@ import 'package:flutter/foundation.dart';
 import 'link.dart';
 import 'store.dart';
 
-/// The release this app was built as: the workflow's N, given to the build
-/// with `--dart-define=BARK_VERSION=<N>` (`.github/workflows/release.yml`).
-/// 0 is a development build, which never asks to be updated.
+/// This app's version: the number of the release that built it, given to
+/// the build with `--dart-define=BARK_VERSION=<N>`
+/// (`.github/workflows/release.yml`), and named `app` by that release's
+/// manifest and by the later ones that carry it on. 0 is a development
+/// build, which never asks to be updated.
 const appVersion = int.fromEnvironment('BARK_VERSION');
 
 /// The latest release of the project, from GitHub's releases API.
@@ -48,40 +51,91 @@ Future<Map<String, dynamic>> fetchLatest() async =>
     jsonDecode(utf8.decode(await httpGet(releasesUrl, json: true)))
         as Map<String, dynamic>;
 
-/// A release `v<N>`: its N, and where to download its APK and its node
-/// image, when it carries them.
+/// The name of a release's manifest: `{"release": N, "app": A,
+/// "firmware": F}`, the release's number and the versions of the app and
+/// the node firmware it carries.
+const manifestName = 'release.json';
+
+/// The download address of the file `name` in the API's answer `j`.
+String? assetUrl(Map<String, dynamic> j, String name) {
+  for (final a in (j['assets'] as List? ?? const [])) {
+    final asset = a as Map<String, dynamic>;
+    if (asset['name'] == name) return asset['browser_download_url'] as String?;
+  }
+  return null;
+}
+
+/// A release `v<N>`: its N, the app's version A and the node firmware's F
+/// it carries, each N if built for it or an earlier release's carried on,
+/// and where to download its APK and its node image, when it carries
+/// them.
 class Release {
   final int n;
+  final int app;
+  final int firmware;
   final String? apk;
   final String? image;
-  const Release(this.n, {this.apk, this.image});
+  const Release(this.n, {int? app, int? firmware, this.apk, this.image})
+    : app = app ?? n,
+      firmware = firmware ?? n;
 
   /// The image's file name.
-  String get imageName => 'bark-fw-$n.img';
+  String get imageName => 'bark-fw-$firmware.img';
 
-  /// The release in the API's answer; null if its tag is not `v<N>`. The
-  /// files are those named for N, as the workflow names them.
-  static Release? parse(Map<String, dynamic> j) {
+  /// The release in the API's answer `j`, with `manifest`, the release's
+  /// [manifestName], when it carries one; null if its tag is not `v<N>`.
+  /// A release without a manifest, v21 and older, carried one version,
+  /// N. The files are those named for the versions, as the workflow
+  /// names them. A manifest that does not fit the tag throws.
+  static Release? parse(
+    Map<String, dynamic> j, [
+    Map<String, dynamic>? manifest,
+  ]) {
     final m = RegExp(r'^v([1-9][0-9]*)$').firstMatch('${j['tag_name']}');
     if (m == null) return null;
     final n = int.parse(m[1]!);
-    String? url(String name) {
-      for (final a in (j['assets'] as List? ?? const [])) {
-        final asset = a as Map<String, dynamic>;
-        if (asset['name'] == name) {
-          return asset['browser_download_url'] as String?;
+    var app = n, firmware = n;
+    if (manifest != null) {
+      // A version carried on is an earlier release's, never a later one.
+      int version(String key) {
+        final v = manifest[key];
+        if (v is! int || v < 1 || v > n) {
+          throw FormatException('release $n: $manifestName $key $v');
         }
+        return v;
       }
-      return null;
-    }
 
-    return Release(n, apk: url('bark-$n.apk'), image: url('bark-fw-$n.img'));
+      if (manifest['release'] != n) {
+        throw FormatException(
+          'release $n: $manifestName names ${manifest['release']}',
+        );
+      }
+      app = version('app');
+      firmware = version('firmware');
+    }
+    return Release(
+      n,
+      app: app,
+      firmware: firmware,
+      apk: assetUrl(j, 'bark-$app.apk'),
+      image: assetUrl(j, 'bark-fw-$firmware.img'),
+    );
   }
 
-  Map<String, dynamic> toJson() => {'n': n, 'apk': apk, 'image': image};
+  Map<String, dynamic> toJson() => {
+    'n': n,
+    'app': app,
+    'firmware': firmware,
+    'apk': apk,
+    'image': image,
+  };
 
+  /// A release kept before the manifest has no `app` or `firmware`: both
+  /// were its N.
   static Release fromJson(Map<String, dynamic> j) => Release(
     j['n'] as int,
+    app: j['app'] as int?,
+    firmware: j['firmware'] as int?,
     apk: j['apk'] as String?,
     image: j['image'] as String?,
   );
@@ -96,7 +150,7 @@ class Releases extends ChangeNotifier {
   /// do not drive it.
   final Future<Map<String, dynamic>> Function()? fetch;
 
-  /// Downloads a release's file.
+  /// Downloads a release's file, its manifest among them.
   final Future<List<int>> Function(String url) download;
 
   /// This app's release, [appVersion] on a phone.
@@ -174,7 +228,11 @@ class Releases extends ChangeNotifier {
     _tried = this.now();
     try {
       final j = await fetch!();
-      final r = Release.parse(j);
+      final m = assetUrl(j, manifestName);
+      final manifest = m == null
+          ? null
+          : jsonDecode(utf8.decode(await download(m))) as Map<String, dynamic>;
+      final r = Release.parse(j, manifest);
       if (r == null) throw FormatException('tag ${j['tag_name']}');
       latest = r;
       checked = this.now();
@@ -197,7 +255,7 @@ class Releases extends ChangeNotifier {
   Release? get newerApp {
     final r = latest;
     if (app == 0 || r == null || r.apk == null) return null;
-    return r.n > app && r.n > dismissedApp ? r : null;
+    return r.app > app && r.app > dismissedApp ? r : null;
   }
 
   /// The latest release if it carries a newer image than `node` runs, and
@@ -209,7 +267,7 @@ class Releases extends ChangeNotifier {
       return null;
     }
     final dismissed = dismissedNodes[nodeName(node.id)] ?? 0;
-    return r.n > node.image && r.n > dismissed ? r : null;
+    return r.firmware > node.image && r.firmware > dismissed ? r : null;
   }
 
   /// No more word of an app of version `n` or older.
@@ -228,14 +286,14 @@ class Releases extends ChangeNotifier {
 }
 
 /// What a check the person asked for found, in one line: this app's
-/// version against the latest release's, and the node's image against
-/// the release's image, or that no node is linked.
+/// version against the latest release's app, and the node's image
+/// against the release's firmware, or that no node is linked.
 String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
   final l = r.latest;
   final app = r.app == 0
       ? 'app is a development build'
-      : l != null && l.apk != null && l.n > r.app
-      ? 'a newer app is available, release ${l.n}: get it under App below'
+      : l != null && l.apk != null && l.app > r.app
+      ? 'a newer app, version ${l.app}, is available: get it under App below'
       : 'app up to date (${r.app})';
   final String image;
   if (node == null) {
@@ -246,12 +304,12 @@ String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
     image = 'node firmware is a bench build';
   } else if (l == null || l.image == null) {
     image = 'node firmware ${node.image}; the release carries none';
-  } else if (l.n > node.image) {
+  } else if (l.firmware > node.image) {
     image =
-        'node firmware ${node.image}; release ${l.n} is newer: send it '
-        'under Node firmware below';
+        'node firmware ${node.image}; version ${l.firmware} is newer: send '
+        'it under Node firmware below';
   } else {
-    image = 'node firmware up to date (${node.image})';
+    image = 'node firmware ${node.image}, up to date';
   }
   final line = '$app; $image';
   return line[0].toUpperCase() + line.substring(1);

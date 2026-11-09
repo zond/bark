@@ -550,14 +550,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final n = s.node;
     final latest = r.latest;
     final newerApp =
-        latest != null && latest.apk != null && r.app != 0 && latest.n > r.app;
+        latest != null &&
+        latest.apk != null &&
+        r.app != 0 &&
+        latest.app > r.app;
     final owner = n != null && !s.guest;
     final newerImage =
         owner &&
         latest != null &&
         latest.image != null &&
         n.image != 0 &&
-        latest.n > n.image;
+        latest.firmware > n.image;
     final reached = _reached;
     return [
       _heading('Updates'),
@@ -591,7 +594,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           r.app == 0
               ? 'A development build'
               : newerApp
-              ? 'Version ${r.app}; version ${latest.n} is available: tap to '
+              ? 'Version ${r.app}; version ${latest.app} is available: tap to '
                     'download it in the browser, and Android asks before it '
                     'installs it over this one'
               : 'Version ${r.app}',
@@ -610,7 +613,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ? 'Version ${n.image}, from before updates over Bluetooth: '
                     'update it by USB once'
               : newerImage
-              ? 'Version ${n.image}; version ${latest.n} is available'
+              ? 'Version ${n.image}; version ${latest.firmware} is available'
               : 'Version ${n.image}',
         ),
         trailing: newerImage && n.version >= updateVersion

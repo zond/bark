@@ -517,8 +517,8 @@ A node out of reach, on a roof, is updated from the phone over the link
 **Updates**, says the version the connected node runs on the **Node
 firmware** row; its **Send to the node**, when the latest release has a newer
 image, opens the update screen, which takes the image from **Latest
-release**, the `bark-fw-<N>.img` of the latest release the app knows of
-(Newer releases), signed by the release. For the bench, Debug, under
+release**, the `bark-fw-<F>.img` of the latest release the app knows of
+(Newer releases), signed by the release that built it. For the bench, Debug, under
 **Bench**, has **Pick a firmware file**, which opens the same screen
 with **Pick a file** beside it for an image
 `bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
@@ -566,17 +566,23 @@ update it by USB once (`bark-fw/README.md`, "Flash").
 
 At start, and once a day while it runs, the app asks GitHub's releases
 API, without an account, for the repository's latest release `v<N>`
-(`lib/releases.dart`; `README.md`, "Releases"). When it carries an APK
-newer than the app, a bar at the top of the conversations says "A newer
-app, version N, is available"; a tap opens the APK's download in the
-browser, and Android asks before it installs it over the app. When the
-connected node runs a version below N, a bar says "Your node runs
-version M; version N is available"; a tap opens **Update firmware**
+(`lib/releases.dart`; `README.md`, "Releases"), and downloads its
+`release.json`, `{"release": N, "app": A, "firmware": F}`: the app's
+version A and the node firmware's F that the release carries, each N
+when the release built it or an earlier release's carried on unchanged.
+A release without the file, v21 and older, carried one version, N, and
+the app reads both as N. When the release carries an APK newer than the
+app, a bar at the top of the conversations says "A newer app, version A,
+is available"; a tap opens the APK's download in the browser, and
+Android asks before it installs it over the app. When the connected node
+runs a version below F, a bar says "Your node runs version M; version F
+is available"; a tap opens **Update firmware**
 with the release's image downloaded and chosen (Updating a node), and
 for a node from before link version 6 the bar says to update it by USB
 once. A bar's × hides it until a newer version, the node's for that
 node alone. The app learns its own version from the release workflow,
-which builds it with `--dart-define=BARK_VERSION=<N>`; a build without
+which builds it with `--dart-define=BARK_VERSION=<N>` and names it A in
+the manifests of that release and of those that carry it on; a build without
 it is a development build, which Debug says, and which never asks for
 a newer app. A node of version 0, a bench build flashed by USB, gets no
 bar either: any signed image replaces it, and the bench updates it by
@@ -588,9 +594,10 @@ app asks again.
 Settings' **Updates** section has **Check for updates**, which asks at
 once by the same check, with a spinner while it runs, and then says in
 one line how this app and the node stand against the latest release,
-such as "App up to date (9); node firmware 18; release 20 is newer: send
-it under Node firmware below", "A newer app is available, release 20: get it
-under App below; no node linked", or "Could not reach the release list"
+such as "App up to date (22); node firmware 21, up to date", "App up to
+date (22); node firmware 21; version 23 is newer: send it under Node
+firmware below", "A newer app, version 22, is available: get it under
+App below; no node linked", or "Could not reach the release list"
 without a network. Under it the **App** row gives the app's version and,
 when the release is newer, a tap downloads it; the **Node firmware** row
 gives the node's version and, when the release's image is newer, **Send
@@ -963,12 +970,13 @@ a phone (Trying it, With a node).
     installed from a checkout as
     `flutter build apk --debug --dart-define=BARK_VERSION=1` and a node
     flashed by USB from a build with `BARK_IMAGE_VERSION=1`: Debug says
-    app version 1 and "Latest release: N, checked" a moment ago; the
-    bar "A newer app, version N, is available" opens the APK in the
+    app version 1 and "Latest release: N, app A, firmware F, checked" a
+    moment ago, A and F as the release's `release.json` names them; the
+    bar "A newer app, version A, is available" opens the APK in the
     browser, and its × hides it, also after the app is closed and
     opened again. Connected to the node, the bar "Your node runs
-    version 1; version N is available" opens **Update firmware** with
-    "Version N" chosen, and its × hides it for that node; another node
+    version 1; version F is available" opens **Update firmware** with
+    "Version F" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
 15. A public node, on link version 8 or later, with two phones. On the owner's
     phone, connected, **Settings**, **Public: serve phones without

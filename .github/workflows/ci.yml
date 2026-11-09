@@ -51,6 +51,18 @@ jobs:
 
       - run: cargo test -p bark-proto --test spec_refs
 
+  # The release workflow's choice of what to build, against commits whose
+  # changes are known, so the whole history.
+  release-changed:
+    name: Release (what changed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - run: scripts/release-changed-test.sh
+
   # The slowest job: the simulator's scenario tests run a city for a
   # simulated minute, unoptimised, one of them under a wall-clock bound
   # (bark-sim/tests/scenarios.rs, capacity_scenario_runs_a_minute_quickly).

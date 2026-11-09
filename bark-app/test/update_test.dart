@@ -280,7 +280,13 @@ void main() {
         expect(u.noLatest, 'No release known yet.');
         known = const Release(1, image: 'https://x/img1');
         expect(u.latest, isNull);
-        expect(u.noLatest, 'The node already runs the latest release.');
+        expect(
+          u.noLatest,
+          'The node already runs the latest release\'s firmware, version 1.',
+        );
+        // A release that carries version 1's firmware on is no newer.
+        known = const Release(2, firmware: 1, image: 'https://x/img1');
+        expect(u.latest, isNull);
         known = const Release(2);
         expect(u.latest, isNull);
         expect(u.noLatest, 'Release 2 carries no node firmware.');
@@ -293,7 +299,8 @@ void main() {
         expect(u.latest, isNull);
         expect(
           u.noLatest,
-          'The node runs a newer version than the latest release, 2.',
+          'The node runs a newer version than the latest release\'s '
+          'firmware, 2.',
         );
       });
     });
@@ -417,7 +424,9 @@ void main() {
     expect(find.textContaining('KiB'), findsNothing);
     expect(t.widget<FilledButton>(latest).enabled, isFalse);
     expect(
-      find.text('The node already runs the latest release.'),
+      find.text(
+        'The node already runs the latest release\'s firmware, version 2.',
+      ),
       findsOneWidget,
     );
     clock = clock.add(const Duration(minutes: 3));

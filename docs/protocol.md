@@ -3457,9 +3457,12 @@ back, as long as an image from the mesh listens before it gives itself
 up ([updates over the mesh](#updates-over-the-mesh), the install), it
 tells the person plainly that the node hears no one and that the new
 firmware may have broken its radio. It says the way back too: the node
-stages no image at or below its own version, so the release it ran
-before goes on over USB, and a later release, once there is one, from
-the phone (roadmap D159).
+stages no image at or below its own version, so the firmware it ran
+before goes on over USB, and a newer firmware, once a release carries
+one, from the phone (roadmap D159). A release names the firmware's
+version apart from the app's, and a release that changes only the app
+carries the previous firmware on under its old version, so a node is
+offered an image only when the firmware changed (roadmap D164).
 
 *Why without a response, seven at a time.* A write request is answered
 in a later connection event than the one that carried it, so a phone
