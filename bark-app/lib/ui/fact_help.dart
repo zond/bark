@@ -19,8 +19,8 @@ const Map<String, String> factHelp = {
       'minute of positions away from where it stood, it counts as '
       'carried, and after four hours in one place it stays put again. A '
       'carried node\'s place follows its GPS, and it keeps no new mail '
-      'for others, as it may soon be gone. Setting its place on the map '
-      'in the app makes it stay put at once.',
+      'for others, as it may soon be gone. Setting its place in the '
+      'app\'s Settings makes it stay put at once.',
   // Spec "Relay choice", "Sleepy nodes", "Addresses".
   'Anchor':
       'A sleepy node sends and receives through one relay near it, its '
@@ -33,8 +33,8 @@ const Map<String, String> factHelp = {
   'Place':
       'Texts find a node by its place: an address is a position and the '
       'node\'s ID, and each relay passes a text on toward that position. '
-      'The place comes from the node\'s GPS, unless a person set it on '
-      'the map in the app, which wins, as for a relay on a roof with no '
+      'The place comes from the node\'s GPS, unless a person set it in '
+      'the app\'s Settings, which wins, as for a relay indoors with no '
       'view of the sky. A node with no place yet sends no heartbeat, so '
       'no text can find it until it has one.',
   // Spec "Nodes", "Sleepy nodes", "Neighbour status".
@@ -46,12 +46,12 @@ const Map<String, String> factHelp = {
       'a relay on it turns sleepy to save the rest for its owner.',
   // Spec "Phone link", Neighbours; "Neighbour table".
   'Link':
-      'How strongly this node hears the other one, in dBm, and how far '
-      'that is above the radio noise here, in dB. The margin is what '
-      'counts: below about 4 dB a full text is often lost when the '
-      'signal fades, so the link is fragile and used only when no other '
-      'is left; from about 7 dB it is good. It is measured one way: the '
-      'other node may hear this one better or worse.',
+      'How well this node hears the other one: how far its signal is '
+      'above the radio noise here. Below about 4 dB a full text is often '
+      'lost when the signal fades, so the link is fragile and used only '
+      'when no other is left; from about 7 dB it is good; between, fair. '
+      'It is measured one way: the other node may hear this one better or '
+      'worse.',
   // Spec "Heartbeat", "Beats", "Neighbour table", Expiry.
   'Last heard':
       'Every node sends a short heartbeat now and then, saying who and '

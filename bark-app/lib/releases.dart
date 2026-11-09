@@ -243,15 +243,15 @@ String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
   } else if (guest) {
     image = 'the node is not yours to update';
   } else if (node.image == 0) {
-    image = 'node image is a bench build';
+    image = 'node firmware is a bench build';
   } else if (l == null || l.image == null) {
-    image = 'node image ${node.image}; the release has none';
+    image = 'node firmware ${node.image}; the release carries none';
   } else if (l.n > node.image) {
     image =
-        'node image ${node.image}, release ${l.n} has ${l.n}: send it '
-        'under Node image below';
+        'node firmware ${node.image}; release ${l.n} is newer: send it '
+        'under Node firmware below';
   } else {
-    image = 'node image up to date (${node.image})';
+    image = 'node firmware up to date (${node.image})';
   }
   final line = '$app; $image';
   return line[0].toUpperCase() + line.substring(1);

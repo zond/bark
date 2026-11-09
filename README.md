@@ -28,11 +28,13 @@ firmware runs on four T-Echo boards on the bench: a relay on USB, and on
 battery a relay until its battery is low if it stands still, sleepy if
 carried, behind a loader that swaps in new images, which reach a node
 signed from the phone, from its neighbours over the mesh, or over USB.
-Releases carry the firmware and the app (Releases, below). The bench
-has measured the radio's timings, capture and a still link's fading
-(`docs/bench-*.md`), the swap under resets, and updates from the phone
-and over the mesh (`bark-fw/README.md`, "Verified and unverified").
-Next is the protocol's routing and sleepy nodes on the boards together
+Releases carry the firmware and the app, v8 the latest (Releases,
+below). The bench has measured the radio's timings, capture and a still
+link's fading (`docs/bench-*.md`), the swap under resets, and updates
+from the phone and over the mesh, one to a node nobody attended
+(`bark-fw/README.md`, "Verified and unverified"); it now tries the
+node's screen and buttons, the neighbour status, the whole log lines
+and an image that hears no one (`docs/roadmap.md`, Phase 2). Next is the protocol's routing and sleepy nodes on the boards together
 (`docs/roadmap.md`, Phases 2 and 3).
 
 Read, in order:

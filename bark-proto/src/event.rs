@@ -138,7 +138,7 @@ pub enum AppCommand<'a> {
         /// External power is present.
         external: bool,
     },
-    /// A person at the node presses the board's button: the node flips
+    /// A person at the node holds the board's button: the node flips
     /// its role, a relay turning sleepy, leaving as at its low battery,
     /// and a sleepy node turning relay, and is forced until the next
     /// change of external power, which returns it to the power's rules.

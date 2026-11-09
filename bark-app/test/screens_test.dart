@@ -22,7 +22,8 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
-import 'package:bark_app/ui/common.dart' show receivedMarks;
+import 'package:bark_app/ui/common.dart'
+    show receivedMarks, signalWord, strongDbm, weakDbm;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';
@@ -39,6 +40,15 @@ import 'package:sodium/sodium.dart';
 const sentTip = 'Sent into the network; no further news until they confirm';
 
 void main() {
+  test('a found node\'s signal in a word, at the thresholds chosen', () {
+    expect(signalWord(-50), 'strong signal');
+    expect(signalWord(strongDbm), 'strong signal');
+    expect(signalWord(strongDbm - 1), 'fair signal');
+    expect(signalWord(weakDbm), 'fair signal');
+    expect(signalWord(weakDbm - 1), 'weak signal');
+    expect(signalWord(null), 'signal unknown');
+  });
+
   late Sodium sodium;
   setUpAll(() async => sodium = await SodiumInit.init());
 
@@ -264,6 +274,13 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Relays known'), findsOneWidget);
+    // The bench's firmware file is picked here, not in Settings.
+    await t.scrollUntilVisible(
+      find.text('Pick a firmware file'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Bench'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
@@ -403,7 +420,9 @@ void main() {
       100,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Use this phone\'s location'), findsOneWidget);
+    // The one action, the same under Home node and under Node's place.
+    expect(find.text('Use this phone\'s location'), findsNWidgets(2));
+    expect(find.text('Phone location'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
 
     fake
@@ -554,7 +573,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Their home mailbox'), findsNothing);
+    expect(find.text('Their home node'), findsNothing);
     await t.tap(find.text('Where Olena was 20 min ago'));
     await t.pumpAndSettle();
     final out = app.session.outbox.single;
@@ -604,7 +623,7 @@ void main() {
       await t.tap(find.byTooltip('Send'));
       await t.pumpAndSettle();
       expect(find.text('Where Olena was 1 h ago'), findsOneWidget);
-      expect(find.text('Their home mailbox'), findsOneWidget);
+      expect(find.text('Their home node'), findsOneWidget);
       expect(find.text('Fast if they are still near there'), findsOneWidget);
       expect(
         find.text('Waits at their home until they fetch it'),
@@ -616,7 +635,7 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    await send('to the mailbox', 'Their home mailbox');
+    await send('to the mailbox', 'Their home node');
     var o = app.session.outbox.last;
     expect(o.body, 'to the mailbox');
     expect(o.dst.toString(), home.toString());
@@ -1089,8 +1108,8 @@ void main() {
     await t.pump();
     expect(find.text(public), findsNothing);
     expect(find.textContaining('Connected as a guest'), findsOneWidget);
-    expect(find.text('Send to node'), findsNothing);
-    expect(find.text('Pick an image file (bench)'), findsNothing);
+    expect(find.text('Send to the node'), findsNothing);
+    expect(find.text('Pick a firmware file'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
     expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));

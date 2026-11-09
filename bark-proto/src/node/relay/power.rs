@@ -50,7 +50,7 @@
 //! A person at the node may flip its role with the board's button
 //! (`AppCommand::ForceRole`): a relay, one that leaves among them, turns
 //! sleepy, leaving as at its battery's low level, flushing first; a
-//! sleepy node turns relay at once. Each press flips the role again. The
+//! sleepy node turns relay at once. Each flip turns the role again. The
 //! node is then forced: its role holds against the grace, the carried
 //! flag and a battery back at its high level, until the driver reports a
 //! change of external power, which returns it to automatic, the rules
@@ -249,7 +249,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A person presses the button: the node flips its role, and is
+    /// A person holds the button: the node flips its role, and is
     /// forced until the power changes (module documentation).
     pub(super) fn force(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.stage == Stage::Off {

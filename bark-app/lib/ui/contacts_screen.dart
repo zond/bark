@@ -27,8 +27,8 @@ class ContactsScreen extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'No contacts yet. Ask them to open bark and tap the QR '
-                'button, then tap Add contact and scan their card.',
+                'No contacts yet. Ask them to open bark and show My card, '
+                'the QR code button, then tap Add contact and scan it.',
               ),
             ),
           for (final c in cs.active) _row(context, c),
@@ -83,9 +83,6 @@ class ContactsScreen extends StatelessWidget {
   );
 }
 
-/// Adds the contact of a scanned card and opens its thread at once, so
-/// that the person sees where it went and can write; back from it leads
-/// to the conversations.
 /// The mark of a temporary card in a contact's row, with how long ago
 /// they were last known at their node (roadmap D162).
 class TemporaryLine extends StatelessWidget {
@@ -112,6 +109,9 @@ class TemporaryLine extends StatelessWidget {
   );
 }
 
+/// Adds the contact of a scanned card and opens its thread at once, so
+/// that the person sees where it went and can write; back from it leads
+/// to the conversations.
 Future<void> openScanned(
   BuildContext context,
   AppModel app,
@@ -216,8 +216,11 @@ class _AddContactScreenState extends State<AddContactScreen> {
               title: const Text('Home node'),
               subtitle: Text(
                 card!.home?.toString() ??
-                    'none: you can write to them once they have written to '
-                        'you',
+                    (card!.now == null
+                        ? 'none, and no node: ask them for a card from a '
+                              'newer app'
+                        : 'none: a temporary card, naming the node they '
+                              'use now'),
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),

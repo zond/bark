@@ -147,7 +147,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   String _option(Contact c, Toward t) => switch (t) {
     Toward.there =>
       'Where ${c.name} was ${ago(app.now().difference(c.placeAt!))}',
-    Toward.home => 'Their home mailbox',
+    Toward.home => 'Their home node',
   };
 
   /// When they last wrote, and whether from their home.
@@ -245,7 +245,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Text(
                   'Not verified yet: a first message can come from anyone. '
-                  'Once a reply of theirs opens here, it is theirs.',
+                  'Their first reply to you proves it is them.',
                 ),
               ),
             if (!app.me.gotItHinted &&
@@ -529,39 +529,42 @@ class _ThreadScreenState extends State<ThreadScreen> {
   /// [sentStates]). Not yet with the node shows a clock rather than
   /// nothing, so a missing mark never means two things. A state that is a
   /// problem keeps its words, which say why.
-  List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
-      switch (o.state) {
-        OutState.queued => [
-          _stateMark([o], Icons.schedule, 'Waiting for a node', small, color),
-        ],
-        OutState.writing => [
-          _stateMark([o], Icons.sync, 'Being handed to the node', small, color),
-        ],
-        OutState.taken => [
-          _stateMark(
-            [o],
-            Icons.check,
-            'Sent into the network; no further news until they confirm',
-            small,
-            color,
-          ),
-        ],
-        OutState.givenBack => [
-          _stateMark(
-            [o],
-            Icons.hourglass_bottom,
-            'The network is busy',
-            small,
-            color,
-          ),
-          const SizedBox(width: 4),
-          Flexible(child: Text(stateLabel(app.session, o), style: small)),
-        ],
-        OutState.refused => [
-          const SizedBox(width: 4),
-          Flexible(child: Text(stateLabel(app.session, o), style: small)),
-        ],
-      };
+  List<Widget> _state(
+    Outgoing o,
+    TextStyle small,
+    Color color,
+  ) => switch (o.state) {
+    OutState.queued => [
+      _stateMark([o], Icons.schedule, 'Waiting for a node', small, color),
+    ],
+    OutState.writing => [
+      _stateMark([o], Icons.sync, 'Being handed to the node', small, color),
+    ],
+    OutState.taken => [
+      _stateMark(
+        [o],
+        Icons.check,
+        'Sent into the network; no further news until they confirm',
+        small,
+        color,
+      ),
+    ],
+    OutState.givenBack => [
+      _stateMark(
+        [o],
+        Icons.hourglass_bottom,
+        'The network is busy',
+        small,
+        color,
+      ),
+      const SizedBox(width: 4),
+      Flexible(child: Text(capital(stateLabel(app.session, o)), style: small)),
+    ],
+    OutState.refused => [
+      const SizedBox(width: 4),
+      Flexible(child: Text(capital(stateLabel(app.session, o)), style: small)),
+    ],
+  };
 
   /// A sent text's state mark, which a tap explains with the others,
   /// under the details of `outs`, the text's parts.

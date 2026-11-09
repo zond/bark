@@ -159,7 +159,11 @@ is a prototype for the bench, not the app people will carry.
   name first", with **Set my name**, as whoever scans a card needs to
   know whose it is.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one; a public node says so, with its RSSI, and a tap asks "Is it
+  one; each says its signal as strong, at −70 dBm or above, fair, or
+  weak, below −85 dBm, a choice, with the number in small print; a
+  scan that has found nothing after about 10 s, or was stopped, says
+  "No node found nearby" and to switch a node on or come closer; a
+  public node says so, and a tap asks "Is it
   yours?": **Pair**, typing the code its screen shows, or **Just use
   it**, as a guest), the node the phone is paired with, and how the
   connected node fares; on the paired node of link version 7 or later
@@ -177,7 +181,9 @@ is a prototype for the bench, not the app people will carry.
   my card**, as on the first screen; clear the mailbox key of a node
   that holds one and is not your home. A node without a place says
   "This node has no place yet", with **Use this phone's location**,
-  which gives it the phone's position as its place; a sleepy or
+  which gives it the phone's position as its place at once and says the
+  coordinates it set, as the same button under **Node's place** does; a
+  sleepy or
   carried node cannot be made home, and the button is off with "A home
   must be a node that stays on power at a fixed place" (spec
   "Mailbox"). Then **Updates** (Newer releases, below), whether the app is
@@ -193,8 +199,7 @@ is a prototype for the bench, not the app people will carry.
   by the margin of the link's averaged RSSI over the node's noise floor
   (spec "Phone link", Neighbours), dashed while the node avoids it,
   demoted or banned. A legend says the bands in dB and the icons: a
-  relay is a tower, a node on power; a sleepy node a battery, a node on
-  battery; a carried one a walker; each in its link's colour;
+  relay is a tower; a sleepy node a battery; a carried one a walker; each in its link's colour;
   the node itself is a target. Tapping one shows the contact's name if
   the node is a contact's home or the node they last used, its ID, and
   then one row a fact in plain words, none of its screen's, an icon and
@@ -206,9 +211,10 @@ is a prototype for the bench, not the app people will carry.
   the anchor's ID, as the link names no neighbour's anchor), Place (a
   satellite, `from GPS`, a pin, `set by a person`, with the
   coordinates under it, or a crossed-out pin, `no place yet`), Power (a
-  plug on USB, a battery with its percent), Link (an antenna, the RSSI
-  and its margin over the noise floor, such as `−71 dBm · +19 dB`, in
-  the link's colour), Last heard (a clock), Distance (a ruler), Known
+  plug on USB, a battery with its percent), Link (an antenna, `good`,
+  `fair` or `fragile` by the margin of the link's RSSI over the noise
+  floor, in the link's colour, and in its help the numbers, such as
+  "This link: −71 dBm, +19 dB over the noise floor."), Last heard (a clock), Distance (a ruler), Known
   (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
   exchanged`), Version (a price tag, the Material set having no version
   icon, such as `V18 · getting V19 14/32` while it gathers an image)
@@ -509,11 +515,12 @@ no one after its update (Updating a node) can be seen.
 A node out of reach, on a roof, is updated from the phone over the link
 (spec "Phone link", Updates; roadmap D145). Settings, under
 **Updates**, says the version the connected node runs on the **Node
-image** row; its **Send to node**, when the latest release has a newer
-image, and the smaller **Pick an image file (bench)** open the update
-screen, which takes the image from **Latest release**,
-the `bark-fw-<N>.img` of the latest release the app knows of (Newer
-releases), signed by the release, or from **Pick a file**, an image
+firmware** row; its **Send to the node**, when the latest release has a newer
+image, opens the update screen, which takes the image from **Latest
+release**, the `bark-fw-<N>.img` of the latest release the app knows of
+(Newer releases), signed by the release. For the bench, Debug, under
+**Bench**, has **Pick a firmware file**, which opens the same screen
+with **Pick a file** beside it for an image
 `bark-fw/scripts/image.py pack` made and `image.py sign` signed; the
 node refuses an image no key of its own signed (`bark-fw/README.md`,
 "Updates"). **Latest release** is offered only when that release's
@@ -531,7 +538,7 @@ from the bytes the node holds, not from the start. Once every byte is
 there the app commits: the node checks the image and answers, and the
 screen says it keeps it for its next boot, or why it refused, in words.
 A refusal for a low battery keeps the image on the node, and
-**Commit** tries again once the node is on USB. **Reboot into version
+**Try again** asks the node to check it again once it is on USB. **Reboot into version
 N** then restarts the node, which swaps the image in, about a minute.
 The node answers and ends the link, and Android may report the write
 failed when the end overtakes the answer; a link that ends after such a
@@ -564,7 +571,7 @@ newer than the app, a bar at the top of the conversations says "A newer
 app, version N, is available"; a tap opens the APK's download in the
 browser, and Android asks before it installs it over the app. When the
 connected node runs a version below N, a bar says "Your node runs
-version M, version N is available"; a tap opens **Update firmware**
+version M; version N is available"; a tap opens **Update firmware**
 with the release's image downloaded and chosen (Updating a node), and
 for a node from before link version 6 the bar says to update it by USB
 once. A bar's × hides it until a newer version, the node's for that
@@ -581,13 +588,13 @@ app asks again.
 Settings' **Updates** section has **Check for updates**, which asks at
 once by the same check, with a spinner while it runs, and then says in
 one line how this app and the node stand against the latest release,
-such as "App up to date (9); node image 18, release 20 has 20: send it
-under Node image below", "A newer app is available, release 20: get it
+such as "App up to date (9); node firmware 18; release 20 is newer: send
+it under Node firmware below", "A newer app is available, release 20: get it
 under App below; no node linked", or "Could not reach the release list"
 without a network. Under it the **App** row gives the app's version and,
-when the release is newer, a tap downloads it; the **Node image** row
+when the release is newer, a tap downloads it; the **Node firmware** row
 gives the node's version and, when the release's image is newer, **Send
-to node**; last, smaller, **Pick an image file (bench)**. A dismissed
+to the node**. A dismissed
 bar does not hide a newer version here.
 
 ## The payload
@@ -798,8 +805,9 @@ a phone (Trying it, With a node).
    temporary without a home; **Share** opens Android's share sheet with
    the card's text and the code's image, and **Details** your identity
    and the card as text, `BARK:` and capitals.
-10. Menu, **Settings**, under **Node's place**: press **Phone location**
-    (allow location), then **Set**: Debug's address changes, and the
+10. Menu, **Settings**, under **Node's place**: press **Use this
+    phone's location** (allow location): a line says the coordinates
+    set, Debug's address changes, and the
     next text to the fake friend names it. **Clear** brings back the
     fake's own fix.
 11. **Settings**, under **Home node**: **Make this node my home**. The
@@ -826,9 +834,9 @@ a phone (Trying it, With a node).
     street map is missing and the nodes are drawn on blank.
 14. Disconnect, close the app, open it again: the conversations, the
     contacts, your name and your identity are still there.
-15. **Settings**, under **Updates**: **Node image** says the fake runs
-    version 1. **Pick an image file (bench)**, or with a release known
-    **Send to node**, then **Latest release** (or **Pick a file** with a signed
+15. **Settings**, under **Updates**: **Node firmware** says the fake runs
+    version 1. Debug, **Bench**, **Pick a firmware file**, or with a release known
+    **Send to the node**, then **Latest release** (or **Pick a file** with a signed
     image; the fake refuses one whose header names no key):
     the image's version and size. **Send to the node**: the bar fills at
     once, the fake has no radio to wait for; then "The node checked
@@ -927,8 +935,9 @@ a phone (Trying it, With a node).
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
     target/vN+1.img`, then sign it with the bench key, which an open
     build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
-    --key-id 255`. In **Settings**, **Updates**, **Node image** says
-    version N. **Pick an image file (bench)**, the image: "Version N+1".
+    --key-id 255`. In **Settings**, **Updates**, **Node firmware** says
+    version N. Debug, **Bench**, **Pick a firmware file**, the image:
+    "Version N+1".
     **Send to the node**: the node logs `update: receiving version=N+1`
     and then nothing while the bar fills, about 20 s; half way, switch
     the phone's Bluetooth off and on: the node logs `update: link closed
@@ -958,7 +967,7 @@ a phone (Trying it, With a node).
     bar "A newer app, version N, is available" opens the APK in the
     browser, and its × hides it, also after the app is closed and
     opened again. Connected to the node, the bar "Your node runs
-    version 1, version N is available" opens **Update firmware** with
+    version 1; version N is available" opens **Update firmware** with
     "Version N" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
 15. A public node, on link version 8 or later, with two phones. On the owner's
@@ -966,7 +975,7 @@ a phone (Trying it, With a node).
     pairing** is on from the start, and the node's screen says `PHONE
     PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
-    lists the node as public with its RSSI; or, with no paired node of
+    lists the node as public with its signal; or, with no paired node of
     its own in reach, the second phone asks whether the node is its own,
     and after **Just use it** goes on an errand there within a round, its first screen saying "Connected to ID … as a guest" for
     a few seconds, then again once a minute. No pairing dialog shows,
