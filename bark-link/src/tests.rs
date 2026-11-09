@@ -161,7 +161,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [11, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -404,6 +404,47 @@ proptest! {
         r[words * 4..].fill(0xff);
         prop_assert_eq!(bond::Bond::from_record(&r), None);
     }
+}
+
+#[test]
+fn public_writes() {
+    assert_eq!(
+        PublicWrite::decode(&[0]),
+        Ok(PublicWrite::Set(Public(false)))
+    );
+    assert_eq!(
+        PublicWrite::decode(&[1]),
+        Ok(PublicWrite::Set(Public(true)))
+    );
+    assert_eq!(PublicWrite::decode(&[2]), Ok(PublicWrite::Unpair));
+    assert_eq!(PublicWrite::Unpair.encode(), [2]);
+    assert_eq!(PublicWrite::decode(&[3]), Err(Malformed::Value));
+    assert_eq!(PublicWrite::decode(&[2, 0]), Err(Malformed::Length));
+    // The read stays a setting.
+    assert_eq!(Public::decode(&[2]), Err(Malformed::Value));
+}
+
+#[test]
+fn a_forgotten_bond_is_none_and_older_images_skip_it() {
+    let r = bond::forgotten();
+    assert_eq!(bond::read(&r), Some(None));
+    // An older image reads a bond record with `from_record` alone.
+    assert_eq!(bond::Bond::from_record(&r), None);
+    let mut cut = r;
+    cut[60..].fill(0xff);
+    assert_eq!(bond::read(&cut), None);
+    let b = bond::Bond {
+        kind: 1,
+        addr: [1; 6],
+        irk: None,
+        ltk: [2; 16],
+        seen: 12,
+        service_changed: false,
+        private: true,
+        owner: Some(3),
+    };
+    assert_eq!(bond::read(&b.record()), Some(Some(b)));
+    assert!(bond::public(bond::read(&r).flatten().as_ref()));
 }
 
 /// A record written before the bond kept the seen version, the

@@ -23,8 +23,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
 /// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
-/// the neighbours heard in Status.
-pub const VERSION: u8 = 11;
+/// the neighbours heard in Status, 12 Public's write that unpairs.
+pub const VERSION: u8 = 12;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -687,6 +687,39 @@ impl Public {
             [1] => Ok(Public(true)),
             [_] => Err(Malformed::Value),
             _ => Err(Malformed::Length),
+        }
+    }
+}
+
+/// Public, as the owner writes it: whether the node is public, or that
+/// the node is to forget its bond, unpaired, and be public again as a
+/// node nobody has paired with is (spec "Phone link", Public); the
+/// unpairing from link version 12.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublicWrite {
+    /// Public or private.
+    Set(Public),
+    /// Forget the bond.
+    Unpair,
+}
+
+impl PublicWrite {
+    /// The byte of an unpairing.
+    pub const UNPAIR: u8 = 2;
+
+    /// The value.
+    pub fn encode(&self) -> [u8; Public::LEN] {
+        match self {
+            PublicWrite::Set(p) => p.encode(),
+            PublicWrite::Unpair => [Self::UNPAIR],
+        }
+    }
+
+    /// Take a written value whole.
+    pub fn decode(b: &[u8]) -> Result<PublicWrite, Malformed> {
+        match b {
+            [Self::UNPAIR] => Ok(PublicWrite::Unpair),
+            _ => Public::decode(b).map(PublicWrite::Set),
         }
     }
 }

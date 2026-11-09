@@ -13,7 +13,7 @@
 //! | 11 | ignored: a public node said 1 here before nodes were public by default |
 //! | 12 | 1 if the paired phone's recipient tag follows, else 0 |
 //! | 13 | the paired phone's recipient tag at the node, or 0 |
-//! | 14 | 1 if the owner has made the node private, else 0 (spec "Phone link", Public) |
+//! | 14 | 1 if the owner has made the node private, else 0 (spec "Phone link", Public); 2 in a forgotten bond's record, below |
 //! | 15 | 0 |
 //! | 16–31 | the long-term key the pairing made, least significant byte first (Vol 3 Part H §2.3.5.6.5) |
 //! | 32–47 | the phone's identity resolving key, or 0 (Vol 3 Part H §3.6.4) |
@@ -23,6 +23,13 @@
 //! The flash writes a record a word at a time in address order, so a
 //! record cut short by a power cut leaves its last word erased, which is
 //! no complement of its first.
+//!
+//! When the owner unpairs (spec "Phone link", Public), the node writes a
+//! **forgotten** record: the tag, byte 14 at 2 and the check, the rest
+//! zero. A later record replaces it as any record does. Byte 14 at 2 is
+//! what an older image takes for no record, so after a copy of one over
+//! USB the bond before the forgotten one comes back, never a bond of
+//! zero keys.
 
 /// The keys of a bond, and the phone they belong to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +117,30 @@ impl Bond {
             private: r[14] == 1,
             owner: (r[12] == 1).then_some(r[13]),
         })
+    }
+}
+
+/// The record of a forgotten bond: the node keeps none.
+pub fn forgotten() -> [u8; Bond::LEN] {
+    let mut r = [0u8; Bond::LEN];
+    r[0] = Bond::TAG;
+    r[14] = FORGOTTEN;
+    let check = [!r[0], !r[1], !r[2], !r[3]];
+    r[60..].copy_from_slice(&check);
+    r
+}
+
+/// Byte 14 of a forgotten bond's record.
+const FORGOTTEN: u8 = 2;
+
+/// What a whole bond record says: `Some(None)` for a forgotten bond,
+/// `Some(Some(bond))` for a bond, and `None` for another record or one
+/// cut short.
+pub fn read(r: &[u8; Bond::LEN]) -> Option<Option<Bond>> {
+    let whole = r[0] == Bond::TAG && (0..4).all(|i| r[60 + i] == !r[i]);
+    match whole && r[14] == FORGOTTEN {
+        true => Some(None),
+        false => Bond::from_record(r).map(Some),
     }
 }
 

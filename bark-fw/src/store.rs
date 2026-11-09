@@ -53,7 +53,7 @@ static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
 #[cfg(not(feature = "console"))]
 static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
 #[cfg(not(feature = "console"))]
-static BOND: Signal<CriticalSectionRawMutex, Bond> = Signal::new();
+static BOND: Signal<CriticalSectionRawMutex, Option<Bond>> = Signal::new();
 
 #[cfg(not(feature = "console"))]
 /// The node's side: keep `stored`, in place of the state kept before.
@@ -68,8 +68,9 @@ pub fn keep_offset(offset_min: i16) {
 }
 
 #[cfg(not(feature = "console"))]
-/// The phone link's side: keep `bond`, in place of the bond kept before.
-pub fn keep_bond(bond: Bond) {
+/// The phone link's side: keep `bond`, in place of the bond kept before;
+/// none once the owner unpairs.
+pub fn keep_bond(bond: Option<Bond>) {
     BOND.signal(bond);
 }
 
@@ -152,7 +153,9 @@ pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (u32, Kept) {
         }
         let first: &[u8; RECORD_LEN] = first.try_into().expect("a slot");
         if first[0] == Bond::TAG {
-            kept.bond = Bond::from_record(&r).or(kept.bond);
+            if let Some(bond) = bark_link::bond::read(&r) {
+                kept.bond = bond;
+            }
             // A bond cut short in its second slot leaves it erased: the
             // next record goes there.
             if !both || second.iter().all(|&b| b == 0xff) {
@@ -201,10 +204,12 @@ impl Flash {
         self.write(&zone_record(offset_min)).await;
     }
 
-    /// Keep the bond, in place of the one kept before.
-    async fn keep_bond(&mut self, bond: &Bond) {
-        self.kept.bond = Some(*bond);
-        self.write(&bond.record()).await;
+    /// Keep the bond, in place of the one kept before, or a forgotten
+    /// one's record for none.
+    async fn keep_bond(&mut self, bond: &Option<Bond>) {
+        self.kept.bond = *bond;
+        let record = bond.map_or_else(bark_link::bond::forgotten, |b| b.record());
+        self.write(&record).await;
     }
 
     /// Write `record`, of one slot or more, into the next slots. A page
