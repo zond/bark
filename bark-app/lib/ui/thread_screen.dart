@@ -147,7 +147,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   String _option(Contact c, Toward t) => switch (t) {
     Toward.there =>
       'Where ${c.name} was ${ago(app.now().difference(c.placeAt!))}',
-    Toward.home => 'Their home mailbox',
+    Toward.home => 'Their home node',
   };
 
   /// When they last wrote, and whether from their home.
@@ -245,7 +245,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Text(
                   'Not verified yet: a first message can come from anyone. '
-                  'Once a reply of theirs opens here, it is theirs.',
+                  'Their first reply to you proves it is them.',
                 ),
               ),
             if (!app.me.gotItHinted &&

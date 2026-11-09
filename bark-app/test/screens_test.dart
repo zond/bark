@@ -554,7 +554,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Their home mailbox'), findsNothing);
+    expect(find.text('Their home node'), findsNothing);
     await t.tap(find.text('Where Olena was 20 min ago'));
     await t.pumpAndSettle();
     final out = app.session.outbox.single;
@@ -604,7 +604,7 @@ void main() {
       await t.tap(find.byTooltip('Send'));
       await t.pumpAndSettle();
       expect(find.text('Where Olena was 1 h ago'), findsOneWidget);
-      expect(find.text('Their home mailbox'), findsOneWidget);
+      expect(find.text('Their home node'), findsOneWidget);
       expect(find.text('Fast if they are still near there'), findsOneWidget);
       expect(
         find.text('Waits at their home until they fetch it'),
@@ -616,7 +616,7 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    await send('to the mailbox', 'Their home mailbox');
+    await send('to the mailbox', 'Their home node');
     var o = app.session.outbox.last;
     expect(o.body, 'to the mailbox');
     expect(o.dst.toString(), home.toString());
