@@ -94,6 +94,9 @@ class Fact {
 
   /// Said on a long press, for a value whose parts need naming.
   final String? tooltip;
+
+  /// This node's own figures, shown under the row's help.
+  final String? detail;
   const Fact(
     this.icon,
     this.label,
@@ -101,6 +104,7 @@ class Fact {
     this.value, {
     this.color,
     this.tooltip,
+    this.detail,
   });
 }
 
@@ -551,14 +555,19 @@ class _NeighbourMarker extends StatelessWidget {
               ? null
               : '${s.percent}%',
         ),
+      // Good, fair or fragile by the margin over the noise floor, at the
+      // thresholds of spec "Phone link", Neighbours ([goodAboveFloorDb],
+      // [fairAboveFloorDb]); the numbers go to the row's help.
       Fact(
         Icons.settings_input_antenna,
         'Link',
         'link strength, ${qualityName(q)}',
-        '${_signed(n.rssiDbm)} dBm \u00b7 '
-            '${_signed(n.rssiDbm - t.floorDbm, plus: true)} dB',
+        qualityName(q),
         color: qualityColor(q),
-        tooltip: 'signal, and its margin over the noise floor',
+        detail:
+            'This link: ${_signed(n.rssiDbm)} dBm, '
+            '${_signed(n.rssiDbm - t.floorDbm, plus: true)} dB over the '
+            'noise floor.',
       ),
       Fact(Icons.schedule, 'Last heard', 'last heard', secondsAgo(n.ageS)),
       if (far != null)
@@ -696,6 +705,10 @@ class _Sheet extends StatelessWidget {
                 Text(f.label, style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 8),
                 Text(factHelp[f.label]!),
+                if (f.detail != null) ...[
+                  const SizedBox(height: 8),
+                  Text(f.detail!),
+                ],
               ],
             ),
           ),

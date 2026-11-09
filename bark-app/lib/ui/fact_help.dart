@@ -46,12 +46,12 @@ const Map<String, String> factHelp = {
       'a relay on it turns sleepy to save the rest for its owner.',
   // Spec "Phone link", Neighbours; "Neighbour table".
   'Link':
-      'How strongly this node hears the other one, in dBm, and how far '
-      'that is above the radio noise here, in dB. The margin is what '
-      'counts: below about 4 dB a full text is often lost when the '
-      'signal fades, so the link is fragile and used only when no other '
-      'is left; from about 7 dB it is good. It is measured one way: the '
-      'other node may hear this one better or worse.',
+      'How well this node hears the other one: how far its signal is '
+      'above the radio noise here. Below about 4 dB a full text is often '
+      'lost when the signal fades, so the link is fragile and used only '
+      'when no other is left; from about 7 dB it is good; between, fair. '
+      'It is measured one way: the other node may hear this one better or '
+      'worse.',
   // Spec "Heartbeat", "Beats", "Neighbour table", Expiry.
   'Last heard':
       'Every node sends a short heartbeat now and then, saying who and '

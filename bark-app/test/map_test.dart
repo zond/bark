@@ -611,8 +611,18 @@ void main() {
     await t.tap(icon(nodeLabel(demoted.id)));
     await t.pumpAndSettle();
     expect(find.text('ID FA4E00000103'), findsOneWidget);
-    expect(find.text('\u2212115 dBm \u00b7 +3 dB'), findsOneWidget);
     expect(icon('link strength, fragile'), findsOneWidget);
+    // The row says the word; its help gives the numbers.
+    expect(find.text('fragile'), findsOneWidget);
+    expect(find.textContaining('dBm'), findsNothing);
+    await t.tap(find.text('Link'));
+    await t.pumpAndSettle();
+    expect(
+      find.text('This link: \u2212115 dBm, +3 dB over the noise floor.'),
+      findsOneWidget,
+    );
+    Navigator.pop(t.element(find.byType(BottomSheet).last));
+    await t.pumpAndSettle();
     expect(find.text('Demoted'), findsOneWidget);
     expect(find.text('its last hand-overs failed'), findsOneWidget);
     expect(icon('distance'), findsOneWidget);
