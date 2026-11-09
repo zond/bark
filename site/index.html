@@ -57,84 +57,103 @@
     <p>Every message carries, encrypted with the rest, the address of the node its sender writes from. A reply sent soon after goes the shortest way to where the sender is now, not to where they were or to their home node, so a person on the move can be answered wherever they last wrote from.</p>
   </details>
   <figure class="mesh">
-    <canvas id="mesh" aria-label="A small mesh of nodes passing a message from node to node"></canvas>
-    <figcaption>Nodes announce themselves with heartbeats; a message hops toward the recipient's place, each hop acknowledged. The dim node is sleepy: it beats seldom and is never a hop.</figcaption>
+    <canvas id="mesh" aria-label="A small mesh of relays and sleepy nodes passing messages"></canvas>
+    <figcaption>Relays on power announce themselves often and pass messages hop by hop toward the recipient's place, each hop acknowledged. Sleepy nodes on battery beat seldom and speak through the relay they anchor to, where messages for them wait until their next beat.</figcaption>
   </figure>
 <script>
 (() => {
-// Places on a 400 × 300 field, with a gap in the middle that some messages go around.
-const P = [[30,40],[95,25],[160,60],[60,120],[130,140],[40,220],[110,260],[250,40],[330,70],[370,150],[300,170],[240,250],[340,260],[190,200],[200,110]];
-const SLEEPY = 14, RANGE = 105, RED = '#c62828';
+// Six relays on power round an empty middle, and eight sleepy nodes, each anchored to the relay nearest it.
+const R = [[60,70],[190,45],[330,70],[350,215],[210,250],[65,205]];
+const S = [[20,25],[110,120],[250,10],[390,115],[285,160],[390,280],[150,285],[20,270]];
+const P = R.concat(S), N = R.length, RANGE = 150, RED = '#c62828';
 const c = document.getElementById('mesh'), g = c.getContext('2d');
 const d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
-const nb = P.map((_, i) => P.map((_, j) => j).filter(j => j != i && d(i, j) < RANGE));
-const relay = i => i != SLEEPY;
-// A heartbeat every 1 to 3 s on screen, the spec's 5 to 15 s scaled; the sleepy node's far seldom.
-const beat = P.map((_, i) => ({ every: relay(i) ? 1 + 2 * Math.random() : 9, at: 3 * Math.random() }));
-// The search: each hop to the untried relay neighbour nearest the recipient's place, back to the parent at a dead end.
+const relays = R.map((_, i) => i);
+const nb = relays.map(i => relays.filter(j => j != i && d(i, j) < RANGE));
+const anchor = i => i < N ? i : relays.reduce((a, b) => d(i, a) < d(i, b) ? a : b);
+// A beat every 1 to 3 s for a relay, 6 to 9 s for a sleepy node: the spec's periods scaled.
+const beat = P.map((_, i) => { const e = i < N ? 1 + 2 * Math.random() : 6 + 3 * Math.random(); return { e, at: e * Math.random() }; });
+const nextBeat = (i, t) => { const b = beat[i]; return b.at + Math.ceil((t - b.at) / b.e) * b.e; };
+// Relay to relay: each hop to the untried neighbour nearest the destination, back to the parent at a dead end.
 function route(s, t) {
-  const hops = [], seen = new Set([s]), stack = [s];
-  while (stack.length) {
-    const u = stack[stack.length - 1];
+  const hops = [], seen = new Set([s]), st = [s];
+  while (st.length) {
+    const u = st[st.length - 1];
     if (u == t) return hops;
-    const n = nb[u].filter(v => relay(v) && !seen.has(v)).sort((a, b) => d(a, t) - d(b, t))[0];
-    if (n === undefined) { stack.pop(); if (stack.length) hops.push([u, stack[stack.length - 1]]); continue; }
-    seen.add(n); stack.push(n); hops.push([u, n]);
+    const n = nb[u].filter(v => !seen.has(v)).sort((a, b) => d(a, t) - d(b, t))[0];
+    if (n === undefined) { st.pop(); if (st.length) hops.push([u, st[st.length - 1]]); continue; }
+    seen.add(n); st.push(n); hops.push([u, n]);
   }
-  return null;
+  return [];
 }
-let W, S, msg = null, next = 1;
+// A sleepy sender hands its message to its anchor; the recipient's anchor holds it until the recipient beats.
+function message(a, b) {
+  const steps = [], A = anchor(a), B = anchor(b);
+  if (a != A) steps.push([a, A]);
+  steps.push(...route(A, B));
+  if (b != B) steps.push(B, [B, b]);
+  return steps;
+}
+let W, msg = null, next = 1, sleepyNext = false;
 function size() {
-  const r = devicePixelRatio || 1; W = c.clientWidth; S = W / 400;
-  c.width = W * r; c.height = W * 0.75 * r; g.setTransform(r * S, 0, 0, r * S, 0, 0);
+  const r = devicePixelRatio || 1; W = c.clientWidth;
+  c.width = W * r; c.height = W * .75 * r; g.setTransform(r * W / 400, 0, 0, r * W / 400, 0, 0);
 }
 function pick(t) {
-  const far = [[0, 12], [5, 8], [3, 9], [1, 11], [6, 7], [0, 10]];
-  const [s, e] = far[Math.floor(Math.random() * far.length)];
-  const [a, b] = Math.random() < .5 ? [s, e] : [e, s];
-  msg = { to: b, hops: route(a, b), t0: t };
+  const pool = sleepyNext ? S.map((_, i) => N + i) : relays;
+  let a, b;
+  do { a = pool[Math.floor(Math.random() * pool.length)]; b = pool[Math.floor(Math.random() * pool.length)]; }
+  while (anchor(a) == anchor(b) || nb[anchor(a)].includes(anchor(b)) && !sleepyNext);
+  sleepyNext = !sleepyNext;
+  msg = { to: b, steps: message(a, b), i: 0, t0: t };
 }
+const HOP = .6, ACK = .3;
+const line = (a, b) => { g.beginPath(); g.moveTo(...P[a]); g.lineTo(...P[b]); g.stroke(); };
 function draw(t, still) {
   g.clearRect(0, 0, 400, 300);
-  g.strokeStyle = '#e4e4e4'; g.lineWidth = 1;
-  nb.forEach((n, i) => n.forEach(j => { if (j > i) { g.beginPath(); g.moveTo(...P[i]); g.lineTo(...P[j]); g.stroke(); } }));
+  g.lineWidth = 1; g.strokeStyle = '#e2e2e2';
+  nb.forEach((n, i) => n.forEach(j => j > i && line(i, j)));
+  g.setLineDash([3, 3]); S.forEach((_, k) => line(N + k, anchor(N + k))); g.setLineDash([]);
   if (!still) beat.forEach((b, i) => {
-    const age = (t - b.at) % b.every;
-    if (t > b.at && age < 1) { g.strokeStyle = `rgba(136,136,136,${1 - age})`; g.beginPath(); g.arc(...P[i], 6 + 30 * age, 0, 7); g.stroke(); }
+    const age = (t - b.at) % b.e;
+    if (t > b.at && age < 1) { g.strokeStyle = `rgba(136,136,136,${(i < N ? 1 : .6) * (1 - age)})`; g.beginPath(); g.arc(...P[i], 6 + 30 * age, 0, 7); g.stroke(); }
   });
   let glow = -1;
-  if (msg) {
-    const HOP = .6, ACK = .3, k = (t - msg.t0) / (HOP + ACK), h = Math.floor(k), f = (k - h) * (HOP + ACK);
-    g.strokeStyle = RED; g.fillStyle = RED;
-    if (h < msg.hops.length) {
-      const [u, v] = msg.hops[h];
-      if (f < HOP) { const q = f / HOP; g.beginPath(); g.arc(P[u][0] + (P[v][0] - P[u][0]) * q, P[u][1] + (P[v][1] - P[u][1]) * q, 4, 0, 7); g.fill(); }
-      else { g.globalAlpha = 1 - (f - HOP) / ACK; g.lineWidth = 2; g.beginPath(); g.moveTo(...P[v]); g.lineTo(...P[u]); g.stroke(); g.globalAlpha = 1; }
-    } else if (h < msg.hops.length + 2) glow = msg.to;
-    else msg = null;
+  while (msg) {
+    const s = msg.steps[msg.i], f = t - msg.t0;
+    if (s === undefined) { if (f < 1.5) glow = msg.to; else msg = null; break; }
+    if (typeof s == 'number') {
+      msg.until ??= nextBeat(msg.to, t);
+      if (t < msg.until) { g.fillStyle = '#888'; g.fillRect(P[s][0] + 6, P[s][1] - 10, 5, 5); break; }
+      msg.until = undefined; msg.i++; msg.t0 = t; continue;
+    }
+    if (f > HOP + ACK) { msg.i++; msg.t0 = t; continue; }
+    const [u, v] = s; g.strokeStyle = g.fillStyle = RED;
+    if (f < HOP) { const q = f / HOP; g.beginPath(); g.arc(P[u][0] + (P[v][0] - P[u][0]) * q, P[u][1] + (P[v][1] - P[u][1]) * q, 4, 0, 7); g.fill(); }
+    else { g.globalAlpha = 1 - (f - HOP) / ACK; g.lineWidth = 2; line(v, u); g.globalAlpha = 1; }
+    break;
   }
   P.forEach((p, i) => {
-    g.fillStyle = i == glow ? RED : relay(i) ? '#777' : '#c4c4c4';
-    g.beginPath(); g.arc(...p, i == glow ? 7 : 5, 0, 7); g.fill();
+    g.fillStyle = i == glow ? RED : i < N ? '#777' : '#c4c4c4';
+    g.beginPath(); g.arc(...p, i == glow ? 7 : i < N ? 5 : 4, 0, 7); g.fill();
   });
 }
 function still() {
   draw(0, true);
-  const hops = route(0, 12);
   g.strokeStyle = RED; g.lineWidth = 2; g.setLineDash([4, 4]);
-  hops.forEach(([u, v]) => { g.beginPath(); g.moveTo(...P[u]); g.lineTo(...P[v]); g.stroke(); });
+  message(N + 1, N + 4).forEach(s => typeof s != 'number' && line(...s));
   g.setLineDash([]);
 }
 const calm = matchMedia('(prefers-reduced-motion: reduce)');
 function frame(ms) {
   const t = ms / 1000;
   if (calm.matches) return still();
-  if (!msg && t > next) { pick(t); next = t + 3 + 3 * Math.random(); }
+  if (!msg && t > next) { pick(t); next = t + 2 + 2 * Math.random(); }
   draw(t, false); requestAnimationFrame(frame);
 }
 addEventListener('resize', () => { size(); if (calm.matches) still(); });
 size(); calm.matches ? still() : requestAnimationFrame(frame);
-calm.addEventListener('change', () => { if (!calm.matches) requestAnimationFrame(frame); else still(); });
+calm.addEventListener('change', () => calm.matches ? still() : requestAnimationFrame(frame));
 })();
 </script>
 </main>
