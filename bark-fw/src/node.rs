@@ -398,6 +398,7 @@ fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
         address: core.address(),
         battery_mv: if external_power { 0 } else { battery_mv },
         inbox: core.inbox_len().min(u8::MAX as usize) as u8,
+        heard: core.neighbour_counts(now).heard,
     }
 }
 

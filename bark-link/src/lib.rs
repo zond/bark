@@ -22,8 +22,9 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// node tells a bonded phone of a change by the version it last saw
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
-/// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer.
-pub const VERSION: u8 = 10;
+/// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
+/// the neighbours heard in Status.
+pub const VERSION: u8 = 11;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -256,11 +257,14 @@ pub struct Status {
     pub battery_mv: u16,
     /// Messages in the inbox.
     pub inbox: u8,
+    /// Its live neighbours, sleepy or not (spec "Neighbour status",
+    /// heard).
+    pub heard: u8,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1;
+    pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
 
     /// Every flag clear and every count zero: a node that has said
     /// nothing yet.
@@ -278,6 +282,7 @@ impl Status {
         address: Position { lat: 0, lon: 0 },
         battery_mv: 0,
         inbox: 0,
+        heard: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -307,6 +312,7 @@ impl Status {
         }
         b[4 + POS..6 + POS].copy_from_slice(&self.battery_mv.to_be_bytes());
         b[6 + POS] = self.inbox;
+        b[7 + POS] = self.heard;
         b
     }
 
@@ -330,6 +336,7 @@ impl Status {
             address: position(&b[4..]),
             battery_mv: u16_at(b, 4 + POS),
             inbox: b[6 + POS],
+            heard: b[7 + POS],
         })
     }
 }

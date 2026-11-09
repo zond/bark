@@ -25,7 +25,7 @@ proptest! {
     }
 
     #[test]
-    fn status_round_trips(flags: u8, relays: u8, boot_left_s: u16, address in pos(), battery_mv: u16, inbox: u8) {
+    fn status_round_trips(flags: u8, relays: u8, boot_left_s: u16, address in pos(), battery_mv: u16, inbox: u8, heard: u8) {
         let bit = |b: u8| flags & (1 << b) != 0;
         let placed = bit(5);
         let s = Status {
@@ -33,7 +33,7 @@ proptest! {
             map_point: bit(4), placed, booting: bit(6), anchorless: bit(7),
             relays, boot_left_s,
             address: if placed { address } else { Position::default() },
-            battery_mv, inbox,
+            battery_mv, inbox, heard,
         };
         let b = s.encode();
         prop_assert_eq!(b[0], flags);
@@ -142,11 +142,12 @@ fn vectors() {
         boot_left_s: 100,
         address: kyiv,
         inbox: 2,
+        heard: 5,
         ..Status::default()
     };
     assert_eq!(
         status.encode(),
-        [0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2]
+        [0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, 5]
     );
 
     let given = GivenBack {
@@ -160,7 +161,7 @@ fn vectors() {
         id: to,
         image: 7,
     };
-    assert_eq!(node.encode(), [10, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    assert_eq!(node.encode(), [11, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -361,7 +362,7 @@ fn seconds_round_up_and_saturate() {
 fn every_value_fits_its_pdu() {
     assert_eq!(value_room(ATT_MTU), 244);
     assert_eq!(value_room(DEFAULT_ATT_MTU), 20);
-    assert_eq!(Status::LEN, 14);
+    assert_eq!(Status::LEN, 15);
     assert_eq!(Node::LEN, 11);
 }
 

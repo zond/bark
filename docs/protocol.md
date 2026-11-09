@@ -3205,7 +3205,7 @@ service and its characteristics:
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) id(6) image(4) | 11 |
-| Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) | 14 |
+| Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) heard(1) | 15 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
 | | | write | msg_id(4) | 4 |
@@ -3236,7 +3236,7 @@ which may be a write without response (Updates, below); a write that is not
 whole is answered with the ATT error 0x0D, invalid length, and one with
 a field the node does not take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
-**Node.** The link version, 10 in this specification; the node's ID, the
+**Node.** The link version, 11 in this specification; the node's ID, the
 second half of its address ([addresses](#addresses)); and the version
 of its firmware image.
 
@@ -3256,10 +3256,16 @@ countdown of `boot_left`:
 | address | the position of its address: its own, or a sleepy node's anchor's ([addresses](#addresses)) |
 | battery | millivolts as last read, uncalibrated; 0 on external power and before the first reading |
 | inbox | messages in the inbox |
+| heard | its live neighbours, sleepy or not, as its screen counts them ([neighbour status](#neighbour-status)); from link version 11 |
 
 So the app can show "listening, 3 relays heard, 1:40 to go", and the
 address the person gives others to reach them. Sleepy and carried are
 measured, not set ([nodes](#nodes)).
+
+*Why heard beside relays.* Relays say where a message can go; heard
+says whether the node hears anyone at all. A node whose only neighbours
+are sleepy hears them but knows no relay, and its radio works (roadmap
+D159).
 
 **Sending.** The app writes Send while ready is set. The node answers
 once it has taken the message, or with the ATT error 0x80, not ready,

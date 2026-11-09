@@ -666,7 +666,8 @@ const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
 
 /// The node's side: publish the status and the inbox's oldest message
 /// after a step, and notify the phones of a change of the flags, the
-/// relays, the inbox's count or the address, or of the battery by a step
+/// relays, the neighbours heard, the inbox's count or the address, or of
+/// the battery by a step
 /// (spec "Phone link", Status).
 pub fn publish(status: Status, inbox: Option<MsgId>) {
     LINK.lock(|l| l.borrow_mut().ring_head = None);
@@ -708,9 +709,10 @@ fn publish_inbox(status: Status, inbox: Option<MsgId>) {
     let (changed, flags) = changed;
     if let Some(flags) = flags {
         log::info!(
-            "ble: status flags={:#04x} relays={} inbox={} address={}",
+            "ble: status flags={:#04x} relays={} heard={} inbox={} address={}",
             flags,
             status.relays,
+            status.heard,
             status.inbox,
             status.address
         );
