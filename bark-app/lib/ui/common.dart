@@ -273,6 +273,58 @@ class StaleBondLine extends StatelessWidget {
   }
 }
 
+/// While the search has found the person's node again and no home is set
+/// ([AppModel.offerHome]): makes it the home in one tap.
+class HomeOfferLine extends StatelessWidget {
+  final AppModel app;
+  const HomeOfferLine(this.app, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!app.offerHome) return const SizedBox.shrink();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              app.contacts.list.isEmpty
+                  ? 'This phone has no home node set.'
+                  : 'This phone has no home node set. Making this node '
+                        'your home sends your new card to your contacts.',
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: app.notHome,
+                  child: const Text('Not now'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final a = app.session.address;
+                    if (a == null) return;
+                    try {
+                      final r = await app.makeHome(a);
+                      if (context.mounted) say(context, r);
+                    } catch (e) {
+                      if (context.mounted) {
+                        say(context, 'Setting the home failed: $e');
+                      }
+                    }
+                  },
+                  child: const Text('Make this node my home'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Opens the phone's Bluetooth settings, where the person forgets a node.
 class BluetoothSettingsButton extends StatelessWidget {
   final AppModel app;

@@ -828,6 +828,7 @@ void main() {
       bool pairedInReach = false,
       bool allowed = true,
       Set<String> bonds = const {},
+      bool stored = true,
     }) {
       fakeAsync((async) {
         DateTime now() => start.add(async.elapsed);
@@ -856,7 +857,7 @@ void main() {
         ble.allowed = allowed;
         if (withPaired && !pairedInReach) ble.inReach.remove(paired);
         UniversalBle.setInstance(ble);
-        if (withPaired) app.session.setPaired(nodeName(FakeNode.id));
+        if (withPaired && stored) app.session.setPaired(nodeName(FakeNode.id));
         async.flushMicrotasks();
         app.startSearch();
         body(async, app, ble);
@@ -1047,6 +1048,7 @@ void main() {
       run(bonds: {strong}, (async, app, ble) {
         ble.nodes[strong]!.paired = false;
         async.elapse(round + seenWait);
+        // Tried as its owner's, refused, then as a guest's.
         expect(ble.connects, [strong, strong]);
         expect(ble.bonds, isEmpty);
         expect(app.staleBond, isNull);
@@ -1060,7 +1062,7 @@ void main() {
         ble.nodes[strong]!.paired = false;
         ble.keepsBonds = true;
         async.elapse(round + const Duration(seconds: 3));
-        expect(ble.connects, [strong]);
+        expect(ble.connects.first, strong);
         expect(app.session.connected, isFalse);
         expect(app.staleBond, nodeName(strongId));
         expect(
@@ -1080,6 +1082,53 @@ void main() {
         expect(app.staleBond, isNull);
         expect(ble.connects.last, strong);
         expect(ble.bonds, isEmpty);
+      });
+    });
+
+    test('a node Android holds a bond with, unknown to the app, that still '
+        'holds the phone\'s: taken back as the paired node without asking', () {
+      run(withPaired: true, pairedInReach: true, stored: false, (
+        async,
+        app,
+        ble,
+      ) {
+        var asked = 0;
+        app.askOwner = (n) async {
+          asked++;
+          return false;
+        };
+        async.elapse(round);
+        expect(asked, 0);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(app.linkDevice, paired);
+        expect(app.pairedNode, nodeName(FakeNode.id));
+        expect(connectionLine(app), 'Back on your node, ID FA4E00000001');
+        expect(app.offerHome, app.session.address != null);
+        expect(ble.bonds, {paired});
+      });
+    });
+
+    test('a node Android holds a bond with that refuses it: the bond is '
+        'removed and the node used as a guest, without asking', () {
+      run(withPaired: true, pairedInReach: true, stored: false, (
+        async,
+        app,
+        ble,
+      ) {
+        ble.nodes[paired]!.paired = false;
+        ble.inReach.removeAll({weak, strong});
+        var asked = 0;
+        app.askOwner = (n) async {
+          asked++;
+          return true;
+        };
+        async.elapse(round + seenWait);
+        expect(asked, 0);
+        expect(ble.bonds, isEmpty);
+        expect(app.session.pairedWith, isNull);
+        expect(app.session.pairingLost, isFalse);
+        expect(app.staleBond, isNull);
+        expect(app.guestNode, nodeName(FakeNode.id));
       });
     });
 
@@ -1329,11 +1378,11 @@ void main() {
       });
     });
 
-    test('yours, with the phone\'s old bond for it: the bond is forgotten '
-        'and the pairing makes a new one', () {
+    test('Pair on a node with the phone\'s old bond for it: the bond is '
+        'forgotten and the pairing makes a new one', () {
       run(bonds: {strong}, (async, app, ble) {
         ble.nodes[strong]!.paired = false;
-        app.askOwner = (n) async => true;
+        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
         async.elapse(round + seenWait);
         expect(ble.connects, [strong]);
         expect((app.session.connected, app.session.guest), (true, false));

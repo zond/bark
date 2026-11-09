@@ -925,6 +925,8 @@ class AppModel extends ChangeNotifier {
         final heard = await round;
         _round = null;
         await recheckStale();
+        final own = lookingNow ? await _bondedNode(heard.values) : null;
+        if (own != null) await _adopt(own);
         // A round cut short by the person's scan or tap heard too little
         // to call anything out of reach.
         final looked = lookingNow;
@@ -1026,6 +1028,81 @@ class AppModel extends ChangeNotifier {
       _searchFailed = f;
       return const {};
     }
+  }
+
+  /// The node heard strongest of those Android lists a bond with, while
+  /// the app knows of no pairing, as after its data was cleared or on a
+  /// new install: the node may still hold the phone's bond. None that
+  /// refused the bond already.
+  Future<FoundNode?> _bondedNode(Iterable<FoundNode> heard) async {
+    if (session.pairedWith != null || session.connected) return null;
+    final byRssi = [...heard]
+      ..sort((a, b) => (b.rssi ?? _noRssi).compareTo(a.rssi ?? _noRssi));
+    for (final n in byRssi) {
+      if (staleBonds.containsKey(n.name)) continue;
+      if (await BleLink.bonded(n.deviceId)) return n;
+    }
+    return null;
+  }
+
+  /// Connects to `n`, whose bond Android holds, as its owner, and keeps it
+  /// as the paired node if the node still holds the bond too: its first
+  /// read on the encrypted link succeeds. A node that refuses the bond is
+  /// a stale bond's ([StaleBond]): Android is asked to remove it and the
+  /// node is used as a guest, without asking whether it is the person's.
+  Future<void> _adopt(FoundNode n) async {
+    session.note('Found ${n.name}, bonded: connecting as its owner');
+    try {
+      await _open(n.deviceId, () async {
+        await _searchStopped();
+        await stopScan();
+        try {
+          return await BleLink.connect(n.deviceId, name: n.name, hadBond: true);
+        } on NotOurs {
+          throw StaleBond(n.name);
+        }
+      });
+    } on StaleBond {
+      _justUse.add(n.name);
+      // Where Android keeps the bond, [staleBonds] keeps the node and the
+      // person is told.
+      if (!await BleLink.forget(n.deviceId)) return;
+      staleBonds.remove(n.name);
+      session.note('Pairing: the phone forgot its old bond with ${n.name}');
+      notifyListeners();
+      // A scan first, as the bond went with what Android knew of the
+      // address's type.
+      if (n.public && await seen(n.deviceId)) await _connectPublic(n);
+      return;
+    } catch (e) {
+      session.note('Connecting to ${n.name} failed: $e');
+      return;
+    }
+    if (!session.connected || session.guest) return;
+    session.note('Pairing: ${n.name} still holds this phone\'s bond');
+    _backAt = now();
+    adopted = n.name;
+    notifyListeners();
+  }
+
+  /// The node the search found still paired with this phone though the
+  /// app knew of no pairing, until the person makes it their home or
+  /// declines: the first screen offers it as the home while none is set.
+  String? adopted;
+
+  /// Whether to offer the connected node, [adopted], as the home.
+  bool get offerHome {
+    final n = session.connected && !session.guest ? session.node : null;
+    return n != null &&
+        nodeName(n.id) == adopted &&
+        me.home == null &&
+        session.address != null;
+  }
+
+  /// The person declines the offer of the home.
+  void notHome() {
+    adopted = null;
+    notifyListeners();
   }
 
   /// Connects to the public node the search found, as a guest; a failure

@@ -329,6 +329,20 @@ guest without asking whether it is the person's, as a **Pair** there
 would only pair again; the texts, the contacts, the home and the card
 stay as they were.
 
+**A pairing found again.** With no pairing stored, as after the app's
+data was cleared, on a new install or after restoring the 12 words, the
+phone may still hold a bond with the person's node, and the node the
+phone's. Each round, while the app knows of no pairing, the search
+looks for a node heard that Android lists a bond with, the strongest
+first, and connects to it as its owner, before any public node and
+without asking "Is it yours?". A first read that succeeds on the
+encrypted link shows the node still holds the bond: it is kept as the
+paired node, and the first screen says "Back on your node, ID …". With
+no home set and the node placed, the first screen offers **Make this
+node my home** in one line, which says when the new card would go to
+the contacts, and **Not now**. A node that refuses the bond goes the
+way of a stale bond, below, without the question either.
+
 A phone can hold such a stale bond in other ways too: unpaired by an
 older app, or with a node another phone has paired with since. A
 guest's link to a node that fails before the app has read it, or whose
@@ -806,7 +820,9 @@ another guest, and move to the paired node once it is heard; with a
 paired node, go to a public node only after two rounds without it,
 send through it as a guest, name it on the card and on the first
 screen's line, come back to the paired node in the round that hears it
-and say so, and stay with a paired node heard every other round; have
+and say so, and stay with a paired node heard every other round; take back
+as the paired node, without asking, a node Android holds a bond with
+that still holds the phone's; have
 Android remove an old bond a public node refuses and connect again,
 and where Android keeps it, pass the node over, saying so once, until
 the bond is forgotten; on unpairing, have Android forget its bond too,
