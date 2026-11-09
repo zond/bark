@@ -31,8 +31,14 @@ is a prototype for the bench, not the app people will carry.
 
 ## Screens
 
-- **Conversations**, the first screen. One row a conversation, newest
-  first, with the last text and, for a sent one, its state. A line at
+- **Conversations**, the first screen. At the first start the app asks
+  for Bluetooth at once, after one sentence on why: it finds and talks
+  to a node over Bluetooth. Until the person has a name, a node (found
+  by the search, or paired) and a first contact, a **Get started**
+  card lists the three steps, each ticked when done and opening where
+  it is done; the card goes once all are. One row a conversation,
+  newest first, with the last text and, for a sent one, its state. A
+  line at
   the top says whether a node is connected, "Connected to bark-… as a
   guest" during an errand at a public node that is not yours, and, when
   none is, which
@@ -47,10 +53,11 @@ is a prototype for the bench, not the app people will carry.
   mail". The button is then off, an hourglass that says it waits for
   the home's answer and how long at most (32 minutes, the spec's
   bounds on the way there and back), until a reply comes, "No new mail"
-  if the home has nothing new, or the node gives the fetch back. It
-  sends nothing, and says why, when no node is connected or the
-  connected node is the home: a fetch goes from another node to the
-  home, and the home's own inbox already holds the mail.
+  if the home has nothing new, or the node gives the fetch back. With
+  no node connected the fetch waits, the button saying "Fetch waits for
+  a node", and goes from the next node the phone links to, addressed to
+  it. It sends nothing, and says why, when the connected node is the
+  home, whose own inbox already holds the mail.
   When the person's card has changed and has not gone to their
   contacts, a line says why, "Your card changed: your home node has a
   new address" or "…: you have no home now", with **Send my card**,
@@ -127,8 +134,9 @@ is a prototype for the bench, not the app people will carry.
   name first", with **Set my name**, as whoever scans a card needs to
   know whose it is.
 - **Settings**, from the menu. The node to connect to (scan, then tap
-  one; a public node says so, with its RSSI, and a tap joins it as a
-  guest, **Pair** pairs with it instead) and the node the phone is
+  one; a public node says so, with its RSSI, and a tap asks "Is it
+  yours?": **Pair**, typing the code its screen shows, or **Just use
+  it**, as a guest) and the node the phone is
   paired with, the fake node switch, on the paired node of link version
   7 or later the switch **Public: serve phones without pairing**, on
   unless the owner turns it off (Public nodes, below), the home node
@@ -854,8 +862,8 @@ a phone (Trying it, With a node).
     PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its RSSI; or, with no paired node of
-    its own in reach, the second phone goes on an errand there within a
-    round, its first screen saying "Connected to bark-… as a guest" for
+    its own in reach, the second phone asks whether the node is its own,
+    and after **Just use it** goes on an errand there within a round, its first screen saying "Connected to bark-… as a guest" for
     a few seconds, then again once a minute. No pairing dialog shows,
     at the connect or later. Its log shows `Recipient: tag …`, a
     `Guest: item …` line for each item read, and `Disconnected`.

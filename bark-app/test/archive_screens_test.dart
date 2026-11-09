@@ -81,6 +81,11 @@ void main() {
     expect(app.contacts.isArchived(olena.key), isTrue);
     // The contact stays in the contacts.
     expect(app.contacts.byKey(olena.key)!.archived, isFalse);
+    // The Undo bar goes first: it lies over the line.
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
+    await t.ensureVisible(find.text('1 archived'));
+    await t.pumpAndSettle();
     await t.tap(find.text('1 archived'));
     await t.pumpAndSettle();
     expect(find.byType(ArchivedScreen), findsOneWidget);

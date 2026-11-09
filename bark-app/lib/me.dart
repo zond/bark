@@ -48,6 +48,13 @@ class Me extends ChangeNotifier {
   /// The app has asked the person to let it notify.
   bool askedToNotify = false;
 
+  /// The app has asked the person to let it use Bluetooth.
+  bool askedBluetooth = false;
+
+  /// A fetch the person asked for while no node was linked: it goes out
+  /// from the next node the phone links to.
+  bool fetchQueued = false;
+
   /// The mailbox: the items its home last said it has not sent, and the
   /// rounds of its latest fetches, newest first.
   int remaining = 0;
@@ -87,6 +94,10 @@ class Me extends ChangeNotifier {
       final backedUp = j['backedUp'] as bool;
       // Added after the format's first version: absent means not asked.
       final askedToNotify = j['askedToNotify'] as bool? ?? false;
+      // Added after the format's first version: absent means not asked,
+      // none queued.
+      final askedBluetooth = j['askedBluetooth'] as bool? ?? false;
+      final fetchQueued = j['fetchQueued'] as bool? ?? false;
       // Added after the format's first version: absent means none told.
       final remaining = j['remaining'] as int? ?? 0;
       final rounds = (j['rounds'] as List).cast<int>().toList();
@@ -100,6 +111,8 @@ class Me extends ChangeNotifier {
         this.lastSent = lastSent;
         this.backedUp = backedUp;
         this.askedToNotify = askedToNotify;
+        this.askedBluetooth = askedBluetooth;
+        this.fetchQueued = fetchQueued;
         this.remaining = remaining;
         this.rounds.addAll(rounds);
       };
@@ -126,6 +139,8 @@ class Me extends ChangeNotifier {
     'lastSent': lastSent,
     'backedUp': backedUp,
     'askedToNotify': askedToNotify,
+    'askedBluetooth': askedBluetooth,
+    'fetchQueued': fetchQueued,
     'remaining': remaining,
     'rounds': rounds,
   });
@@ -160,6 +175,17 @@ class Me extends ChangeNotifier {
 
   Future<void> setAskedToNotify() async {
     askedToNotify = true;
+    await _changed();
+  }
+
+  Future<void> setAskedBluetooth() async {
+    askedBluetooth = true;
+    await _changed();
+  }
+
+  Future<void> setFetchQueued(bool v) async {
+    if (fetchQueued == v) return;
+    fetchQueued = v;
     await _changed();
   }
 

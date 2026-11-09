@@ -300,21 +300,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       title: Text(n.name),
       subtitle: Text(
         [
-          if (app.connectedTo(n.deviceId)) 'Connected' else n.deviceId,
+          if (app.connectedTo(n.deviceId)) 'Connected',
           if (n.public) 'public: serves phones without pairing',
           '${n.rssi ?? '?'} dBm',
         ].join(', '),
       ),
       onTap: busy
           ? null
-          : () => _connect(() => guest ? app.connectGuest(n) : app.connect(n)),
-      trailing: guest
-          ? TextButton(
-              onPressed: busy ? null : () => _connect(() => app.connect(n)),
-              child: const Text('Pair'),
-            )
-          : null,
+          : () => guest ? _yours(n) : _connect(() => app.connect(n)),
     );
+  }
+
+  /// A public node not paired with: the person says whether it is theirs.
+  Future<void> _yours(FoundNode n) async {
+    final mine = await askIsYours(context, n);
+    if (mine == null || !mounted) return;
+    await _connect(() => mine ? app.connect(n) : app.connectGuest(n));
   }
 
   /// The owner's switch of whether the node serves phones that have not

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../ble_link.dart';
 import '../session.dart';
 
 void say(BuildContext context, String s) =>
@@ -121,6 +122,13 @@ class FetchButton extends StatelessWidget {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (context.mounted) say(context, news);
       });
+    }
+    if (app.me.fetchQueued) {
+      return const IconButton(
+        tooltip: 'Fetch waits for a node',
+        icon: Icon(Icons.schedule_send),
+        onPressed: null,
+      );
     }
     final waiting = s.fetchWaiting;
     if (waiting != null) {
@@ -241,3 +249,53 @@ String pairedLine(Session s) {
       ? '$n is no longer yours: another phone has paired with it.'
       : 'Paired with $n.';
 }
+
+/// Asks whether `n`, a public node, is the person's: true pairs with it,
+/// by the code its screen shows; false uses it as a guest; null decides
+/// nothing (spec "Phone link", Pairing, Public).
+Future<bool?> askIsYours(BuildContext context, FoundNode n) => showDialog<bool>(
+  context: context,
+  builder: (context) => SimpleDialog(
+    title: Text('Is ${n.name} yours?'),
+    children: [
+      SimpleDialogOption(
+        onPressed: () => Navigator.pop(context, true),
+        child: const ListTile(
+          title: Text('Pair'),
+          subtitle: Text('You will type the code its screen shows.'),
+        ),
+      ),
+      SimpleDialogOption(
+        onPressed: () => Navigator.pop(context, false),
+        child: const ListTile(
+          title: Text('Just use it'),
+          subtitle: Text('It passes on your texts; it stays its owner\'s.'),
+        ),
+      ),
+    ],
+  ),
+);
+
+/// Says why bark wants Bluetooth before Android asks; whether to go on.
+Future<bool> whyBluetooth(BuildContext context) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bluetooth'),
+        content: const Text(
+          'bark sends and receives through a node near you, which it finds '
+          'and talks to over Bluetooth. Android asks you next.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    ) ??
+    false;

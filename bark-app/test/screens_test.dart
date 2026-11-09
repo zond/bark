@@ -279,6 +279,32 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('Get started: three steps ticked as they are done, then gone', (
+    t,
+  ) async {
+    final app = await model(t);
+    await t.pumpWidget(BarkApp(app));
+    await t.pump();
+    expect(find.text('Get started'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsNothing);
+    await t.runAsync(() => app.me.setName('Ana'));
+    await t.pump();
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(List.filled(32, 5), null, 1, 'Olena')),
+    );
+    await t.pump();
+    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+    expect(find.text('Get started'), findsOneWidget);
+    await app.connectFake();
+    await t.pump();
+    expect(find.text('Get started'), findsNothing);
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
   testWidgets('a temporary contact: marked in its row until a card with a '
       'home, and written to at the node on its card', (t) async {
     final app = await model(t);
@@ -523,16 +549,14 @@ void main() {
     final away = Address(Position.fromDegrees(50.5, 30.5), [9, 9, 9, 9, 9, 9]);
     await app.me.setHome(away);
     await t.pump();
-    await fetch('Not connected to a node: a fetch is sent from another node');
+    // Queued until a node links, then sent from it to the home.
+    await fetch('The fetch waits for a node');
     expect(app.session.outbox, isEmpty);
-
-    // Another node: the fetch goes to the home.
+    expect(find.byTooltip('Fetch waits for a node'), findsOneWidget);
     await app.connectFake();
     await t.pump();
-    await t.tap(find.byTooltip('Fetch my mail'));
     await t.pump();
-    await t.pump();
-    expect(find.text('Fetching your mail'), findsOneWidget);
+    expect(app.me.fetchQueued, isFalse);
     final f = app.session.outbox.where((o) => o.kind == OutKind.fetch);
     expect(f.single.dst.toString(), away.toString());
 

@@ -17,9 +17,33 @@ import 'settings_screen.dart';
 import 'thread_screen.dart';
 import 'update_screen.dart';
 
-class ConversationsScreen extends StatelessWidget {
+class ConversationsScreen extends StatefulWidget {
   final AppModel app;
   const ConversationsScreen(this.app, {super.key});
+
+  @override
+  State<ConversationsScreen> createState() => _ConversationsScreenState();
+}
+
+class _ConversationsScreenState extends State<ConversationsScreen> {
+  AppModel get app => widget.app;
+
+  @override
+  void initState() {
+    super.initState();
+    // The first screen is under every other, so it asks over them.
+    app.askOwner = (n) => askIsYours(context, n);
+    // Without Bluetooth there is no node, so the app asks at once.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) app.askForBluetooth(() => whyBluetooth(context));
+    });
+  }
+
+  @override
+  void dispose() {
+    app.askOwner = null;
+    super.dispose();
+  }
 
   void _open(BuildContext context, Widget screen) =>
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
@@ -77,6 +101,7 @@ class ConversationsScreen extends StatelessWidget {
         children: [
           ..._releases(context),
           NoticeCard(app),
+          ..._gettingStarted(context),
           if (!app.me.backedUp)
             Card(
               child: ListTile(
@@ -114,6 +139,52 @@ class ConversationsScreen extends StatelessWidget {
       ),
     );
   });
+
+  /// The steps to a first text, each ticked once done, until all are.
+  List<Widget> _gettingStarted(BuildContext context) {
+    final g = app.gettingStarted;
+    if (g.name && g.node && g.contact) return [];
+    Widget step(bool done, String title, String how, VoidCallback onTap) =>
+        ListTile(
+          dense: true,
+          leading: Icon(
+            done ? Icons.check_circle : Icons.radio_button_unchecked,
+            semanticLabel: done ? 'Done' : 'To do',
+          ),
+          title: Text(title),
+          subtitle: done ? null : Text(how),
+          onTap: done ? null : onTap,
+        );
+    return [
+      Card(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const ListTile(title: Text('Get started')),
+            step(
+              g.name,
+              'Your name',
+              'On your card, so that people know who you are.',
+              () => askMyName(context, app),
+            ),
+            step(
+              g.node,
+              'A node',
+              'Found by itself when one is near, or pair your own in '
+                  'Settings.',
+              () => _open(context, SettingsScreen(app)),
+            ),
+            step(
+              g.contact,
+              'Your first contact',
+              'Scan their card, or show them yours.',
+              () => _open(context, ContactsScreen(app)),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
 
   /// A bar for a newer app, and one for a newer image than the connected
   /// node runs; each says what a tap does and can be dismissed for that
