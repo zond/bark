@@ -34,12 +34,12 @@ String ago(Duration d) {
 /// more than the app knows: once the node has taken a message the network
 /// says nothing more until the recipient confirms (spec "Addresses").
 String stateLabel(Session s, Outgoing o) => switch (o.state) {
-  OutState.queued => 'waiting on this phone',
+  OutState.queued => 'Waiting for a node',
   OutState.writing => 'being handed to the node',
   OutState.taken => 'sent into the network',
   OutState.givenBack => switch (s.waitLeftS(o)) {
-    0 => 'network busy, try again now',
-    final w => 'network busy, try again in ${clock(w)}',
+    0 => 'The network is busy, sending again now',
+    final w => 'The network is busy, sending again in ${clock(w)}',
   },
   OutState.refused => 'refused: ${o.error}',
 };
@@ -49,8 +49,9 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
 const List<(IconData, String, String)> sentStates = [
   (
     Icons.schedule,
-    'Waiting on this phone',
-    'No node is linked, or the node is not ready for it yet.',
+    'Waiting for a node',
+    'It waits on this phone: no node is linked, or the node is not ready '
+        'for it yet.',
   ),
   (
     Icons.sync,
@@ -70,9 +71,9 @@ const List<(IconData, String, String)> sentStates = [
   ),
   (
     Icons.hourglass_bottom,
-    'Network busy',
-    'The network could not take it now and gave it back. Try again once '
-        'the wait it asked for is over.',
+    'The network is busy',
+    'The network could not take it now and gave it back, with a wait. '
+        'The app sends it again by itself once the wait is over.',
   ),
 ];
 

@@ -699,7 +699,7 @@ void main() {
     final out = app.session.outbox;
     expect(out.map((o) => o.part), [1, 2]);
     expect(find.text(long), findsOneWidget);
-    expect(find.byTooltip('Waiting on this phone'), findsOneWidget);
+    expect(find.byTooltip('Waiting for a node'), findsOneWidget);
 
     Future<void> redraw() async {
       app.session.dismissNotice();
@@ -710,7 +710,7 @@ void main() {
     out[0].state = OutState.taken;
     await redraw();
     expect(find.text('1 of 2 sent'), findsOneWidget);
-    expect(find.byTooltip('Waiting on this phone'), findsNothing);
+    expect(find.byTooltip('Waiting for a node'), findsNothing);
     out[1].state = OutState.taken;
     await redraw();
     expect(find.byTooltip(sentTip), findsOneWidget);

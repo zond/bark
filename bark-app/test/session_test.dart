@@ -199,21 +199,23 @@ void main() {
       expect(d.state, OutState.queued);
       expect(s.status!.ready, isFalse);
 
-      async.elapse(const Duration(seconds: 28));
-      expect(s.waitLeftS(c), 0);
-      expect(d.state, OutState.taken);
+      // Its wait over, the app sends it again by itself.
+      async.elapse(const Duration(seconds: 26));
+      expect(
+        s.log.map((l) => l.text),
+        contains('Send ${msgIdHex(c.id)}: its wait is over, sent again'),
+      );
+      expect(c.state, isNot(OutState.givenBack));
 
-      s.offerAgain(c);
-      async.elapse(const Duration(seconds: 1));
-      expect(c.state, OutState.taken);
-
-      async.elapse(const Duration(seconds: 10));
-      expect(s.received.map((r) => r.text).where((t) => t.startsWith('Echo')), [
-        'Echo: a',
-        'Echo: b',
-        'Echo: d',
-        'Echo: c',
-      ]);
+      // Given back again or not, every text arrives in the end.
+      async.elapse(const Duration(minutes: 3));
+      expect(
+        s.received
+            .map((r) => r.text)
+            .where((t) => t.startsWith('Echo'))
+            .toSet(),
+        {'Echo: a', 'Echo: b', 'Echo: c', 'Echo: d'},
+      );
       // Its echo was boxed: only the fake friend could make it.
       expect(friendOf(p, node).verified, isTrue);
     });

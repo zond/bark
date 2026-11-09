@@ -457,7 +457,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
   List<Widget> _state(Outgoing o, TextStyle small, Color color) =>
       switch (o.state) {
         OutState.queued => [
-          _stateMark(Icons.schedule, 'Waiting on this phone', small, color),
+          _stateMark(Icons.schedule, 'Waiting for a node', small, color),
         ],
         OutState.writing => [
           _stateMark(Icons.sync, 'Being handed to the node', small, color),
@@ -471,7 +471,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
           ),
         ],
         OutState.givenBack => [
-          _stateMark(Icons.hourglass_bottom, 'Network busy', small, color),
+          _stateMark(
+            Icons.hourglass_bottom,
+            'The network is busy',
+            small,
+            color,
+          ),
           const SizedBox(width: 4),
           Flexible(child: Text(stateLabel(app.session, o), style: small)),
         ],
@@ -513,42 +518,22 @@ class _ThreadScreenState extends State<ThreadScreen> {
     ),
   );
 
-  /// Send again and Cancel, for the parts each applies to.
+  /// Cancel, for the parts not yet with the node; a part given back goes
+  /// again by itself once its wait is over.
   Widget _actions(List<Outgoing> outs) {
     final s = app.session;
-    final back = [
-      for (final o in outs)
-        if (o.state == OutState.givenBack) o,
-    ];
     final droppable = [
       for (final o in outs)
         if (o.state != OutState.writing && o.state != OutState.taken) o,
     ];
-    if (back.isEmpty && droppable.isEmpty) return const SizedBox.shrink();
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (back.isNotEmpty)
-          TextButton(
-            onPressed: back.any((o) => s.waitLeftS(o) > 0)
-                ? null
-                : () async {
-                    for (final o in back) {
-                      await s.offerAgain(o);
-                    }
-                  },
-            child: const Text('Send again'),
-          ),
-        if (droppable.isNotEmpty)
-          TextButton(
-            onPressed: () async {
-              for (final o in droppable) {
-                await s.drop(o);
-              }
-            },
-            child: const Text('Cancel'),
-          ),
-      ],
+    if (droppable.isEmpty) return const SizedBox.shrink();
+    return TextButton(
+      onPressed: () async {
+        for (final o in droppable) {
+          await s.drop(o);
+        }
+      },
+      child: const Text('Cancel'),
     );
   }
 }

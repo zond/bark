@@ -74,13 +74,14 @@ is a prototype for the bench, not the app people will carry.
   text's size whose tooltips give the words: a house, to their home; a
   pin, to where they were; an hourglass, to the node on a temporary
   card; a mailbox, from your mailbox. A sent text's states: a clock,
-  waiting on this phone; two arrows, being handed to the node; one
+  waiting for a node, on this phone; two arrows, being handed to the node; one
   check, sent into the network, whose tooltip says the network gives no
   further news until they confirm, as it sends none (spec
   "Addresses"); two checks in the theme's colour, confirmed by the
-  recipient. A text the network gave back shows an hourglass and
-  "network busy, try again in m:ss", and can be sent again once the
-  wait is over, or cancelled; a refused text says why in words. A tap
+  recipient. A text the network gave back shows an hourglass and "The
+  network is busy, sending again in m:ss", and the app sends it again
+  by itself once the wait is over, also after a restart; until then it
+  can be cancelled. A refused text says why in words. A tap
   on a state opens a sheet that explains them all. The top line says
   when the contact last wrote, and, when their card names a home,
   whether from it. A received text has a labelled chip, **Got it**,
