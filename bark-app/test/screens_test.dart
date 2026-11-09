@@ -24,6 +24,7 @@ import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
+import 'package:bark_app/ui/debug_screen.dart';
 import 'package:bark_app/ui/conversations_screen.dart';
 import 'package:bark_app/ui/settings_screen.dart';
 import 'package:bark_app/ui/thread_screen.dart';
@@ -193,10 +194,21 @@ void main() {
     await t.pageBack();
     await t.pumpAndSettle();
 
+    // Debug is at the bottom of Settings.
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Settings'));
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(
+      find.text('Debug'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.ensureVisible(find.text('Debug'));
     await t.pumpAndSettle();
     await t.tap(find.text('Debug'));
     await t.pumpAndSettle();
+    expect(find.byType(DebugScreen), findsOneWidget);
     expect(find.text('fa4e00000001'), findsOneWidget);
     expect(find.text('Identity'), findsOneWidget);
     await t.scrollUntilVisible(
@@ -297,7 +309,7 @@ void main() {
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
     await t.pumpAndSettle();
     expect(find.text('Contacts'), findsNothing);
-    expect(find.text('Map'), findsOneWidget);
+    expect(find.text('Nearby nodes'), findsOneWidget);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
     await t.tap(find.byTooltip('Contacts'));

@@ -14,6 +14,7 @@ import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
 import 'common.dart';
+import 'debug_screen.dart';
 import 'update_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -201,6 +202,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             ..._backup(),
             ..._mapPoint(),
+            const SizedBox(height: 24),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.bug_report_outlined),
+              title: const Text('Debug'),
+              subtitle: const Text(
+                'Everything the link says, for a bug report',
+              ),
+              onTap: () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => DebugScreen(app))),
+            ),
           ],
         ),
       ),

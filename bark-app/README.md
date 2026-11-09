@@ -162,13 +162,14 @@ is a prototype for the bench, not the app people will carry.
   identity), and the node's
   map point: set from typed degrees or the phone's location, or
   cleared.
-- **Map**, from the menu. The connected node and every neighbour it
+- **Nearby nodes**, from the menu: a map. The connected node and every neighbour it
   knows on an OpenStreetMap street map, a line from the node to each
   coloured by the link's quality: green good, amber fair, red fragile,
   by the margin of the link's averaged RSSI over the node's noise floor
   (spec "Phone link", Neighbours), dashed while the node avoids it,
-  demoted or banned. A legend says the bands in dB. A relay is a tower,
-  a sleepy node a battery, a carried one a walker, in its link's colour;
+  demoted or banned. A legend says the bands in dB and the icons: a
+  relay is a tower, a node on power; a sleepy node a battery, a node on
+  battery; a carried one a walker; each in its link's colour;
   the node itself is a target. Tapping one shows its name, RSSI,
   margin, quality, when it was last heard, how far it is from the node,
   and its flags. The map reads Neighbours when it opens, at every
@@ -193,7 +194,7 @@ is a prototype for the bench, not the app people will carry.
   without internet; without either, the markers and lines are drawn on
   a blank background and a line says why. A node before link version
   4 cannot tell its neighbours, and the screen says to update it.
-- **Debug**, from the menu. Your identity, card address, home node and
+- **Debug**, at the bottom of Settings. Your identity, card address, home node and
   mailbox state; Node, what Home reads, every Status field, the last
   Given back value, each sent and received message's kind, `sent`, ID
   and payload in hex, and a log of the link's events since the app
@@ -685,7 +686,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 10,
+3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 10,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -731,7 +732,7 @@ a phone (Trying it, With a node).
     again, disconnect, press **No home node**: the app says the old home
     still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
     mailbox key** clears it.
-13. Menu, **Map**: the fake node in Kyiv and its five neighbours,
+13. Menu, **Nearby nodes**: the fake node in Kyiv and its five neighbours,
     three green lines, one amber and one red; the red one and a green
     one dashed. Tap the red
     one: `ID FA4E00000103`, fragile, 3.0 dB over the floor, demoted.
@@ -772,7 +773,7 @@ a phone (Trying it, With a node).
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
    node), and the relays it hears.
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
-   address, and **Map** draws it with the relays it hears, each line's
+   address, and **Nearby nodes** draws it with the relays it hears, each line's
    colour its link's quality. Without one, set a map point in Settings: Status changes to
    placed and map point. A text names the node's address only once it
    has one. With neighbours on link version 9 or later, each marker

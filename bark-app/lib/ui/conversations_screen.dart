@@ -11,7 +11,6 @@ import '../link.dart';
 import 'card_screen.dart';
 import 'common.dart';
 import 'contacts_screen.dart';
-import 'debug_screen.dart';
 import 'map_screen.dart';
 import 'settings_screen.dart';
 import 'thread_screen.dart';
@@ -83,15 +82,11 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
               ),
               PopupMenuItem(
                 value: () => MapScreen(app),
-                child: const Text('Map'),
+                child: const Text('Nearby nodes'),
               ),
               PopupMenuItem(
                 value: () => SettingsScreen(app),
                 child: const Text('Settings'),
-              ),
-              PopupMenuItem(
-                value: () => DebugScreen(app),
-                child: const Text('Debug'),
               ),
             ],
           ),

@@ -395,7 +395,8 @@ void main() {
     await t.pumpWidget(BarkApp(app));
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
     await t.pumpAndSettle();
-    expect(find.text('Map'), findsOneWidget);
+    expect(find.text('Nearby nodes'), findsOneWidget);
+    expect(find.text('Debug'), findsNothing);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
     app.connectFake();

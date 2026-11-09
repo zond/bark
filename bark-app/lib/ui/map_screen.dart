@@ -141,7 +141,7 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) => Watch(widget.app, (context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Map'),
+        title: const Text('Nearby nodes'),
         actions: [
           IconButton(
             tooltip: 'Read again',
@@ -303,6 +303,14 @@ class _MapScreenState extends State<MapScreen> {
         Text('${qualityName(q)} $range', style: const TextStyle(fontSize: 12)),
       ],
     );
+    Widget kind(IconData icon, String words) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16),
+        const SizedBox(width: 4),
+        Text(words, style: const TextStyle(fontSize: 12)),
+      ],
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -317,6 +325,9 @@ class _MapScreenState extends State<MapScreen> {
             band(Quality.good, '≥ $good dB'),
             band(Quality.fair, '$fair–$good dB'),
             band(Quality.fragile, '< $fair dB over the noise floor'),
+            kind(Icons.cell_tower, 'a node on power'),
+            kind(Icons.battery_std, 'a node on battery'),
+            kind(Icons.directions_walk, 'a carried node'),
           ],
         ),
       ),
