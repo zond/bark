@@ -817,10 +817,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _heading('Node\'s place'),
       Text(
         st == null || !st.placed
-            ? 'The node has no position.'
+            ? 'The node has no place yet.'
             : st.mapPoint
-            ? 'The node\'s position is its map point, ${st.address}.'
-            : 'The node\'s position is ${st.address}, not from a map point.',
+            ? 'The node\'s place, set by a person: ${st.address}.'
+            : 'The node\'s place, from its GPS: ${st.address}.',
+      ),
+      const SizedBox(height: 4),
+      Text(
+        'A node finds its place by GPS. Set it here for a node that cannot '
+        'see the sky, such as one indoors: what is set here wins over GPS '
+        'until it is cleared.',
+        style: Theme.of(context).textTheme.bodySmall,
       ),
       Row(
         children: [

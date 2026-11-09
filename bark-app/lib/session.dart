@@ -1096,7 +1096,7 @@ class Session extends ChangeNotifier {
       await link.setMapPoint(p);
       note('Map point: ${p ?? 'cleared'}');
     } catch (e) {
-      _tell('Setting the map point failed: $e');
+      _tell('Setting the node\'s place failed: $e');
     }
   }
 

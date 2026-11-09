@@ -19,8 +19,8 @@ const Map<String, String> factHelp = {
       'minute of positions away from where it stood, it counts as '
       'carried, and after four hours in one place it stays put again. A '
       'carried node\'s place follows its GPS, and it keeps no new mail '
-      'for others, as it may soon be gone. Setting its place on the map '
-      'in the app makes it stay put at once.',
+      'for others, as it may soon be gone. Setting its place in the '
+      'app\'s Settings makes it stay put at once.',
   // Spec "Relay choice", "Sleepy nodes", "Addresses".
   'Anchor':
       'A sleepy node sends and receives through one relay near it, its '
@@ -33,8 +33,8 @@ const Map<String, String> factHelp = {
   'Place':
       'Texts find a node by its place: an address is a position and the '
       'node\'s ID, and each relay passes a text on toward that position. '
-      'The place comes from the node\'s GPS, unless a person set it on '
-      'the map in the app, which wins, as for a relay on a roof with no '
+      'The place comes from the node\'s GPS, unless a person set it in '
+      'the app\'s Settings, which wins, as for a relay indoors with no '
       'view of the sky. A node with no place yet sends no heartbeat, so '
       'no text can find it until it has one.',
   // Spec "Nodes", "Sleepy nodes", "Neighbour status".
