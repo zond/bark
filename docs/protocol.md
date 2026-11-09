@@ -3390,6 +3390,18 @@ answered with the ATT error 0x81, refused, and Update says why:
 What is staged lasts across connections until the node resets. From
 link version 6 (roadmap D145).
 
+An image from the phone keeps itself once the node has started, whether
+or not the node then hears anyone: the node may be the only one in
+reach. So the app, after an update it drove, reads Status's count of
+relays known, and if the node still knows none 585.9 s after it came
+back, as long as an image from the mesh listens before it gives itself
+up ([updates over the mesh](#updates-over-the-mesh), the install), it
+tells the person plainly that the node hears no one and that the new
+firmware may have broken its radio. It says the way back too: the node
+stages no image at or below its own version, so the release it ran
+before goes on over USB, and a later release, once there is one, from
+the phone (roadmap D159).
+
 *Why without a response, seven at a time.* A write request is answered
 in a later connection event than the one that carried it, so a phone
 that waits for each answer sends one piece every two events; without
@@ -4235,6 +4247,51 @@ rotation, and a sleepy node can take a piece at no other time.
 for it in the same moment, so one frame reaches all of them; in a
 node's own windows a frame reaches one node, and each window would be
 paid by the channel's pace.
+
+**The install.** A node that holds a gathered image whole checks it and
+stages it as the phone's update does ([phone link](#phone-link),
+Updates), noting that it came over the mesh, and reboots into it at the
+first moment that loses nothing: no phone linked, no message held in its
+send queue, its delivery queue, its inbox or a mailbox write, and the
+power a swap needs ([implementation notes](#implementation-notes)). Its
+loader swaps the image in and starts a watchdog of 600 s, which the
+image feeds only once it has confirmed itself; a reset before then swaps
+the previous image back (roadmap D79). An image a person staged, from
+the phone or over USB, confirms itself once its core is set up and its
+radio is up. An image gathered over the mesh confirms itself only once
+the node has heard another node: a frame from any node that decodes, a
+heartbeat, a DATA, an ACK, a piece or a status. If it hears none within
+three worst-case rotations of heartbeats and a heartbeat's lateness of
+its start, 3 × 195 s + 872.8 ms = 585.9 s ([heartbeat](#heartbeat)),
+it resets itself, and the loader swaps the previous image back. The
+image back gives the failed one up: it keeps the failed image's name in
+a page of flash that no copy over USB erases, and never gathers an image
+of that name again, so never serves it. A release after it has another
+name and is taken as usual. The page holds 128 names, and when full is
+erased and starts again with the newest.
+
+*Why hear a node.* A node that gathered an image over the mesh had a
+neighbour to take it from. An image that runs but cannot hear or be
+heard, from a wrong radio setting, a broken frame format or a timing
+fault, would otherwise keep itself, and the node would stay deaf beyond
+the reach of the next image. One frame that decodes proves the image's
+radio and frame format against another node's. It proves the receiving
+side only: an image that hears but is not heard keeps itself. *Why any
+node.* Who sent the frame does not matter for that proof, and a node
+heard before the update may have moved or gone dark since. *Why not
+after the phone's update.* A node updated from the phone may be the
+only node in reach, and would swap every image back for want of
+company; the person holding the phone is told instead
+([phone link](#phone-link), Updates). *Why three rotations.* Each
+neighbour's heartbeat reaches the node's home channel once a rotation,
+and a listening receiver loses about one in ten
+([channel at boot](#channel-at-boot)): two rotations miss a lone
+neighbour one time in a hundred, and a third, the margin, one time in
+a thousand, since a revert gives the image up for good. The time fits
+the loader's 600 s, which still ends the trial of an image that hangs
+or never checks its time. *Why give it up.* Its neighbours go on
+telling it; taken again, it would be gathered for hours and swapped
+back again, without end.
 
 **What a node keeps.** The image it holds; the one it gathers, the
 first block it lacks, the blocks that passed, a bit each, and the
