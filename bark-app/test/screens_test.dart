@@ -22,6 +22,7 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
+import 'package:bark_app/ui/common.dart' show receivedMarks;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';
@@ -164,7 +165,40 @@ void main() {
       find.textContaining('The network gives no further news'),
       findsOneWidget,
     );
-    await t.tapAt(Offset.zero);
+    // Above them, what the bubble does not say: the node it went to.
+    expect(find.text('This message'), findsOneWidget);
+    expect(find.text('To node'), findsOneWidget);
+    expect(find.text('Message ID'), findsOneWidget);
+    expect(find.text('Sealed'), findsOneWidget);
+    Navigator.pop(t.element(find.byType(BottomSheet)));
+    await t.pumpAndSettle();
+    // A received text's time and marks explain theirs the same way.
+    await t.tap(
+      find
+          .descendant(
+            of: find.ancestor(
+              of: find.text('Echo: hello'),
+              matching: find.byType(Card),
+            ),
+            matching: find.byType(InkWell),
+          )
+          .last,
+    );
+    await t.pumpAndSettle();
+    expect(find.text('This message'), findsOneWidget);
+    expect(find.text('Written'), findsOneWidget);
+    expect(find.text('Sealed'), findsOneWidget);
+    for (final (_, title, words) in receivedMarks) {
+      expect(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text(title, skipOffstage: false),
+        ),
+        findsOneWidget,
+      );
+      expect(words, isNotEmpty);
+    }
+    Navigator.pop(t.element(find.byType(BottomSheet)));
     await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();

@@ -82,7 +82,15 @@ is a prototype for the bench, not the app people will carry.
   network is busy, sending again in m:ss", and the app sends it again
   by itself once the wait is over, also after a restart; until then it
   can be cancelled. A refused text says why in words. A tap
-  on a state opens a sheet that explains them all. The top line says
+  on a state opens a sheet that explains them all, and a tap on a
+  received text's time or marks one that explains the marks a received
+  text can show: Got it and its check, a first message, from your
+  mailbox, parts not yet here, the time. Above the marks, under This
+  message, each sheet gives what the app keeps that the bubble does not
+  say: for a sent text the node it went to and that node's place, its
+  parts, how it was sealed and its message IDs; for a received one when
+  the sender wrote it, by their phone's clock, its parts here, how it
+  was sealed and its message IDs. The top line says
   when the contact last wrote, and, when their card names a home,
   whether from it. A received text has a labelled chip, **Got it**,
   48 dp tall; nothing is confirmed by itself, and until the person
