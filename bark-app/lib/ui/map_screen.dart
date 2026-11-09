@@ -85,12 +85,16 @@ String _where(Position p) =>
 
 /// The neighbours a node knows as its screen's KNOWN line counts them:
 /// heard, heard with the margin a full frame needs through a fade, and
-/// proven to hear it (spec "Neighbour status").
-String knownOf(NeighbourTable t) {
-  final strong = t.list.where((n) => n.quality(t.floorDbm) != Quality.fragile);
-  return '${t.list.length}/${strong.length}/'
-      '${t.list.where((n) => n.proven).length}';
-}
+/// those that have taken a message from it (spec "Neighbour status").
+String known(int heard, int strong, int exchanged) =>
+    '$heard heard \u00b7 $strong strong \u00b7 $exchanged exchanged';
+
+/// [known] of the table read.
+String knownOf(NeighbourTable t) => known(
+  t.list.length,
+  t.list.where((n) => n.quality(t.floorDbm) != Quality.fragile).length,
+  t.list.where((n) => n.proven).length,
+);
 
 /// One fact of a sheet: an icon named for screen readers and a short
 /// label, which a newcomer reads where an icon alone would leave them
@@ -435,13 +439,7 @@ class _NodeMarker extends StatelessWidget {
               usb: st.externalPower,
               battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
             ),
-            Fact(
-              Icons.hub,
-              'Known',
-              'neighbours known',
-              knownOf(t),
-              tooltip: 'heard / strong / proven',
-            ),
+            Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
             Fact(
               Icons.sell,
               'Version',
@@ -514,8 +512,7 @@ class _NeighbourMarker extends StatelessWidget {
           Icons.hub,
           'Known',
           'neighbours known',
-          '${s.heard}/${s.strong}/${s.proven}',
-          tooltip: 'heard / strong / proven',
+          known(s.heard, s.strong, s.proven),
         ),
         if (s.version != 0)
           Fact(

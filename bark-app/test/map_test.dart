@@ -337,8 +337,7 @@ void main() {
       expect(ys[i], greaterThan(ys[i - 1]));
     }
     expect(line('57%'), findsOneWidget);
-    expect(line('4/2/1'), findsOneWidget);
-    expect(find.byTooltip('heard / strong / proven'), findsOneWidget);
+    expect(line('4 heard \u00b7 2 strong \u00b7 1 exchanged'), findsOneWidget);
     expect(line('V9'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
     expect(line('KNOWN 4/2/1'), findsNothing);
