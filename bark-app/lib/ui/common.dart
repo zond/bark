@@ -384,32 +384,17 @@ String? lookingLine(AppModel app) {
 /// phone uses).
 String? guestLine(AppModel app) {
   final s = app.session;
-  final String? name = s.connected && s.guest
-      ? nodeName(s.node!.id)
-      : s.connected
-      ? null
-      : app.guestNode;
-  if (name == null) return null;
-  final why = app.ownAway
-      ? 'your node is out of reach'
-      : 'a public node, not yours';
-  return 'Using ${shownName(name)} as a guest: $why';
+  return s.connected && !s.guest ? null : app.nodeLine;
 }
 
 /// The first screen's line on the phone's node: which it is on, and why.
 String connectionLine(AppModel app) {
-  final s = app.session;
-  final n = s.node;
   final looking = lookingLine(app);
-  return guestLine(app) ??
-      (app.backOnOwn
-          ? 'Back on your node, ${nodeLabel(n!.id)}'
-          : s.connected
-          ? 'Connected to ${nodeLabel(n!.id)}, paired'
-          : looking != null
+  return app.nodeLine ??
+      (looking != null
           ? '$looking Texts wait on the phone until it is in reach.'
           : 'Not connected to a node: texts wait on the phone. '
-                '${pairedLine(s)}');
+                '${pairedLine(app.session)}');
 }
 
 /// The phone's pairing as a person reads it while not connected (spec

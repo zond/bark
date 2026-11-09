@@ -417,8 +417,10 @@ before archiving names nothing archived and reads as such.
 ## Notifications and the background link
 
 While a node is connected over Bluetooth, the app keeps running with the
-screen off or its window closed, under a notification that names the
-node, "Connected to ID …"; tapping it opens the app. The link is the
+screen off or its window closed, under a notification that says
+which node it is on, in the first screen's words: "Connected to ID …,
+paired", "Back on your node, ID …", or "Using ID … as a guest", during
+errands at a public node and between them; tapping it opens the app. The link is the
 same one as in the foreground: the app's Dart engine outlives its window
 (`Engine.kt`), and an Android foreground service of the connected device
 type (`LinkService.kt`) keeps the process running, so there is one
@@ -427,9 +429,8 @@ node (previous section) the service runs too, and its notification says
 "Looking for ID …": without one Android suspends or ends an app in the
 background, and the search with it, and queued texts are to go out as
 soon as the node is in reach, not when the person next opens the app.
-While it looks for a public node alone, or is a guest, the notification
-says so: "Looking for a public node", "Connected to ID … as a
-guest". Before Bluetooth is allowed there is no search, and no
+While it looks for a public node alone, the notification says
+"Looking for a public node". Before Bluetooth is allowed there is no search, and no
 notification.
 The service goes on from connected to looking and back, changing only its
 notification, as Android 12 and later restrict starting a service from

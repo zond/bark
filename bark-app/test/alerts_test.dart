@@ -264,7 +264,7 @@ void main() {
       expect(n.log, ['let go']);
       app.session.attach(node.connect());
       async.flushMicrotasks();
-      expect(n.log, ['let go', 'hold Connected to ID FA4E00000001']);
+      expect(n.log, ['let go', 'hold Connected to ID FA4E00000001, paired']);
       node.dispose();
     });
   });

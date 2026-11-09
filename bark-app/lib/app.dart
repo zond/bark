@@ -277,13 +277,13 @@ class AppModel extends ChangeNotifier {
   /// connecting it stays: Android 12 and later refuse to start the service
   /// again from the background.
   Held? get held {
-    final n = session.node;
-    if (n != null && !fake) {
+    final on = fake ? null : nodeLine;
+    if (on != null) {
       return (
-        title: session.guest
-            ? 'Connected to ${nodeLabel(n.id)} as a guest'
-            : 'Connected to ${nodeLabel(n.id)}',
-        body: 'Texts arrive while the screen is off',
+        title: on,
+        body: session.connected
+            ? 'Texts arrive while the screen is off'
+            : 'Texts go and come on a visit about once a minute',
       );
     }
     if (!searchOn || !bluetoothAllowed) return null;
@@ -589,6 +589,24 @@ class AppModel extends ChangeNotifier {
   /// The public node the phone uses as a guest, between its errands too:
   /// the node of the last, while the search runs.
   String? get guestNode => searchOn ? _guestAt : null;
+
+  /// Which node the phone is on, and why, as the first screen, Settings
+  /// and the link's notification say it; null while it is on none. A
+  /// public node is on between errands too.
+  String? get nodeLine {
+    final n = session.connected ? session.node : null;
+    final g = n != null && session.guest ? nodeName(n.id) : guestNode;
+    if (g != null && (n == null || session.guest)) {
+      final why = ownAway
+          ? 'your node is out of reach'
+          : 'a public node, not yours';
+      return 'Using ${shownName(g)} as a guest: $why';
+    }
+    if (n == null) return null;
+    return backOnOwn
+        ? 'Back on your node, ${nodeLabel(n.id)}'
+        : 'Connected to ${nodeLabel(n.id)}, paired';
+  }
 
   /// The phone came back to its paired node from public ones within
   /// [backShown], and is on it.

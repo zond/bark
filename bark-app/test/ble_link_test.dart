@@ -923,6 +923,7 @@ void main() {
         const using =
             'Using ID 0CE400000004 as a guest: your node is out of reach';
         expect(connectionLine(app), using);
+        expect(app.held?.title, using);
         // The card's node is the one in use.
         expect(app.me.nodeAddress!.id, strongId);
         expect(app.session.pairedWith, nodeName(FakeNode.id));
@@ -940,9 +941,11 @@ void main() {
         expect(app.ownAway, isFalse);
         expect(app.guestNode, isNull);
         expect(connectionLine(app), 'Back on your node, ID FA4E00000001');
+        expect(app.held?.title, 'Back on your node, ID FA4E00000001');
         expect(app.me.nodeAddress!.id, FakeNode.id);
         async.elapse(backShown);
         expect(connectionLine(app), 'Connected to ID FA4E00000001, paired');
+        expect(app.held?.title, 'Connected to ID FA4E00000001, paired');
         // On its paired node the search stops.
         final after = ble.scans;
         async.elapse(const Duration(minutes: 1));
@@ -1044,7 +1047,10 @@ void main() {
         app.stopScan();
         async.elapse(round);
         expect(ble.connects, [strong]);
-        expect(app.held?.title, 'Looking for a public node');
+        expect(
+          app.held?.title,
+          'Using ID 0CE400000004 as a guest: a public node, not yours',
+        );
       });
     });
 
