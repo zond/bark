@@ -4,7 +4,7 @@ Firmware for the LILYGO T-Echo (nRF52840 + SX1262, 433 MHz build). Its own
 Cargo workspace, cross-compiled for `thumbv7em-none-eabihf` (roadmap D7).
 
 Current state (2026-11-09). It runs on four boards on the bench and is
-released as `bark-fw-<N>`, v6 to v8 so far (`README.md`, "Releases";
+released as `bark-fw-<N>`, v8 the latest (`README.md`, "Releases";
 Verified and unverified, below). It starts behind a loader of its own,
 which swaps in a staged image, from the phone, the mesh or the console,
 and swaps it back if it does not confirm itself (Updates, below). The
@@ -118,10 +118,14 @@ Phase 2:
 - Pairing and the phone link with the app, and an update from the phone
   across a lost link, under the loader of roadmap D148, the image then
   on the 32.768 kHz crystal (2026-11-07).
-- An update over the mesh, twice, from one board to another; the
-  second, version 11 of 471 544 bytes, whole an hour after it began and
-  swapped in at a quiet moment (2026-11-09). The neighbour status of
-  roadmap D157 and the rules of D158 are on the bench since 2026-11-09.
+- An update over the mesh from one board to another, the gatherer once
+  left unattended; version 11 of 471 544 bytes was whole an hour after
+  it began and swapped in at a quiet moment (2026-11-09).
+- On the bench since 2026-11-09, with what each is to show in the bench
+  list: the neighbour status and its retries (roadmap D157, D158,
+  D161), the code on the screen, the touch pad and the button (D160),
+  an image gathered over the mesh that hears no one (D159), and whole
+  log lines.
 
 Verified on the host:
 
