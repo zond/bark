@@ -379,9 +379,13 @@ class FakeNodes extends UniversalBlePlatform {
     if (!keepsBonds) bonds.remove(deviceId);
   }
 
+  /// The pairings Android was asked for, each a code typed.
+  int pairings = 0;
+
   /// Pairs, which makes a guest's link the owner's.
   @override
   Future<bool> pair(String deviceId) async {
+    pairings++;
     bonds.add(deviceId);
     final n = nodes[deviceId]!..pair();
     final guest = _links[deviceId];
@@ -1378,17 +1382,33 @@ void main() {
       });
     });
 
+    test(
+      'Pair pressed on a node with a live bond adopts it without a code',
+      () {
+        run(bonds: {strong}, (async, app, ble) {
+          app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+          async.elapse(round);
+          expect(ble.pairings, 0);
+          expect((app.session.connected, app.session.guest), (true, false));
+          expect(app.pairedNode, nodeName(strongId));
+          expect(ble.bonds, {strong});
+        });
+      },
+    );
+
     test('Pair on a node with the phone\'s old bond for it: the bond is '
         'forgotten and the pairing makes a new one', () {
       run(bonds: {strong}, (async, app, ble) {
         ble.nodes[strong]!.paired = false;
         app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
         async.elapse(round + seenWait);
-        expect(ble.connects, [strong]);
+        // Over the old bond first, refused, then paired with a code.
+        expect(ble.connects, [strong, strong]);
         expect((app.session.connected, app.session.guest), (true, false));
         expect(app.pairedNode, nodeName(strongId));
         expect(app.session.pairingLost, isFalse);
         expect(app.staleBond, isNull);
+        expect(ble.pairings, 1);
       });
     });
 

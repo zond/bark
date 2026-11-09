@@ -711,19 +711,29 @@ class AppModel extends ChangeNotifier {
     await _open(n.deviceId, () async {
       await _searchStopped();
       await stopScan();
-      // A bond the phone holds for a node it has not paired with, as far as
-      // the app knows, is one the node no longer has: the pairing makes
-      // a new one.
-      final stale =
-          !again && s.pairedWith != n.name && await BleLink.bonded(n.deviceId);
-      if (again || stale) {
+      final ours = s.pairedWith == n.name && !s.pairingLost;
+      var forget = again;
+      if (!again && !ours && await BleLink.bonded(n.deviceId)) {
+        // A node Android holds a bond with is never paired anew: Android
+        // pairs with its old keys while the node runs a new pairing, and
+        // the key check fails whatever code is typed (bench, 2026-11-10).
+        // The link goes over the bond, and a node that still holds it is
+        // the person's again; one that refuses it has the bond removed,
+        // and the pairing makes a new one.
+        try {
+          return await BleLink.connect(n.deviceId, name: n.name, hadBond: true);
+        } on NotOurs {
+          forget = true;
+        }
+      }
+      if (forget) {
         if (!await BleLink.forget(n.deviceId)) throw StaleBond(n.name);
         if (!await seen(n.deviceId)) throw NotSeen(n.name);
       }
       return BleLink.connect(
         n.deviceId,
         name: n.name,
-        hadBond: !again && s.pairedWith == n.name && !s.pairingLost,
+        hadBond: !again && ours,
         pairing: () {
           _phase(Linking.pairing);
           session.note('Pairing with ${n.name}');

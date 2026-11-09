@@ -356,9 +356,16 @@ with the same **Bluetooth settings** button, and a tap on the node in
 the scan says the same in a dialog. The search passes the node over,
 as every link to it would fail alike, until Android no longer lists the
 bond: it checks at each round and when the app comes to the front, and
-the line goes once the bond is gone. **Pair** on such a node, the
-person's own choice, has Android remove the stale bond first, as **Pair
-again** does, and says the same line only where the bond stays.
+the line goes once the bond is gone.
+
+A node Android lists a bond with is never paired anew: Android pairs
+with its old keys while the node runs a new pairing with a new code, and
+the key check fails whatever code is typed (bench, 2026-11-10, DHKey
+check failed three times). So **Pair** on such a node connects over the
+bond first, and a node that still holds it is the person's again,
+without a code; only a node that refuses it has Android remove the bond,
+as **Pair again** does, and then pairs with the code its screen shows,
+saying the stale-bond line only where Android keeps the bond.
 
 **A guest's errand.** A public node takes one guest's link at a time
 beside its owner's and ends it after 30 s, so a guest does not stay. It
