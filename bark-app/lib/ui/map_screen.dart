@@ -132,6 +132,15 @@ Fact _power({required bool usb, String? battery}) => usb
         battery ?? 'not read',
       );
 
+/// Whether a node is carried, said whatever its header's words leave
+/// out, as a sleepy node's do (spec "Nodes").
+Fact _moving(bool carried) => Fact(
+  Icons.directions_walk,
+  'Moving',
+  'moving',
+  carried ? 'carried' : 'stays put',
+);
+
 /// Where a node's position comes from: GPS, or a map point a person set;
 /// none without a place.
 Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
@@ -425,6 +434,8 @@ class _NodeMarker extends StatelessWidget {
       final st = s.status ?? const Status();
       showModalBottomSheet<void>(
         context: context,
+        // Taller than half the screen when its rows need it.
+        isScrollControlled: true,
         builder: (_) => _Sheet(
           nodeLabel(s.node!.id),
           roleOf(
@@ -439,6 +450,7 @@ class _NodeMarker extends StatelessWidget {
               usb: st.externalPower,
               battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
             ),
+            _moving(st.carried),
             Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
             Fact(
               Icons.sell,
@@ -499,7 +511,7 @@ class _NeighbourMarker extends StatelessWidget {
       Fact(Icons.schedule, 'Last heard', 'last heard', secondsAgo(n.ageS)),
       if (far != null)
         Fact(Icons.straighten, 'Distance', 'distance', distance(far)),
-      if (s != null) ...[
+      if (s != null)
         _power(
           usb: s.usb,
           battery: s.battery == NeighbourStatus.batteryLow
@@ -508,6 +520,8 @@ class _NeighbourMarker extends StatelessWidget {
               ? null
               : '${s.percent}%',
         ),
+      _moving(s?.carried ?? n.carried),
+      if (s != null) ...[
         Fact(
           Icons.hub,
           'Known',
@@ -569,6 +583,8 @@ class _NeighbourMarker extends StatelessWidget {
     return GestureDetector(
       onTap: () => showModalBottomSheet<void>(
         context: context,
+        // Taller than half the screen when its rows need it.
+        isScrollControlled: true,
         builder: (_) => _Sheet(
           nodeLabel(n.id),
           s?.role ??
@@ -618,7 +634,7 @@ class _Sheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,

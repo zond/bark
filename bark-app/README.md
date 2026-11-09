@@ -186,7 +186,7 @@ is a prototype for the bench, not the app people will carry.
   antenna, the RSSI and its margin over the noise floor, such as
   `−71 dBm · +19 dB`, in the link's colour), Last heard (a clock),
   Distance (a ruler), Power (a plug on USB, a battery with its
-  percent), Known (a hub, the neighbours it knows, such as `3 heard ·
+  percent), Moving (a walker, `carried` or `stays put`), Known (a hub, the neighbours it knows, such as `3 heard ·
   3 strong · 0 exchanged`), Version (a price tag, the
   Material set having no version icon, such as `V18 · getting V19
   14/32` while it gathers an image), Place (a satellite for GPS, a pin

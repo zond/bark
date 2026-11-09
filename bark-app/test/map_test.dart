@@ -325,6 +325,7 @@ void main() {
       named('last heard'),
       named('distance'),
       named('battery'),
+      named('moving'),
       named('neighbours known'),
       named('firmware version'),
       named('position from a map point'),
@@ -339,6 +340,7 @@ void main() {
     expect(line('57%'), findsOneWidget);
     expect(line('4 heard \u00b7 2 strong \u00b7 1 exchanged'), findsOneWidget);
     expect(line('V9'), findsOneWidget);
+    expect(line('stays put'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
     expect(line('KNOWN 4/2/1'), findsNothing);
     expect(named('exchanged'), findsNothing);
@@ -348,13 +350,24 @@ void main() {
       ('Last heard', rows[2]),
       ('Distance', rows[3]),
       ('Power', rows[4]),
-      ('Known', rows[5]),
-      ('Version', rows[6]),
-      ('Place', rows[7]),
+      ('Moving', rows[5]),
+      ('Known', rows[6]),
+      ('Version', rows[7]),
+      ('Place', rows[8]),
     ]) {
       expect(line(label), findsOneWidget);
       expect(t.getCenter(line(label)).dy, closeTo(t.getCenter(row).dy, 1));
     }
+    await t.tapAt(Offset.zero);
+    await t.pumpAndSettle();
+
+    // One whose answer says carried, though its heartbeats did not.
+    final carried = list.singleWhere(
+      (n) => fake.statuses[hex(n.id)]?.carried ?? false,
+    );
+    await t.tap(icon(nodeLabel(carried.id)));
+    await t.pumpAndSettle();
+    expect(line('carried'), findsOneWidget);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
 
@@ -491,6 +504,7 @@ void main() {
     expect(find.text('Relays known: 3'), findsNothing);
     expect(icon('neighbours known'), findsOneWidget);
     expect(icon('paired'), findsOneWidget);
+    expect(icon('moving'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     debugPrint = print;
