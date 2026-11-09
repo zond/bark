@@ -734,11 +734,8 @@ relay late; the 90 % times fall evenly with the gap.
 
 ## What is left
 
-- **The firmware's side**: the driver's answers to the update's
-  actions over `bark-image`'s `pieces.rs` and `code.rs` (D149), the
-  policy (keys, the version, given up images), the signature check, the
-  install through the loader, and `Holds` at boot. The firmware's driver
-  answers none of the update's actions yet.
+- **The firmware's side**: built since (roadmap D153), and run on two
+  boards (roadmap Phase 2, "An update over the mesh").
 - **Foreign senders.** Two thirds of the pieces from another channel
   than the sender's home still overlap with another such sender's; a
   holder cannot tell whether a better one reaches the gatherer.

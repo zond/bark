@@ -45,7 +45,7 @@ const _: () = assert!(PIECE == PIECE_BYTES);
 pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The pieces of the image gathered: the radio's task offers, this one
-/// steps. At 7 KB it is built in place, never on the stack.
+/// steps. At about 4 KB it is built in place, never on the stack.
 static STORE: Mutex<ThreadModeRawMutex, RefCell<Store>> = Mutex::new(RefCell::new(Store::EMPTY));
 
 /// The image the node runs, as it serves it, once checked at boot.

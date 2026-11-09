@@ -1,8 +1,8 @@
-//! The pieces of an image a node gathers over the mesh (roadmap D146,
-//! D151;
-//! `docs/mesh-update-2026-10-25.md`, "The code"), kept on the external flash until their block decodes,
-//! and the decoded image, written into the staged slot as the phone's
-//! staging writes it (`crate::boot::Stager`).
+//! The pieces of an image a node gathers over the mesh (roadmap D149,
+//! D151; `docs/mesh-update-2026-10-25.md`, "The code"), kept on the
+//! external flash until their block decodes, and the decoded image,
+//! written into the staged slot as the phone's staging writes it
+//! (`crate::boot::Stager`).
 //!
 //! **What is gathered.** The image as packed: its 256-byte header, then
 //! the bytes of the firmware's slot (`bark-fw/README.md`, "Updates"), in
@@ -54,15 +54,17 @@
 //! million multiply-adds of a byte; at the bus's 2 088 ms for 256 KiB read
 //! (`docs/roadmap.md`, "The external flash's bus"), 2 ms a piece, and the
 //! code's 14 cycles a byte, about 8.3 s of reads and 0.4 s of sums, in
-//! steps of one piece read and its sums, 0.11 ms; a block takes 99 paces of
-//! 13.86 s, 22.9 minutes, to gather, so the decode is 0.6 % of that.
+//! steps of one piece read and its sums, 0.11 ms; a block takes at least
+//! the 80 pieces of a holder's quota a gap of 4.16 s apart, 5.5 minutes, to
+//! gather (spec "Updates over the mesh"), so the decode is under 3 % of
+//! that.
 //!
 //! **What a reset keeps.** The head: the image, which blocks are done, the
 //! table and the header; the decoded blocks in [`DFU`]; and every slot
 //! written whole. [`Store::open`] reads the head, and [`Store::poll`] then
 //! reads every slot, one a step, and erases any lane that holds what is
-//! not wanted: a block done, outside the five, or one whose slots cut
-//! short leave too few for its pieces. Lost and gathered again: the
+//! not wanted: a block done, a block in another block's lane, or one
+//! whose slots cut short leave too few for its pieces. Lost and gathered again: the
 //! pieces queued and not yet written, a decode under way, done again from
 //! the slots, and an erase under way, done again.
 //!
@@ -142,7 +144,7 @@ pub const SLOT: u32 = PROGRAM_PAGE;
 
 /// Blocks whose pieces a node keeps at once: every block of the image,
 /// one lane each, since a holder streams every block it holds and a node
-/// keeps every piece of every block it lacks (roadmap D146, D151).
+/// keeps every piece of every block it lacks (roadmap D151).
 pub const LANES: usize = crate::layout::external::PIECE_LANES as usize;
 
 const SLOTS_PER_SECTOR: usize = (SECTOR / SLOT) as usize;
@@ -187,10 +189,10 @@ const DONE_AT: u32 = 64;
 const TABLE_AT: u32 = SLOT;
 const HEADER_AT: u32 = 4 * SLOT;
 
-/// Pieces waiting in RAM to be written: one arrives every 13.86 s from a
-/// holder, the transport's pace (roadmap D146), and is
-/// written in 1.3 ms ([`ext_flash::PROGRAM_TYP_US`]) before any other step,
-/// so two are room for two holders' pieces at once.
+/// Pieces waiting in RAM to be written: one arrives at most every 4.16 s
+/// from a holder, the update's gap (roadmap D156), and is written in
+/// 1.3 ms ([`ext_flash::PROGRAM_TYP_US`]) before any other step, so two
+/// are room for two holders' pieces at once.
 const QUEUE: usize = 2;
 
 /// Data pieces decoded at once: 494 bytes of RAM, and the lane read 32
@@ -695,7 +697,7 @@ fn slot_address(lane: usize, slot: usize) -> u32 {
 
 impl Store {
     /// A store holding nothing, for a static the firmware opens in place
-    /// ([`Store::reopen`]): at 7 KB it is never built on the stack.
+    /// ([`Store::reopen`]): at about 4 KB it is never built on the stack.
     pub const EMPTY: Store = Store {
         image: None,
         mode: Mode::Empty,

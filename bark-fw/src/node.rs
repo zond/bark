@@ -1,8 +1,10 @@
-//! The protocol core on the board, a relay on USB and sleepy on battery
-//! (`power.rs`, spec "Nodes"), driven by `bark_driver::Driver` against
-//! the SX1262. Its node ID is the chip's (`crate::node_id`).
+//! The protocol core on the board, a relay on USB and on battery what its
+//! motion and its battery make it (`power.rs`, spec "Nodes"), driven by
+//! `bark_driver::Driver` against the SX1262. Its node ID is the chip's
+//! (`crate::node_id`).
 //!
-//! Its application is the phone link (`ble.rs`). The node's place comes
+//! Its application is the phone link (`ble.rs`) and the update over the
+//! mesh (`update/mesh.rs`). The node's place comes
 //! from `BARK_LAT` and `BARK_LON` (degrees) at build time, or from a map
 //! point the phone sets (spec "Node identity", "Position"). Built without
 //! them, and with no place stored as a fixed node, the node has none: it
@@ -743,7 +745,7 @@ impl embassy_usb_logger::ReceiverHandler for IgnoreInput {
     }
 }
 
-/// The core in static memory: at 168 KiB a relay is kept out of every
+/// The core in static memory: at 93 KiB a relay is kept out of every
 /// task's future and stack.
 struct Static(&'static mut Role);
 

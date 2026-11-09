@@ -7,13 +7,15 @@
 //! on that neighbour's channel, sweeping the blocks in order: fresh pieces
 //! of one block until the neighbour furthest behind on it has enough, then
 //! the next block some neighbour there lacks, and the sweep again while
-//! any lacks something. Senders on a channel share one piece a [`PACE`]
-//! between them; every piece is paid from the bucket as a forward is, and
-//! waits behind at most [`PASS`] frames of the send queue. A sleepy node only
-//! gathers; its anchor's frame after a slot heartbeat is the next piece of
-//! its stream on its home channel. A node that gathers says so again every
-//! rotation where its helper hears it, and a helper streams to it only
-//! while it has heard that within [`LEASE_ROTATIONS`] of its rotations.
+//! any lacks something. A sender alone on a channel with nothing else to
+//! send sends a piece a [`GAP`]; senders that hear each other share one
+//! piece a [`PACE`] between them; every piece is paid from the bucket as a
+//! forward is, and waits behind at most [`PASS`] frames of the send queue.
+//! A sleepy node only gathers; its anchor's frame after a slot heartbeat
+//! is the next piece of its stream on its home channel. A node that
+//! gathers says so again every rotation where its helper hears it, and a
+//! helper streams to it only while it has heard that within
+//! [`LEASE_ROTATIONS`] of its rotations.
 
 use super::{Job, Node, Stage};
 use crate::event::{Action, Frame, SlotPiece, Trace};
@@ -730,8 +732,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the channel's pace lets a piece go on `c` at `t`, and if not,
-    /// when it will (spec "Updates over the mesh"): one a [`PACE`] on each
-    /// channel, on at most [`SERVED_CHANNELS`] in one.
+    /// when it will (spec "Updates over the mesh"): one a [`GAP`] or a
+    /// [`PACE`] on each channel, on at most [`SERVED_CHANNELS`] in one pace.
     fn pace_allows(&self, c: Channel, t: Instant) -> Instant {
         let s = &self.spread;
         let mut at = t;
@@ -747,7 +749,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 };
                 // The pace is a floor: with no other sender heard there
                 // since its last piece and nothing else to send, the next
-                // goes as soon as the bucket lets it.
+                // goes a gap after it.
                 let alone = k == 0 && self.queue.is_empty() && self.tail(c, t).is_none();
                 at = at.max(if alone {
                     *x + GAP

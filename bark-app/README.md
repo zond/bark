@@ -652,7 +652,7 @@ a phone (Trying it, With a node).
 2. Go back. A notification of the fake friend's two messages has come.
    A conversation with **Fake friend** holds their two
    messages.
-3. Menu, **Debug**: your identity and card address; link version 8,
+3. Menu, **Debug**: your identity and card address; link version 10,
    the node ID `fa4e00000001`, the clock from the phone with the
    phone's offset, Home "not a home", an address, and Status: ready,
    external power, placed, first rotation running with about 3:15 to go,
@@ -724,7 +724,7 @@ a phone (Trying it, With a node).
    node's screen shows `PAIR CODE` and six digits within a few seconds:
    type them. Settings then says "Connected and paired, MTU 247", and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
-3. **Debug** shows link version 8, the node's clock (from its GPS if it
+3. **Debug** shows link version 10, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
@@ -787,14 +787,14 @@ a phone (Trying it, With a node).
     version` with the old and the new version, then `ble: service
     changed confirmed`; the next connection logs neither.
 13. An update from the phone (Updating a node), on a node of link
-    version 6 with the loader, version N, on USB with its log open. On
+    version 6 or later with the loader, version N, on USB with its log open. On
     the host, from `bark-fw/`, build an image one version up, open for
     the bench, and copy it to the phone:
     `BARK_OPEN=1 BARK_IMAGE_VERSION=N+1 cargo build --release &&
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
     target/vN+1.img`, then sign it with the bench key, which an open
     build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
-    --key-id 1`. In **Settings**, **Firmware** says version N.
+    --key-id 255`. In **Settings**, **Firmware** says version N.
     **Update firmware**, **Pick a file**, the image: "Version N+1".
     **Send to the node**: the node logs `update: receiving version=N+1`
     and then nothing while the bar fills, about 20 s; half way, switch
@@ -828,7 +828,7 @@ a phone (Trying it, With a node).
     version 1, version N is available" opens **Update firmware** with
     "Version N" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
-15. A public node, on link version 8, with two phones. On the owner's
+15. A public node, on link version 8 or later, with two phones. On the owner's
     phone, connected, **Settings**, **Public: serve phones without
     pairing** is on from the start, and the node's screen says `PHONE
     PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE

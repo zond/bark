@@ -18,18 +18,21 @@ spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
 web from small, cheap threads.
 
-## Status (2026-11-05)
+## Status (2026-11-09)
 
-The protocol core, the simulator and the firmware are written. The
-simulator runs a city's collision domain, 28 km² with 270 relays and
-20 000 sleepy nodes, at the design's rate and above; what it measured, and
-the decisions it led to, are in `docs/roadmap.md`. The firmware runs the
-core, a relay on USB, and on battery a relay until its battery is low if
-it stands still, sleepy if carried, behind a loader that swaps in new
-images; it has booted and run on one T-Echo board, alone. Three boards
-are on the bench, on a measurement build: it has measured the radio's
-timings, two frames on one channel and a still link's fading
-(`docs/bench-*.md`). Next is the protocol on the three boards together
+The protocol core, the simulator, the firmware and the Android app are
+written. The simulator runs a city's collision domain, 28 km² with 270
+relays and 20 000 sleepy nodes, at the design's rate and above; what it
+measured, and the decisions it led to, are in `docs/roadmap.md`. The
+firmware runs on four T-Echo boards on the bench: a relay on USB, and on
+battery a relay until its battery is low if it stands still, sleepy if
+carried, behind a loader that swaps in new images, which reach a node
+signed from the phone, from its neighbours over the mesh, or over USB.
+Releases carry the firmware and the app (Releases, below). The bench
+has measured the radio's timings, capture and a still link's fading
+(`docs/bench-*.md`), the swap under resets, and updates from the phone
+and over the mesh (`bark-fw/README.md`, "Verified and unverified").
+Next is the protocol's routing and sleepy nodes on the boards together
 (`docs/roadmap.md`, Phases 2 and 3).
 
 Read, in order:

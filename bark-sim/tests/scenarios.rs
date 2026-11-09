@@ -73,8 +73,8 @@ fn busy_block(seed: u64) -> Scenario {
     sc.protocol.sweep_interval_ms = Some(13 * 86_400_000);
     sc.protocol.heartbeat_min_ms = Some(86_400_000);
     sc.protocol.heartbeat_max_ms = Some(86_400_000);
-    // Leaves stand in for traffic the stub cores do not generate: each
-    // listens on a channel and transmits test frames.
+    // Scripted leaves add raw test frames and readings beside the cores'
+    // traffic: each listens on a channel and transmits test frames.
     for k in 0..300u32 {
         let leaf = format!("leaf:{}", k % 200);
         let at = 0.5 + k as f64 * 0.37;

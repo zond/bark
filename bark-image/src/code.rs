@@ -1,5 +1,5 @@
 //! The code an update's blocks travel in over the mesh
-//! (`docs/mesh-update-2026-10-25.md`, "The code"; roadmap D146): a
+//! (`docs/mesh-update-2026-10-25.md`, "The code"; roadmap D149): a
 //! Reed-Solomon code over GF(2⁸) in evaluation form. A block of `n` data
 //! pieces, `n` at most [`DATA`], is the polynomial of degree below `n`
 //! whose value at point `i` is data piece `i`, a byte position at a time;
