@@ -40,6 +40,14 @@ the case, for the reasons under "Walls, fit and print". The antenna
 stands 126.93 − 65.68 − 1.72 = 59.5 mm above the jack's ring, 1.72 mm
 being how far the ring stands proud of the logo part in the model.
 
+The same print's lid felt flimsy, as if the case could fall out. By the
+formulas under "Snap fit" its six latches, 8 mm tall with a 1.0 mm tooth
+in a 0.25 mm gap, bent 0.75 mm, went on with 12 N in all and broke at
+215 N; a tooth reached 0.75 mm into its groove, 0.5 mm with the lid
+pushed to one side, and the lid could rock in its gap. The latches are now
+12 mm tall with a 1.25 mm tooth and the gap 0.15 mm: 26 N on, 484 N to
+break, 1.1 mm of catch.
+
 The places of the buttons, port and jack are read from the board
 maker's 3D model of the cased T-Echo, `dimensions/t-echo_3d.stl` in its
 repository (<https://github.com/Xinyuan-LilyGO/T-Echo>, fetched
@@ -284,22 +292,34 @@ plane of the print's layers, so the strain runs along the printed lines
 and not across them: across layers printed ASA holds only 11 MPa, against
 42 MPa along them (Prusament ASA data sheet). The strain at a beam's
 root is 1.5 × thickness × deflection / length² (Bayer, "Snap-Fit Joints
-for Plastics – A Design Guide", Table 1, constant section): 2.0 mm thick,
-1.0 mm tooth, 25 mm long, 0.48 %. The guide lets an amorphous plastic go
-to about 70 % of its yield strain for one snap and 60 % of that for
-snaps repeated; Prusament ASA yields at 3.4 %, so 1.4 %. The script
-halves that for the cold and checks every beam against 0.71 %. A beam
-pushes back with about 1.7 N (modulus 1.7 GPa); through the 30° lead-in,
-with a friction coefficient of 0.5 assumed, the lid goes on with about
-16 N. The catch is square; to open, push each beam in through its slot
-with a small screwdriver. The slots are drains as well.
+for Plastics – A Design Guide", Table 1, constant section). Each beam is
+2.0 mm thick, 12 mm tall and 25 mm long, and its tooth reaches 1.25 mm
+past the lid's edge, so with the lid's 0.15 mm gap it bends 1.1 mm,
+0.53 %, and 0.60 % with the lid pushed to the far side. The guide lets
+an amorphous plastic go to about 70 % of its yield strain for one snap
+and 60 % of that for snaps repeated; Prusament ASA yields at 3.4 %, so
+1.4 %. The script halves that for the cold and checks every beam
+against 0.71 %. A beam bent so pushes back with b h² E ε / 6 l = 2.9 N
+(b its height, h its thickness, modulus 1.7 GPa); through the 30°
+lead-in, with a friction coefficient of 0.5 assumed, that is
+P (μ + tan 30°) / (1 − μ tan 30°) = 4.4 N a latch, and the lid goes on
+with 26 N. The catch is square, 90° to the pull: a pull on the lid would
+cam a beam in only on a face flatter than arctan(1/μ) = 63°, so the lid
+does not come off by pulling, and holds until a beam breaks, bent in its
+12 mm height by the pull at its tooth: 42 MPa × 2.0 × 12² / (6 × 25) =
+81 N a latch, 484 N for the lid. A tooth reaches 1.1 mm into its
+groove, and 0.95 mm with the lid pushed to the far side. A push up on
+the lid is taken by the posts, the case and the stops before a tooth
+touches its groove's sloped top, so it never cams the beams in either.
+To open, push each beam in through its slot with a small screwdriver.
+The slots are drains as well.
 
 **No gasket.** Water does not enter from below: rain falls on the top
 and runs off the walls past the joint, and only wind-driven spray
 reaches the lid from underneath, onto a recessed plate it cannot climb
 past. A gasket would make the box tight but for its openings, and so
 trap what the breathing draws in; at −25 °C a printed or rubber seal
-also stiffens. The joint stays a plain 0.25 mm gap.
+also stiffens. The joint stays a plain 0.15 mm gap.
 
 **Cable entry.** The cable comes down through a slot at the bay's outer
 end that runs to the lid's front edge; the cable is slid in from the
@@ -388,8 +408,10 @@ the stops and the posts, since the first print at 0.4 from the maker's
 model would not take the case: a printed wall is out by about 0.2 mm,
 a caliper's flat jaw reads the widest point of a case that is not
 flat, and the readings and the model differ by 0.15 to 0.4 mm even
-along the axes where they agree; and 0.25 mm each side between
-lid and body. Prusament ASA prints at 260 ± 10 °C on a bed at
+along the axes where they agree; and 0.15 mm each side between
+lid and body, the body's opening chamfered 1 mm inside its drip edge so
+the lid finds its way in and the first layer's spread does not catch
+it. Prusament ASA prints at 260 ± 10 °C on a bed at
 110 ± 5 °C with the fan at 30 % (data sheet), in an enclosure, since ASA
 warps when its surroundings are cool (Prusa's ASA article). The body
 prints standing on its open end, as mounted: the ceilings bridge the

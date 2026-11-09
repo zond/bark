@@ -77,11 +77,13 @@ ASA guidance:
 | walls | 6 perimeters of 0.4 mm, so the 2.4 mm walls are solid |
 | top and bottom | solid, at least 5 layers |
 | bay's front wall | 100 % infill, by a modifier over it |
+| latch beams | solid: 2 mm, five perimeters |
 | supports | none |
 
-The body stands on its open end, as mounted; the lid on its floor. Keep
-the first layer from spreading (elephant's foot) on the body: the lid
-fits inside the body's bottom edge with 0.25 mm a side.
+The body stands on its open end, as mounted; the lid on its floor. The
+lid fits inside the body with 0.15 mm a side; the body's opening is
+chamfered 1 mm, so a first layer that spreads (elephant's foot) does
+not catch it.
 
 ## Assembly
 

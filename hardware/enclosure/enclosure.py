@@ -109,7 +109,11 @@ BEND_R = 38.0
 CLEAR = 0.6
 RIB_BITE = 0.15       # crush ribs press this far into the case: no rattle
 ANT_GAP = 4.0         # air around the antenna, so the shell barely detunes it
-LID_CLEAR = 0.25      # lid to body, each side: a sliding fit
+# Lid to body, each side. The first print's 0.25 let the lid rock; 0.15 is
+# about a printed wall's error, and a chamfer round the body's opening,
+# inside the drip skirt, leads the lid in and takes the first layer's spread.
+LID_CLEAR = 0.15
+LID_LEAD = 1.0        # that chamfer, 45 deg
 BUTTON_GAP = 0.8      # wall beside the buttons: never pressed by the shell
 
 # --- Walls and print -----------------------------------------------------------
@@ -122,8 +126,11 @@ LID_T = 2.4           # floor at its front edge
 LID_FALL = 1.2        # floor top falls this much from back to front, to the drains
 DRIP = 1.5            # body skirt hangs below the lid: water drips off before the joint
 BEAM_T = 2.0          # latch beam thickness, flexing in the layer plane
-BEAM_H = 8.0          # its height
-UNDERCUT = 1.0        # tooth depth = deflection on snapping
+# Its height. The force a beam pushes back with grows with it and its
+# strength in a pull with its square, at no cost in strain; with the
+# cable's bend setting the floor it costs no height either.
+BEAM_H = 12.0
+UNDERCUT = 1.25       # tooth depth past the lid's edge; the beam bends by this less LID_CLEAR
 TOOTH_FLAT = 2.0      # tooth's vertical catch length
 LEAD_DEG = 30.0       # lead-in face from the insertion direction
 SLOT_W = 4.0          # gap behind each beam: room to flex, a drain, a release
@@ -134,6 +141,12 @@ POST_D = 6.0          # posts that hold the case up against the top stops
 # repeated ones; Prusament ASA yields at 3.4 %, so 1.4 %. Half of that for
 # brittleness at -25 C (notched impact falls 40 -> 9 kJ/m2 at -30 C).
 STRAIN_LIMIT = 0.5 * 0.6 * 0.7 * 0.034
+# For the forces the script reports, not for the shape: Prusament ASA's
+# tensile modulus 1.7 GPa and strength along the printed lines 42 MPa
+# (data sheet), and an assumed friction coefficient of ASA on ASA.
+E_ASA = 1700.0        # MPa
+SIGMA_ALONG = 42.0    # MPa
+MU = 0.5
 
 # --- Mounting ------------------------------------------------------------------------
 PAD_T = 8.0           # back pad: bands pass through it, behind the body
@@ -231,9 +244,28 @@ RIBS_X = tuple(CASE_L + f * CASE_W for f in (0.2, 0.5, 0.8))
 RIB_W = 1.6
 
 
-def beam_strain(length):
+def beam_strain(length, y=UNDERCUT):
     # Cantilever of constant section, Bayer guide Table 1: e = 1.5 h y / l^2.
-    return 1.5 * BEAM_T * UNDERCUT / length ** 2
+    # By default the worst case: the lid pushed to the far side.
+    return 1.5 * BEAM_T * y / length ** 2
+
+
+def beam_push(length, y=UNDERCUT - LID_CLEAR):
+    """Force the beam's tip pushes back with when bent by y (Bayer, P = b h^2 E e / 6 l)."""
+    return BEAM_H * BEAM_T ** 2 * E_ASA * beam_strain(length, y) / (6 * length)
+
+
+def snap_in(length):
+    """Push on the lid for one latch through its lead-in (Bayer, W = P (mu + tan a) / (1 - mu tan a))."""
+    t = math.tan(math.radians(LEAD_DEG))
+    return beam_push(length) * (MU + t) / (1 - MU * t)
+
+
+def pull_out(length):
+    """A square catch locks against any pull (it would release only below
+    atan(1 / MU), 63 deg), so the lid holds until a beam breaks: bent in its
+    tall direction by the pull at its tooth, along its printed lines."""
+    return SIGMA_ALONG * BEAM_T * BEAM_H ** 2 / (6 * length)
 
 
 def tooth_x(x_root, x_free):
@@ -259,7 +291,9 @@ def groove_profile(side):
     wall = CY1 if side > 0 else CY0
     d = UNDERCUT + 0.3
     z0 = TOOTH_Z - 0.2
-    z1 = TOOTH_Z + TOOTH_FLAT + 0.4
+    # Room above the tooth for the lid to be pushed up until the posts, the
+    # case and the stops take it, so a push never cams the beams in.
+    z1 = TOOTH_Z + TOOTH_FLAT + 2 * CLEAR + 0.4
     s = side
     return [(wall - s * 0.01, z0), (wall + s * d, z0), (wall + s * d, z1), (wall - s * 0.01, z1 + d)]
 
@@ -273,6 +307,12 @@ def make_body(ribs=True):
     cavity = cavity.union(box(TX0, TX1, CY0, CY1, BODY_BOT_Z - 1, TOWER_CEIL_Z))
     cavity = cavity.union(box(CX0, MX0 + 0.01, CY0, CY1, BODY_BOT_Z - 1, BAY_TOP))
     body = outer.cut(cavity)
+    # The lead chamfer round the opening.
+    c = LID_LEAD
+    lead = (cq.Workplane("XY").workplane(offset=BODY_BOT_Z - 0.01)
+            .center((CX0 + CX1) / 2, (CY0 + CY1) / 2).rect(CX1 - CX0 + 2 * c, CY1 - CY0 + 2 * c)
+            .workplane(offset=c + 0.01).rect(CX1 - CX0, CY1 - CY0).loft())
+    body = body.cut(lead)
 
     # Shoulder over the screen part beside the logo part; over the logo part
     # the ceiling beside the tower is the stop. They hold the case from above.
@@ -434,10 +474,15 @@ def check(body, bare, lid, techo):
         v = volume(part.intersect(grown))
         assert v < 1e-3, f"{name} is within {CLEAR} mm of the case: {v:.3f} mm3"
     print(f"  crush ribs bite {volume(body.intersect(techo)):.0f} mm3 of the case")
-    for x_root, x_free, _ in BEAMS:
-        e = beam_strain(abs(x_free - x_root))
+    for i, (x_root, x_free, _) in enumerate(BEAMS):
+        n = abs(x_free - x_root)
+        e = beam_strain(n)
         assert e <= STRAIN_LIMIT, f"beam strain {e:.4f} over {STRAIN_LIMIT:.4f}"
-    print(f"  latch strain {max(beam_strain(abs(b - a)) for a, b, _ in BEAMS):.2%}, limit {STRAIN_LIMIT:.2%}")
+        print(f"  latch {i + 1}: {n:.0f} mm, strain {beam_strain(n, UNDERCUT - LID_CLEAR):.2%} "
+              f"({e:.2%} with the lid to the far side, limit {STRAIN_LIMIT:.2%}), "
+              f"snap-in {snap_in(n):.1f} N, pull-out {pull_out(n):.0f} N")
+    print(f"  lid: snap-in {sum(snap_in(abs(b - a)) for a, b, _ in BEAMS):.0f} N, "
+          f"pull-out {sum(pull_out(abs(b - a)) for a, b, _ in BEAMS):.0f} N")
 
 
 def watertight(path):
