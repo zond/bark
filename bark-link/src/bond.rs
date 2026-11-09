@@ -118,3 +118,24 @@ impl Bond {
 pub fn public(bond: Option<&Bond>) -> bool {
     bond.is_none_or(|b| !b.private)
 }
+
+/// The bond to keep once a pairing has ended, given the one kept before
+/// and the pairing's: the pairing's only if it was authenticated, by the
+/// passkey on the node's screen, and bonds; the node stays private or
+/// public as it was. A pairing that failed, was cut off, or was not
+/// authenticated leaves the kept bond as it was, whatever the host made of
+/// it (spec "Phone link", Pairing).
+pub fn after_pairing(
+    kept: Option<Bond>,
+    paired: Option<Bond>,
+    authenticated: bool,
+) -> Option<Bond> {
+    match paired.filter(|_| authenticated) {
+        Some(b) => Some(Bond {
+            private: kept.is_some_and(|k| k.private),
+            owner: None,
+            ..b
+        }),
+        None => kept,
+    }
+}

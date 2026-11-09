@@ -71,11 +71,6 @@ jobs:
       # BARK_LON: a released node takes its place from its GPS or from the
       # phone, never from the build.
       BARK_IMAGE_VERSION: ${{ needs.version.outputs.n }}
-      # The public keys an image to stage must be signed by, a repository
-      # variable (bark-fw/README.md, "Updates", Keys); without it the
-      # firmware holds no key and uf2.py refuses to pack it. The console build holds them too, so that it stages
-      # the released image.
-      BARK_SIGNING_KEYS: ${{ vars.BARK_SIGNING_KEYS }}
       ELF: target/thumbv7em-none-eabihf/release/bark-fw
       LOADER: ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader
     steps:

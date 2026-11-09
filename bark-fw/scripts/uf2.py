@@ -34,6 +34,7 @@ always boots as it is: no swap asked for before the copy takes place over it.
 from __future__ import annotations
 
 import argparse
+import os
 import struct
 import sys
 
@@ -218,14 +219,15 @@ def signing_keys(image: bytes, start: int, syms: dict[str, int]) -> list[tuple[i
     return [(s[0], s[1:]) for s in slots if s[0] != 0]
 
 
-def check_keys(image: bytes, start: int, syms: dict[str, int]) -> None:
-    """Exit on a protected firmware that holds no signing key: it would
-    stage no image, so the node could be updated only by hand."""
-    if symbol_word(image, start, syms, "BARK_OPEN") != 1 and not signing_keys(image, start, syms):
-        sys.exit(
-            "a protected firmware without BARK_SIGNING_KEYS holds no key and accepts no staged image; "
-            'build it with BARK_SIGNING_KEYS, or open with BARK_OPEN=1 (bark-fw/README.md, "Updates", Keys)'
-        )
+def key_name(key_id: int, public: bytes) -> str:
+    """How a held key reads: the project's or the bench key by its file in
+    keys/, so that a refusal says which a firmware holds."""
+    keys = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "keys")
+    for file, name in (("project.pub", "the project's key"), ("bench.pub", "the bench key")):
+        with open(os.path.join(keys, file)) as f:
+            if f"{key_id}:{public.hex()}" in f.read().split():
+                return f"{name} {key_id}"
+    return f"key {key_id}"
 
 
 def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str]]:
@@ -249,14 +251,13 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None) -> tuple[bytes, list[str
     lines.append(f"stack:    {room} bytes, the floor {STACK_FLOOR}")
     start, end = region(syms, "__bootloader_active")
     firmware = flash_image(load_segments(firmware_elf), start, end, "firmware")
-    check_keys(firmware, start, syms)
     if loader_elf is not None and bench and symbol_word(firmware, start, syms, "BARK_OPEN") != 1:
         # The loader's reset is for the bench alone (roadmap D143).
         sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with an open firmware (BARK_OPEN=1)")
     payloads += blocks(start, firmware)
     lines.append(f"firmware: {len(firmware)} bytes at {start:#x}")
     for key_id, public in signing_keys(firmware, start, syms):
-        lines.append(f"signing key {key_id}: {public.hex()}")
+        lines.append(f"signing key: {key_name(key_id, public)}, {public.hex()}")
     if loader_elf is not None:
         written = {addr for addr, _ in payloads}
         erased = [a for a in range(WINDOW_START, SOFTDEVICE_END, UF2_PAYLOAD) if a not in written]

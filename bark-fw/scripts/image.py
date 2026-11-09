@@ -52,7 +52,8 @@ SIGNED_LEN = 48
 SLOTS = 3
 SIGNATURE_LEN = 64
 SLOT_LEN = 1 + SIGNATURE_LEN
-# The bench key pair, for open builds alone (bark-fw/README.md, "Updates").
+# The bench key pair, which open builds hold beside the project's keys
+# (bark-fw/README.md, "Updates").
 KEYS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "keys")
 BENCH_KEY = os.path.join(KEYS, "bench.pem")
 
@@ -89,7 +90,6 @@ def pack(elf: bytes) -> tuple[bytes, int]:
     syms = uf2.symbols(elf)
     start, end = uf2.region(syms, "__bootloader_active")
     image = uf2.flash_image(uf2.load_segments(elf), start, end, "firmware")
-    uf2.check_keys(image, start, syms)
     at = syms.get("BARK_IMAGE_VERSION")
     if at is None or not start <= at < start + len(image) - 4:
         sys.exit("the ELF has no BARK_IMAGE_VERSION in its image")
@@ -216,12 +216,13 @@ def accepted_by(path: str, elf_path: str) -> str:
         if key_id in keys:
             try:
                 ed.Ed25519PublicKey.from_public_bytes(keys[key_id]).verify(signature, signed)
-                return f"{path}: version {version} over {running}, signed by key {key_id}, which {elf_path} holds"
+                held = uf2.key_name(key_id, keys[key_id])
+                return f"{path}: version {version} over {running}, signed by {held}, which {elf_path} holds"
             except InvalidSignature:
                 pass
-    held = ", ".join(str(k) for k in sorted(keys))
+    held = ", ".join(uf2.key_name(k, keys[k]) for k in sorted(keys))
     found = ", ".join(str(i) for i, _ in slots(head) if i) or "none"
-    sys.exit(f"{path}: no signature verifies under {elf_path}'s keys {held} (signed by: {found})")
+    sys.exit(f"{path}: no signature verifies under the keys {elf_path} holds, {held} (signed by: {found})")
 
 
 def answer(fd: int, buf: bytearray, words: tuple[str, ...]) -> str:
