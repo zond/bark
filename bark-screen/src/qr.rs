@@ -184,4 +184,4 @@ fn line(picture: &mut Picture, a: (i32, i32), b: (i32, i32), keep: impl Fn(i32, 
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

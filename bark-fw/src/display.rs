@@ -422,6 +422,14 @@ pub async fn run(
                     picture.text(text.bytes(), bark_screen::SCALE, *y);
                     embassy_futures::yield_now().await;
                 }
+                for (label, y) in bark_screen::labels(&state).iter().flatten() {
+                    picture.text_at(
+                        label.as_bytes(),
+                        bark_screen::LABEL_SCALE,
+                        bark_screen::LABEL_LEFT,
+                        *y,
+                    );
+                }
             }
             Face::Code => {
                 for part in 0..bark_screen::qr::PARTS {

@@ -3870,9 +3870,20 @@ Nothing else is drawn.
 (`bark-fw/README.md`, Display), and the code shows nothing that would
 grow stale.
 
-**The button.** Held 3 s, the button forces the other role
-([nodes](#nodes)) and shows the lines, so that the person holding it
-sees the role it took. A shorter press does nothing.
+**The buttons.** Both are on the case's left side as the screen reads:
+the reset button nearer the top, the user button below the glass. Held
+3 s, the user button forces the other role ([nodes](#nodes)) and shows
+the lines, so that the person holding it sees the role it took; a
+shorter press does nothing. A press of the reset button resets the
+chip, and the node boots the image it ran. The lines label both at
+their left edge, each on the margin nearer its button: `<-REBOOT` at
+the top, and at the bottom `<-[SLEEP] 3S` on a relay or `<-[WAKE] 3S`
+on a sleepy node, none where the force would not be taken, a sleepy
+node on battery at its low level. The code shows no labels.
+
+*Why the reset button only resets.* It is wired to the chip's reset
+pin, and reading a long press from it would take that pin over, which
+would end the bootloader's double tap and a hung board's recovery.
 
 *Why 3 s.* A choice: thirty times an ordinary press of about 100 ms, so
 that a bump, a bag or a curious finger does not change what the node

@@ -72,7 +72,11 @@ impl Picture {
     /// pixels. A character the font lacks is a blank.
     pub fn text(&mut self, text: &[u8], scale: usize, y: usize) {
         let width = text_width(text.len(), scale);
-        let x0 = WIDTH.saturating_sub(width) / 2;
+        self.text_at(text, scale, WIDTH.saturating_sub(width) / 2, y);
+    }
+
+    /// `text` with its top left corner at `(x0, y)`.
+    pub fn text_at(&mut self, text: &[u8], scale: usize, x0: usize, y: usize) {
         for (i, &c) in text.iter().enumerate() {
             let glyph = glyph(c).unwrap_or([0; GLYPH_HEIGHT]);
             for (row, bits) in glyph.iter().enumerate() {
@@ -170,6 +174,9 @@ pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
         b'+' => [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00],
         b'-' => [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00],
         b'/' => [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00],
+        b'<' => [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02],
+        b'[' => [0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E],
+        b']' => [0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E],
         _ => return None,
     })
 }
@@ -320,15 +327,42 @@ pub struct Fixed<'a> {
 }
 
 /// The top of the first line, and the gap below the header.
-const TOP: usize = 6;
+const TOP: usize = 10;
 const GAP: usize = 8;
+
+/// The buttons' labels: one font pixel a pixel, at the left edge, on the
+/// lines picture's top and bottom margins, each the one nearer its
+/// button: both buttons are on the case's left side as the screen reads,
+/// the reset button nearer the top and the user button below the glass
+/// (`docs/enclosure-2026-11-09.md`, the maker's case model). The long
+/// press's length is `bark-fw`'s `button::LONG_PRESS`.
+pub const LABEL_SCALE: usize = 1;
+pub const LABEL_LEFT: usize = 2;
+pub const REBOOT_TOP: usize = 1;
+pub const ROLE_TOP: usize = HEIGHT - 1 - GLYPH_HEIGHT * LABEL_SCALE;
 
 /// The most lines the screen takes: the role and `STARTING` as the
 /// header, the ID, the image and the one it gathers, the phone, the
 /// state's three, and the time.
 pub const LINES: usize = 10;
 
-const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= HEIGHT);
+const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= ROLE_TOP);
+const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
+
+/// The labels the lines show beside the buttons that change something,
+/// each with its top row, the arrow pointing at the button: the reset
+/// button reboots; the user button held forces the other role, so it
+/// says what it would turn the node to, and nothing when that would not
+/// be taken, a sleepy node on battery at its low level (spec "Screen and
+/// buttons").
+pub fn labels(state: &State) -> [Option<(&'static str, usize)>; 2] {
+    let role = match (state.sleepy, state.battery) {
+        (false, _) => Some("<-[SLEEP] 3S"),
+        (true, Battery::Low) => None,
+        (true, _) => Some("<-[WAKE] 3S"),
+    };
+    [Some(("<-REBOOT", REBOOT_TOP)), role.map(|r| (r, ROLE_TOP))]
+}
 
 /// The screen's lines, each with the row its top edge is at, for `state`
 /// with the node up `up_min` minutes and the time `clock`; `None` past
@@ -511,6 +545,9 @@ pub fn draw(
         Face::Lines => {
             for (text, y) in lines(fixed, state, up_min, clock).iter().flatten() {
                 picture.text(text.bytes(), SCALE, *y);
+            }
+            for (label, y) in labels(state).iter().flatten() {
+                picture.text_at(label.as_bytes(), LABEL_SCALE, LABEL_LEFT, *y);
             }
         }
         Face::Code => {

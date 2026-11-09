@@ -132,7 +132,7 @@ fn the_code_reads() {
 }
 
 /// The picture as a raw PBM, 1 black.
-fn pbm(p: &Picture) -> Vec<u8> {
+pub(crate) fn pbm(p: &Picture) -> Vec<u8> {
     let mut out = std::format!("P4\n{WIDTH} {HEIGHT}\n").into_bytes();
     for y in 0..HEIGHT {
         for x in (0..WIDTH).step_by(8) {

@@ -865,9 +865,15 @@ level wait for the next touch. Nothing else is drawn. Each picture is
 drawn to its end before the next is considered, so none starts while a
 refresh runs. `bark_screen::schedule` decides, tested on the host.
 
-*The button.* Held 3 s, the user button (P1.10, `src/button.rs`) forces
-the other role (spec "Nodes", "Screen and buttons") and shows the lines;
-a shorter press does nothing.
+*The buttons.* Held 3 s, the user button (P1.10, `src/button.rs`)
+forces the other role (spec "Nodes", "Screen and buttons") and shows the
+lines; a shorter press does nothing. A press of the reset button resets
+the chip into the image it ran; a double tap within half a second
+enters the bootloader instead (Flash, above), which the screen does not
+say. The lines label both at their left edge, in 1-pixel text on the
+margin nearer each: `<-REBOOT` at the top, `<-[SLEEP] 3S` or
+`<-[WAKE] 3S` at the bottom; the ten lines start 10 px down to make
+room.
 
 *The pad.* A touch sensor chip on the board gives a level on P0.11
 while touched. Its polarity is not in the repository's notes; such

@@ -268,7 +268,7 @@ fn every_line_fits_and_is_drawable() {
 }
 
 /// The picture is the lines drawn: something black in each line's band,
-/// white outside them.
+/// white outside them but for the buttons' labels in the margins.
 #[test]
 fn the_picture_is_the_lines() {
     let state = State::default();
@@ -287,8 +287,11 @@ fn the_picture_is_the_lines() {
         );
     }
     let last = rows.last().unwrap() + line_height(SCALE);
-    assert!(!(last..HEIGHT).any(inked));
-    assert!(!(0..rows[0]).any(inked));
+    let label = LABEL_SCALE * 7;
+    assert!(!(last..ROLE_TOP).any(inked));
+    assert!(!(REBOOT_TOP + label..rows[0]).any(inked));
+    assert!((ROLE_TOP..ROLE_TOP + label).any(inked));
+    assert!((REBOOT_TOP..REBOOT_TOP + label).any(inked));
     // Drawing again over an old picture leaves nothing of it.
     let mut q = Picture::white();
     draw(
@@ -382,4 +385,49 @@ fn the_phone_paired_or_its_code() {
     assert_eq!(phone(Phone::Public), "PHONE     PUBLIC");
     assert_eq!(phone(Phone::Code(42)), "PAIR CODE 000042");
     assert_eq!(phone(Phone::Code(999_999)), "PAIR CODE 999999");
+}
+
+/// Beside each button that changes something, what it does: the reset
+/// button reboots; the user button, held, forces the other role, none
+/// where that would not be taken. Only on the lines.
+#[test]
+fn the_buttons_labelled() {
+    let label = |state: State| labels(&state).map(|l| l.map(|(t, _)| t));
+    assert_eq!(
+        label(State::default()),
+        [Some("<-REBOOT"), Some("<-[SLEEP] 3S")]
+    );
+    let sleepy = State {
+        sleepy: true,
+        battery: Battery::Percent(50),
+        ..State::default()
+    };
+    assert_eq!(label(sleepy), [Some("<-REBOOT"), Some("<-[WAKE] 3S")]);
+    let low = State {
+        battery: Battery::Low,
+        ..sleepy
+    };
+    assert_eq!(label(low), [Some("<-REBOOT"), None]);
+    let forced = State {
+        forced: true,
+        ..sleepy
+    };
+    assert_eq!(label(forced)[1], Some("<-[WAKE] 3S"));
+    for (t, _) in labels(&State::default()).iter().flatten() {
+        assert!(t.bytes().all(|c| glyph(c).is_some()));
+    }
+    // At the left edge, in the margins; and not on the code.
+    let mut p = Picture::white();
+    draw(&mut p, Face::Lines, &FIXED, &State::default(), 3, CLOCKS[1]);
+    let left = (0..WIDTH).find(|&x| (ROLE_TOP..HEIGHT).any(|y| p.black(x, y)));
+    assert_eq!(left, Some(LABEL_LEFT));
+    if let Some(path) = std::env::var_os("BARK_SCREEN_LINES") {
+        std::fs::write(path, crate::qr::tests::pbm(&p)).unwrap();
+    }
+    let mut q = Picture::white();
+    draw(&mut q, Face::Code, &FIXED, &State::default(), 3, None);
+    let mut with = Picture::white();
+    with.bytes = q.bytes;
+    with.text_at(b"<-REBOOT", LABEL_SCALE, LABEL_LEFT, REBOOT_TOP);
+    assert!(with.bytes != q.bytes, "the code shows no label");
 }
