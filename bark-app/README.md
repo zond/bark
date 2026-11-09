@@ -149,10 +149,11 @@ is a prototype for the bench, not the app people will carry.
   also asks each neighbour once, through Ask, what its own screen shows;
   a neighbour that answers has its role under its marker in its
   screen's words, such as `FIXED RELAY` or `SLEEPY ANCHORED`, and its
-  details show its screen's lines one a row under the distance, in
-  place of the flags: the role, its power, the neighbours it knows, its
-  firmware version and, from link version 10, the image it gathers,
-  such as `GET V14 14/31`. An ask costs airtime, so
+  details show its screen's lines one a row under the distance (the
+  role, its power, the neighbours it knows, its firmware version and,
+  from link version 10, the image it gathers, such as `GET V14 14/31`)
+  in place of the sleepy and carried flags they repeat, then this
+  node's own view of it, such as its anchor or a ban. An ask costs airtime, so
   one lost is not repeated: the person refreshes. The
   node is drawn at its own position, not its address, so a sleepy node
   is not drawn on its anchor; a node without a place has its

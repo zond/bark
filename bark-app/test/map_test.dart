@@ -240,7 +240,7 @@ void main() {
     expect(find.text('SLEEPY ANCHORED'), findsOneWidget);
 
     // The sleepy one's details say its screen's lines, one a row right
-    // under its distance, in place of the app's own flags.
+    // under its distance, in place of the flags they repeat.
     Finder icon(String label) =>
         find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
     final sleepy = list.singleWhere((n) => n.sleepy);
@@ -264,7 +264,10 @@ void main() {
       expect(ys[i], greaterThan(ys[i - 1]));
     }
     expect(line('sleepy'), findsNothing);
-    expect(line('position from a map point'), findsNothing);
+    // This node's view of it stays, after its screen's lines.
+    final mapPoint = line('position from a map point');
+    expect(mapPoint, findsOneWidget);
+    expect(t.getTopLeft(mapPoint).dy, greaterThan(ys.last));
     expect(find.textContaining('Its screen'), findsNothing);
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
