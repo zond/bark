@@ -103,6 +103,13 @@ pub const FULL_FRAME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBO
 /// take at most 1 % of a channel's time (spec "Updates over the mesh").
 pub const PACE: Duration = FULL_FRAME.mul(100);
 
+/// The fastest a holder sends pieces on an idle channel: one a refill of
+/// a full frame at the duty cap, 138.6 ms × 600 / 59 = 1.41 s
+/// (spec "Updates over the mesh", "Duty cycle cap").
+pub const FASTEST: Duration = budget::refill_time(FULL_FRAME);
+
+const _: () = assert!(FASTEST.as_micros() / 10_000 == 140);
+
 /// How many frames of the send queue may go before an update frame that
 /// is due: the full frames the bucket refills in one [`PACE`], 9.83,
 /// rounded, less the update frame itself. A node at its cap then sends an

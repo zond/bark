@@ -129,7 +129,7 @@ pub const fn most_on_air(span: Duration) -> Duration {
 }
 
 /// The time the bucket takes to refill `d`.
-const fn refill_time(d: Duration) -> Duration {
+pub const fn refill_time(d: Duration) -> Duration {
     Duration::from_micros((d.as_micros() * RATE_DEN).div_ceil(RATE_NUM))
 }
 

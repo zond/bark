@@ -592,7 +592,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 } else {
                     0
                 };
-                at = at.max(*x + PACE.mul(k + 1));
+                // The pace is a floor: with no other sender heard there
+                // since its last piece and nothing else to send, the next
+                // goes as soon as the bucket lets it.
+                let alone = k == 0 && self.queue.is_empty();
+                at = at.max(if alone { *x } else { *x + PACE.mul(k + 1) });
             }
         }
         let mut ends = [Instant::ZERO; SERVED_CHANNELS];
@@ -730,11 +734,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let airtime = mac::airtime(&f);
         if !self.affordable(airtime, now) {
             self.slot_end(SlotPiece::Bucket, emit);
+            // Two holders the bucket holds alike would wait out the same
+            // refill and send together: each waits a random time more,
+            // within two frames, as after a piece.
+            let jitter = self.rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
             self.spread.ready_at = self
                 .radio
                 .budget
                 .allowed_at(airtime, REPLY_RESERVE, now)
-                .unwrap_or(now + PACE);
+                .map_or(now + PACE, |t| t + jitter);
             return false;
         }
         self.radio.excursion.check(Job::Update, c, emit);
@@ -859,5 +867,49 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 s.target[i] = sweep_pieces(deficit);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::Config;
+    use crate::tables::send_queue::Outgoing;
+
+    /// The pace is a floor: alone on a channel and with nothing else to
+    /// send, the next piece may go at once; with a frame of the send
+    /// queue waiting, or another sender heard there since, it keeps the
+    /// pace (spec "Updates over the mesh").
+    #[test]
+    fn the_pace_is_a_floor() {
+        let mut r = crate::Relay::new(Config::default(), 1);
+        let c = r.home;
+        let x = Instant::ZERO + Duration::from_secs(100);
+        r.spread.sent[0] = Some((c, x));
+        assert_eq!(r.pace_allows(c, x), x, "idle and alone: at once");
+        let frame = mac::frame(
+            &Packet::Update(Update::Piece {
+                tag: ImageTag([1; 4]),
+                block: 0,
+                index: 0,
+                bytes: &[0; PIECE_BYTES],
+            }),
+            c,
+            MIN_PREAMBLE_SYMBOLS,
+        );
+        r.queue
+            .push(Outgoing::new(
+                frame,
+                crate::tables::send_queue::Kind::Forward,
+            ))
+            .unwrap();
+        assert_eq!(r.pace_allows(c, x), x + PACE, "busy: the pace");
+        r.queue.clear();
+        r.spread.others[0] = x + Duration::from_secs(1);
+        assert_eq!(
+            r.pace_allows(c, x),
+            x + PACE.mul(2),
+            "another heard: shared"
+        );
     }
 }
