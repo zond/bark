@@ -39,6 +39,13 @@ class ConversationsScreen extends StatelessWidget {
         actions: [
           FetchButton(app),
           IconButton(
+            tooltip: 'Contacts',
+            // A head, as a contact is a person; account_circle would read
+            // as the person's own account, which is My card.
+            icon: const Icon(Icons.person, semanticLabel: 'Contacts'),
+            onPressed: () => _open(context, ContactsScreen(app)),
+          ),
+          IconButton(
             tooltip: 'My card',
             icon: const Icon(Icons.qr_code),
             onPressed: () => _open(context, CardScreen(app)),
@@ -46,10 +53,6 @@ class ConversationsScreen extends StatelessWidget {
           PopupMenuButton<Widget Function()>(
             onSelected: (f) => _open(context, f()),
             itemBuilder: (_) => [
-              PopupMenuItem(
-                value: () => ContactsScreen(app),
-                child: const Text('Contacts'),
-              ),
               PopupMenuItem(
                 value: () => ArchivedScreen(app),
                 child: const Text('Archived'),

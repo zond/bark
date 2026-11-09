@@ -93,7 +93,7 @@ is a prototype for the bench, not the app people will carry.
   contact's thread has only **Archive conversation**. The bar has **Fetch my mail**
   too, as on the first screen. Texts wait on the phone while no node is
   connected.
-- **Contacts**, from the menu. Adding one: scan their card with the
+- **Contacts**, the head button beside the QR button. Adding one: scan their card with the
   camera, and the new contact's thread opens at once, so you see where
   it went and can write; or paste the card and save it, with a name of
   your choosing if you like. An address alone is not enough: a text is

@@ -256,14 +256,20 @@ void main() {
     expect(find.byIcon(Icons.send), findsOneWidget);
     expect(app.contacts.list.single.key, card.key);
 
-    // Back leads to the conversations; the contact is in Contacts.
+    // Back leads to the conversations; the contact is in Contacts, a
+    // button of its own and no longer in the menu.
     await t.pageBack();
     await t.pumpAndSettle();
     expect(find.byType(ConversationsScreen), findsOneWidget);
     await t.tap(find.byType(PopupMenuButton<Widget Function()>));
     await t.pumpAndSettle();
-    await t.tap(find.text('Contacts'));
+    expect(find.text('Contacts'), findsNothing);
+    expect(find.text('Map'), findsOneWidget);
+    await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
+    await t.tap(find.byTooltip('Contacts'));
+    await t.pumpAndSettle();
+    expect(find.byType(ContactsScreen), findsOneWidget);
     expect(find.text(unnamed), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
