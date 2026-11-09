@@ -875,12 +875,13 @@ margin nearer each: `<-REBOOT` at the top, `<-SLEEP (3s)` or
 `<-WAKE (3s)` at the bottom; the ten lines start 10 px down to make
 room.
 
-*The pad.* A touch sensor chip on the board gives a level on P0.11
-while touched. Its polarity is not in the repository's notes; such
-chips drive high while touched by default, so the firmware takes high
-as touched, with the pin's pull-down so that a floating pin reads
-untouched, and logs at boot what it reads untouched (`pad: reads low
-untouched`), for the bench to confirm.
+*The pad.* A TTP223 touch sensor on the chip's own supply drives P0.11
+both ways (`docs/touch-pad-2026-11-09.md`), so the pin has no pull. The
+idle level differed between boards on the bench, so the firmware takes
+the level at boot, when nobody touches, as idle, logs it (`pad: idle
+low`), and counts a change away from it lasting 40 ms as a touch, then
+waits for 40 ms back at idle before the next. An open build logs every
+edge (`pad: edge, High`).
 
 The cost on battery: a full refresh holds BUSY high for 2 s (the
 board's label). The panel's current during a refresh is not in the

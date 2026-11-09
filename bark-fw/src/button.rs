@@ -6,12 +6,13 @@
 //!
 //! The board's UF2 bootloader reads its buttons through the internal
 //! pull-up, pressed pulling the pin to ground; P1.10 is wired the same
-//! way, active low, as a press on the bench (2026-11-06) showed. The pad
-//! is a touch sensor chip's output, a level while touched; its polarity
-//! is not in the repository's notes. Such chips drive their output high
-//! while touched by default, so this takes high as touched, with a
-//! pull-down so that a pin left floating reads untouched; the log's
-//! `pad:` lines show which it is on the bench.
+//! way, active low, as a press on the bench (2026-11-06) showed.
+//!
+//! The pad is a TTP223 touch sensor's output, powered from the chip's own
+//! supply, its mode pins left open (`docs/touch-pad-2026-11-09.md`). Its
+//! idle level differed between boards on the bench, so the level read at
+//! boot, when nobody touches, is idle, and a touch is a change away from
+//! it.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -71,21 +72,53 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
     }
 }
 
-/// Wait for touches of the pad forever: each one flips the screen.
+/// How long the pad must stay away from its idle level to count as a
+/// touch, and back at it to count as released: a choice. The sensor
+/// filters its own input, so its output does not bounce; this rejects a
+/// glitch, and is well under the 100 ms or so of a quick tap.
+const TOUCH_DEBOUNCE: Duration = Duration::from_millis(40);
+
+/// Wait for touches of the pad forever: each one flips the screen. No
+/// pull: the sensor drives its output both ways (`docs/touch-pad-2026-11-09.md`),
+/// and a pull against it would only cost current while it drives the
+/// other way. An open build logs every edge, for the bench.
 pub async fn pad(pin: Peri<'static, P0_11>) -> ! {
-    let mut pad = Input::new(pin, Pull::Down);
+    use embassy_nrf::gpio::Level;
+    let bench = crate::protect::BARK_OPEN == 1;
+    let mut pad = Input::new(pin, Pull::None);
+    let idle = pad.get_level();
     log::info!(
-        "pad: reads {} untouched",
-        if pad.is_high() { "high" } else { "low" }
+        "pad: idle {}",
+        if idle == Level::High { "high" } else { "low" }
     );
+    let away = async |pad: &mut Input<'static>| match idle {
+        Level::High => pad.wait_for_low().await,
+        Level::Low => pad.wait_for_high().await,
+    };
+    let back = async |pad: &mut Input<'static>| match idle {
+        Level::High => pad.wait_for_high().await,
+        Level::Low => pad.wait_for_low().await,
+    };
     loop {
-        pad.wait_for_high().await;
-        Timer::after(DEBOUNCE).await;
-        if pad.is_high() {
+        away(&mut pad).await;
+        if bench {
+            log::info!("pad: edge, {:?}", pad.get_level());
+        }
+        Timer::after(TOUCH_DEBOUNCE).await;
+        if pad.get_level() != idle {
             log::info!("pad: touched");
             crate::display::touched();
         }
-        pad.wait_for_low().await;
-        Timer::after(DEBOUNCE).await;
+        // Back at idle for a debounce before the next.
+        loop {
+            back(&mut pad).await;
+            if bench {
+                log::info!("pad: edge, {:?}", pad.get_level());
+            }
+            Timer::after(TOUCH_DEBOUNCE).await;
+            if pad.get_level() == idle {
+                break;
+            }
+        }
     }
 }
