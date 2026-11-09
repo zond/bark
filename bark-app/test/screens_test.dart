@@ -1107,7 +1107,13 @@ void main() {
     await app.session.attach(app.fakeNode!.connectGuest(), guest: true);
     await t.pump();
     expect(find.text(public), findsNothing);
-    expect(find.textContaining('Connected as a guest'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Using ID FA4E00000001 as a guest: a public node, not yours. It is '
+        'someone else\'s',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Send to the node'), findsNothing);
     expect(find.text('Pick a firmware file'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
@@ -1115,9 +1121,7 @@ void main() {
     await t.pumpWidget(BarkApp(app));
     await t.pump();
     expect(
-      find.text(
-        'Connected to ID FA4E00000001 as a guest: a public node, not yours',
-      ),
+      find.text('Using ID FA4E00000001 as a guest: a public node, not yours'),
       findsOneWidget,
     );
 

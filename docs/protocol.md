@@ -3645,6 +3645,30 @@ again only when they say so; an app waits for Ready by itself. A phone
 with nothing to send passes the turn on after a ban, as nothing in the
 protocol acts sooner.
 
+**Which node a phone uses.** A phone uses the node it is paired with
+whenever it reaches it. It uses the public node it hears strongest, as
+a guest, while it is paired with none, while its node is no longer its
+own (The replaced phone, above), and while its node is out of reach:
+not reached in two of the app's scans in a row, 15 s apart, so 30 s.
+A scan that hears its own node again takes the phone back to it at
+once. On a public node the phone is a guest like any other: its texts
+go from that node, so replies come to it, and it reads them there by
+its recipient tag; a fetch it sends there carries its tag at that
+node, so the home's answer comes there too ([mailbox](#mailbox), The
+fetch) (roadmap D163).
+
+*Why two scans, and back at once.* A scan lasts four of the node's
+advertising intervals, 4.1 s, and hears a node in reach while the
+phone's screen is on; with the screen off the phone listens less and
+may miss it in one scan, so one miss does not prove the node gone. A
+scan every 15 s is two in 30 s, within the five Android lets an app
+start in 30 s. The own node serves the person whole, its inbox and its
+settings, so the phone goes back to it at once. The two differ on
+purpose: at the edge of the own node's reach, heard in some scans and
+not others, the phone stays with it rather than going back and forth,
+and a text and the replies to it do not go by a public node the phone
+then leaves.
+
 **The payload.** The app owns it; this is its layout (roadmap D123 to
 D127, D150). The reasons, and the alternatives a reader would ask about, are
 in `docs/app-layer-2026-11-05.md`; the codec and the vectors the app is

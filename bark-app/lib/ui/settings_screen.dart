@@ -348,9 +348,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: Text(nodeLabel(s.node!.id)),
           subtitle: Text(
             s.guest
-                ? 'Connected as a guest: a public node, someone else\'s, '
-                      'which passes on your texts without pairing. '
-                      '${health(s)}'
+                ? '${guestLine(app)}. It is someone else\'s and passes on '
+                      'your texts without pairing. ${health(s)}'
+                : app.backOnOwn
+                ? 'Back on your node: connected and paired. ${health(s)}'
                 : 'Connected and paired. ${health(s)}',
           ),
           trailing: OutlinedButton(
@@ -359,7 +360,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         )
       else ...[
-        Text(app.connecting ? _linking(app.linking) : pairedLine(s)),
+        Text(
+          app.connecting
+              ? _linking(app.linking)
+              : [?guestLine(app), pairedLine(s)].join('. '),
+        ),
         const SizedBox(height: 8),
       ],
       if (app.fake && !s.connected)
