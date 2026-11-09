@@ -543,6 +543,8 @@ impl<C: Core> Harness<C> {
                 }
             }
             Action::App(e @ AppEvent::Boot { .. }) => self.nodes[i].boot.push((now, e)),
+            // For a gathered image's trial, which the core's own test checks.
+            Action::App(AppEvent::Heard) => {}
             Action::App(e) => self.nodes[i].app.push((now, e)),
             Action::Store(s) => self.nodes[i].stored = Some(s),
             Action::Locate(until) => self.nodes[i].located.push((now, until)),

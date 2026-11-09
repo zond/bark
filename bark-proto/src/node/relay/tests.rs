@@ -121,6 +121,65 @@ fn a_sleepy_node_keeps_no_heard_table() {
     assert!(n.is_some_and(|n| n.sleepy && n.last_resort()), "{n:?}");
 }
 
+/// The application is told once, at the first frame from another node
+/// that decodes, and not for bytes that do not decode
+/// (spec "Updates over the mesh", the install).
+#[test]
+fn the_first_frame_heard_is_told_once() {
+    // How long a gathered image may wait for it: three worst-case
+    // rotations and a heartbeat's lateness (spec "Heartbeat").
+    assert_eq!(
+        crate::update::heard_within(&Config::default()),
+        Duration::from_micros(3 * 13 * 15_000_000 + 872_800)
+    );
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 7);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(5));
+    let heard = |r: &mut Relay, now: Instant, bytes: &[u8]| {
+        let event = Event::Received {
+            channel: r.home(),
+            rssi_dbm: -80,
+            snr_db: 5,
+            bytes,
+        };
+        let mut told = 0;
+        r.handle(event, now, &mut |a| {
+            told += usize::from(matches!(a, Action::App(crate::AppEvent::Heard)))
+        });
+        told
+    };
+    // A frame the codec refuses, as a bench frame is (`wire::BENCH_FIRST`).
+    assert_eq!(heard(&mut r, now, &[0x8f, 1, 0, 0]), 0);
+    let (home, own) = (r.home(), r.id);
+    let beat = |id| Heartbeat {
+        sleepy: false,
+        anchorless: false,
+        carried: false,
+        home,
+        format: crate::wire::FORMAT,
+        map_point: false,
+        id,
+        short: config.position.short(),
+    };
+    let mut buf = [0; crate::event::MAX_FRAME];
+    // Its own ID, as no radio hears its own frame.
+    let len = Packet::Heartbeat(beat(own)).encode(&mut buf).unwrap();
+    assert_eq!(heard(&mut r, now, &buf[..len]), 0);
+    let len = Packet::Heartbeat(beat(name(78))).encode(&mut buf).unwrap();
+    assert_eq!(heard(&mut r, now, &buf[..len]), 1);
+    let len = Packet::Heartbeat(beat(name(79))).encode(&mut buf).unwrap();
+    assert_eq!(heard(&mut r, now, &buf[..len]), 0);
+    // A reset is a boot: told again.
+    r.reset(config, 7);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(5));
+    assert_eq!(heard(&mut r, now, &buf[..len]), 1);
+}
+
 /// A sleepy node holds mail for nobody: a message for another node at
 /// its own position is not its to deliver, and waits to go on (spec
 /// "Sleepy nodes", "Owner").
