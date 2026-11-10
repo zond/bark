@@ -45,7 +45,27 @@ class FoundNode {
     },
     public: public && n.public,
   );
+
+  /// Whether it was heard at a signal a link holds at: not below
+  /// [weakDbm]. One heard without an RSSI ranks as the weakest.
+  bool get usable => (rssi ?? noRssi) >= weakDbm;
 }
+
+/// Ranks a node heard without an RSSI below every RSSI a controller
+/// reports, −127 dBm and up (Bluetooth Core Specification 5.0, Vol 4
+/// Part E §7.7.65.2).
+const int noRssi = -128;
+
+/// Strength, in dBm, at or above which a node's advertisement reads as
+/// strong. A choice: these are the advertisement's strength as the phone
+/// hears it before any link, so the node's noise floor, by which a link's
+/// quality is judged, does not apply.
+const int strongDbm = -70;
+
+/// Strength, in dBm, below which a node's advertisement reads as weak,
+/// and the search passes a node over for one heard above it; a choice,
+/// as [strongDbm].
+const int weakDbm = -85;
 
 /// The ATT transaction timeout (Bluetooth Core Specification 5.0, Vol 3
 /// Part F §3.3.3). The node answers Send only once it has the message,
@@ -103,19 +123,23 @@ const Duration lookScan = Duration(microseconds: 4 * 1022500);
 /// three for the person's own Scan and Pair again.
 const Duration lookRound = Duration(seconds: 15);
 
-/// Scans for [lookScan], or until the node called `until` is heard or
+/// Scans for [lookScan], or until a node heard is one `until` stops at or
 /// `stop` completes: the nodes heard, by device, each at the best RSSI it
 /// was heard with.
 Future<Map<String, FoundNode>> listen({
-  String? until,
+  bool Function(FoundNode)? until,
   Future<void>? stop,
 }) async {
   final heard = <String, FoundNode>{};
   await _scanUntil(
     (d) {
       final n = FoundNode.of(d);
-      heard.update(d.deviceId, (was) => was.heardAgain(n), ifAbsent: () => n);
-      return until != null && n.name == until;
+      final best = heard.update(
+        d.deviceId,
+        (was) => was.heardAgain(n),
+        ifAbsent: () => n,
+      );
+      return until != null && until(best);
     },
     lookScan,
     mode: AndroidScanMode.lowLatency,

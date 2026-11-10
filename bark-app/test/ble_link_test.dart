@@ -192,7 +192,9 @@ class FakeNodes extends UniversalBlePlatform {
   final Set<String> _up = {};
   final Map<String, NodeLink> _links = {};
 
-  /// The RSSI each device is heard with, dBm.
+  /// The RSSI each device is heard with, dBm; one not given is heard at
+  /// −60 dBm, a node a room away, as Android reports an RSSI with every
+  /// scan result.
   final Map<String, int> rssi = {};
 
   /// Each scan's start, and each connect's device, in order.
@@ -283,7 +285,7 @@ class FakeNodes extends UniversalBlePlatform {
           BleDevice(
             deviceId: id,
             name: nodeName(n.nodeId),
-            rssi: rssi[id],
+            rssi: rssi[id] ?? -60,
             services: [n.public ? Uuids.publicNode : Uuids.service],
           ),
         );
@@ -768,6 +770,49 @@ void main() {
       });
     });
 
+    test('Forget on a node no longer this phone\'s, heard in this run: '
+        'gone from the paired nodes, and Android\'s bond removed', () {
+      run((async, app, ble) {
+        async.elapse(const Duration(seconds: 1));
+        ble.nodes[paired]!.pairElsewhere();
+        ble.drop(paired);
+        async.elapse(const Duration(seconds: 1));
+        final name = nodeName(FakeNode.id);
+        expect(app.session.pairingLost, contains(name));
+        bool? gone;
+        app.forget(name).then((v) => gone = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(gone, isTrue);
+        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.pairingLost, isEmpty);
+        expect(ble.bonds, isEmpty);
+      });
+    });
+
+    test('Forget on a node not heard in this run: gone from the paired '
+        'nodes; the bond is left for the person, and the home stays', () {
+      run(pairedInReach: false, (async, app, ble) {
+        final name = nodeName(FakeNode.id);
+        final home = Address(Position.fromDegrees(50, 30), FakeNode.id);
+        app.me.setHome(home);
+        app.session.setPaired(name, lost: true);
+        async.elapse(const Duration(seconds: 1));
+        bool? gone = false;
+        app.forget(name).then((v) => gone = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(gone, isNull);
+        expect(app.session.pairedWith, isEmpty);
+        expect(ble.bonds, {paired});
+        expect(app.me.home.toString(), home.toString());
+        // Heard later, refusing the bond: the app removes it then.
+        ble.nodes[paired]!.pairElsewhere();
+        ble.inReach.add(paired);
+        async.elapse(lookRound + seenWait);
+        expect(ble.bonds, isEmpty);
+        expect(app.session.pairedWith, isEmpty);
+      });
+    });
+
     test('a tap on another node ends the search', () {
       run(pairedInReach: false, (async, app, ble) {
         // A round's scan is under way.
@@ -803,18 +848,19 @@ void main() {
     });
 
     test('the paired node, heard, before any public node', () {
-      final heard = [n('a', -40), n('mine', -95, public: false)];
+      final heard = [n('a', -40), n('mine', -80, public: false)];
       expect(chooseNode(heard, paired: {'mine'})?.name, 'mine');
-      expect(chooseNode(heard, paired: {'mine'}, linked: true)?.name, 'mine');
+      // From a guest's link at a public node, the paired node is higher.
+      expect(chooseNode(heard, paired: {'mine'}, on: 'b')?.name, 'mine');
       // Not heard: the strongest public node, unless a link is up.
       expect(chooseNode([n('a', -40)], paired: {'mine'})?.name, 'a');
-      expect(chooseNode([n('a', -40)], paired: {'mine'}, linked: true), isNull);
+      expect(chooseNode([n('a', -40)], paired: {'mine'}, on: 'b'), isNull);
     });
 
-    test('the home before every other paired node, however weak; else the '
-        'strongest paired node, before any public node', () {
+    test('the home before every other paired node; else the strongest '
+        'paired node, before any public node', () {
       final heard = [
-        n('home', -95, public: false),
+        n('home', -84, public: false),
         n('near', -50, public: false),
         n('far', -80),
         n('a', -40),
@@ -828,6 +874,109 @@ void main() {
         chooseNode(heard.skip(1), home: 'home', paired: paired)?.name,
         'near',
       );
+    });
+
+    test('a weak home is passed over for a fair paired node', () {
+      final heard = [
+        n('home', weakDbm - 1, public: false),
+        n('fair', weakDbm, public: false),
+      ];
+      const paired = {'home', 'fair'};
+      expect(chooseNode(heard, home: 'home', paired: paired)?.name, 'fair');
+    });
+
+    test('a weak paired node is passed over for a fair public one', () {
+      final heard = [n('mine', weakDbm - 1, public: false), n('a', weakDbm)];
+      expect(chooseNode(heard, paired: {'mine'})?.name, 'a');
+      // And a weak home, the same.
+      expect(chooseNode(heard, home: 'mine', paired: {'mine'})?.name, 'a');
+    });
+
+    test('a weak node is taken when it is the only one', () {
+      expect(
+        chooseNode(
+          [n('home', -100, public: false)],
+          home: 'home',
+          paired: {'home'},
+        )?.name,
+        'home',
+      );
+      expect(chooseNode([n('a', -100)])?.name, 'a');
+    });
+
+    test('nothing usable heard: the strongest, whatever its kind', () {
+      // A weak home and a slightly stronger weak public node: the public.
+      expect(
+        chooseNode(
+          [n('home', -90, public: false), n('a', -89)],
+          home: 'home',
+          paired: {'home'},
+        )?.name,
+        'a',
+      );
+      final weak = [
+        n('a', -95),
+        n('mine', -88, public: false),
+        n('home', -100, public: false),
+      ];
+      expect(
+        chooseNode(weak, home: 'home', paired: {'home', 'mine'})?.name,
+        'mine',
+      );
+      // Only nodes the phone may use: not one private and not its own,
+      // nor one whose pairing was lost.
+      expect(
+        chooseNode([...weak, n('shut', -86, public: false)], paired: {})?.name,
+        'a',
+      );
+      expect(
+        chooseNode([n('lost', -86), n('a', -95)], lost: {'lost'})?.name,
+        'a',
+      );
+      // Heard without an RSSI: ranked as the weakest.
+      expect(
+        chooseNode(
+          [n('mine', -90, public: false), n('a', null)],
+          paired: {'mine'},
+        )?.name,
+        'mine',
+      );
+    });
+
+    test('on a link, only a node higher in the order, heard usable', () {
+      final heard = [
+        n('home', -60, public: false),
+        n('other', -40, public: false),
+        n('a', -30),
+      ];
+      const paired = {'home', 'mine', 'other'};
+      // From a paired node, up to the home.
+      expect(
+        chooseNode(heard, home: 'home', paired: paired, on: 'mine')?.name,
+        'home',
+      );
+      // Never sideways to another paired node, however strong.
+      expect(
+        chooseNode(heard.skip(1), home: 'home', paired: paired, on: 'mine'),
+        isNull,
+      );
+      // On the home, nothing is higher.
+      expect(
+        chooseNode(heard, home: 'home', paired: paired, on: 'home'),
+        isNull,
+      );
+      // A weak home is not worth the link in use.
+      expect(
+        chooseNode(
+          [n('home', -95, public: false)],
+          home: 'home',
+          paired: paired,
+          on: 'mine',
+        ),
+        isNull,
+      );
+      // From a guest's link, never sideways to another public node.
+      expect(chooseNode([n('b', -30)], on: 'a'), isNull);
     });
 
     test('no public node heard: none', () {
@@ -891,7 +1040,7 @@ void main() {
           },
           bonds: {if (withPaired) paired, ...bonds},
         );
-        ble.rssi.addAll({weak: -70, strong: -50, shut: -40, paired: -90});
+        ble.rssi.addAll({weak: -70, strong: -50, shut: -40, paired: -80});
         ble.allowed = allowed;
         if (withPaired && !pairedInReach) ble.inReach.remove(paired);
         UniversalBle.setInstance(ble);
@@ -1035,6 +1184,21 @@ void main() {
         final after = ble.scans;
         async.elapse(const Duration(minutes: 1));
         expect(ble.scans, after);
+      });
+    });
+
+    test('the paired node heard weak: an errand at a fair public node at '
+        'once, and back on the paired node once it is heard usable', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        ble.rssi[paired] = weakDbm - 1;
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        expect(app.session.connected, isFalse);
+        expect(connectionHelp(app), contains('too weakly'));
+        ble.rssi[paired] = weakDbm;
+        async.elapse(lookRound);
+        expect(ble.connects, [strong, paired]);
+        expect((app.session.guest, app.linkDevice), (false, paired));
       });
     });
 
@@ -1563,10 +1727,10 @@ void main() {
         strongId = [0x0c, 0xe4, 0, 0, 0, 4];
     final start = DateTime.utc(2026, 11, 10);
 
-    /// The phone paired with the fake node at `home`, at −90 dBm, made its
-    /// home unless not `withHome`, then with another node at `near`, at
-    /// −60 dBm, as the user's round of 2026-11-10 had it; and a public
-    /// node nobody owns at −50 dBm.
+    /// The phone paired with the fake node at `home`, at −80 dBm, fair,
+    /// made its home unless not `withHome`, then with another node at
+    /// `near`, at −60 dBm, as the user's round of 2026-11-10 had it; and a
+    /// public node nobody owns at −50 dBm.
     void run(
       void Function(FakeAsync, AppModel, FakeNodes) body, {
       bool withHome = true,
@@ -1593,7 +1757,7 @@ void main() {
           },
           bonds: {home, near},
         );
-        ble.rssi.addAll({home: -90, near: -60, strong: -50});
+        ble.rssi.addAll({home: -80, near: -60, strong: -50});
         UniversalBle.setInstance(ble);
         if (withHome) {
           app.me.setHome(Address(Position.fromDegrees(50, 30), FakeNode.id));
@@ -1679,6 +1843,118 @@ void main() {
         ble.inReach.add(near);
         async.elapse(lookRound);
         expect((app.linkDevice, app.session.guest), (near, false));
+      });
+    });
+
+    test('a weak home is passed over for the other paired node; heard '
+        'usable while the phone is there, it is moved to within a minute', () {
+      run((async, app, ble) {
+        ble.rssi[home] = weakDbm - 5;
+        async.elapse(round);
+        expect(ble.connects, [near]);
+        expect(connectionHelp(app), contains('moves to it within a minute'));
+        // Still weak: the look-around a minute on hears it and stays.
+        final scans = ble.scans;
+        async.elapse(lookAround);
+        expect(ble.scans, scans + 1);
+        expect(app.linkDevice, near);
+        // Usable: the next look-around moves the phone to it.
+        ble.rssi[home] = weakDbm;
+        async.elapse(lookAround);
+        expect(ble.connects, [near, home]);
+        expect((app.linkDevice, app.session.guest), (home, false));
+        expect(connectionLine(app), 'Connected to your home, ID FA4E00000001');
+        // On the home nothing is higher: no more scans.
+        final after = ble.scans;
+        async.elapse(const Duration(minutes: 5));
+        expect(ble.scans, after);
+      });
+    });
+
+    test('a weak home is taken when it is the only node heard', () {
+      run((async, app, ble) {
+        ble.rssi[home] = weakDbm - 10;
+        ble.inReach.removeAll({near, strong});
+        async.elapse(round);
+        expect(ble.connects, [home]);
+        expect(app.linkDevice, home);
+      });
+    });
+
+    test('a scan while linked: no more often than a minute, and only for '
+        'the home', () {
+      run((async, app, ble) {
+        ble.inReach.remove(home);
+        async.elapse(round);
+        expect(app.linkDevice, near);
+        final scans = ble.scans;
+        async.elapse(const Duration(minutes: 5));
+        expect(ble.scans - scans, 5);
+        expect(ble.connects, [near]);
+      });
+    });
+
+    test('without a home, never from one paired node to another, however '
+        'strong; no scan while linked', () {
+      run(withHome: false, (async, app, ble) {
+        ble.inReach.remove(home);
+        async.elapse(round);
+        expect(app.linkDevice, near);
+        ble.inReach.add(home);
+        ble.rssi[home] = -30;
+        final scans = ble.scans;
+        async.elapse(const Duration(minutes: 5));
+        expect(ble.scans, scans);
+        expect(ble.connects, [near]);
+      });
+    });
+
+    test('no move while something is in flight: a fetch awaited keeps the '
+        'phone until it is answered', () {
+      run((async, app, ble) {
+        ble.inReach.remove(home);
+        async.elapse(round);
+        expect(app.linkDevice, near);
+        final s = app.session;
+        final fetch = Outgoing(
+          Address(Position.fromDegrees(50, 30), FakeNode.id),
+          Uint8List(40),
+          at: s.now(),
+          kind: OutKind.fetch,
+          sent: 1,
+        );
+        s.queue(fetch);
+        async.elapse(const Duration(seconds: 1));
+        expect(fetch.state, OutState.taken);
+        expect(s.fetchWaiting, fetch);
+        expect(app.settled, isFalse);
+        ble.inReach.add(home);
+        async.elapse(lookAround);
+        expect(ble.connects, [near]);
+        expect(app.linkDevice, near);
+        s.fetchAnswered(1, nothingNew: true);
+        expect(app.settled, isTrue);
+        async.elapse(lookAround);
+        expect(ble.connects, [near, home]);
+      });
+    });
+
+    test('a link the person made by a tap is not moved from', () {
+      run((async, app, ble) {
+        ble.inReach.remove(home);
+        async.elapse(round);
+        app.disconnect();
+        async.elapse(const Duration(seconds: 1));
+        app.connect(FoundNode(near, nodeName(nearId), -60, public: false));
+        async.elapse(const Duration(seconds: 1));
+        expect(app.linkDevice, near);
+        ble.inReach.add(home);
+        async.elapse(const Duration(minutes: 3));
+        expect(app.linkDevice, near);
+        // Dropped, the search takes it from there: the home, as heard.
+        ble.drop(near);
+        async.elapse(const Duration(seconds: 6));
+        expect(app.linkDevice, home);
       });
     });
   });
