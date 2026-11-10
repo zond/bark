@@ -5,7 +5,8 @@
 // guest reads by its tag after the number it keeps for the node, across
 // links and restarts, reading taking nothing; one guest's link at a time,
 // ended after 30 s; and the owner and a guest take turns at the one
-// message it holds, the turn being Ready.
+// message it holds, the turn being Ready, which goes only to a phone
+// that asks or whose app is too old to ask.
 
 import 'dart:typed_data';
 
@@ -13,6 +14,7 @@ import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/node_link.dart';
+import 'package:bark_app/session.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
@@ -206,48 +208,138 @@ void main() {
     });
   });
 
-  test('the turn is Ready: the owner\'s or the guest\'s; it passes when the '
-      'node takes its message, after a ban unused, or when its link '
-      'ends', () {
+  /// Ready as each of `links` reads it.
+  List<bool?> readyOf(FakeAsync async, List<NodeLink> links) {
+    final r = List<bool?>.filled(links.length, null);
+    for (final (i, l) in links.indexed) {
+      l.readStatus().then((s) => r[i] = s.ready);
+    }
+    async.flushMicrotasks();
+    return r;
+  }
+
+  const notReady = AttError.notReady;
+
+  /// Writes Send to `l`; null when taken, else the ATT error's code.
+  int? sendOn(FakeAsync async, NodeLink l, Uint8List value) {
+    int? code = -1;
+    l
+        .send(value)
+        .then<void>(
+          (_) => code = null,
+          onError: (Object e) => code = (e as AttException).code,
+        );
+    async.flushMicrotasks();
+    return code;
+  }
+
+  test('the turn is Ready and goes only to a phone that asks: idle phones '
+      'see no flips; the holder keeps it past its message; an ask out of '
+      'turn is answered not ready and has the turn after the holder\'s ban '
+      'unused; two asking take turns; a link that ends passes it', () {
     run((async, owner, guest, node) {
       final g = node.connectGuest();
+      g.setRecipient(tagOf(guest), '');
+      async.flushMicrotasks();
       final links = <NodeLink>[node, g];
-      List<bool?> ready() {
-        final r = List<bool?>.filled(links.length, null);
-        for (final (i, l) in links.indexed) {
-          l.readStatus().then((s) => r[i] = s.ready);
-        }
-        async.flushMicrotasks();
-        return r;
-      }
-
+      ready() => readyOf(async, links);
+      var told = 0;
+      final sub = g.statusNotified.listen((_) => told++);
       Uint8List send(int n) => encodeSend(there, payloadFor(tagOf(owner), n));
       // The owner's link came first: its turn.
       expect(ready(), [true, false]);
-      // Out of turn: not ready.
-      Object? failed;
-      g.send(send(1)).then<void>((_) {}, onError: (Object e) => failed = e);
-      async.flushMicrotasks();
-      expect(failed, isA<AttException>().having((e) => e.code, 'code', 0x80));
-      // The owner sits on it for a ban: the guest's turn.
-      async.elapse(FakeNode.ban);
-      expect(ready(), [false, true]);
-      // Taken: the turn passes, and Ready comes back once the node takes
-      // a message again.
-      var taken = false;
-      g.send(send(2)).then((_) => taken = true);
-      async.flushMicrotasks();
-      expect(taken, isTrue);
-      expect(ready(), [false, false]);
+      // Both idle: the turn stays, and nobody is told anything.
+      async.elapse(FakeNode.ban * 5);
+      expect(ready(), [true, false]);
+      expect(told, 0);
+      // The owner's message taken: nobody else asked, so the turn stays.
+      expect(sendOn(async, node, send(1)), isNull);
       async.elapse(FakeNode.handOver);
       expect(ready(), [true, false]);
-      // The owner sits on it again, and the guest's link ends: back.
+      // The guest asks while the owner has just had Ready back: not ready,
+      // and the turn after the owner's ban unused.
+      expect(sendOn(async, g, send(2)), notReady);
+      async.elapse(FakeNode.ban - const Duration(milliseconds: 1));
+      expect(ready(), [true, false]);
+      async.elapse(const Duration(milliseconds: 1));
+      expect(ready(), [false, true]);
+      // Two asking take turns: each one's message taken, the turn goes to
+      // the other.
+      expect(sendOn(async, node, send(3)), notReady);
+      expect(sendOn(async, g, send(4)), isNull);
+      async.elapse(FakeNode.handOver);
+      expect(ready(), [true, false]);
+      expect(sendOn(async, g, send(5)), notReady);
       async.elapse(FakeNode.ban);
       expect(ready(), [false, true]);
+      // The guest's link ends: back to the owner.
       g.close();
       links.removeLast();
       async.flushMicrotasks();
       expect(ready(), [true]);
+      sub.cancel();
+    });
+  });
+
+  test('a phone of link version 12 cannot ask: alone it has Ready as '
+      'before, and beside a newer one it has the turn after one ban unused '
+      'and keeps it until the newer one asks', () {
+    run((async, owner, guest, node) {
+      node.close();
+      async.flushMicrotasks();
+      final g = node.connectGuest();
+      // The tag alone: an app of version 12.
+      g.setRecipient(tagOf(guest));
+      async.flushMicrotasks();
+      expect(readyOf(async, [g]), [true]);
+      expect(
+        sendOn(async, g, encodeSend(there, payloadFor(tagOf(guest), 1))),
+        isNull,
+      );
+      async.elapse(FakeNode.handOver);
+      expect(readyOf(async, [g]), [true]);
+      g.close();
+      async.flushMicrotasks();
+      // Beside the owner's newer app, which has the turn first.
+      final link = node.connect();
+      owner.session.attach(link);
+      async.flushMicrotasks();
+      final old = node.connectGuest();
+      old.setRecipient(tagOf(guest));
+      async.flushMicrotasks();
+      final links = <NodeLink>[node, old];
+      expect(readyOf(async, links), [true, false]);
+      async.elapse(FakeNode.ban);
+      expect(readyOf(async, links), [false, true]);
+      async.elapse(FakeNode.ban * 10);
+      expect(readyOf(async, links), [false, true]);
+      // The owner's app has a message: it asks, and has the turn after
+      // the old phone's ban unused, and the message is taken.
+      final o = Outgoing(
+        there,
+        payloadFor(tagOf(owner), 7),
+        at: start,
+        kind: OutKind.text,
+        sent: 1,
+      );
+      owner.session.queue(o);
+      async.flushMicrotasks();
+      expect(o.state, OutState.taken);
+      // A second waits for the turn, which the old phone has again.
+      async.elapse(FakeNode.handOver);
+      expect(readyOf(async, links), [false, true]);
+      final o2 = Outgoing(
+        there,
+        payloadFor(tagOf(owner), 8),
+        at: start,
+        kind: OutKind.text,
+        sent: 2,
+      );
+      owner.session.queue(o2);
+      async.flushMicrotasks();
+      expect(o2.state, OutState.queued);
+      async.elapse(FakeNode.ban);
+      expect(o2.state, OutState.taken);
     });
   });
 }

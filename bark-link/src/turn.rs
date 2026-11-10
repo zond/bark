@@ -1,0 +1,322 @@
+//! Whose turn it is at the one message a node holds for its phones, and so
+//! whose Status has ready set (spec "Phone link", Sending; roadmap D184).
+//! The node keeps one [`Turn`] for its links; it lives here, beside the
+//! values it acts on, so that the host tests it.
+
+use bark_proto::tables::budget::BAN;
+use bark_proto::{Duration, Instant};
+
+/// The first link version whose app asks for the turn, by writing Send
+/// while ready is not set for it. An older app writes only while ready is
+/// set, so it cannot ask.
+pub const ASKS: u8 = 13;
+
+/// How long a turn lasts unused while another phone wants it: a ban, the
+/// shortest wait the protocol tells, as nothing in it acts sooner (spec
+/// "Bans").
+pub const UNUSED: Duration = BAN;
+
+/// What the turn knows of the phone on one link.
+#[derive(Clone, Copy, Debug, Default)]
+struct Phone {
+    /// A link is up.
+    live: bool,
+    /// Its Recipient write said an app older than [`ASKS`], which cannot
+    /// ask and so is taken to want the turn whenever it lacks it.
+    old: bool,
+    /// It asked for the turn and has not had it since.
+    asked: bool,
+}
+
+/// The turn among `N` links, by their slots.
+#[derive(Clone, Copy, Debug)]
+pub struct Turn<const N: usize> {
+    phones: [Phone; N],
+    /// The phone that has the turn.
+    holder: Option<usize>,
+    /// Since when it has had ready: the turn counts unused only while the
+    /// node takes a message.
+    since: Option<Instant>,
+}
+
+impl<const N: usize> Default for Turn<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> Turn<N> {
+    /// No links, and the turn nobody's.
+    pub const fn new() -> Self {
+        Turn {
+            phones: [Phone {
+                live: false,
+                old: false,
+                asked: false,
+            }; N],
+            holder: None,
+            since: None,
+        }
+    }
+
+    /// The phone whose ready is set while the node takes a message.
+    pub fn holder(&self) -> Option<usize> {
+        self.holder
+    }
+
+    /// A link came up in `slot`. Until its Recipient write says otherwise
+    /// its phone neither asks nor wants: every app writes Recipient first.
+    pub fn linked(&mut self, slot: usize) {
+        self.phones[slot] = Phone {
+            live: true,
+            ..Phone::default()
+        };
+    }
+
+    /// The link in `slot` ended.
+    pub fn ended(&mut self, slot: usize) {
+        self.phones[slot] = Phone::default();
+    }
+
+    /// The phone in `slot` wrote Recipient, saying its app's link version.
+    pub fn app(&mut self, slot: usize, version: u8) {
+        self.phones[slot].old = version < ASKS;
+    }
+
+    /// The phone in `slot` wrote Send: if the turn is not its, it asks.
+    pub fn ask(&mut self, slot: usize) {
+        if self.holder != Some(slot) {
+            self.phones[slot].asked = true;
+        }
+    }
+
+    /// The node took the holder's message: the turn goes to the next phone
+    /// that wants it, or stays.
+    pub fn taken(&mut self) {
+        self.pass();
+    }
+
+    /// Move the turn on to `now`, `ready` saying whether the node takes a
+    /// message: to a phone if none has it, and on from one that has had
+    /// ready for [`UNUSED`] while another wants it. Whether it moved.
+    pub fn advance(&mut self, now: Instant, ready: bool) -> bool {
+        let before = self.holder;
+        if before.is_none_or(|s| !self.phones[s].live) {
+            self.pass();
+        }
+        if !ready {
+            self.since = None;
+        } else {
+            let since = *self.since.get_or_insert(now);
+            if now.since(since) >= UNUSED && self.others_want() {
+                self.pass();
+                self.since = Some(now);
+            }
+        }
+        self.holder != before
+    }
+
+    /// When the turn next moves by itself: when the holder's time unused
+    /// is over, if another phone wants it.
+    pub fn ends(&self) -> Option<Instant> {
+        self.since
+            .filter(|_| self.others_want())
+            .map(|t| t + UNUSED)
+    }
+
+    /// Whether the phone in `slot` wants the turn: it asked, or cannot.
+    fn wants(&self, slot: usize) -> bool {
+        let p = &self.phones[slot];
+        p.live && (p.asked || p.old)
+    }
+
+    /// The first phone after `after`, in the order of the slots and coming
+    /// round to `after` itself last, that `f` takes.
+    fn next(&self, after: Option<usize>, f: impl Fn(usize) -> bool) -> Option<usize> {
+        let from = after.map_or(0, |a| a + 1);
+        (from..from + N).map(|i| i % N).find(|&i| f(i))
+    }
+
+    fn others_want(&self) -> bool {
+        self.next(self.holder, |i| self.wants(i) && Some(i) != self.holder)
+            .is_some()
+    }
+
+    /// The holder's turn is over: to the next phone that wants it, else
+    /// the holder keeps it, else, with no holder, the next phone linked.
+    fn pass(&mut self) {
+        let holder = self.holder.filter(|&s| self.phones[s].live);
+        let to = self
+            .next(self.holder, |i| self.wants(i))
+            .or(holder)
+            .or_else(|| self.next(self.holder, |i| self.phones[i].live));
+        if let Some(s) = to {
+            self.phones[s].asked = false;
+        }
+        self.holder = to;
+        self.since = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const T0: Instant = Instant::from_micros(1_000_000);
+
+    fn at(n: u64) -> Instant {
+        T0 + UNUSED.mul(n)
+    }
+
+    /// Two phones of version 13 linked and idle.
+    fn two() -> Turn<3> {
+        let mut t = Turn::<3>::new();
+        t.linked(0);
+        t.app(0, 13);
+        t.linked(1);
+        t.app(1, 13);
+        t.advance(T0, true);
+        t
+    }
+
+    #[test]
+    fn idle_phones_see_no_flips() {
+        let mut t = two();
+        assert_eq!(t.holder(), Some(0));
+        for n in 1..100 {
+            assert!(!t.advance(at(n), true));
+        }
+        assert_eq!(t.holder(), Some(0));
+        assert_eq!(t.ends(), None);
+    }
+
+    #[test]
+    fn a_phone_that_asks_gets_the_turn_and_the_other_does_not() {
+        let mut t = two();
+        t.ask(1);
+        assert_eq!(t.ends(), Some(at(1)));
+        assert!(!t.advance(at(1) - Duration::from_micros(1), true));
+        assert!(t.advance(at(1), true));
+        assert_eq!(t.holder(), Some(1));
+        // It keeps it unused, as nobody else asks.
+        for n in 2..10 {
+            assert!(!t.advance(at(n), true));
+        }
+        assert_eq!(t.holder(), Some(1));
+    }
+
+    #[test]
+    fn an_ask_after_a_long_idle_turn_moves_it_at_once() {
+        let mut t = two();
+        t.advance(at(5), true);
+        t.ask(1);
+        assert!(t.advance(at(5), true));
+        assert_eq!(t.holder(), Some(1));
+    }
+
+    #[test]
+    fn the_holder_asks_nothing() {
+        let mut t = two();
+        t.ask(0);
+        assert_eq!(t.ends(), None);
+    }
+
+    #[test]
+    fn two_asking_take_turns() {
+        let mut t = Turn::<3>::new();
+        for s in 0..3 {
+            t.linked(s);
+            t.app(s, 13);
+        }
+        t.advance(T0, true);
+        assert_eq!(t.holder(), Some(0));
+        t.ask(1);
+        t.ask(2);
+        // The holder's message taken: on to the next that asked.
+        t.taken();
+        assert_eq!(t.holder(), Some(1));
+        t.taken();
+        assert_eq!(t.holder(), Some(2));
+        // Nobody asks: the turn stays.
+        t.taken();
+        assert_eq!(t.holder(), Some(2));
+        // 1 asks again, 2 leaves it unused for a ban.
+        t.ask(1);
+        t.advance(at(1), true);
+        assert!(t.advance(at(2), true));
+        assert_eq!(t.holder(), Some(1));
+    }
+
+    #[test]
+    fn the_unused_time_counts_only_while_the_node_takes_one() {
+        let mut t = two();
+        t.ask(1);
+        assert!(!t.advance(at(3), false));
+        assert_eq!(t.ends(), None);
+        assert!(!t.advance(at(4), true));
+        assert!(t.advance(at(5), true));
+    }
+
+    #[test]
+    fn an_old_phone_alone_has_the_turn_as_before() {
+        let mut t = Turn::<3>::new();
+        t.linked(1);
+        t.app(1, 12);
+        assert!(t.advance(T0, true));
+        assert_eq!(t.holder(), Some(1));
+        t.taken();
+        assert_eq!(t.holder(), Some(1));
+        for n in 1..10 {
+            assert!(!t.advance(at(n), true));
+        }
+    }
+
+    #[test]
+    fn a_phone_alone_has_the_turn_before_it_asks() {
+        let mut t = Turn::<3>::new();
+        t.linked(2);
+        t.app(2, 13);
+        assert!(t.advance(T0, true));
+        assert_eq!(t.holder(), Some(2));
+    }
+
+    #[test]
+    fn an_old_phone_beside_a_new_one_has_it_once_unused_and_keeps_it() {
+        let mut t = two();
+        t.app(1, 12);
+        assert!(t.advance(at(1), true));
+        assert_eq!(t.holder(), Some(1));
+        for n in 2..10 {
+            assert!(!t.advance(at(n), true));
+        }
+        // The new phone asks, and has it after the old one's unused ban.
+        t.ask(0);
+        assert!(t.advance(at(10), true));
+        assert_eq!(t.holder(), Some(0));
+        // Its message taken, the old phone, which always wants it.
+        t.taken();
+        assert_eq!(t.holder(), Some(1));
+    }
+
+    #[test]
+    fn two_old_phones_take_turns_as_before() {
+        let mut t = two();
+        t.app(0, 12);
+        t.app(1, 12);
+        assert!(t.advance(at(1), true));
+        assert_eq!(t.holder(), Some(1));
+        assert!(t.advance(at(2), true));
+        assert_eq!(t.holder(), Some(0));
+    }
+
+    #[test]
+    fn a_link_that_ends_passes_the_turn() {
+        let mut t = two();
+        t.ended(0);
+        assert!(t.advance(at(0), true));
+        assert_eq!(t.holder(), Some(1));
+        t.ended(1);
+        assert!(t.advance(at(0), true));
+        assert_eq!(t.holder(), None);
+    }
+}

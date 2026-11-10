@@ -1007,6 +1007,8 @@ class Session extends ChangeNotifier {
     answers.clear();
     _answeredAt.clear();
     stopAsking();
+    _askedAt = null;
+    _askAgain?.cancel();
     note('Disconnected');
   }
 
@@ -1204,28 +1206,51 @@ class Session extends ChangeNotifier {
     await save();
   }
 
+  /// How long the app waits for Ready after asking for the turn before it
+  /// asks again (spec "Phone link", Sending): a ban, 1.58 s, for each
+  /// other of the node's [maxPhones] + 1 links, the longest the turn takes
+  /// to reach it while the node takes messages.
+  static const turnWait = Duration(milliseconds: maxPhones * 1580);
+
+  /// When the app last asked for the turn on this link, by a write
+  /// answered not ready.
+  DateTime? _askedAt;
+  Timer? _askAgain;
+
   Future<void> _pump() async {
     final link = _link;
-    if (_writing || link == null || !(status?.ready ?? false)) return;
+    if (_writing || link == null) return;
     final o = outbox.where((o) => o.state == OutState.queued).firstOrNull;
     if (o == null) return;
+    // Out of turn, the write asks for it, unless it asked lately.
+    final ready = status?.ready ?? false;
+    if (!ready) {
+      final asked = _askedAt;
+      if ((node?.version ?? 0) < turnVersion) return;
+      if (asked != null && now().difference(asked) < turnWait) return;
+    }
     _writing = true;
     o.state = OutState.writing;
     notifyListeners();
     var again = true;
     try {
       await link.send(encodeSend(o.dst, o.payload));
+      _askedAt = null;
       o.state = OutState.taken;
       note('Send ${msgIdHex(o.id)}: taken');
     } on AttException catch (e) {
       note('Send ${msgIdHex(o.id)}: $e');
       if (e.code == AttError.notReady) {
-        // Ready turned false between the status read and the write; wait
-        // for the node to say ready again, and read it in case that
+        // Not this phone's turn, which the write asked for, or Ready
+        // turned false between the status read and the write; wait for
+        // the node to say ready again, and read it in case that
         // notification came before this answer.
         o.state = OutState.queued;
         status = status?.copyWith(ready: false);
         again = false;
+        _askedAt = now();
+        _askAgain?.cancel();
+        _askAgain = Timer(turnWait, _pump);
         unawaited(link.readStatus().then(_onStatus, onError: (_) {}));
       } else {
         o.state = OutState.refused;
@@ -1298,6 +1323,7 @@ class Session extends ChangeNotifier {
   @override
   void dispose() {
     _retry?.cancel();
+    _askAgain?.cancel();
     for (final s in _subs) {
       s.cancel();
     }

@@ -152,7 +152,8 @@ pub mod att {
     /// The value has the right length and a field it does not take.
     pub const VALUE_NOT_ALLOWED: u8 = 0x13;
     /// Not now: the node takes no message from its application at the
-    /// moment; the app waits for [`crate::Status::ready`]. The first of
+    /// moment, or the turn is another phone's ([`crate::turn`]); the app
+    /// waits for [`crate::Status::ready`]. The first of
     /// the application error codes, 0x80 to 0x9F.
     pub const NOT_READY: u8 = 0x80;
     /// The node refused a begin, a commit or a reboot of an update; Update
@@ -396,6 +397,7 @@ impl Status {
 
 /// Send, write: a message for the node to originate, as
 /// `AppCommand::Send` takes it (spec "Receiving DATA").
+/// Written while ready is not set, it asks for the turn ([`turn`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Send<'a> {
     /// The destination's position (spec "Addresses").
@@ -981,6 +983,7 @@ pub mod bond;
 pub mod home;
 pub mod neighbours;
 pub mod phones;
+pub mod turn;
 pub mod update;
 
 #[cfg(test)]

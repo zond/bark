@@ -3403,23 +3403,37 @@ queue: it keeps the rest and offers the next when ready is set again.
 
 The node's phones, paired and guests (Public, below), take turns at
 that one message, and the turn is Ready: the node sets it, while it
-takes a message, for one phone at a time. The turn goes to the next
-phone connected when the node takes the message of the phone that has
-it, when that phone's link ends, or when that phone has had Ready for a
-ban without writing ([bans](#bans): 1.58 s, the shortest wait the
-protocol tells). A Send from a phone whose turn it is not is answered
-0x80, not ready; an app writes only while Ready is set, so only one
-that does not keep to that meets it.
+takes a message, for one phone at a time, and gives it only to a phone
+that wants it. A phone asks for it by writing Send while Ready is not
+set for it, and so wants it until it has it; an app whose Recipient
+write said link version 12 or older cannot ask, as it writes only while
+Ready is set, and its phone wants the turn whenever it lacks it. The
+phone that has the turn keeps it until the node takes its message, its
+link ends, or it has had Ready for a ban while another phone wants it
+([bans](#bans): 1.58 s, the shortest wait the protocol tells). The turn
+then goes to the next phone that wants it, in the order of the links,
+and stays where it is if none does; with no phone holding it, as at the
+first link, it goes to the next that wants it or else the next linked.
+The node answers a Send out of turn 0x80, not ready, unless the turn
+passes to the phone at that write, and then takes it. An app with a
+message waits for Ready after asking, and asks again if Ready has not
+come within 12.64 s: a ban for each of the eight other links, the
+longest the turn takes to reach it while the node takes messages.
 
-*Why the turn is Ready.* One message at a time is the node's rule for
-its application ([receiving DATA](#receiving-data)), and Ready is
-already how the node says it takes one: one rule for one slot. Set for
-every phone at once, the slot would go to whichever write reached the
-node first, and a phone with a queue would keep it. A refusal with a
-wait would need the person, as the app offers a given-back message
-again only when they say so; an app waits for Ready by itself. A phone
-with nothing to send passes the turn on after a ban, as nothing in the
-protocol acts sooner.
+*Why the turn is Ready, and goes only to a phone that asks.* One
+message at a time is the node's rule for its application ([receiving
+DATA](#receiving-data)), and Ready is already how the node says it
+takes one: one rule for one slot. Set for every phone at once, the slot
+would go to whichever write reached the node first, and a phone with a
+queue would keep it. A refusal with a wait would need the person, as
+the app offers a given-back message again only when they say so; an
+app waits for Ready by itself. Passed round to phones that want nothing,
+the turn flipped every 1.58 s while two were linked and idle, each flip
+a notification to every phone for nothing (roadmap D184). The Send the
+app writes anyway is the ask, so nothing new crosses the link; a phone
+of an older app, taken to want the turn always, is served as before.
+The holder keeps the turn unused a ban, as nothing in the protocol acts
+sooner.
 
 **Given back.** When the node gives the app's message back, it sets
 Given back to the message's ID and the seconds left of the wait the

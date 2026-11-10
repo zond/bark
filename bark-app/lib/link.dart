@@ -1183,6 +1183,12 @@ class Answer {
 /// Node's room and Home's mine (spec "Phone link"; roadmap D168).
 const int phonesVersion = 13;
 
+/// The link version from which a node gives the turn at its one message
+/// only to a phone that asks, by writing Send while Ready is not set for
+/// it, and from which the app asks (spec "Phone link", Sending; roadmap
+/// D184). An app of an older version cannot ask.
+const int turnVersion = 13;
+
 /// The phones a node keeps at most (spec "Phone link", Pairing).
 const int maxPhones = 8;
 

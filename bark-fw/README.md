@@ -1220,7 +1220,9 @@ and confirms it to the core once it is written; each paired phone's
 Inbox reads its own person's from it, and a guest's read of Inbox asks
 the node for the oldest item after the number it wrote to Guest
 (`for_tag`). Whose turn it is at the one message the node holds, and so
-whose Ready is set, is `Turn` in `src/ble.rs`. A message given back is
+whose Ready is set, is `bark_link::turn::Turn`, which `src/ble.rs` tells
+of each link, each Recipient write's version and each Send out of turn,
+an ask (spec "Phone link", Sending). A message given back is
 kept with its phone's record, a guest's with its link. The console's
 `status` has `public=true` or `public=false`, read from the phones in
 the stored-state page, and then `drain_relay=` and `drain_sleepy=`, the
