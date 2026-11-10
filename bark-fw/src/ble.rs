@@ -1054,6 +1054,7 @@ pub async fn run(
             .set_io_capabilities(IoCapabilities::DisplayOnly)
             .build(),
     );
+    resolving_list();
     for i in 0..RECORDS {
         let Some(r) = crate::phones::read(|p| p.get(i).copied()) else {
             continue;
@@ -1243,6 +1244,37 @@ fn unpair(stack: &Stack, i: usize) {
     hold_records(stack);
     log::info!("ble: record {} unpaired by its phone; its home stays", i);
     records_changed();
+}
+
+/// The controller's resolving list, which holds each bonded phone's
+/// identity key so that the controller knows the phone's changing address
+/// (Bluetooth Core Vol 6 Part B §4.7): logged at boot against the
+/// records, for the bench, as the controller's documentation does not
+/// give its size.
+fn resolving_list() {
+    let mut out = sdc::raw::sdc_hci_cmd_le_read_resolving_list_size_return_t {
+        resolving_list_size: 0,
+    };
+    // SAFETY: the controller is built before the host runs, and its
+    // commands are synchronous calls from thread mode, so none is in
+    // progress when this one starts.
+    let status = unsafe { sdc::raw::sdc_hci_cmd_le_read_resolving_list_size(&mut out) };
+    let size = out.resolving_list_size;
+    match (status, usize::from(size) >= RECORDS) {
+        (0, true) => log::info!(
+            "ble: resolving list holds {} keys, the {} records need {}",
+            size,
+            RECORDS,
+            RECORDS
+        ),
+        (0, false) => log::error!(
+            "ble: resolving list holds {} keys, the {} records need {}: phones past it are not known by their address",
+            size,
+            RECORDS,
+            RECORDS
+        ),
+        (e, _) => log::error!("ble: LE Read Resolving List Size failed: {:#x}", e),
+    }
 }
 
 /// The node's random static address: the factory's DEVICEADDR (nRF52840
