@@ -41,6 +41,7 @@ enum Op {
     Lbt(Channel),
     Rssi(Channel),
     Transmit(Frame),
+    Recover,
 }
 
 /// A frame on the air, heard if the radio listens on its channel from its
@@ -288,6 +289,11 @@ impl Radio for FakeRadio {
         let airtime = time_on_air(frame.len, frame.preamble_symbols);
         self.world.sleep(self.world.now() + airtime).await;
         Ok(())
+    }
+
+    fn recover(&mut self) {
+        self.world.op(Op::Recover);
+        self.deaf();
     }
 }
 
@@ -954,6 +960,7 @@ fn a_relay_runs_through_the_loop() {
             }
         }
     }
+    assert_eq!(d.stats().recoveries, 0);
     let (id, payload) = d.core().inbox().expect("its own message came back");
     assert_eq!(payload, b"hello");
     assert!(
@@ -965,6 +972,65 @@ fn a_relay_runs_through_the_loop() {
         d.app().messages
     );
     assert!(d.app().outgoing.is_none(), "taken");
+}
+
+/// A radio whose every check reads busy: the relay skips a heartbeat on
+/// every channel in turn, and once it has on all of them, the driver
+/// brings the radio back as at boot (roadmap D192), and not before.
+#[test]
+fn a_heartbeat_skipped_on_every_channel_brings_the_radio_back() {
+    let world = World::default();
+    let me = Position::from_degrees(50.45, 30.52);
+    let relay = Relay::new(relay_config(me), 7);
+    let mut d = Driver::new(
+        relay,
+        FakeRadio {
+            world: world.clone(),
+            cad_busy: true,
+        },
+        FakeClock {
+            world: world.clone(),
+            early: Duration::ZERO,
+            fired_early: Default::default(),
+        },
+        TestApp::default(),
+        10,
+    );
+    run_until(&mut d, &world, Instant::ZERO + Duration::from_secs(600));
+    let ops = world.ops();
+    let first = ops
+        .iter()
+        .position(|(_, op)| *op == Op::Recover)
+        .expect("the radio was brought back");
+    // Before it, every check found its channel busy, three to a
+    // heartbeat, on every channel, and nothing was sent.
+    let checked: std::collections::BTreeSet<u8> = ops[..first]
+        .iter()
+        .filter_map(|(_, op)| match op {
+            Op::Lbt(c) => Some(c.index()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(checked.len(), usize::from(bark_proto::CHANNELS));
+    let checks = ops[..first]
+        .iter()
+        .filter(|(_, op)| matches!(op, Op::Lbt(_)))
+        .count();
+    assert!(
+        checks >= 3 * usize::from(bark_proto::CHANNELS),
+        "{checks} checks"
+    );
+    assert!(!ops[..first]
+        .iter()
+        .any(|(_, op)| matches!(op, Op::Transmit(_))));
+    // Then it listens again, and counts afresh.
+    assert!(
+        matches!(ops[first + 1].1, Op::Listen(_)),
+        "{:?}",
+        ops[first + 1]
+    );
+    let recovered = ops.iter().filter(|(_, op)| *op == Op::Recover).count();
+    assert_eq!(d.stats().recoveries as usize, recovered);
 }
 
 /// A script that sniffs from 10 ms to `until` on channel 3 and wakes at

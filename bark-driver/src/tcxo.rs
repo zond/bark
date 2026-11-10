@@ -18,7 +18,10 @@
 //! running and no delay is too short, so the restart after a CAD, which
 //! ends in STDBY_RC a few hundred microseconds before the next command,
 //! is programmed short ([`SHORT`]); every other start is a cold one and
-//! takes the probed delay.
+//! takes the probed delay. The error flag stays set until it is read, so
+//! it is read before a cold start too: one set then came from a short
+//! restart, and a board whose oscillator fails those takes the probed
+//! delay at every start (`docs/radio-recovery-2026-11-10.md`).
 
 use crate::{Duration, Instant};
 
@@ -196,6 +199,9 @@ pub struct Delay {
     pub probes: u32,
     /// Cold starts in use that set the error flag.
     pub errors: u32,
+    /// Whether a restart within [`STILL_RUNNING`] takes [`SHORT`]: until
+    /// one failed.
+    pub short: bool,
     /// The last probe.
     pub last: Option<Probe>,
     /// When the delay was last probed or stepped, and the die's
@@ -213,6 +219,7 @@ impl Delay {
             delay: MAX,
             probes: 0,
             errors: 0,
+            short: true,
             last: None,
             settled_at: now,
             settled_temp: None,

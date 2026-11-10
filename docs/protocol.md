@@ -719,6 +719,16 @@ checks at boot that the two agree on the home channel, keeps the
 offset it finds, and reads after the detection if they do not
 (roadmap D88).
 
+**A radio that reads every channel busy.** A heartbeat skipped on every
+channel with no check found clear in between is 39 busy checks in a
+row, three to each of the 13 channels. At the 35 % of airtime a channel
+can carry ([capacity and sizing](#capacity-and-sizing)) that comes by
+chance about once in 0.35³⁹, 10⁻¹⁸, so it is taken to mean the radio
+reads wrong, not that the air is full: the driver resets the radio,
+measures again what it measured at boot, its oscillator's start and the
+offset above, and logs it. A sleepy node, which beats on its home
+channel alone, is not watched this way (roadmap D192).
+
 No scanning is needed: every relay's heartbeat visits all channels, so a
 node listening on any one channel hears every relay in range within one
 rotation. The heartbeat load per channel is in

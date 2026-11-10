@@ -31,14 +31,14 @@ pub mod utc;
 use core::fmt::Debug;
 use core::future::pending;
 
-use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
+use bark_proto::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
 use bark_proto::sniff::LONG_PREAMBLE_SYMBOLS;
 use bark_proto::time::earlier;
 use bark_proto::update::{Image, Piece};
 use bark_proto::wire::{Packet, MAX_PAYLOAD};
 use bark_proto::{
     Action, AppCommand, AppEvent, Core, Duration, Event, Frame, Instant, MsgId, NodeId, Position,
-    Stored, MAX_FRAME,
+    Stored, Trace, MAX_FRAME,
 };
 use embassy_futures::select::{select3, Either3};
 
@@ -56,6 +56,9 @@ pub const RSSI_DWELL: Duration = RSSI_SETTLE;
 /// raw ≥ 0; DS §13.5.4), so the core takes the channel as busy rather than
 /// transmit on a reading it never got.
 pub const FAILED_RSSI_DBM: i16 = 0;
+
+/// Every channel, as a mask of bits by index.
+const ALL_CHANNELS: u16 = (1 << CHANNELS) - 1;
 
 /// How often the driver reads the battery while on battery and reports it
 /// to the core (core-interface §4). The core turns a fixed relay sleepy at
@@ -179,6 +182,12 @@ pub trait Radio {
     /// Send `frame` on its channel at `dbm` conducted. Returns once it has
     /// left the antenna. Leaves the radio not listening.
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error>;
+
+    /// Bring the radio back as at boot before its next operation: it
+    /// answers, but what it reads is no longer to be trusted
+    /// ([`Driver`], "every channel busy"). Leaves the radio not
+    /// listening.
+    fn recover(&mut self) {}
 }
 
 /// A monotonic clock in the core's units.
@@ -376,6 +385,44 @@ pub struct Stats {
     pub own_readies: u32,
     /// Pieces the application could not fill, not sent ([`App::serve`]).
     pub unserved: u32,
+    /// Times the radio was brought back as at boot because every channel
+    /// read busy ([`BusyRun`]).
+    pub recoveries: u32,
+}
+
+/// The listen-before-talk checks since the last one the core found clear.
+///
+/// A relay's heartbeat visits every channel in turn and is skipped after
+/// three busy checks (spec "Heartbeat"). A heartbeat skipped on every
+/// channel with no clear check between is 39 busy checks in a row on all
+/// 13 channels: at the 35 % of airtime a channel can carry (spec
+/// "Capacity and sizing") that comes by chance about once in 0.35^39,
+/// 10^-18, so it says the radio reads wrong, not that the air is full.
+/// The radio is then brought back as at boot, which on the bench cured
+/// a board that read every channel busy (roadmap D192,
+/// `docs/radio-recovery-2026-11-10.md`). A sleepy node beats on its home
+/// channel alone and never fills the mask.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BusyRun {
+    /// The channels a heartbeat was skipped on, as a mask by index.
+    pub skipped: u16,
+    /// The checks made, and those whose CAD saw a preamble.
+    pub checks: u32,
+    /// Of `checks`, those whose CAD saw a preamble.
+    pub cad: u32,
+    /// The lowest and highest reading, dBm.
+    pub dbm: Option<(i16, i16)>,
+}
+
+impl BusyRun {
+    fn check(&mut self, cad: bool, dbm: i16) {
+        self.checks += 1;
+        self.cad += u32::from(cad);
+        self.dbm = Some(match self.dbm {
+            Some((lo, hi)) => (lo.min(dbm), hi.max(dbm)),
+            None => (dbm, dbm),
+        });
+    }
 }
 
 /// The loop: one core, one radio, one clock, one application.
@@ -419,6 +466,8 @@ pub struct Driver<C, R, K, A> {
     excursion: Option<Action>,
     /// When the outstanding check began waiting for a reception to end.
     held_since: Option<Instant>,
+    /// The busy checks since the last clear one.
+    busy: BusyRun,
     rx: [u8; MAX_FRAME],
     payload: [u8; MAX_PAYLOAD],
     stats: Stats,
@@ -449,6 +498,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             receiving: None,
             excursion: None,
             held_since: None,
+            busy: BusyRun::default(),
             rx: [0; MAX_FRAME],
             payload: [0; MAX_PAYLOAD],
             stats: Stats::default(),
@@ -793,10 +843,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// of resting channel at once.
     async fn deliver(&mut self, event: Event<'_>) -> Result<(), R::Error> {
         let now = self.clock.now();
+        let lbt = matches!(event, Event::LbtDone { .. });
         let mut resting = self.resting;
         let mut excursion = self.excursion;
         let mut sniff = self.sniff_until;
         let mut search = self.search_until;
+        let mut skipped = 0u16;
         let app = &mut self.app;
         self.core.handle(event, now, &mut |action| match action {
             Action::Listen(c) => {
@@ -815,7 +867,12 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::App(e) => app.message(&e),
             Action::Store(s) => app.store(&s),
             Action::Locate(until) => search = Some(until).filter(|&t| t > now),
-            Action::Trace(t) => log::info!("{:?}", t),
+            Action::Trace(t) => {
+                if let Trace::HeartbeatSkipped { channel } = t {
+                    skipped |= 1 << channel.index();
+                }
+                log::info!("{:?}", t)
+            }
             Action::Offered(image) => app.offered(&image),
             Action::StorePiece(piece) => app.store_piece(&piece),
         });
@@ -826,8 +883,33 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         self.excursion = excursion;
         self.sniff_until = sniff;
         self.search_until = search;
+        // A check the core found clear is followed by what it checked for.
+        if lbt && matches!(excursion, Some(Action::Transmit(_) | Action::Serve(_))) {
+            self.busy = BusyRun::default();
+        }
+        self.busy.skipped |= skipped;
+        if self.busy.skipped == ALL_CHANNELS {
+            self.recover();
+        }
         self.follow_gps(now);
         self.listen_resting().await
+    }
+
+    /// Every channel read busy ([`BusyRun`]): bring the radio back as at
+    /// boot.
+    fn recover(&mut self) {
+        let run = core::mem::take(&mut self.busy);
+        let (lo, hi) = run.dbm.unwrap_or_default();
+        log::warn!(
+            "radio: a heartbeat skipped on every channel, {} checks busy in a row, {} with a preamble seen, readings {} to {} dBm; resetting the radio",
+            run.checks,
+            run.cad,
+            lo,
+            hi
+        );
+        self.stats.recoveries += 1;
+        self.radio.recover();
+        self.deaf();
     }
 
     /// Carry out an excursion and return its completion event. A radio
@@ -845,6 +927,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                         (true, FAILED_RSSI_DBM)
                     }
                 };
+                self.busy.check(busy, dbm);
                 Event::LbtDone { channel, busy, dbm }
             }
             Action::Rssi(channel) => {
