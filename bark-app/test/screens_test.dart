@@ -1132,6 +1132,156 @@ void main() {
     app.dispose();
   });
 
+  testWidgets('the node\'s phones in two lists; another\'s removed by the '
+      'code on the node\'s screen, a wrong code offering a new one', (t) async {
+    final app = await model(t);
+    await app.me.setName('Ann');
+    app.setFake(true);
+    final f = app.fakeNode = FakeNode(
+      now: DateTime.now,
+      sodium: sodium,
+      app: app.me.identity,
+    );
+    final today = DateTime.now().toUtc().difference(DateTime.utc(2026)).inDays;
+    f.others.addAll([
+      PhoneRecord(number: 2, paired: true, home: true, day: today, name: 'Bo'),
+      PhoneRecord(number: 3, paired: true, day: today - 2),
+      const PhoneRecord(number: 4, home: true, name: 'Cy'),
+    ]);
+    await app.connectFake();
+    await app.session.setPaired(nodeName(FakeNode.id));
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    // The name from the card went to the node.
+    expect(f.ownerName, 'Ann');
+    expect(find.text('Phones paired with this node'), findsOneWidget);
+    expect(find.text('Phones with a home here'), findsOneWidget);
+    // On the node's list and under My name.
+    expect(find.text('Ann'), findsNWidgets(2));
+    expect(find.text('This phone, linked now'), findsOneWidget);
+    expect(
+      find.text('Has a home here too, last linked yesterday'),
+      findsOneWidget,
+    );
+    expect(find.text('Paired too, last linked yesterday'), findsOneWidget);
+    expect(find.text('A phone with no name'), findsOneWidget);
+    expect(find.text('Last linked 3 days ago'), findsOneWidget);
+    expect(find.text('Last linked never'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Remove'), findsNWidgets(4));
+    expect(find.widgetWithText(TextButton, 'Unpair'), findsOneWidget);
+
+    // A wrong code: not removed, and a new code asked for.
+    final remove = find.widgetWithText(TextButton, 'Remove').at(1);
+    await t.ensureVisible(remove);
+    await t.tap(remove);
+    await t.pumpAndSettle();
+    expect(find.text('Remove the phone with no name?'), findsOneWidget);
+    expect(
+      find.textContaining('no longer paired with the node'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('within 30 s'), findsOneWidget);
+    await t.tap(find.text('Show the code'));
+    await t.pumpAndSettle();
+    final first = f.shownCode!;
+    final wrong = (first + 1) % removalCodes;
+    await t.enterText(
+      find.byKey(const Key('removal code')),
+      wrong.toString().padLeft(6, '0'),
+    );
+    await t.pump();
+    await t.tap(find.widgetWithText(FilledButton, 'Remove'));
+    await t.pumpAndSettle();
+    expect(find.text('Not removed'), findsOneWidget);
+    expect(f.others.length, 3);
+    await t.tap(find.text('New code'));
+    await t.pumpAndSettle();
+    expect(f.shownCode, isNotNull);
+    await t.enterText(
+      find.byKey(const Key('removal code')),
+      f.shownCode!.toString().padLeft(6, '0'),
+    );
+    await t.pump();
+    await t.tap(find.widgetWithText(FilledButton, 'Remove'));
+    await t.pumpAndSettle();
+    expect(find.text('Removed'), findsOneWidget);
+    expect(f.others.map((r) => r.number), [2, 4]);
+    expect(find.text('A phone with no name'), findsNothing);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('a full node: Settings says it takes no more pairings', (
+    t,
+  ) async {
+    final app = await model(t);
+    app.setFake(true);
+    final f = app.fakeNode = FakeNode(
+      now: DateTime.now,
+      sodium: sodium,
+      app: app.me.identity,
+    );
+    f.others.addAll([
+      for (var n = 2; n <= maxPhones; n++) PhoneRecord(number: n, paired: true),
+    ]);
+    await app.connectFake();
+    expect(app.session.node!.room, 0);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    expect(
+      find.textContaining('takes no more pairings until one is removed'),
+      findsOneWidget,
+    );
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the paired list: stopped, a row says so and a tap connects; '
+      'Disconnect below it; a newer node said quietly', (t) async {
+    final app = await model(t);
+    app.setFake(true);
+    app.fakeNode = FakeNode(
+      now: DateTime.now,
+      sodium: sodium,
+      app: app.me.identity,
+    )..version = linkVersion + 1;
+    await app.connectFake();
+    await app.session.setPaired('bark-0ce400000002');
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    expect(app.session.notice, isNull);
+    final disconnect = find.widgetWithText(OutlinedButton, 'Disconnect');
+    expect(
+      t.getTopLeft(disconnect).dy,
+      greaterThan(t.getTopLeft(find.text('ID 0CE400000002')).dy),
+    );
+    await t.scrollUntilVisible(
+      find.textContaining('newer than this app'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      find.textContaining('brings the node\'s new features'),
+      findsOneWidget,
+    );
+    await t.scrollUntilVisible(
+      disconnect,
+      -100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(disconnect);
+    await t.pumpAndSettle();
+    expect(app.session.stopped, isTrue);
+    expect(find.text('Not looking. Tap to connect'), findsNWidgets(2));
+    await t.pumpWidget(const SizedBox());
+    app.dispose();
+  });
+
   testWidgets('the owner unpairs, after the dialog says what follows', (
     t,
   ) async {

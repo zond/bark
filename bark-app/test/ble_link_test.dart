@@ -1606,6 +1606,65 @@ void main() {
       });
     });
 
+    test('a tap on a paired node in Settings, the search stopped: heard '
+        'by a scan of its own, and connected as its owner', () {
+      run(
+        (async, app, ble) {
+          async.elapse(round);
+          expect(app.session.connected && !app.session.guest, isTrue);
+          app.disconnect();
+          async.elapse(lookRound * 3);
+          expect((app.session.connected, app.session.stopped), (false, true));
+          app.connectPaired(nodeName(FakeNode.id));
+          async.elapse(round);
+          expect(app.session.connected && !app.session.guest, isTrue);
+          expect(nodeName(app.session.node!.id), nodeName(FakeNode.id));
+          expect(app.session.stopped, isFalse);
+          // Out of reach and not heard for the span the search takes to
+          // call it so, it says it was not seen.
+          app.disconnect();
+          ble.inReach.remove(paired);
+          async.elapse(lookRound * ownGone);
+          Object? failed;
+          app
+              .connectPaired(nodeName(FakeNode.id))
+              .then<void>((_) {}, onError: (Object e) => failed = e);
+          async.elapse(lookRound * 3);
+          expect(failed, isA<NotSeen>());
+        },
+        withPaired: true,
+        pairedInReach: true,
+      );
+    });
+
+    test('a full node: no home offered, and no pairing tried, as it would '
+        'refuse it', () {
+      run((async, app, ble) {
+        ble.nodes[strong]!
+          ..paired = false
+          ..others.addAll([
+            for (var n = 1; n <= maxPhones; n++)
+              PhoneRecord(number: n, paired: true),
+          ]);
+        async.elapse(round);
+        expect(app.guestHere?.room, 0);
+        expect(app.offerHome, isFalse);
+        String? told;
+        app.homeHere().then((r) => told = r);
+        async.elapse(round);
+        expect(told, fullNode);
+        expect(ble.pairings, 0);
+        // Pairing anyway, from a scan's tap, the node refuses it.
+        Object? failed;
+        app
+            .connect(FoundNode(strong, nodeName(strongId), -50))
+            .then<void>((_) {}, onError: (Object e) => failed = e);
+        async.elapse(round);
+        expect(failed, isA<NotPaired>());
+        expect(ble.bonds, isEmpty);
+      });
+    });
+
     test('a wrong code: not paired, no home, and the node still used as a '
         'guest', () {
       run((async, app, ble) {

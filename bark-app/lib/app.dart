@@ -367,6 +367,8 @@ class AppModel extends ChangeNotifier {
   /// one round's scan, and [NotSeen] goes on if it is not heard.
   Future<void> connectPaired(String name) async {
     if (connecting) return;
+    final f = fakeNode;
+    if (fake && f != null && name == nodeName(f.nodeId)) return connectFake();
     final last = _lastHeard[name];
     var n = last != null && now().difference(last.at) < lookRound * ownGone
         ? last.found

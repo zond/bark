@@ -46,6 +46,21 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.refused => 'refused: ${o.error}',
 };
 
+/// The day a node's phone was last linked, as a record counts it
+/// ([dayOf]), in words against `now`: "today", "yesterday", "N days ago",
+/// or "never" when the node had no time at any of its links.
+String lastLinked(int day, DateTime now) {
+  final d = dayOf(day);
+  if (d == null) return 'never';
+  final t = now.toUtc();
+  final ago = DateTime.utc(t.year, t.month, t.day).difference(d).inDays;
+  return switch (ago) {
+    <= 0 => 'today',
+    1 => 'yesterday',
+    _ => '$ago days ago',
+  };
+}
+
 /// `s` with its first letter a capital.
 String capital(String s) =>
     s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';

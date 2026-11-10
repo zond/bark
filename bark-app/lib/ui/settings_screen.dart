@@ -276,6 +276,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               StaleBondLine(app),
               ..._connection(),
               ..._public(),
+              ..._phones(),
               ..._home(),
               ..._pairHere(),
               ..._updates(),
@@ -366,10 +367,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
       if (s.connected)
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(health(s)),
-          trailing: OutlinedButton(
+        Padding(padding: const EdgeInsets.only(top: 8), child: Text(health(s))),
+      ..._paired(),
+      // Below the paired nodes, so that Disconnect, which only ends the
+      // link, is not taken for Unpair.
+      if (s.connected)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton(
             onPressed: app.disconnect,
             child: const Text('Disconnect'),
           ),
@@ -384,7 +389,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         )
       else
         const SizedBox(height: 8),
-      ..._paired(),
       if (app.fake && !s.connected)
         Align(
           alignment: Alignment.centerLeft,
@@ -427,7 +431,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// The nodes this phone is paired with, the home first, each with how
-  /// it stands, and Unpair on the one connected (spec "Phone link",
+  /// it stands, and Unpair on the one connected before link version 13,
+  /// where the phone's own row of the node's phones has it ([_phones]);
+  /// a tap on another connects to it as its owner (spec "Phone link",
   /// Pairing).
   List<Widget> _paired() {
     final s = app.session;
@@ -456,7 +462,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             '' => null,
             final w => Text(w),
           },
-          trailing: n == on && s.node!.version >= unpairVersion
+          onTap: n == on || s.pairingLost.contains(n) || app.connecting
+              ? null
+              : () => _connect(() => app.connectPaired(n)),
+          trailing:
+              n == on &&
+                  s.node!.version >= unpairVersion &&
+                  s.node!.version < phonesVersion
               ? TextButton(onPressed: _askUnpair, child: const Text('Unpair'))
               : s.pairingLost.contains(n)
               ? TextButton(
@@ -481,7 +493,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         else if (lost)
           'no longer yours: it no longer knows this phone'
         else if (app.searchOn)
-          'not in reach',
+          'not in reach'
+        else if (app.session.stopped)
+          'not looking. Tap to connect',
       ].join(', '),
     );
   }
@@ -536,6 +550,180 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onChanged: (v) => _try(() => s.writePublic(v), 'Setting Public failed'),
       ),
     ];
+  }
+
+  /// The node's phones, on an owner's link from link version 13: those
+  /// paired with it, and those whose home it is, a record holding both
+  /// in both lists (spec "Phone link", Phones). Another's row has Remove,
+  /// the person's own paired row Unpair; their own home is changed under
+  /// Home node.
+  List<Widget> _phones() {
+    final s = app.session;
+    final rs = s.phones;
+    if (!s.connected || s.guest || rs == null) return [];
+    final paired = rs.where((r) => r.paired).toList();
+    final homes = rs.where((r) => r.home).toList();
+    return [
+      _heading('Phones at this node'),
+      Text(
+        'A node keeps up to eight phones: anyone at it can pair by the '
+        'six-digit code it shows, and every phone paired with it may change '
+        'its settings. Remove a phone you do not know, or one that is gone.',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      if ((s.node?.room ?? 1) == 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'It keeps eight now and takes no more pairings until one is '
+            'removed.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      _subheading('Phones paired with this node'),
+      for (final r in paired) _phoneRow(r, home: false),
+      if (homes.isNotEmpty) ...[
+        _subheading('Phones with a home here'),
+        for (final r in homes) _phoneRow(r, home: true),
+      ],
+    ];
+  }
+
+  Widget _subheading(String t) => Padding(
+    padding: const EdgeInsets.only(top: 12),
+    child: Text(t, style: Theme.of(context).textTheme.titleSmall),
+  );
+
+  /// A record's row in the paired list, or with `home` in the homes list.
+  Widget _phoneRow(PhoneRecord r, {required bool home}) {
+    final both = r.paired && r.home;
+    final words = [
+      if (r.mine) 'this phone',
+      if (both) home ? 'paired too' : 'has a home here too',
+      if (r.linked)
+        'linked now'
+      else
+        'last linked ${lastLinked(r.day, app.now())}',
+    ];
+    final Widget? action;
+    if (!r.mine) {
+      action = TextButton(
+        onPressed: () => _askRemove(r),
+        child: const Text('Remove'),
+      );
+    } else if (!home) {
+      action = TextButton(onPressed: _askUnpair, child: const Text('Unpair'));
+    } else {
+      // The person's own home is changed under Home node, below.
+      action = null;
+    }
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(home ? Icons.home_outlined : Icons.phone_android),
+      title: Text(r.name.isEmpty ? 'A phone with no name' : r.name),
+      subtitle: Text(capital(words.join(', '))),
+      trailing: action,
+    );
+  }
+
+  /// Removes another phone's pairing, home or both, after a dialog that
+  /// says what follows, by the code the node's screen shows.
+  Future<void> _askRemove(PhoneRecord r) async {
+    final who = r.name.isEmpty
+        ? 'the phone with no name'
+        : '${r.name}\'s phone';
+    final whoCap = capital(who);
+    final parts = [
+      if (r.paired)
+        '$whoCap is no longer paired with the node. At its next link the '
+            'node ends it, and its app says the node is no longer theirs; '
+            'pairing again takes the code on the node\'s screen.',
+      if (r.home)
+        'The node is no longer ${r.name.isEmpty ? 'its person' : r.name}\'s '
+            'home: it forgets their mailbox key, and their app says so at '
+            'their next link here. Their fetches from elsewhere go '
+            'unanswered.',
+    ];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          r.paired && r.home
+              ? 'Remove $who and its home?'
+              : r.paired
+              ? 'Remove $who?'
+              : 'Remove this home?',
+        ),
+        content: Text(
+          '${parts.join('\n\n')}\n\nTo show that you are at the node, it '
+          'draws a six-digit code on its screen, which you type here '
+          'within 30 s.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Show the code'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _removeByCode(r);
+  }
+
+  /// Asks the node for a code, takes the six digits, and writes the
+  /// removal; a wrong or late code offers a new one, as each code takes
+  /// one try.
+  Future<void> _removeByCode(PhoneRecord r) async {
+    final s = app.session;
+    while (mounted) {
+      try {
+        await s.askRemovalCode();
+      } catch (e) {
+        if (mounted) say(context, 'Asking the node for a code failed: $e');
+        return;
+      }
+      if (!mounted) return;
+      final code = await showDialog<String>(
+        context: context,
+        builder: (context) => const _CodeDialog(),
+      );
+      if (code == null || !mounted) return;
+      try {
+        await s.removePhone(
+          r,
+          bond: r.paired,
+          home: r.home,
+          code: int.parse(code),
+        );
+        if (mounted) say(context, 'Removed');
+        return;
+      } on AttException catch (e) {
+        if (!mounted) return;
+        if (e.code != AttError.refused) {
+          say(
+            context,
+            'The node no longer holds that; the list is read again.',
+          );
+          return;
+        }
+        final again = await confirm(
+          context,
+          'Not removed',
+          'That was not the code on the node\'s screen, or it came after '
+              '30 s. Each code takes one try.',
+          'New code',
+        );
+        if (!again) return;
+      } catch (e) {
+        if (mounted) say(context, 'Removing failed: $e');
+        return;
+      }
+    }
   }
 
   Future<void> _askUnpair() async {
@@ -788,6 +976,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final here = owned ? s.address : guest?.address;
     final atHome = owned ? app.atHome : app.guestAtHome;
     final homeable = owned ? canBeHome(st) : guest?.homeable ?? false;
+    final full = guest?.room == 0;
     return [
       _heading('Home node'),
       Text(
@@ -819,21 +1008,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'A home must be a node that stays on power at a fixed place.',
           ),
         ),
-      if (app.holdsOtherKey)
+      if (app.homeKeyGone)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text(
-            'This node holds a mailbox key: it is someone\'s home, perhaps '
-            'a former one of yours.',
+            'Your home node does not hold your mailbox key: someone paired '
+            'with it may have removed it. Make it your home again, or '
+            'choose another.',
           ),
+        ),
+      if (app.holdsOtherKey)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            s.nodeHome?.mine == null
+                ? 'This node holds a mailbox key: it is someone\'s home, '
+                      'perhaps a former one of yours.'
+                : 'This node still holds your mailbox key, from when it was '
+                      'your home.',
+          ),
+        ),
+      if (app.othersHome)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('This node is someone else\'s home.'),
         ),
       const SizedBox(height: 8),
       Wrap(
         spacing: 8,
         children: [
-          if ((owned || guest != null) && here != null && !atHome)
+          if ((owned || guest != null) &&
+              here != null &&
+              (!atHome || app.homeKeyGone))
             FilledButton(
-              onPressed: homeable && !app.connecting
+              onPressed: homeable && !app.connecting && (owned || !full)
                   ? () => _setHome(here, pair: !owned)
                   : null,
               child: const Text('Make this node my home'),
@@ -913,14 +1121,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// does to the node's keeper.
   static const _pairsFirst =
       'The phone pairs with this node first: you type the six-digit code '
-      'its screen shows. A node keeps one paired phone, so any phone '
-      'paired with it before loses it.';
+      'its screen shows. A node keeps up to eight phones, and the phones '
+      'paired with it before keep theirs.';
 
   /// A public node the phone uses as a guest, for a keeper who wants its
   /// settings without making it their home, after the home's action.
   List<Widget> _pairHere() {
     final g = app.guestHere;
     if (g == null) return [];
+    if (g.room == 0) {
+      return [const SizedBox(height: 8), const Text(fullNode)];
+    }
     return [
       const SizedBox(height: 8),
       ListTile(
@@ -1055,5 +1266,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
       signed: true,
       decimal: true,
     ),
+  );
+}
+
+/// Takes the six digits the node's screen shows for a removal.
+class _CodeDialog extends StatefulWidget {
+  const _CodeDialog();
+
+  @override
+  State<_CodeDialog> createState() => _CodeDialogState();
+}
+
+class _CodeDialogState extends State<_CodeDialog> {
+  final _code = TextEditingController();
+
+  @override
+  void dispose() {
+    _code.dispose();
+    super.dispose();
+  }
+
+  bool get _whole => RegExp(r'^\d{6}$').hasMatch(_code.text);
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('The code on the node'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'The node\'s screen shows REMOVE and six digits. Type them '
+          'within 30 s.',
+        ),
+        TextField(
+          key: const Key('removal code'),
+          controller: _code,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(labelText: 'Code'),
+          onChanged: (_) => setState(() {}),
+        ),
+      ],
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: _whole ? () => Navigator.pop(context, _code.text) : null,
+        child: const Text('Remove'),
+      ),
+    ],
   );
 }
