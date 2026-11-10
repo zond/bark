@@ -139,10 +139,10 @@ Verified on the host:
   each build, plain, with `--features console` and with `BARK_OPEN=1`.
 - The ELF's first loadable byte (the vector table) is at `0x06000`, the
   initial stack pointer is `0x20040000`. The open node image is
-  516 884 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
-  of the 929 792 B slot, and uses 195 824 B of RAM before the stack
-  (`.data` and `.bss`), which leaves the stack 65 280 B (2026-11-10 with
-  roadmap D181, `size -A`, `scripts/uf2.py --stack`). The relay,
+  526 564 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
+  of the 929 792 B slot, and uses 195 896 B of RAM before the stack
+  (`.data` and `.bss`), which leaves the stack 65 216 B (2026-11-10 with
+  roadmap D186, `size -A`, `scripts/uf2.py --stack`). The relay,
   95 536 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. The
   stack's depth is in "Tasks and the stack", below.
