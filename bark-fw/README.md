@@ -176,7 +176,7 @@ Verified on the host:
   fake console on a pseudo-terminal (2026-10-25).
 - The phones' records (`cargo test -p bark-link`, `phones`): each entry
   kept whole or, cut at any word, not at all; the last of each kind
-  holding; an older image's bond and home made record one; a pairing
+  holding; a pairing
   added, taken again by the same phone, refused on a full node and given
   the oldest home on a node nobody is paired with; a home joining the one
   its person's earlier phone left; a removal of what a record holds; eight
@@ -299,8 +299,7 @@ Inside:
 | firmware, running | `0x06000` | 908 KiB, 227 pages | the CPU runs from internal flash; everything up to the record |
 | staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
 | given up | `0xEA000` | 4 KiB | the names of the images the node swapped back, 128, which it never gathers again (Updates, below); outside every UF2, so a copy over USB keeps them |
-| spare | `0xEB000` | 28 KiB, 7 pages | unused, outside every UF2: for secrets to come |
-| mailbox state | `0xF2000` | 4 KiB | where an image before roadmap D168 kept the one mailbox key, the last fetch and the phone's last confirmed item, read once to make record one (Phone link, below); secret, so above `0xEA000` |
+| spare | `0xEB000` | 32 KiB, 8 pages | unused, outside every UF2: for secrets to come; its pages hold what earlier layouts left, so a use erases them first |
 | stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the phones' records, their bonds' keys and mailbox keys among them; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
@@ -1104,11 +1103,11 @@ bond, the tag, the name, the home or the day changes; what each read or
 fetch moves, the last confirmed and the last fetch, as an entry of one
 slot; and the node's settings, private or not and the next record's
 number, one slot. The last entry of each kind is the one that holds, and
-a full page is erased and every kind's latest written again. A page an
-older image wrote holds its one bond instead, which the first boot
-makes record one, with the home the mailbox's state page held, and
-writes at once; such a page holds no settings entry, which is how the
-node tells.
+a full page is erased and every kind's latest written again. The page's
+first slot is its head, which names the page's layout, 2; a page
+without it, or of another layout, is read as empty, and the node logs
+`store: the page is of another layout; its state is discarded` and
+erases it at its first write (roadmap D188).
 
 A pairing that completes, is authenticated and bonds takes a free
 record, or replaces the bond of the record whose bond names the same
@@ -1135,7 +1134,7 @@ cable must not stand in for being at the node; then `ble: paired,
 Added(2), phone ..`, `Again(..)` or `Took(..)`, `ble: pairing refused,
 every record in use; the screen says PHONES FULL` or `ble: pairing
 failed ..`, and at boot `phones: 2 paired, 3 kept, room 5, public true`
-and `ble: record 0 number 1 table seen at version 13, ..` for each
+and `ble: record 0 number 1 table seen at version 1, ..` for each
 record with a bond; each names its phone by its identity address, kind
 and an IRK fingerprint, and each connection says which record's bond
 the peer is (`record=Some(0)`). A disconnect's reason, and a host error
@@ -1156,7 +1155,7 @@ copy; and 1.8 KB of static RAM, which leaves the stack 35 KB. How much
 of it the P-256 arithmetic takes in the phone link's task is for the
 bench's `stack_used` to show (`docs/pairing-2026-11-06.md`).
 
-Neighbours (link version 4) gives the phone the neighbour table a page
+Neighbours gives the phone the neighbour table a page
 at a time. The node's task copies the live entries into a static by
 slot after each step (`src/node.rs`, `publish_neighbours`), and the BLE
 task builds the page the phone reads from that copy, each age counted
@@ -1171,14 +1170,14 @@ Changed and the database hash, which the host computes once the table is
 whole (spec "Phone link", Changes to the table). Each record keeps the
 link version its phone last saw and its subscription to Service
 Changed. At boot the log says `ble: record 0 number 1 table seen at
-version 12, service changed true, ..` or the like; on the phone's
+version 1, service changed true, ..` or the like; on the phone's
 encrypted link, while it is subscribed and saw another version, `ble:
-service changed: the phone of record 0 saw version 12, this is 13` and,
+service changed: the phone of record 0 saw version 1, this is 2` and,
 once the phone confirms,
 `ble: service changed confirmed`. It costs 4 KB of flash and 0.4 KB of
 static RAM (2026-11-07, `llvm-size`).
 
-Update and Image (link version 6) stage a new image from the phone
+Update and Image stage a new image from the phone
 (Updates, above). The BLE task serves them itself and keeps the staging
 across connections (`src/update/phone.rs`); it awaits each piece's
 writes before it takes the next request, so the pieces wait in the
@@ -1191,22 +1190,20 @@ resets. They cost 14.8 KB of flash and 1.4 KB of static RAM, the
 SHA-256 among it, which the node build did not have before
 (2026-11-07, `llvm-size`, an open build).
 
-Recipient and Public (link version 7) serve guests on a public node
-(spec "Phone link", Public; roadmap D150). A node is public unless a
-paired phone writes 0 to Public, private, a setting of the node's, kept
-in the settings entry, so a node never paired, and one whose bond an
-older image kept public, is public; with the last bond gone it is public
-again. Each paired phone writes its person's tag at every connection,
-and from link version 13 the app's link version, the oldest node version
-it serves and the person's name after it, which its record keeps; an
-older app's tag alone is taken as version 12's, the name left empty.
-Node says the oldest app version the node serves, 12
-(`bark_link::OLDEST`, which says why). An app and the node that do not
-serve each other, one's version below the other's oldest, get the ATT
-error 0x82 for Recipient's write and the link ends, the log saying `ble:
-the app in slot 1 speaks link version 14 and serves nodes from version
-14; this node speaks 13 and serves apps from 12: they do not serve each
-other, closed` (spec "Phone link", Versions; roadmap D177). Each link is
+Recipient and Public serve guests on a public node (spec "Phone link",
+Public; roadmap D150). A node is public unless a paired phone writes 0
+to Public, private, a setting of the node's, kept in the settings
+entry, so a node never paired is public; with the last bond gone it is
+public again. Each paired phone writes its person's tag at every
+connection, the app's link version, the oldest node version it serves
+and the person's name after it, which its record keeps. Node says the
+oldest app version the node serves, its own (`bark_link::OLDEST`). An
+app and the node that do not serve each other, one's version below the
+other's oldest, get the ATT error 0x82 for Recipient's write and the
+link ends, the log saying `ble: the app in slot 1 speaks link version 2
+and serves nodes from version 2; this node speaks 1 and serves apps from
+1: they do not serve each other, closed` (spec "Phone link", Versions;
+roadmap D177). Each link is
 served by a task of its own (`slot`), so that its future lies in static
 storage and the stack holds one poll at a time; one slot advertises at a
 time. A guest's link ends 30 s after it began, and a second guest's as
@@ -1221,15 +1218,15 @@ Inbox reads its own person's from it, and a guest's read of Inbox asks
 the node for the oldest item after the number it wrote to Guest
 (`for_tag`). Whose turn it is at the one message the node holds, and so
 whose Ready is set, is `bark_link::turn::Turn`, which `src/ble.rs` tells
-of each link, each Recipient write's version and each Send out of turn,
-an ask (spec "Phone link", Sending). A message given back is
+of each link and each Send out of turn, an ask (spec "Phone link",
+Sending). A message given back is
 kept with its phone's record, a guest's with its link. The console's
 `status` has `public=true` or `public=false`, read from the phones in
 the stored-state page, and then `drain_relay=` and `drain_sleepy=`, the
 drains the node image kept there, or the first ones while it has learned
 none.
 
-A paired phone unpairs by writing 2 to Public (link version 12): the
+A paired phone unpairs by writing 2 to Public: the
 node answers, removes its bond from its record and from the host,
 keeping the record's home, and closes the link; the record is freed if
 it holds no home.
@@ -1238,10 +1235,10 @@ Home sets or clears the writing phone's person's key alone, in its
 record; a record that holds the same key and no bond, the home the
 person's earlier phone left, takes this phone's bond, name and tag, and
 the phone's own record is freed, so that the bits the person's unfetched
-mail has in the ring's marks stay theirs. Home's read says, from link
-version 13, whether the node is the reading phone's person's home.
+mail has in the ring's marks stay theirs. Home's read says whether the
+node is the reading phone's person's home.
 
-Phones (link version 13) lists the records and removes one's bond, home
+Phones lists the records and removes one's bond, home
 or both (spec "Phone link", Phones): a write of 1 draws a fresh code on
 the screen, `REMOVE` and six digits, for 30 s, logged in an open build
 as a pairing's is; a write of 2 with a record's number, the parts and
@@ -1250,14 +1247,14 @@ phones::Code`), the removed bond's phone's link closed and the bond
 gone from the host. Node's `room` says how many more phones may pair.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
-5a slot 1 record Some(1) app version 13 name 5 bytes` as a phone writes its tag, `ble:
+5a slot 1 record Some(1) name 5 bytes` as a phone writes its tag, `ble:
 public false`, `ble: record 1 unpaired by its phone; its home stays`,
 `ble: home of record 1 set`, `ble: removal, the code shown`, `ble:
 record 2 number 7 removed: bond true, home false`, `ring: id=...
 tag=Some(5a) kept` for each message kept, `ble: a second guest in slot
 1, closed`, and `ble: the guest in slot 1 closed after its time`.
 
-Ask (link version 9, the image gathered from 10) asks a neighbour for
+Ask asks a neighbour for
 its status (spec "Neighbour status", "Phone link", Ask; roadmap D157,
 D158). The phone's write of an ID goes to the core as
 `bark_driver::Request::Ask`; the core sends the ask, and the answer
@@ -1289,12 +1286,9 @@ whose bit is set, sealed again, through the core's one application send
 slot, the phone's own message first (`src/node.rs`, `LinkApp::take`),
 the rounds of several records in turn. An item sent to a record, or
 confirmed by its phone, has that record's bit cleared, a program of
-one byte without an erase; it stays in the ring. A slot written before
-the bits, its mark 0xFF unsent or 0 sent, reads so for record one, the
-older image's owner, and a record made since claims nothing from before
-it. The keys and what each record has read and fetched are kept with
-the records (Phone link, above); the mailbox's state page inside, where
-an older image kept its one key, is read once to make record one.
+one byte without an erase; it stays in the ring. A record claims
+nothing from before it was made. The keys and what each record has read
+and fetched are kept with the records (Phone link, above).
 
 The mailbox reads a slot when asked, about a millisecond on the
 external flash's bus, and never waits on a write: its writes and erases
