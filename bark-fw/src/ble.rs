@@ -1114,7 +1114,21 @@ async fn slot(
             link
         });
         log::info!("ble: link {} in slot {}", link, i);
-        serve(i, stack, server, gatt, &conn, update).await;
+        Serving {
+            slot: i,
+            stack,
+            server,
+            gatt,
+            changes: Cccd(
+                gatt.service_changed
+                    .cccd_handle
+                    .expect("Service Changed indicates"),
+            ),
+            conn: &conn,
+            update,
+        }
+        .serve()
+        .await;
         LINK.lock(|l| {
             let mut l = l.borrow_mut();
             let link = l.phones[i].link;
@@ -1476,106 +1490,134 @@ fn allowed(owner: bool, public: bool, link: &Link, att: &AttClient<'_>) -> bool 
 /// Assigned Numbers, Descriptors).
 const CCCD_TYPE: u16 = 0x2902;
 
-/// Serve the link in `slot` until it ends: answer its reads and writes,
-/// notify what changes, and pair.
-async fn serve(
+/// A link [`slot`] serves, and what it serves it with.
+struct Serving<'a, 's, 'v> {
     slot: usize,
-    stack: &Stack,
-    server: &Server<'_>,
-    gatt: &Gatt,
-    conn: &GattConnection<'_, '_, DefaultPacketPool>,
-    update: &Update,
-) {
-    let changes = Cccd(
-        gatt.service_changed
-            .cccd_handle
-            .expect("Service Changed indicates"),
-    );
-    // A pairing that does not bond is refused ([`settle`]); the phone asks
-    // to bond, and so the node offers it.
-    if let Err(e) = conn.raw().set_bondable(true) {
-        log::error!("ble: bondable {}", HostError(&e));
+    stack: &'static Stack,
+    server: &'static Server<'static>,
+    gatt: &'static Gatt,
+    /// Service Changed's subscription.
+    changes: Cccd,
+    conn: &'a GattConnection<'s, 'v, DefaultPacketPool>,
+    update: &'static Update,
+}
+
+/// What a write asks of the link once it is answered.
+#[derive(Default)]
+struct After {
+    /// The phone subscribed to Service Changed, or ended it.
+    wrote_changes: bool,
+    /// End the link.
+    close: bool,
+    /// Reboot into the image the phone staged.
+    reboot: bool,
+}
+
+impl Serving<'_, '_, '_> {
+    /// Serve the link until it ends: answer its reads and writes, notify
+    /// what changes, and pair.
+    async fn serve(&self) {
+        // A pairing that does not bond is refused ([`settle`]); the phone asks
+        // to bond, and so the node offers it.
+        if let Err(e) = self.conn.raw().set_bondable(true) {
+            log::error!("ble: bondable {}", HostError(&e));
+        }
+        // What changed while no phone was connected is read, not notified.
+        NOTIFY[self.slot].reset();
+        refresh(self.slot, self.server, self.conn, self.update);
+        let ends = embassy_time::Instant::now() + GUEST_LINK;
+        loop {
+            // A guest's link, on a public node, ends at `ends`: neither a
+            // paired phone's nor one that pairs.
+            let pairing = LINK.lock(|l| l.borrow().phones[self.slot].pairing);
+            let guest = public() && !pairing && owner(self.conn).is_none();
+            if guest && embassy_time::Instant::now() >= ends {
+                log::info!("ble: the guest in slot {} closed after its time", self.slot);
+                self.conn.raw().disconnect();
+            }
+            let next = LINK.lock(|l| l.borrow().turn.ends());
+            let next = match (next, guest) {
+                (Some(t), true) => Some(crate::clock::embassy(t).min(ends)),
+                (Some(t), false) => Some(crate::clock::embassy(t)),
+                (None, true) => Some(ends),
+                (None, false) => None,
+            };
+            let turn = async {
+                match next {
+                    Some(t) => embassy_time::Timer::at(t).await,
+                    None => core::future::pending().await,
+                }
+            };
+            match select3(self.conn.next(), NOTIFY[self.slot].wait(), turn).await {
+                Either3::First(GattConnectionEvent::Gatt { event }) => self.request(event).await,
+                Either3::First(GattConnectionEvent::Disconnected { reason }) => {
+                    log::info!(
+                        "ble: disconnected 0x{:02x} slot {}",
+                        u8::from(reason),
+                        self.slot
+                    );
+                    if owner(self.conn).is_some() {
+                        self.update.lock().await.phone.link_closed();
+                    }
+                    // A pairing cut short leaves no code on the screen.
+                    if LINK.lock(|l| l.borrow().phones[self.slot].pairing) {
+                        crate::display::pairing(None);
+                    }
+                    return;
+                }
+                Either3::First(event) => {
+                    if self.link_event(event) {
+                        tell_of_change(self.gatt, &self.changes, self.conn, false).await;
+                    }
+                }
+                Either3::Second(n) => self.notified(n).await,
+                // The turn passed on unused, or a guest's time is up, which the
+                // loop's start sees.
+                Either3::Third(()) => turn_moved(),
+            }
+        }
     }
-    // What changed while no phone was connected is read, not notified.
-    NOTIFY[slot].reset();
-    let link = &server.link;
-    refresh(slot, server, conn, update);
-    let ends = embassy_time::Instant::now() + GUEST_LINK;
-    loop {
-        // A guest's link, on a public node, ends at `ends`: neither a
-        // paired phone's nor one that pairs.
-        let pairing = LINK.lock(|l| l.borrow().phones[slot].pairing);
-        let guest = public() && !pairing && owner(conn).is_none();
-        if guest && embassy_time::Instant::now() >= ends {
-            log::info!("ble: the guest in slot {} closed after its time", slot);
+
+    /// Notify what changed for this link, and close it if asked.
+    async fn notified(&self, n: Notify) {
+        let (slot, conn, link) = (self.slot, self.conn, &self.server.link);
+        LINK.lock(|l| l.borrow_mut().phones[slot].sending = true);
+        // A guest's link ends with the public setting.
+        if n.close_guests && owner(conn).is_none() {
+            log::info!("ble: no longer public; the guest in slot {} closed", slot);
             conn.raw().disconnect();
         }
-        let next = LINK.lock(|l| l.borrow().turn.ends());
-        let next = match (next, guest) {
-            (Some(t), true) => Some(crate::clock::embassy(t).min(ends)),
-            (Some(t), false) => Some(crate::clock::embassy(t)),
-            (None, true) => Some(ends),
-            (None, false) => None,
-        };
-        let turn = async {
-            match next {
-                Some(t) => embassy_time::Timer::at(t).await,
-                None => core::future::pending().await,
-            }
-        };
-        let event = match select3(conn.next(), NOTIFY[slot].wait(), turn).await {
-            Either3::First(e) => e,
-            Either3::Second(n) => {
-                LINK.lock(|l| l.borrow_mut().phones[slot].sending = true);
-                // A guest's link ends with the public setting.
-                if n.close_guests && owner(conn).is_none() {
-                    log::info!("ble: no longer public; the guest in slot {} closed", slot);
-                    conn.raw().disconnect();
-                }
-                // Its phone's bond was removed by another phone, or the node
-                // reboots.
-                if n.close {
-                    log::info!("ble: the link in slot {} closed", slot);
-                    conn.raw().disconnect();
-                }
-                refresh(slot, server, conn, update);
-                if n.status {
-                    let _ = link
-                        .status
-                        .notify(conn, &status_now(slot).encode(), true)
-                        .await;
-                }
-                if n.given_back {
-                    let _ = link
-                        .given_back
-                        .notify(conn, &given_back_now(slot), true)
-                        .await;
-                }
-                if n.answer && owner(conn).is_some() {
-                    let _ = link.ask.notify(conn, &answer_now(), true).await;
-                }
-                LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
-                continue;
-            }
-            Either3::Third(()) => {
-                // The turn passed on unused, or a guest's time is up, which
-                // the loop's start sees.
-                turn_moved();
-                continue;
-            }
-        };
-        let event = match event {
-            GattConnectionEvent::Disconnected { reason } => {
-                log::info!("ble: disconnected 0x{:02x} slot {}", u8::from(reason), slot);
-                if owner(conn).is_some() {
-                    update.lock().await.phone.link_closed();
-                }
-                // A pairing cut short leaves no code on the screen.
-                if LINK.lock(|l| l.borrow().phones[slot].pairing) {
-                    crate::display::pairing(None);
-                }
-                return;
-            }
+        // Its phone's bond was removed by another phone, or the node
+        // reboots.
+        if n.close {
+            log::info!("ble: the link in slot {} closed", slot);
+            conn.raw().disconnect();
+        }
+        refresh(slot, self.server, conn, self.update);
+        if n.status {
+            let _ = link
+                .status
+                .notify(conn, &status_now(slot).encode(), true)
+                .await;
+        }
+        if n.given_back {
+            let _ = link
+                .given_back
+                .notify(conn, &given_back_now(slot), true)
+                .await;
+        }
+        if n.answer && owner(conn).is_some() {
+            let _ = link.ask.notify(conn, &answer_now(), true).await;
+        }
+        LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
+    }
+
+    /// A change of the link other than its end or a request: the pairing
+    /// and the encryption, and what the controller settled. Whether the
+    /// link was encrypted, and its phone is to be told of a changed table.
+    fn link_event(&self, event: GattConnectionEvent<'_, '_, DefaultPacketPool>) -> bool {
+        let (slot, conn) = (self.slot, self.conn);
+        match event {
             GattConnectionEvent::PassKeyDisplay(key) => {
                 // The code only in an open build, for the bench: a
                 // protected node's log must not let a USB cable stand in
@@ -1590,13 +1632,12 @@ async fn serve(
                 }
                 LINK.lock(|l| l.borrow_mut().phones[slot].pairing = true);
                 crate::display::pairing(Some(key.value()));
-                continue;
             }
             GattConnectionEvent::PairingComplete {
                 security_level,
                 bond,
             } => {
-                settle(stack, conn, security_level, bond);
+                settle(self.stack, conn, security_level, bond);
                 crate::display::pairing(None);
                 LINK.lock(|l| {
                     let p = &mut l.borrow_mut().phones[slot];
@@ -1604,7 +1645,6 @@ async fn serve(
                     p.pairing = false;
                 });
                 linked(conn);
-                continue;
             }
             GattConnectionEvent::PairingFailed(e) => {
                 let refused = LINK.lock(|l| {
@@ -1621,21 +1661,17 @@ async fn serve(
                     log::info!("ble: pairing failed {}", HostError(&e));
                     crate::display::pairing(None);
                 }
-                settle(stack, conn, SecurityLevel::NoEncryption, None);
-                continue;
+                settle(self.stack, conn, SecurityLevel::NoEncryption, None);
             }
             GattConnectionEvent::Encrypted { security_level, .. } => {
                 log::info!("ble: encrypted {:?}", security_level);
                 LINK.lock(|l| l.borrow_mut().phones[slot].record = owner(conn));
                 linked(conn);
-                tell_of_change(gatt, &changes, conn, false).await;
-                continue;
+                return true;
             }
             GattConnectionEvent::BondLost => {
                 log::info!("ble: a phone the node holds a bond with pairs again");
-                continue;
             }
-            GattConnectionEvent::Gatt { event } => event,
             GattConnectionEvent::ConnectionParamsUpdated {
                 conn_interval,
                 peripheral_latency,
@@ -1647,11 +1683,9 @@ async fn serve(
                     peripheral_latency,
                     supervision_timeout.as_millis()
                 );
-                continue;
             }
             GattConnectionEvent::PhyUpdated { tx_phy, rx_phy } => {
                 log::info!("ble: phy tx={:?} rx={:?}", tx_phy, rx_phy);
-                continue;
             }
             GattConnectionEvent::DataLengthUpdated {
                 max_tx_octets,
@@ -1659,13 +1693,16 @@ async fn serve(
                 ..
             } => {
                 log::info!("ble: data length tx={} rx={}", max_tx_octets, max_rx_octets);
-                continue;
             }
-            _ => {
-                log::info!("ble: other connection event");
-                continue;
-            }
-        };
+            _ => log::info!("ble: other connection event"),
+        }
+        false
+    }
+
+    /// Answer a read or a write of the phone's, and do what a write then
+    /// asks.
+    async fn request(&self, event: GattEvent<'_, '_, DefaultPacketPool>) {
+        let (slot, conn, link) = (self.slot, self.conn, &self.server.link);
         // The update's pieces and its progress reads come many to a
         // second; the update logs its own changes instead.
         let incoming = event.payload().incoming();
@@ -1681,7 +1718,7 @@ async fn serve(
             if let Ok(reply) = event.reject(AttErrorCode::INSUFFICIENT_AUTHENTICATION) {
                 reply.send().await;
             }
-            continue;
+            return;
         }
         // The attribute server answers every kind of read from the values
         // it holds, a read by handle or by type, of one value or several:
@@ -1718,70 +1755,14 @@ async fn serve(
             }
         }
         if !continued && !piece {
-            refresh(slot, server, conn, update);
+            refresh(slot, self.server, conn, self.update);
         }
         let writing = written(&incoming).is_some();
         LINK.lock(|l| l.borrow_mut().phones[slot].sending = writing);
-        let mut wrote_changes = false;
-        let mut reboot = false;
-        let mut close = false;
+        let mut after = After::default();
         let reply = match event {
             GattEvent::Write(w) => {
-                let h = w.handle();
-                wrote_changes = h == changes.0;
-                let answer = if h == link.image.handle {
-                    let taken = write_image(&w, &mut update.lock().await.phone).await;
-                    // A write without response has no answer to refuse
-                    // with; the phone reads Update instead.
-                    match w.payload().incoming() {
-                        AttClient::Command(_) => Some(Ok(())),
-                        _ => Some(taken),
-                    }
-                } else if h == link.update.handle {
-                    let mut u = update.lock().await;
-                    let answer = write_update(&w, &mut u).await;
-                    reboot = answer == Ok(true);
-                    let _ = conn.set(&link.update, &progress(&u.phone));
-                    Some(answer.map(|_| ()))
-                } else if h == link.send.handle {
-                    Some(write_send(from, &w).await)
-                } else if h == link.inbox.handle {
-                    Some(write_confirm(from, &w).await)
-                } else if h == link.map_point.handle {
-                    Some(write_map_point(from, &w).await)
-                } else if h == link.clock.handle {
-                    let r = write_clock(from, &w).await;
-                    // The node may have the time only now.
-                    linked(conn);
-                    Some(r)
-                } else if h == link.home.handle {
-                    Some(write_home(from, &w))
-                } else if h == link.phones.handle {
-                    Some(write_phones(from, stack, &w))
-                } else if h == link.neighbours.handle {
-                    Some(write_neighbours(slot, &w))
-                } else if h == link.ask.handle {
-                    Some(write_ask(from, &w).await)
-                } else if h == link.recipient.handle {
-                    let (r, end) = write_recipient(from, &w);
-                    close = end;
-                    Some(r)
-                } else if h == link.guest.handle {
-                    Some(write_guest(from, &w))
-                } else if h == link.public.handle {
-                    let r = write_public(from, &w);
-                    if let (Ok(true), Some(i)) = (r, from.record) {
-                        unpair(stack, i);
-                        // The link was a paired phone's, which it is no
-                        // longer.
-                        close = true;
-                    }
-                    Some(r.map(|_| ()))
-                } else {
-                    // Not a request: the server takes it by its own rules,
-                    // a subscription's descriptor above all.
-                    None
-                };
+                let answer = self.write(from, &w, &mut after).await;
                 match answer {
                     Some(Ok(())) => w.accept_unprocessed(),
                     Some(Err(e)) => w.reject(e),
@@ -1794,13 +1775,13 @@ async fn serve(
             reply.send().await;
         }
         LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
-        if wrote_changes {
-            tell_of_change(gatt, &changes, conn, true).await;
+        if after.wrote_changes {
+            tell_of_change(self.gatt, &self.changes, conn, true).await;
         }
-        if close {
+        if after.close {
             conn.raw().disconnect();
         }
-        if reboot {
+        if after.reboot {
             // Closed first, so that the phone has the answer and sees the
             // node leave, not lose it.
             conn.raw().disconnect();
@@ -1815,6 +1796,70 @@ async fn serve(
             let _ = embassy_time::with_timeout(SUPERVISION_MAX, closed).await;
             crate::update::reboot().await;
         }
+    }
+
+    /// The answer to a write by `from`, with what it asks of the link
+    /// after: `None` for one the attribute server takes by its own rules,
+    /// a subscription's descriptor above all.
+    async fn write(
+        &self,
+        from: From,
+        w: &WriteEvent<'_, '_, DefaultPacketPool>,
+        after: &mut After,
+    ) -> Option<Result<(), AttErrorCode>> {
+        let (link, update) = (&self.server.link, self.update);
+        let h = w.handle();
+        after.wrote_changes = h == self.changes.0;
+        Some(if h == link.image.handle {
+            let taken = write_image(w, &mut update.lock().await.phone).await;
+            // A write without response has no answer to refuse with; the
+            // phone reads Update instead.
+            match w.payload().incoming() {
+                AttClient::Command(_) => Ok(()),
+                _ => taken,
+            }
+        } else if h == link.update.handle {
+            let mut u = update.lock().await;
+            let answer = write_update(w, &mut u).await;
+            after.reboot = answer == Ok(true);
+            let _ = self.conn.set(&link.update, &progress(&u.phone));
+            answer.map(|_| ())
+        } else if h == link.send.handle {
+            write_send(from, w).await
+        } else if h == link.inbox.handle {
+            write_confirm(from, w).await
+        } else if h == link.map_point.handle {
+            write_map_point(from, w).await
+        } else if h == link.clock.handle {
+            let r = write_clock(from, w).await;
+            // The node may have the time only now.
+            linked(self.conn);
+            r
+        } else if h == link.home.handle {
+            write_home(from, w)
+        } else if h == link.phones.handle {
+            write_phones(from, self.stack, w)
+        } else if h == link.neighbours.handle {
+            write_neighbours(self.slot, w)
+        } else if h == link.ask.handle {
+            write_ask(from, w).await
+        } else if h == link.recipient.handle {
+            let (r, end) = write_recipient(from, w);
+            after.close = end;
+            r
+        } else if h == link.guest.handle {
+            write_guest(from, w)
+        } else if h == link.public.handle {
+            let r = write_public(from, w);
+            if let (Ok(true), Some(i)) = (r, from.record) {
+                unpair(self.stack, i);
+                // The link was a paired phone's, which it is no longer.
+                after.close = true;
+            }
+            r.map(|_| ())
+        } else {
+            return None;
+        })
     }
 }
 
