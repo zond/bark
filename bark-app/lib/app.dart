@@ -330,6 +330,39 @@ class AppModel extends ChangeNotifier {
     return gone;
   }
 
+  /// The device of each node heard in this run, by name: Android names a
+  /// bond by the device, which the app learns only by hearing the node.
+  final Map<String, String> _devices = {};
+
+  void _heard(Iterable<FoundNode> nodes) {
+    for (final n in nodes) {
+      if (n.name != n.deviceId) _devices[n.name] = n.deviceId;
+    }
+  }
+
+  /// Forgets `name`, a paired node no longer this phone's: the app counts
+  /// it paired no more, and has Android remove its bond with the node, as
+  /// [unpair] does, where it has heard the node in this run (roadmap
+  /// D173). Returns true once no bond is left, false where Android kept
+  /// it ([staleBond] then says so), and null where the app has not heard
+  /// the node: it removes the bond once it does ([_bondedNode]), or the
+  /// person forgets the node in the phone's Bluetooth settings. The home
+  /// stays, as the node keeps the mailbox key.
+  Future<bool?> forget(String name) async {
+    await session.forget(name);
+    final device = _devices[name];
+    if (device == null) return null;
+    if (!await BleLink.bonded(device)) return true;
+    if (await BleLink.forget(device)) {
+      session.note('Pairing: the phone forgot its bond with $name too');
+      return true;
+    }
+    session.note('Pairing: the phone kept its bond with $name');
+    staleBonds[name] = device;
+    notifyListeners();
+    return false;
+  }
+
   /// Keeps the node's address for the card, and the home's.
   void _nodeAddress() {
     final a = session.address;
@@ -613,6 +646,7 @@ class AppModel extends ChangeNotifier {
     try {
       await startScan((n) {
         found[n.deviceId] = n;
+        _heard([n]);
         notifyListeners();
       });
     } catch (e) {
@@ -1205,6 +1239,7 @@ class AppModel extends ChangeNotifier {
   ) async {
     try {
       final heard = await listen(until: until, stop: _wake.future);
+      _heard(heard.values);
       _searchFailed = null;
       return heard;
     } catch (e) {

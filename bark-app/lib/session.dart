@@ -677,6 +677,16 @@ class Session extends ChangeNotifier {
     await link.close();
   }
 
+  /// Forgets the node `name`, no longer this phone's, the others paired
+  /// with staying: the person lets it go (roadmap D173).
+  Future<void> forget(String name) async {
+    if (!pairedWith.remove(name)) return;
+    pairingLost.remove(name);
+    note('Pairing: forgot $name');
+    notifyListeners();
+    await save();
+  }
+
   /// Whether `link` ends within [unpairEnd].
   static Future<bool> _ends(NodeLink link) =>
       link.closed.then((_) => true).timeout(unpairEnd, onTimeout: () => false);

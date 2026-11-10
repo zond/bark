@@ -770,6 +770,49 @@ void main() {
       });
     });
 
+    test('Forget on a node no longer this phone\'s, heard in this run: '
+        'gone from the paired nodes, and Android\'s bond removed', () {
+      run((async, app, ble) {
+        async.elapse(const Duration(seconds: 1));
+        ble.nodes[paired]!.pairElsewhere();
+        ble.drop(paired);
+        async.elapse(const Duration(seconds: 1));
+        final name = nodeName(FakeNode.id);
+        expect(app.session.pairingLost, contains(name));
+        bool? gone;
+        app.forget(name).then((v) => gone = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(gone, isTrue);
+        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.pairingLost, isEmpty);
+        expect(ble.bonds, isEmpty);
+      });
+    });
+
+    test('Forget on a node not heard in this run: gone from the paired '
+        'nodes; the bond is left for the person, and the home stays', () {
+      run(pairedInReach: false, (async, app, ble) {
+        final name = nodeName(FakeNode.id);
+        final home = Address(Position.fromDegrees(50, 30), FakeNode.id);
+        app.me.setHome(home);
+        app.session.setPaired(name, lost: true);
+        async.elapse(const Duration(seconds: 1));
+        bool? gone = false;
+        app.forget(name).then((v) => gone = v);
+        async.elapse(const Duration(seconds: 1));
+        expect(gone, isNull);
+        expect(app.session.pairedWith, isEmpty);
+        expect(ble.bonds, {paired});
+        expect(app.me.home.toString(), home.toString());
+        // Heard later, refusing the bond: the app removes it then.
+        ble.nodes[paired]!.pairElsewhere();
+        ble.inReach.add(paired);
+        async.elapse(lookRound + seenWait);
+        expect(ble.bonds, isEmpty);
+        expect(app.session.pairedWith, isEmpty);
+      });
+    });
+
     test('a tap on another node ends the search', () {
       run(pairedInReach: false, (async, app, ble) {
         // A round's scan is under way.

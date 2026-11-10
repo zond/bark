@@ -457,6 +457,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
           trailing: n == on && s.node!.version >= unpairVersion
               ? TextButton(onPressed: _askUnpair, child: const Text('Unpair'))
+              : s.pairingLost.contains(n)
+              ? TextButton(
+                  onPressed: () => _askForget(n, home: n == home),
+                  child: const Text('Forget'),
+                )
               : null,
         ),
     ];
@@ -581,6 +586,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'Bluetooth settings, or the phone cannot use it as a guest.',
       );
     }, 'Unpairing failed');
+  }
+
+  /// Forgets `name`, a node no longer this phone's, after a dialog that
+  /// says what follows; where the phone's own pairing with it may stay,
+  /// says how to forget that too.
+  Future<void> _askForget(String name, {required bool home}) async {
+    final stays = home
+        ? ' It stays your home node, so texts to you still go to it.'
+        : '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Forget ${shownName(name)}?'),
+        content: Text(
+          'Another phone has paired with it, so it is no longer yours. '
+          'This phone stops listing it, and forgets its own pairing with '
+          'it. To make it yours again, pair at the node by the code on '
+          'its screen.$stays',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Forget'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _try(() async {
+      final gone = await app.forget(name);
+      if (!mounted) return;
+      switch (gone) {
+        case true:
+          say(context, 'Forgotten.$stays');
+        case false:
+          await askToForget(
+            context,
+            app,
+            'Forgotten.$stays This phone could not forget its own pairing '
+            'with it: forget the node in the phone\'s Bluetooth settings.',
+          );
+        case null:
+          await askToForget(
+            context,
+            app,
+            'Forgotten.$stays The phone has not heard the node since the app '
+            'started, so it forgets its own pairing with it once it does. '
+            'To do it now, forget the node in the phone\'s Bluetooth '
+            'settings.',
+          );
+      }
+    }, 'Forgetting failed');
   }
 
   /// The outcome of the last check the person asked for: null before
