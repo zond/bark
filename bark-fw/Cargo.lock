@@ -51,6 +51,7 @@ dependencies = [
  "crypto_box",
  "crypto_secretbox",
  "sha2",
+ "unicode-segmentation",
 ]
 
 [[package]]

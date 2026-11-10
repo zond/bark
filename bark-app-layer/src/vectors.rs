@@ -12,7 +12,7 @@ use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
 use crate::keys::{self, Keys};
-use crate::plain::{self, Header, Reaction, Record, Writer};
+use crate::plain::{self, Header, Record, Writer};
 use crate::seal::{self, Fetch};
 use crate::text;
 use crate::{Address, MAX_PAYLOAD};
@@ -194,28 +194,21 @@ pub fn json() -> String {
     ));
     let box_payload = payload;
 
-    // A text in UTF-8, from Bob to Alice, with a thumbs up before it: the
-    // bytes of an acknowledgement from an app before reactions.
+    // A text in UTF-8, from Bob to Alice.
     let words = "ok 👍";
     let header = Header {
         greater: plain::greater(&f.bob.identity, &f.alice.identity),
         sent: 1_000_060,
         address: None,
     };
-    let thumbs_up = Record::React {
-        sent: 1_000_000,
-        reaction: Reaction::ThumbsUp,
-    };
-    let p = plaintext(&header, &[thumbs_up, text_record(words, &mut tb)]);
+    let p = plaintext(&header, &[text_record(words, &mut tb)]);
     let nonce = core::array::from_fn(|i| 0x80 + i as u8);
     parts.push(entry(
-        "box_utf8_reaction",
+        "box_utf8",
         &[
             ("text", q(words)),
             ("sent", format!("{}", header.sent)),
             ("greater", format!("{}", header.greater)),
-            ("reacts_to", "1000000".into()),
-            ("reaction", q("👍")),
             ("plaintext", h(&p)),
             ("nonce", h(&nonce)),
             (
@@ -225,11 +218,17 @@ pub fn json() -> String {
         ],
     ));
 
-    // A reaction alone, Bob to Alice: a thumbs up, as an acknowledgement
-    // was, and a heart.
-    for (name, reaction, emoji, sent, nonce) in [
-        ("box_reaction", Reaction::ThumbsUp, "👍", 1_000_120, 0xc0),
-        ("box_heart", Reaction::Heart, "❤️", 1_000_180, 0xe0),
+    // Reactions, Bob to Alice: a thumbs up, a heart of two code points,
+    // and the longest, a kiss with two skin tones.
+    for (name, emoji, sent, nonce) in [
+        ("box_reaction", "👍", 1_000_120, 0xc0),
+        ("box_heart", "❤️", 1_000_180, 0xe0),
+        (
+            "box_kiss",
+            "🧑🏻\u{200d}❤️\u{200d}💋\u{200d}🧑🏿",
+            1_000_190,
+            0xd0,
+        ),
     ] {
         let header = Header {
             greater: plain::greater(&f.bob.identity, &f.alice.identity),
@@ -240,7 +239,7 @@ pub fn json() -> String {
             &header,
             &[Record::React {
                 sent: 1_000_000,
-                reaction,
+                emoji,
             }],
         );
         let nonce: [u8; 24] = core::array::from_fn(|i| nonce + i as u8);
