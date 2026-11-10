@@ -3157,7 +3157,11 @@ node their home (Home, below); the number of the last of their messages
 the phone confirmed (Receiving, below); the day the phone was last
 linked; and the record's number, one more than the last the node gave.
 A record holds a bond, a home or both, as a phone that unpairs leaves
-its home (Public, below), and is freed when it holds neither. A pairing
+its home (Public, below), and is freed when it holds neither. Two
+phones of one person are two records holding the same key and tag: an
+item with their tag sets both records' bits, so both phones read it, a
+fetch opens under the first record whose key fits and clears only that
+record's bit, and no rule merges them. A pairing
 takes a free record; from a phone whose identity address a record's
 bond names, it replaces that bond and keeps the rest of the record.
 With no record free the node refuses the pairing: it answers the
@@ -3681,8 +3685,9 @@ so the node keeps nothing per guest.
 
 *Why Inbox, with a number written to Guest.* A guest's mail is its
 inbox, read as a paired phone's is; it carries the item's number, which the
-guest writes back to read on. A readable value of its own would cost
-its room in RAM again, 235 B, which the stack's floor does not leave.
+guest writes back to read on. A readable value of its own would add a
+characteristic to the table, and 235 B of RAM, for what Inbox already
+reads.
 
 **Phones.** Any paired phone reads the node's records (Pairing, above),
 so that its person sees who else is paired and whose home the node is,
@@ -4053,7 +4058,10 @@ line of text, and phones' readers take 2.
 text for 30 s, or until the next touch, and then the code again: what
 the node is, its ID and image, the image it gathers, the phone, its
 neighbours, its power, its uptime and the time of day
-(`bark-fw/README.md`, Display). While a pairing or a removal code
+(`bark-fw/README.md`, Display). The phone's line says `PHONE UNPAIRED`
+before any phone has paired, `PHONE PUBLIC` or `PHONE PRIVATE` with one
+paired, and `3 PHONES, PUBLIC` or `3 PHONES, PRIVATE`, with the count,
+once more than one is ([phone link](#phone-link), Pairing). While a pairing or a removal code
 shows, the screen shows the lines by itself, as a touch would, and
 keeps them, past the 30 s and whatever is touched, until the pairing
 or the removal ends or is abandoned, a removal's code at most 30 s;
