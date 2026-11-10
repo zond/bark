@@ -643,11 +643,9 @@ fn a_holder_answers_a_lagging_neighbour_once_a_rotation() {
 
 /// A gatherer at home on channel 5 that hears only a holder at home on 3,
 /// which hears another holder at home on 5 out of the gatherer's reach:
-/// the holder on 3 streams to it, since the gatherer's section says no
-/// relay at home on its channel holds the block it lacks. On 2026-11-10 it
-/// left the gatherer to the holder on 5 and the gatherer took no piece in
-/// twelve hours (roadmap D196). Where the gatherer hears the holder on 5
-/// too, the holder on 3 leaves it to that one and sends nothing on 5.
+/// the holder on 3 streams to it on 5 (roadmap D196), and does so as well
+/// where the gatherer hears the holder on 5 too, since no relay leaves a
+/// gatherer to another (spec "Updates over the mesh").
 #[test]
 fn a_gatherer_that_hears_only_a_holder_elsewhere_is_served() {
     for hears_home in [false, true] {
@@ -679,6 +677,6 @@ fn a_gatherer_that_hears_only_a_holder_elsewhere_is_served() {
             .iter()
             .filter(|f| f.1 == common::ch(5))
             .count();
-        assert_eq!(on_5 == 0, hears_home, "{on_5} pieces on 5");
+        assert!(on_5 > 0, "hears the holder at home {hears_home}: none on 5");
     }
 }

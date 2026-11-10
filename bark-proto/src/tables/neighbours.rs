@@ -288,10 +288,7 @@ pub struct Told {
     runs: u32,
     /// The image's place in the table, [`NO_IMAGE`] for none.
     image: u8,
-    /// The blocks held from the first, with [`Section::home_holds`] in its
-    /// top bit, as on the air, so that the entry does not grow.
-    ///
-    /// [`Section::home_holds`]: crate::update::Section::home_holds
+    /// The blocks held from the first.
     complete: u8,
     have: u8,
 }
@@ -508,7 +505,7 @@ impl Neighbours {
                 at: now,
                 runs: section.runs,
                 image,
-                complete: crate::wire::complete_byte(&section),
+                complete: section.complete,
                 have: section.have,
             };
         }
@@ -559,9 +556,8 @@ impl Neighbours {
         t.heard.then_some(crate::update::Section {
             runs: t.runs,
             image: self.images.get(usize::from(t.image)).copied().flatten(),
-            complete: t.complete & crate::wire::COMPLETE_MASK,
+            complete: t.complete,
             have: t.have,
-            home_holds: t.complete & !crate::wire::COMPLETE_MASK != 0,
         })
     }
 
@@ -1723,7 +1719,6 @@ mod tests {
             image: Some(image(v)),
             complete: 3,
             have: 9,
-            home_holds: false,
         };
         let mut t = Neighbours::new(params());
         for i in 1..=7 {
@@ -1750,13 +1745,5 @@ mod tests {
         t.section_heard(id(7), section(4), at(0));
         assert_eq!(named(&t, 7), Some(image(4)));
         assert_eq!(named(&t, 3), Some(image(8)));
-        // Whether a relay at home holds its next block rides with the blocks.
-        let told = Section {
-            home_holds: true,
-            complete: 47,
-            ..section(8)
-        };
-        t.section_heard(id(3), told, at(0));
-        assert_eq!(t.section(t.get(id(3)).unwrap()), Some(told));
     }
 }

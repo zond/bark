@@ -4487,9 +4487,8 @@ first 13 bytes ([packet formats](#packet-formats)): the version the
 node runs, 0 if it knows none; the newest image it holds or gathers, by
 its version, the signer's key, its
 blocks and the pieces of its last, or none; how many of its blocks the
-node holds from the first; how many pieces it holds of the block after
-those; and, while it gathers, whether it hears a relay at home on its own
-channel that holds that block. A node that knows neither the version it runs nor an image
+node holds from the first; and how many pieces it holds of the block
+after those. A node that knows neither the version it runs nor an image
 tells no section. The count of pieces goes as it stands when sent.
 
 A relay's heartbeats carry the section in a **rotation of sections**:
@@ -4510,8 +4509,8 @@ While a relay gathers, every heartbeat it sends on the home channel of
 its **helper** carries the section as well, which is once a rotation:
 the helper is the relay it last took a piece from, and before its first
 piece the best holder it hears. A piece does not name its sender, so
-the node takes for it the relay whose stream carries that block to it
-by rule 3 below: one at home on its own channel that holds the block,
+the node takes for it a relay it hears that holds that block: one at
+home on its own channel, whose pieces the node hears with its own,
 else the one that holds the most blocks from the first, then the lowest
 ID. A sleepy node's beats carry the section for one beat after a change,
 in every beat while it gathers, and in one an hour: its anchor hears
@@ -4581,12 +4580,8 @@ bytes and 14.4 ms.
 3. A relay **helps** a channel where a neighbour's section says it
    gathers the image the relay gathers or holds and lacks a block the
    relay holds: it **streams** there, at the gap or the pace (below),
-   from the blocks it holds. On its home channel it streams to every gatherer
-   at home there. On another channel it leaves a gatherer whose section
-   says it hears a relay at home there that holds the block it lacks the
-   blocks such a relay holds, by that relay's section, and streams it
-   only those past them; to any other gatherer there it streams from the
-   first block it lacks. It streams to a gatherer on another channel
+   from the blocks it holds, to each gatherer from the first block it
+   lacks. It streams to a gatherer on another channel
    only if it is the best holder it hears for it: no relay it
    hears that is not at home there, holds more than the gatherer and is
    no farther from it has more blocks from the first, or as many and a
@@ -4664,31 +4659,32 @@ channel with several streaming would carry their sum: in a district run
 with no such rule the update's frames came to 7 % of each channel's
 time once 70 relays held the image. Helpers at home on a channel hear
 each other there and each takes its share, so the channel carries one
-piece a pace whatever their number. *Why the
-sweep on a channel belongs to the relays at home there.* A relay hears
-only its home channel, so only the relays at home on a channel can
-share its pace; pieces from elsewhere would add up unheard. A stream
-from another channel seeds a channel until a relay at home there has
-caught up, and the chain then runs within each channel. *Why the
-gatherer says it hears one.* A relay elsewhere knows that it hears a
-relay at home on the gatherer's channel, not that the gatherer does: a
-gatherer that heard only a holder elsewhere, which left it to a holder
-at home on the gatherer's channel out of the gatherer's reach, took no
-piece in twelve simulated hours (roadmap D196). The gatherer knows. It
-says so in the top bit of its count of blocks, which never passes 48,
-so the section stays 13 bytes. A change of the bit starts no rotation:
-it turns off when the gatherer catches up with the relay at home,
-which changes its blocks, or when that relay goes, and the gatherer's
-helper is then a relay elsewhere, on whose channel its section goes
-every rotation. Of the relays
-elsewhere only the best holder near a gatherer streams to it, since
-they cannot hear each other's pieces there; a relay stands back only
-for one that is no farther from the gatherer, which reaches it as well.
-In the district at the design rate over an update's first 6
-hours, leaving a channel's blocks to the relays at home there cut the
-pieces' airtime from 92 400 s to 69 000 s and the channels' busy share
-from 4.2 to 3.5 %, and the best holder's rule to 56 900 s and 3.2 %,
-the relays a little behind (`mesh-update-2026-11-07.md`). *Why share and not leave the
+piece a pace whatever their number. A relay hears only its home
+channel, so pieces from elsewhere add up unheard. *Why the best holder alone of the relays elsewhere.*
+They cannot hear each other's pieces on the gatherer's channel; a relay
+stands back only for one that is no farther from the gatherer, which
+reaches it as well. In the district at the design rate over an update's
+first 6 hours the best holder's rule, with the standing back of
+roadmap D151 in place, cut the pieces' airtime from
+69 000 s to 56 900 s and the channels' busy share from 3.5 to 3.2 %,
+the relays a little behind (`mesh-update-2026-11-07.md`). *Why a relay
+elsewhere does not stand back for one at home.* It cannot know whether
+the gatherer hears that relay, and where it stood back a gatherer that
+heard only a holder elsewhere took no piece in twelve hours (roadmap
+D196). The relay at home is helped by the lease alone: a gatherer says
+its section every rotation only on its helper's channel, so a relay
+elsewhere whose channel is not its helper's hears it only when it
+changes or hourly, and stops streaming two rotations after.
+Without the standing back, the relays hold the image no later and the
+pieces take no more air: in `mesh-spread.toml` without its restart
+and with `[update]`, 24
+hours, seeds 1 to 6, the 13th and 19th of 25 relays held it after 6.4
+and 7.4 hours against 6.8 and 8.3, the pieces took 10 220 s against
+10 900 s, and 24.7 relays held it at the end against 23.8; in the
+district at the design rate, 12 hours, seeds 1 to 3, half the 538 relays
+after 7.6 hours against 7.5, 90 % after 8.0 against 8.2, 527 against
+526 at the end, the pieces 271 000 s against 282 000 s, and the texts
+delivered alike (roadmap D200). *Why share and not leave the
 channel to one.* Every helper keeps streaming, each from the blocks it
 holds, so a neighbour that lacks a block one helper does not hold still
 has it from another, and the channel loses nothing when a helper goes.
@@ -5128,10 +5124,8 @@ HEARTBEAT first(1) format(1) flags(1) id(6) short_pos(4)                    = 13
           version = the newest image it holds or gathers, 0 for none;
           key = which signer's key signed it; blocks = its blocks, 2 to 48; last =
           the pieces of its last block, 1 to 64; complete = the blocks
-          the node holds from the first, bits 0 to 6, and in bit 7
-          whether it gathers and hears a relay at home on its own
-          channel that holds block `complete`; have = the pieces it
-          holds of block `complete`
+          the node holds from the first; have = the pieces it holds of
+          block `complete`
 ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           the answer to a DATA, taken, refused or seen; sent on the channel
           in the answered packet's aux
