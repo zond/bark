@@ -423,9 +423,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// A heartbeat of `from` carried `section`: the neighbour table keeps
     /// it, and a newer image than this node runs or gathers is offered to
-    /// the driver's policy, once. A neighbour that names nothing as new as
-    /// what this relay streams is answered with a rotation of its section,
-    /// at most one a rotation, so that it learns of the image within one.
+    /// the driver's policy, once, as is one [`Node::stranded_for`] names. A
+    /// neighbour that names nothing as new as what this relay streams is
+    /// answered with a rotation of its section, at most one a rotation, so
+    /// that it learns of the image within one.
     pub(super) fn section_heard(
         &mut self,
         from: NodeId,
@@ -448,20 +449,42 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(image) = section.image else {
             return;
         };
-        let s = &mut self.spread;
+        let s = &self.spread;
         let newest = s
             .gather
             .map(|g| g.image.version)
             .max(s.own.map(|o| o.version))
             .unwrap_or(0);
-        if image.version <= newest || s.offered == Some((image.tag(), image.version)) {
+        if s.offered == Some((image.tag(), image.version)) {
             return;
         }
+        if image.version <= newest && !self.stranded_for(image, section.complete, now) {
+            return;
+        }
+        let s = &mut self.spread;
         if usize::from(image.blocks) > MAX_BLOCKS {
             return;
         }
         s.offered = Some((image.tag(), image.version));
         emit(Action::Offered(image));
+    }
+
+    /// Whether this node gathers an image no neighbour it hears holds the
+    /// next block of, and `image`, of the same version under another name,
+    /// is held from the first by `complete` blocks: then it is offered
+    /// `image`. Two builds can carry one version; one whose holders all
+    /// went over to the other would leave its gatherers waiting for good,
+    /// since only a higher version is offered otherwise
+    /// (`docs/update-stall-2026-11-10.md`).
+    fn stranded_for(&self, image: Image, complete: u8, now: Instant) -> bool {
+        let Some(g) = self.spread.gather else {
+            return false;
+        };
+        g.block < g.image.blocks
+            && complete > 0
+            && image.version == g.image.version
+            && image.tag() != g.image.tag()
+            && self.holder_of(g.block, now).is_none()
     }
 
     /// Its slot heartbeat went on its home channel: a relay whose sleepy
