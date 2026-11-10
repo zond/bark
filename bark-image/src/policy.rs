@@ -48,7 +48,29 @@ pub struct Moment {
     /// A swap may start on its power: on USB, or on a battery above the
     /// low level (roadmap D143).
     pub swap_allowed: bool,
+    /// How long it has waited, ms, draining with its core drained, for
+    /// its mailbox and its phones ([`WRITE_WAIT_MS`],
+    /// [`EXCHANGE_WAIT_MS`]).
+    pub waited_ms: u64,
 }
+
+/// The longest the reboot waits for the mailbox's writes once the core
+/// has drained, ms: the six ops its queue holds
+/// (`bark_app_layer::flash_ring::OPS`), each at the external flash's
+/// longest, a sector erase's 12 ms (`ext_flash::ERASE_MAX_US`). What a
+/// reset then cuts is a mark of the ring, as every item the core held is
+/// written or kept across the reboot, so at worst an item is sent or
+/// shown once more.
+pub const WRITE_WAIT_MS: u64 = 6 * 12;
+
+/// The longest the reboot waits for an exchange with a phone half done
+/// once the core has drained, ms: the ATT transaction's timeout and the
+/// Security Manager's, 30 s each (Bluetooth Core Vol 3 Part F §3.3.3,
+/// Part H §3.4), after which the phone has given up the write or the
+/// pairing. A phone that writes without pause would otherwise hold the
+/// reboot back for good; cut off, it makes the exchange again after the
+/// reboot.
+pub const EXCHANGE_WAIT_MS: u64 = 30_000;
 
 /// What the node's phone links are doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,13 +96,18 @@ pub fn drains(m: Moment) -> bool {
 
 /// Whether the node reboots into the staged image now: drained, its
 /// mailbox's writes done, no transfer with a phone mid-way, which would
-/// be cut, and as long as it drains. A phone's standing link does not hold
+/// be cut, and as long as it drains; the writes and a transfer are
+/// waited for within their bounds ([`WRITE_WAIT_MS`],
+/// [`EXCHANGE_WAIT_MS`]). A phone's standing link does not hold
 /// it back (roadmap D170): the node ends it, and the app looks for its
 /// node and connects again once it is back, so the person sees it out of
 /// reach for the minute a swap takes; held back by it, a home node whose
 /// owner is at home would never install.
 pub fn quiet(m: Moment) -> bool {
-    drains(m) && m.drained && !m.writing && m.links != Links::MidWay
+    drains(m)
+        && m.drained
+        && (!m.writing || m.waited_ms >= WRITE_WAIT_MS)
+        && (m.links != Links::MidWay || m.waited_ms >= EXCHANGE_WAIT_MS)
 }
 
 #[cfg(test)]
@@ -153,6 +180,7 @@ mod tests {
             writing: false,
             phone_update: false,
             swap_allowed: true,
+            waited_ms: 0,
         }
     }
 
@@ -207,6 +235,61 @@ mod tests {
         assert!(!quiet(Moment {
             writing: true,
             ..moment()
+        }));
+    }
+
+    /// The write bound is the mailbox's queue at the flash's longest op.
+    #[cfg(feature = "boot")]
+    #[test]
+    fn the_write_bound_is_a_full_queue_of_erases() {
+        let erase_ms = u64::from(crate::ext_flash::ERASE_MAX_US) / 1000;
+        assert_eq!(WRITE_WAIT_MS % erase_ms, 0);
+        assert_eq!(WRITE_WAIT_MS / erase_ms, 6);
+    }
+
+    /// The mailbox and a phone hold the reboot back only within their
+    /// bounds, counted while the core is drained.
+    #[test]
+    fn a_write_and_an_exchange_are_waited_for_within_their_bounds() {
+        for (busy, bound) in [
+            (
+                Moment {
+                    writing: true,
+                    ..moment()
+                },
+                WRITE_WAIT_MS,
+            ),
+            (
+                Moment {
+                    links: Links::MidWay,
+                    ..moment()
+                },
+                EXCHANGE_WAIT_MS,
+            ),
+        ] {
+            assert!(!quiet(Moment {
+                waited_ms: bound - 1,
+                ..busy
+            }));
+            assert!(quiet(Moment {
+                waited_ms: bound,
+                ..busy
+            }));
+        }
+        // Not past the core's own drain, nor while it may not drain.
+        let late = Moment {
+            waited_ms: EXCHANGE_WAIT_MS,
+            links: Links::MidWay,
+            writing: true,
+            ..moment()
+        };
+        assert!(!quiet(Moment {
+            drained: false,
+            ..late
+        }));
+        assert!(!quiet(Moment {
+            phone_update: true,
+            ..late
         }));
     }
 

@@ -722,7 +722,9 @@ confirmed itself.
   its inbox, or 600 s since it began), the mailbox's writes done, and
   no exchange with a phone half done (`ble::doing`: a write not yet
   answered or its reply not yet sent, a notification not yet sent, a
-  pairing). What the core still holds then goes into the carried region
+  pairing); once the core has drained it waits for the mailbox at most
+  72 ms and for a phone at most 30 s (`policy::WRITE_WAIT_MS`,
+  `EXCHANGE_WAIT_MS`). What the core still holds then goes into the carried region
   of the external flash, `carry: id=... kept across the reboot` for
   each, and after the reboot back to the core as the node's own, one
   at a time ahead of the phone's message and the mailbox's replies,

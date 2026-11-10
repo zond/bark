@@ -199,18 +199,40 @@ pub fn staged() -> Option<u32> {
     }
 }
 
+/// Since when the node has drained with its core drained, waiting for
+/// its mailbox and its phones ([`moment`]).
+static WAITING: Mutex<ThreadModeRawMutex, Cell<Option<embassy_time::Instant>>> =
+    Mutex::new(Cell::new(None));
+
+// The write bound is the mailbox's queue at the flash's longest op.
+const _: () = assert!(
+    policy::WRITE_WAIT_MS
+        == bark_app_layer::flash_ring::OPS as u64 * bark_image::ext_flash::ERASE_MAX_US as u64
+            / 1000
+);
+
 /// What the node is doing as it would reboot into the staged image
 /// ([`policy::quiet`]): `drained`, whether its core may reboot
-/// (`Relay::drained`); `writing`, whether its mailbox writes.
+/// (`Relay::drained`); `writing`, whether its mailbox writes; and how
+/// long it has waited for them and its phones since both held.
 pub fn moment(drained: bool, writing: bool) -> Moment {
     let power = super::power();
-    Moment {
+    let mut m = Moment {
         links: crate::ble::doing(),
         drained,
         writing,
         phone_update: super::phone::holds_slot(),
         swap_allowed: super::swap_allowed(power),
-    }
+        waited_ms: 0,
+    };
+    let now = embassy_time::Instant::now();
+    let since = WAITING.lock(|w| {
+        let since = (drained && policy::drains(m)).then(|| w.get().unwrap_or(now));
+        w.set(since);
+        since
+    });
+    m.waited_ms = since.map_or(0, |t| (now - t).as_millis());
+    m
 }
 
 /// The drain asked of the core and not yet seen there, so that it is

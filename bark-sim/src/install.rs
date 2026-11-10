@@ -273,6 +273,8 @@ impl Sim {
             writing: false,
             phone_update: false,
             swap_allowed: self.swap_allowed(node),
+            // No phone or mailbox to wait for.
+            waited_ms: 0,
         };
         let draining = core.draining();
         let want = policy::drains(moment);
