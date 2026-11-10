@@ -498,6 +498,7 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
                 {
                     storage.security_level = SecurityLevel::NoEncryption;
                     storage.bondable = false;
+                    storage.refuses_pairing = false;
                     self.security_manager.disconnect(storage);
                 }
                 #[cfg(feature = "att-queued-writes")]
@@ -895,6 +896,22 @@ impl<'d, P: PacketPool> ConnectionManager<'d, P> {
         }
     }
 
+    pub(crate) fn set_refuses_pairing(&self, index: u8, refuses: bool) -> Result<(), Error> {
+        #[cfg(feature = "security")]
+        {
+            let mut storage = self.connection_mut(index);
+            match storage.state {
+                ConnectionState::Connected => {
+                    storage.refuses_pairing = refuses;
+                    Ok(())
+                }
+                _ => Err(Error::Disconnected),
+            }
+        }
+        #[cfg(not(feature = "security"))]
+        Err(Error::NotSupported)
+    }
+
     pub(crate) fn set_bondable(&self, index: u8, bondable: bool) -> Result<(), Error> {
         #[cfg(feature = "security")]
         {
@@ -1210,6 +1227,8 @@ pub struct ConnectionStorage<P> {
     #[cfg(feature = "security")]
     pub bondable: bool,
     #[cfg(feature = "security")]
+    pub refuses_pairing: bool,
+    #[cfg(feature = "security")]
     pub oob_available: bool,
     #[cfg(feature = "security")]
     pub bond_rejected: bool,
@@ -1356,6 +1375,8 @@ impl<P> ConnectionStorage<P> {
             reassembly: PacketReassembly::new(),
             #[cfg(feature = "security")]
             bondable: false,
+            #[cfg(feature = "security")]
+            refuses_pairing: false,
             #[cfg(feature = "security")]
             oob_available: false,
             #[cfg(feature = "att-queued-writes")]

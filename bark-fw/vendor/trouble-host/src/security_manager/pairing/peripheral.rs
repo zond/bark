@@ -263,6 +263,9 @@ impl Pairing {
         ops: &mut OPS,
         _rng: &mut RNG,
     ) -> Result<Self, Error> {
+        if ops.refuses_pairing() {
+            return Err(Error::Security(Reason::UnspecifiedReason));
+        }
         if ops.find_bond().is_some() {
             if let Err(e) = ops.try_send_connection_event(ConnectionEvent::BondLost) {
                 error!("[smp] Failed to send BondLost event: {:?}", e);
@@ -827,6 +830,36 @@ mod tests {
             timeout_at: Instant::now() + crate::security_manager::constants::TIMEOUT,
             bond_information: None,
         }
+    }
+
+    /// A connection that refuses pairing answers a Pairing Request with
+    /// no Pairing Response, and tells the application it failed.
+    #[test]
+    fn a_refused_pairing_request() {
+        let mut pairing_ops: TestOps<10> = TestOps::new(0xDEAD);
+        pairing_ops.refuses_pairing = true;
+        let mut pairing_data = make_default_pairing_data(
+            Address::random([1, 2, 3, 4, 5, 6]),
+            Address::random([7, 8, 9, 10, 11, 12]),
+            IoCapabilities::DisplayOnly,
+        );
+        let mut pairing = Pairing::new();
+        let mut rng: ChaCha12Rng = ChaCha12Core::seed_from_u64(1).into();
+        let r = pairing.handle_input::<HeaplessPool, _, _>(
+            Input::Command(Command::PairingRequest, &[0x04, 0, 0x0d, 16, 0, 0]),
+            &mut pairing_data,
+            &mut pairing_ops,
+            &mut rng,
+        );
+        assert_eq!(
+            r,
+            Err(crate::Error::Security(crate::security_manager::Reason::UnspecifiedReason))
+        );
+        assert!(pairing_ops.sent_packets.is_empty());
+        assert!(matches!(
+            pairing_ops.connection_events.as_slice(),
+            [ConnectionEvent::PairingFailed(_)]
+        ));
     }
 
     #[test]

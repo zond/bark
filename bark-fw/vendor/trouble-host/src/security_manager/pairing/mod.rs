@@ -78,6 +78,10 @@ pub trait PairingOps<P: PacketPool> {
     fn connection_handle(&mut self) -> ConnHandle;
     fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error>;
     fn bonding_flag(&self) -> BondingFlag;
+    /// Whether a Pairing Request is refused on this connection.
+    fn refuses_pairing(&self) -> bool {
+        false
+    }
     /// Whether OOB data is available for this connection.
     fn oob_available(&self) -> bool;
     /// Get the configured passkey, if any.
@@ -433,6 +437,7 @@ mod tests {
         pub(crate) connection_events: heapless::Vec<ConnectionEvent, 10>,
         pub(crate) bond_information: Option<BondInformation>,
         pub(crate) bondable: bool,
+        pub(crate) refuses_pairing: bool,
         pub(crate) oob_available: bool,
         pub(crate) passkey: Option<u32>,
         pub(crate) secret_key: crate::security_manager::crypto::SecretKey,
@@ -450,6 +455,7 @@ mod tests {
                 connection_events: heapless::Vec::new(),
                 bond_information: None,
                 bondable: false,
+                refuses_pairing: false,
                 oob_available: false,
                 passkey: None,
                 secret_key,
@@ -511,6 +517,10 @@ mod tests {
         fn try_send_connection_event(&mut self, event: ConnectionEvent) -> Result<(), Error> {
             self.connection_events.push(event).unwrap();
             Ok(())
+        }
+
+        fn refuses_pairing(&self) -> bool {
+            self.refuses_pairing
         }
 
         fn bonding_flag(&self) -> BondingFlag {
