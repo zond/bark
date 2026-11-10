@@ -179,6 +179,13 @@ pub enum AppCommand<'a> {
         /// The neighbour.
         neighbour: NodeId,
     },
+    /// Take no message from now, `true`, so that what the node holds
+    /// drains before it reboots into an image it has staged; or take them
+    /// again, `false` (spec "Send queue", "Updates over the mesh", the
+    /// install). A message offered to it is refused as for want of room,
+    /// its sender told a place in the room's line, and the application's
+    /// is not taken ([`crate::Core::accepts_send`]).
+    Drain(bool),
     /// The block the node gathers decoded from the pieces it was given
     /// ([`Action::StorePiece`]): its hash checked, `ok`, and the node goes
     /// on to the next; or not, and the node gathers it again.
@@ -232,6 +239,9 @@ pub enum DropReason {
     /// application, which may offer it again after that wait
     /// (spec "A sleepy node's own message", "Receiving DATA").
     Pushback,
+    /// The node drains for a reboot into a new image and takes no message
+    /// (spec "Send queue"). Refused.
+    Draining,
     /// Received, and the ACK that takes it could not go out: not taken,
     /// since a take is final only when its ACK has gone, and the sender's
     /// retry brings it again (spec "The ACK"). Refused.

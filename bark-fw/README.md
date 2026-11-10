@@ -293,9 +293,10 @@ On the external flash, in sectors of 4 KiB:
 | Region | Start | Size | Why |
 |---|---|---|---|
 | firmware, staged | `0x000000` | 912 KiB, 228 sectors | one sector larger than the running slot, which embassy-boot's swap needs; after a swap it holds the previous image |
-| coded pieces | `0x0E4000` | 88 KiB, 22 sectors | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
-| mailbox ring | `0x0FA000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
-| free | `0x13A000` | 792 KiB, 198 sectors | |
+| coded pieces | `0x0E4000` | 772 KiB, 193 sectors | a head of what has been gathered and a lane of four sectors, 64 pieces of 256 bytes, for each of an image's 48 blocks at most, for the update over the mesh (`bark-image` `pieces.rs`, roadmap D151) |
+| mailbox ring | `0x1A5000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
+| carried | `0x1E5000` | 44 KiB, 11 sectors | what the node still holds when it reboots into an image gathered over the mesh, 167 messages at most, a page each, offered again after the reboot (Updates, below) |
+| free | `0x1F0000` | 64 KiB, 16 sectors | |
 
 RAM, 256 KiB: `0x20000000..0x20000008` is left to the MBR;
 `0x20000008..0x20000400` holds a panic message for the next boot
@@ -668,11 +669,29 @@ confirmed itself.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for
-  (`Stager::written`, `update::commit`). The node then reboots at the
-  first quiet moment (`bark_image::policy::quiet`): no phone link open,
-  no message held that a reset would lose, in its send queue, its
-  delivery queue, its inbox or a mailbox write, no phone update under
-  way, and the power a swap needs. The loader's trial follows as from
+  (`Stager::written`, `update::commit`). The node then drains (spec
+  "Send queue", "Updates over the mesh"; roadmap D170): while its power
+  allows a swap and no phone update is under way, it asks the core to
+  take no message, `update: draining for the reboot: the node takes no
+  message`, and takes them again, `update: taking messages again until
+  the reboot may come`, once either fails. It reboots at the first quiet
+  moment (`bark_image::policy::quiet`): the core drained
+  (`Relay::drained`: nothing in its send queue, its delivery queue or
+  its inbox, or 600 s since it began), the mailbox's writes done, and
+  no exchange with a phone half done (`ble::doing`: a write not yet
+  answered or its reply not yet sent, a notification not yet sent, a
+  pairing). What the core still holds then goes into the carried region
+  of the external flash, `carry: id=... kept across the reboot` for
+  each, and after the reboot back to the core as the node's own, one
+  at a time ahead of the phone's message and the mailbox's replies,
+  `carry: id=... offered again`, the region erased once all have gone
+  (`src/carry.rs`). A phone that stays linked does not hold the reboot
+  back: the node ends every link first, `ble: disconnected 0x16 slot N`
+  for each, and waits for them to end, at most the longest supervision
+  timeout, 32 s; the app looks for its node and connects again once it
+  is back (`bark-app/README.md`, "Screens"), so for the minute the swap
+  takes its person sees what a node out of reach shows. The loader's
+  trial follows as from
   the phone, but the image confirms itself only once it hears a node,
   and is swapped back and given up if it hears none within 585.9 s
   (The firmware, above). An offer of an image given up is logged
@@ -716,6 +735,7 @@ A: update: serving block=0 piece=113 (1 of this block)
 B: update: block 0 decoded and written, 1 of 31
 B: update: block 7 failed its check; gathered again
 B: update: version=8 length=471064 whole and checked: the loader swaps it in at the next boot
+B: update: draining for the reboot: the node takes no message
 B: update: rebooting into version 8 at a quiet moment
 B: reboot
 B: update: version 8 confirmed

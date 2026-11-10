@@ -38,6 +38,7 @@
 
 use core::cell::RefCell;
 
+use bark_image::policy::Links;
 use bark_link::bond::Bond;
 use bark_link::neighbours;
 use bark_link::update::{Command, Piece, Progress, Refusal};
@@ -433,6 +434,9 @@ struct Peer {
     after: u32,
     /// A pairing runs on its link.
     pairing: bool,
+    /// A reply to its write or a notification is on its way to it, until
+    /// it is sent.
+    sending: bool,
     /// A guest's message given back, and the end of its wait; the paired
     /// phone's is [`State::given_back`].
     given_back: Option<(MsgId, Instant)>,
@@ -449,6 +453,7 @@ impl Peer {
         tag: None,
         after: 0,
         pairing: false,
+        sending: false,
         given_back: None,
         neighbours_from: 0,
     };
@@ -628,13 +633,14 @@ static ADVERTISE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// directly, which the controller's radio timing could not wait for.
 pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// What to notify, and whether a guest's link is to close.
+/// What to notify, and whether a guest's link, or every link, is to close.
 #[derive(Clone, Copy, Default)]
 struct Notify {
     status: bool,
     given_back: bool,
     answer: bool,
     close_guests: bool,
+    close: bool,
 }
 
 /// Notify every link's phone of `n`.
@@ -651,6 +657,7 @@ fn notify_one(slot: usize, n: Notify) {
             given_back: o.given_back || n.given_back,
             answer: o.answer || n.answer,
             close_guests: o.close_guests || n.close_guests,
+            close: o.close || n.close,
         },
         None => n,
     };
@@ -1128,6 +1135,7 @@ async fn slot(
         // turn passes on.
         crate::mailbox::FOR_CORE.signal(());
         ADVERTISE.signal(());
+        ENDED.signal(());
         if LINK.lock(|l| l.borrow_mut().advance(now())) {
             notify(Notify {
                 status: true,
@@ -1140,6 +1148,49 @@ async fn slot(
 /// Links up now.
 pub fn links() -> usize {
     LINK.lock(|l| l.borrow().phones.iter().filter(|p| p.live).count())
+}
+
+/// What the links are doing, for a reboot into an image gathered over
+/// the mesh (`bark_image::policy::quiet`). Mid-way is what a reset would
+/// cut: a request written that the node has not answered, or whose reply
+/// is not yet sent, a notification not yet sent, such as a message given
+/// back, and a pairing. A link that is up and doing none of these is
+/// idle however long it stays.
+pub fn doing() -> Links {
+    LINK.lock(|l| {
+        let l = l.borrow();
+        let live = || (0..LINKS).filter(|&i| l.phones[i].live);
+        let mid_way = l.request.is_some()
+            || l.answer.is_some()
+            || live().any(|i| {
+                let p = &l.phones[i];
+                p.sending || p.pairing || NOTIFY[i].signaled()
+            });
+        match (mid_way, live().next()) {
+            (true, _) => Links::MidWay,
+            (false, Some(_)) => Links::Idle,
+            (false, None) => Links::None,
+        }
+    })
+}
+
+/// Raised when a link has ended.
+static ENDED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// End every link before a reboot, so that each phone sees the node leave
+/// at once rather than after its link's supervision timeout; resolves
+/// once they have ended, or after the longest such timeout.
+pub async fn close_all() {
+    notify(Notify {
+        close: true,
+        ..Notify::default()
+    });
+    let ended = async {
+        while links() > 0 {
+            ENDED.wait().await;
+        }
+    };
+    let _ = embassy_time::with_timeout(SUPERVISION_MAX, ended).await;
 }
 
 /// Take up what the kept bond says: whether the node is public and the
@@ -1410,9 +1461,13 @@ async fn serve(
         let event = match select3(conn.next(), NOTIFY[slot].wait(), turn).await {
             Either3::First(e) => e,
             Either3::Second(n) => {
+                LINK.lock(|l| l.borrow_mut().phones[slot].sending = true);
                 // A guest's link ends with the public setting.
                 if n.close_guests && !owner(conn) {
                     log::info!("ble: no longer public; the guest in slot {} closed", slot);
+                    conn.raw().disconnect();
+                }
+                if n.close {
                     conn.raw().disconnect();
                 }
                 refresh(slot, server, conn, update);
@@ -1431,6 +1486,7 @@ async fn serve(
                 if n.answer && owner(conn) {
                     let _ = link.ask.notify(conn, &answer_now(), true).await;
                 }
+                LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
                 continue;
             }
             Either3::Third(()) => {
@@ -1583,6 +1639,8 @@ async fn serve(
         if !continued && !piece {
             refresh(slot, server, conn, update);
         }
+        let writing = written(&incoming).is_some();
+        LINK.lock(|l| l.borrow_mut().phones[slot].sending = writing);
         let mut wrote_changes = false;
         let mut reboot = false;
         let mut close = false;
@@ -1648,6 +1706,7 @@ async fn serve(
         if let Ok(reply) = reply {
             reply.send().await;
         }
+        LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
         if wrote_changes {
             tell_of_change(gatt, &changes, conn, true).await;
         }

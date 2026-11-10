@@ -199,17 +199,40 @@ pub fn staged() -> Option<u32> {
     }
 }
 
-/// Whether the node may reboot into the staged image now
-/// ([`policy::quiet`]): `holding`, whether it holds a message a reset
-/// would lose.
-pub fn quiet(holding: bool) -> bool {
+/// What the node is doing as it would reboot into the staged image
+/// ([`policy::quiet`]): `drained`, whether its core may reboot
+/// (`Relay::drained`); `writing`, whether its mailbox writes.
+pub fn moment(drained: bool, writing: bool) -> Moment {
     let power = super::power();
-    policy::quiet(Moment {
-        links: crate::ble::links(),
-        holding,
+    Moment {
+        links: crate::ble::doing(),
+        drained,
+        writing,
         phone_update: super::phone::holds_slot(),
         swap_allowed: super::swap_allowed(power),
-    })
+    }
+}
+
+/// The drain asked of the core and not yet seen there, so that it is
+/// asked once.
+static DRAIN_ASKED: Mutex<CriticalSectionRawMutex, Cell<Option<bool>>> =
+    Mutex::new(Cell::new(None));
+
+/// Ask the core to drain, or to take messages again, if `want` is not
+/// what it does: through the requests, which wakes the driver's step.
+pub fn drain(want: bool, draining: bool) {
+    let asked = DRAIN_ASKED.lock(|a| a.get());
+    if want == draining {
+        DRAIN_ASKED.lock(|a| a.set(None));
+        return;
+    }
+    if asked != Some(want) && FOR_CORE.try_send(Request::Drain(want)).is_ok() {
+        DRAIN_ASKED.lock(|a| a.set(Some(want)));
+        match want {
+            true => log::info!("update: draining for the reboot: the node takes no message"),
+            false => log::info!("update: taking messages again until the reboot may come"),
+        }
+    }
 }
 
 // The phone's side (`phone.rs`).

@@ -146,7 +146,8 @@ pub mod external {
     /// node keeps the pieces of every block it lacks (`crate::pieces`,
     /// roadmap D151). 48 lanes and the head are what the chip has room
     /// for beside the staged image and the mailbox, with about 108 KiB to
-    /// spare: an image of 47 blocks, 743 KB packed, today's 28.
+    /// spare before what a reboot carries took 44: an image of 47 blocks,
+    /// 743 KB packed, today's 28.
     pub const PIECE_LANES: u32 = 48;
 
     /// Sectors for coded pieces: a head of what has been gathered, then a
@@ -157,6 +158,10 @@ pub mod external {
     /// items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`,
     /// section 5).
     const MAILBOX_SECTORS: u32 = 64;
+
+    /// Sectors for what a node carries across a reboot: 167 slots of 256
+    /// bytes, 16 to a sector, rounded up.
+    const CARRY_SECTORS: u32 = 167u32.div_ceil(16);
 
     /// The staged image (embassy-boot's DFU partition), one sector more
     /// than the running one (embassy-boot, `BootLoader::new`: "The dfu
@@ -170,10 +175,15 @@ pub mod external {
     /// The mailbox's ring. Its items are sealed to the phone, so whoever
     /// reads the chip learns nothing from them.
     pub const MAILBOX: Region = Region::pages_from(PIECES.end(), MAILBOX_SECTORS);
+    /// What a node still holds when it reboots into a new image, offered
+    /// again after it (`bark_app_layer::carry`): a slot of 256 bytes for
+    /// each of the 167 messages a node holds at most, 11 sectors. Its
+    /// payloads are the network's, sealed by their senders.
+    pub const CARRY: Region = Region::pages_from(MAILBOX.end(), CARRY_SECTORS);
     /// Free.
     pub const FREE: Region = Region {
-        start: MAILBOX.end(),
-        len: END - MAILBOX.end(),
+        start: CARRY.end(),
+        len: END - CARRY.end(),
     };
 }
 
@@ -236,9 +246,9 @@ const _: () = {
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(external::DFU.len == ACTIVE.len + external::SECTOR);
-    assert!(external::MAILBOX.end() <= external::END);
-    // About 108 KiB stay free.
-    assert!(external::FREE.len >= 27 * external::SECTOR);
+    assert!(external::CARRY.end() <= external::END);
+    // About 64 KiB stay free.
+    assert!(external::FREE.len >= 16 * external::SECTOR);
     assert!(PROTECT_LOW.len.is_multiple_of(PAGE) && PROTECT_LOW.len <= FLASH_END / 2);
     assert!(PROTECT_HIGH.start.is_multiple_of(PAGE) && PROTECT_HIGH.len <= FLASH_END / 2);
     // embassy-boot keeps two progress words a page for the swap and two for
@@ -359,10 +369,17 @@ mod tests {
             }
         );
         assert_eq!(
-            external::FREE,
+            external::CARRY,
             Region {
                 start: 0x1E5000,
-                len: 27 * PAGE
+                len: 11 * PAGE
+            }
+        );
+        assert_eq!(
+            external::FREE,
+            Region {
+                start: 0x1F0000,
+                len: 16 * PAGE
             }
         );
     }
@@ -383,6 +400,7 @@ mod tests {
             external::DFU,
             external::PIECES,
             external::MAILBOX,
+            external::CARRY,
             external::FREE,
         ];
         for order in [&inside[..], &outside[..]] {
@@ -397,7 +415,7 @@ mod tests {
         assert_eq!(inside[0].start, APPLICATION_START);
         assert_eq!(inside[7].end(), BOOTLOADER_START);
         assert_eq!(outside[0].start, 0);
-        assert_eq!(outside[3].end(), external::END);
+        assert_eq!(outside[4].end(), external::END);
     }
 
     #[test]

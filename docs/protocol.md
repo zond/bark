@@ -1534,7 +1534,8 @@ or they would get the same code. The wait told is:
   last took one, its refusals' waits aside, so that a rising load shows
   before the next take.
 - *For want of anything else*, a place for the message's record or in
-  the delivery queue: one ban, in the room's line.
+  the delivery queue, or at a node about to reboot
+  ([send queue](#send-queue)): one ban, in the room's line.
 - In every case, never less than the rest of the ban on the
   packet's next hop, rounded down and without a place in line: the
   packet could not move sooner here.
@@ -1977,6 +1978,20 @@ takes them, the last no further travelled, are not all held: the ones
 past the budget wait their place in line at the relay before, at the
 cost of a refused DATA frame and an ACK each. At the design's rate that
 is rare; under load it is the price of the wait reaching the origin.
+
+**Before a reboot.** A node about to reboot into a new image
+([updates over the mesh](#updates-over-the-mesh), the install) takes no
+message: it refuses every DATA that would give it work, to send on, to
+hold for a sleepy node or for its own application, as for want of room
+([bans](#bans)), and takes none from its application. A take it answered
+before stands.
+
+*Why it refuses.* A reset loses what a node holds in RAM, and under
+load its queues are never empty, so it stops taking to empty them.
+Refused, a message waits at its sender, which sends it round this node
+where another way is left, and the wait travels back to the origin as
+under overload, so nothing is lost. The application keeps its own
+message meanwhile.
 
 **Choosing what to send.** Whenever no hand-over is under way and the
 radio is free, the relay routes every queued message from the state as
@@ -4610,11 +4625,51 @@ paid by the channel's pace.
 
 **The install.** A node that holds a gathered image whole checks it and
 stages it as the phone's update does ([phone link](#phone-link),
-Updates), noting that it came over the mesh, and reboots into it at the
-first moment that loses nothing: no phone linked, no message held in its
-send queue, its delivery queue, its inbox or a mailbox write, and the
-power a swap needs ([implementation notes](#implementation-notes)). Its
-loader swaps the image in and starts a watchdog of 600 s, which the
+Updates), noting that it came over the mesh, and reboots into it once
+that loses nothing. From then on it drains: it takes no message
+([send queue](#send-queue)), so that its send queue empties to its
+neighbours, its delivery queue to its sleepy nodes at their beats, and
+its inbox to its application. It does so while it has the power a swap
+needs ([implementation notes](#implementation-notes)) and no phone's
+update holds the staged slot; otherwise it takes messages again, since
+no swap can come. It reboots at the first moment that it holds none of
+them, its mailbox has no write under way, and no exchange with a phone
+is half done: a write the node has not yet answered, a notification it
+has not yet sent, or a pairing.
+
+The drain lasts at most the delivery TTL, 600 s
+([nodes](#nodes)), counted from the second it began. By then every
+message in the delivery queue has waited for its node as long as the
+queue gives a node that sleeps or is dark
+([delivery queue](#delivery-queue)), and a message to send on has had
+twenty hops' budgets of 30 s ([send queue](#send-queue)). What the node
+still holds then it writes to its flash, logging each message's ID, and
+after the reboot offers each again as its own application's, one at a
+time, ahead of its phone's and its mailbox's. A message's ID is a hash
+of its destination and its payload alone
+([packet formats](#packet-formats)), so it is the same message, and a
+node that has it already answers it as any copy. It starts again at
+count 0 with no parent here, so a search from this node that runs out of
+neighbours ends here instead of going back to the parent it came from
+([return to parent](#return-to-parent)). A message for the node's own
+application comes back to its inbox, and one for a sleepy node it holds
+for to its delivery queue.
+
+*Why a bound.* Taking nothing, the node's queues only shrink, but a
+message for a sleepy node that stays dark waits in the delivery queue
+until its node beats, and one whose every way on stays banned waits for
+the ban, so a drain without an end could keep the node from its update
+for good. The TTL is how long the protocol waits for a node before its
+message is stale; what is left then is carried across the reboot, not
+dropped.
+
+*Why a standing link does not hold it back.* The node ends the link
+before it resets, and the phone connects again once the node is back,
+as after an update from the phone; held back by it, a home node whose
+owner is at home would never install.
+
+At the reboot its loader swaps the image in and starts a watchdog of
+600 s, which the
 image feeds only once it has confirmed itself; a reset before then swaps
 the previous image back (roadmap D79). An image a person staged, from
 the phone or over USB, confirms itself once its core is set up and its
