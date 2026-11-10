@@ -221,13 +221,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           title:
               'Your node runs version ${node.image}; version ${i.firmware} is '
               'available',
-          subtitle: node.version < updateVersion
-              ? 'Its firmware is from before updates over Bluetooth: '
-                    'update it by USB once.'
-              : 'Tap to update it from this phone.',
-          onTap: node.version < updateVersion
-              ? null
-              : () => _open(context, UpdateScreen(app, release: i)),
+          subtitle: 'Tap to update it from this phone.',
+          onTap: () => _open(context, UpdateScreen(app, release: i)),
           dismiss: () => r.dismissImage(node, i.firmware),
         ),
     ];

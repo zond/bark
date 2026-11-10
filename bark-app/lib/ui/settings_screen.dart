@@ -437,10 +437,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// The nodes this phone is paired with, the home first, each with how
-  /// it stands, and Unpair on the one connected before link version 13,
-  /// where the phone's own row of the node's phones has it ([_phones]);
-  /// a tap on another connects to it as its owner (spec "Phone link",
-  /// Pairing).
+  /// it stands; a tap on another connects to it as its owner (spec "Phone
+  /// link", Pairing). The phone's own row of the node's phones has Unpair
+  /// ([_phones]).
   List<Widget> _paired() {
     final s = app.session;
     final home = app.homeName;
@@ -471,12 +470,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           onTap: n == on || s.pairingLost.contains(n) || app.connecting
               ? null
               : () => _connect(() => app.connectPaired(n)),
-          trailing:
-              n == on &&
-                  s.node!.version >= unpairVersion &&
-                  s.node!.version < phonesVersion
-              ? TextButton(onPressed: _askUnpair, child: const Text('Unpair'))
-              : s.pairingLost.contains(n)
+          trailing: s.pairingLost.contains(n)
               ? TextButton(
                   onPressed: () => _askForget(n, home: n == home),
                   child: const Text('Forget'),
@@ -579,7 +573,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   /// The owner's switch of whether the node serves phones that have not
-  /// paired with it, from link version 7.
+  /// paired with it.
   List<Widget> _public() {
     final s = app.session;
     final p = s.nodePublic;
@@ -601,7 +595,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-  /// The node's phones, on an owner's link from link version 13: those
+  /// The node's phones, on an owner's link: those
   /// paired with it, and those whose home it is, a record holding both
   /// in both lists (spec "Phone link", Phones). Another's row has Remove,
   /// the person's own paired row Unpair; their own home is changed under
@@ -967,14 +961,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ? 'No node linked'
               : s.guest
               ? 'Only the phone paired with the node updates it'
-              : n.version < updateVersion
-              ? 'Version ${n.image}, from before updates over Bluetooth: '
-                    'update it by USB once'
               : newerImage
               ? 'Version ${n.image}; version ${latest.firmware} is available'
               : 'Version ${n.image}',
         ),
-        trailing: newerImage && n.version >= updateVersion
+        trailing: newerImage
             ? FilledButton(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
@@ -1069,12 +1060,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (app.holdsOtherKey)
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: Text(
-            s.nodeHome?.mine == null
-                ? 'This node holds a mailbox key: it is someone\'s home, '
-                      'perhaps a former one of yours.'
-                : 'This node still holds your mailbox key, from when it was '
-                      'your home.',
+          child: const Text(
+            'This node still holds your mailbox key, from when it was your '
+            'home.',
           ),
         ),
       if (app.othersHome)

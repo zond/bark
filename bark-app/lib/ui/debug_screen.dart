@@ -84,7 +84,7 @@ class DebugScreen extends StatelessWidget {
   List<Widget> _bench(BuildContext context) {
     final s = app.session;
     final n = s.node;
-    if (n == null || s.guest || n.version < updateVersion) {
+    if (n == null || s.guest) {
       return [
         const Text(
           'Connect a node this phone is paired with to pick a firmware '
@@ -176,28 +176,16 @@ class DebugScreen extends StatelessWidget {
       _row('Link', s.guest ? 'a guest\'s' : 'the paired phone\'s'),
       _row('Link version', '${n.version}'),
       _row('Firmware image', '${n.image}'),
-      _row(
-        'Clock',
-        n.version < clockVersion
-            ? 'none before link version $clockVersion'
-            : switch (s.nodeTime) {
-                null => 'not read',
-                final t => describeTime(t),
-              },
-      ),
+      _row('Clock', switch (s.nodeTime) {
+        null => 'not read',
+        final t => describeTime(t),
+      }),
       _row('Public', switch (s.nodePublic) {
         null when s.guest => 'yes, as a guest finds it',
-        null when n.version < publicVersion =>
-          'none before link version $publicVersion',
         null => 'not read',
         final p => p ? 'yes' : 'no',
       }),
-      _row(
-        'Home',
-        n.version < homeVersion
-            ? 'none before link version $homeVersion'
-            : '${s.nodeHome ?? 'not read'}',
-      ),
+      _row('Home', '${s.nodeHome ?? 'not read'}'),
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Address'),

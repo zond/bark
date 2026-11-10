@@ -102,7 +102,7 @@ class LinkNotifier extends NoNotifier {
 }
 
 NodeInfo node(int image, {int last = 1}) =>
-    NodeInfo(updateVersion, [0xfa, 0x4e, 0, 0, 0, last], image);
+    NodeInfo([0xfa, 0x4e, 0, 0, 0, last], image);
 
 void main() {
   test('a release from the API', () {

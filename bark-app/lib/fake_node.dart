@@ -593,11 +593,6 @@ class FakeNode implements NodeLink {
   /// Since when the phone whose turn it is has had Ready.
   DateTime? _since;
 
-  /// The phones whose Recipient said a link version older than
-  /// [turnVersion]: they cannot ask, and so want the turn whenever they
-  /// lack it.
-  final Set<Object> _old = {};
-
   /// The phones that asked for the turn, by a Send out of turn, and have
   /// not had it since.
   final Set<Object> _asked = {};
@@ -606,7 +601,7 @@ class FakeNode implements NodeLink {
   /// it still stands.
   int _turnGen = 0;
 
-  bool _wants(Object p) => _asked.contains(p) || _old.contains(p);
+  bool _wants(Object p) => _asked.contains(p);
 
   /// The phone the turn goes to from the one that has it, or that stood at
   /// `at` in [_links]: the next that wants it, coming round to the holder
@@ -658,7 +653,6 @@ class FakeNode implements NodeLink {
   void _gone(Object p) {
     final at = _links.indexOf(p);
     _links.remove(p);
-    _old.remove(p);
     _asked.remove(p);
     if (_turn != p) {
       _idleCheck();
@@ -666,16 +660,6 @@ class FakeNode implements NodeLink {
     }
     _turn = null;
     _give(_nextTurn(at - 1));
-  }
-
-  /// Recipient from `p` says its app's link version.
-  void _app(Object p, int version) {
-    if (version < turnVersion) {
-      _old.add(p);
-    } else {
-      _old.remove(p);
-    }
-    _idleCheck();
   }
 
   /// A Send from `p`: out of turn, it asks for it, which may pass to it
@@ -741,7 +725,7 @@ class FakeNode implements NodeLink {
       homeKey != null || others.any((r) => r.home),
       0,
       0,
-      mine: version >= phonesVersion ? homeKey != null : null,
+      mine: homeKey != null,
     ),
   );
 
@@ -962,12 +946,8 @@ class FakeNode implements NodeLink {
   }
 
   @override
-  Future<void> setRecipient(int tag, [String? name]) => _answer(() {
-    final v = encodeRecipient(tag, name);
-    if (v.length > 1 && version < phonesVersion) {
-      throw const AttException(AttError.invalidLength);
-    }
-    final r = _takeRecipient(v, this);
+  Future<void> setRecipient(int tag, String name) => _answer(() {
+    final r = _takeRecipient(encodeRecipient(tag, name), this);
     ownerTag = r.tag;
     ownerName = r.name;
   });
@@ -980,27 +960,20 @@ class FakeNode implements NodeLink {
     NodeLink phone,
   ) {
     final r = decodeRecipient(v);
-    if (version >= phonesVersion &&
-        (r.version < oldest || version < r.oldest)) {
+    if (r.version < oldest || version < r.oldest) {
       scheduleMicrotask(phone.close);
       throw const AttException(AttError.incompatible);
     }
-    _app(phone, r.version);
     _notify();
     return r;
   }
 
-  /// The oldest link version whose apps it serves, from link version 13.
-  int oldest = 12;
+  /// The oldest link version whose apps it serves.
+  int oldest = linkVersion;
 
-  /// Node as a phone reads it: `room` from link version 13.
-  NodeInfo get _info => NodeInfo(
-    version,
-    nodeId,
-    image,
-    room: version >= phonesVersion ? room : null,
-    oldest: version >= phonesVersion ? oldest : null,
-  );
+  /// Node as a phone reads it.
+  NodeInfo get _info =>
+      NodeInfo(nodeId, image, version: version, oldest: oldest, room: room);
 
   /// The records of the node's other phones, each another person's phone,
   /// a home one left behind, or both, which a test sets (spec "Phone
@@ -1296,9 +1269,8 @@ class FakeNode implements NodeLink {
   /// [pairElsewhere] has it pair with another (spec "Phone link").
   bool paired = true;
 
-  /// Another phone removes this one's bond, or before link version 13
-  /// pairs in its place, and the fake then refuses this one; the tag kept
-  /// with the old bond goes with it.
+  /// Another phone removes this one's bond, and the fake then refuses this
+  /// one; the tag kept with the old bond goes with it.
   void pairElsewhere() {
     paired = false;
     ownerTag = null;
@@ -1412,7 +1384,7 @@ class FakeGuest implements NodeLink {
   /// A second guest that writes Recipient while another's link is up is
   /// closed at once: the other link is the owner's to take.
   @override
-  Future<void> setRecipient(int tag, [String? name]) => _open(() {
+  Future<void> setRecipient(int tag, String name) => _open(() {
     node._takeRecipient(encodeRecipient(tag, name), this);
     if (node.guests.length > FakeNode.maxGuests) {
       close();

@@ -73,8 +73,8 @@ void main() {
       installing: 0x0118,
     );
     final bytes = [
-      0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, 5, //
-      0x01, 0x18,
+      0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, //
+      0x01, 0x18, 2,
     ];
     expect(s.encode(), bytes);
     final d = Status.decode(bytes);
@@ -95,19 +95,10 @@ void main() {
   test('status ignores what a later version appends', () {
     final s = Status(relays: 9, heard: 11).encode();
     expect(Status.decode([...s, 0xaa, 0xaa, 0xaa]).heard, 11);
-    expect(() => Status.decode(s.sublist(0, 13)), throwsA(isA<Malformed>()));
-  });
-
-  test('a node of link version 12 tells of no install', () {
-    final s = Status(heard: 11, installing: 24).encode();
-    final old = Status.decode(s.sublist(0, Status.len12));
-    expect([old.heard, old.installing], [11, 0]);
-  });
-
-  test('a node before link version 11 has its relays stand for heard', () {
-    final s = Status(relays: 9, heard: 11).encode();
-    final old = Status.decode(s.sublist(0, Status.len10));
-    expect([old.relays, old.heard], [9, 9]);
+    expect(
+      () => Status.decode(s.sublist(0, Status.len - 1)),
+      throwsA(isA<Malformed>()),
+    );
   });
 
   test('given back', () {
@@ -127,14 +118,15 @@ void main() {
   });
 
   test('node', () {
-    final n = NodeInfo(linkVersion, to, 7, room: 3, oldest: 12);
-    expect(n.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3, 12]);
-    expect(NodeInfo(12, to, 7).encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
-    final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
-    expect([d.version, d.image, d.room], [1, 7, null]);
-    // What a later version appends after oldest is ignored.
-    final e = NodeInfo.decode([14, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 12, 0xaa]);
-    expect([e.version, e.room, e.oldest], [14, 0, 12]);
+    final n = NodeInfo(to, 7, room: 3);
+    expect(n.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    // What a later version appends after room is ignored.
+    final d = NodeInfo.decode([2, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 0xaa]);
+    expect([d.version, d.oldest, d.image, d.room], [2, 1, 7, 0]);
+    expect(
+      () => NodeInfo.decode([1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]),
+      throwsA(isA<Malformed>()),
+    );
     expect(d.id, to);
     expect(nodeName(to), 'bark-010203040506');
     expect(shownName(nodeName(to)), 'ID 010203040506');
@@ -198,18 +190,20 @@ void main() {
     final k = List.generate(mailboxKeyLen, (i) => i);
     expect(encodeHome(k), [1, ...k]);
     expect(() => encodeHome([1, 2]), throwsA(isA<Malformed>()));
-    final h = NodeHome.decode([1, 0, 0, 17, 1, 2, 3]);
-    expect((h.set, h.oldest, h.newest, h.mine), (true, 17, 0x010203, null));
-    expect(h.encode(), [1, 0, 0, 17, 1, 2, 3]);
-    final m = NodeHome.decode([1, 0, 0, 17, 1, 2, 3, 0, 9]);
-    expect((m.set, m.mine), (true, false));
-    expect(m.encode(), [1, 0, 0, 17, 1, 2, 3, 0]);
+    final h = NodeHome.decode([1, 0, 0, 0, 17, 1, 2, 3, 9]);
+    expect((h.set, h.mine, h.oldest, h.newest), (true, false, 17, 0x010203));
+    expect(h.encode(), [1, 0, 0, 0, 17, 1, 2, 3]);
+    expect(NodeHome.decode([1, 1, 0, 0, 0, 0, 0, 0]).mine, isTrue);
     expect(
-      () => NodeHome.decode([1, 0, 0, 0, 0, 0, 0, 2]),
+      () => NodeHome.decode([1, 2, 0, 0, 0, 0, 0, 0]),
       throwsA(isA<Malformed>()),
     );
     expect(
-      () => NodeHome.decode([2, 0, 0, 0, 0, 0, 0]),
+      () => NodeHome.decode([2, 0, 0, 0, 0, 0, 0, 0]),
+      throwsA(isA<Malformed>()),
+    );
+    expect(
+      () => NodeHome.decode([1, 0, 0, 0, 0, 0, 0]),
       throwsA(isA<Malformed>()),
     );
     expect(() => NodeHome.decode([1]), throwsA(isA<Malformed>()));
@@ -217,7 +211,6 @@ void main() {
 
   // bark-link/src/lib.rs, `Recipient::encode`, `decode`, `compatible`.
   test('recipient and the versions each side serves', () {
-    expect(encodeRecipient(0x2a), [0x2a]);
     expect(encodeRecipient(0x2a, ''), [0x2a, linkVersion, oldestNode]);
     expect(encodeRecipient(0x2a, 'Ann'), [
       0x2a, linkVersion, oldestNode, 0x41, 0x6e, 0x6e, //
@@ -226,26 +219,22 @@ void main() {
     final cut = encodeRecipient(1, 'ö' * 20);
     expect(cut.length, 3 + 32);
     expect(decodeRecipient(cut).name, 'ö' * 16);
-    expect(decodeRecipient([7]), (tag: 7, version: 12, oldest: 0, name: ''));
     expect(nameBytes('a${'ö' * 16}').length, 31);
-    expect(() => encodeRecipient(256), throwsA(isA<Malformed>()));
+    expect(() => encodeRecipient(256, ''), throwsA(isA<Malformed>()));
+    expect(() => decodeRecipient([7]), throwsA(isA<Malformed>()));
     expect(() => decodeRecipient([1, 2]), throwsA(isA<Malformed>()));
 
-    NodeInfo node(int version, [int? oldest]) =>
-        NodeInfo(version, to, 1, room: 1, oldest: oldest);
+    NodeInfo node(int version, int oldest) =>
+        NodeInfo(to, 1, version: version, oldest: oldest, room: 1);
+    expect(servesEachOther(node(linkVersion, oldestNode)), isTrue);
     expect(servesEachOther(node(linkVersion + 1, linkVersion)), isTrue);
     expect(servesEachOther(node(linkVersion + 2, linkVersion + 1)), isFalse);
     expect(
       notServedLine(node(linkVersion + 2, linkVersion + 1)),
       contains('update the app'),
     );
-    // Before version 13 a node says no oldest and serves its own version.
-    expect(servesEachOther(NodeInfo(12, to, 1)), isTrue);
-    expect(servesEachOther(NodeInfo(oldestNode - 1, to, 1)), isFalse);
-    expect(
-      notServedLine(NodeInfo(oldestNode - 1, to, 1)),
-      contains('update the node'),
-    );
+    expect(servesEachOther(node(oldestNode - 1, 0)), isFalse);
+    expect(notServedLine(node(oldestNode - 1, 0)), contains('update the node'));
   });
 
   // bark-link/src/phones.rs, `PhonesWrite::encode`, `Phones::page`,
@@ -312,7 +301,7 @@ void main() {
     );
     final b = NeighbourPage(-118, 20, kyiv, [n]).encode();
     expect(b, [
-      0x8a, 20, 18, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, //
+      20, 0x8a, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 18, //
       1, 2, 3, 4, 5, 6, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, //
       0xfb, 0xaf, 0x01, 0x2c, 0x91,
     ]);
@@ -323,7 +312,7 @@ void main() {
     expect((d.position, d.rssiDdbm, d.ageS), (kyiv, -1105, 300));
     expect((d.sleepy, d.anchor, d.proven, d.banned), (true, true, true, false));
     // A later version's neighbour, three bytes longer, read the same.
-    final longer = [...b.sublist(0, 2), 21, ...b.sublist(3), 0xaa, 0xaa, 0xaa];
+    final longer = [...b.sublist(0, 9), 21, ...b.sublist(10), 0xaa, 0xaa, 0xaa];
     expect(NeighbourPage.decode(longer).neighbours.single.rssiDdbm, -1105);
     expect(
       () => NeighbourPage.decode(b.sublist(0, 27)),
@@ -373,8 +362,8 @@ void main() {
       'V16909060',
       'GET V14 14/31',
     ]);
-    // Link version 9's answer, and a notification's 20 bytes at the
-    // default MTU: gathering none.
+    // A notification's 20 bytes at the default MTU, and the least it may
+    // carry: gathering none.
     for (final cut in [15, 20]) {
       expect(Answer.decode(b.sublist(0, cut))!.status.lines, [
         'SLEEPY ANCHORED',
@@ -442,8 +431,8 @@ void main() {
   });
 
   test('recipient and public', () {
-    expect(encodeRecipient(0xcf), [0xcf]);
-    expect(() => encodeRecipient(256), throwsA(isA<Malformed>()));
+    expect(encodeRecipient(0xcf, ''), [0xcf, linkVersion, oldestNode]);
+    expect(() => encodeRecipient(256, ''), throwsA(isA<Malformed>()));
     expect(encodePublic(true), [1]);
     expect(encodePublic(false), [0]);
     expect(decodePublic([1]), isTrue);

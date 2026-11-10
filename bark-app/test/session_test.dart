@@ -4,7 +4,6 @@
 // the mailbox's replies; and the node paired with, and whether the person
 // stopped looking for it, kept across a restart.
 
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart';
@@ -28,16 +27,7 @@ import 'package:sodium/sodium.dart';
 class LateRefusal extends FakeNode {
   LateRefusal({required super.now, required super.sodium, required super.app});
   @override
-  Future<NodeInfo> readNode() async =>
-      NodeInfo(linkVersion, FakeNode.id, 1, room: 7, oldest: linkVersion);
-}
-
-/// A node at link version 2, before Home: still attached, and given the
-/// clock.
-class Version2Node extends FakeNode {
-  Version2Node({required super.now, required super.sodium, required super.app});
-  @override
-  Future<NodeInfo> readNode() async => NodeInfo(2, FakeNode.id, 1);
+  Future<NodeInfo> readNode() async => NodeInfo(FakeNode.id, 1, room: 7);
 }
 
 /// One phone: its person, contacts, session and messenger, with stores
@@ -411,28 +401,6 @@ void main() {
     });
   });
 
-  test(
-    'a stored acknowledgement of an app before reactions is a thumbs up',
-    () {
-      final out = Outgoing(
-        Address(const Position(0, 0), Uint8List(6)),
-        Uint8List(1),
-        at: DateTime.utc(2026),
-        kind: OutKind.text,
-        sent: 1,
-        body: 'a',
-      ).toJson()..remove('reaction');
-      final old = {...out, 'acked': true};
-      expect(Outgoing.fromJson(old).reaction, 0);
-      expect(Outgoing.fromJson(old).acked, isFalse);
-      expect(Outgoing.fromJson({...old, 'kind': 'ack'}).kind, OutKind.reaction);
-      final r = Received(1, [], DateTime.utc(2026), sent: 1, body: 'b').toJson()
-        ..remove('reaction');
-      expect(Received.fromJson({...r, 'acked': true}).reaction, 0);
-      expect(Received.fromJson({...r, 'acked': false}).reaction, isNull);
-    },
-  );
-
   group('long texts', () {
     /// The records of a payload from the phone to the fake friend.
     (Header, List<Record>) opened(Phone p, FakeNode node, Uint8List payload) =>
@@ -690,25 +658,6 @@ void main() {
     });
   });
 
-  test('a node at link version 2 is attached and given the clock', () {
-    fakeAsync((async) {
-      final s = Session(store: MemoryStore(), now: () => start);
-      final node = Version2Node(
-        now: () => start,
-        sodium: sodium,
-        app: List.filled(32, 1),
-      );
-      bool? ok;
-      s.attach(node.connect()).then((v) => ok = v);
-      async.flushMicrotasks();
-      expect(ok, isTrue);
-      expect(s.node!.version, 2);
-      expect(s.nodeTime!.source, TimeSource.phone);
-      node.dispose();
-      s.dispose();
-    });
-  });
-
   /// Attaches `node`, its link the owner's or a `guest`'s; whether the
   /// session took it.
   bool? attached(
@@ -725,7 +674,7 @@ void main() {
     return ok;
   }
 
-  FakeNode fake(int version, {int oldest = 12}) =>
+  FakeNode fake(int version, {int oldest = linkVersion}) =>
       FakeNode(now: () => start, sodium: sodium, app: List.filled(32, 1))
         ..version = version
         ..oldest = oldest;
@@ -802,22 +751,6 @@ void main() {
     });
   });
 
-  test('a node of link version 12 still works, given the tag alone', () {
-    fakeAsync((async) {
-      final s = session();
-      final node = fake(12);
-      expect(attached(async, s, node), isTrue);
-      expect(s.connected, isTrue);
-      expect(s.nodeNewer, isFalse);
-      expect(node.ownerTag, 7);
-      expect(node.ownerName, '');
-      expect(s.node!.room, isNull);
-      expect(s.phones, isNull);
-      node.dispose();
-      s.dispose();
-    });
-  });
-
   test('the identity, contacts, queue and texts survive a restart', () {
     run((async, p, node) {
       p.messenger.sendText(friendOf(p, node), 'kept');
@@ -848,42 +781,6 @@ void main() {
       expect(again.session.pairedWith.toList(), [b, a]);
       expect(again.session.pairingLost, {a});
       expect((p.session.store as MemoryStore).state!['pairedWith'], [b, a]);
-    });
-  });
-
-  test('a file of one paired node, from before a phone kept several, is '
-      'read as a set of one, lost or not', () {
-    fakeAsync((async) {
-      for (final lost in [false, true]) {
-        final store = MemoryStore()
-          ..text = jsonEncode({
-            'version': Session.version,
-            'outbox': [],
-            'received': [],
-            'pairedWith': 'bark-fa4e00000001',
-            'pairingLost': lost,
-          });
-        final s = Session(store: store, now: () => start)..load();
-        async.flushMicrotasks();
-        expect(s.pairedWith, {'bark-fa4e00000001'});
-        expect(s.pairingLost, lost ? {'bark-fa4e00000001'} : isEmpty);
-        s.dispose();
-      }
-      // A file with none.
-      final store = MemoryStore()
-        ..text = jsonEncode({
-          'version': Session.version,
-          'outbox': [],
-          'received': [],
-          'pairedWith': null,
-          'pairingLost': false,
-        });
-      final s = Session(store: store, now: () => start)..load();
-      async.flushMicrotasks();
-      expect(s.pairedWith, isEmpty);
-      expect(s.pairingLost, isEmpty);
-      expect(store.fault, isNull);
-      s.dispose();
     });
   });
 

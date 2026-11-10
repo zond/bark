@@ -102,22 +102,13 @@ class HiddenNode extends UniversalBlePlatform {
   final String id;
   final bool advertises;
 
-  /// Whether Android's kept table of the node is one from before
-  /// Service Changed, which only a discovery without the cache replaces.
-  final bool keptOld;
-
   /// Each discovery's options, in order.
   final List<DiscoverServicesPlatformConfig?> discoveries = [];
 
   /// How long the person takes to type the code.
   final Duration typing;
   bool scanned = false;
-  HiddenNode(
-    this.id, {
-    this.advertises = true,
-    this.typing = Duration.zero,
-    this.keptOld = false,
-  });
+  HiddenNode(this.id, {this.advertises = true, this.typing = Duration.zero});
 
   @override
   Future<void> startScan({
@@ -160,8 +151,7 @@ class HiddenNode extends UniversalBlePlatform {
     DiscoverServicesPlatformConfig? platformConfig,
   }) async {
     discoveries.add(platformConfig);
-    final fresh = platformConfig?.android?.clearGattCache ?? false;
-    return keptOld && !fresh ? [] : _withServiceChanged;
+    return _withServiceChanged;
   }
 
   @override
@@ -461,7 +451,7 @@ class FakeNodes extends UniversalBlePlatform {
     switch (characteristic) {
       case Uuids.recipient:
         final r = decodeRecipient(value);
-        await n.setRecipient(r.tag, value.length == 1 ? null : r.name);
+        await n.setRecipient(r.tag, r.name);
       case Uuids.phones when value.first == 0:
         await n.setPhonesFrom(value[1]);
       case Uuids.phones when value.first == 1:
@@ -590,24 +580,7 @@ void main() {
     await link.close();
   });
 
-  test(
-    'a table kept from before Service Changed is discovered again',
-    () async {
-      final node = HiddenNode(device, keptOld: true)..scanned = true;
-      UniversalBle.setInstance(node);
-      final (link, _) = await BleLink.connect(
-        device,
-        name: 'bark-7572482fc367',
-      );
-      expect(node.discoveries.map((c) => c?.android?.clearGattCache), [
-        null,
-        true,
-      ]);
-      await link.close();
-    },
-  );
-
-  test('a table with Service Changed is kept', () async {
+  test('the table is discovered once', () async {
     final node = HiddenNode(device)..scanned = true;
     UniversalBle.setInstance(node);
     final (link, _) = await BleLink.connect(device, name: 'bark-7572482fc367');
@@ -1521,9 +1494,8 @@ void main() {
 
     test('a node no longer this phone\'s, its bond forgotten in the phone\'s '
         'settings: used as a guest like any public node', () {
-      // As an older app left it: a Pair on the unpaired node, refused for
-      // the bond Android kept, marked the node lost, and the mark outlived
-      // the bond.
+      // The node marked lost, as a phone another removed is, and the mark
+      // outlived the bond the person forgot in the phone's settings.
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         ble
           ..inReach.removeAll({weak, strong})
@@ -2179,7 +2151,7 @@ void main() {
 
     /// The phone paired with the fake node at `mine`, out of reach, and
     /// holding a bond the app does not know of with a public node in
-    /// reach, as after an older app kept only the node paired with last.
+    /// reach, as after the app's data was cleared.
     void run(void Function(FakeAsync, AppModel, FakeNodes) body) {
       fakeAsync((async) {
         DateTime now() => start.add(async.elapsed);

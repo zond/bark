@@ -1,12 +1,11 @@
 // The map against the fake node: its neighbours read in one page, a
-// table longer than a page read whole across pages, a node too old to
-// tell them refused, and the screen: in the menu, a marker and a line
-// for each, the legend, a tapped marker's details, and the blank
-// background said when no street map can be had. Then Ask: each
-// neighbour asked as the map opens, one that does not answer asked again
-// every 2 s up to three asks, a refresh asking only those without an
-// answer in the last 10 s, the answers drawn in the words of the
-// neighbours' screens, and a node before link version 9 not asked.
+// table longer than a page read whole across pages, and the screen: in
+// the menu, a marker and a line for each, the legend, a tapped marker's
+// details, and the blank background said when no street map can be had.
+// Then Ask: each neighbour asked as the map opens, one that does not
+// answer asked again every 2 s up to three asks, a refresh asking only
+// those without an answer in the last 10 s, and the answers drawn in the
+// words of the neighbours' screens.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -25,20 +24,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
-
-/// A node of link version 3, before Neighbours.
-class OldNode extends FakeNode {
-  OldNode({required super.now, required super.sodium, required super.app});
-  @override
-  Future<NodeInfo> readNode() async => NodeInfo(3, FakeNode.id, 1);
-}
-
-/// A node of link version 8, before Ask.
-class Version8Node extends FakeNode {
-  Version8Node({required super.now, required super.sodium, required super.app});
-  @override
-  Future<NodeInfo> readNode() async => NodeInfo(8, FakeNode.id, 1);
-}
 
 void main() {
   late Sodium sodium;
@@ -112,24 +97,6 @@ void main() {
         for (final s in slots) name(fake.neighbours[s]!),
       ]);
     });
-  });
-
-  test('a node before link version 4 is not asked', () {
-    run((async, app) {
-      expect(app.session.node!.version, 3);
-      Object? error;
-      app.session.readNeighbours().catchError((Object e) {
-        error = e;
-        return (
-          floorDbm: 0,
-          own: const Position(0, 0),
-          list: <Neighbour>[],
-          at: start,
-        );
-      });
-      async.flushMicrotasks();
-      expect(error, isStateError);
-    }, make: (now, me) => OldNode(now: now, sodium: sodium, app: me));
   });
 
   test('each neighbour asked, the silent one again every 2 s, three times '
@@ -231,18 +198,6 @@ void main() {
       expect(error, isA<AttException>());
       expect((error as AttException).code, AttError.invalidLength);
     });
-  });
-
-  test('a node before link version 9 is not asked', () {
-    run((async, app) {
-      expect(app.session.node!.version, 8);
-      final t = read(async, app)!;
-      Object? error;
-      app.session.askNeighbours(t.list).catchError((Object e) => error = e);
-      async.flushMicrotasks();
-      expect(error, isStateError);
-      expect(app.fakeNode!.asked, isEmpty);
-    }, make: (now, me) => Version8Node(now: now, sodium: sodium, app: me));
   });
 
   /// An app connected to the fake node, or to the node `make` gives, its
@@ -527,23 +482,6 @@ void main() {
       findsOneWidget,
     );
     await closeSheet(t);
-    await shut(t, app);
-    debugPrint = print;
-  });
-
-  testWidgets('the map does not ask a node before link version 9', (t) async {
-    final print = debugPrint;
-    debugPrint = (_, {wrapWidth}) {};
-    final app = await openMap(
-      t,
-      make: (now, me) => Version8Node(now: now, sodium: sodium, app: me),
-    );
-    await t.pump(FakeNode.answerAfter);
-    expect(find.textContaining('neighbours, read'), findsOneWidget);
-    expect(app.fakeNode!.asked, isEmpty);
-    await t.tap(find.byTooltip('Read again'));
-    await t.pump(FakeNode.answerAfter);
-    expect(app.fakeNode!.asked, isEmpty);
     await shut(t, app);
     debugPrint = print;
   });
