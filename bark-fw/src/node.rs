@@ -100,7 +100,9 @@ impl App for LinkApp<'_> {
                     self.follow_home();
                     self.placed().map(|_| Ready::Driver)
                 }
-                Either6::Fifth(()) | Either6::Sixth(()) => Some(Ready::Driver),
+                Either6::Fifth(()) => Some(Ready::Driver),
+                // A press an earlier step took leaves its signal behind.
+                Either6::Sixth(()) => crate::button::force_waiting().then_some(Ready::Driver),
             };
             if let Some(ready) = new {
                 return ready;

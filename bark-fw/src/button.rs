@@ -45,6 +45,11 @@ pub fn take_force() -> bool {
     FORCE.swap(false, Ordering::Relaxed)
 }
 
+/// Whether a flip of the role waits, without taking it.
+pub fn force_waiting() -> bool {
+    FORCE.load(Ordering::Relaxed)
+}
+
 /// Wait for presses of the user button forever. Each wait is on the
 /// GPIOTE PORT event, so the button wakes nothing while untouched.
 pub async fn run(pin: Peri<'static, P1_10>) -> ! {
