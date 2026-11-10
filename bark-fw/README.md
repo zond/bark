@@ -945,7 +945,15 @@ D160). `bark-screen/src/qr.rs` draws it from the modules
 `bark-screen/scripts/qr.py generate` wrote, which a host test checks
 against the address encoded again; another host test decodes the drawn
 picture, and `qr.py check` decodes it with two more decoders and writes
-it as `target/bark-screen/code.png`:
+it as `target/bark-screen/code.png`. The code is version 3, 29 × 29
+modules, at error correction level H, the smallest version that holds
+the address's 19 bytes at H (24 bytes; version 2 holds 14), drawn 5
+pixels a module, 145 pixels, centred across and near the top, with 2
+modules clear above and below, where the standard asks 4 and phones'
+readers take 2, and more at the sides. Level H restores about 30 % of
+the codewords (ISO/IEC 18004), so the web over the centre, 61 of the 841
+modules and none of the finder, timing, alignment or format patterns,
+leaves it readable:
 
 ```
 python3 -m venv .venv

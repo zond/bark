@@ -331,9 +331,8 @@ fn secretbox(key: &[u8; KEY_LEN]) -> XSalsa20Poly1305 {
 
 /// The most items a fetch is answered with, its batch, so the most places
 /// a requester tries: within the 33 full frames a relay's full bucket
-/// sends with the reply reserve left (spec "Send queue", What sets the
-/// 39), so that a batch passes each relay on its way without waiting for
-/// its bucket to refill (spec "Mailbox", Why a batch with a count).
+/// sends with the reply reserve left (spec "Send queue"), so that a batch passes each relay on its way without waiting for
+/// its bucket to refill (spec "Mailbox", The answer).
 pub const MAX_REPLIES: u32 = 32;
 
 /// A reply's nonce: the fetch's `sent` (the round), the reply's place in

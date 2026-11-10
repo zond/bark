@@ -1,6 +1,6 @@
 // The search's decision, as tables of situations and what the search
 // does in each: whether it runs, when it listens, and which node it takes
-// as whose (spec "Phone link", Which node a phone uses).
+// as whose (`bark-app/README.md`, "Screens"; roadmap D163, D171).
 
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/decision.dart';

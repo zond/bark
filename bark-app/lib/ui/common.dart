@@ -525,8 +525,8 @@ String connectionLine(AppModel app) =>
     AppModel.notLookingLine;
 
 /// Why the phone is on the node [connectionLine] names, or on none, in
-/// a few plain sentences for the person who asks (spec "Phone link",
-/// Which node a phone uses).
+/// a few plain sentences for the person who asks (`bark-app/README.md`,
+/// "Screens"; roadmap D163, D171).
 String connectionHelp(AppModel app) {
   final s = app.session;
   final lost = [for (final n in app.nodes.lost) shownName(n)];

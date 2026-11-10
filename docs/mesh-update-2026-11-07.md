@@ -670,7 +670,7 @@ pieces are the same pace's.
 **Known limits, accepted by the user on 2026-11-08.** Sleepy nodes
 update slowly: one piece a rotation of their anchor is a floor of 2 133
 rotations for today's image at the margin, 77 hours, 3.2 days (spec
-"Updates over the mesh", What it costs a sleepy node); about a fifth to
+"Updates over the mesh", Sleepy nodes); about a fifth to
 a quarter of the slot pieces carry blocks the node already holds, since
 it finishes blocks out of order and its section counts them only from
 the first; and anchors open the slot in under half their rotations,

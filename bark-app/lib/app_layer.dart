@@ -272,7 +272,7 @@ class Fetch {
 
 /// The most items a fetch is answered with, its batch, so the most places
 /// tried: what passes each relay on the way from its bucket as it stands
-/// (spec "Mailbox", Why a batch with a count).
+/// (spec "Mailbox", The answer).
 const int maxReplies = 32;
 
 /// A reply's nonce, never sent: the fetch's `sent`, the reply's place in
