@@ -1,0 +1,146 @@
+# district.toml at 64 times the rate of spec "Capacity and sizing", far
+# past the patch's capacity, where a relay's queues are never empty
+# (docs/pushback-2026-11-03.md, docs/waited-2026-11-05.md): the load
+# under which roadmap D170 asks that nodes reboot into a new image with
+# nothing lost. It is district-x64-install.toml without the installs,
+# the run that one is compared with (docs/update-under-load-2026-11-10.md).
+#
+# A district: a tenth of dense-power.toml's city, the same node mix,
+# links, fading, walkers and power switching at the same densities, with
+# every node switched on in the same second. It is the city in minutes
+# rather than hours, for runs at many times the rate of
+# spec "Capacity and sizing" (docs/district-2026-11-04.md). The patch has a border on
+# all four sides, as the city does, and texts go to anyone in the patch,
+# so a text's path is a third of the city's and the patch's capacity
+# per relay four and a half times the city's; the note says what that
+# changes.
+
+name = "district-x64"
+seed = 1
+# An hour and a half: the settle time, the hour over which
+# district-x64-install.toml's nodes stage their images, the 600 s bound
+# of the last one's drain, its swap and a margin for what it kept.
+duration_s = 5400.0
+# The city's settle time after the last switch-on: a relay's first
+# channel moves come 795 s after it is switched on
+# (spec "Channel at boot", "Channel moves"). It is also more than twice the time a text
+# takes to reach its destination or the node that holds it for it, 94 s
+# at the 90th percentile at the patch's capacity, so the backlog of texts
+# on their way has levelled by then.
+settle_s = 900.0
+# As the city: a node's ID is its chip's factory ID (spec "Node identity").
+ids = "random"
+
+# Everything on at once, the hardest boot (dense-power.toml says why the
+# city spreads it): the settled window then starts at 900 s rather than
+# at 2700 s, as the city's does, which would double every run.
+[boot]
+relays_s = 0.0
+sleepy_s = 0.0
+
+# Each node's clock runs off true time by up to the ±50 ppm of a watch
+# crystal (spec "Heartbeat"), uniformly: the tolerance bounds the error
+# and says nothing of its spread, and a uniform spread puts more clocks
+# near the bound than one that clusters at zero would.
+[clocks]
+drift_ppm = 50.0
+
+# A fifth of the people walk somewhere now and then, as people do in a
+# city whose transport has stopped. A walk is a kilometre on average,
+# twelve minutes at a common walking speed, between stops of an hour: a
+# walker is in the street a sixth of the time, so 3 % of all sleepy nodes
+# are at any moment, about the half hour a day of its waking hours a
+# person spends walking. Stops are indoors and walks outdoors, without
+# the wall. Relays placed as such never move.
+[movement]
+fraction = 0.2
+speed_m_s = 1.4
+trip_m = 1000.0
+stop_s = 3600.0
+# The share of the people's relays that walk: a node on a power bank.
+relay_fraction = 0.2
+shadow_decorrelation_m = 50.0
+
+[origin]
+lat = 50.45
+lon = 30.52
+
+[links]
+model = "log_distance"
+# S2's fit to the ranges of spec "Physical layer" at SF5, 10 dBm and the -119 dBm
+# default sensitivity, 129 dB of budget, with free-space loss at 1 m of
+# 25.2 dB: 750 m to a handheld in the street gives n = 3.6, and 300 m to
+# one indoors leaves 14.4 dB for the wall. A windowsill relay counts as
+# outdoors: with a wall at both ends a relay would reach a leaf 120 m
+# away, and spec "Capacity and sizing"'s 9.6 relays per km² would leave most leaves without one.
+exponent = 3.6
+indoor_loss_db = 14.4
+# Rooftop relays hear about 3 km (spec "Physical layer", "Capacity and sizing"): 129 - 25.2 - 36 log10(3000)
+# = -21.4 dB, so a link between two rooftops has 21.4 dB less loss than
+# the same link in the clutter. A rooftop relay's link to anything
+# below the roofs gets no bonus.
+rooftop_bonus_db = 21.4
+shadowing_sigma_db = 6.0
+
+[links.fading]
+sigma_db = 4.0
+correlation_time_s = 60.0
+step_s = 10.0
+
+# A tenth of the city's square, 2.8 km²: side 1673.3 m. The same
+# densities give 5 rooftop relays, 22 others and 2000 people's nodes.
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 1673.3
+height_m = 1673.3
+per_km2 = 1.9
+rooftop = true
+
+[[nodes]]
+place = "density"
+role = "relay"
+width_m = 1673.3
+height_m = 1673.3
+per_km2 = 7.7
+
+# The city's 714.3 people's nodes per km² (spec "Capacity and sizing":
+# 300 000 users over 14 domains), all indoors.
+[[nodes]]
+place = "density"
+role = "leaf"
+width_m = 1673.3
+height_m = 1673.3
+per_km2 = 714.2857
+indoor = true
+# The share of the people's nodes that are relays (roadmap D68).
+relay_share = 0.25
+
+# 64 times 23 texts per user per day (spec "Capacity and sizing"), 100
+# bytes each (spec "Capacity and sizing"'s text), to any other leaf in
+# the domain alike.
+[[traffic]]
+kind = "poisson"
+per_leaf_per_hour = 61.333333
+payload_min = 100
+payload_max = 100
+destination = { kind = "uniform" }
+
+# As S2: dark five minutes in an hour on average (spec "Delivery queue").
+[availability]
+mean_available_s = 3300.0
+mean_dark_s = 300.0
+
+[metrics]
+cadence_s = 1.0
+observers = ["relay:*"]
+per_node = true
+
+[gps]
+checks = true
+
+[power]
+walkers = true
+fraction = 0.2
+usb_s = 7200.0
+battery_s = 1800.0

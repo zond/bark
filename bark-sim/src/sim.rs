@@ -73,6 +73,13 @@ pub(crate) enum Ev {
     Update,
     /// A row of the update's series.
     UpdateSample,
+    /// A node's image, gathered over the mesh, is whole and staged
+    /// (`install.rs`).
+    Stage(u32),
+    /// A node with an image staged checks the moment (`install.rs`).
+    Install(u32),
+    /// A node's swap is done and it starts the new image (`install.rs`).
+    Swapped(u32),
     /// A walker ends its stop or its walk (walker index).
     Leg(u32),
     /// A walking node takes a GPS fix (node).
@@ -749,9 +756,12 @@ pub struct Sim {
     /// (`scenario::Battery`).
     pub(crate) battery: Option<crate::battery::BatteryModel>,
     /// The update spreading, if the scenario has one (`update.rs`).
-    update: Option<crate::update::UpdateRun>,
+    pub(crate) update: Option<crate::update::UpdateRun>,
+    /// The reboots into images gathered over the mesh, if any
+    /// (`install.rs`).
+    pub(crate) install: Option<crate::install::InstallModel>,
     /// Every node's core.
-    relays: Vec<Relay>,
+    pub(crate) relays: Vec<Relay>,
     pub(crate) nodes: Vec<NodeState>,
     pub(crate) now: Instant,
     heap: Events<Ev>,
@@ -924,7 +934,7 @@ pub struct Sim {
     next_tx: Vec<TxMark>,
     /// Per node, what it last asked to keep across a reboot, and how
     /// often it asked: in all, and after the settle time.
-    stored: Vec<Option<Stored>>,
+    pub(crate) stored: Vec<Option<Stored>>,
     store_writes: Vec<[u32; 2]>,
     /// The destinations of the texts offered at scripted boots.
     boot_rng: Stream,
@@ -1354,6 +1364,7 @@ impl Sim {
             power: None,
             battery: None,
             update: None,
+            install: None,
             sleepers: HashMap::new(),
             beat_from: HashMap::new(),
             relays,
@@ -1767,6 +1778,7 @@ impl Sim {
         if let Some(u) = &sc.update {
             self.update_setup(u, sc, placed)?;
         }
+        self.install_setup(sc)?;
         self.power_setup(&sc.power, sc.seed)?;
         self.battery_setup(&sc.battery, sc.seed)
     }
@@ -2061,6 +2073,9 @@ impl Sim {
                 }
             }
             Ev::UpdateSample => self.update_sample(),
+            Ev::Stage(n) => self.stage(n, None),
+            Ev::Install(n) => self.check_moment(n),
+            Ev::Swapped(n) => self.swapped(n),
             Ev::Sample => {
                 self.metrics.sample(self.now.as_micros());
                 self.sample_load();
@@ -2328,11 +2343,22 @@ impl Sim {
         let owed = self
             .update
             .as_mut()
-            .map(|u| std::mem::take(&mut u.owed))
-            .unwrap_or_default();
-        for (n, cmd) in owed {
-            self.deliver(n, Event::App(cmd));
+            .map(|u| (u.holder, std::mem::take(&mut u.owed)));
+        if let Some((holder, owed)) = owed {
+            for (n, cmd) in owed {
+                // An image gathered whole is checked and staged; the first
+                // holder was given its image and runs it.
+                let staged = match cmd {
+                    AppCommand::Holds(image) if n != holder => Some(image),
+                    _ => None,
+                };
+                self.deliver(n, Event::App(cmd));
+                if let Some(image) = staged {
+                    self.stage(n, Some(image));
+                }
+            }
         }
+        self.after_install_event(node);
         self.gps_account(node);
         let st = &mut self.nodes[node as usize];
         if st.wake_at != wake {
@@ -2348,7 +2374,7 @@ impl Sim {
         let reply_due = self.mailboxes[node as usize]
             .as_ref()
             .is_some_and(|m| m.reply_due());
-        if self.offers[node as usize].is_some() || reply_due {
+        if self.offers[node as usize].is_some() || reply_due || self.has_kept(node) {
             self.offer(node);
         }
     }
@@ -3902,6 +3928,7 @@ impl Sim {
                 }
                 (len, payload)
             }
+            AppEvent::GivenBack { msg_id, .. } if self.kept_given_back(node, msg_id) => return,
             AppEvent::GivenBack { msg_id, .. }
                 if !self.msg_tags.contains_key(&msg_id.0)
                     && self.mailboxes[node as usize].is_some() =>
@@ -4107,6 +4134,38 @@ impl Sim {
         t.fold((false, 0), |(held, n), e| (held || e.id == id, n + 1))
     }
 
+    /// What became of the messages kept across a reboot into a new image
+    /// (`install.rs`): delivered, dropped, in flight and unaccounted.
+    pub fn kept_fates(&self) -> [u64; 4] {
+        let mut out = [0; 4];
+        for f in self.kept_messages() {
+            out[match f {
+                Fate::Delivered => 0,
+                Fate::Dropped { .. } => 1,
+                Fate::InFlight => 2,
+                Fate::Unaccounted => 3,
+            }] += 1;
+        }
+        out
+    }
+
+    /// The fate of each message kept across a reboot into a new image.
+    pub(crate) fn kept_messages(&self) -> Vec<Fate> {
+        let Some(m) = &self.install else {
+            return Vec::new();
+        };
+        let tags: std::collections::HashSet<u32> = m
+            .kept
+            .iter()
+            .filter_map(|id| self.msg_tags.get(id).copied())
+            .collect();
+        self.messages()
+            .enumerate()
+            .filter(|(tag, _)| tags.contains(&(*tag as u32)))
+            .map(|(_, (_, fate, _))| fate)
+            .collect()
+    }
+
     /// Fate of every originated message, in origination order.
     pub fn fates(&self) -> impl Iterator<Item = Fate> + '_ {
         self.originated().map(|(_, f)| f)
@@ -4303,7 +4362,10 @@ impl Sim {
     /// Traffic tags of the messages some live core still holds, or its
     /// application still waits to hand it.
     fn held_tags(&self) -> std::collections::HashSet<u32> {
-        let alive = |i: usize| self.nodes[i].alive;
+        // A node in its swap holds its application's message, and has
+        // kept its core's in flash.
+        let swapping = |i: usize| self.install.as_ref().is_some_and(|m| m.swapping(i as u32));
+        let alive = |i: usize| self.nodes[i].alive || swapping(i);
         let relays = self
             .relays
             .iter()
@@ -4316,7 +4378,9 @@ impl Sim {
             .enumerate()
             .filter(|(i, _)| alive(*i))
             .filter_map(|(_, o)| o.as_ref().map(|o| o.tag));
+        let kept = self.install.iter().flat_map(|m| m.waiting());
         relays
+            .chain(kept)
             .filter_map(|id| self.msg_tags.get(&id.0).copied())
             .chain(waiting)
             .collect()
@@ -4572,11 +4636,15 @@ impl Sim {
     }
 
     /// Hand `src`'s waiting message to its core, if the core takes one now.
-    fn offer(&mut self, src: u32) {
+    pub(crate) fn offer(&mut self, src: u32) {
         let now = self.now;
         let local = self.clocks[src as usize].local(now);
         let ready = self.nodes[src as usize].alive && self.relays[src as usize].accepts_send(local);
         if !ready {
+            return;
+        }
+        // What the node kept across a reboot goes before what is new.
+        if self.offer_kept(src) {
             return;
         }
         let Some(o) = self.offers[src as usize].take() else {
@@ -4857,7 +4925,7 @@ impl Sim {
 
     /// Power-on is delivered as a wakeup (docs/core-interface.md §2), and
     /// then the power the node has (§4).
-    fn power_on(&mut self, node: u32) {
+    pub(crate) fn power_on(&mut self, node: u32) {
         self.deliver(node, Event::Wakeup);
         let external = self.external(node);
         self.deliver(node, Event::App(AppCommand::Power { external }));
@@ -4905,7 +4973,7 @@ impl Sim {
         self.watch_boot(node, kind);
     }
 
-    fn power_off(&mut self, node: u32, why: &str) {
+    pub(crate) fn power_off(&mut self, node: u32, why: &str) {
         if !self.nodes[node as usize].alive {
             return;
         }
@@ -5040,7 +5108,9 @@ impl Sim {
     fn availability_toggle(&mut self, n: u32) {
         let (mean_up, mean_dark) = self.availability.expect("availability configured");
         let li = (n - self.n_relays) as usize;
-        if !self.nodes[n as usize].alive {
+        // A node in its swap goes on: it comes back as it would be.
+        let swapping = self.install.as_ref().is_some_and(|m| m.swapping(n));
+        if !self.nodes[n as usize].alive && !swapping {
             return;
         }
         let dark = !self.nodes[n as usize].avail_dark;

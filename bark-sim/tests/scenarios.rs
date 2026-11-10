@@ -935,3 +935,63 @@ fn relays_on_battery_in_an_outage() {
     assert!(low["to_sleepy"] >= 10.0, "{low:?}");
     assert!(low["relay_charge_min"] > 0.15, "{low:?}");
 }
+
+/// The run of nodes rebooting into a new image at 64 times the rate is
+/// the district at that rate with the installs added, and nothing else
+/// (`docs/update-under-load-2026-11-10.md`).
+#[test]
+fn the_install_run_is_its_baseline_with_installs() {
+    let base = scenario("district-x64.toml");
+    let mut install = scenario("district-x64-install.toml");
+    assert!(install.install.is_some());
+    install.install = None;
+    install.name = base.name.clone();
+    assert_eq!(base, install);
+    let mut district = scenario("district.toml");
+    district.name = base.name.clone();
+    district.duration_s = base.duration_s;
+    let rate = |sc: &Scenario| match sc.traffic[..] {
+        [TrafficSpec::Poisson {
+            per_leaf_per_hour, ..
+        }] => per_leaf_per_hour,
+        _ => panic!("one Poisson flow"),
+    };
+    // 64 times 23 texts a day, to the file's six decimals.
+    assert!((rate(&base) - 64.0 * 23.0 / 24.0).abs() < 1e-6);
+    if let TrafficSpec::Poisson {
+        per_leaf_per_hour, ..
+    } = &mut district.traffic[0]
+    {
+        *per_leaf_per_hour = rate(&base);
+    }
+    assert_eq!(base, district);
+}
+
+/// Every node of a mesh reboots into a new image over its settled half
+/// hour (spec "Updates over the mesh", the install; roadmap D170): each
+/// drains, reboots within the bound of its staging, comes back after the
+/// swap, and what it kept is offered again, none of it lost.
+#[test]
+fn nodes_reboot_into_a_staged_image_within_the_bound() {
+    let mut sc = scenario("mesh-spread.toml");
+    sc.install = Some(bark_sim::scenario::Installs {
+        from_s: Some(600.0),
+        over_s: 1500.0,
+        share: 1.0,
+    });
+    let mut sim = Sim::new(&sc).expect("builds");
+    sim.run();
+    let rows = sim.install_rows();
+    assert_eq!(rows.len(), 50, "every node stages its image");
+    let swap = bark_proto::Duration::from_micros(bark_sim::install::SWAP_US);
+    for r in rows {
+        let rebooted = r.rebooted.expect("rebooted");
+        // The bound counts from the whole second the drain began.
+        assert!(rebooted.since(r.staged).as_micros() <= 601_000_000, "{r:?}");
+        assert_eq!(r.back, Some(rebooted + swap), "{r:?}");
+    }
+    let [delivered, dropped, in_flight, unaccounted] = sim.kept_fates();
+    assert!(delivered + in_flight > 0, "nothing kept across a reboot");
+    assert_eq!((dropped, unaccounted), (0, 0));
+    accounted(&sim, "mesh-spread installing");
+}

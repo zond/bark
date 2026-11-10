@@ -208,6 +208,13 @@ impl Sim {
         self.push(next, Ev::Battery);
     }
 
+    /// What `node`'s battery read at the last reading, millivolts, as its
+    /// driver hands it over; `None` without cells in the run.
+    pub(crate) fn millivolts(&self, node: u32) -> Option<u16> {
+        let c = self.battery.as_ref()?.cells.get(node as usize)?;
+        Some((ocv(c.charge / c.capacity) * c.gain * 1000.0).round() as u16)
+    }
+
     /// A trace of a core about its role (`Trace::Role`).
     pub(crate) fn battery_turn(&mut self, sleepy: bool) {
         if let Some(m) = self.battery.as_mut() {

@@ -59,6 +59,9 @@ pub enum Purpose {
     GpsSky = 21,
     /// Each node's cell (`scenario::Battery`).
     Battery = 22,
+    /// Which nodes install an image and when it becomes whole
+    /// (`scenario::Installs`).
+    Install = 23,
 }
 
 /// SplitMix64 output function: a bijective 64-bit mixer.

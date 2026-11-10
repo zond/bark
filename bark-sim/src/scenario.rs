@@ -736,6 +736,36 @@ impl Default for UpdateSpec {
     }
 }
 
+/// Nodes whose image, gathered over the mesh, becomes whole at a time of
+/// each one's own, without the pieces: each stages it then and reboots
+/// into it as the firmware does (`install.rs`;
+/// spec "Updates over the mesh", the install). For runs too short for the gathering itself,
+/// which takes the district's relays 13 to 15 hours at the design rate
+/// (`docs/mesh-update-2026-11-07.md`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Installs {
+    /// When the first image may become whole, seconds; `None` for the
+    /// time the run has settled ([`Scenario::settled_s`]).
+    pub from_s: Option<f64>,
+    /// The window after it within which each node's image becomes whole,
+    /// at a time drawn uniformly from the run's seed, seconds.
+    pub over_s: f64,
+    /// The share of the nodes that install, each chosen from the run's
+    /// seed.
+    pub share: f64,
+}
+
+impl Default for Installs {
+    fn default() -> Self {
+        Installs {
+            from_s: None,
+            over_s: 3600.0,
+            share: 1.0,
+        }
+    }
+}
+
 /// A complete scenario.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -769,6 +799,10 @@ pub struct Scenario {
     /// A firmware image given to one relay, to spread over the mesh;
     /// `None` for none.
     pub update: Option<UpdateSpec>,
+    /// Nodes that reboot into an image gathered over the mesh at
+    /// scheduled times; `None` for none. With [`Scenario::update`] each
+    /// node also reboots into the image once it has gathered it whole.
+    pub install: Option<Installs>,
     /// How long a node takes to settle after it is switched on, seconds:
     /// the run has settled this long after the last switch-on
     /// ([`Scenario::settled_s`]), and messages originated before then are
@@ -820,6 +854,7 @@ impl Default for Scenario {
             power: Power::default(),
             battery: Battery::default(),
             update: None,
+            install: None,
             settle_s: 0.0,
             origin: Origin::default(),
             radio: RadioParams::default(),

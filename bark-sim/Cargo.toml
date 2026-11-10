@@ -10,6 +10,9 @@ description = "Discrete-event simulator and scenario runner for the bark mesh."
 bark-proto = { path = "../bark-proto", features = ["std"] }
 # The mailbox a home node runs, as the firmware does (spec "Mailbox").
 bark-app-layer = { path = "../bark-app-layer" }
+# The firmware's rule for when a node reboots into an image it gathered
+# (spec "Updates over the mesh", the install).
+bark-image = { path = "../bark-image", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

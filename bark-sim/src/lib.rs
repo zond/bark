@@ -13,6 +13,7 @@ mod battery;
 pub mod boots;
 pub mod geo;
 mod gps;
+pub mod install;
 pub mod links;
 pub mod margin;
 pub mod metrics;
