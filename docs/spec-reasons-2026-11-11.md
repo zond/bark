@@ -561,3 +561,133 @@ Any 162.9 s carries at most a full bucket and its refill,
 messages in that time. The records of held messages are never evicted
 and may be older, so the table has room for the 103 a send queue holds
 on top: 667.
+
+## Sleepy nodes
+
+*Why those levels.* At 20 % a relay has relayed through four fifths of
+its cell and keeps the rest for its owner. The curve is flat there,
+34 mV from 20 to 30 %; the gap is several times a reading's noise and
+the load's drop across the cell, so the role does not flap, and a cell
+rises without external power only on a solar box, which then relays
+again.
+
+*Why it calibrates.* The SAADC's gain error at gain 1/6 is up to ±3 %
+(nRF52840 Product Specification, SAADC), which at 3.74 V spans 4 to 57 %
+of a cell's charge. A cell that has finished charging and rested reads
+the curve's 100 %: the T-Echo's 500 mA charger brings an empty 850 mAh
+cell to its end voltage within 1.7 h, its constant-voltage end is
+assumed to take under 1.3 h more, and AN4189's readings rest an hour.
+Scaled so, a board is left with the charger's tolerance on its end
+voltage, about 1 %, and turns between 14 and 32 %. A scale beyond the
+gain error is of a cell that was not full. A relay unplugged from a full
+charge calibrates within its first hour, days before it is low; only a
+discharge begun short of full, before any calibration, turns anywhere
+between 4 and 57 %.
+
+*Why once a minute.* A reading a minute late is under a tenth of a
+percent of the cell at the most a board draws, below a reading's noise,
+and a reading costs a sample of microseconds.
+
+*Why an hour.* A charger moved across the room then costs nobody
+anything, and a node taken off its charger to be carried away is seen
+carried within it (spec "Position").
+
+*Why a TTL at most.* The flush goes through the duty budget as any
+delivery, and where the channels are full it could wait for hours with
+the node listening at full current. A TTL is what the network promises a
+node it cannot reach.
+
+*Why hand it on.* A message ends only as
+spec "Overload waits" lists (roadmap D31), and a node that walks off or runs low is none of those.
+Its address is still where the network can find the message's node: the
+relay that owns it now, or the node itself as a neighbour, takes it on.
+
+## Relay choice
+
+*Why at once.* Its address is the anchor's position, which its senders
+still use, and its holder may hold mail for it.
+
+*Why that margin.* It is two standard deviations of the difference, so
+that a relay no better takes the node on 2.3 % of comparisons. A relay's
+heartbeats reach the node's channel about 130 s apart, longer than the
+60 s the fading lasts, so they are nearly independent.
+
+Under fading of σ = 4 dB (the scenarios' figure) a mean of two
+heartbeats has σ/√2, and the difference of two such means
+σ√(1/2 + 1/2) = 4 dB. The neighbour table's average lets each new
+frame count half, which varies less than a mean of two (σ²/3 against
+σ²/2), so 8 dB is a little more than two standard deviations there.
+
+*Why it wakes.* Between its windows a sleepy node receives duty-cycled,
+which catches no heartbeat with the ordinary preamble, so it hears its
+anchor's rotating heartbeat only if it listens when the rotation brings
+it to its channel. Hearing the heartbeat is how the node knows the
+anchor is alive, and how it follows it to a new home channel: the
+heartbeat names the anchor's home, and the next on the new channel comes
+when the rotation brings it there.
+
+## Beats
+
+*Why that period.* It is half the delivery TTL, so that two beats are
+never more than a TTL apart. A holder that keeps a node for a TTL then
+loses it only after two lost beats, and keeps a node that has gone for
+a TTL, as long as its messages are kept at least
+(spec "Heard table").
+
+*Why random.* The spread keeps two nodes whose beats met once from
+meeting again. The interval is random, not fixed, since nobody wakes for
+a beat: a holder hears it as it listens.
+
+*Why two rotations.* A neighbour heard anchorless once may be switching
+on, and will anchor within minutes. One still anchorless a rotation
+later is in a pocket with no relay, whose nodes mostly know their way
+out already, from the time both were anchorless, so waiting a rotation
+costs them little.
+
+## Heard table
+
+*Why that size.* 256 is three times the ≈80 sleepy nodes per relay
+expected at indoor density in Kyiv with 10 % adoption
+(spec "Capacity and sizing"); at 50 %, ≈400, a full
+table does no harm (above).
+
+## Delivery queue
+
+*Why age alone drops nothing.* A message dropped when no other needs its
+place is lost for nothing, and its node may yet beat, back from a pocket
+or a basement, or heard at last by a holder that missed its beats.
+
+*Why that size.* Nodes in one train or one basement go dark together, so
+the queue holds what arrives in a TTL for every node a holder can keep,
+its heard table's 256 (spec "Heard table"), at the 23 texts a
+day each that the network carries
+(spec "Capacity and sizing"): 256 × 23 / 144 ten-minute
+TTLs in a day = 40.9, so 41 messages.
+
+*Why it waits.* A leaving node is there but not now, as a sleepy node is
+between its beats, and is back within the drain's bound and its swap.
+Sent round it, a message that can end only there would wander among its
+neighbours to the hop cap.
+
+## Delivery
+
+*Why the flush.* The node is leaving: once it has gone its sleepy nodes'
+beats no longer reach it, and the long preamble reaches them now,
+whatever their windows. Each message is flushed once, so a still node
+whose fixes stray past the carried radius again pays no more. The cost is
+bounded: a full queue, 41 messages of 372.8 ms, is 15.3 s of airtime,
+two and a half buckets, paced by the bucket.
+
+## A sleepy node's own message
+
+*Why a fade.* A fade lasts about a minute (the scenarios' correlation
+time), and the three attempts of one hand-over, a few hundred
+milliseconds apart, all fall inside it, where the doubling bans would
+offer it every few seconds to a node whose channel is full.
+
+## Sleepy nodes alone
+
+*Why that period.* Beats at most a period apart visit every channel
+within a TTL, so a relay in reach on any channel hears the node, and two
+nodes in anchorless mode find each other, within the least time the
+network keeps what it holds for them (spec "Sleepy nodes").
