@@ -978,13 +978,21 @@ at the top, and at the bottom the role a hold would give, `SLEEP (3s)`
 or `WAKE (3s)`. The screen says nothing of a forced role. The ten lines
 start 10 px down to make room.
 
-*The pad.* A TTP223 touch sensor on the chip's own supply drives P0.11
-both ways (`docs/touch-pad-2026-11-09.md`), so the pin has no pull. The
-idle level differed between boards on the bench, so the firmware takes
-the level at boot, when nobody touches, as idle, logs it (`pad: idle
-low`), and counts a change away from it lasting 40 ms as a touch, then
-waits for 40 ms back at idle before the next. An open build logs every
-edge (`pad: edge, High`).
+*The pad.* A TTP223-BA6 touch sensor on the chip's own supply drives
+P0.11 both ways, low at rest and high while touched as wired, with no
+limit on how long it reports a touch (`docs/touch-pad-2026-11-10.md`).
+The bench found pins resting high on two boards and unmoving on a
+third, so the firmware learns the resting level (`bark_screen::pad`,
+tested on the host). It reads nothing for the first second, while the
+sensor calibrates, then reads the pin with the pull up and then down: a
+pin that follows the pull has nothing driving it, and the pad is taken
+as dead; else the level it holds is its rest, read with no pull from
+then on. A change from rest that lasts 40 ms to 10 s is a touch,
+counted once the pin has been back for 40 ms; a change that lasts
+longer becomes the rest. The log says `pad: rests low`, `pad: rests
+high, as if touched` or `pad: follows the pull, nothing drives it:
+taken as dead` at boot, then `pad: touched` and `pad: held 10 s, rests
+high now`; an open build logs every edge (`pad: edge, high`).
 
 The cost on battery: a full refresh holds BUSY high for 2 s (the
 board's label). The panel's current during a refresh is not in the

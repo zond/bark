@@ -8,11 +8,9 @@
 //! pull-up, pressed pulling the pin to ground; P1.10 is wired the same
 //! way, active low, as a press on the bench (2026-11-06) showed.
 //!
-//! The pad is a TTP223 touch sensor's output, powered from the chip's own
-//! supply, its mode pins left open (`docs/touch-pad-2026-11-09.md`). Its
-//! idle level differed between boards on the bench, so the level read at
-//! boot, when nobody touches, is idle, and a touch is a change away from
-//! it.
+//! The pad is a TTP223-BA6 touch sensor's output, powered from the
+//! chip's own supply (`docs/touch-pad-2026-11-10.md`); how it is read is
+//! `bark_screen::pad`'s (roadmap D175).
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -90,55 +88,88 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
     }
 }
 
-/// How long the pad must stay away from its idle level to count as a
-/// touch, and back at it to count as released, and the button pressed
-/// and released alike: a choice. The sensor filters its own input, so its
-/// output does not bounce; tactile switches' datasheets give their
-/// contacts' bounce as 5 to 10 ms at most; this is four times that, and
-/// well under the 100 ms or so of a quick tap or press.
+/// How long the button must stay pressed to count, and released before
+/// the next: a choice. Tactile switches' datasheets give their contacts'
+/// bounce as 5 to 10 ms at most; this is four times that, and well under
+/// the 100 ms or so of a quick press.
 const TOUCH_DEBOUNCE: Duration = Duration::from_millis(40);
 
-/// Wait for touches of the pad forever: each one flips the screen. No
-/// pull: the sensor drives its output both ways (`docs/touch-pad-2026-11-09.md`),
-/// and a pull against it would only cost current while it drives the
-/// other way. An open build logs every edge, for the bench.
+/// How long the pin is given to follow a pull when the pad is probed:
+/// with the chip's 13 kΩ pull (nRF52840 Product Specification, GPIO
+/// electrical specification) and up to 1 nF on the pin, five time
+/// constants are 65 µs; this is fifteen times that.
+const PROBE_SETTLE: Duration = Duration::from_millis(1);
+
+/// Read the pad forever: each touch flips the screen. The rules are
+/// `bark_screen::pad`'s, tested on the host; this feeds them the pin's
+/// level at each edge and at each deadline they set. Read with no pull
+/// once probed: the sensor drives its output both ways, and a pull
+/// against it would only cost current. An open build logs every edge.
 pub async fn pad(pin: Peri<'static, P0_11>) -> ! {
-    use embassy_nrf::gpio::Level;
+    use bark_screen::pad::{Event, Pad, SETTLE_MS};
+    use embassy_nrf::gpio::Flex;
+    use embassy_time::{with_deadline, Instant};
     let bench = crate::protect::BARK_OPEN == 1;
-    let mut pad = Input::new(pin, Pull::None);
-    let idle = pad.get_level();
-    log::info!(
-        "pad: idle {}",
-        if idle == Level::High { "high" } else { "low" }
-    );
-    let away = async |pad: &mut Input<'static>| match idle {
-        Level::High => pad.wait_for_low().await,
-        Level::Low => pad.wait_for_high().await,
-    };
-    let back = async |pad: &mut Input<'static>| match idle {
-        Level::High => pad.wait_for_high().await,
-        Level::Low => pad.wait_for_low().await,
-    };
+    let level = |high: bool| if high { "high" } else { "low" };
+    let now = || Instant::now().as_millis();
+    let mut pad = Pad::new();
+    let mut pin = Flex::new(pin);
+    Timer::at(Instant::from_millis(SETTLE_MS)).await;
+    pin.set_as_input(Pull::Up);
+    Timer::after(PROBE_SETTLE).await;
+    let with_up = pin.is_high();
+    pin.set_as_input(Pull::Down);
+    Timer::after(PROBE_SETTLE).await;
+    let with_down = pin.is_high();
+    match pad.probe(with_up, with_down, now()) {
+        Event::Rest(high) => {
+            log::info!(
+                "pad: rests {}{}",
+                level(high),
+                // The wiring makes the sensor active high (README, The pad).
+                if high { ", as if touched" } else { "" }
+            );
+            pin.set_as_input(Pull::None);
+        }
+        _ => {
+            log::warn!("pad: follows the pull, nothing drives it: taken as dead");
+            pin.set_as_disconnected();
+            core::future::pending::<()>().await;
+        }
+    }
+    let mut high = pin.is_high();
     loop {
-        away(&mut pad).await;
-        if bench {
-            log::info!("pad: edge, {:?}", pad.get_level());
-        }
-        Timer::after(TOUCH_DEBOUNCE).await;
-        if pad.get_level() != idle {
-            log::info!("pad: touched");
-            crate::display::touched();
-        }
-        // Back at idle for a debounce before the next.
-        loop {
-            back(&mut pad).await;
-            if bench {
-                log::info!("pad: edge, {:?}", pad.get_level());
+        if let Some(event) = pad.read(high, now()) {
+            match event {
+                Event::Touch => {
+                    log::info!("pad: touched");
+                    crate::display::touched();
+                }
+                Event::Held(rest) => log::info!(
+                    "pad: held {} s, rests {} now",
+                    bark_screen::pad::HOLD_MS / 1000,
+                    level(rest)
+                ),
+                Event::Rest(_) | Event::Dead => {}
             }
-            Timer::after(TOUCH_DEBOUNCE).await;
-            if pad.get_level() == idle {
-                break;
+        }
+        let edge = async {
+            if high {
+                pin.wait_for_low().await
+            } else {
+                pin.wait_for_high().await
             }
+        };
+        match pad.deadline() {
+            Some(at) => {
+                let _ = with_deadline(Instant::from_millis(at), edge).await;
+            }
+            None => edge.await,
+        }
+        let was = high;
+        high = pin.is_high();
+        if bench && high != was {
+            log::info!("pad: edge, {}", level(high));
         }
     }
 }

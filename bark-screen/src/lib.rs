@@ -11,6 +11,7 @@
 
 use core::fmt::{self, Write};
 
+pub mod pad;
 pub mod qr;
 pub mod schedule;
 
