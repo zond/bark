@@ -47,7 +47,9 @@ Read, in order:
    discovery, routing, sleepy nodes, the phone link and the app's
    payload, the mailbox, updates over the mesh, packet formats, open
    items.
-2. `docs/roadmap.md`: phases, decisions taken, open questions.
+2. `docs/roadmap.md`: phases, decisions taken, open questions, and the
+   reasons behind each decision; `docs/spec-reasons-2026-11-11.md` holds
+   the spec's longer reasons that no decision row carries.
 3. `docs/core-interface.md`: the contract between the protocol core and
    its drivers (simulator, firmware).
 4. `docs/simulator-design.md`: the simulator.
