@@ -988,7 +988,14 @@ class Session extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnect() async => _link?.close();
+  /// Closes the link, which is detached once this returns: a link's own
+  /// report of its end may come later, as Bluetooth's does.
+  Future<void> disconnect() async {
+    final link = _link;
+    if (link == null) return;
+    await link.close();
+    _detach(link);
+  }
 
   void _detach(NodeLink link) {
     if (_link != link) return;
