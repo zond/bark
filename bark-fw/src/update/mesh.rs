@@ -205,7 +205,7 @@ pub fn staged() -> Option<u32> {
 pub fn quiet(holding: bool) -> bool {
     let power = super::power();
     policy::quiet(Moment {
-        links: crate::ble::links(),
+        links: crate::ble::doing(),
         holding,
         phone_update: super::phone::holds_slot(),
         swap_allowed: super::swap_allowed(power),

@@ -674,7 +674,8 @@ pub async fn run<'a>(
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
         // An image gathered over the mesh and staged: the reboot into it
-        // waits for a moment that loses nothing (`update::mesh::quiet`).
+        // waits for a moment that loses nothing (`update::mesh::quiet`),
+        // and ends the phones' links first.
         if let Some(version) = crate::update::mesh::staged() {
             let core = &driver.core().0;
             let holding =
@@ -684,6 +685,7 @@ pub async fn run<'a>(
                     "update: rebooting into version {} at a quiet moment",
                     version
                 );
+                crate::ble::close_all().await;
                 crate::update::reboot().await;
             }
         }
