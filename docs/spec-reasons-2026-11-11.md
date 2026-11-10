@@ -313,3 +313,251 @@ are its heartbeats' section's (spec "Updates over the mesh").
 *Why its blocks.* The status then fills 13 blocks of symbols at SF5
 exactly, so the byte costs no airtime, and the held blocks can be shown
 against all.
+
+## Duty cycle cap
+
+*Why that rate.* Any interval of length L then carries at most
+6 s + 9.83% × L on air, so any hour at most 360 s: 10%, the limit of
+ERC/REC 70-03 band g1, which is measured over an hour (proof in
+`tables/budget.rs`). The rate is below 10% by the bucket's depth over
+the hour, so that a burst cannot carry an hour over the limit.
+
+## Hand-over
+
+*Why a byte in every packet.* Nodes are planted by anyone and updated by
+hand, one at a time, so a new format must work beside nodes that never
+get it: an updated node talks to its old neighbours in the old format,
+and their heartbeats tell it, at no traffic, which speaks what. The byte
+costs no airtime in the heartbeat and the ACK, whose 13 and 18 bytes
+fill the same 6 and 8 blocks of symbols at SF5 as 11 and 17 would. In
+DATA it adds a block, 1.28 ms, for two payload lengths in five: 0.51 ms
+on average, under 1 % of a text's frame, and nothing for the 100-byte
+text of spec "Capacity and sizing".
+
+## Retry wait
+
+*Why that unit.* 155.5 ms is how long one hand-over holds its receiver,
+a full frame (138.6 ms) and its ACK (17.0 ms). A hand-over whose frame
+has the long preamble holds its receiver longer by as much as its frame
+is longer, 234.2 ms
+(spec "Duty-cycled receive and the long preamble").
+
+*Why a random wait that doubles.* Other than a weak link, the usual
+cause of a missing ACK is a hidden terminal: a sender the first cannot
+hear transmitted to the same receiver at the same time, and both miss
+the ACK and retry. Their retries miss each other only if they start more
+than one hand-over apart, which for full frames and a window of W units
+happens with probability (1 − 1/W)²: never with one unit, 1/4 with two,
+9/16 with four. Doubling per attempt also spreads more than two such
+senders.
+
+*Why a give-up waits the same window.* The backoff waits for a frame to
+end, and a channel busy for 500 ms, longer than any frame, is held by
+one hand-over after another: the wait is in their unit, and the senders
+waiting for the same channel come apart as retrying ones do.
+
+## The ACK
+
+(roadmap D29). A second reply would go out only after the first and its
+retunes, and taking a packet it may not answer in time would let its
+sender hand the message to someone else as well.
+
+## Bans
+
+The senders a relay refuses stand in a **line**, each told to come back
+at its own place, so that they return one after another as room frees,
+not together to be refused again at the cost of a frame and an ACK
+each. A place is rounded up to a code, so a sender comes back at most a
+ban, or an eighth of a long wait, late; places are at least a ban apart,
+or they would get the same code. The wait told is:
+
+*Why silence doubles.* A refusal measures what one hand-over takes from
+the receiver's bucket. Silence says only that the channel or the
+receiver is full, or the link gone, not how full. Without the doubling,
+a neighbour that stops answering under load is offered every other
+message at once, each offer up to three more frames where frames are
+already being lost.
+
+## Next hop
+
+message would only wander among that node's neighbours, each passing it
+over in turn, to the hop cap. Refused by that node, it waits for it in
+the delivery queue (spec "Delivery queue").
+
+*Why a demotion ends the wait.* A neighbour whose heartbeats this relay
+hears but which never hears it stays live, its heartbeats renewing it.
+Waited for as the only candidate left, it would hold the message for as
+long as it beats, and this relay's part of the search would never end.
+Three hand-overs in a row unanswered are the test that it does not hear
+this relay, so there the message lets it go. The cost falls on that one
+message: where three collisions demote a working link that is the only
+way on, it is returned or, at its origin, dropped; the next message
+tries the link last.
+
+*Why the next hop need not be closer.* After the message comes back, the
+best neighbour left is usually farther from the destination than the
+relay itself, and such a rule would turn every gap into a dead end. On a
+first send the nearest neighbour is chosen anyway.
+
+## Send queue
+
+*What sets the 39.* The bucket holds at most 6 s
+(spec "Duty cycle cap"), and a full frame and the ACK that
+took it on cost 138.6 + 17.0 = 155.5 ms, so ⌈6 s / 155.5 ms⌉ = 39. With
+the reply reserve left in, a full bucket takes at most 33 full frames,
+so for full frames the bucket is the limit; shorter frames fill the 39
+places first, and 39 hand-overs of them go out within a few seconds.
+
+*Why route at each chance.* The table changes between one chance to
+send and the next: a ban ends, a neighbour arrives, recovers or is
+demoted. Routed only when its turn came, a message waiting for one ban
+would miss a better way that opened meanwhile.
+
+## Receiving DATA
+
+Cases 1, 3, 4 and 6 end a packet without acting on it, and in each the
+message lives on: it has arrived, the packet was answered when it first
+came, another copy goes on, or, seen, the copy stays with its sender, so
+no case ends the last copy of a message
+(spec "Overload waits" lists what does).
+
+Nothing is sent straight back, and no copy searches twice over the same
+ground: a relay that has had the message goes on from where its own
+search stands when the message returns to it, and a copy that reaches
+it from elsewhere searches on from its sender's record, past this
+relay. A return goes from a relay to its parent, and the parents, each
+set when its record was made, lead back to the origin without a loop,
+so a message cannot go back and forth between two relays that hold none
+of it (roadmap D35).
+
+## Return to parent
+
+*Why hold it.* Within seconds of its boot a node has heard no relay
+yet, though its burst brings it the relays in range within about 15 s
+(spec "Heartbeat"): dropped then, the person's first text would
+be lost to the boot alone.
+
+## Hop count
+
+*Why not start higher.* Sent with 1, the message could take hop
+place 1 at its first hop, which overload must not give to fresh work
+(spec "Send queue").
+
+So along the path of a message the count only grows, and a relay sends
+a count for a message once, but in retries: to send another packet of
+it, it must have received one since its last hand-over that succeeded or
+was answered seen, which spends the count the receiver recorded, or that
+hand-over failed and the packet goes elsewhere. After a wait for a ban
+it may also go again to the neighbour that did not answer; if that
+
+*Why the cap.* A search that keeps its records ends on its own
+(spec "Why the search finds a path"); the cap
+ends one that has lost its way because a record was replaced or the
+message split in two, and it ends the chain of hop places
+(spec "Overload waits"). 255 is generous: the longest
+straight route across the city of
+spec "Capacity and sizing" (≈30 km at the ≈750 m
+street range of spec "Physical layer") is about 40
+hand-overs, leaving about 200 for routing around gaps.
+
+## Why the search finds a path
+
+Suppose that while a message is being routed the links do not change,
+every hand-over to a neighbour that answers succeeds within its
+attempts, and no record is replaced. Then:
+
+- The message moves as a single packet: a relay sends only what it has
+  just received or originated, and every ACK-only case of
+  spec "Receiving DATA" sends nothing.
+- Each stay of the message at a relay ends with a hand-over that
+  succeeds, or at the origin with a drop (spec "Next hop",
+  spec "Return to parent"), and there are finitely many of
+  those: a relay hands the message to each neighbour at most once, since
+  one that takes it is tried (spec "Message records"), and
+  the parents lead to the origin without a loop. So the search ends.
+- A neighbour that does not answer costs a bounded number of failed
+  hand-overs (spec "Bounds"), and the hop cap bounds the stays
+  (spec "Hop count").
+- A send to a relay that already has the message and holds none of it
+  is answered seen (receiving DATA, case 6): the sender marks it tried
+  and goes on with its own candidates, and the relay's own search, if
+  unfinished, goes on when the message returns to it from its child. So
+  a relay met again is neither searched twice nor skipped: its
+  neighbours are its own to try, and the message stays a single copy. A relay whose
+  search is unfinished gets the message back through the parents, so
+  none is left with neighbours untried.
+
+So the message makes a depth-first traversal of the relays reachable
+from the origin through neighbours that answer, nearest to the
+destination first. A depth-first traversal visits every relay it can
+reach; it stops at the first owner, or returns to the origin when there
+is none. If a path to an owner exists, the message finds it, provided
+the traversal fits in the 255 hand-overs of spec "Hop count".
+The search cannot stall on a seen answer, since the sender keeps the
+message and its next choice is its own; nor loop, since the message
+moves only when a hand-over is taken, and each relay hands it to each
+neighbour at most once.
+
+What breaks it:
+
+- **A lost record.** A message returning to a relay whose record has
+  been replaced is new there; the relay searches again from itself, and
+  the relays above it never get the message back. The search ends early,
+  or wanders until the hop cap ends it.
+- **A split.** A hand-over whose ACKs were all lost looks failed, so the
+  sender moves on while the receiver also carries the message: two
+  copies search at once. They share the relays' records: a copy that
+  reaches a relay the other has crossed is answered seen and searches on
+  past it, into relays neither has reached, or back up its own parents.
+  A copy ends where it meets the other held at a relay (receiving DATA,
+  case 4), where the message has arrived (case 1), at the origin with
+  the search, at the hop cap, or as a return to a parent that gave the
+  child up and answers seen (case 6). Only the last can end a copy that
+  is the last one, and it takes every ACK of three hand-overs on one
+  link lost.
+- **Links that change** during the search, including a parent that moves
+  to another home channel: parts of the graph go unsearched.
+
+## Bounds
+
+*What a neighbour that does not answer costs.* Each failed hand-over to
+it bans it for every message, the ban doubling up to 61 s
+(spec "Bans"), until it leaves the table 390 s after its last
+heartbeat or answer: the bans 1.58, 3.16, 6.3, 12.7, 25.3 and 50.6 s add
+up to 100 s, and 61 s bans fill the rest. After three failures it ranks
+behind the others (spec "Neighbour table") and the message
+that waited for it moves on, so the first message pays two bans and
+three hand-overs, 14.2 s, and every later one a hand-over, 3.15 s, until
+the demotion lapses and the count starts again. A hand-over is at most
+three attempts of 738.6 ms, listen-before-talk until it gives up, a full
+frame and the ACK timeout, and the retry waits, 0.93 s
+(spec "Hand-over"). A channel that stays busy adds its wait to a
+forward's or a return's hand-over, but no airtime (step 2). A neighbour
+that answers this relay between failures is not demoted and holds a
+message as long as its bans, with no bound by count: it hears this
+relay, and each offer is another chance for the frame to get through;
+if it refuses the message, the message goes round it where another
+candidate is left (spec "Next hop").
+
+*Why that many records.* A message sent on can come back, returned by a
+child or offered by a split copy, and its record must still be here
+then. On its way it may wait at each relay as long as a full send queue
+takes to drain, each of the 103 places, 39 regular and 64 hop places,
+waiting out one ban of 1.58 s: 162.9 s. A ban after silence lasts up to 61 s, so where every way on is
+silent a message can wait longer; its own record is kept while it is
+held, and this bound covers a wait of one ban per place behind
+refusals only (roadmap D42); a refusal may ask for more
+(spec "Bans"), and a message held longer than the records last can
+come back to a relay that has replaced its record, where the hop cap
+ends a search that loses its way (spec "Hop count").
+
+Every message a relay handles costs at least an ACK (18 bytes, 17.0 ms)
+and one DATA packet with no payload (28 bytes, 22.1 ms,
+spec "Physical layer"), together 39.0 ms.
+
+Any 162.9 s carries at most a full bucket and its refill,
+6 s + 9.83% × 162.9 s = 22.0 s of airtime
+(spec "Duty cycle cap"), so a relay handles at most 564
+messages in that time. The records of held messages are never evicted
+and may be older, so the table has room for the 103 a send queue holds
+on top: 667.
