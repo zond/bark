@@ -60,8 +60,9 @@ FoundNode? _strongest(Iterable<FoundNode> nodes) {
 ///
 /// The order holds among the nodes heard at a signal a link holds at
 /// ([FoundNode.usable]): a node heard weak is passed over for one further
-/// down heard better, as a link to it would not hold, and taken only when
-/// nothing usable is heard (roadmap D171).
+/// down heard better, as a link to it would not hold. With none usable,
+/// the node heard strongest, of whatever kind, as signal alone then says
+/// which link is likeliest to hold (roadmap D171).
 ///
 /// While the phone has a link to the node `on`, the choice is only a node
 /// higher in the order than it, heard usable: the home over another paired
@@ -82,20 +83,20 @@ FoundNode? chooseNode(
       : paired.contains(name)
       ? 1
       : 2;
-  FoundNode? first(Iterable<FoundNode> among) {
-    final own = among.where((n) => paired.contains(n.name));
-    final atHome = own.where((n) => place(n.name) == 0).firstOrNull;
-    if (atHome != null) return atHome;
-    if (own.isNotEmpty) return _strongest(own);
-    return _strongest(
-      among.where(
-        (n) => n.public && !lost.contains(n.name) && !stale.contains(n.name),
-      ),
-    );
+  // A node the phone may use at all, whatever its signal.
+  bool may(FoundNode n) =>
+      paired.contains(n.name) ||
+      (n.public && !lost.contains(n.name) && !stale.contains(n.name));
+  final good = heard.where((n) => n.usable && may(n));
+  final own = good.where((n) => paired.contains(n.name));
+  final FoundNode? n;
+  if (good.isEmpty) {
+    n = on == null ? _strongest(heard.where(may)) : null;
+  } else if (own.isEmpty) {
+    n = _strongest(good);
+  } else {
+    n = own.where((n) => place(n.name) == 0).firstOrNull ?? _strongest(own);
   }
-
-  final n =
-      first(heard.where((n) => n.usable)) ?? (on == null ? first(heard) : null);
   if (n == null || on == null) return n;
   return place(n.name) < place(on) ? n : null;
 }

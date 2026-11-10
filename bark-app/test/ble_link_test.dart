@@ -892,8 +892,7 @@ void main() {
       expect(chooseNode(heard, home: 'mine', paired: {'mine'})?.name, 'a');
     });
 
-    test('a weak node is taken when nothing usable is heard, in the '
-        'order', () {
+    test('a weak node is taken when it is the only one', () {
       expect(
         chooseNode(
           [n('home', -100, public: false)],
@@ -902,19 +901,38 @@ void main() {
         )?.name,
         'home',
       );
+      expect(chooseNode([n('a', -100)])?.name, 'a');
+    });
+
+    test('nothing usable heard: the strongest, whatever its kind', () {
+      // A weak home and a slightly stronger weak public node: the public.
+      expect(
+        chooseNode(
+          [n('home', -90, public: false), n('a', -89)],
+          home: 'home',
+          paired: {'home'},
+        )?.name,
+        'a',
+      );
       final weak = [
-        n('a', -90),
-        n('mine', -99, public: false),
+        n('a', -95),
+        n('mine', -88, public: false),
         n('home', -100, public: false),
       ];
       expect(
         chooseNode(weak, home: 'home', paired: {'home', 'mine'})?.name,
-        'home',
+        'mine',
       );
-      expect(chooseNode(weak, paired: {'mine'})?.name, 'mine');
-      expect(chooseNode(weak)?.name, 'a');
-      // A node usable but not one the phone may use is no usable node.
-      expect(chooseNode([...weak, n('shut', -40, public: false)])?.name, 'a');
+      // Only nodes the phone may use: not one private and not its own,
+      // nor one whose pairing was lost.
+      expect(
+        chooseNode([...weak, n('shut', -86, public: false)], paired: {})?.name,
+        'a',
+      );
+      expect(
+        chooseNode([n('lost', -86), n('a', -95)], lost: {'lost'})?.name,
+        'a',
+      );
       // Heard without an RSSI: ranked as the weakest.
       expect(
         chooseNode(

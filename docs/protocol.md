@@ -3753,7 +3753,8 @@ guest, while it is paired with none that is still its own (The removed
 phone, above), while those are out of reach: none reached in two of the
 app's scans in a row, 15 s apart, so 30 s; and while it hears them only
 weakly. A node heard weakly is passed over for one further down the order
-heard well, and used only when the phone hears no node well. A scan that
+heard well; when the phone hears no node well, it uses the one it hears
+strongest, of whatever kind. A scan that
 hears one of its nodes well takes the phone back to it at once. On a node
 it is paired with that is not its home, the phone listens for the home once
 a minute and moves to it once it hears it well and nothing on the link is
@@ -3776,7 +3777,9 @@ of their nodes, texts sent to the home wait there to be fetched.
 *Why a weak node is passed over.* A link to a node at the edge of its reach
 may not hold, while a node nearer would. −85 dBm is a choice, the line
 below which the app calls a signal weak, as the phone hears an
-advertisement before any link. It is applied only when the phone takes a
+advertisement before any link. Below it the order gives way to signal,
+as of nodes that may all fail to hold a link the strongest is the
+likeliest to hold. It is applied only when the phone takes a
 node: a link once up is not left for its signal, so a node heard about the
 line does not move the phone back and forth.
 

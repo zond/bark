@@ -457,8 +457,8 @@ link", Which node a phone uses). The order holds among the nodes heard
 at −85 dBm or above, where Settings stops saying "weak"
 (`FoundNode.usable`): a home or paired node heard below it is passed
 over for a node further down the order heard above it, a public one at
-once, and a weak node is taken only when nothing better is heard
-(`chooseNode`). The paired nodes are out of reach
+once; with none heard above it, the app takes the node heard strongest,
+whatever its kind (`chooseNode`). The paired nodes are out of reach
 once two rounds in a row, 30 s, have reached none of them, heard or
 connected (`ownGone`): one round with the screen off may miss a node in
 reach. A paired node heard well always comes first, and the app moves
