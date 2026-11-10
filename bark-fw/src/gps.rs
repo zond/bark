@@ -20,6 +20,7 @@
 //! (`main.rs`).
 
 use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bark_driver::gnss::{Fix, Nmea, OUTPUT};
 use bark_driver::Gps;
@@ -57,6 +58,9 @@ static FIX: Mutex<CriticalSectionRawMutex, Cell<Option<Position>>> = Mutex::new(
 /// The receiver lost its fix since the node last took one, until the
 /// node takes this.
 static LOST: Mutex<CriticalSectionRawMutex, Cell<bool>> = Mutex::new(Cell::new(false));
+/// The receiver runs, its WAKEUP line high, for the discharge log
+/// (`discharge.rs`): it draws some 29 mA then (spec "Sleepy nodes").
+static AWAKE: AtomicBool = AtomicBool::new(false);
 /// Raised when a fix, or its loss, waits for the node.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
@@ -74,6 +78,11 @@ pub fn take_fix() -> Option<Position> {
 /// asked. It hands this before the fix waiting, which came after.
 pub fn take_lost() -> bool {
     LOST.lock(|l| l.replace(false))
+}
+
+/// Whether the receiver runs now.
+pub fn awake() -> bool {
+    AWAKE.load(Ordering::Relaxed)
 }
 
 /// The node's side: whether anything [`FOR_CORE`] was raised for waits,
@@ -130,6 +139,7 @@ pub async fn run(mut p: Parts) -> ! {
             want = WANT.wait().await;
         }
         wake.set_high();
+        AWAKE.store(true, Ordering::Relaxed);
         log::info!("gps: searching");
         note("searching");
         let mut state = State::Searching;
@@ -191,6 +201,7 @@ pub async fn run(mut p: Parts) -> ! {
         }
         drop((tx, rx));
         wake.set_low();
+        AWAKE.store(false, Ordering::Relaxed);
         let found = if state == State::Fixed {
             ""
         } else {

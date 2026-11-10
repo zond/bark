@@ -296,7 +296,8 @@ On the external flash, in sectors of 4 KiB:
 | coded pieces | `0x0E4000` | 772 KiB, 193 sectors | a head of what has been gathered and a lane of four sectors, 64 pieces of 256 bytes, for each of an image's 48 blocks at most, for the update over the mesh (`bark-image` `pieces.rs`, roadmap D151) |
 | mailbox ring | `0x1A5000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
 | carried | `0x1E5000` | 44 KiB, 11 sectors | what the node still holds when it reboots into an image gathered over the mesh, 167 messages at most, a page each, offered again after the reboot (Updates, below) |
-| free | `0x1F0000` | 64 KiB, 16 sectors | |
+| discharge log | `0x1F0000` | 32 KiB, 8 sectors | the battery's samples, 2048 at most, a sample an hour on battery (Discharge log, below) |
+| free | `0x1F8000` | 32 KiB, 8 sectors | |
 
 RAM, 256 KiB: `0x20000000..0x20000008` is left to the MBR;
 `0x20000008..0x20000400` holds a panic message for the next boot
@@ -1348,6 +1349,7 @@ retune times.
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
 | `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`, whether the node is public, from the bond, and the battery drains the node image kept; `reset` zeroes the counters | |
 | `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
+| `discharge [erase]` | the node image's discharge log (Discharge log, below), oldest first; `erase` erases it | a header with `slots`, `every_s` and the calibration `scale` the node keeps, then per sample `seq`, `utc_s`, `uptime_s`, `mv`, `external`, `sleepy`, `gps` and `why`, then `discharge end samples=N` |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
@@ -1583,6 +1585,39 @@ the windows after them (spec "Beats"); without an anchor each beat is a
 249 ms frame with the long preamble at the transmit current, every 34.6 s
 on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 `scripts/measure.md` step 5 measures it in each state.
+
+## Discharge log
+
+The board has no fuel gauge, and the level it shows is read off the
+cell's voltage by a coarse line through three points of a typical cell's
+curve (roadmap D169). To learn the board's own curve, the node keeps a
+log of its cell's voltage on the external flash, so that a discharge
+from full to empty, days to weeks on battery where no host reads the
+USB log, can be read afterwards (roadmap D178; `src/discharge.rs`,
+`bark-image` `discharge.rs`).
+
+It takes a sample at the first reading after a boot, at once on USB; at
+each reading an hour after the last sample on battery; at the first
+reading after USB goes and at USB's return, with the last reading on
+battery; and at the first reading after the node turns sleepy or relay
+or its GPS starts or stops. The driver reads the battery once a minute
+on battery only, so a sample on USB has no reading, `mv=0`. Each
+sample is 16 bytes: a sequence number, UTC seconds if the node knows
+the time from the GPS or a phone, else 0, the uptime, the reading as
+the converter gave it, the power, the mode, why it was taken, and a
+CRC-16, so that a record a power cut tore is skipped. 8 sectors hold
+2048: a full sleepy node lasts 59 days, 1416 hours. The log wraps: the
+sector after the newest is erased whole before it is written, losing
+the oldest 256 samples, since the discharge to read is the one just
+ended. It is kept across reboots and image swaps.
+
+At boot the node logs `discharge: N samples over H h, A mV to B mV`.
+To read it all, stage a console image (`scripts/image.py stage`) and
+run `discharge`; `scripts/discharge.py PORT --csv run.csv` sends the
+command, writes the samples to a CSV and fits the curve over the last
+run on battery, printing the voltage at every 5 % of the charge
+(its docstring says what it assumes). `discharge erase` empties the
+log before a run.
 
 ## Risks
 

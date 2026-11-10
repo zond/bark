@@ -24,6 +24,7 @@ mod carry;
 mod clock;
 #[cfg(feature = "console")]
 mod console;
+mod discharge;
 mod display;
 mod ext_flash;
 #[cfg(not(feature = "console"))]
@@ -661,6 +662,7 @@ async fn node_radio(n: NodeRadio) {
             ext_flash::init(n.flash);
             mailbox::open();
             carry::open();
+            discharge::open();
             update::started(n.shared);
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;

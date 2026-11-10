@@ -118,6 +118,7 @@ impl App for LinkApp<'_> {
     async fn battery(&mut self) -> Option<u16> {
         let mv = self.battery.read().await;
         self.battery_mv = mv;
+        crate::discharge::read(mv);
         Some(mv)
     }
 
@@ -719,6 +720,7 @@ pub async fn run<'a>(
             }
         }
         crate::carry::tidy().await;
+        crate::discharge::note(driver.core().0.sleepy()).await;
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {

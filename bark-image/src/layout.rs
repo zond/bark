@@ -129,6 +129,8 @@ pub const STORE: Region = Region::pages_from(STORE_START, 1);
 /// | [`external::DFU`] | the staged image, one sector larger than [`ACTIVE`] |
 /// | [`external::PIECES`] | coded pieces of an update arriving over the mesh |
 /// | [`external::MAILBOX`] | the mailbox's ring |
+/// | [`external::CARRY`] | what a node carries across a reboot into a new image |
+/// | [`external::DISCHARGE`] | the battery's discharge log |
 /// | the rest | free |
 pub mod external {
     use super::{Region, ACTIVE_PAGES};
@@ -146,8 +148,8 @@ pub mod external {
     /// node keeps the pieces of every block it lacks (`crate::pieces`,
     /// roadmap D151). 48 lanes and the head are what the chip has room
     /// for beside the staged image and the mailbox, with about 108 KiB to
-    /// spare before what a reboot carries took 44: an image of 47 blocks,
-    /// 743 KB packed, today's 28.
+    /// spare before what a reboot carries took 44 and the discharge log
+    /// 32: an image of 47 blocks, 743 KB packed, today's 28.
     pub const PIECE_LANES: u32 = 48;
 
     /// Sectors for coded pieces: a head of what has been gathered, then a
@@ -162,6 +164,13 @@ pub mod external {
     /// Sectors for what a node carries across a reboot: 167 slots of 256
     /// bytes, 16 to a sector, rounded up.
     const CARRY_SECTORS: u32 = 167u32.div_ceil(16);
+
+    /// Sectors for the discharge log (`crate::discharge`): a full sleepy
+    /// node runs 59 days on its cell (spec "Sleepy nodes"), 1416 samples
+    /// at one an hour, 5.5 sectors of 256; a sector is erased whole
+    /// before it is written again, and boots and changes of power add
+    /// samples, so 8, half of what was free.
+    const DISCHARGE_SECTORS: u32 = 8;
 
     /// The staged image (embassy-boot's DFU partition), one sector more
     /// than the running one (embassy-boot, `BootLoader::new`: "The dfu
@@ -180,10 +189,14 @@ pub mod external {
     /// each of the 167 messages a node holds at most, 11 sectors. Its
     /// payloads are the network's, sealed by their senders.
     pub const CARRY: Region = Region::pages_from(MAILBOX.end(), CARRY_SECTORS);
+    /// The battery's discharge log, a sample an hour on battery and one
+    /// at each boot and change of power (`crate::discharge`, roadmap
+    /// D178). Kept across reboots and image swaps.
+    pub const DISCHARGE: Region = Region::pages_from(CARRY.end(), DISCHARGE_SECTORS);
     /// Free.
     pub const FREE: Region = Region {
-        start: CARRY.end(),
-        len: END - CARRY.end(),
+        start: DISCHARGE.end(),
+        len: END - DISCHARGE.end(),
     };
 }
 
@@ -246,9 +259,9 @@ const _: () = {
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(external::DFU.len == ACTIVE.len + external::SECTOR);
-    assert!(external::CARRY.end() <= external::END);
-    // About 64 KiB stay free.
-    assert!(external::FREE.len >= 16 * external::SECTOR);
+    assert!(external::DISCHARGE.end() <= external::END);
+    // About 32 KiB stay free.
+    assert!(external::FREE.len >= 8 * external::SECTOR);
     assert!(PROTECT_LOW.len.is_multiple_of(PAGE) && PROTECT_LOW.len <= FLASH_END / 2);
     assert!(PROTECT_HIGH.start.is_multiple_of(PAGE) && PROTECT_HIGH.len <= FLASH_END / 2);
     // embassy-boot keeps two progress words a page for the swap and two for
@@ -376,10 +389,17 @@ mod tests {
             }
         );
         assert_eq!(
-            external::FREE,
+            external::DISCHARGE,
             Region {
                 start: 0x1F0000,
-                len: 16 * PAGE
+                len: 8 * PAGE
+            }
+        );
+        assert_eq!(
+            external::FREE,
+            Region {
+                start: 0x1F8000,
+                len: 8 * PAGE
             }
         );
     }
@@ -401,6 +421,7 @@ mod tests {
             external::PIECES,
             external::MAILBOX,
             external::CARRY,
+            external::DISCHARGE,
             external::FREE,
         ];
         for order in [&inside[..], &outside[..]] {
@@ -415,7 +436,7 @@ mod tests {
         assert_eq!(inside[0].start, APPLICATION_START);
         assert_eq!(inside[7].end(), BOOTLOADER_START);
         assert_eq!(outside[0].start, 0);
-        assert_eq!(outside[4].end(), external::END);
+        assert_eq!(outside[5].end(), external::END);
     }
 
     #[test]
