@@ -3849,8 +3849,10 @@ paired with it, else the node it is paired with that it hears strongest; on
 either it is the owner. It uses the public node it hears strongest, as a
 guest, while it is paired with none that is still its own (The removed
 phone, above), while those are out of reach: none reached in two of the
-app's scans in a row, 15 s apart, so 30 s; and while it hears them only
-weakly. A node heard weakly is passed over for one further down the order
+app's scans in a row, 15 s apart, so 30 s, counted from 55 s after a node
+that said it was installing ended the link, the time a node is away for
+its swap ([updates over the mesh](#updates-over-the-mesh), the install);
+and while it hears them only weakly. A node heard weakly is passed over for one further down the order
 heard well; when the phone hears no node well, it uses the one it hears
 strongest, of whatever kind. A scan that
 hears one of its nodes well takes the phone back to it at once. On a node
