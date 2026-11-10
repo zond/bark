@@ -123,8 +123,8 @@ So the chip was in STDBY_RC, with its oscillator off, when the driver
 believed it was receiving: the last mode change had failed. On every
 board it came after a heartbeat's last check, at the first
 `GetIrqStatus` after the return to receive, which is the restart within
-a millisecond of a CAD that the driver programs with the short 100 µs
-delay (`tcxo.rs`, `SHORT`). A start fails like this when the oscillator
+a millisecond of a CAD that the driver programmed with a constant
+100 µs delay (roadmap D88). A start fails like this when the oscillator
 is not running at the end of its delay (`GetDeviceErrors` bit 5,
 `XOSC_START_ERR`) or the PLL does not lock on it (bit 6, `PLL_LOCK_ERR`,
 DS Table 13-84). The driver did not read the device errors before the
@@ -233,6 +233,18 @@ missing. The candidates, and what tells them apart:
   M with a preamble seen, readings L to H dBm; resetting the radio`.
   The 10 s line counts these in `recoveries`.
 - The console's `recover` does the same reset by hand.
+
+Revised the same day by roadmap D193: the restart's delay is probed as
+the cold one is, the error word is read after every start, and a failed
+restart steps the restart's delay up one step, with a line giving the
+delay and how long the oscillator had been off, instead of ending
+restarts. A CAD's end is now timed from the earliest it can be, eight
+symbols after its command: the driver had timed it from when it read the
+CAD's result, which another task holding the processor can delay past
+the millisecond the oscillator runs on, so that a restart it took for
+one found the oscillator cold. The same hold leaves the reading inside
+the CAD unread, a busy check, which fits every `OpError(170)` coming
+after a skipped heartbeat.
 
 ## What the bench should do with bac7
 

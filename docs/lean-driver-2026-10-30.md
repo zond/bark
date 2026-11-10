@@ -63,7 +63,8 @@ after the CAD instead, with the receiver started on the channel and
 settled, 1.1 ms more. The choice is logged at boot and shown by the
 console's `tcxo`.
 
-**The oscillator's start, probed** (`bark-driver/src/tcxo.rs`). Two
+**The oscillator's start, probed** (`bark-driver/src/tcxo.rs`; the
+restart's delay is probed too since roadmap D193). Two
 delays: 100 µs for the restart after a CAD, twice the 50 µs that never
 failed within a millisecond of stopping on the bench, since zero hangs
 the chip; and a probed one for every cold start. The probed delay is
