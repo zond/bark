@@ -673,6 +673,22 @@ pub enum Trace {
         /// The node.
         node: NodeId,
     },
+    /// A forward refused by a neighbour leaving the air, where it may end,
+    /// waits for that neighbour in the delivery queue
+    /// (spec "Delivery queue").
+    Waits {
+        /// The message.
+        msg_id: MsgId,
+        /// The neighbour.
+        node: NodeId,
+    },
+    /// A message that waited for a neighbour leaving the air went into
+    /// the send queue as a forward, that neighbour back or gone
+    /// (spec "Delivery queue").
+    Released {
+        /// The message.
+        msg_id: MsgId,
+    },
     /// A message the node held for another, left when it turned sleepy,
     /// went into its send queue as a forward toward its address (spec
     /// "Sleepy nodes").

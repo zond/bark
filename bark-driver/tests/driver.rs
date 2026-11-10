@@ -700,6 +700,7 @@ fn a_deaf_radio_drops_every_frame_of_its_node() {
             home: ch(3),
             format: bark_proto::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id,
             short: Position::default().short(),
         }))
@@ -913,6 +914,7 @@ fn a_relay_runs_through_the_loop() {
         home: ch(6),
         format: bark_proto::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: bark_proto::NodeId([6; 6]),
         short: other.short(),
     });

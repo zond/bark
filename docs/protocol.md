@@ -682,7 +682,7 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 | heartbeat | 4 | `1000`: the packet is a heartbeat ([packet formats](#packet-formats)) |
 | channel | 4 | home channel index 0–12 |
 | format | 8 | the newest format the node speaks ([packet formats](#packet-formats)) |
-| flags | 8 | sleepy, anchorless, carried, map point ([packet formats](#packet-formats)) |
+| flags | 8 | sleepy, anchorless, carried, map point, leaving ([packet formats](#packet-formats)) |
 | id | 48 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
@@ -918,6 +918,7 @@ Per node, up to 64 entries, by node ID:
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
 | sleepy, anchorless | from its heartbeat's flags ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
 | carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)), and a last resort once stale ([next hop](#next-hop)) |
+| leaving | from its heartbeat's flags: it is about to leave the air ([packet formats](#packet-formats)), until a heartbeat without the flag; gone round while another next hop is left ([next hop](#next-hop)) |
 | format | from its heartbeat: the newest format it speaks ([packet formats](#packet-formats)), which sets the format of a DATA to it ([hand-over](#hand-over)) |
 | map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
@@ -1764,6 +1765,17 @@ cleared when the ban ends, and while a refuser is banned it is no
 candidate for that message, unless that leaves none, or only a last
 resort the refuser was not; then the message waits for the ban. A
 failed hand-over sets no bit ([hand-over](#hand-over) step 6).
+
+A neighbour whose last heartbeat had the leaving flag
+([packet formats](#packet-formats)) is passed over the same way, for
+every message but one that may end there, addressed to it or, if it
+holds mail, to a position within the owner radius of it
+([owner](#owner)): it is no candidate while another is left that is no
+worse a last resort, and the next hop where none is. Nothing is counted
+against it, no ban and no demotion. Sent round a node where it ends, a
+message would only wander among that node's neighbours, each passing it
+over in turn, to the hop cap. Refused by that node, it waits for it in
+the delivery queue ([delivery queue](#delivery-queue)).
 
 *Why a ban is a wait.* A neighbour that does not answer stays the first
 candidate until it is demoted or gone, for the reasons of
@@ -2945,6 +2957,28 @@ TTLs in a day = 40.9, so 41 messages.
 A flow to one node that pauses longer than a hand-over waits for the
 next beat, at most 41 messages a period, and the rest are refused.
 
+**A neighbour leaving the air.** A message refused by a neighbour whose
+last heartbeat had the leaving flag, where the message may end, addressed
+to it or to a position it may own ([next hop](#next-hop)), waits in the
+queue for that neighbour, by the same rules of age and place. Once its
+heartbeat comes without the flag, as after its swap, or its entry is
+gone, the message goes into the send queue as a forward received with
+its count, and is routed as any. Where the queue has no place, it goes
+round as any refused message. A node that is sleepy or leaving to turn
+sleepy holds none, as it holds mail for nobody.
+
+*Why it waits.* A leaving node is there but not now, as a sleepy node is
+between its beats, and is back within the drain's bound and its swap.
+Sent round it, a message that can end only there would wander among its
+neighbours to the hop cap.
+
+*Why two nodes do not wait for each other.* A node that drains takes no
+message ([updates over the mesh](#updates-over-the-mesh), the install),
+so what a node holds for a draining neighbour it took before its own
+drain, and the neighbour took nothing to hold for it meanwhile. Its own
+drain then waits for the neighbour's return or ends at its bound, and
+what it holds goes across its reboot (roadmap D186).
+
 The owner remembers 41 delivered message IDs
 ([packet formats](#packet-formats)) and ACKs a repeat without delivering
 it twice. When it needs the place, it forgets the one delivered or last
@@ -3049,7 +3083,8 @@ windows, after the deliveries above and one at a time.
   comes is done; the rest stay and go at beats as before until their
   place is needed.
 - **A node heard as a relay.** A holder that hears a heartbeat without
-  the sleepy flag from a node it holds messages for, carried or not,
+  the sleepy or the leaving flag from a node it holds messages for,
+  carried or not,
   sends them at once, one after the other, with the ordinary preamble on
   the home channel the heartbeat names. Each is done on its ACK;
   unanswered ones wait for the node's next heartbeat or beat heard.
@@ -4921,7 +4956,8 @@ sender and is set on its own:
 | 1 | anchorless | "I know no node that holds mail, one that is neither sleepy nor carried. If you are one, tell me." A sleepy node without an anchor sets it ([sleepy nodes alone](#sleepy-nodes-alone)), and a relay on the heartbeats of its burst, while its table is new; those are in no slot ([heartbeat](#heartbeat)) |
 | 2 | carried | "I move. I hold mail for nobody, and take each GPS fix unless I sleep with an anchor." ([nodes](#nodes)) |
 | 3 | map point | "My position is a map point a person set in the app, not a GPS fix." ([position](#position)) |
-| 4–7 | | zero; a later format may define them |
+| 4 | leaving | "I am about to leave the air; do not rely on me." A node sets it while it drains before a reboot into a new image ([updates over the mesh](#updates-over-the-mesh)) and while it flushes what it holds to turn sleepy ([sleepy nodes](#sleepy-nodes)) |
+| 5–7 | | zero; a later format may define them |
 
 A receiver ignores the flag bits it does not know.
 
@@ -4929,6 +4965,13 @@ A receiver ignores the flag bits it does not know.
 says without a new heartbeat layout, which every node, old or new, must
 read. It costs no airtime: 13 bytes fill the same 6 blocks of symbols
 at SF5 as 11.
+
+*Why leaving is told.* A node that drains refuses every message and
+then falls silent, so a sender that waits for it meets silence at the
+end and its search runs out; told, the sender goes round it while
+another way is left (roadmap D181). The bit changes nothing on air, the
+13 bytes filling the same 6 blocks, and a node that does not know it
+waits for the node as before.
 
 A node sets the map point while its position is the map point, keeps it
 across a reboot, and clears it when the app clears it ([position](#position)). Its

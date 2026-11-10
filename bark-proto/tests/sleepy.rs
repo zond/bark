@@ -945,6 +945,7 @@ fn heartbeats_out_of_slot_do_not_move_the_watch() {
         home: relay.home(),
         format: bark_proto::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: relay.id(),
         short: relay.config().position.short(),
     };

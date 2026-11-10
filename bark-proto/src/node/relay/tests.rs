@@ -109,6 +109,7 @@ fn a_sleepy_node_keeps_no_heard_table() {
         home: r.home(),
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: other,
         short: config.position.short(),
     };
@@ -167,6 +168,7 @@ fn the_first_frame_heard_is_told_once() {
         home,
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id,
         short: config.position.short(),
     };
@@ -367,6 +369,7 @@ fn the_first_choice_ends_without_the_anchor() {
             home: Channel::new(4).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: anchor,
             short: config.position.short(),
         };
@@ -1082,6 +1085,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
         home: b_home,
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: id_of(b),
         short: b.short(),
     };
@@ -1208,6 +1212,7 @@ fn a_message_that_waited_keeps_its_turn() {
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(p),
             short: p.short(),
         };
@@ -1338,6 +1343,7 @@ fn the_offer_keeps_the_mark() {
         home: Channel::new(5).unwrap(),
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: id_of(d_pos),
         short: d_pos.short(),
     };
@@ -1425,6 +1431,7 @@ fn an_answer_to_another_sender_is_not_ours() {
         home: Channel::new(5).unwrap(),
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: id_of(d_pos),
         short: d_pos.short(),
     };
@@ -1556,6 +1563,7 @@ fn a_neighbour_that_answers_stays_live() {
             home: Channel::new(5).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(d_pos),
             short: d_pos.short(),
         }),
@@ -1641,6 +1649,7 @@ fn with_every_neighbour_banned() -> (Relay, Instant, Position) {
             home: Channel::new(5).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(at),
             short: at.short(),
         };
@@ -2028,6 +2037,7 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(p),
             short: p.short(),
         };
@@ -2316,6 +2326,7 @@ fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
         home: Channel::new(5).unwrap(),
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: f,
         short: f_pos.short(),
     });
@@ -2454,6 +2465,7 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
         home: Channel::new(5).unwrap(),
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: d,
         short: d_pos.short(),
     };
@@ -2522,6 +2534,7 @@ fn a_message_waiting_for_a_ban_goes_to_a_better_newcomer_at_once() {
         home: Channel::new(6).unwrap(),
         format: crate::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: id_of(at),
         short: at.short(),
     };
@@ -2819,6 +2832,7 @@ fn handing_between_with(
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(p),
             short: p.short(),
         })
@@ -3047,6 +3061,7 @@ fn owner_with(c_live: bool) -> (Option<NodeId>, bool) {
             home: Channel::new(7).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: c,
             short: c_pos.short(),
         };
@@ -3134,6 +3149,7 @@ fn own_refused(lats: &[i32], bans: u8) -> (Relay, Instant, Vec<(Instant, Frame)>
             home: Channel::new(5 + i as u8).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(at(k)),
             short: at(k).short(),
         };
@@ -3320,6 +3336,7 @@ fn neighbour_counts_tell_heard_strong_and_proven() {
             home: Channel::new(5).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(at),
             short: at.short(),
         };
@@ -3438,6 +3455,7 @@ fn with_two_neighbours() -> (Relay, Instant, NodeId, NodeId) {
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id_of(at),
             short: at.short(),
         };
@@ -3662,4 +3680,134 @@ fn the_status_tells_the_battery() {
     assert_eq!(r.status(now).battery, Battery::Low);
     cmd(&mut r, AppCommand::Power { external: true });
     assert_eq!(r.status(now).battery, Battery::Usb);
+}
+
+/// A relay that hears neighbours at `lats` north of it, nearer a far
+/// destination the farther north, each heartbeat leaving or not, and
+/// queues a forward there, to the neighbour `dst_id` if any, and to the
+/// position of the neighbour `dst_pos` if any; the relay, and the
+/// neighbour its first DATA goes to.
+fn first_hop_among(
+    lats: &[(i32, bool)],
+    dst_id: Option<usize>,
+    dst_pos: Option<usize>,
+) -> (Relay, Instant, NodeId) {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let at = |k: i32| Position {
+        lat: me.lat + k,
+        ..me
+    };
+    for (i, &(k, leaving)) in lats.iter().enumerate() {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5 + i as u8).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving,
+            id: id_of(at(k)),
+            short: at(k).short(),
+        };
+        hear(&mut r, &mut now, &Packet::Heartbeat(hb));
+    }
+    let data = Data {
+        sender_home: r.home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: at(dst_pos.map_or(100_000, |i| lats[i].0)),
+        dst_id: dst_id.map_or(NOBODY, |i| id_of(at(lats[i].0))),
+        hops: 2,
+        payload: b"leaving",
+    };
+    let id = data.msg_id();
+    let parent = Some((name(7), Channel::new(2).unwrap()));
+    let place = r.record_place().unwrap();
+    r.records.put(place, Record::new(id, parent, 1, now));
+    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
+    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    let sent = until_sent(&mut r, &mut now, Vec::new());
+    let to = data_to(&sent)[0].0;
+    (r, now, to)
+}
+
+/// A neighbour about to leave the air is gone round where another is
+/// left, and still taken where it is the only one, the message's
+/// destination or the owner of its position; it is neither banned nor
+/// demoted for it
+/// (spec "Next hop", roadmap D181).
+#[test]
+fn a_leaving_neighbour_is_gone_round_while_another_is_left() {
+    let me = Config::default().position;
+    let id = |k: i32| {
+        id_of(Position {
+            lat: me.lat + k,
+            ..me
+        })
+    };
+    let (d, e) = (10_000, 5_000);
+    assert_eq!(
+        first_hop_among(&[(d, false), (e, false)], None, None).2,
+        id(d)
+    );
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, false)], None, None).2,
+        id(e)
+    );
+    assert_eq!(first_hop_among(&[(d, true)], None, None).2, id(d), "alone");
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, true)], None, None).2,
+        id(d),
+        "all leaving"
+    );
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, false)], Some(0), None).2,
+        id(d),
+        "addressed"
+    );
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, false)], None, Some(0)).2,
+        id(d),
+        "the owner of the position"
+    );
+    let (r, now, _) = first_hop_among(&[(d, true), (e, false)], None, None);
+    let n = r.neighbours.get(id(d)).unwrap();
+    assert!(n.leaving);
+    assert!(!r.neighbours.is_banned(n, now) && !r.neighbours.is_demoted(n, now));
+    assert_eq!(n.fail_count, 0);
+}
+
+/// Its heartbeats say it is leaving the air while it drains for a reboot
+/// and while it flushes to turn sleepy, and no longer once the drain opens
+/// again (spec "Packet formats", roadmap D181).
+#[test]
+fn a_node_s_heartbeat_says_it_is_leaving() {
+    let mut r = Relay::new(Config::default(), 1);
+    let now = Instant::ZERO + Duration::from_secs(10);
+    let leaving = |r: &Relay| match Packet::decode(r.heartbeat_frame().payload()) {
+        Ok(Packet::Heartbeat(h)) => h.leaving,
+        other => panic!("{other:?}"),
+    };
+    assert!(!leaving(&r));
+    r.drain(true, now);
+    assert!(leaving(&r), "draining");
+    r.drain(false, now);
+    assert!(!leaving(&r), "open again");
+    r.mode = Mode::Relay(Power::Leaving(now));
+    assert!(leaving(&r), "turning sleepy");
 }

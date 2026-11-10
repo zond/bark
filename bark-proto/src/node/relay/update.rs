@@ -1112,6 +1112,7 @@ mod tests {
             home: Channel::new(5).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: crate::ids::NodeId::from_u64(at.short().0 as u64),
             short: at.short(),
         };

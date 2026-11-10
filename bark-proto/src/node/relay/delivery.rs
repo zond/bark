@@ -30,6 +30,10 @@
 //! taken to listen all the time: its messages go at once, and after an
 //! unanswered one every `delivery_retry` (60 s) as well as on its beats.
 //!
+//! A message that waits for a neighbour leaving the air is not delivered
+//! from here: it goes back into the send queue as a forward once that
+//! neighbour is back or gone (`relay/forward.rs` `release`, roadmap D186).
+//!
 //! Messages for a node this one does not hear wait for it all the same, as
 //! spec "Owner" has the owner queue when nobody knows the node.
 //!
@@ -101,7 +105,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return Ok(());
         }
         let home = n.home;
-        let Some(q) = self.delivery.iter().find(|q| q.node == node) else {
+        let Some(q) = self.delivery.iter().find(|q| q.node == node && !q.waits()) else {
             return Ok(());
         };
         // The count is stamped when its hand-over starts (spec "Hop count").
@@ -179,11 +183,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut i = 0;
         // The windows first: their nodes listen only briefly.
         loop {
-            let Some(node) = self.delivery.iter().nth(i).map(|q| q.node) else {
+            let Some(q) = self.delivery.iter().nth(i).copied() else {
                 break;
             };
-            let first = !self.delivery.iter().take(i).any(|q| q.node == node);
-            if first {
+            let node = q.node;
+            let first = !self
+                .delivery
+                .iter()
+                .take(i)
+                .any(|q| q.node == node && !q.waits());
+            if first && !q.waits() {
                 if let Err(at) = self.try_deliver(node, retry, now) {
                     self.timers.feed_at = at;
                     return;
@@ -239,7 +248,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(q) = self
             .delivery
             .iter()
-            .find(|q| (q.relay_home.is_some() || (far && !q.flushed)) && !queued(q))
+            .find(|q| (q.relay_home.is_some() || (far && !q.flushed)) && !q.waits() && !queued(q))
             .copied()
         else {
             return Ok(());
@@ -287,18 +296,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A hand-over to `node` as a relay went unanswered: its messages wait
     /// for its next heartbeat heard, or its beat.
     pub(super) fn direct_failed(&mut self, node: NodeId) {
-        for q in self.delivery.iter_mut().filter(|q| q.node == node) {
+        for q in self
+            .delivery
+            .iter_mut()
+            .filter(|q| q.node == node && !q.waits())
+        {
             q.relay_home = None;
         }
     }
 
-    /// `node` was heard as a node that is not sleepy, at home on `home`:
+    /// `node` was heard as a node that is neither sleepy nor leaving the
+    /// air, at home on `home`:
     /// what is queued for it goes to it there directly
     /// (spec "Delivery"), whether or not it has a place in the
     /// neighbour table.
     pub(super) fn heard_as_relay(&mut self, node: NodeId, home: Channel) {
         let mut any = false;
-        for q in self.delivery.iter_mut().filter(|q| q.node == node) {
+        for q in self
+            .delivery
+            .iter_mut()
+            .filter(|q| q.node == node && !q.waits())
+        {
             q.relay_home = Some(home);
             any = true;
         }
@@ -324,10 +342,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }));
     }
 
-    /// Expire the heard table, and with `sleepy_listens` retry the
-    /// delivery queue.
+    /// Expire the heard table, and the neighbour table while a message
+    /// waits for a neighbour, and with `sleepy_listens` retry the delivery
+    /// queue.
     pub(super) fn delivery_timers(&mut self, now: Instant) {
         self.heard.expire(now);
+        if self.delivery.iter().any(|q| q.waits()) {
+            // Its wakeup at a waited-for neighbour's expiry is spent.
+            self.neighbours.expire(now);
+        }
         if self.config.sleepy_listens && now >= self.timers.delivery_retry_at {
             self.timers.delivery_retry_at = now + self.config.delivery_retry;
             self.feed(true, now);
@@ -345,6 +368,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .any(Outgoing::held)
             .then(|| earlier(self.delivery.stale_from(), self.inbox.stale_from()))
             .flatten();
-        earlier(retry, earlier(self.heard.next_expiry(), held))
+        // A neighbour waited for that goes is waited for no longer
+        // (`release`).
+        let gone = self
+            .delivery
+            .iter()
+            .filter(|q| q.waits())
+            .filter_map(|q| self.neighbours.expiry_of(q.waits_for))
+            .min();
+        earlier(
+            earlier(retry, gone),
+            earlier(self.heard.next_expiry(), held),
+        )
     }
 }

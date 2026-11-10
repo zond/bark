@@ -42,6 +42,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.forwarding.drain_from_s != u32::MAX
     }
 
+    /// Whether it is about to leave the air, for a reboot or to turn
+    /// sleepy: its heartbeats say so, and its neighbours rely on it only
+    /// where nothing else is left (spec "Packet formats", "Next hop").
+    pub fn leaving_air(&self) -> bool {
+        self.draining() || self.leaving()
+    }
+
     /// Whether the node, draining, may reboot at `now`: it holds nothing
     /// a reset would lose, in its send queue, its delivery queue, its
     /// inbox or a reply that takes a message, or it has drained for the
