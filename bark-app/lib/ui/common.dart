@@ -95,8 +95,8 @@ const List<(IconData, String, String)> sentStates = [
   (
     Icons.add_reaction_outlined,
     'Their reaction',
-    'An emoji under the text is how they answered it. Nothing answers by '
-        'itself: they chose to, and it came back like a text.',
+    'An emoji on the text\'s corner is how they answered it. Nothing '
+        'answers by itself: they chose to, and it came back like a text.',
   ),
 ];
 
@@ -107,8 +107,8 @@ const List<(IconData, String, String)> receivedMarks = [
   (
     Icons.add_reaction_outlined,
     'Your reaction',
-    'Press and hold a text to answer it with an emoji, or to copy it. '
-        'The sender sees the emoji under their copy once it arrives, which '
+    'Press and hold a text to answer it with any emoji, or to copy it. '
+        'The sender sees the emoji on their copy once it arrives, which '
         'like a text may take a while. Pick another to change it. Nothing '
         'answers by itself.',
   ),

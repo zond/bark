@@ -43,6 +43,7 @@ dependencies:
   flutter_map: 8.3.2
   latlong2: 0.10.1
   universal_ble: 3.2.0
+  emojis: 3.2.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

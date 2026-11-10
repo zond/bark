@@ -14,6 +14,9 @@ blake2 = { version = "=0.10.6", default-features = false }
 crypto_box = { version = "=0.9.1", default-features = false, features = ["salsa20"] }
 crypto_secretbox = { version = "=0.1.1", default-features = false, features = ["salsa20"] }
 sha2 = { version = "=0.10.9", default-features = false }
+# A reaction is one character as a person sees it (src/plain.rs): Unicode's
+# grapheme clusters, without allocating; no dependencies of its own.
+unicode-segmentation = { version = "=1.13.3", default-features = false }
 
 [dev-dependencies]
 # The library's own sealed box, which allocates, to check ours against.
