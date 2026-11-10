@@ -3533,7 +3533,10 @@ The node keeps every message for its application in its ring
 ([mailbox](#mailbox), The ring), with the recipient tag it carries in
 the payload's second byte ([the payload](#the-payload)), and confirms
 it to the core once its slot is written, so that a reboot meanwhile
-loses none ([receiving DATA](#receiving-data)). A paired phone's
+loses none ([receiving DATA](#receiving-data)). It shows a message to a
+phone, paired or a guest, only then too: one read before could be
+confirmed, or a guest's number pass it, and lost to a reboot, its number
+would go to the next message, which would then count as read. A paired phone's
 messages are those with its record's tag ([pairing](#pairing)); a
 record whose phone has not written a tag yet has none. Inbox reads the
 oldest of the phone's messages after the last it confirmed, with the

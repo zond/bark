@@ -79,6 +79,12 @@ pub trait Ring {
     }
     /// Erases page `page`.
     fn erase(&mut self, page: u32);
+    /// Whether slot `slot` is on the flash as last written, its write and
+    /// any erase before it done: a ring that writes later than asked
+    /// (`flash_ring::FlashRing`) holds it only in its queue until then.
+    fn written(&self, _slot: u32) -> bool {
+        true
+    }
 }
 
 fn fnv1a(bytes: &[u8]) -> u32 {
@@ -194,6 +200,8 @@ struct Unread {
     /// The item's number and the message ID it arrived with.
     first: Option<(u32, MsgId)>,
     count: u32,
+    /// The newest item looked at.
+    upto: u32,
 }
 
 /// The mailbox of a node.
@@ -296,18 +304,21 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// Person `i`'s oldest unread item and the count of them.
+    /// Items written since it was last found are looked at then.
     fn unread_of(&self, i: usize) -> Unread {
-        if let Some(u) = self.unread[i].get() {
-            return u;
-        }
-        let mut u = Unread {
+        let shown = self.shown();
+        let mut u = self.unread[i].get().unwrap_or(Unread {
             first: None,
             count: 0,
-        };
+            upto: 0,
+        });
+        if u.upto == shown {
+            return u;
+        }
         if let Some(t) = self.people[i].and_then(|p| p.tag.map(|t| (t, p.read))) {
             let (tag, read) = t;
-            let from = (read + 1).max(self.lowest());
-            for n in (from..=self.newest).filter(|&n| self.holds(n, tag)) {
+            let from = (read + 1).max(self.lowest()).max(u.upto + 1);
+            for n in (from..=shown).filter(|&n| self.holds(n, tag)) {
                 if u.first.is_none() {
                     u.first = self
                         .read_item(n, &mut [0u8; MAX_PAYLOAD])
@@ -316,8 +327,22 @@ impl<R: Ring> Mailbox<R> {
                 u.count += 1;
             }
         }
+        u.upto = shown;
         self.unread[i].set(Some(u));
         u
+    }
+
+    /// The newest item a phone may read: the newest whose slot is
+    /// written, those after it held only in the ring's queue. Read before
+    /// then, an item could be confirmed, or a guest's number moved past
+    /// it, and a reboot that lost its slot would give its number to the
+    /// next item, which would then count as read.
+    fn shown(&self) -> u32 {
+        let mut n = self.newest;
+        while n >= self.lowest() && n > 0 && !self.ring.written(self.slot_of(n)) {
+            n -= 1;
+        }
+        n
     }
 
     /// Whether the ring holds item `n` whole and for `tag`: its tag byte
@@ -349,7 +374,7 @@ impl<R: Ring> Mailbox<R> {
     ) -> Option<(u32, MsgId, usize)> {
         let after = if after > self.newest { 0 } else { after };
         let from = after.saturating_add(1).max(self.lowest());
-        (from..=self.newest)
+        (from..=self.shown())
             .filter(|&n| self.tag_of(n) == tag)
             .find_map(|n| {
                 self.read_item(n, out)
@@ -502,15 +527,8 @@ impl<R: Ring> Mailbox<R> {
         b[MARK_AT] = mark;
         self.ring.write(s, &b);
         self.newest = n;
-        // Each person whose tag it carries has one more unread.
-        for i in (0..PEOPLE).filter(|&i| mark & (1 << i) != 0) {
-            if let Some(u) = self.unread[i].get() {
-                self.unread[i].set(Some(Unread {
-                    first: u.first.or(Some((n, msg_id))),
-                    count: u.count + 1,
-                }));
-            }
-        }
+        // Each person whose tag it carries has one more unread once it is
+        // written ([`Mailbox::shown`]), found then ([`Mailbox::unread_of`]).
         Arrival::Kept(n)
     }
 
