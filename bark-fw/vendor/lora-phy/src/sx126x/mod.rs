@@ -268,13 +268,15 @@ where
         self.intf.write(&cmd, false).await
     }
 
-    /// GetDeviceErrors (§13.5.6): the error word.
-    pub async fn device_errors(&mut self) -> Result<u16, RadioError> {
+    /// GetDeviceErrors (§13.5.6): the error word, and the status byte that
+    /// comes with it (§13.5.1).
+    pub async fn device_errors(&mut self) -> Result<(u16, u8), RadioError> {
         let mut buf = [0u8; 2];
-        self.intf
+        let status = self
+            .intf
             .read_with_status(&[OpCode::GetDeviceErrors.value()], &mut buf)
             .await?;
-        Ok(u16::from_be_bytes(buf))
+        Ok((u16::from_be_bytes(buf), status))
     }
 
     /// ClearDeviceErrors (§13.5.7).

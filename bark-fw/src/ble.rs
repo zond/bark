@@ -824,7 +824,7 @@ pub fn take_request<R>(f: impl FnOnce(From, &Request) -> Option<(R, bool)>) -> O
                 }
                 let id = MsgId::of(dst_pos, dst_id, &payload[..usize::from(len)]);
                 l.took = Some((id, from, l.phones[from.slot].link));
-                l.turn.taken();
+                l.turn.taken(from.slot);
             }
         }
         l.request = None;
@@ -889,15 +889,15 @@ fn now() -> Instant {
 
 /// The status as the phone in `slot` reads it now: ready in its turn
 /// alone, and its count its own person's items not confirmed, none for a
-/// guest.
+/// guest. It moves no turn: whatever moves it tells every phone
+/// ([`turn_moved`], [`publish`]).
 fn status_now(slot: usize) -> Status {
     LINK.lock(|l| {
-        let mut l = l.borrow_mut();
+        let l = l.borrow();
         let now = now();
-        l.advance(now);
         let inbox = l.phones[slot].record.map_or(0, |i| l.counts[i]);
         Status {
-            ready: l.status.ready && l.request.is_none() && l.turn.holder() == Some(slot),
+            ready: l.status.ready && l.turn.holder() == Some(slot),
             boot_left_s: l.boot_ends.map_or(0, |e| seconds_left(now, e)),
             inbox,
             ..l.status
@@ -2106,6 +2106,7 @@ fn refresh(
     if let Err(e) = conn.raw().set_refuses_pairing(refuses) {
         log::error!("ble: refusing pairing {}", HostError(&e));
     }
+    turn_moved();
     let status = status_now(slot).encode();
     let staged = update
         .try_lock()
@@ -2222,6 +2223,8 @@ async fn write_send(
     if !status_now(from.slot).ready {
         return Err(NOT_READY);
     }
+    // Ready says the turn is this phone's (roadmap D184): a request of
+    // another phone's under way is waited for, not answered not ready.
     match ask(from, request).await {
         true => Ok(()),
         false => Err(NOT_READY),
@@ -2433,6 +2436,9 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
             now
         );
         LINK.lock(|l| l.borrow_mut().phones[from.slot].record = Some(now));
+        // A record freed and the phone's mail now another's: the phones
+        // are told, this one of its person's count.
+        records_changed();
     }
     crate::mailbox::FOR_CORE.signal(());
     log::info!(

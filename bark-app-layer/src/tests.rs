@@ -882,10 +882,12 @@ mod mailbox {
         assert_eq!(order, [(1, 3), (4, 3), (1, 2), (4, 2), (1, 1), (4, 1)]);
     }
 
-    /// A record made anew claims nothing kept before it: a bit left set
-    /// by the person before it at its place counts for nothing.
+    /// A record made anew claims nothing kept before it for a fetch: a
+    /// bit left set by the person before it at its place counts for
+    /// nothing. Its phone reads every item with its tag, as a person who
+    /// pairs again wants the mail that came for them meanwhile.
     #[test]
-    fn a_new_person_claims_no_older_item() {
+    fn a_new_person_claims_no_older_item_but_reads_it() {
         let mut m = home();
         for i in 1..=3 {
             m.arrive(MsgId(i), &item(i));
@@ -901,6 +903,9 @@ mod mailbox {
         // The inbox goes by tag: the newcomer's phone reads the older ones.
         let mut out = [0u8; MAX_PAYLOAD];
         assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(1));
+        assert_eq!(m.unread_count(0), 4);
+        assert!(m.confirm_read(0, 1));
+        assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(2));
     }
 
     /// Two phones of one person: the same key and tag at two places. A
@@ -1425,6 +1430,50 @@ mod flash_ring {
             Arrival::Refused,
             "replayed"
         );
+    }
+
+    /// An item shows to a phone only once its slot is written: until then
+    /// it cannot be confirmed, nor a guest's number pass it, so a reboot
+    /// that loses its slot gives its number to the next item, which the
+    /// phone and the guest then read, rather than skip as read.
+    #[test]
+    fn an_item_shows_once_its_slot_is_written() {
+        let mut flash = Ram::erased(PAGES);
+        let mut alice = alice();
+        alice.tag = Some(b'm');
+        let mine = |i: u32| {
+            let mut p = item(i);
+            p[crate::seal::RECIPIENT_AT] = b'm';
+            p
+        };
+        let mut b = [0u8; MAX_PAYLOAD];
+        // Item 1 kept, its slot still queued, and the node reboots.
+        let view = flash.clone();
+        let mut m = view.open();
+        m.set_person(0, Some(alice));
+        assert_eq!(m.arrive(MsgId(1), &mine(1)), Arrival::Kept(1));
+        assert_eq!(m.unread_head(0), None);
+        assert_eq!(m.unread_count(0), 0);
+        assert!(m.for_tag(b'm', 0, &mut b).is_none());
+        assert_eq!(m.person(0).unwrap().read, 0);
+        // After the reboot the next item takes number 1, and shows once
+        // written.
+        alice = step(&mut flash, alice, |m| {
+            assert_eq!(m.arrive(MsgId(2), &mine(2)), Arrival::Kept(1));
+            assert_eq!(m.unread_head(0), None);
+        });
+        // One written and one queued: the queued one waits.
+        alice = step(&mut flash, alice, |m| {
+            assert_eq!(m.unread_head(0), Some((1, MsgId(2))));
+            assert_eq!(m.for_tag(b'm', 0, &mut b).map(|f| f.1), Some(MsgId(2)));
+            assert_eq!(m.arrive(MsgId(3), &mine(3)), Arrival::Kept(2));
+            assert_eq!(m.unread_count(0), 1);
+            assert!(m.for_tag(b'm', 1, &mut b).is_none());
+        });
+        step(&mut flash, alice, |m| {
+            assert_eq!(m.unread_count(0), 2);
+            assert!(m.confirm_read(0, 2));
+        });
     }
 
     /// Items a page away from their place, as a ring laid out otherwise

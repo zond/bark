@@ -2983,12 +2983,15 @@ between its beats, and is back within the drain's bound and its swap.
 Sent round it, a message that can end only there would wander among its
 neighbours to the hop cap.
 
-*Why two nodes do not wait for each other.* A node that drains takes no
-message ([updates over the mesh](#updates-over-the-mesh), the install),
-so what a node holds for a draining neighbour it took before its own
-drain, and the neighbour took nothing to hold for it meanwhile. Its own
-drain then waits for the neighbour's return or ends at its bound, and
-what it holds goes across its reboot (roadmap D186).
+*Why two nodes that wait for each other lose nothing.* A node that
+drains takes no message ([updates over the mesh](#updates-over-the-mesh),
+the install), so what a node holds for a draining neighbour it took
+before its own drain. Two nodes that drain at once may each hold a text
+for the other, taken before either drained: each then waits for the
+other, and the first to drain runs to its bound, 600 s. What it holds
+goes across its reboot, and once its heartbeat comes back without the
+leaving flag the other's text goes to it (roadmap D186). So such a wait
+costs each node at most its bound, and no text.
 
 The owner remembers 41 delivered message IDs
 ([packet formats](#packet-formats)) and ACKs a repeat without delivering
@@ -3533,7 +3536,10 @@ The node keeps every message for its application in its ring
 ([mailbox](#mailbox), The ring), with the recipient tag it carries in
 the payload's second byte ([the payload](#the-payload)), and confirms
 it to the core once its slot is written, so that a reboot meanwhile
-loses none ([receiving DATA](#receiving-data)). A paired phone's
+loses none ([receiving DATA](#receiving-data)). It shows a message to a
+phone, paired or a guest, only then too: one read before could be
+confirmed, or a guest's number pass it, and lost to a reboot, its number
+would go to the next message, which would then count as read. A paired phone's
 messages are those with its record's tag ([pairing](#pairing)); a
 record whose phone has not written a tag yet has none. Inbox reads the
 oldest of the phone's messages after the last it confirmed, with the
@@ -4205,9 +4211,10 @@ rest clear, so a guest's item, which no record claims, has every bit
 clear and no fetch sends it. A bit is cleared without an erase, so the
 item stays: when a reply carries the item (below), and when the
 record's phone confirms it through Inbox. So one person's reading marks
-nothing of another's. A record claims no item older than itself: its
-bit in the marks of the items up to the newest when it was made is a
-freed record's, and counts for nothing.
+nothing of another's. A record's bit in the marks of the items up to
+the newest when it was made is a freed record's and counts for
+nothing, so none of its fetches sends them; its phone still reads
+those with its tag ([receiving](#receiving)).
 
 **The fetch** is a form 2 payload to the home address whose plaintext
 is `sent` (4), the requester's current address (13) and its recipient
@@ -4869,10 +4876,19 @@ when it takes messages again. It reboots at the first moment that it
 holds none of them, its mailbox has no write under way, and no exchange
 with a phone is half done: a write the node has not yet answered, a
 notification it has not yet sent, such as that of `installing`, or a
-pairing.
+pairing. Once it holds none, or its drain has reached the bound below,
+it waits for its mailbox at most 72 ms, the six writes the mailbox
+queues at the external flash's longest, a 12 ms erase (ZD25WQ16B
+datasheet, tSE), and for a phone at most 30 s, after which the phone
+has given up a write or a pairing (Bluetooth Core Vol 3 Part F §3.3.3,
+Part H §3.4). A reset then cuts at most a mark of the ring, as every
+message the node held is written or kept across the reboot, so an item
+may be sent or shown once more; and a phone that writes without pause
+cannot hold the reboot back for good.
 
 The drain lasts at most the delivery TTL, 600 s
-([nodes](#nodes)), counted from the second it began. By then every
+([nodes](#nodes)), counted from the second it began, and the waits above
+at most 30 s more. By then every
 message in the delivery queue has waited for its node as long as the
 queue gives a node that sleeps or is dark
 ([delivery queue](#delivery-queue)), and a message to send on has had

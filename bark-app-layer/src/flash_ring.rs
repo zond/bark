@@ -183,4 +183,12 @@ impl<R: Region> Ring for FlashRing<R> {
             offset: PAGE_LEN * page,
         });
     }
+
+    fn written(&self, slot: u32) -> bool {
+        let at = Self::slot_offset(slot);
+        !self.ops.iter().flatten().any(|op| match *op {
+            Op::Erase { offset } => offset == at - at % PAGE_LEN,
+            Op::Write { offset, len, .. } => offset == at && usize::from(len) == SLOT_LEN,
+        })
+    }
 }

@@ -366,7 +366,7 @@ impl Chip for Hardware<'_> {
         self.sx.tcxo(TCXO_VOLTAGE, delay.as_micros() as u32).await
     }
 
-    async fn errors(&mut self) -> Result<u16, RadioError> {
+    async fn errors(&mut self) -> Result<(u16, u8), RadioError> {
         self.sx.device_errors().await
     }
 
