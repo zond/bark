@@ -9,6 +9,28 @@ import 'dart:typed_data';
 /// The link version this app speaks.
 const int linkVersion = 13;
 
+/// The oldest node link version this app still serves (spec "Phone link",
+/// Versions; roadmap D177): 1. Every value of version 1, Node, Status,
+/// Send, Inbox, Given back and Map point, is read and written as it was
+/// then, and every characteristic or field a later version brought is
+/// used only on a node of that version or later: Clock from 2, Home from
+/// 3, Neighbours from 4, Update from 6, Recipient and Public from 7, Guest
+/// from 8, Ask from 9, unpairing from 12, Phones and the name from 13.
+const int oldestNode = 1;
+
+/// Whether this app and the node `n` serve each other: each side's version
+/// at least the other's oldest, a node before link version 13, which says
+/// no oldest, serving only its own version (spec "Phone link", Versions).
+bool servesEachOther(NodeInfo n) =>
+    linkVersion >= (n.oldest ?? n.version) && n.version >= oldestNode;
+
+/// What the person reads of a node that, by [servesEachOther], this app
+/// and it do not serve: the side to update.
+String notServedLine(NodeInfo n) => n.version < oldestNode
+    ? 'This node\'s firmware is older than this app serves: update the '
+          'node\'s firmware.'
+    : 'This app is older than this node\'s firmware serves: update the app.';
+
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
 const int attMtu = 247;
@@ -76,6 +98,10 @@ class AttError {
   /// The node refused an update's begin, commit or reboot; Update says
   /// why.
   static const refused = 0x81;
+
+  /// The app and the node do not serve each other: one side's version is
+  /// below the other's oldest (spec "Phone link", Versions).
+  static const incompatible = 0x82;
 }
 
 /// A value too short, or of a length it never has.
@@ -236,11 +262,15 @@ class NodeInfo {
   /// From link version 13: how many more phones may pair with the node, 0
   /// when it would refuse a pairing (spec "Phone link", Node).
   final int? room;
-  NodeInfo(this.version, List<int> id, this.image, {this.room})
+
+  /// From link version 13: the oldest link version whose apps the node
+  /// serves ([servesEachOther]).
+  final int? oldest;
+  NodeInfo(this.version, List<int> id, this.image, {this.room, this.oldest})
     : id = Uint8List.fromList(id);
 
   Uint8List encode() =>
-      Uint8List.fromList([version, ...id, ..._be32(image), ?room]);
+      Uint8List.fromList([version, ...id, ..._be32(image), ?room, ?oldest]);
 
   static NodeInfo decode(List<int> b) {
     if (b.length < len) throw const Malformed('Node');
@@ -249,6 +279,7 @@ class NodeInfo {
       b.sublist(1, 1 + nodeIdLen),
       _u32(b, 1 + nodeIdLen),
       room: b.length > len ? b[len] : null,
+      oldest: b.length > len + 1 ? b[len + 1] : null,
     );
   }
 }
@@ -858,13 +889,17 @@ const int publicVersion = 7;
 /// Bytes of the person's name a node keeps (spec "Phone link", Pairing).
 const int nameMax = 32;
 
-/// Recipient, write: the phone's recipient tag at this node, and from link
-/// version 13 the person's name as their card has it, cut to [nameMax]
-/// bytes of UTF-8 at a character's end; an empty name writes the tag
-/// alone, the form of every version before.
-Uint8List encodeRecipient(int tag, [String name = '']) {
+/// Recipient, write: the phone's recipient tag at this node; to a node of
+/// link version 13 or later, with a `name`, empty for a guest, also this
+/// app's link version and [oldestNode], and the person's name as their
+/// card has it, cut to [nameMax] bytes of UTF-8 at a character's end.
+/// Without one, the tag alone, the form of every version before.
+Uint8List encodeRecipient(int tag, [String? name]) {
   if (tag < 0 || tag > 0xff) throw const Malformed('recipient tag');
-  return Uint8List.fromList([tag, ...nameBytes(name)]);
+  return Uint8List.fromList([
+    tag,
+    if (name != null) ...[linkVersion, oldestNode, ...nameBytes(name)],
+  ]);
 }
 
 /// `name` in UTF-8, cut to [nameMax] bytes without splitting a character.
@@ -878,13 +913,17 @@ List<int> nameBytes(String name) {
   return out;
 }
 
-/// Recipient, written: the tag and the name, for the fake node.
-({int tag, String name}) decodeRecipient(List<int> b) {
-  if (b.isEmpty || b.length > 1 + nameMax) {
-    throw const Malformed('Recipient');
-  }
-  return (tag: b[0], name: utf8.decode(b.sublist(1)));
-}
+/// Recipient, written, for the fake node: the tag alone is an app of link
+/// version 12 or older, which serves any node, so its oldest is 0.
+({int tag, int version, int oldest, String name}) decodeRecipient(
+  List<int> b,
+) => switch (b) {
+  [final tag] => (tag: tag, version: 12, oldest: 0, name: ''),
+  [final tag, final version, final oldest, ...final name]
+      when name.length <= nameMax =>
+    (tag: tag, version: version, oldest: oldest, name: utf8.decode(name)),
+  _ => throw const Malformed('Recipient'),
+};
 
 /// Public, write: whether the node serves phones that have not paired.
 Uint8List encodePublic(bool public) => Uint8List.fromList([public ? 1 : 0]);

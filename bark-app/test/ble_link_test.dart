@@ -454,7 +454,7 @@ class FakeNodes extends UniversalBlePlatform {
     switch (characteristic) {
       case Uuids.recipient:
         final r = decodeRecipient(value);
-        await n.setRecipient(r.tag, r.name);
+        await n.setRecipient(r.tag, value.length == 1 ? null : r.name);
       case Uuids.phones when value.first == 0:
         await n.setPhonesFrom(value[1]);
       case Uuids.phones when value.first == 1:

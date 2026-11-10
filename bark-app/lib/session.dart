@@ -522,6 +522,15 @@ class Session extends ChangeNotifier {
       await link.close();
       rethrow;
     }
+    if (!servesEachOther(n)) {
+      await link.close();
+      note(
+        'Node: ${nodeName(n.id)}, link version ${n.version}, oldest '
+        '${n.oldest ?? n.version}; this app $linkVersion, oldest $oldestNode',
+      );
+      _tell(notServedLine(n));
+      return false;
+    }
     node = n;
     _link = link;
     this.guest = guest;
@@ -537,7 +546,9 @@ class Session extends ChangeNotifier {
       ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue))
       ..add(link.answerNotified.listen(_onAnswer, onError: _badValue));
     unawaited(link.closed.then((_) => _detach(link)));
-    if (n.version >= publicVersion) await _setRecipient(link, n);
+    if (n.version >= publicVersion && !await _setRecipient(link, n)) {
+      return false;
+    }
     try {
       await link.subscribe();
       _onStatus(await link.readStatus());
@@ -620,20 +631,34 @@ class Session extends ChangeNotifier {
   /// Writes the person's recipient tag at the node: a public node hands a
   /// phone only the messages that carry its tag, and keeps the paired
   /// phone's to place its messages while it is away.
-  /// From link version 13 a paired phone writes the person's name with
-  /// it; a guest writes the tag alone, as the node keeps nothing of a
-  /// guest's.
-  Future<void> _setRecipient(NodeLink link, NodeInfo n) async {
+  /// From link version 13 it writes this app's versions with it, and a
+  /// paired phone the person's name; a guest's name is left empty, as the
+  /// node keeps nothing of a guest's. False when the node finds that it and
+  /// the app do not serve each other, which [servesEachOther] tells before
+  /// the write; the node then ends the link.
+  Future<bool> _setRecipient(NodeLink link, NodeInfo n) async {
     final tag = recipient?.call(n);
-    if (tag == null) return;
-    final named = n.version >= phonesVersion && !guest;
-    final who = named ? name?.call() ?? '' : '';
+    if (tag == null) return true;
+    final who = n.version < phonesVersion
+        ? null
+        : guest
+        ? ''
+        : name?.call() ?? '';
     try {
       await link.setRecipient(tag, who);
-      note('Recipient: tag $tag${who.isEmpty ? '' : ', a name'}');
+      note('Recipient: tag $tag${who?.isNotEmpty ?? false ? ', a name' : ''}');
+    } on AttException catch (e) {
+      if (e.code != AttError.incompatible) {
+        note('Recipient: $e');
+        return true;
+      }
+      await link.close();
+      _tell(notServedLine(n));
+      return false;
     } catch (e) {
       note('Recipient: $e');
     }
+    return true;
   }
 
   Future<void> _readPublic(NodeLink link) async {

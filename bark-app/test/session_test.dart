@@ -23,6 +23,15 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 
+/// A node whose Node says it serves this app though Recipient's check
+/// finds it does not.
+class LateRefusal extends FakeNode {
+  LateRefusal({required super.now, required super.sodium, required super.app});
+  @override
+  Future<NodeInfo> readNode() async =>
+      NodeInfo(linkVersion, FakeNode.id, 1, room: 7, oldest: linkVersion);
+}
+
 /// A node at link version 2, before Home: still attached, and given the
 /// clock.
 class Version2Node extends FakeNode {
@@ -676,35 +685,110 @@ void main() {
     });
   });
 
-  test('a node of a newer link version is used, as its owner and as a '
-      'guest, with no notice', () {
+  /// Attaches `node`, its link the owner's or a `guest`'s; whether the
+  /// session took it.
+  bool? attached(
+    FakeAsync async,
+    Session s,
+    FakeNode node, {
+    bool guest = false,
+  }) {
+    bool? ok;
+    s
+        .attach(guest ? node.connectGuest() : node.connect(), guest: guest)
+        .then((v) => ok = v);
+    async.flushMicrotasks();
+    return ok;
+  }
+
+  FakeNode fake(int version, {int oldest = 12}) =>
+      FakeNode(now: () => start, sodium: sodium, app: List.filled(32, 1))
+        ..version = version
+        ..oldest = oldest;
+
+  Session session() => Session(store: MemoryStore(), now: () => start)
+    ..recipient = ((n) => 7)
+    ..name = (() => 'Ann');
+
+  test('a newer node that still serves this app is used, as its owner and '
+      'as a guest, with no notice', () {
     fakeAsync((async) {
-      final s = Session(store: MemoryStore(), now: () => start);
-      final node = FakeNode(
-        now: () => start,
-        sodium: sodium,
-        app: List.filled(32, 1),
-      )..version = linkVersion + 1;
-      bool? ok;
-      s.attach(node.connect()).then((v) => ok = v);
-      async.flushMicrotasks();
-      expect(ok, isTrue);
+      final s = session();
+      final node = fake(linkVersion + 1, oldest: linkVersion);
+      expect(attached(async, s, node), isTrue);
       expect(s.connected && !s.guest, isTrue);
       expect(s.nodeNewer, isTrue);
       expect(s.notice, isNull);
+      expect(node.ownerName, 'Ann');
       // The owner's values of this app's version are read as on any node.
       expect(s.nodePublic, isTrue);
       expect(s.nodeHome, isNotNull);
       s.disconnect();
       async.flushMicrotasks();
-      ok = null;
-      s.attach(node.connectGuest(), guest: true).then((v) => ok = v);
-      async.flushMicrotasks();
-      expect(ok, isTrue);
+      expect(attached(async, s, node, guest: true), isTrue);
       expect(s.connected && s.guest, isTrue);
-      expect(s.nodeNewer, isTrue);
       expect(s.notice, isNull);
       expect(s.guestRead, isTrue);
+      node.dispose();
+      s.dispose();
+    });
+  });
+
+  test('a newer node that no longer serves this app: closed, update the '
+      'app', () {
+    fakeAsync((async) {
+      final s = session();
+      final node = fake(linkVersion + 2, oldest: linkVersion + 1);
+      expect(attached(async, s, node), isFalse);
+      expect(s.connected, isFalse);
+      expect(s.notice, contains('update the app'));
+      node.dispose();
+      s.dispose();
+    });
+  });
+
+  test('a node the app does not serve, as its version says, refuses the '
+      'Recipient write: closed, and told', () {
+    fakeAsync((async) {
+      final s = session();
+      // A node whose Node says it serves this app, but which finds
+      // Recipient's versions do not fit, as one of a later rule would.
+      final node = LateRefusal(
+        now: () => start,
+        sodium: sodium,
+        app: List.filled(32, 1),
+      )..oldest = linkVersion + 1;
+      expect(attached(async, s, node), isFalse);
+      expect(s.connected, isFalse);
+      expect(s.notice, contains('update'));
+      node.dispose();
+      s.dispose();
+    });
+  });
+
+  test('a node older than this app serves: closed, update the node', () {
+    fakeAsync((async) {
+      final s = session();
+      final node = fake(oldestNode - 1);
+      expect(attached(async, s, node), isFalse);
+      expect(s.connected, isFalse);
+      expect(s.notice, contains('update the node'));
+      node.dispose();
+      s.dispose();
+    });
+  });
+
+  test('a node of link version 12 still works, given the tag alone', () {
+    fakeAsync((async) {
+      final s = session();
+      final node = fake(12);
+      expect(attached(async, s, node), isTrue);
+      expect(s.connected, isTrue);
+      expect(s.nodeNewer, isFalse);
+      expect(node.ownerTag, 7);
+      expect(node.ownerName, '');
+      expect(s.node!.room, isNull);
+      expect(s.phones, isNull);
       node.dispose();
       s.dispose();
     });

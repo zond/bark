@@ -101,8 +101,11 @@ abstract class NodeLink {
 
   /// Link version 7 and later: the phone's recipient tag at this node,
   /// by which a public node hands it its messages; from link version 13
-  /// with the person's `name`, which a paired phone's record keeps.
-  Future<void> setRecipient(int tag, [String name = '']);
+  /// with the app's versions and the person's `name`, which a paired
+  /// phone's record keeps ([encodeRecipient]). Throws [AttException] 0x82
+  /// when the node and the app do not serve each other, and the node
+  /// ends the link.
+  Future<void> setRecipient(int tag, [String? name]);
 
   /// Link version 7 and later, the paired phone's alone: whether the node
   /// serves phones that have not paired.

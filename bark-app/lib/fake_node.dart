@@ -878,14 +878,34 @@ class FakeNode implements NodeLink {
   }
 
   @override
-  Future<void> setRecipient(int tag, [String name = '']) => _answer(() {
-    final r = decodeRecipient(encodeRecipient(tag, name));
-    if (r.name.isNotEmpty && version < phonesVersion) {
+  Future<void> setRecipient(int tag, [String? name]) => _answer(() {
+    final v = encodeRecipient(tag, name);
+    if (v.length > 1 && version < phonesVersion) {
       throw const AttException(AttError.invalidLength);
     }
+    final r = _takeRecipient(v, this);
     ownerTag = r.tag;
     ownerName = r.name;
   });
+
+  /// Recipient as the node takes it from `phone`: one that, by the
+  /// versions it writes, it and the node do not serve each other is
+  /// answered 0x82 and its link ended (spec "Phone link", Versions).
+  ({int tag, int version, int oldest, String name}) _takeRecipient(
+    Uint8List v,
+    NodeLink phone,
+  ) {
+    final r = decodeRecipient(v);
+    if (version >= phonesVersion &&
+        (r.version < oldest || version < r.oldest)) {
+      scheduleMicrotask(phone.close);
+      throw const AttException(AttError.incompatible);
+    }
+    return r;
+  }
+
+  /// The oldest link version whose apps it serves, from link version 13.
+  int oldest = 12;
 
   /// Node as a phone reads it: `room` from link version 13.
   NodeInfo get _info => NodeInfo(
@@ -893,6 +913,7 @@ class FakeNode implements NodeLink {
     nodeId,
     image,
     room: version >= phonesVersion ? room : null,
+    oldest: version >= phonesVersion ? oldest : null,
   );
 
   /// The records of the node's other phones, each another person's phone,
@@ -1305,8 +1326,8 @@ class FakeGuest implements NodeLink {
   /// A second guest that writes Recipient while another's link is up is
   /// closed at once: the other link is the owner's to take.
   @override
-  Future<void> setRecipient(int tag, [String name = '']) => _open(() {
-    encodeRecipient(tag, name);
+  Future<void> setRecipient(int tag, [String? name]) => _open(() {
+    node._takeRecipient(encodeRecipient(tag, name), this);
     if (node.guests.length > FakeNode.maxGuests) {
       close();
       throw StateError('closed: another guest has the link');

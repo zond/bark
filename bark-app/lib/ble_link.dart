@@ -495,7 +495,7 @@ class BleLink implements NodeLink {
       NeighbourPage.decode(await _read(Uuids.neighbours));
 
   @override
-  Future<void> setRecipient(int tag, [String name = '']) =>
+  Future<void> setRecipient(int tag, [String? name]) =>
       _write(Uuids.recipient, encodeRecipient(tag, name));
 
   @override

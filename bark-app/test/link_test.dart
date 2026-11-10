@@ -119,14 +119,14 @@ void main() {
   });
 
   test('node', () {
-    final n = NodeInfo(linkVersion, to, 7, room: 3);
-    expect(n.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    final n = NodeInfo(linkVersion, to, 7, room: 3, oldest: 12);
+    expect(n.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3, 12]);
     expect(NodeInfo(12, to, 7).encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
     expect([d.version, d.image, d.room], [1, 7, null]);
-    // What a later version appends after room is ignored.
-    final e = NodeInfo.decode([14, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 0xaa]);
-    expect([e.version, e.room], [14, 0]);
+    // What a later version appends after oldest is ignored.
+    final e = NodeInfo.decode([14, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 12, 0xaa]);
+    expect([e.version, e.room, e.oldest], [14, 0, 12]);
     expect(d.id, to);
     expect(nodeName(to), 'bark-010203040506');
     expect(shownName(nodeName(to)), 'ID 010203040506');
@@ -207,15 +207,37 @@ void main() {
     expect(() => NodeHome.decode([1]), throwsA(isA<Malformed>()));
   });
 
-  test('recipient', () {
+  // bark-link/src/lib.rs, `Recipient::encode`, `decode`, `compatible`.
+  test('recipient and the versions each side serves', () {
     expect(encodeRecipient(0x2a), [0x2a]);
-    expect(encodeRecipient(0x2a, 'Ann'), [0x2a, 0x41, 0x6e, 0x6e]);
+    expect(encodeRecipient(0x2a, ''), [0x2a, linkVersion, oldestNode]);
+    expect(encodeRecipient(0x2a, 'Ann'), [
+      0x2a, linkVersion, oldestNode, 0x41, 0x6e, 0x6e, //
+    ]);
     // Cut to 32 bytes at a character's end: an ö is two.
     final cut = encodeRecipient(1, 'ö' * 20);
-    expect(cut.length, 1 + 32);
+    expect(cut.length, 3 + 32);
     expect(decodeRecipient(cut).name, 'ö' * 16);
+    expect(decodeRecipient([7]), (tag: 7, version: 12, oldest: 0, name: ''));
     expect(nameBytes('a${'ö' * 16}').length, 31);
     expect(() => encodeRecipient(256), throwsA(isA<Malformed>()));
+    expect(() => decodeRecipient([1, 2]), throwsA(isA<Malformed>()));
+
+    NodeInfo node(int version, [int? oldest]) =>
+        NodeInfo(version, to, 1, room: 1, oldest: oldest);
+    expect(servesEachOther(node(linkVersion + 1, linkVersion)), isTrue);
+    expect(servesEachOther(node(linkVersion + 2, linkVersion + 1)), isFalse);
+    expect(
+      notServedLine(node(linkVersion + 2, linkVersion + 1)),
+      contains('update the app'),
+    );
+    // Before version 13 a node says no oldest and serves its own version.
+    expect(servesEachOther(NodeInfo(12, to, 1)), isTrue);
+    expect(servesEachOther(NodeInfo(oldestNode - 1, to, 1)), isFalse);
+    expect(
+      notServedLine(NodeInfo(oldestNode - 1, to, 1)),
+      contains('update the node'),
+    );
   });
 
   // bark-link/src/phones.rs, `PhonesWrite::encode`, `Phones::page`,
