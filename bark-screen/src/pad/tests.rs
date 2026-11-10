@@ -58,7 +58,10 @@ fn probe_tells_driven_from_undriven() {
     assert_eq!(pad.read(false, 3_000), None);
     assert_eq!(pad.deadline(), None);
     // Holds against both pulls.
-    assert_eq!(Pad::new().probe(false, false, SETTLE_MS), Event::Rest(false));
+    assert_eq!(
+        Pad::new().probe(false, false, SETTLE_MS),
+        Event::Rest(false)
+    );
     assert_eq!(Pad::new().probe(true, true, SETTLE_MS), Event::Rest(true));
     // Moved between the reads: driven, the later read the level.
     assert_eq!(Pad::new().probe(false, true, SETTLE_MS), Event::Rest(true));
@@ -70,7 +73,11 @@ fn touch_from_either_rest() {
         let mut pad = resting(rest);
         assert_eq!(pad.deadline(), None);
         let events = run(&mut pad, &[(2_000, !rest), (2_150, rest)], 20_000);
-        assert_eq!(events, vec![(2_150 + BOUNCE_MS, Event::Touch)], "rest {rest}");
+        assert_eq!(
+            events,
+            vec![(2_150 + BOUNCE_MS, Event::Touch)],
+            "rest {rest}"
+        );
         assert_eq!(pad.deadline(), None);
         // And the next.
         let events = run(&mut pad, &[(3_000, !rest), (3_500, rest)], 20_000);
@@ -81,7 +88,11 @@ fn touch_from_either_rest() {
 #[test]
 fn bounce_is_not_a_touch() {
     let mut pad = resting(false);
-    let events = run(&mut pad, &[(2_000, true), (2_000 + BOUNCE_MS - 1, false)], 20_000);
+    let events = run(
+        &mut pad,
+        &[(2_000, true), (2_000 + BOUNCE_MS - 1, false)],
+        20_000,
+    );
     assert_eq!(events, vec![]);
     assert_eq!(pad.deadline(), None);
 }
@@ -124,7 +135,10 @@ fn long_hold_read_late_is_the_same() {
     let mut pad = resting(false);
     assert_eq!(pad.read(true, 2_000), None);
     assert_eq!(pad.read(true, 2_000 + BOUNCE_MS), None);
-    assert_eq!(pad.read(false, 2_000 + HOLD_MS + 500), Some(Event::Held(true)));
+    assert_eq!(
+        pad.read(false, 2_000 + HOLD_MS + 500),
+        Some(Event::Held(true))
+    );
     assert_eq!(pad.read(false, 2_000 + HOLD_MS + 500 + BOUNCE_MS), None);
     assert_eq!(pad.deadline(), Some(2_000 + HOLD_MS + 500 + HOLD_MS + 1));
 }
