@@ -538,9 +538,15 @@ impl Sim {
         ] {
             let [d, x, f, u] = self.kept_fates_of(|k| k == at);
             if d + x + f + u > 0 {
+                let mut why = std::collections::BTreeMap::new();
+                for f in self.kept_messages(|k| k == at) {
+                    if let crate::sim::Fate::Dropped { reason, .. } = f {
+                        *why.entry(format!("{reason:?}")).or_insert(0u64) += 1;
+                    }
+                }
                 let _ = writeln!(
                     out,
-                    "    {what}: delivered {d}, dropped {x}, in flight {f}, unaccounted {u}"
+                    "    {what}: delivered {d}, dropped {x} {why:?}, in flight {f}, unaccounted {u}"
                 );
             }
         }
