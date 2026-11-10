@@ -3205,7 +3205,8 @@ the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it, on the line `PAIR CODE`; the
 same line says `PHONE UNPAIRED` before any phone has paired, when the
 node is public all the same, then `PHONE PUBLIC`, or `PHONE PRIVATE` on
-a node its owners have made private. Only an open build, for the bench,
+a node its owners have made private, and with more phones paired their
+count ([screen and buttons](#screen-and-buttons)). Only an open build, for the bench,
 also writes the passkey to its USB log, as a protected node's log must
 not let a cable stand in for being at the node (roadmap D138).
 
@@ -3218,7 +3219,9 @@ it, which the phone writes to Recipient as it connects (Public, below),
 the name from link version 13; their mailbox key once they make the
 node their home (Home, below); the number of the last of their messages
 the phone confirmed (Receiving, below); the day the phone was last
-linked; and the record's number, one more than the last the node gave.
+linked; the record's number, one more than the last the node gave; and
+the number of the newest item in the ring when the record was made
+([mailbox](#mailbox), The ring).
 A record holds a bond, a home or both, as a phone that unpairs leaves
 its home (Public, below), and is freed when it holds neither. Two
 phones of one person are two records holding the same key and tag: an
@@ -3227,10 +3230,13 @@ fetch opens under the first record whose key fits and clears only that
 record's bit, and no rule merges them. A pairing
 takes a free record; from a phone whose identity address a record's
 bond names, it replaces that bond and keeps the rest of the record.
-With no record free the node refuses the pairing: it answers the
-phone's Pairing Request with Pairing Failed, unspecified reason (Vol 3
-Part H §3.5.5), shows no code, and its screen says `PHONES FULL` for
-30 s; Node's `room` tells an app so before it pairs. A node no phone is
+With no record free the node refuses a pairing from a phone no
+record's bond names: it answers the phone's Pairing Request with
+Pairing Failed, unspecified reason (Vol 3 Part H §3.5.5), shows no
+code, and its screen says `PHONES FULL` for 30 s; Node's `room` tells an
+app so before it pairs. A phone whose record holds its bond, and whose
+address the node resolves by that bond's key, pairs again as on any
+node. A node no phone is
 paired with refuses none: its eight records are then homes left by
 phones that unpaired, and the pairing takes the one whose phone was
 linked longest ago, forgetting that home, so that a node can always be
@@ -3262,14 +3268,14 @@ BLE host holds nine bonds, the eight and the one a pairing makes before
 the node takes or refuses it; eight records of at most 128 bytes are
 1 KiB, a quarter of one 4 KiB page of flash; and the links fit (below).
 
-*Why nine links.* A link costs 5.6 KB of static RAM, reserved whether
+*Why nine links.* A link costs 5.9 KB of static RAM, reserved whether
 it is used or not: the controller's 2.4 KB by `sdc.h`'s formulas, the
-host's 1.2 KB and the task that serves it, 1.9 KB, all of it out of
-the stack (roadmap D150). Nine are seven more than the two before,
-39.3 KB, which leaves the stack 72.6 KB of the 111.9 KB it had (roadmap
-D160), above its floor of 24 KiB (`bark-fw/README.md`, "Tasks and the
-stack"). Each linked phone also costs a sleepy node its connection
-events, for the bench to measure.
+host's 1.2 KB and the task that serves it, 2.2 KB, all of it out of
+the stack (roadmap D150, D168). Nine are seven more than the two before,
+41.1 KB, which with the records leaves the stack 65.9 KB of the
+110.4 KB it had, above its floor of 24 KiB (`bark-fw/README.md`, "Tasks
+and the stack"). Each linked phone also costs a sleepy node its
+connection events, for the bench to measure.
 
 **The removed phone.** A phone whose bond the node no longer holds, as
 another phone removed it (Phones, below), learns it at its next
@@ -3310,7 +3316,7 @@ service and its characteristics:
 | | UUID | properties | value | bytes |
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
-| Node | `28bc0002-…` | read | version(1) id(6) image(4) room(1) | 12 |
+| Node | `28bc0002-…` | read | version(1) id(6) image(4) room(1) oldest(1) | 13 |
 | Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) heard(1) | 15 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
@@ -3326,7 +3332,7 @@ service and its characteristics:
 | Update | `28bc000b-…` | read | state(1) refused(1) held(4) version(4) hash(32) | 42 |
 | | | write | 0 then header(256) to begin; 1 to commit; 2 to reboot | 257, 1 |
 | Image | `28bc000c-…` | write, write without response | offset(4) bytes(1–240) | 5–244 |
-| Recipient | `28bc000d-…` | write | tag(1) name(0–32) | 1–33 |
+| Recipient | `28bc000d-…` | write | tag(1) version(1) oldest(1) name(0–32); an app of version 12 or older: tag(1) | 3–35, 1 |
 | Public | `28bc000e-…` | read | public(1) | 1 |
 | | | write | 0 private, 1 public, 2 unpair | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
@@ -3350,7 +3356,8 @@ second half of its address ([addresses](#addresses)); the version of
 its firmware image; and from link version 13 `room`, how many more
 phones may pair with it: the records free, 0 when it would refuse a
 pairing, and 1 on a node nobody is paired with that has none free
-(Pairing, above).
+(Pairing, above), and `oldest`, the oldest link version whose apps it
+serves, 12 in this specification (Versions, below).
 
 **Status.** How the node stands now, notified at every change but the
 countdown of `boot_left`:
@@ -3467,8 +3474,11 @@ none the time is 0. From link version 2 (roadmap D130).
 **Home.** A write of 1 and the mailbox key makes the node the home of
 the phone's person, the key kept in the phone's record across reboots,
 and of 0 forgets that key ([mailbox](#mailbox)). A record that holds the
-same key and no bond is then freed: it was this person's home, left by
-a phone that unpaired, and is now kept with their phone. Another
+same key and no bond, this person's home left by a phone that
+unpaired, then takes this phone's bond, name and tag, and the phone's
+own record is freed: the person's mail that waited for a fetch keeps
+its bits in the ring's marks, which are that record's
+([mailbox](#mailbox), The ring). Another
 person's key is removed only through Phones (below). A read says
 whether the node is anyone's home, the numbers of the oldest and the
 newest item its ring holds, 0 when none, and, from link version 13,
@@ -3631,6 +3641,23 @@ node and asks the person to update it. An app that finds a version
 above its own tells the person the node's firmware is newer (roadmap
 D117).
 
+Each side also says the oldest link version it still serves: the node
+in Node's `oldest`, the app in Recipient's `version` and `oldest`,
+which it writes as it connects; Recipient's tag alone is an app of
+version 12 or older, which serves any node. An app and a node serve
+each other when each side's version is at least the other's oldest. A
+change an older side cannot follow raises `oldest`, and a change to
+what a field means still takes a new UUID. When they do not serve each
+other the node answers Recipient's write with the ATT error 0x82,
+incompatible, and ends the link, and the app reads Node's `oldest`
+before it writes, to tell the person which side to update (roadmap
+D177).
+
+*Why the newer side decides.* The older side cannot know what a later
+version changed, so only the newer one can say whether it still serves
+the older. Each side's oldest is that statement, and the rule takes the
+newer side's.
+
 **Changes to the table.** Besides the service, the node's attribute
 table holds the GAP service, with the node's name and appearance, and
 the GATT service, with Service Changed, indicate only (Vol 3 Part G
@@ -3710,8 +3737,8 @@ On a public node:
   timeout (Vol 3 Part F §3.3.3), longer than a guest's errand; a phone
   that is not paired and writes Recipient while another guest's link is
   up is closed at once, as the other links are the paired phones' to
-  take. A guest writes its tag alone to Recipient: the node keeps
-  nothing of a guest's. Made private again, the node closes the guest's
+  take. A guest's name, if it writes one to Recipient, is not kept:
+  the node keeps nothing of a guest's. Made private again, the node closes the guest's
   link.
 - *A guest's messages* are those in the ring that no record's tag
   claims (Receiving, above): written with every bit of the mark clear,
@@ -3735,7 +3762,7 @@ takes 19 bytes. A second UUID costs no byte, and both phone systems
 filter a scan by service UUID in the controller, where a flag would be
 read only by the app.
 
-*Why one guest's link, and short.* A link costs 5.6 KB of static RAM
+*Why one guest's link, and short.* A link costs 5.9 KB of static RAM
 whether it is used or not (Pairing, above), and one held open buys a
 guest nothing the ring does not: the ring already holds mail for a
 phone that is away, as it does a paired phone's, so a guest needs a
@@ -3761,7 +3788,7 @@ reached the last; eight records take two reads at most. The slot read
 from is 0 at each connection. Each record gives its number, its flags,
 the day its phone was last linked, counted from 1 on 2026-01-01 UTC,
 the first day of `sent` (The payload, below), 0 when the node had no
-time then, the person's recipient tag at the node, and their name, as
+time at any of its links, the person's recipient tag at the node, and their name, as
 long as its length byte says:
 
 | flags | |
@@ -3773,8 +3800,8 @@ long as its length byte says:
 | bit 4 | its tag is known; else the tag is 0 |
 
 To remove, the app writes 1, and the node draws a fresh six-digit code
-on its screen at once, on the pairing code's line as `REMOVE CODE`
-([screen and buttons](#screen-and-buttons)). Then the app writes 2, the
+on its screen at once, on the pairing code's line as `REMOVE` and the
+code ([screen and buttons](#screen-and-buttons)). Then the app writes 2, the
 record's number, what to remove, 1 the bond, 2 the home or 3 both, and
 the code, as a number. The node takes it only within 30 s of drawing
 the code and with that code: it forgets the bond, in flash too, ending
@@ -3786,7 +3813,8 @@ while their fetches from elsewhere go unanswered, as a fetch the node
 cannot open names no address to answer ([mailbox](#mailbox)). A write
 with another code, or after the 30 s, is answered with the ATT error
 0x81, refused, and the code is forgotten; a number no record has, or a
-part the record does not hold, is answered 0x13. The last bond removed
+part the record does not hold, is answered 0x13, and the code stays, as
+it was not tried. The last bond removed
 leaves the node one nobody has paired with, as the last unpairing does
 (Public, above). From link version 13.
 
@@ -4059,7 +4087,9 @@ rest clear, so a guest's item, which no record claims, has every bit
 clear and no fetch sends it. A bit is cleared without an erase, so the
 item stays: when a reply carries the item (below), and when the
 record's phone confirms it through Inbox. So one person's reading marks
-nothing of another's.
+nothing of another's. A record claims no item older than itself: its
+bit in the marks of the items up to the newest when it was made is a
+freed record's, and counts for nothing.
 
 **The fetch** is a form 2 payload to the home address whose plaintext
 is `sent` (4), the requester's current address (13) and its recipient
@@ -4164,8 +4194,10 @@ neighbours, its power and how long its battery lasts, its uptime and
 the time of day
 (`bark-fw/README.md`, Display). The phone's line says `PHONE UNPAIRED`
 before any phone has paired, `PHONE PUBLIC` or `PHONE PRIVATE` with one
-paired, and `3 PHONES, PUBLIC` or `3 PHONES, PRIVATE`, with the count,
-once more than one is ([phone link](#phone-link), Pairing). While a pairing or a removal code
+paired, and `3 PHONES PUBLIC` or `3 PHONES PRIVATE`, with the count,
+once more than one is ([phone link](#phone-link), Pairing): the count
+and `PHONES` at the left and the setting at the right, as every line is
+a label and a value in the line's 16 characters. While a pairing or a removal code
 shows, the screen shows the lines by itself, as a touch would, and
 keeps them, past the 30 s and whatever is touched, until the pairing
 or the removal ends or is abandoned, a removal's code at most 30 s;
@@ -4180,8 +4212,9 @@ the node, and is the one who wants to see the node's state.
 enough that the next person to pass finds the code again.
 
 **When it is drawn.** A change of picture, a touch or the 30 s ending,
-is drawn at once, and so is a new pairing or removal code, since a person stands at
-the node waiting for each. On the code nothing else changes. While the lines show,
+is drawn at once, and so is a new pairing or removal code, or
+`PHONES FULL`, since a person stands at the node waiting for each. On
+the code nothing else changes. While the lines show,
 a change of the role, of the phone's line or of the power is drawn one
 refresh after it, and changes within one refresh are drawn together;
 the neighbour counts and the battery's level and time left wait for the

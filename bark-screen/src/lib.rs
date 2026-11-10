@@ -346,18 +346,58 @@ pub struct Getting {
     pub blocks: u8,
 }
 
-/// The phone link as the screen says it (spec "Phone link", Pairing).
+/// The phone link as the screen says it (spec "Phone link", Pairing,
+/// Phones; "Screen and buttons").
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phone {
     /// No phone has paired; the node is public all the same.
     #[default]
     Unpaired,
-    /// An owner has paired, and the node is theirs alone.
+    /// One phone is paired, and the node is its owners' alone.
     Private,
-    /// An owner has paired, and the node serves guests too.
+    /// One phone is paired, and the node serves guests too.
     Public,
+    /// More than one phone is paired: how many, and whether the node is
+    /// private.
+    Phones { count: u8, private: bool },
     /// A phone is pairing: the six-digit code to type into it.
     Code(u32),
+    /// A removal waits: the six-digit code to type into the phone that
+    /// removes.
+    Remove(u32),
+    /// A pairing was refused, as every phone the node keeps is taken.
+    Full,
+}
+
+impl Phone {
+    /// A code a person at the node types into a phone, which the screen
+    /// shows the lines for, and draws at once (`schedule`).
+    pub fn code(&self) -> Option<u32> {
+        match *self {
+            Phone::Code(c) | Phone::Remove(c) => Some(c),
+            _ => None,
+        }
+    }
+}
+
+/// The phone's line, on the lines and, while it says what a person at
+/// the node acts on, under the code ([`code_line`]).
+fn phone_line(phone: Phone) -> Text {
+    match phone {
+        Phone::Unpaired => row("PHONE", format_args!("UNPAIRED")),
+        Phone::Private => row("PHONE", format_args!("PRIVATE")),
+        Phone::Public => row("PHONE", format_args!("PUBLIC")),
+        Phone::Phones { count, private } => {
+            let mut label = Text::new();
+            let _ = write!(label, "{count} PHONES");
+            let label = core::str::from_utf8(label.bytes()).unwrap_or("PHONES");
+            let set = if private { "PRIVATE" } else { "PUBLIC" };
+            row(label, format_args!("{set}"))
+        }
+        Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
+        Phone::Remove(c) => row("REMOVE", format_args!("{c:06}")),
+        Phone::Full => row("PHONES", format_args!("FULL")),
+    }
 }
 
 /// The time of day when the picture is drawn, if the node knows it
@@ -455,15 +495,7 @@ pub fn lines(
         let label = core::str::from_utf8(label.bytes()).unwrap_or("GET");
         put(row(label, format_args!("{}/{}", g.complete, g.blocks)), 0);
     }
-    put(
-        match state.phone {
-            Phone::Unpaired => row("PHONE", format_args!("UNPAIRED")),
-            Phone::Private => row("PHONE", format_args!("PRIVATE")),
-            Phone::Public => row("PHONE", format_args!("PUBLIC")),
-            Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
-        },
-        0,
-    );
+    put(phone_line(state.phone), 0);
     put(
         row(
             "KNOWN",
@@ -520,11 +552,13 @@ pub enum Face {
     Lines,
 }
 
-/// The line under the code: the pairing code while a phone pairs, as on
-/// the lines, else the node's ID, which its name in the app ends with.
+/// The line under the code: the pairing code while a phone pairs, the
+/// removal code while a removal waits, and `PHONES FULL` after a pairing
+/// refused for want of room, as on the lines; else the node's ID, which
+/// its name in the app ends with.
 pub fn code_line(fixed: &Fixed<'_>, state: &State) -> Text {
     match state.phone {
-        Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
+        p @ (Phone::Code(_) | Phone::Remove(_) | Phone::Full) => phone_line(p),
         _ => row("ID", format_args!("{}", Hex(fixed.id))),
     }
 }

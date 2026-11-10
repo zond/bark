@@ -79,10 +79,17 @@ without the `central` feature, 6 KB the image has no room for
   its place, and a phone the node held a bond with failed every new
   pairing at the DHKey check (bench, 2026-11-10). A test in
   `src/security_manager/mod.rs` connects such a peer.
+- `src/connection.rs`, `src/connection_manager.rs`, `src/security_manager/mod.rs`
+  and `src/security_manager/pairing/mod.rs`, `peripheral.rs`: a link may refuse
+  pairing (`Connection::set_refuses_pairing`); a Pairing Request on it is then
+  answered with Pairing Failed, unspecified reason (Bluetooth Core Vol 3 Part H
+  §3.5.5), before any key is made, and the application gets `PairingFailed`. A
+  node with every phone record in use refuses so (roadmap D168). A test in
+  `pairing/peripheral.rs` sends such a request.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
   central's side, so they run only with `central`.
 
-The tests: `cargo test --lib --features security` runs all 63, and
+The tests: `cargo test --lib --features security` runs all 64, and
 `cargo test --lib --no-default-features --features
 peripheral,gatt,derive,default-packet-pool,security` the 49 without
 `central`. The integration tests in `tests/` do not build with

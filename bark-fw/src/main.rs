@@ -33,6 +33,8 @@ mod gps;
 mod mailbox;
 #[cfg(not(feature = "console"))]
 mod node;
+#[cfg(not(feature = "console"))]
+mod phones;
 mod power;
 mod protect;
 mod radio;
@@ -432,14 +434,12 @@ async fn main(spawner: Spawner) {
         spawner.spawn(trial(mpsl_flash).expect("spawned once"));
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
-        // The bond with the paired phone, to the phone link, and its line
-        // on the first picture.
-        display::phone_at_boot(ble::phone_of(kept.bond.as_ref()));
-        ble::STORED_BOND.signal(kept.bond);
-        // The mailbox's writes, its state beside the store on the same
-        // flash (`mailbox.rs`); the mailbox opens once the radio has
-        // raised the rail its ring's flash is on (`node_radio`).
-        spawner.spawn(mailbox::run(mpsl_flash).expect("spawned once"));
+        // The phones' records, for the phone link, the mailbox and the
+        // first picture; an older image's bond and home become record one.
+        phones::init(kept.phones.phones(mailbox::old_home()));
+        // The mailbox's writes (`mailbox.rs`); the mailbox opens once the
+        // radio has raised the rail its ring's flash is on (`node_radio`).
+        spawner.spawn(mailbox::run().expect("spawned once"));
         utc::init(utc::ppm(lf_source), offset_min);
         let config = node::config(stored);
         let core = node::core(config, seed);
@@ -669,7 +669,7 @@ async fn node_radio(n: NodeRadio) {
         }
         // Without a radio USB and the log keep running so the error can be
         // read, and the phone link still comes up, so the node can be found,
-        // with the mailbox's state but without its ring.
+        // with the phones' records but without the ring.
         Err(e) => {
             log::error!("radio init failed: {:?}", e);
             mailbox::open();

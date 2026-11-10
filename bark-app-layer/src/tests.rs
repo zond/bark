@@ -583,20 +583,34 @@ fn the_longest_parts_fill_a_box() {
 }
 
 mod mailbox {
+    use std::boxed::Box;
     use std::vec::Vec;
 
     use bark_proto::MsgId;
 
-    use crate::mailbox::{Arrival, Mailbox, RamRing, Ring};
+    use crate::mailbox::{Arrival, Mailbox, Person, RamRing, Ring};
     use crate::seal::{self, Fetch, Opened};
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
 
     type Small = RamRing<32>;
 
+    /// The tag `item` payloads carry: their second byte, `t` of "item".
+    const ITEM_TAG: u8 = b't';
+
+    /// Alice, whose home the node is, at place 0, her tag the items'.
+    fn alice() -> Person {
+        Person {
+            number: 1,
+            tag: Some(ITEM_TAG),
+            key: Some(fixture().alice.mailbox),
+            ..Person::default()
+        }
+    }
+
     fn home() -> Mailbox<Box<Small>> {
         let mut m = Mailbox::new(Box::new(Small::new()));
-        m.set_key(Some(fixture().alice.mailbox));
+        m.set_person(0, Some(alice()));
         m
     }
 
@@ -610,21 +624,13 @@ mod mailbox {
         fn write(&mut self, slot: u32, bytes: &[u8; 256]) {
             (**self).write(slot, bytes)
         }
-        fn clear(&mut self, slot: u32, at: usize) {
-            (**self).clear(slot, at)
+        fn clear(&mut self, slot: u32, at: usize, bits: u8) {
+            (**self).clear(slot, at, bits)
         }
         fn erase(&mut self, page: u32) {
             (**self).erase(page)
         }
-        fn state(&self) -> Option<[u8; 64]> {
-            (**self).state()
-        }
-        fn keep_state(&mut self, state: &[u8; 64]) {
-            (**self).keep_state(state)
-        }
     }
-
-    use std::boxed::Box;
 
     fn fetch(key: &[u8; 32], sent: u32) -> [u8; Fetch::LEN] {
         Fetch {
@@ -644,53 +650,40 @@ mod mailbox {
         NothingNew,
     }
 
-    /// Every reply due now, opened as the requester opens them, in order.
+    fn open(key: &[u8; 32], round: u32, reply: &[u8], number: u32) -> Got {
+        let mut item = [0u8; MAX_PAYLOAD];
+        match seal::open_reply(key, round, reply, &mut item) {
+            Ok(Opened::Item {
+                number: n,
+                remaining,
+                len,
+                ..
+            }) => {
+                assert_eq!(n, number);
+                Got::Item(n, remaining, item[..len].to_vec())
+            }
+            Ok(Opened::NothingNew) => {
+                assert_eq!(number, 0);
+                Got::NothingNew
+            }
+            Err(e) => panic!("a reply the requester cannot open: {e:?}"),
+        }
+    }
+
+    /// Every reply due now, opened as Alice opens them, in order.
     fn drain<R: Ring>(m: &mut Mailbox<R>, round: u32) -> Vec<Got> {
         let key = fixture().alice.mailbox;
         let mut got = Vec::new();
         let mut out = [0u8; MAX_PAYLOAD];
         while let Some(o) = m.next(&mut out) {
             assert_eq!(o.address, fixture().away);
+            assert_eq!(o.person, 0);
             // The fetch's recipient tag, for the node it is answered at.
             assert_eq!(seal::recipient_of(&out[..o.len]), Some(9));
-            let mut item = [0u8; MAX_PAYLOAD];
-            got.push(
-                match seal::open_reply(&key, round, &out[..o.len], &mut item) {
-                    Ok(Opened::Item {
-                        number,
-                        remaining,
-                        len,
-                        ..
-                    }) => {
-                        assert_eq!(number, o.number);
-                        Got::Item(number, remaining, item[..len].to_vec())
-                    }
-                    Ok(Opened::NothingNew) => {
-                        assert_eq!(o.number, 0);
-                        Got::NothingNew
-                    }
-                    Err(e) => panic!("a reply the requester cannot open: {e:?}"),
-                },
-            );
+            got.push(open(&key, round, &out[..o.len], o.number));
         }
         assert!(!m.reply_due());
         got
-    }
-
-    #[test]
-    fn a_public_node_keeps_without_a_key_and_takes_no_fetch() {
-        let mut m = Mailbox::new(RamRing::<32>::new());
-        assert_eq!(m.arrive(MsgId(1), b"a"), Arrival::NotHome);
-        m.set_public(true);
-        assert!(m.keeps() && !m.is_home());
-        assert_eq!(m.arrive(MsgId(2), b"b"), Arrival::Kept(1));
-        let f = fetch(&fixture().alice.mailbox, 5);
-        assert_eq!(m.arrive(MsgId(3), &f), Arrival::Refused);
-        assert!(!m.reply_due());
-        let mut out = [0u8; MAX_PAYLOAD];
-        assert_eq!(m.unread(&mut out), Some((1, MsgId(2), 1)));
-        m.set_public(false);
-        assert_eq!(m.arrive(MsgId(4), b"c"), Arrival::NotHome);
     }
 
     /// A payload of the format's version for the recipient tag `tag`.
@@ -698,63 +691,213 @@ mod mailbox {
         std::vec![seal::Form::Boxed.format(), tag, i, i, i]
     }
 
+    /// A node nobody is paired with keeps everything, for guests: no fetch
+    /// opens, and no person's inbox holds it.
     #[test]
-    fn a_public_node_keeps_guests_mail_by_tag_apart_from_the_owner_s() {
-        use crate::mailbox::Owner;
-        let mut m = Mailbox::new(RamRing::<32>::new());
-        m.set_public(true);
-        m.set_key(Some(fixture().alice.mailbox));
-        m.set_owner(Owner::Tag(1));
+    fn a_node_with_no_people_keeps_everything_for_guests() {
+        let mut m = Mailbox::new(Small::new());
+        assert_eq!(m.arrive(MsgId(1), &tagged(3, 1)), Arrival::Kept(1));
+        assert!(!m.is_home());
+        let f = fetch(&fixture().alice.mailbox, 5);
+        assert_eq!(m.arrive(MsgId(3), &f), Arrival::Refused);
+        assert!(!m.reply_due());
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!((m.unread_count(0), m.unread(0, &mut out)), (0, None));
+        assert_eq!(m.for_tag(3, 0, &mut out).map(|u| u.0), Some(1));
+    }
+
+    /// Each person's inbox holds the items with their tag, read after the
+    /// last they confirmed; a guest reads its own by tag, and reading takes
+    /// nothing.
+    #[test]
+    fn each_person_and_each_guest_reads_by_tag() {
+        let mut m = Mailbox::new(Small::new());
+        m.set_person(
+            0,
+            Some(Person {
+                tag: Some(1),
+                ..alice()
+            }),
+        );
+        m.set_person(
+            5,
+            Some(Person {
+                number: 2,
+                tag: Some(6),
+                key: None,
+                ..alice()
+            }),
+        );
         for (i, tag) in [(1u8, 1u8), (2, 5), (3, 6), (4, 1), (5, 5)] {
             assert_eq!(
                 m.arrive(MsgId(i.into()), &tagged(tag, i)),
                 Arrival::Kept(i.into())
             );
         }
-        // The owner's inbox: items 1 and 4 alone.
         let mut out = [0u8; MAX_PAYLOAD];
-        assert_eq!(m.unread_count(), 2);
-        assert_eq!(m.unread(&mut out).map(|u| u.0), Some(1));
-        m.confirm_read(1);
-        assert_eq!(m.unread(&mut out).map(|u| u.0), Some(4));
-        assert_eq!(m.unread_count(), 1);
-        // A guest reads its own after the number it keeps, and reading
-        // takes nothing.
+        assert_eq!(m.unread_count(0), 2);
+        assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(1));
+        assert!(m.confirm_read(0, 1));
+        assert!(!m.confirm_read(0, 1), "confirmed already");
+        assert_eq!(m.person(0).map(|p| p.read), Some(1));
+        assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(4));
+        assert_eq!(m.unread_head(0), Some((4, MsgId(4))));
+        assert_eq!(m.unread_count(0), 1);
+        // One more for her, counted without a scan.
+        m.arrive(MsgId(6), &tagged(1, 6));
+        assert_eq!(
+            (m.unread_count(0), m.unread_head(0)),
+            (2, Some((4, MsgId(4))))
+        );
+        m.confirm_read(0, 4);
+        assert_eq!(
+            (m.unread_count(0), m.unread_head(0)),
+            (1, Some((6, MsgId(6))))
+        );
+        m.confirm_read(0, 6);
+        assert_eq!((m.unread_count(0), m.unread_head(0)), (0, None));
+        assert_eq!(
+            (m.unread_count(5), m.unread(5, &mut out).map(|u| u.0)),
+            (1, Some(3))
+        );
+        assert_eq!(m.for_tag(1, 0, &mut out).map(|u| u.0), Some(1));
+        // Nobody's at place 2.
+        assert_eq!(m.unread_count(2), 0);
+        assert!(!m.confirm_read(2, 1));
+        // A guest reads its own after the number it keeps.
         assert_eq!(m.for_tag(5, 0, &mut out).map(|u| u.0), Some(2));
         assert_eq!(&out[..5], &tagged(5, 2)[..]);
         assert_eq!(m.for_tag(5, 2, &mut out).map(|u| u.0), Some(5));
         assert_eq!(m.for_tag(5, 5, &mut out), None);
         assert_eq!(m.for_tag(5, 0, &mut out).map(|u| u.0), Some(2));
-        assert_eq!(m.for_tag(6, 0, &mut out).map(|u| u.0), Some(3));
         assert_eq!(m.for_tag(9, 0, &mut out), None);
         // A number from before the ring began again reads as 0.
         assert_eq!(m.for_tag(5, 900, &mut out).map(|u| u.0), Some(2));
-        // A fetch sends the owner's alone: the guests' are written sent.
-        assert_eq!(m.unsent(), 1);
+        // A fetch sends its person's alone, and of those the unconfirmed:
+        // hers are all confirmed, and the guests' are not hers.
         let f = fetch(&fixture().alice.mailbox, 50);
-        assert_eq!(m.arrive(MsgId(9), &f), Arrival::Fetch);
-        assert_eq!(numbers(&drain(&mut m, 50)), [4]);
+        assert_eq!(m.arrive(MsgId(9), &f), Arrival::Fetch(0));
+        assert_eq!(m.person(0).map(|p| p.last_fetch), Some(50));
+        assert_eq!(numbers(&drain(&mut m, 50)), [0]);
     }
 
+    /// One person's reading and fetching clears their own bit alone: the
+    /// other person's fetch still sends the item they share.
     #[test]
-    fn a_node_nobody_owns_keeps_everything_for_guests() {
-        use crate::mailbox::Owner;
-        let mut m = Mailbox::new(RamRing::<32>::new());
-        m.set_public(true);
-        m.set_owner(Owner::Nobody);
-        assert_eq!(m.arrive(MsgId(1), &tagged(3, 1)), Arrival::Kept(1));
+    fn one_person_s_reading_marks_nothing_of_another_s() {
+        let mut m = Mailbox::new(Small::new());
+        let bob = Person {
+            number: 2,
+            tag: Some(ITEM_TAG),
+            key: Some(fixture().bob.mailbox),
+            ..Person::default()
+        };
+        m.set_person(0, Some(alice()));
+        m.set_person(3, Some(bob));
+        for i in 1..=3 {
+            m.arrive(MsgId(i), &item(i));
+        }
+        m.confirm_read(0, 2);
+        assert_eq!(numbers(&fetch_all(&mut m, 100)), [3, 1]);
+        // Bob's fetch gets all three, his bits untouched.
+        let k = fixture().bob.mailbox;
+        assert_eq!(m.arrive(MsgId(0), &fetch(&k, 7)), Arrival::Fetch(3));
         let mut out = [0u8; MAX_PAYLOAD];
-        assert_eq!((m.unread_count(), m.unread(&mut out)), (0, None));
-        assert_eq!(m.for_tag(3, 0, &mut out).map(|u| u.0), Some(1));
+        let mut got = Vec::new();
+        while let Some(o) = m.next(&mut out) {
+            assert_eq!(o.person, 3);
+            got.push(open(&k, 7, &out[..o.len], o.number));
+        }
+        assert_eq!(numbers(&got), [3, 2, 1]);
+    }
+
+    /// Two people's rounds take the send slot in turn.
+    #[test]
+    fn rounds_take_turns() {
+        let mut m = Mailbox::new(Small::new());
+        let bob = Person {
+            number: 2,
+            tag: Some(ITEM_TAG),
+            key: Some(fixture().bob.mailbox),
+            ..Person::default()
+        };
+        m.set_person(1, Some(alice()));
+        m.set_person(4, Some(bob));
+        for i in 1..=3 {
+            m.arrive(MsgId(i), &item(i));
+        }
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 9)),
+            Arrival::Fetch(1)
+        );
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&fixture().bob.mailbox, 9)),
+            Arrival::Fetch(4)
+        );
+        let mut out = [0u8; MAX_PAYLOAD];
+        let mut order = Vec::new();
+        while let Some(o) = m.next(&mut out) {
+            order.push((o.person, o.number));
+        }
+        assert_eq!(order, [(1, 3), (4, 3), (1, 2), (4, 2), (1, 1), (4, 1)]);
+    }
+
+    /// A record made anew claims nothing kept before it: a bit left set
+    /// by the person before it at its place counts for nothing.
+    #[test]
+    fn a_new_person_claims_no_older_item() {
+        let mut m = home();
+        for i in 1..=3 {
+            m.arrive(MsgId(i), &item(i));
+        }
+        let newcomer = Person {
+            number: 7,
+            from: 3,
+            ..alice()
+        };
+        m.set_person(0, Some(newcomer));
+        m.arrive(MsgId(4), &item(4));
+        assert_eq!(numbers(&fetch_all(&mut m, 100)), [4]);
+        // The inbox goes by tag: the newcomer's phone reads the older ones.
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(1));
+    }
+
+    /// Two phones of one person: the same key and tag at two places. A
+    /// fetch opens under the first and clears its bit alone.
+    #[test]
+    fn two_phones_of_one_person() {
+        let mut m = Mailbox::new(Small::new());
+        m.set_person(2, Some(alice()));
+        m.set_person(
+            6,
+            Some(Person {
+                number: 9,
+                ..alice()
+            }),
+        );
+        m.arrive(MsgId(1), &item(1));
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.unread(2, &mut out).map(|u| u.0), Some(1));
+        assert_eq!(m.unread(6, &mut out).map(|u| u.0), Some(1));
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 5)),
+            Arrival::Fetch(2)
+        );
+        while m.next(&mut out).is_some() {}
+        // The second place's bit is still set: its own fetch gets it.
+        m.set_person(2, None);
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 6)),
+            Arrival::Fetch(6)
+        );
+        assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 1)));
     }
 
     #[test]
     fn a_guest_s_item_leaves_only_as_the_ring_wraps() {
-        use crate::mailbox::Owner;
         // Two pages of 16.
         let mut m = Mailbox::new(RamRing::<32>::new());
-        m.set_public(true);
-        m.set_owner(Owner::Nobody);
         for i in 1..=32u8 {
             m.arrive(MsgId(i.into()), &tagged(7, i));
         }
@@ -791,10 +934,10 @@ mod mailbox {
         counts[0]
     }
 
-    /// A fetch from the requester as `round`, and every reply it gets.
+    /// A fetch from Alice as `round`, and every reply it gets.
     fn fetch_all<R: Ring>(m: &mut Mailbox<R>, round: u32) -> Vec<Got> {
         let k = fixture().alice.mailbox;
-        assert_eq!(m.arrive(MsgId(0), &fetch(&k, round)), Arrival::Fetch);
+        assert_eq!(m.arrive(MsgId(0), &fetch(&k, round)), Arrival::Fetch(0));
         drain(m, round)
     }
 
@@ -804,7 +947,6 @@ mod mailbox {
         for i in 1..=5 {
             assert_eq!(m.arrive(MsgId(i), &item(i)), Arrival::Kept(i));
         }
-        assert_eq!(m.unsent(), 5);
         assert_eq!(
             fetch_all(&mut m, 100),
             [
@@ -815,7 +957,6 @@ mod mailbox {
                 Got::Item(1, 0, item(1))
             ]
         );
-        assert_eq!(m.unsent(), 0);
         // Sent, they stay in the ring.
         assert_eq!(m.oldest(), 1);
         assert_eq!(fetch_all(&mut m, 101), [Got::NothingNew]);
@@ -849,7 +990,9 @@ mod mailbox {
     fn an_item_that_cannot_be_sealed_goes_empty() {
         let mut m = home();
         m.arrive(MsgId(1), &item(1));
-        m.arrive(MsgId(2), &[0x42; MAX_PAYLOAD]);
+        let mut long = [0x42; MAX_PAYLOAD];
+        long[seal::RECIPIENT_AT] = ITEM_TAG;
+        m.arrive(MsgId(2), &long);
         assert_eq!(
             fetch_all(&mut m, 100),
             [Got::Item(2, 0, Vec::new()), Got::Item(1, 0, item(1))]
@@ -859,7 +1002,7 @@ mod mailbox {
     #[test]
     fn a_backlog_comes_in_batches_newest_first_down_to_none_remaining() {
         let mut m = Mailbox::new(Box::new(RamRing::<128>::new()));
-        m.set_key(Some(fixture().alice.mailbox));
+        m.set_person(0, Some(alice()));
         for i in 1..=70 {
             m.arrive(MsgId(i), &item(i));
         }
@@ -874,18 +1017,16 @@ mod mailbox {
             }
         }
         assert_eq!(batches, [(70, 39, 38), (38, 7, 6), (6, 1, 0)]);
-        assert_eq!(m.unsent(), 0);
     }
 
     #[test]
     fn a_ring_larger_than_a_batch_sends_its_newest_and_overwrites_by_age() {
         let mut m = Mailbox::new(Box::new(RamRing::<64>::new()));
-        m.set_key(Some(fixture().alice.mailbox));
+        m.set_person(0, Some(alice()));
         for i in 1..=70 {
             m.arrive(MsgId(i), &item(i));
         }
         // Item 65 erased the page of 1 to 16: 17 to 70 are unsent.
-        assert_eq!(m.unsent(), 54);
         let got = fetch_all(&mut m, 100);
         assert_eq!(numbers(&got), (39..=70).rev().collect::<Vec<_>>());
         assert_eq!(remaining(&got), 22);
@@ -893,7 +1034,6 @@ mod mailbox {
         for i in 71..=81 {
             m.arrive(MsgId(i), &item(i));
         }
-        assert_eq!(m.unsent(), 22 - 16 + 11);
         let got = fetch_all(&mut m, 101);
         let want: Vec<u32> = (71..=81).rev().chain((33..=38).rev()).collect();
         assert_eq!(numbers(&got), want);
@@ -908,38 +1048,44 @@ mod mailbox {
         assert_eq!(m.arrive(MsgId(0), &fetch(&other, 100)), Arrival::Refused);
         assert_eq!(m.newest(), 1);
         assert!(drain(&mut m, 100).is_empty());
-        assert_eq!(m.unsent(), 1);
+        assert_eq!(numbers(&fetch_all(&mut m, 100)), [1]);
     }
 
+    /// The last fetch is the record's: after a reboot the node gives it
+    /// back with the person, and a replay is refused.
     #[test]
     fn a_replayed_fetch_is_refused_even_after_a_reboot() {
         let mut m = home();
         m.arrive(MsgId(1), &item(1));
         let k = fixture().alice.mailbox;
         let f = fetch(&k, 100);
-        assert_eq!(m.arrive(MsgId(0), &f), Arrival::Fetch);
+        assert_eq!(m.arrive(MsgId(0), &f), Arrival::Fetch(0));
         assert_eq!(m.arrive(MsgId(0), &f), Arrival::Refused);
         assert_eq!(m.arrive(MsgId(0), &fetch(&k, 99)), Arrival::Refused);
+        let kept = m.person(0);
         let ring = Box::new(clone_ring(m.ring()));
         let mut m = Mailbox::new(ring);
+        m.set_person(0, kept);
         assert!(m.is_home());
         assert_eq!(m.newest(), 1);
         assert_eq!(m.arrive(MsgId(0), &f), Arrival::Refused);
-        assert_eq!(m.arrive(MsgId(0), &fetch(&k, 101)), Arrival::Fetch);
+        assert_eq!(m.arrive(MsgId(0), &fetch(&k, 101)), Arrival::Fetch(0));
     }
 
     #[test]
     fn a_reboot_between_two_fetches_keeps_the_marks() {
         let mut m = Mailbox::new(Box::new(RamRing::<64>::new()));
-        m.set_key(Some(fixture().alice.mailbox));
+        m.set_person(0, Some(alice()));
         for i in 1..=40 {
             m.arrive(MsgId(i), &item(i));
         }
         let got = fetch_all(&mut m, 100);
         assert_eq!(numbers(&got), (9..=40).rev().collect::<Vec<_>>());
         assert_eq!(remaining(&got), 8);
+        let kept = m.person(0);
         let mut m = Mailbox::new(Box::new(clone_ring(m.ring())));
-        assert_eq!((m.newest(), m.unsent()), (40, 8));
+        m.set_person(0, kept);
+        assert_eq!(m.newest(), 40);
         let got = fetch_all(&mut m, 101);
         assert_eq!(numbers(&got), (1..=8).rev().collect::<Vec<_>>());
         assert_eq!(remaining(&got), 0);
@@ -957,9 +1103,30 @@ mod mailbox {
         m.arrive(MsgId(0), &fetch(&k, 100));
         let mut out = [0u8; MAX_PAYLOAD];
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(3));
+        let kept = m.person(0);
         let mut m = Mailbox::new(Box::new(clone_ring(m.ring())));
+        m.set_person(0, kept);
         assert!(!m.reply_due());
         assert_eq!(numbers(&fetch_all(&mut m, 101)), [2, 1]);
+    }
+
+    /// A key changed ends the round under the old one.
+    #[test]
+    fn a_new_key_ends_the_round() {
+        let mut m = home();
+        m.arrive(MsgId(1), &item(1));
+        m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 100));
+        assert!(m.reply_due());
+        m.set_person(
+            0,
+            Some(Person {
+                key: None,
+                ..alice()
+            }),
+        );
+        assert!(!m.reply_due());
+        let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.next(&mut out), None);
     }
 
     /// A reply lost on the way is still in the ring: the phone reads it at
@@ -971,9 +1138,9 @@ mod mailbox {
         m.arrive(MsgId(0xa2), &item(2));
         assert_eq!(numbers(&fetch_all(&mut m, 100)), [2, 1]);
         let mut b = [0u8; MAX_PAYLOAD];
-        assert_eq!(m.unread(&mut b), Some((1, MsgId(0xa1), item(1).len())));
-        m.confirm_read(1);
-        assert_eq!(m.unread(&mut b), Some((2, MsgId(0xa2), item(2).len())));
+        assert_eq!(m.unread(0, &mut b), Some((1, MsgId(0xa1), item(1).len())));
+        m.confirm_read(0, 1);
+        assert_eq!(m.unread(0, &mut b), Some((2, MsgId(0xa2), item(2).len())));
         assert_eq!(&b[..item(2).len()], item(2).as_slice());
     }
 
@@ -984,9 +1151,8 @@ mod mailbox {
         for i in 1..=3 {
             m.arrive(MsgId(i), &item(i));
         }
-        m.confirm_read(1);
-        m.confirm_read(2);
-        assert_eq!(m.unsent(), 1);
+        m.confirm_read(0, 1);
+        m.confirm_read(0, 2);
         assert_eq!(numbers(&fetch_all(&mut m, 100)), [3]);
     }
 
@@ -996,9 +1162,6 @@ mod mailbox {
         for s in 0..N as u32 {
             r.read(s, &mut b);
             c.write(s, &b);
-        }
-        if let Some(st) = r.state() {
-            c.keep_state(&st);
         }
         c
     }
@@ -1011,7 +1174,7 @@ mod mailbox {
         }
         // 32 slots in two pages: writing item 33 erased the page of 1 to 16.
         assert_eq!(m.oldest(), 17);
-        assert_eq!(m.unsent(), 24);
+        assert_eq!(m.unread_count(0), 24);
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(16, &mut b), None);
         assert_eq!(m.item(17, &mut b), Some(item(17).len()));
@@ -1042,13 +1205,6 @@ mod mailbox {
         assert_eq!(m.next(&mut out), Some(nothing));
     }
 
-    #[test]
-    fn a_node_that_is_no_home_keeps_nothing() {
-        let mut m = Mailbox::new(Box::new(Small::new()));
-        assert_eq!(m.arrive(MsgId(1), &item(1)), Arrival::NotHome);
-        assert_eq!(m.newest(), 0);
-    }
-
     /// The phone's Inbox: the oldest item not confirmed, with the ID it
     /// arrived with, the same at every read until it is confirmed.
     #[test]
@@ -1058,26 +1214,70 @@ mod mailbox {
         m.arrive(MsgId(0xa2), &item(2));
         let mut b = [0u8; MAX_PAYLOAD];
         let first = (1, MsgId(0xa1), item(1).len());
-        assert_eq!(m.unread(&mut b), Some(first));
-        assert_eq!(m.unread(&mut b), Some(first));
-        m.confirm_read(1);
-        assert_eq!(m.unread(&mut b), Some((2, MsgId(0xa2), item(2).len())));
+        assert_eq!(m.unread(0, &mut b), Some(first));
+        assert_eq!(m.unread(0, &mut b), Some(first));
+        m.confirm_read(0, 1);
+        assert_eq!(m.unread(0, &mut b), Some((2, MsgId(0xa2), item(2).len())));
         assert_eq!(&b[..item(2).len()], item(2).as_slice());
-        m.confirm_read(2);
-        assert_eq!(m.unread(&mut b), None);
+        m.confirm_read(0, 2);
+        assert_eq!(m.unread(0, &mut b), None);
+    }
+
+    /// A slot written before the marks held a bit a person, 0xFF unsent
+    /// and 0 sent, reads so for the first person, the one an older
+    /// image's owner becomes; the other bits there count for nothing.
+    #[test]
+    fn an_older_mark_is_the_first_person_s() {
+        let mut m = home();
+        m.arrive(MsgId(1), &item(1));
+        m.arrive(MsgId(2), &item(2));
+        // As an older image wrote them: 1 sent, 2 not.
+        let mut b = [0u8; 256];
+        let mut r = RamRing::<32>::new();
+        for s in 0..2 {
+            m.ring().read(s, &mut b);
+            b[256 - 9] = if s == 0 { 0 } else { 0xff };
+            r.write(s, &b);
+        }
+        let mut m = Mailbox::new(r);
+        m.set_person(0, Some(alice()));
+        m.set_person(
+            1,
+            Some(Person {
+                number: 2,
+                from: 2,
+                ..alice()
+            }),
+        );
+        assert_eq!(numbers(&fetch_all(&mut m, 100)), [2]);
+    }
+
+    #[test]
+    fn an_older_state_reads_as_its_key_its_last_fetch_and_its_read() {
+        let k = [5u8; 32];
+        let s = crate::mailbox::old_state_of(Some(k), 77, 0x01_0203);
+        assert_eq!(
+            crate::mailbox::old_state(&s),
+            Some((Some(k), 77, 0x01_0203))
+        );
+        let mut cut = s;
+        cut[60..].fill(0xff);
+        assert_eq!(crate::mailbox::old_state(&cut), None);
+        let none = crate::mailbox::old_state_of(None, 0, 0);
+        assert_eq!(crate::mailbox::old_state(&none), Some((None, 0, 0)));
     }
 }
 
 /// The mailbox on its ring in flash, the board's pages in RAM: what it
 /// keeps survives a reboot, and a power cut at any write or erase leaves
-/// every item whole or gone and the state the last whole one.
+/// every item whole or gone.
 mod flash_ring {
     use std::vec::Vec;
 
     use bark_proto::MsgId;
 
-    use crate::flash_ring::{Area, FlashRing, Op, Region, PAGE_LEN};
-    use crate::mailbox::{Arrival, Mailbox};
+    use crate::flash_ring::{last_state, state_record, FlashRing, Op, Region, PAGE_LEN};
+    use crate::mailbox::{old_state, old_state_of, Arrival, Mailbox, Person};
     use crate::seal::Fetch;
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
@@ -1099,7 +1299,7 @@ mod flash_ring {
         /// `cut` bytes, of an erase nothing.
         fn apply(&mut self, op: &Op, cut: Option<usize>) {
             match *op {
-                Op::Erase { offset, .. } => {
+                Op::Erase { offset } => {
                     if cut.is_none() {
                         let o = offset as usize;
                         self.0[o..o + PAGE_LEN as usize].fill(0xff);
@@ -1114,6 +1314,10 @@ mod flash_ring {
                 }
             }
         }
+
+        fn open(&self) -> Home<'_> {
+            Mailbox::new(FlashRing::open(self))
+        }
     }
 
     impl Region for &Ram {
@@ -1123,36 +1327,6 @@ mod flash_ring {
         fn read(&self, offset: u32, out: &mut [u8]) {
             let o = offset as usize;
             out.copy_from_slice(&self.0[o..o + out.len()]);
-        }
-    }
-
-    /// The ring's pages and the state's page.
-    #[derive(Clone)]
-    struct Flash {
-        ring: Ram,
-        state: Ram,
-    }
-
-    impl Flash {
-        fn erased() -> Flash {
-            Flash {
-                ring: Ram::erased(PAGES),
-                state: Ram::erased(1),
-            }
-        }
-
-        fn apply(&mut self, op: &Op, cut: Option<usize>) {
-            let area = match *op {
-                Op::Erase { area, .. } | Op::Write { area, .. } => area,
-            };
-            match area {
-                Area::Ring => self.ring.apply(op, cut),
-                Area::State => self.state.apply(op, cut),
-            }
-        }
-
-        fn open(&self) -> Home<'_> {
-            Mailbox::new(FlashRing::open(&self.ring, &&self.state))
         }
     }
 
@@ -1172,8 +1346,13 @@ mod flash_ring {
         .unwrap()
     }
 
-    fn home(m: &mut Home<'_>) {
-        m.set_key(Some(fixture().alice.mailbox));
+    fn alice() -> Person {
+        Person {
+            number: 1,
+            tag: Some(b't'),
+            key: Some(fixture().alice.mailbox),
+            ..Person::default()
+        }
     }
 
     /// The ops the mailbox has queued, taken from it in order.
@@ -1187,39 +1366,46 @@ mod flash_ring {
         q
     }
 
-    /// Boot a mailbox from `flash`, do `f`, and do every op it queued.
-    fn step(flash: &mut Flash, f: impl FnOnce(&mut Home<'_>)) {
+    /// Boot a mailbox from `flash` with Alice as `person` left her, do
+    /// `f`, do every op it queued, and give back what Alice's record keeps.
+    fn step(flash: &mut Ram, person: Person, f: impl FnOnce(&mut Home<'_>)) -> Person {
         let view = flash.clone();
         let mut m = view.open();
+        m.set_person(0, Some(person));
         f(&mut m);
+        let kept = m.person(0).unwrap();
         for op in take_ops(&mut m) {
             flash.apply(&op, None);
         }
+        kept
     }
 
     #[test]
-    fn items_and_state_survive_a_reboot() {
-        let mut flash = Flash::erased();
-        step(&mut flash, home);
+    fn items_survive_a_reboot() {
+        let mut flash = Ram::erased(PAGES);
+        let mut alice = alice();
         for i in 1..=70 {
-            step(&mut flash, |m| {
+            alice = step(&mut flash, alice, |m| {
                 assert_eq!(m.arrive(MsgId(i), &item(i)), Arrival::Kept(i))
             });
         }
-        step(&mut flash, |m| {
-            assert_eq!(m.arrive(MsgId(0), &fetch(100)), Arrival::Fetch)
+        alice = step(&mut flash, alice, |m| {
+            assert_eq!(m.arrive(MsgId(0), &fetch(100)), Arrival::Fetch(0))
         });
-        step(&mut flash, |m| m.confirm_read(60));
+        alice = step(&mut flash, alice, |m| assert!(m.confirm_read(0, 60)));
         let mut m = flash.open();
-        assert!(m.is_home());
+        m.set_person(0, Some(alice));
         assert_eq!(m.newest(), 70);
         // Four pages of 16: item 65 erased the page of 1 to 16.
         assert_eq!(m.oldest(), 17);
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(17, &mut b), Some(item(17).len()));
         assert_eq!(&b[..item(17).len()], item(17).as_slice());
-        assert_eq!(m.unread(&mut b).map(|u| (u.0, u.1)), Some((61, MsgId(61))));
-        assert_eq!(m.unread_count(), 10);
+        assert_eq!(
+            m.unread(0, &mut b).map(|u| (u.0, u.1)),
+            Some((61, MsgId(61)))
+        );
+        assert_eq!(m.unread_count(0), 10);
         assert_eq!(
             m.arrive(MsgId(0), &fetch(100)),
             Arrival::Refused,
@@ -1227,50 +1413,23 @@ mod flash_ring {
         );
     }
 
-    /// The state page fills, is erased and starts again, and the state
-    /// read back is always the last kept.
-    #[test]
-    fn the_state_log_wraps() {
-        let mut flash = Flash::erased();
-        step(&mut flash, home);
-        for i in 1..=100u32 {
-            step(&mut flash, |m| {
-                m.arrive(MsgId(i), &item(i));
-                m.confirm_read(i);
-            });
-        }
-        let m = flash.open();
-        assert!(m.is_home());
-        assert_eq!(m.unread_count(), 0);
-        assert_eq!(m.newest(), 100);
-    }
-
     /// Items a page away from their place, as a ring laid out otherwise
     /// before leaves them, are not taken for items, and new ones are kept
     /// whole from the first slot.
     #[test]
     fn items_out_of_place_are_ignored() {
-        let mut flash = Flash::erased();
-        step(&mut flash, home);
+        let mut flash = Ram::erased(PAGES);
         for i in 1..=20 {
-            step(&mut flash, |m| {
+            step(&mut flash, alice(), |m| {
                 m.arrive(MsgId(i), &item(i));
             });
         }
-        // The ring a page up and no state, as a ring laid out otherwise
-        // before leaves them.
-        flash.ring.0.rotate_right(PAGE_LEN as usize);
-        flash.state = Ram::erased(1);
-        let mut m = flash.open();
+        flash.0.rotate_right(PAGE_LEN as usize);
+        let m = flash.open();
         assert_eq!(m.newest(), 0);
-        assert!(!m.is_home());
-        home(&mut m);
         let mut kept = flash.clone();
-        for op in take_ops(&mut m) {
-            kept.apply(&op, None);
-        }
         for i in 1..=3 {
-            step(&mut kept, |m| {
+            step(&mut kept, alice(), |m| {
                 assert_eq!(m.arrive(MsgId(i), &item(i)), Arrival::Kept(i))
             });
         }
@@ -1282,27 +1441,28 @@ mod flash_ring {
 
     /// A power cut at every op of a run, at every eighth byte of a
     /// write: the mailbox comes back with every item it reads whole and
-    /// right, its key, and no number above what was kept.
+    /// right, and no number above what was kept.
     #[test]
     fn a_cut_anywhere_leaves_items_whole_or_gone() {
-        // The run: home, 40 items, a fetch, a read confirmed; one mailbox
+        // The run: 40 items, a fetch, a read confirmed; one mailbox
         // throughout, its ops collected in order.
         let mut all: Vec<Op> = Vec::new();
-        {
-            let view = Flash::erased();
-            let mut m = view.open();
-            home(&mut m);
-            all.extend(take_ops(&mut m));
-            for i in 1..=40 {
-                m.arrive(MsgId(i), &item(i));
-                all.extend(take_ops(&mut m));
-            }
-            m.arrive(MsgId(0), &fetch(100));
-            all.extend(take_ops(&mut m));
-            m.confirm_read(30);
+        let view = Ram::erased(PAGES);
+        let mut m = view.open();
+        m.set_person(0, Some(alice()));
+        for i in 1..=40 {
+            m.arrive(MsgId(i), &item(i));
             all.extend(take_ops(&mut m));
         }
-        let mut flash = Flash::erased();
+        m.arrive(MsgId(0), &fetch(100));
+        let mut out = [0u8; MAX_PAYLOAD];
+        while m.next(&mut out).is_some() {
+            all.extend(take_ops(&mut m));
+        }
+        m.confirm_read(0, 30);
+        all.extend(take_ops(&mut m));
+        let alice = m.person(0).unwrap();
+        let mut flash = Ram::erased(PAGES);
         let mut cuts = 0;
         for (k, op) in all.iter().enumerate() {
             let points: Vec<usize> = match op {
@@ -1321,53 +1481,38 @@ mod flash_ring {
                     }
                 }
                 assert!(m.newest() <= 40);
-                // The key is lost only by a cut in its own first record.
-                if k > 0 {
-                    assert!(m.is_home(), "op {k} cut {cut}");
-                }
             }
             flash.apply(op, None);
         }
         assert!(cuts > 1000, "{cuts}");
-        let m = flash.open();
-        assert_eq!((m.newest(), m.unread_count()), (40, 10));
+        let mut m = flash.open();
+        m.set_person(0, Some(alice));
+        assert_eq!((m.newest(), m.unread_count(0)), (40, 10));
     }
 
     /// A guest's item cut short by a power cut is not read; written whole,
     /// it is read after the reboot, by the number the guest keeps.
     #[test]
     fn a_cut_between_a_guest_s_write_and_its_read() {
-        use crate::mailbox::Owner;
         let payload = std::vec![crate::seal::Form::Boxed.format(), 5, 1, 2, 3];
-        let mut ops = Vec::new();
-        {
-            let view = Flash::erased();
-            let mut m = view.open();
-            m.set_public(true);
-            m.set_owner(Owner::Nobody);
-            assert_eq!(m.arrive(MsgId(1), &payload), Arrival::Kept(1));
-            ops.extend(take_ops(&mut m));
-        }
-        let write = ops.iter().position(|o| {
-            matches!(
-                o,
-                Op::Write {
-                    area: Area::Ring,
-                    ..
-                }
-            )
-        });
-        let write = write.expect("the slot's write");
+        let view = Ram::erased(PAGES);
+        let mut m = view.open();
+        assert_eq!(m.arrive(MsgId(1), &payload), Arrival::Kept(1));
+        let ops = take_ops(&mut m);
+        let write = ops
+            .iter()
+            .position(|o| matches!(o, Op::Write { .. }))
+            .expect("the slot's write");
         let mut b = [0u8; MAX_PAYLOAD];
         for cut in (0..ops[write].data().len()).step_by(8) {
-            let mut f = Flash::erased();
+            let mut f = Ram::erased(PAGES);
             for op in &ops[..write] {
                 f.apply(op, None);
             }
             f.apply(&ops[write], Some(cut));
             assert_eq!(f.open().for_tag(5, 0, &mut b), None, "cut {cut}");
         }
-        let mut f = Flash::erased();
+        let mut f = Ram::erased(PAGES);
         for op in &ops {
             f.apply(op, None);
         }
@@ -1380,57 +1525,57 @@ mod flash_ring {
         assert_eq!(m.for_tag(5, 1, &mut b), None);
     }
 
-    /// A mark is a write of one byte over a written slot: it is kept
-    /// across a reboot, and the item stays whole.
+    /// A mark is a write of one byte over a written slot, a bit cleared:
+    /// it is kept across a reboot, and the item stays whole.
     #[test]
     fn marks_survive_a_reboot_in_flash() {
-        let mut flash = Flash::erased();
-        step(&mut flash, home);
+        let mut flash = Ram::erased(PAGES);
+        let mut alice = alice();
         for i in 1..=40 {
-            step(&mut flash, |m| {
+            alice = step(&mut flash, alice, |m| {
                 m.arrive(MsgId(i), &item(i));
             });
         }
-        let mut ops = Vec::new();
-        {
-            let view = flash.clone();
-            let mut m = view.open();
-            assert_eq!(m.arrive(MsgId(0), &fetch(100)), Arrival::Fetch);
+        let view = flash.clone();
+        let mut m = view.open();
+        m.set_person(0, Some(alice));
+        assert_eq!(m.arrive(MsgId(0), &fetch(100)), Arrival::Fetch(0));
+        let mut ops = take_ops(&mut m);
+        let mut out = [0u8; MAX_PAYLOAD];
+        let mut sent = Vec::new();
+        while let Some(o) = m.next(&mut out) {
+            sent.push(o.number);
             ops.extend(take_ops(&mut m));
-            let mut out = [0u8; MAX_PAYLOAD];
-            let mut sent = Vec::new();
-            while let Some(o) = m.next(&mut out) {
-                assert_eq!(m.unsent(), o.number - 1);
-                sent.push(o.number);
-                ops.extend(take_ops(&mut m));
-            }
-            assert_eq!(sent, (9..=40).rev().collect::<Vec<_>>());
         }
-        assert!(ops.iter().any(|o| o.data().len() == 1));
+        assert_eq!(sent, (9..=40).rev().collect::<Vec<_>>());
+        let alice = m.person(0).unwrap();
+        // Each a byte with one bit clear.
+        assert!(ops
+            .iter()
+            .filter(|o| o.data().len() == 1)
+            .all(|o| o.data() == [!1]));
         for op in &ops {
             flash.apply(op, None);
         }
         let mut m = flash.open();
-        assert_eq!(m.unsent(), 8);
+        m.set_person(0, Some(alice));
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(40, &mut b), Some(item(40).len()));
         assert_eq!(&b[..item(40).len()], item(40).as_slice());
         m.arrive(MsgId(0), &fetch(101));
         let mut out = [0u8; MAX_PAYLOAD];
-        let first = m.next(&mut out).map(|o| o.number);
-        assert_eq!(first, Some(8));
+        assert_eq!(m.next(&mut out).map(|o| o.number), Some(8));
     }
 
     #[test]
     fn a_mark_queued_is_read_through_the_queue() {
-        let flash = Flash::erased();
+        let flash = Ram::erased(PAGES);
         let mut m = flash.open();
-        home(&mut m);
+        m.set_person(0, Some(alice()));
         m.arrive(MsgId(1), &item(1));
         m.arrive(MsgId(2), &item(2));
-        m.confirm_read(1);
+        m.confirm_read(0, 1);
         assert!(!m.ring().idle());
-        assert_eq!(m.unsent(), 1);
         m.arrive(MsgId(0), &fetch(100));
         let mut out = [0u8; MAX_PAYLOAD];
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(2));
@@ -1439,12 +1584,27 @@ mod flash_ring {
 
     #[test]
     fn reads_see_what_is_queued() {
-        let flash = Flash::erased();
+        let flash = Ram::erased(PAGES);
         let mut m = flash.open();
-        home(&mut m);
         m.arrive(MsgId(1), &item(1));
         assert!(!m.ring().idle());
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(1, &mut b), Some(item(1).len()));
+    }
+
+    /// An older mailbox's state page: the last whole record is its state.
+    #[test]
+    fn the_last_whole_state_of_an_older_mailbox() {
+        let mut page = Ram::erased(1);
+        assert_eq!(last_state(&&page), None);
+        let k = Some([4u8; 32]);
+        for (i, read) in [1u32, 2, 3].into_iter().enumerate() {
+            let r = state_record(&old_state_of(k, 10, read));
+            page.0[i * 128..(i + 1) * 128].copy_from_slice(&r);
+        }
+        // The third cut short.
+        page.0[2 * 128 + 60..3 * 128].fill(0xff);
+        let s = last_state(&&page).unwrap();
+        assert_eq!(old_state(&s), Some((k, 10, 2)));
     }
 }

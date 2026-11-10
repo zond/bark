@@ -1,6 +1,7 @@
-//! The bond: the keys a node keeps for the one phone paired with it
-//! (spec "Phone link", Pairing), as the node stores them in flash, two of
-//! the stored-state page's 32-byte slots (`bark-fw/src/store.rs`).
+//! The bond as a node kept it before link version 13, for the one phone
+//! paired with it, in two of the stored-state page's 32-byte slots
+//! (`bark-fw/src/store.rs`). A node that finds one and none of the
+//! records of `crate::phones` makes it record one (`phones::Load`).
 //!
 //! | bytes | |
 //! |---|---|
@@ -141,32 +142,5 @@ pub fn read(r: &[u8; Bond::LEN]) -> Option<Option<Bond>> {
     match whole && r[14] == FORGOTTEN {
         true => Some(None),
         false => Bond::from_record(r).map(Some),
-    }
-}
-
-/// Whether a node with the bond `bond`, or none, is public: unless its
-/// owner has made it private (spec "Phone link", Public).
-pub fn public(bond: Option<&Bond>) -> bool {
-    bond.is_none_or(|b| !b.private)
-}
-
-/// The bond to keep once a pairing has ended, given the one kept before
-/// and the pairing's: the pairing's only if it was authenticated, by the
-/// passkey on the node's screen, and bonds; the node stays private or
-/// public as it was. A pairing that failed, was cut off, or was not
-/// authenticated leaves the kept bond as it was, whatever the host made of
-/// it (spec "Phone link", Pairing).
-pub fn after_pairing(
-    kept: Option<Bond>,
-    paired: Option<Bond>,
-    authenticated: bool,
-) -> Option<Bond> {
-    match paired.filter(|_| authenticated) {
-        Some(b) => Some(Bond {
-            private: kept.is_some_and(|k| k.private),
-            owner: None,
-            ..b
-        }),
-        None => kept,
     }
 }

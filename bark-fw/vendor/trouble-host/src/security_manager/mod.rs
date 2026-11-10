@@ -1264,6 +1264,10 @@ impl<'sm, 'cm, 'cm2, 'cs, P: PacketPool> PairingOps<P> for PairingOpsImpl<'sm, '
         self.passkey
     }
 
+    fn refuses_pairing(&self) -> bool {
+        self.storage.refuses_pairing
+    }
+
     fn bonding_flag(&self) -> BondingFlag {
         if self.storage.bondable {
             BondingFlag::Bonding

@@ -1,23 +1,19 @@
-//! The mailbox's [`Ring`] in two regions of NOR flash: the ring's pages,
-//! and a page with a log of the state (spec "Mailbox";
-//! `bark-image/src/layout.rs`). They are apart because they are kept
-//! apart: the ring's items are sealed to the phone, the state holds the
-//! mailbox key, so the ring can lie on a chip anyone with a clip can
-//! read and the state cannot.
+//! The mailbox's [`Ring`] in a region of NOR flash: the ring's pages
+//! (spec "Mailbox"; `bark-image/src/layout.rs`), which may lie on a chip
+//! anyone with a clip can read, as its items are sealed to the phone.
+//! The people's mailbox keys are kept with their records inside the
+//! chip (`bark-link` `phones`).
 //!
 //! The flash is read when the mailbox asks, but written later: a write
 //! or an erase is queued as an [`Op`], read back through the queue until
 //! it is done, and done by the driver when it can, which on the node is
 //! between the radio's events (`bark-fw/src/mailbox.rs`). The mailbox
-//! never waits on a write.
+//! never waits on a write. A slot cut short by a power cut fails the
+//! mailbox's own check and holds no item.
 //!
-//! The state page is a log, as the node's stored state is: each state
-//! goes into the next erased record with a check of its own, the last
-//! whole record is the state, and only a full page is erased. A record
-//! cut short by a power cut fails its check and the one before it is
-//! taken; a cut between the erase and the write that follows it loses
-//! the state, as the store's does. A slot cut short fails the mailbox's
-//! own check and holds no item.
+//! Before the people's records, the mailbox kept its one key in a page
+//! of its own, a log of records each with a check; [`last_state`] reads
+//! it once, so that the key becomes the first record's.
 
 use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN, STATE_LEN};
 
@@ -26,18 +22,19 @@ use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN, STATE_LEN};
 /// alike.
 pub const PAGE_LEN: u32 = 4096;
 
-/// Bytes of a state record: the state, its check, and erased bytes to a
-/// power of two, 32 to a page.
+/// Bytes of a record of the state page an older mailbox kept: the state,
+/// its check, and erased bytes to a power of two, 32 to a page.
 pub const RECORD_LEN: usize = 128;
 const RECORDS: u32 = PAGE_LEN / RECORD_LEN as u32;
 const CHECK_AT: usize = STATE_LEN;
 const _: () = assert!(CHECK_AT + 4 <= RECORD_LEN);
 
-/// Ops queued at most. The mailbox queues at most three at a time: an
-/// erase and a slot's write, or a mark and the state's erase and write;
-/// the driver does them before it hands the mailbox the next message, so
-/// twice that is room for a phone's confirmation, three more, between.
-pub const OPS: usize = 2 * 3;
+/// Ops queued at most. A step of the node queues at most four: a
+/// message's erase and write, a confirmation's mark and a reply's; the
+/// driver does them as soon as the step ends, and the node confirms the
+/// next message to the core only once they are done, so a few more than
+/// that is room.
+pub const OPS: usize = 6;
 
 /// A region's flash, read when asked; offsets from its start.
 pub trait Region {
@@ -47,16 +44,8 @@ pub trait Region {
     fn read(&self, offset: u32, out: &mut [u8]);
 }
 
-/// Which region an op is in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Area {
-    /// The ring's pages.
-    Ring,
-    /// The state's page.
-    State,
-}
-
-/// A write or an erase the driver is to do, at an offset in a region.
+/// A write or an erase the driver is to do, at an offset in the ring's
+/// region.
 // Ops lie in a fixed queue whichever they are: an erase's room is a
 // write's.
 #[allow(clippy::large_enum_variant)]
@@ -64,16 +53,12 @@ pub enum Area {
 pub enum Op {
     /// Erase the page at `offset`.
     Erase {
-        /// The region.
-        area: Area,
         /// The page's first byte.
         offset: u32,
     },
     /// Write `bytes[..len]` at `offset`: bytes erased since they were last
     /// written, or a mark, which only clears bits.
     Write {
-        /// The region.
-        area: Area,
         /// The first byte written.
         offset: u32,
         /// Bytes written.
@@ -93,14 +78,11 @@ impl Op {
     }
 }
 
-/// The ring and its state in their regions of flash, with the writes
-/// and erases not yet done.
+/// The ring in its region of flash, with the writes and erases not yet
+/// done.
 pub struct FlashRing<R: Region> {
     ring: R,
     ops: [Option<Op>; OPS],
-    /// The next erased state record; [`RECORDS`] when the page is full.
-    next_record: u32,
-    state: Option<[u8; STATE_LEN]>,
     /// Ops that found the queue full and were dropped.
     lost: u32,
 }
@@ -111,41 +93,49 @@ fn fnv1a(bytes: &[u8]) -> u32 {
     })
 }
 
+/// The last whole state an older mailbox kept in `page`, a log of
+/// [`RECORD_LEN`]-byte records each with a check after the state.
+pub fn last_state(page: &impl Region) -> Option<[u8; STATE_LEN]> {
+    let mut state = None;
+    for i in 0..RECORDS {
+        let mut r = [0u8; RECORD_LEN];
+        page.read(i * RECORD_LEN as u32, &mut r);
+        if r.iter().all(|&b| b == 0xff) {
+            break;
+        }
+        let check = u32::from_be_bytes([
+            r[CHECK_AT],
+            r[CHECK_AT + 1],
+            r[CHECK_AT + 2],
+            r[CHECK_AT + 3],
+        ]);
+        if fnv1a(&r[..CHECK_AT]) == check {
+            state = Some(r[..STATE_LEN].try_into().expect("the state"));
+        }
+    }
+    state
+}
+
+/// A record of the state page as an older mailbox wrote it, for the
+/// tests of [`last_state`].
+#[cfg(test)]
+pub(crate) fn state_record(state: &[u8; STATE_LEN]) -> [u8; RECORD_LEN] {
+    let mut r = [0xffu8; RECORD_LEN];
+    r[..STATE_LEN].copy_from_slice(state);
+    r[CHECK_AT..CHECK_AT + 4].copy_from_slice(&fnv1a(state).to_be_bytes());
+    r
+}
+
 impl<R: Region> FlashRing<R> {
-    /// The ring in `ring`, with the state the last whole record in
-    /// `state_page` holds; the state's writes are queued as [`Area::State`].
-    pub fn open(ring: R, state_page: &impl Region) -> FlashRing<R> {
+    /// The ring in `ring`.
+    pub fn open(ring: R) -> FlashRing<R> {
         assert!(
             ring.pages() >= 2,
             "one page of the ring is erased to make room"
         );
-        assert!(state_page.pages() >= 1);
-        let mut state = None;
-        let mut next_record = RECORDS;
-        for i in 0..RECORDS {
-            let mut r = [0u8; RECORD_LEN];
-            state_page.read(i * RECORD_LEN as u32, &mut r);
-            if r.iter().all(|&b| b == 0xff) {
-                next_record = i;
-                break;
-            }
-            let check = u32::from_be_bytes([
-                r[CHECK_AT],
-                r[CHECK_AT + 1],
-                r[CHECK_AT + 2],
-                r[CHECK_AT + 3],
-            ]);
-            if fnv1a(&r[..CHECK_AT]) == check {
-                let mut s = [0u8; STATE_LEN];
-                s.copy_from_slice(&r[..STATE_LEN]);
-                state = Some(s);
-            }
-        }
         FlashRing {
             ring,
             ops: [None; OPS],
-            next_record,
-            state,
             lost: 0,
         }
     }
@@ -189,21 +179,13 @@ impl<R: Region> FlashRing<R> {
         let end = at + out.len() as u32;
         for op in self.ops.iter().flatten() {
             match *op {
-                Op::Erase {
-                    area: Area::Ring,
-                    offset,
-                } if offset == at - at % PAGE_LEN => out.fill(0xff),
-                Op::Write {
-                    area: Area::Ring,
-                    offset,
-                    len,
-                    bytes,
-                } => {
+                Op::Erase { offset } if offset == at - at % PAGE_LEN => out.fill(0xff),
+                Op::Write { offset, len, bytes } => {
                     for i in offset.max(at)..(offset + u32::from(len)).min(end) {
                         out[(i - at) as usize] &= bytes[(i - offset) as usize];
                     }
                 }
-                _ => {}
+                Op::Erase { .. } => {}
             }
         }
     }
@@ -230,18 +212,16 @@ impl<R: Region> Ring for FlashRing<R> {
 
     fn write(&mut self, slot: u32, bytes: &[u8; SLOT_LEN]) {
         self.push(Op::Write {
-            area: Area::Ring,
             offset: Self::slot_offset(slot),
             len: SLOT_LEN as u16,
             bytes: *bytes,
         });
     }
 
-    fn clear(&mut self, slot: u32, at: usize) {
+    fn clear(&mut self, slot: u32, at: usize, bits: u8) {
         let mut bytes = [0xffu8; SLOT_LEN];
-        bytes[0] = 0;
+        bytes[0] = !bits;
         self.push(Op::Write {
-            area: Area::Ring,
             offset: Self::slot_offset(slot) + at as u32,
             len: 1,
             bytes,
@@ -250,33 +230,7 @@ impl<R: Region> Ring for FlashRing<R> {
 
     fn erase(&mut self, page: u32) {
         self.push(Op::Erase {
-            area: Area::Ring,
             offset: PAGE_LEN * page,
         });
-    }
-
-    fn state(&self) -> Option<[u8; STATE_LEN]> {
-        self.state
-    }
-
-    fn keep_state(&mut self, state: &[u8; STATE_LEN]) {
-        if self.next_record >= RECORDS {
-            self.push(Op::Erase {
-                area: Area::State,
-                offset: 0,
-            });
-            self.next_record = 0;
-        }
-        let mut bytes = [0xffu8; SLOT_LEN];
-        bytes[..STATE_LEN].copy_from_slice(state);
-        bytes[CHECK_AT..CHECK_AT + 4].copy_from_slice(&fnv1a(state).to_be_bytes());
-        self.push(Op::Write {
-            area: Area::State,
-            offset: self.next_record * RECORD_LEN as u32,
-            len: RECORD_LEN as u16,
-            bytes,
-        });
-        self.next_record += 1;
-        self.state = Some(*state);
     }
 }

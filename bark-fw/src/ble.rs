@@ -15,39 +15,38 @@
 //! takes what the phone writes as requests, one at a time, each answered
 //! before the phone's write is (roadmap D117).
 //!
-//! The link is the paired phone's (spec "Phone link", Pairing; roadmap
-//! D135): every characteristic of the service needs a link encrypted
-//! with an authenticated key, the node shows the passkey of a pairing on
-//! its screen, and it keeps one bond, in flash (`store.rs`), which a new
-//! pairing replaces. On a public node guests share it (spec "Phone link",
-//! Public; roadmap D150): [`LINKS`] links, the owner's and one guest's at
-//! a time, each served by a slot of its own ([`slot`]), the
-//! characteristics a guest needs open on any of them ([`allowed`]), a
-//! guest's mail read from the ring by its recipient tag ([`Request::Guest`];
-//! `mailbox.rs`), and the one message the node holds for its phones taken
-//! in turn ([`Turn`]).
+//! The link is the paired phones' (spec "Phone link", Pairing; roadmap
+//! D135, D168): every characteristic of the service needs a link
+//! encrypted with an authenticated key, the node shows the passkey of a
+//! pairing on its screen, and it keeps a record for each phone paired,
+//! up to eight, in flash (`phones.rs`, `store.rs`), each phone an owner.
+//! On a public node guests use it too (spec "Phone link", Public; roadmap
+//! D150): a link for each paired phone and one more, [`LINKS`] at most,
+//! each served by a slot of its own ([`slot`]), the characteristics a
+//! guest needs open on any of them ([`allowed`]), a guest's mail read from
+//! the ring by its recipient tag ([`Request::Guest`]; `mailbox.rs`), and
+//! the one message the node holds for its phones taken in turn
+//! ([`Turn`]).
 //!
-//! The paired phone keeps the attribute table it discovered; the node
-//! tells it when the table has changed since, by the link version the
-//! bond records ([`tell_of_change`]; spec "Phone link", Changes to the
-//! table).
+//! A paired phone keeps the attribute table it discovered; the node tells
+//! it when the table has changed since, by the link version its record
+//! keeps ([`tell_of_change`]; spec "Phone link", Changes to the table).
 //!
-//! The phone stages a new image through Update and Image, which this
+//! A paired phone stages a new image through Update and Image, which this
 //! task serves itself, across its connections (`update::Phone`; spec
 //! "Phone link", Updates).
 
 use core::cell::RefCell;
 
 use bark_image::policy::Links;
-use bark_link::bond::Bond;
 use bark_link::neighbours;
+use bark_link::phones::{Keys, RECORDS};
 use bark_link::update::{Command, Piece, Progress, Refusal};
 use bark_link::{
     le_bytes, seconds_left, uuid, GivenBack, Malformed, Message, Node, Status, ATT_MTU,
 };
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
-use bark_screen::Phone;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::{peripherals, rng, Peri};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
@@ -59,13 +58,12 @@ use static_cell::StaticCell;
 use trouble_host::att::{AttClient, AttCmd, AttReq};
 use trouble_host::prelude::*;
 
-/// Links at once: one on a node that is not public, the owner's and a
-/// guest's on a public one (spec "Phone link", Public; roadmap D150).
-/// Each costs 5.6 KB of static RAM, the controller's [`PER_LINK`], the
-/// host's 1.2 KB and its slot's task, all taken from the stack, which
-/// two leave above its floor and three do not (`bark-fw/README.md`,
-/// "Tasks and the stack").
-pub const LINKS: usize = 2;
+/// Links at once: one for each phone the node keeps a record for and one
+/// more, for a phone that pairs or a guest (spec "Phone link", Pairing;
+/// roadmap D168). Each costs 5.6 KB of static RAM, the controller's
+/// [`PER_LINK`], the host's 1.2 KB and its slot's task, all taken from the
+/// stack (`bark-fw/README.md`, "Tasks and the stack").
+pub const LINKS: usize = RECORDS + 1;
 /// Room for L2CAP's connection-oriented channels (Vol 3 Part A §10),
 /// none: the node registers no protocol for them, so it opens none and
 /// refuses every one a phone asks for, and ATT and the signalling run on
@@ -73,9 +71,9 @@ pub const LINKS: usize = 2;
 const CHANNELS: usize = 0;
 /// Advertising sets: the one advertisement.
 const ADV_SETS: usize = 1;
-/// Bonds the host holds: the one kept, and the one a pairing adds before
-/// [`settle`] takes the other away.
-const BONDS: usize = 2;
+/// Bonds the host holds: the records', and the one a pairing adds before
+/// [`settle`] takes it into a record or away.
+const BONDS: usize = RECORDS + 1;
 /// Link-layer buffers each way: the controller's default for transmit,
 /// three (`SDC_DEFAULT_TX_PACKET_COUNT`, `sdc.h`), and as many to receive.
 const LL_BUFFERS: u8 = 3;
@@ -249,6 +247,8 @@ pub struct Link {
     pub guest: (),
     #[characteristic(uuid = le_bytes(uuid::ASK), read, write, notify, permissions(authenticated))]
     pub ask: heapless::Vec<u8, { bark_link::Answer::LEN }>,
+    #[characteristic(uuid = le_bytes(uuid::PHONES), read, write, permissions(authenticated))]
+    pub phones: heapless::Vec<u8, { bark_link::phones::MAX_LEN }>,
 }
 
 /// What the MPSL takes.
@@ -401,8 +401,9 @@ pub enum Request {
     /// The page of the neighbour table from this slot, which the phone
     /// reads now.
     Neighbours(u8),
-    /// The Inbox the paired phone in this link's slot reads now.
-    Inbox(usize),
+    /// The Inbox the paired phone in `slot`, of record `record`, reads
+    /// now.
+    Inbox { slot: usize, record: usize },
     /// What the guest in this link's slot reads from Guest now: the oldest
     /// item after `after` for its tag.
     Guest { slot: usize, tag: u8, after: u32 },
@@ -410,12 +411,19 @@ pub enum Request {
     Ask(NodeId),
 }
 
-/// Which phone a request is from: its link's slot, and whether it is the
-/// paired phone's link, encrypted with the bond.
+/// Which phone a request is from: its link's slot, and the record whose
+/// bond its link is encrypted with, a paired phone's.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct From {
     pub slot: usize,
-    pub owner: bool,
+    pub record: Option<usize>,
+}
+
+impl From {
+    /// Whether it is a paired phone's.
+    pub fn owner(&self) -> bool {
+        self.record.is_some()
+    }
 }
 
 /// A phone connected in a slot.
@@ -426,36 +434,45 @@ struct Peer {
     /// Counts the slot's links, so that a message given back is not handed
     /// to a later phone in the slot.
     link: u32,
-    /// The link is encrypted with the bond: the paired phone's.
-    owner: bool,
+    /// The record whose bond the link is encrypted with: a paired
+    /// phone's.
+    record: Option<usize>,
     /// The recipient tag it wrote (spec "Phone link", Public).
     tag: Option<u8>,
     /// The number of the last item it took from Guest, as it wrote it.
     after: u32,
     /// A pairing runs on its link.
     pairing: bool,
+    /// A pairing on its link would be refused, every record being in use
+    /// ([`refresh`]).
+    refuses: bool,
     /// A reply to its write or a notification is on its way to it, until
     /// it is sent.
     sending: bool,
-    /// A guest's message given back, and the end of its wait; the paired
-    /// phone's is [`State::given_back`].
+    /// A guest's message given back, and the end of its wait; a paired
+    /// phone's is its record's, [`State::given_back`].
     given_back: Option<(MsgId, Instant)>,
     /// The slot it reads the neighbour table from (spec "Phone link",
     /// Neighbours); 0 at each connection.
     neighbours_from: u8,
+    /// The place it reads the records from (spec "Phone link", Phones); 0
+    /// at each connection.
+    phones_from: u8,
 }
 
 impl Peer {
     const NONE: Peer = Peer {
         live: false,
         link: 0,
-        owner: false,
+        record: None,
         tag: None,
         after: 0,
         pairing: false,
+        refuses: false,
         sending: false,
         given_back: None,
         neighbours_from: 0,
+        phones_from: 0,
     };
 }
 
@@ -466,16 +483,22 @@ pub struct State {
     pub status: Status,
     /// When the first rotation ends, while it runs.
     pub boot_ends: Option<Instant>,
-    /// The ID of what the paired phone's Inbox shows: the core's inbox's
-    /// oldest message, or the ring's, which the node writes as the phone
+    /// For each record, the item its phone's Inbox shows, the oldest of
+    /// its person's after the last confirmed: its number and the ID it
+    /// arrived with (`mailbox.rs`), which the node writes as the phone
     /// reads it ([`Request::Inbox`]).
-    pub inbox: Option<MsgId>,
-    /// Of a ring, the item the inbox shows: its number and ID
-    /// (`mailbox.rs`); `None` while the inbox is the core's.
-    pub ring_head: Option<(u32, MsgId)>,
-    /// The paired phone's message last given back and the end of its
-    /// wait, until the node takes another; kept across its links.
-    pub given_back: Option<(MsgId, Instant)>,
+    pub heads: [Option<(u32, MsgId)>; RECORDS],
+    /// For each record, its person's items not yet confirmed, as Status
+    /// says them to its phone.
+    counts: [u8; RECORDS],
+    /// For each record, its phone's message last given back and the end of
+    /// its wait, until the node takes another; kept across its links.
+    given_back: [Option<(MsgId, Instant)>; RECORDS],
+    /// The records' numbers as last followed ([`records_changed`]).
+    numbers: [Option<u16>; RECORDS],
+    /// The node's Node value but for `room`, which [`refresh`] reads from
+    /// the records.
+    node: Option<Node>,
     /// The last neighbour's status the node was told, which Ask reads
     /// (spec "Phone link", Ask).
     told_status: Option<bark_link::Answer>,
@@ -486,16 +509,17 @@ pub struct State {
     took: Option<(MsgId, From, u32)>,
     /// The phone whose turn it is ([`Turn`]).
     turn: Turn,
-    /// The node is public, as it is unless the bond says private.
+    /// The node is public, as it is unless its records say private.
     public: bool,
     /// The phone's request, until the node answers it.
     pub request: Option<(From, Request)>,
     /// The node's answer, until the step that gave it has published what
     /// it changed ([`answer`]).
     answer: Option<bool>,
-    /// What the phones were last told of the status, for when to tell
-    /// them again.
+    /// What the phones were last told of the status and of their counts,
+    /// for when to tell them again.
     told: Status,
+    told_counts: [u8; RECORDS],
     /// The flags byte last logged.
     flags: Option<u8>,
 }
@@ -563,9 +587,15 @@ impl State {
     }
 
     /// Whether `slot` is a guest's link: the node is public and the link
-    /// is not the paired phone's.
+    /// is not a paired phone's.
     fn guest(&self, slot: usize) -> bool {
-        self.public && !self.phones[slot].owner
+        self.public && self.phones[slot].record.is_none()
+    }
+
+    /// The live links of record `i`'s phone: one, as a link is known by
+    /// its phone's identity.
+    fn slots_of(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
+        (0..LINKS).filter(move |&s| self.phones[s].live && self.phones[s].record == Some(i))
     }
 }
 
@@ -598,9 +628,11 @@ const _: () = assert!(bark_link::GuestItem::MAX_LEN <= READ_LEN);
 pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(RefCell::new(State {
     status: Status::EMPTY,
     boot_ends: None,
-    inbox: None,
-    ring_head: None,
-    given_back: None,
+    heads: [None; RECORDS],
+    counts: [0; RECORDS],
+    given_back: [None; RECORDS],
+    numbers: [None; RECORDS],
+    node: None,
     told_status: None,
     phones: [Peer::NONE; LINKS],
     took: None,
@@ -612,6 +644,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     request: None,
     answer: None,
     told: Status::EMPTY,
+    told_counts: [0; RECORDS],
     flags: None,
 }));
 
@@ -633,13 +666,16 @@ static ADVERTISE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// directly, which the controller's radio timing could not wait for.
 pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// What to notify, and whether a guest's link, or every link, is to close.
+/// What to notify, and whether a guest's link, or the link itself, is to
+/// close.
 #[derive(Clone, Copy, Default)]
 struct Notify {
     status: bool,
     given_back: bool,
     answer: bool,
     close_guests: bool,
+    /// The link is to end: its phone's bond was removed
+    /// (spec "Phone link", Phones), or the node reboots.
     close: bool,
 }
 
@@ -671,28 +707,17 @@ const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
     - bark_proto::BatteryLevels::DESIGN.low_mv)
     .div_ceil(100 - 20);
 
-/// The node's side: publish the status and the inbox's oldest message
-/// after a step, and notify the phones of a change of the flags, the
-/// relays, the neighbours heard, the inbox's count or the address, or of
-/// the battery by a step
-/// (spec "Phone link", Status).
-pub fn publish(status: Status, inbox: Option<MsgId>) {
-    LINK.lock(|l| l.borrow_mut().ring_head = None);
-    publish_inbox(status, inbox);
-}
-
-/// The node's side, for a ring, a home's or a public node's: [`publish`]
-/// with the inbox the ring's oldest unread item, its number beside (spec
-/// "Mailbox").
-pub fn publish_ring(status: Status, item: Option<(u32, MsgId)>) {
-    LINK.lock(|l| l.borrow_mut().ring_head = Some(item.unwrap_or((0, MsgId(0)))));
-    publish_inbox(status, item.map(|(_, id)| id));
-}
-
-fn publish_inbox(status: Status, inbox: Option<MsgId>) {
+/// The node's side: publish the status and, for each record, the
+/// oldest of its person's items its phone has not confirmed and their
+/// count (spec "Phone link", Receiving; "Mailbox"), after a step, and
+/// notify the phones of a change of the flags, the relays, the neighbours
+/// heard, a count or the address, or of the battery by a step (spec
+/// "Phone link", Status).
+pub fn publish(status: Status, heads: [Option<(u32, MsgId)>; RECORDS], counts: [u8; RECORDS]) {
     let changed = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        l.inbox = inbox;
+        l.heads = heads;
+        l.counts = counts;
         l.status = status;
         let told = l.told;
         let quiet = |s: Status| Status {
@@ -701,9 +726,11 @@ fn publish_inbox(status: Status, inbox: Option<MsgId>) {
             ..s
         };
         let changed = quiet(told) != quiet(status)
-            || told.battery_mv.abs_diff(status.battery_mv) >= BATTERY_STEP_MV;
+            || told.battery_mv.abs_diff(status.battery_mv) >= BATTERY_STEP_MV
+            || l.told_counts != counts;
         if changed {
             l.told = status;
+            l.told_counts = counts;
         }
         let turn = l.advance(now());
         // The flags as the phone reads them, at the first publish and each
@@ -716,11 +743,10 @@ fn publish_inbox(status: Status, inbox: Option<MsgId>) {
     let (changed, flags) = changed;
     if let Some(flags) = flags {
         log::info!(
-            "ble: status flags={:#04x} relays={} heard={} inbox={} address={}",
+            "ble: status flags={:#04x} relays={} heard={} address={}",
             flags,
             status.relays,
             status.heard,
-            status.inbox,
             status.address
         );
     }
@@ -741,13 +767,13 @@ pub fn public() -> bool {
 /// ([`READ`]), written by `write` for the request into its buffer.
 pub fn serve_read(write: impl FnOnce(&Request, &mut [u8; READ_LEN]) -> usize) {
     take_request(|_, r| match *r {
-        Request::Neighbours(_) | Request::Inbox(_) | Request::Guest { .. } => {
+        Request::Neighbours(_) | Request::Inbox { .. } | Request::Guest { .. } => {
             let mut b = [0; READ_LEN];
             let n = write(r, &mut b);
             READ.lock(|v| {
                 let mut v = v.borrow_mut();
                 v.0 = Some(match *r {
-                    Request::Inbox(slot) => Read::Inbox(slot),
+                    Request::Inbox { slot, .. } => Read::Inbox(slot),
                     Request::Guest { slot, .. } => Read::Guest(slot),
                     _ => Read::Neighbours,
                 });
@@ -766,23 +792,29 @@ pub fn booting(ends: Option<Instant>) {
 }
 
 /// The node's side: a phone's message was given back, to the phone it
-/// came from while its link lasts, the paired phone's kept for its next
-/// (spec "Phone link", Given back, Public).
+/// came from: a guest's while its link lasts, a paired phone's kept with
+/// its record for its next (spec "Phone link", Given back, Public).
 pub fn given_back(msg_id: MsgId, retry_at: Instant) {
     let to = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        match l.took {
-            Some((id, from, link)) if id == msg_id && !from.owner => {
-                let p = &mut l.phones[from.slot];
-                let here = p.live && p.link == link;
-                if here {
-                    p.given_back = Some((msg_id, retry_at));
+        match l.took.filter(|&(id, ..)| id == msg_id) {
+            Some((_, from, link)) => match from.record {
+                None => {
+                    let p = &mut l.phones[from.slot];
+                    let here = p.live && p.link == link;
+                    if here {
+                        p.given_back = Some((msg_id, retry_at));
+                    }
+                    here.then_some(from.slot)
                 }
-                here.then_some(from.slot)
-            }
-            _ => {
-                l.given_back = Some((msg_id, retry_at));
-                (0..LINKS).find(|&i| l.phones[i].live && l.phones[i].owner)
+                Some(i) => {
+                    l.given_back[i] = Some((msg_id, retry_at));
+                    l.slots_of(i).next()
+                }
+            },
+            None => {
+                log::warn!("ble: given back id={:08x}, whose is not known", msg_id.0);
+                None
             }
         }
     });
@@ -797,15 +829,16 @@ pub fn given_back(msg_id: MsgId, retry_at: Instant) {
     }
 }
 
-/// The node's side: a neighbour told its status, for the paired phone
+/// The node's side: a neighbour told its status, for every paired phone
 /// (spec "Phone link", Ask).
 pub fn told_status(answer: bark_link::Answer) {
     let to = LINK.lock(|l| {
         let mut l = l.borrow_mut();
         l.told_status = Some(answer);
-        (0..LINKS).find(|&i| l.phones[i].live && l.phones[i].owner)
+        let owners = (0..LINKS).filter(|&i| l.phones[i].live && l.phones[i].record.is_some());
+        owners.fold(0u16, |m, i| m | 1 << i)
     });
-    if let Some(slot) = to {
+    for slot in (0..LINKS).filter(|&i| to & (1 << i) != 0) {
         notify_one(
             slot,
             Notify {
@@ -841,9 +874,9 @@ pub fn take_request<R>(f: impl FnOnce(From, &Request) -> Option<(R, bool)>) -> O
             if answer {
                 // A phone's message taken: what it was given back before
                 // is over, and the turn passes on.
-                match from.owner {
-                    true => l.given_back = None,
-                    false => l.phones[from.slot].given_back = None,
+                match from.record {
+                    Some(i) => l.given_back[i] = None,
+                    None => l.phones[from.slot].given_back = None,
                 }
                 let id = MsgId::of(dst_pos, dst_id, &payload[..usize::from(len)]);
                 l.took = Some((id, from, l.phones[from.slot].link));
@@ -901,16 +934,14 @@ fn now() -> Instant {
 }
 
 /// The status as the phone in `slot` reads it now: ready in its turn
-/// alone, and a guest's inbox the message waiting for it.
+/// alone, and its count its own person's items not confirmed, none for a
+/// guest.
 fn status_now(slot: usize) -> Status {
     LINK.lock(|l| {
         let mut l = l.borrow_mut();
         let now = now();
         l.advance(now);
-        let inbox = match l.guest(slot) {
-            true => 0,
-            false => l.status.inbox,
-        };
+        let inbox = l.phones[slot].record.map_or(0, |i| l.counts[i]);
         Status {
             ready: l.status.ready && l.request.is_none() && l.turn.slot == Some(slot),
             boot_left_s: l.boot_ends.map_or(0, |e| seconds_left(now, e)),
@@ -923,9 +954,9 @@ fn status_now(slot: usize) -> Status {
 fn given_back_now(slot: usize) -> heapless::Vec<u8, { GivenBack::LEN }> {
     LINK.lock(|l| {
         let l = l.borrow();
-        let given = match l.guest(slot) {
-            true => l.phones[slot].given_back,
-            false => l.given_back,
+        let given = match l.phones[slot].record {
+            Some(i) => l.given_back[i],
+            None => l.phones[slot].given_back,
         };
         match given {
             Some((msg_id, retry_at)) => {
@@ -985,17 +1016,13 @@ fn inbox_now(slot: usize) -> heapless::Vec<u8, { bark_link::GuestItem::MAX_LEN }
     heapless::Vec::from_slice(&read_for(read)).expect("it fits")
 }
 
-/// The bond kept in flash, handed once at boot when the store has opened
-/// (`store.rs`).
-pub static STORED_BOND: Signal<CriticalSectionRawMutex, Option<Bond>> = Signal::new();
-
 type Stack = trouble_host::Stack<'static, SoftdeviceController<'static>, DefaultPacketPool>;
 
-/// The update the paired phone stages, across its links.
+/// The update a paired phone stages, across its links.
 type Update = embassy_sync::mutex::Mutex<NoopRawMutex, Staging>;
 
 /// The update, and room for the header a begin carries, kept here rather
-/// than in every link's task, as only the paired phone stages.
+/// than in every link's task, as one is staged at a time.
 pub struct Staging {
     phone: crate::update::Phone,
     header: [u8; bark_link::update::HEADER_LEN],
@@ -1031,20 +1058,29 @@ pub async fn run(
             .set_io_capabilities(IoCapabilities::DisplayOnly)
             .build(),
     );
-    if let Some(b) = STORED_BOND.wait().await {
-        KEPT.lock(|k| k.replace(Some(b)));
+    resolving_list();
+    for i in 0..RECORDS {
+        let Some(r) = crate::phones::read(|p| p.get(i).copied()) else {
+            continue;
+        };
+        let Some(b) = r.bond else {
+            log::info!("ble: record {} number {}, a home, no bond", i, r.number);
+            continue;
+        };
         match stack.add_bond_information(information(&b)) {
             Ok(()) => log::info!(
-                "ble: bond kept, table seen at version {}, service changed {}, private {}, {}",
+                "ble: record {} number {} table seen at version {}, service changed {}, home {}, {}",
+                i,
+                r.number,
                 b.seen,
                 b.service_changed,
-                b.private,
+                r.key.is_some(),
                 Whose(&b)
             ),
-            Err(e) => log::error!("ble: the kept bond {}", HostError(&e)),
+            Err(e) => log::error!("ble: record {}'s bond {}", i, HostError(&e)),
         }
     }
-    follow_bond();
+    records_changed();
     static NAME: StaticCell<[u8; bark_link::NAME_LEN]> = StaticCell::new();
     let name = core::str::from_utf8(NAME.init(bark_link::name(id))).expect("the name is ASCII");
     static SERVER: StaticCell<(Server<'static>, Gatt)> = StaticCell::new();
@@ -1053,8 +1089,10 @@ pub async fn run(
         version: bark_link::VERSION,
         id,
         image,
+        room: None,
+        oldest: Some(bark_link::OLDEST),
     };
-    let _ = server.set(&server.link.node, &node.encode());
+    LINK.lock(|l| l.borrow_mut().node = Some(node));
     static ADVERTISING: StaticCell<Advertising> = StaticCell::new();
     let advertising = ADVERTISING.init(Advertising::new(stack.peripheral()));
     static UPDATE: StaticCell<Update> = StaticCell::new();
@@ -1093,12 +1131,12 @@ async fn slot(
             let mut p = advertising.lock().await;
             loop {
                 let public = public();
-                if links() > 0 && !public {
+                if links() >= room_for_links() {
                     ADVERTISE.wait().await;
                     continue;
                 }
-                // Stopped and begun again as the setting changes or a
-                // link ends, which may make a public node's free.
+                // Stopped and begun again as the setting changes, a link
+                // ends or a phone pairs, which may free a link.
                 match select(advertise(&mut p, server, name, public), ADVERTISE.wait()).await {
                     Either::First(Ok(conn)) => break conn,
                     Either::First(Err(e)) => {
@@ -1145,6 +1183,12 @@ pub fn links() -> usize {
     LINK.lock(|l| l.borrow().phones.iter().filter(|p| p.live).count())
 }
 
+/// Links the node takes: one for each phone paired and one more (spec
+/// "Phone link", Finding the node).
+fn room_for_links() -> usize {
+    (crate::phones::read(|p| p.paired()) + 1).min(LINKS)
+}
+
 /// What the links are doing, for a reboot into an image gathered over
 /// the mesh (`bark_image::policy::quiet`). Mid-way is what a reset would
 /// cut: a request written that the node has not answered, or whose reply
@@ -1188,61 +1232,110 @@ pub async fn close_all() {
     let _ = embassy_time::with_timeout(SUPERVISION_MAX, ended).await;
 }
 
-/// Take up what the kept bond says: whether the node is public and the
-/// owner's recipient tag, for the links, the mailbox and the screen.
-fn follow_bond() {
-    let bond = KEPT.lock(|k| *k.borrow());
-    let public = bark_link::bond::public(bond.as_ref());
-    LINK.lock(|l| {
+/// The records changed: the links, the advertising, the node's loop and
+/// the phones follow what they say now (the mailbox and the screen follow
+/// in `phones.rs`).
+fn records_changed() {
+    let (public, numbers) =
+        crate::phones::read(|p| (p.public(), p.records.map(|r| r.map(|r| r.number))));
+    let was = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        l.public = public;
-    });
-    use bark_app_layer::mailbox::Owner;
-    let owner = match (public, bond) {
-        (false, _) => Owner::All,
-        (true, None) => Owner::Nobody,
-        (true, Some(b)) => b.owner.map_or(Owner::All, Owner::Tag),
-    };
-    crate::mailbox::with(|m| {
-        m.set_public(public);
-        m.set_owner(owner);
-    });
-}
-
-/// Keep `bond` in place of the one kept, in the host's copy and in flash,
-/// and follow it.
-fn keep(bond: Bond) {
-    KEPT.lock(|k| k.replace(Some(bond)));
-    crate::store::keep_bond(Some(bond));
-    follow_bond();
-}
-
-/// The owner unpairs (spec "Phone link", Public): forget the bond, in the
-/// host, in flash and here, so that the node is public, as one nobody has
-/// paired with is, and its screen says `PHONE UNPAIRED`.
-fn forget(stack: &Stack) {
-    KEPT.lock(|k| k.replace(None));
-    crate::store::keep_bond(None);
-    let mut held: heapless::Vec<Identity, BONDS> = heapless::Vec::new();
-    stack.with_bond_information(|bonds| {
-        for b in bonds {
-            let _ = held.push(b.identity);
+        // A message given back to a record's phone is not a new record's.
+        let l = &mut *l;
+        for ((given, was), now) in l.given_back.iter_mut().zip(&l.numbers).zip(numbers) {
+            if *was != now {
+                *given = None;
+            }
         }
+        l.numbers = numbers;
+        core::mem::replace(&mut l.public, public)
     });
-    for i in held {
-        if let Err(e) = stack.remove_bond_information(i) {
-            log::error!("ble: removing a bond {}", HostError(&e));
-        }
-    }
-    follow_bond();
-    log::info!("ble: unpaired by the owner; the bond is forgotten and the node is public");
     ADVERTISE.signal(());
     crate::mailbox::FOR_CORE.signal(());
     notify(Notify {
         status: true,
+        close_guests: was && !public,
         ..Notify::default()
     });
-    crate::display::phone(phone_now());
+}
+
+/// The host holds the records' bonds and no other: one a pairing added
+/// that no record took goes, and one a record holds that the host does
+/// not comes back.
+fn hold_records(stack: &Stack) {
+    let mut want: heapless::Vec<BondInformation, RECORDS> = heapless::Vec::new();
+    for b in crate::phones::read(|p| p.records.map(|r| r.and_then(|r| r.bond)))
+        .into_iter()
+        .flatten()
+    {
+        let _ = want.push(information(&b));
+    }
+    let mut other: heapless::Vec<Identity, BONDS> = heapless::Vec::new();
+    let mut held: heapless::Vec<BondInformation, BONDS> = heapless::Vec::new();
+    stack.with_bond_information(|bonds| {
+        for b in bonds {
+            match want.contains(b) {
+                true => {
+                    let _ = held.push(b.clone());
+                }
+                false => {
+                    let _ = other.push(b.identity);
+                }
+            }
+        }
+    });
+    for i in other {
+        if let Err(e) = stack.remove_bond_information(i) {
+            log::error!("ble: removing a bond {}", HostError(&e));
+        }
+    }
+    for b in want.into_iter().filter(|b| !held.contains(b)) {
+        if let Err(e) = stack.add_bond_information(b) {
+            log::error!("ble: a record's bond {}", HostError(&e));
+        }
+    }
+}
+
+/// The phone of record `i` unpairs (spec "Phone link", Public): its bond
+/// goes, in the host and in flash, and its home stays; with the last bond
+/// gone the node is public, as one nobody has paired with is, and its
+/// screen says `PHONE UNPAIRED`.
+fn unpair(stack: &Stack, i: usize) {
+    crate::phones::with(|p| p.unpair(i));
+    hold_records(stack);
+    log::info!("ble: record {} unpaired by its phone; its home stays", i);
+    records_changed();
+}
+
+/// The controller's resolving list, which holds each bonded phone's
+/// identity key so that the controller knows the phone's changing address
+/// (Bluetooth Core Vol 6 Part B §4.7): logged at boot against the
+/// records, for the bench, as the controller's documentation does not
+/// give its size.
+fn resolving_list() {
+    let mut out = sdc::raw::sdc_hci_cmd_le_read_resolving_list_size_return_t {
+        resolving_list_size: 0,
+    };
+    // SAFETY: the controller is built before the host runs, and its
+    // commands are synchronous calls from thread mode, so none is in
+    // progress when this one starts.
+    let status = unsafe { sdc::raw::sdc_hci_cmd_le_read_resolving_list_size(&mut out) };
+    let size = out.resolving_list_size;
+    match (status, usize::from(size) >= RECORDS) {
+        (0, true) => log::info!(
+            "ble: resolving list holds {} keys, the {} records need {}",
+            size,
+            RECORDS,
+            RECORDS
+        ),
+        (0, false) => log::error!(
+            "ble: resolving list holds {} keys, the {} records need {}: phones past it are not known by their address",
+            size,
+            RECORDS,
+            RECORDS
+        ),
+        (e, _) => log::error!("ble: LE Read Resolving List Size failed: {:#x}", e),
+    }
 }
 
 /// The node's random static address: the factory's DEVICEADDR (nRF52840
@@ -1312,16 +1405,20 @@ async fn advertise<'v, 's>(
     );
     let conn = advertiser.accept().await?;
     let p = conn.params();
-    // Whether the kept bond's identity, by its address or its IRK, is this
-    // peer's: a bonded phone that is not is refused its key by the host,
-    // and its link ends at once (spec "Phone link", The replaced phone).
+    // The record whose bond's identity, by its address or its IRK, is
+    // this peer's: a bonded phone that has none is refused its key by the
+    // host, and its link ends at once (spec "Phone link", The removed
+    // phone).
     let peer = conn.peer_address();
-    let bonded = KEPT.lock(|k| {
-        k.borrow()
-            .map(|b| information(&b).identity.match_address(&peer))
+    let bonded = crate::phones::read(|p| {
+        (0..RECORDS).find(|&i| {
+            p.get(i)
+                .and_then(|r| r.bond)
+                .is_some_and(|b| information(&b).identity.match_address(&peer))
+        })
     });
     log::info!(
-        "ble: connected peer={:?} the bond's={:?} interval_us={} latency={} timeout_ms={}",
+        "ble: connected peer={:?} record={:?} interval_us={} latency={} timeout_ms={}",
         peer,
         bonded,
         p.conn_interval.as_micros(),
@@ -1331,11 +1428,32 @@ async fn advertise<'v, 's>(
     Ok(conn.with_attribute_server(server)?)
 }
 
-/// Whether the link is the paired phone's: encrypted with an
-/// authenticated key, which only the kept bond gives, as the host holds
-/// no other ([`settle`]).
-fn owner(conn: &GattConnection<'_, '_, DefaultPacketPool>) -> bool {
-    conn.raw().security_level().ok() == Some(SecurityLevel::EncryptedAuthenticated)
+/// The record whose phone the link is: encrypted with an authenticated
+/// key, which only a record's bond gives, as the host holds no other
+/// ([`hold_records`]), and the record whose bond names the peer.
+fn owner(conn: &GattConnection<'_, '_, DefaultPacketPool>) -> Option<usize> {
+    let raw = conn.raw();
+    if raw.security_level().ok() != Some(SecurityLevel::EncryptedAuthenticated) {
+        return None;
+    }
+    let peer = raw.peer_identity();
+    crate::phones::read(|p| {
+        (0..RECORDS).find(|&i| {
+            p.get(i)
+                .and_then(|r| r.bond)
+                .is_some_and(|b| information(&b).identity.match_identity(&peer))
+        })
+    })
+}
+
+/// The phone's identity address, as the host knows it: a pairing from a
+/// phone a record's bond names is taken on a full node
+/// (spec "Phone link", Pairing).
+fn identity(conn: &GattConnection<'_, '_, DefaultPacketPool>) -> (u8, [u8; 6]) {
+    let a = conn.raw().peer_identity().addr;
+    let mut addr = [0u8; 6];
+    addr.copy_from_slice(a.addr.raw());
+    (a.kind.into_inner(), addr)
 }
 
 /// The handles a guest may use on a public node: the values of Node,
@@ -1356,7 +1474,7 @@ fn open_handles(link: &Link) -> [u16; 9] {
     ]
 }
 
-/// Whether the link may make the request `att`: the paired phone's may
+/// Whether the link may make the request `att`: a paired phone's may
 /// make any the host allows; on a public node, any link may use the open
 /// handles; on any node, any link may discover the table and read what
 /// the host leaves open. A read by type reads an open value only by the
@@ -1432,10 +1550,10 @@ async fn serve(
     refresh(slot, server, conn, update);
     let ends = embassy_time::Instant::now() + GUEST_LINK;
     loop {
-        // A guest's link, on a public node, ends at `ends`: neither the
-        // owner's nor one that pairs.
+        // A guest's link, on a public node, ends at `ends`: neither a
+        // paired phone's nor one that pairs.
         let pairing = LINK.lock(|l| l.borrow().phones[slot].pairing);
-        let guest = public() && !pairing && !owner(conn);
+        let guest = public() && !pairing && owner(conn).is_none();
         if guest && embassy_time::Instant::now() >= ends {
             log::info!("ble: the guest in slot {} closed after its time", slot);
             conn.raw().disconnect();
@@ -1458,11 +1576,14 @@ async fn serve(
             Either3::Second(n) => {
                 LINK.lock(|l| l.borrow_mut().phones[slot].sending = true);
                 // A guest's link ends with the public setting.
-                if n.close_guests && !owner(conn) {
+                if n.close_guests && owner(conn).is_none() {
                     log::info!("ble: no longer public; the guest in slot {} closed", slot);
                     conn.raw().disconnect();
                 }
+                // Its phone's bond was removed by another phone, or the node
+                // reboots.
                 if n.close {
+                    log::info!("ble: the link in slot {} closed", slot);
                     conn.raw().disconnect();
                 }
                 refresh(slot, server, conn, update);
@@ -1478,7 +1599,7 @@ async fn serve(
                         .notify(conn, &given_back_now(slot), true)
                         .await;
                 }
-                if n.answer && owner(conn) {
+                if n.answer && owner(conn).is_some() {
                     let _ = link.ask.notify(conn, &answer_now(), true).await;
                 }
                 LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
@@ -1499,11 +1620,13 @@ async fn serve(
         let event = match event {
             GattConnectionEvent::Disconnected { reason } => {
                 log::info!("ble: disconnected 0x{:02x} slot {}", u8::from(reason), slot);
-                if owner(conn) {
+                if owner(conn).is_some() {
                     update.lock().await.phone.link_closed();
                 }
                 // A pairing cut short leaves no code on the screen.
-                crate::display::phone(phone_now());
+                if LINK.lock(|l| l.borrow().phones[slot].pairing) {
+                    crate::display::pairing(None);
+                }
                 return;
             }
             GattConnectionEvent::PassKeyDisplay(key) => {
@@ -1519,7 +1642,7 @@ async fn serve(
                     }
                 }
                 LINK.lock(|l| l.borrow_mut().phones[slot].pairing = true);
-                crate::display::phone(Phone::Code(key.value()));
+                crate::display::pairing(Some(key.value()));
                 continue;
             }
             GattConnectionEvent::PairingComplete {
@@ -1527,22 +1650,37 @@ async fn serve(
                 bond,
             } => {
                 settle(stack, conn, security_level, bond);
+                crate::display::pairing(None);
                 LINK.lock(|l| {
                     let p = &mut l.borrow_mut().phones[slot];
-                    p.owner = owner(conn);
+                    p.record = owner(conn);
                     p.pairing = false;
                 });
+                linked(conn);
                 continue;
             }
             GattConnectionEvent::PairingFailed(e) => {
-                log::info!("ble: pairing failed {}", HostError(&e));
+                let refused = LINK.lock(|l| {
+                    let mut l = l.borrow_mut();
+                    l.phones[slot].pairing = false;
+                    l.phones[slot].refuses
+                });
+                if refused {
+                    log::info!(
+                        "ble: pairing refused, every record in use; the screen says PHONES FULL"
+                    );
+                    crate::display::full();
+                } else {
+                    log::info!("ble: pairing failed {}", HostError(&e));
+                    crate::display::pairing(None);
+                }
                 settle(stack, conn, SecurityLevel::NoEncryption, None);
-                LINK.lock(|l| l.borrow_mut().phones[slot].pairing = false);
                 continue;
             }
             GattConnectionEvent::Encrypted { security_level, .. } => {
                 log::info!("ble: encrypted {:?}", security_level);
-                LINK.lock(|l| l.borrow_mut().phones[slot].owner = owner(conn));
+                LINK.lock(|l| l.borrow_mut().phones[slot].record = owner(conn));
+                linked(conn);
                 tell_of_change(gatt, &changes, conn, false).await;
                 continue;
             }
@@ -1590,9 +1728,9 @@ async fn serve(
         }
         let from = From {
             slot,
-            owner: owner(conn),
+            record: owner(conn),
         };
-        if !allowed(from.owner, public(), link, &incoming) {
+        if !allowed(from.owner(), public(), link, &incoming) {
             if let Ok(reply) = event.reject(AttErrorCode::INSUFFICIENT_AUTHENTICATION) {
                 reply.send().await;
             }
@@ -1611,7 +1749,7 @@ async fn serve(
         );
         // A read of Neighbours asks the node for the page first: the table
         // is the core's, which only the node's task reads.
-        if !continued && from.owner && read_of(&incoming) == Some(link.neighbours.handle) {
+        if !continued && from.owner() && read_of(&incoming) == Some(link.neighbours.handle) {
             let start = LINK.lock(|l| l.borrow().phones[slot].neighbours_from);
             ask(from, Request::Neighbours(start)).await;
         }
@@ -1620,15 +1758,16 @@ async fn serve(
                 let l = l.borrow();
                 (l.guest(slot), l.phones[slot].tag, l.phones[slot].after)
             });
-            match (guest, tag) {
-                (false, _) => {
-                    ask(from, Request::Inbox(slot)).await;
+            match (from.record, guest, tag) {
+                (Some(record), ..) => {
+                    ask(from, Request::Inbox { slot, record }).await;
                 }
-                (true, Some(tag)) => {
+                (None, true, Some(tag)) => {
                     ask(from, Request::Guest { slot, tag, after }).await;
                 }
-                // Without a tag a guest has no mail to read.
-                (true, None) => {}
+                // Without a tag a guest has no mail to read, and a link
+                // that is neither reads nothing.
+                _ => {}
             }
         }
         if !continued && !piece {
@@ -1664,24 +1803,30 @@ async fn serve(
                 } else if h == link.map_point.handle {
                     Some(write_map_point(from, &w).await)
                 } else if h == link.clock.handle {
-                    Some(write_clock(from, &w).await)
+                    let r = write_clock(from, &w).await;
+                    // The node may have the time only now.
+                    linked(conn);
+                    Some(r)
                 } else if h == link.home.handle {
-                    Some(write_home(&w))
+                    Some(write_home(from, &w))
+                } else if h == link.phones.handle {
+                    Some(write_phones(from, stack, &w))
                 } else if h == link.neighbours.handle {
                     Some(write_neighbours(slot, &w))
                 } else if h == link.ask.handle {
                     Some(write_ask(from, &w).await)
                 } else if h == link.recipient.handle {
-                    let r = write_recipient(from, &w);
-                    close = r == Ok(true);
-                    Some(r.map(|_| ()))
+                    let (r, end) = write_recipient(from, &w);
+                    close = end;
+                    Some(r)
                 } else if h == link.guest.handle {
                     Some(write_guest(from, &w))
                 } else if h == link.public.handle {
                     let r = write_public(from, &w);
-                    if r == Ok(true) {
-                        forget(stack);
-                        // The link was the owner's, which it is no longer.
+                    if let (Ok(true), Some(i)) = (r, from.record) {
+                        unpair(stack, i);
+                        // The link was a paired phone's, which it is no
+                        // longer.
                         close = true;
                     }
                     Some(r.map(|_| ()))
@@ -1761,34 +1906,27 @@ fn read_of(att: &AttClient<'_>) -> Option<u16> {
     }
 }
 
-/// Bring the paired phone's attribute table up to date (spec
-/// "Phone link", Changes to the table): on its link, encrypted with the
-/// kept bond, keep its subscription to Service Changed with the bond, as
-/// a bonded client's is kept across connections (Vol 3 Part G
+/// Bring a paired phone's attribute table up to date
+/// (spec "Phone link", Changes to the table): on its link, encrypted with
+/// its record's bond, keep its subscription to Service Changed with the
+/// bond, as a bonded client's is kept across connections (Vol 3 Part G
 /// §3.3.3.3), and while it is subscribed and the table it last saw is of
 /// another link version, indicate Service Changed over every handle; once
 /// the phone confirms, it has the table of this version. `written` is
-/// whether the phone has just written its subscription, which then
-/// stands as written; else the kept one is put back.
+/// whether the phone has just written its subscription, which then stands
+/// as written; else the kept one is put back.
 async fn tell_of_change(
     gatt: &Gatt,
     changes: &Cccd,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     written: bool,
 ) {
-    let raw = conn.raw();
-    if raw.security_level().ok() != Some(SecurityLevel::EncryptedAuthenticated) {
-        return;
-    }
-    let Some(mut bond) = KEPT.lock(|k| *k.borrow()) else {
+    let Some(i) = owner(conn) else {
         return;
     };
-    if !information(&bond)
-        .identity
-        .match_identity(&raw.peer_identity())
-    {
+    let Some(mut bond) = crate::phones::read(|p| p.get(i).and_then(|r| r.bond)) else {
         return;
-    }
+    };
     let before = bond;
     let live = conn
         .get(changes)
@@ -1803,7 +1941,8 @@ async fn tell_of_change(
     }
     if bond.service_changed && bond.seen != bark_link::VERSION {
         log::info!(
-            "ble: service changed: the phone saw version {}, this is {}",
+            "ble: service changed: the phone of record {} saw version {}, this is {}",
+            i,
             bond.seen,
             bark_link::VERSION
         );
@@ -1820,17 +1959,32 @@ async fn tell_of_change(
         }
     }
     if bond != before {
-        keep(bond);
+        crate::phones::with(|p| p.set_keys(i, bond));
     }
 }
 
-/// After a pairing: keep its bond if it is the paired phone's from now
-/// on, an authenticated pairing that bonds, in place of the one kept
-/// before, since its code was on the node's screen and so someone was at
-/// the node. The host then holds the kept bond and no other, so that a
-/// Just Works pairing, or one that does not bond, leaves the kept bond as
-/// it was, even one that replaced it in the host as the same phone's; and
-/// its link is closed.
+/// The paired phone on `conn` is linked today: its record keeps the day,
+/// written when it changes (spec "Phone link", Phones).
+fn linked(conn: &GattConnection<'_, '_, DefaultPacketPool>) {
+    let Some(i) = owner(conn) else {
+        return;
+    };
+    let day = crate::phones::today();
+    let known = crate::phones::read(|p| p.get(i).map(|r| r.day));
+    if day != 0 && known.is_some_and(|d| d != day) {
+        crate::phones::with(|p| p.linked(i, day));
+    }
+}
+
+/// After a pairing: an authenticated pairing that bonds, by the code on
+/// the node's screen, so someone was at the node, takes a record, or
+/// replaces the bond of the record whose bond names the same phone; on a
+/// node with every record in use and a phone paired it is refused, and
+/// its link closed (spec "Phone link", Pairing). A Just Works pairing, or
+/// one that does not bond, changes no record, and its link is closed. The
+/// host then holds the records' bonds and no other, so that a refused
+/// pairing leaves every record's bond as it was, even one the host
+/// replaced as the same phone's.
 fn settle(
     stack: &Stack,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
@@ -1840,71 +1994,37 @@ fn settle(
     let authenticated = level == SecurityLevel::EncryptedAuthenticated;
     let paired = bond
         .as_ref()
-        .filter(|b| b.is_bonded)
-        .map(|b| bond_of(b, false));
-    let before = KEPT.lock(|k| *k.borrow());
-    let after = bark_link::bond::after_pairing(before, paired, authenticated);
-    if let Some(b) = after.filter(|_| after != before) {
-        log::info!(
-            "ble: paired; the bond replaces any before it, {}",
-            Whose(&b)
-        );
-        keep(b);
-    } else if level != SecurityLevel::NoEncryption {
-        log::warn!("ble: a pairing that is not authenticated or does not bond; closed");
-        conn.raw().disconnect();
-    }
-    let keep = KEPT.lock(|k| *k.borrow()).map(|b| information(&b));
-    let mut other: heapless::Vec<Identity, BONDS> = heapless::Vec::new();
-    let mut held = false;
-    stack.with_bond_information(|bonds| {
-        for b in bonds {
-            match Some(b) == keep.as_ref() {
-                true => held = true,
-                false => {
-                    let _ = other.push(b.identity);
+        .filter(|b| b.is_bonded && authenticated)
+        .map(keys_of);
+    match paired {
+        Some(keys) => {
+            let newest = crate::mailbox::with(|m| m.newest()).unwrap_or(0);
+            match crate::phones::with(|p| p.pair(keys, newest)) {
+                Ok(how) => {
+                    log::info!("ble: paired, {:?}, {}", how, Whose(&keys));
+                    records_changed();
+                }
+                Err(bark_link::phones::Full) => {
+                    log::warn!("ble: paired, but every record is in use; refused and closed");
+                    crate::display::full();
+                    conn.raw().disconnect();
                 }
             }
         }
-    });
-    for i in other {
-        if let Err(e) = stack.remove_bond_information(i) {
-            log::error!("ble: removing a bond {}", HostError(&e));
+        None if level != SecurityLevel::NoEncryption => {
+            log::warn!("ble: a pairing that is not authenticated or does not bond; closed");
+            conn.raw().disconnect();
         }
+        None => {}
     }
-    if let Some(b) = keep.filter(|_| !held) {
-        if let Err(e) = stack.add_bond_information(b) {
-            log::error!("ble: the kept bond {}", HostError(&e));
-        }
-    }
-    crate::display::phone(phone_now());
-}
-
-/// The bond kept, which the host is to hold alone ([`settle`]), as
-/// kept in flash.
-static KEPT: Mutex<CriticalSectionRawMutex, RefCell<Option<Bond>>> = Mutex::new(RefCell::new(None));
-
-/// The screen's phone line when no pairing runs: what the kept bond says.
-fn phone_now() -> Phone {
-    KEPT.lock(|k| phone_of(k.borrow().as_ref()))
-}
-
-/// The screen's phone line for a node with the bond `bond`, or none:
-/// unpaired, its owner's alone, or its owner's and public
-/// (spec "Phone link", Pairing).
-pub fn phone_of(bond: Option<&Bond>) -> Phone {
-    match bond {
-        None => Phone::Unpaired,
-        Some(b) if b.private => Phone::Private,
-        Some(_) => Phone::Public,
-    }
+    hold_records(stack);
 }
 
 /// Whose a bond is, for the log: the identity address's kind and bytes,
 /// most significant first as phones show them, and a fingerprint of its
 /// IRK, the first byte of its sum, so that two logs tell whether the bond
 /// is the same phone's.
-struct Whose<'a>(&'a Bond);
+struct Whose<'a>(&'a Keys);
 
 impl core::fmt::Display for Whose<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1921,8 +2041,8 @@ impl core::fmt::Display for Whose<'_> {
     }
 }
 
-/// The host's bond of a kept one.
-fn information(b: &Bond) -> BondInformation {
+/// The host's bond of a record's.
+fn information(b: &Keys) -> BondInformation {
     BondInformation::new(
         Identity {
             addr: Address::new(AddrKind::new(b.kind), BdAddr::new(b.addr)),
@@ -1934,21 +2054,18 @@ fn information(b: &Bond) -> BondInformation {
     )
 }
 
-/// The bond to keep of a new pairing's: the phone discovers the table
-/// of this version as it pairs, and has not subscribed yet; the node stays
-/// `private` or not, and the new phone's tag comes once it writes it.
-fn bond_of(b: &BondInformation, private: bool) -> Bond {
+/// The keys to keep of a new pairing's bond: the phone discovers the table
+/// of this version as it pairs, and has not subscribed yet.
+fn keys_of(b: &BondInformation) -> Keys {
     let mut addr = [0u8; 6];
     addr.copy_from_slice(b.identity.addr.addr.raw());
-    Bond {
+    Keys {
         kind: b.identity.addr.kind.into_inner(),
         addr,
         irk: b.identity.irk.map(|k| k.to_le_bytes()),
         ltk: b.ltk.to_le_bytes(),
         seen: bark_link::VERSION,
         service_changed: false,
-        private,
-        owner: None,
     }
 }
 
@@ -1985,6 +2102,18 @@ fn refresh(
     update: &Update,
 ) {
     let link = &server.link;
+    let record = owner(conn);
+    // A pairing is refused while no record would take it: the phone's
+    // own, a free one, or any on a node nobody is paired with.
+    let refuses = !crate::phones::read(|p| p.takes(Some(identity(conn))));
+    LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        l.phones[slot].record = record;
+        l.phones[slot].refuses = refuses;
+    });
+    if let Err(e) = conn.raw().set_refuses_pairing(refuses) {
+        log::error!("ble: refusing pairing {}", HostError(&e));
+    }
     let status = status_now(slot).encode();
     let staged = update
         .try_lock()
@@ -1992,15 +2121,17 @@ fn refresh(
         .and_then(|u| conn.set(&link.update, &progress(&u.phone)).err());
     for e in [
         staged,
+        conn.set(&link.node, &node_now()).err(),
         conn.set(&link.status, &status).err(),
         conn.set(&link.inbox, &inbox_now(slot)).err(),
         conn.set(&link.given_back, &given_back_now(slot)).err(),
         conn.set(&link.clock, &clock_now()).err(),
-        conn.set(&link.home, &home_now().encode()).err(),
+        conn.set(&link.home, &home_now(record).encode()).err(),
         conn.set(&link.neighbours, &neighbours_now()).err(),
         conn.set(&link.ask, &answer_now()).err(),
         conn.set(&link.public, &bark_link::Public(public()).encode())
             .err(),
+        conn.set(&link.phones, &phones_now(slot, record)).err(),
     ]
     .into_iter()
     .flatten()
@@ -2132,55 +2263,75 @@ async fn write_map_point(
     Ok(())
 }
 
-/// Recipient, written: the phone's recipient tag at the node; the paired
-/// phone's is kept with the bond, so that the node places its owner's
-/// messages while the owner is away (spec "Phone link", Public).
+/// Recipient, written: the phone's recipient tag at the node, and from
+/// link version 13 its person's name; a paired phone's record keeps both,
+/// so that the node knows its person's messages while they are away and
+/// the node's phones see who is paired (spec "Phone link", Pairing,
+/// Public). A guest's name is not kept.
 ///
-/// One guest at a time: whether to close the link, a phone's that is not
-/// the owner's while another guest's link is up, as the other link is the
-/// owner's to take.
+/// The answer, and whether to close the link: an app whose link version
+/// and the node's do not serve each other is answered with the ATT error
+/// 0x82 and its link ended (spec "Phone link", Versions); and one guest
+/// at a time, so a phone's that is not paired is closed while another
+/// guest's link is up, as the other links are the paired phones' to take.
 fn write_recipient(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
-) -> Result<bool, AttErrorCode> {
-    let tag = w.with_data(|offset, data| match offset {
+) -> (Result<(), AttErrorCode>, bool) {
+    let r = w.with_data(|offset, data| match offset {
         0 => bark_link::Recipient::decode(data).map_err(malformed),
         _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    });
+    let r = match r {
+        Ok(r) => r,
+        Err(e) => return (Err(e), false),
+    };
+    if !r.compatible() {
+        log::warn!(
+            "ble: the app in slot {} speaks link version {} and serves nodes from version {}; \
+this node speaks {} and serves apps from {}: they do not serve each other, closed",
+            from.slot,
+            r.version,
+            r.oldest,
+            bark_link::VERSION,
+            bark_link::OLDEST
+        );
+        return (Err(AttErrorCode::new(bark_link::att::INCOMPATIBLE)), true);
+    }
     let busy = LINK.lock(|l| {
         let mut l = l.borrow_mut();
         let other = (0..LINKS).any(|i| {
             let p = &l.phones[i];
-            i != from.slot && p.live && !p.owner && p.tag.is_some()
+            i != from.slot && p.live && p.record.is_none() && p.tag.is_some()
         });
-        let busy = !from.owner && other;
+        let busy = !from.owner() && other;
         if !busy {
-            l.phones[from.slot].tag = Some(tag.0);
+            l.phones[from.slot].tag = Some(r.tag);
         }
         busy
     });
     if busy {
         log::info!("ble: a second guest in slot {}, closed", from.slot);
-        return Ok(true);
+        return (Ok(()), true);
     }
-    if from.owner {
-        if let Some(b) = KEPT
-            .lock(|k| *k.borrow())
-            .filter(|b| b.owner != Some(tag.0))
-        {
-            keep(Bond {
-                owner: Some(tag.0),
-                ..b
-            });
+    if let Some(i) = from.record {
+        let changed = crate::phones::read(|p| {
+            p.get(i)
+                .is_some_and(|rec| rec.tag != Some(r.tag) || rec.name != r.name)
+        });
+        if changed {
+            crate::phones::with(|p| p.set_recipient(i, r.tag, r.name));
         }
     }
     log::info!(
-        "ble: recipient {:02x} slot {} owner {}",
-        tag.0,
+        "ble: recipient {:02x} slot {} record {:?} app version {} name {} bytes",
+        r.tag,
         from.slot,
-        from.owner
+        from.record,
+        r.version,
+        r.name.as_bytes().len()
     );
-    Ok(false)
+    (Ok(()), false)
 }
 
 /// Guest, written: the number of the last item the guest took, after
@@ -2194,11 +2345,11 @@ fn write_guest(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<
     Ok(())
 }
 
-/// Public, written by the paired phone: 0 makes the node private, the
-/// owner's alone, and 1 public again, as it is by default, at once and
-/// across reboots; made private, its guests' links close; 2 unpairs, for
-/// the caller to [`forget`] the bond. Whether it unpairs
-/// (spec "Phone link", Public).
+/// Public, written by a paired phone: 0 makes the node private, its
+/// owners' alone, and 1 public again, as it is by default, at once and
+/// across reboots, the node's one setting for all its phones; made
+/// private, its guests' links close; 2 unpairs the writing phone, for the
+/// caller to [`unpair`]. Whether it unpairs (spec "Phone link", Public).
 fn write_public(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
@@ -2207,63 +2358,200 @@ fn write_public(
         0 => bark_link::PublicWrite::decode(data).map_err(malformed),
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
-    let Some(b) = KEPT.lock(|k| *k.borrow()).filter(|_| from.owner) else {
-        // Only the owner's link writes it, and it is the bond's.
+    if !from.owner() {
+        // Only a paired phone's link writes it.
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
-    };
+    }
     let set = match write {
         bark_link::PublicWrite::Unpair => return Ok(true),
         bark_link::PublicWrite::Set(set) => set,
     };
-    if b.private == set.0 {
-        keep(Bond {
-            private: !set.0,
-            ..b
-        });
+    if crate::phones::read(|p| p.public()) != set.0 {
+        crate::phones::with(|p| p.set_private(!set.0));
         log::info!("ble: public {}", set.0);
-        ADVERTISE.signal(());
-        crate::mailbox::FOR_CORE.signal(());
-        notify(Notify {
-            status: true,
-            close_guests: !set.0,
-            ..Notify::default()
-        });
-        crate::display::phone(phone_now());
+        records_changed();
     }
     Ok(false)
 }
 
-/// Home as the phone reads it: whether the node is a home, and the
-/// numbers its ring holds.
-fn home_now() -> bark_link::home::Home {
+/// Node as the phone reads it: what the node is, and how many more
+/// phones may pair with it.
+fn node_now() -> [u8; Node::LEN] {
+    let node = LINK.lock(|l| l.borrow().node);
+    let room = crate::phones::read(|p| p.room());
+    node.map_or([0; Node::LEN], |n| {
+        Node {
+            room: Some(room),
+            ..n
+        }
+        .encode()
+    })
+}
+
+/// Home as the phone of record `record` reads it: whether the node is
+/// anyone's home, the numbers its ring holds, and whether it is this
+/// phone's person's home.
+fn home_now(record: Option<usize>) -> bark_link::home::Home {
+    let mine =
+        record.is_some_and(|i| crate::phones::read(|p| p.get(i).is_some_and(|r| r.key.is_some())));
     crate::mailbox::with(|m| bark_link::home::Home {
         set: m.is_home(),
         oldest: m.oldest(),
         newest: m.newest(),
+        mine: Some(mine),
     })
     .unwrap_or_default()
 }
 
-/// Home, written: the mailbox takes the key, or forgets it, at once
-/// (`mailbox.rs`), and the node publishes its inbox as a home's or not
-/// (`node.rs`, `follow_home`).
-fn write_home(w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
+/// Phones as the phone in `slot`, of record `record`, reads it: the
+/// records from the place it wrote (spec "Phone link", Phones).
+fn phones_now(
+    slot: usize,
+    record: Option<usize>,
+) -> heapless::Vec<u8, { bark_link::phones::MAX_LEN }> {
+    let (from, linked) = LINK.lock(|l| {
+        let l = l.borrow();
+        let linked = (0..LINKS)
+            .filter_map(|s| l.phones[s].record.filter(|_| l.phones[s].live))
+            .fold(0u8, |m, i| m | 1 << i);
+        (l.phones[slot].phones_from, linked)
+    });
+    let mut b = [0u8; bark_link::phones::MAX_LEN];
+    let n = crate::phones::read(|p| p.page(from, record, linked, &mut b));
+    heapless::Vec::from_slice(&b[..n]).expect("it fits")
+}
+
+/// Home, written by the phone of record `i`: its person's key, or none,
+/// at once; another person's home stays (spec "Phone link", Home).
+fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     use bark_link::home::SetHome;
     let set = w.with_data(|offset, data| match offset {
         0 => SetHome::decode(data).map_err(malformed),
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
+    let Some(i) = from.record else {
+        return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
+    };
     let key = match set {
         SetHome::Set(k) => Some(k),
         SetHome::Clear => None,
     };
-    crate::mailbox::with(|m| m.set_key(key));
+    let now = crate::phones::with(|p| p.set_home(i, key));
+    if now != i {
+        log::info!(
+            "ble: record {} joins the home record {} left by its person's phone",
+            i,
+            now
+        );
+        LINK.lock(|l| l.borrow_mut().phones[from.slot].record = Some(now));
+    }
     crate::mailbox::FOR_CORE.signal(());
     log::info!(
-        "ble: home {}",
+        "ble: home of record {} {}",
+        now,
         if key.is_some() { "set" } else { "cleared" }
     );
     Ok(())
+}
+
+/// The removal code on the screen, if one is (spec "Phone link", Phones).
+static REMOVAL: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<bark_link::phones::Code>>> =
+    Mutex::new(core::cell::Cell::new(None));
+
+fn ms_now() -> u64 {
+    embassy_time::Instant::now().as_millis()
+}
+
+/// Phones, written by a paired phone: the place to read from, a code
+/// drawn on the screen, or a removal with that code, taken within 30 s
+/// and on one try (spec "Phone link", Phones).
+fn write_phones(
+    from: From,
+    stack: &Stack,
+    w: &WriteEvent<'_, '_, DefaultPacketPool>,
+) -> Result<(), AttErrorCode> {
+    use bark_link::phones::{Code, PhonesWrite};
+    let write = w.with_data(|offset, data| match offset {
+        0 => PhonesWrite::decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })?;
+    if from.record.is_none() {
+        return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
+    }
+    match write {
+        PhonesWrite::From(place) => {
+            LINK.lock(|l| l.borrow_mut().phones[from.slot].phones_from = place);
+            Ok(())
+        }
+        PhonesWrite::Code => {
+            let code = loop {
+                let mut r = [0u8; 4];
+                trouble_host_random(&mut r);
+                if let Some(c) = Code::draw(u32::from_le_bytes(r), ms_now()) {
+                    break c;
+                }
+            };
+            REMOVAL.lock(|c| c.set(Some(code)));
+            // The code only in an open build, as a pairing's
+            // (spec "Phone link", Pairing).
+            match crate::protect::BUILD {
+                bark_image::protect::Build::Open => {
+                    log::info!("ble: removal, the code shown: {:06}", code.code)
+                }
+                bark_image::protect::Build::Protected => log::info!("ble: removal, the code shown"),
+            }
+            crate::display::removal(Some(code.code));
+            Ok(())
+        }
+        PhonesWrite::Remove {
+            number,
+            parts,
+            code,
+        } => {
+            if crate::phones::read(|p| p.holding(number, parts)).is_none() {
+                return Err(malformed(Malformed::Value));
+            }
+            let taken = REMOVAL.lock(|c| {
+                let mut drawn = c.get();
+                let taken = Code::take(&mut drawn, code, ms_now());
+                c.set(drawn);
+                taken
+            });
+            crate::display::removal(None);
+            if !taken {
+                log::info!("ble: removal refused: not the code shown, or too late");
+                return Err(REFUSED);
+            }
+            let Some(removed) = crate::phones::with(|p| p.remove(number, parts)) else {
+                return Err(malformed(Malformed::Value));
+            };
+            log::info!(
+                "ble: record {} number {} removed: bond {}, home {}",
+                removed.index,
+                number,
+                parts.bond,
+                parts.home
+            );
+            if removed.bond.is_some() {
+                hold_records(stack);
+                let slots = LINK.lock(|l| {
+                    let l = l.borrow();
+                    l.slots_of(removed.index).fold(0u16, |m, s| m | 1 << s)
+                });
+                for s in (0..LINKS).filter(|&s| slots & (1 << s) != 0) {
+                    notify_one(
+                        s,
+                        Notify {
+                            close: true,
+                            ..Notify::default()
+                        },
+                    );
+                }
+            }
+            records_changed();
+            Ok(())
+        }
+    }
 }
 
 /// Neighbours, written: the next read on the link in `slot` starts at

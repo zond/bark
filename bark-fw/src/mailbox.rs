@@ -1,29 +1,27 @@
 //! The mailbox (spec "Mailbox"; `bark_app_layer::mailbox`): an
 //! application on the node beside the phone link, its ring on the
-//! external flash (`bark_image::layout::external::MAILBOX`) and its state,
-//! which holds the mailbox key, in a page inside
-//! (`bark_image::layout::MAILBOX_STATE`; `bark_app_layer::flash_ring`).
+//! external flash (`bark_image::layout::external::MAILBOX`). Its people,
+//! their tags and keys, come from the phones' records (`phones.rs`),
+//! which keep what it moves on. Every node keeps every message in it, its
+//! phones' and its guests' (spec "Phone link", Receiving).
 //!
 //! The mailbox lives in a static, used by the node's loop (`node.rs`:
 //! what the core delivers, the replies it sends) and by the phone link
 //! (`ble.rs`: Home, the Inbox read from the ring). It reads the ring when
 //! asked, about a millisecond a slot on the external flash's bus, and
-//! never waits on a write: what it writes is queued, and [`run`] does it,
-//! the ring's ops on the external flash with the executor free while the
-//! chip writes (`ext_flash.rs`), the state's through the MPSL's flash
-//! timeslots, as the store does, between the BLE controller's radio
-//! events. A message the core delivered is confirmed to the core only
-//! once its slot is written, so that one taken is not lost to a reboot
-//! meanwhile (`node.rs`).
+//! never waits on a write: what it writes is queued, and [`run`] does it
+//! on the external flash with the executor free while the chip writes
+//! (`ext_flash.rs`). A message the core delivered is confirmed to the
+//! core only once its slot is written, so that one taken is not lost to a
+//! reboot meanwhile (`node.rs`).
 //!
-//! While the node is nobody's home and not public nothing changes: the
-//! core's inbox is the phone's, as without the mailbox. A public node's
-//! ring keeps its owner's messages as a home's does (spec "Phone link",
-//! Public).
+//! The mailbox's state page inside (`bark_image::layout::MAILBOX_STATE`),
+//! where an image before the records kept its one key, is read once, for
+//! that key to become record one ([`old_home`]).
 
 use core::cell::RefCell;
 
-use bark_app_layer::flash_ring::{Area, FlashRing, Op, Region};
+use bark_app_layer::flash_ring::{FlashRing, Op, Region};
 use bark_app_layer::mailbox::{Arrival, Mailbox, SLOTS_PER_PAGE};
 use bark_image::layout::{self, external, MAILBOX_STATE, PAGE};
 use bark_proto::wire::MAX_PAYLOAD;
@@ -35,7 +33,6 @@ use embassy_time::Instant;
 use embedded_storage::nor_flash::ReadNorFlash;
 
 use crate::ext_flash;
-use crate::store::SharedFlash;
 
 /// A region of the internal flash, read where it lies in the chip's
 /// address space: the state's page.
@@ -86,30 +83,47 @@ static HOME_CELL: static_cell::StaticCell<Home> = static_cell::StaticCell::new()
 /// Raised when the mailbox has queued a write.
 static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Raised when the queued writes are done, and when the phone sets or
-/// clears the home: the node then confirms what was kept, and publishes
+/// Raised when the queued writes are done, and when a phone's home or
+/// records change: the node then confirms what was kept, and publishes
 /// the change. A reply due needs no signal: the driver offers before every
 /// wait.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// What an image before the records kept of its one home, from the
+/// mailbox's state page, read where it lies.
+pub fn old_home() -> bark_link::phones::OldHome {
+    let state = bark_app_layer::flash_ring::last_state(&Mapped(MAILBOX_STATE));
+    match state.as_ref().and_then(bark_app_layer::mailbox::old_state) {
+        Some((key, last_fetch, read)) => bark_link::phones::OldHome {
+            key,
+            last_fetch,
+            read,
+        },
+        None => bark_link::phones::OldHome::default(),
+    }
+}
+
 /// Open the mailbox as it was before the reboot, once at boot, after
-/// `ext_flash::init`: every slot of the ring is read, and the time it
-/// takes is logged, the external flash's bus speed on the board.
+/// `ext_flash::init`, with its people from their records: every slot of
+/// the ring is read, and the time it takes is logged, the external
+/// flash's bus speed on the board.
 pub fn open() {
     let t0 = Instant::now();
-    let m = Mailbox::new(FlashRing::open(Ring, &Mapped(MAILBOX_STATE)));
-    log::info!(
-        "mailbox: home={} oldest={} newest={} unread={} unsent={}, {} slots read in {} ms",
-        m.is_home(),
-        m.oldest(),
-        m.newest(),
-        m.unread_count(),
-        m.unsent(),
-        Ring.pages() * SLOTS_PER_PAGE,
-        t0.elapsed().as_millis()
-    );
+    let m = Mailbox::new(FlashRing::open(Ring));
+    let ms = t0.elapsed().as_millis();
     let m = HOME_CELL.init(m);
     HOME.lock(|c| *c.borrow_mut() = Some(m));
+    crate::phones::to_mailbox();
+    let (home, oldest, newest) =
+        with(|m| (m.is_home(), m.oldest(), m.newest())).unwrap_or_default();
+    log::info!(
+        "mailbox: home={} oldest={} newest={}, {} slots read in {} ms",
+        home,
+        oldest,
+        newest,
+        Ring.pages() * SLOTS_PER_PAGE,
+        ms
+    );
 }
 
 /// Use the mailbox; what `f` queues is written soon after.
@@ -126,70 +140,53 @@ pub fn with<R>(f: impl FnOnce(&mut Home) -> R) -> Option<R> {
     Some(r)
 }
 
-/// Whether the ring keeps what arrives: on a home or a public node.
-pub fn keeps() -> bool {
-    with(|m| m.keeps()).unwrap_or(false)
-}
-
 /// Whether every write asked for is done.
 pub fn idle() -> bool {
     with(|m| m.ring().idle()).unwrap_or(true)
 }
 
-/// A payload the core delivered, into the mailbox.
+/// A payload the core delivered, into the mailbox; a fetch taken moves
+/// its person's last fetch, which their record keeps.
 pub fn arrive(msg_id: MsgId, payload: &[u8]) {
     match with(|m| m.arrive(msg_id, payload)) {
         Some(Arrival::Kept(n)) => log::info!("mailbox: id={:08x} kept as {}", msg_id.0, n),
-        Some(Arrival::Fetch) => log::info!("mailbox: fetch id={:08x} taken", msg_id.0),
+        Some(Arrival::Fetch(i)) => {
+            log::info!("mailbox: fetch id={:08x} taken for record {}", msg_id.0, i);
+            crate::phones::progress(i);
+        }
         Some(a) => log::info!("mailbox: id={:08x} {:?}", msg_id.0, a),
         None => {}
     }
 }
 
-/// The oldest item the phone at the node has not confirmed: the phone's
-/// Inbox when the node is a home. Its number, the message ID it arrived
-/// with, and its length in `out`.
-pub fn unread(out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
-    with(|m| m.unread(out)).flatten()
+/// The oldest of person `i`'s items their phone has not confirmed: its
+/// number, the message ID it arrived with, and its length in `out`.
+pub fn unread(i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
+    with(|m| m.unread(i, out)).flatten()
 }
 
-/// Write what the mailbox queues, for ever, one op at a time: the ring's
-/// on the external flash, the state's each in an MPSL flash timeslot, the
-/// flash shared with the store.
+/// Write what the mailbox queues, for ever, one op at a time, on the
+/// external flash.
 #[embassy_executor::task]
-pub async fn run(flash: &'static SharedFlash) -> ! {
+pub async fn run() -> ! {
     loop {
         WRITE.wait().await;
         while let Some(op) = with(|m| m.ring().op()).flatten() {
             match op {
-                Op::Erase {
-                    area: Area::Ring,
-                    offset,
-                } => {
+                Op::Erase { offset } => {
                     if let Err(e) = ext_flash::erase(external::MAILBOX.start + offset).await {
                         log::error!("mailbox: ring {:?}", e);
                     }
                 }
-                Op::Write {
-                    area: Area::Ring,
-                    offset,
-                    ..
-                } => {
+                Op::Write { offset, .. } => {
                     let at = external::MAILBOX.start + offset;
+                    let mark = op.data().len() == 1;
+                    let before = mark.then(|| read_byte(at));
                     if let Err(e) = ext_flash::program(at, op.data()).await {
                         log::error!("mailbox: ring {:?}", e);
                     }
-                }
-                Op::Erase { offset, .. } => {
-                    let at = MAILBOX_STATE.start + offset;
-                    if let Err(e) = flash.lock().await.erase(at, at + PAGE).await {
-                        log::error!("mailbox: state {:?}", e);
-                    }
-                }
-                Op::Write { offset, .. } => {
-                    let at = MAILBOX_STATE.start + offset;
-                    if let Err(e) = flash.lock().await.write(at, op.data()).await {
-                        log::error!("mailbox: state {:?}", e);
+                    if let Some(before) = before {
+                        check_mark(at, before, op.data()[0]);
                     }
                 }
             }
@@ -199,5 +196,52 @@ pub async fn run(flash: &'static SharedFlash) -> ! {
             log::error!("mailbox: {} writes lost", lost);
         }
         FOR_CORE.signal(());
+    }
+}
+
+/// A byte of the ring's flash, as the chip holds it.
+fn read_byte(at: u32) -> u8 {
+    let mut b = [0xffu8];
+    let _ = ext_flash::with(|c| c.read(at, &mut b));
+    b[0]
+}
+
+/// Whether a mark's program, a byte programmed again over one written
+/// before with bits clear, left the AND of the two, as the marks need: a
+/// slot's mark takes a program for each of the eight records' bits
+/// between erases (spec "Mailbox", The ring). The chip's datasheet is not
+/// in the repository to say whether it allows that, so the bench reads it
+/// here: the first mark that reads back right is logged once, and the
+/// wrong ones with their count.
+fn check_mark(at: u32, before: u8, cleared: u8) {
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+    static RIGHT: AtomicBool = AtomicBool::new(false);
+    static WRONG: AtomicU32 = AtomicU32::new(0);
+    let want = before & cleared;
+    let got = read_byte(at);
+    if got == want {
+        if !RIGHT.swap(true, Relaxed) {
+            log::info!(
+                "mailbox: a mark programmed over {:#04x} read back {:#04x}, as it should",
+                before,
+                got
+            );
+        }
+        return;
+    }
+    // Logged at the first, and at each power of two after, so that the log
+    // shows how often without a line a mark.
+    let wrong = WRONG.fetch_add(1, Relaxed) + 1;
+    if wrong.is_power_of_two() {
+        log::error!(
+            "mailbox: a mark at {:#x} programmed {:#04x} over {:#04x} read back {:#04x}, not {:#04x}: \
+the flash does not take a byte programmed again ({} so far)",
+            at,
+            cleared,
+            before,
+            got,
+            want,
+            wrong
+        );
     }
 }

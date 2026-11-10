@@ -214,3 +214,37 @@ fn a_flip_draws_the_lines_at_once() {
     s.drawn(Face::Lines, battery());
     assert_eq!(s.due(&battery(), 9_500), Some(9_000 + LINES_MS));
 }
+
+/// A removal code shows the lines as a pairing code does, and both it and
+/// a pairing refused for want of room are drawn at once on the code.
+#[test]
+fn a_removal_code_and_phones_full() {
+    let removing = State {
+        phone: Phone::Remove(4),
+        ..battery()
+    };
+    let mut s = shown(battery());
+    assert_eq!(s.face(&removing, 5_000), Face::Lines);
+    assert_eq!(s.due(&removing, 5_000), Some(5_000));
+    let full = State {
+        phone: Phone::Full,
+        ..battery()
+    };
+    let mut s = shown(battery());
+    assert_eq!(s.face(&full, 5_000), Face::Code, "the code stays");
+    assert_eq!(s.due(&full, 5_000), Some(5_000));
+    s.drawn(Face::Code, full);
+    assert_eq!(s.due(&full, 6_000), None);
+    // Its end is drawn a refresh after it, as the line goes back to the ID.
+    assert_eq!(s.due(&battery(), 35_000), Some(35_000 + REFRESH_MS));
+    // More phones paired is not shown on the code.
+    let mut s = shown(battery());
+    let two = State {
+        phone: Phone::Phones {
+            count: 2,
+            private: false,
+        },
+        ..battery()
+    };
+    assert_eq!(s.due(&two, 5_000), None);
+}

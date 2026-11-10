@@ -1,26 +1,32 @@
-//! The home node's mailbox, an application on the node beside the phone
-//! link (spec "Mailbox"). It reads what the core delivers to the node's
+//! The node's mailbox, an application on the node beside the phone link
+//! (spec "Mailbox"). It reads what the core delivers to the node's
 //! application (`AppEvent::Message`, the payload from `Core::inbox`),
 //! offers replies as `AppCommand::Send` while `accepts_send` holds, and
 //! takes a reply back on `AppEvent::GivenBack`; it changes nothing in the
 //! core, and the simulator can run it on a [`Ring`] in RAM.
 //!
-//! The node holds the mailbox key and cannot open the person's mail: it
-//! keeps every payload but a fetch, numbered, and answers a fetch once:
-//! the newest batch of the items it has not sent, newest first, each
-//! sealed again under the key with the count of those still unsent after
-//! the batch (`seal::seal_reply`), or one reply that says nothing is new
-//! (`seal::seal_nothing_new`). An item handed over for a reply, or
-//! confirmed by the phone at the node, is marked sent in its slot and
-//! stays in the ring. An item that arrives later waits for the next
-//! fetch.
+//! Every node keeps every payload but a fetch in its ring, numbered, for
+//! the people paired with it, its [`Person`]s, up to [`PEOPLE`], and for
+//! its guests, each by the recipient tag the payload carries
+//! (spec "Phone link", Receiving, Public). A slot's mark is a bit for each person, set
+//! as the item is written for those whose tag it carries: the item is
+//! theirs and not yet sent to them. A person's phone reads their items
+//! after the last it confirmed; a guest reads its own by tag after a
+//! number it keeps itself ([`Mailbox::for_tag`]).
 //!
-//! On a public node the ring keeps the guests' mail too, every payload for
-//! a recipient tag that is not the owner's, which a guest reads by its tag
-//! after a number it keeps itself ([`Mailbox::for_tag`]); such an item is
-//! written marked sent, so no fetch sends it and it counts in nothing of
-//! the owner's, and it leaves the ring as the ring wraps (spec "Mailbox",
-//! "Phone link", Public).
+//! The node holds the people's mailbox keys and cannot open their mail. A
+//! fetch opens under one person's key, and the node answers it once: the
+//! newest batch of that person's items whose bit is set, newest first,
+//! each sealed again under the key with the count of those still unsent
+//! after the batch (`seal::seal_reply`), or one reply that says nothing
+//! is new (`seal::seal_nothing_new`). An item handed over for a reply, or
+//! confirmed by the person's phone, has the person's bit cleared and
+//! stays in the ring. An item that arrives later waits for the next
+//! fetch. The rounds of several people take the core's send slot in turn.
+//!
+//! What a person's record keeps, the key, the last fetch and the last
+//! item confirmed, the node keeps with the record (`bark-link`
+//! `phones`), not here: the mailbox says when they change.
 
 use core::cell::Cell;
 
@@ -44,19 +50,26 @@ const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
 /// that the payload's place is the same in a slot written before it was
 /// kept, whose ID reads as `0xFFFF_FFFF`, the erased flash.
 const ID_AT: usize = CHECK_AT - 4;
-/// The byte that marks an item sent: erased while it is not, cleared to
-/// 0 without an erase when it is, so that the item stays. A slot written
-/// before marks were kept reads as not sent.
+/// The slot's mark: a bit for each person, set while the item is theirs
+/// and not yet sent to them, and erased, all set, until the slot is
+/// written. A bit is cleared without an erase, so that the item stays. A
+/// slot written before a mark held a bit for each read as unsent, one
+/// before the people took their bits read 0xFF unsent and 0 sent, which is
+/// what the first person's bit says; the others' bits there count for
+/// nothing ([`Person::from`]).
 const MARK_AT: usize = ID_AT - 1;
 const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= MARK_AT);
 
-/// Bytes of the mailbox's kept state.
+/// People a node keeps: a bit for each in a slot's mark, a byte.
+pub const PEOPLE: usize = 8;
+
+/// Bytes of the state a mailbox kept before its people's records held it
+/// (`flash_ring::last_state`).
 pub const STATE_LEN: usize = 64;
 
-/// The flash a mailbox keeps its items and its state in: pages of
-/// [`SLOTS_PER_PAGE`] slots, erased to `0xFF` a page at a time, and one
-/// record of state. The firmware backs it with flash, the simulator and
-/// the tests with RAM.
+/// The flash a mailbox keeps its items in: pages of [`SLOTS_PER_PAGE`]
+/// slots, erased to `0xFF` a page at a time. The firmware backs it with
+/// flash, the simulator and the tests with RAM.
 pub trait Ring {
     /// Pages in the ring, at least two: one is erased to make room.
     fn pages(&self) -> u32;
@@ -64,9 +77,9 @@ pub trait Ring {
     fn read(&self, slot: u32, out: &mut [u8; SLOT_LEN]);
     /// Writes slot `slot`, erased since it was last written.
     fn write(&mut self, slot: u32, bytes: &[u8; SLOT_LEN]);
-    /// Clears byte `at` of slot `slot` to 0, without an erase: flash
-    /// clears bits in a written byte.
-    fn clear(&mut self, slot: u32, at: usize);
+    /// Clears the bits `bits` of byte `at` of slot `slot`, without an
+    /// erase: flash clears bits in a written byte.
+    fn clear(&mut self, slot: u32, at: usize, bits: u8);
     /// Byte `at` of slot `slot`; cheaper than the slot where the flash
     /// is slow to read.
     fn read_byte(&self, slot: u32, at: usize) -> u8 {
@@ -76,10 +89,6 @@ pub trait Ring {
     }
     /// Erases page `page`.
     fn erase(&mut self, page: u32);
-    /// The state last kept, if any.
-    fn state(&self) -> Option<[u8; STATE_LEN]>;
-    /// Keeps `state` across a reboot.
-    fn keep_state(&mut self, state: &[u8; STATE_LEN]);
 }
 
 fn fnv1a(bytes: &[u8]) -> u32 {
@@ -98,34 +107,41 @@ fn slot_check(b: &[u8; SLOT_LEN]) -> u32 {
     fnv1a_on(h, &b[MARK_AT + 1..CHECK_AT])
 }
 
-/// What a payload delivered to the home node was.
+/// What a payload delivered to the node was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arrival {
     /// Kept as this item.
     Kept(u32),
-    /// A fetch, taken: its answer follows.
-    Fetch,
-    /// A fetch that does not open under the key, or is not later than the
-    /// last taken: dropped.
+    /// A fetch that opened under this person's key, taken: its answer
+    /// follows, and the person's last fetch is its `sent`.
+    Fetch(usize),
+    /// A fetch that opens under no key, or is not later than the last
+    /// its person took, or an item the ring has no number for: dropped.
     Refused,
-    /// The node is nobody's home and not public: nothing is kept.
-    NotHome,
 }
 
-/// Whose the ring's items are, by their recipient tags (spec "Phone link",
-/// Public).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Owner {
-    /// Every item is the owner's: a node that is not public, or one whose
-    /// owner's phone has not written its tag yet.
-    All,
-    /// The owner's are those with this tag; the rest are guests'.
-    Tag(u8),
-    /// None is: a public node nobody has paired with.
-    Nobody,
+/// A person paired with the node, or whose home it is, as the mailbox
+/// needs them: what their record holds of their mail (`bark-link`
+/// `phones::Record`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Person {
+    /// Their record's number: a new number is a new person.
+    pub number: u16,
+    /// Their recipient tag at the node, once their phone wrote it: their
+    /// items are those with it.
+    pub tag: Option<u8>,
+    /// Their mailbox key, while the node is their home.
+    pub key: Option<[u8; KEY_LEN]>,
+    /// The newest item when their record was made: their bit in the
+    /// marks of items up to it was another's, and counts for nothing.
+    pub from: u32,
+    /// The last of their items their phone confirmed.
+    pub read: u32,
+    /// The `sent` of the last fetch they took.
+    pub last_fetch: u32,
 }
 
-/// The fetch the mailbox answers.
+/// The fetch the mailbox answers for a person.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Reply {
     /// The fetch's `sent`: the replies' round.
@@ -141,7 +157,7 @@ struct Reply {
     bottom: u32,
     /// Replies with an item handed to the core: the last one's place.
     handed: u32,
-    /// Items unsent after the batch when the fetch was taken.
+    /// The person's items unsent after the batch when the fetch was taken.
     remaining: u16,
     /// An item given back, with its place, to send again.
     again: Option<(u32, u32)>,
@@ -149,10 +165,18 @@ struct Reply {
     answered: bool,
 }
 
+impl Reply {
+    fn due(&self) -> bool {
+        self.again.is_some() || self.next >= self.bottom || !self.answered
+    }
+}
+
 /// A reply handed to the core and not yet past its first hop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct InFlight {
     msg_id: MsgId,
+    /// Whose round it is of.
+    person: usize,
     /// The item, or 0 for the reply that says nothing is new.
     number: u32,
     /// Its place in the round.
@@ -170,61 +194,56 @@ pub struct Outgoing {
     pub len: usize,
     /// The message's ID, as the core will compute it.
     pub msg_id: MsgId,
+    /// Whose round it is of.
+    pub person: usize,
 }
 
-/// The mailbox of a home node.
+/// A person's oldest unread item and the count of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Unread {
+    /// The item's number and the message ID it arrived with.
+    first: Option<(u32, MsgId)>,
+    count: u32,
+}
+
+/// The mailbox of a node.
 pub struct Mailbox<R: Ring> {
     ring: R,
-    key: Option<[u8; KEY_LEN]>,
-    /// The `sent` of the last fetch taken; 0 before any.
-    last_fetch: u32,
-    reply: Option<Reply>,
+    people: [Option<Person>; PEOPLE],
+    replies: [Option<Reply>; PEOPLE],
+    /// The person whose round last handed a reply to the core: the next
+    /// reply is another's, in turn.
+    turn: usize,
     in_flight: Option<InFlight>,
     /// The highest number kept; 0 before any.
     newest: u32,
-    /// Items in the ring not marked sent.
-    unsent: u32,
-    /// The highest number the phone at the node has confirmed reading;
-    /// 0 before any (spec "Phone link", Receiving).
-    read: u32,
-    /// The node is public ([`Mailbox::keeps`]).
-    public: bool,
-    /// Whose the items are.
-    owner: Owner,
-    /// The owner's oldest unread item's number, 0 for none, and the count
+    /// Each person's oldest unread item, its number and ID, and the count
     /// of them, while nothing has changed since: found by reading each
     /// later item's tag, which the node's loop asks for at every step.
-    owners_unread: Cell<Option<(u32, u32)>>,
+    unread: [Cell<Option<Unread>>; PEOPLE],
 }
 
 impl<R: Ring> Mailbox<R> {
-    /// The mailbox in `ring`, as it was before a reboot.
+    /// The mailbox in `ring`, as it was before a reboot; its people come
+    /// from their records ([`Mailbox::set_person`]).
     pub fn new(ring: R) -> Mailbox<R> {
         let mut m = Mailbox {
             ring,
-            key: None,
-            last_fetch: 0,
-            reply: None,
+            people: [None; PEOPLE],
+            replies: [None; PEOPLE],
+            turn: PEOPLE - 1,
             in_flight: None,
             newest: 0,
-            unsent: 0,
-            read: 0,
-            public: false,
-            owner: Owner::All,
-            owners_unread: Cell::new(None),
+            unread: Default::default(),
         };
         // A whole slot counts only in its own place: one that is not, left
         // by a ring laid out otherwise before, would set the newest number
         // past slots that are not erased, and the next item written over
         // one of them would fail its check.
         for s in 0..m.slots() {
-            if let Some((n, _, sent)) = m.slot(s).filter(|&(n, ..)| m.slot_of(n) == s) {
+            if let Some((n, _)) = m.slot(s).filter(|&(n, _)| m.slot_of(n) == s) {
                 m.newest = m.newest.max(n);
-                m.unsent += u32::from(!sent);
             }
-        }
-        if let Some(s) = m.ring.state() {
-            m.restore(&s);
         }
         m
     }
@@ -240,56 +259,81 @@ impl<R: Ring> Mailbox<R> {
         &mut self.ring
     }
 
-    /// The oldest item the phone at the node has not confirmed: its number,
-    /// the message ID it arrived with and its length in `out`. The phone
-    /// reads the ring from where it last confirmed; the ring keeps every
-    /// item for fetches either way.
-    pub fn unread(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
-        let (n, _) = self.owners_unread();
+    /// The person at place `i`, from their record, or none. A person of
+    /// another number than the one there is another person: their round
+    /// ends, as does one whose key changed.
+    pub fn set_person(&mut self, i: usize, person: Option<Person>) {
+        let was = self.people[i];
+        if was == person {
+            return;
+        }
+        let same = was.zip(person).is_some_and(|(w, p)| w.number == p.number);
+        let keyed = was.and_then(|w| w.key) == person.and_then(|p| p.key);
+        if !same || !keyed {
+            self.replies[i] = None;
+            if self.in_flight.is_some_and(|f| f.person == i) {
+                self.in_flight = None;
+            }
+        }
+        self.people[i] = person;
+        self.unread[i].set(None);
+    }
+
+    /// The person at place `i`, with what the mailbox has moved on.
+    pub fn person(&self, i: usize) -> Option<Person> {
+        self.people[i]
+    }
+
+    /// The oldest of person `i`'s items their phone has not confirmed: its
+    /// number, the message ID it arrived with and its length in `out`.
+    /// The phone reads the ring from where it last confirmed; the ring
+    /// keeps every item for fetches either way (spec "Phone link",
+    /// Receiving).
+    pub fn unread(&self, i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
+        let (n, _) = self.unread_of(i).first?;
         self.read_item(n, out).map(|(id, l)| (n, id, l))
     }
 
-    /// Items the phone at the node has not confirmed.
-    pub fn unread_count(&self) -> u32 {
-        self.owners_unread().1
+    /// The number and the message ID of person `i`'s oldest unread item,
+    /// without reading it.
+    pub fn unread_head(&self, i: usize) -> Option<(u32, MsgId)> {
+        self.unread_of(i).first
     }
 
-    /// The owner's oldest unread item and the count of them.
-    fn owners_unread(&self) -> (u32, u32) {
-        if let Some(u) = self.owners_unread.get() {
+    /// Person `i`'s items their phone has not confirmed.
+    pub fn unread_count(&self, i: usize) -> u32 {
+        self.unread_of(i).count
+    }
+
+    /// Person `i`'s oldest unread item and the count of them.
+    fn unread_of(&self, i: usize) -> Unread {
+        if let Some(u) = self.unread[i].get() {
             return u;
         }
-        let from = (self.read + 1).max(self.oldest());
-        let mut first = 0;
-        let mut count = 0;
-        for n in (from..=self.newest).filter(|&n| self.owners(n)) {
-            if first == 0 && self.read_item(n, &mut [0u8; MAX_PAYLOAD]).is_some() {
-                first = n;
-            }
-            count += 1;
-        }
-        self.owners_unread.set(Some((first, count)));
-        (first, count)
-    }
-
-    /// Whether item `n` is the owner's, by its tag.
-    fn owners(&self, n: u32) -> bool {
-        match self.owner {
-            Owner::All => true,
-            Owner::Nobody => false,
-            Owner::Tag(t) => {
-                self.ring
-                    .read_byte(self.slot_of(n), PAYLOAD_AT + seal::RECIPIENT_AT)
-                    == t
+        let mut u = Unread {
+            first: None,
+            count: 0,
+        };
+        if let Some(t) = self.people[i].and_then(|p| p.tag.map(|t| (t, p.read))) {
+            let (tag, read) = t;
+            let from = (read + 1).max(self.lowest());
+            for n in (from..=self.newest).filter(|&n| self.tag_of(n) == tag) {
+                if u.first.is_none() {
+                    u.first = self
+                        .read_item(n, &mut [0u8; MAX_PAYLOAD])
+                        .map(|(id, _)| (n, id));
+                }
+                u.count += 1;
             }
         }
+        self.unread[i].set(Some(u));
+        u
     }
 
-    /// Whose the items are from now on; items kept before stay as they
-    /// were written.
-    pub fn set_owner(&mut self, owner: Owner) {
-        self.owner = owner;
-        self.owners_unread.set(None);
+    /// The recipient tag item `n` carries, read from its slot alone.
+    fn tag_of(&self, n: u32) -> u8 {
+        self.ring
+            .read_byte(self.slot_of(n), PAYLOAD_AT + seal::RECIPIENT_AT)
     }
 
     /// The oldest item after `after` whose recipient tag is `tag`: its
@@ -306,11 +350,7 @@ impl<R: Ring> Mailbox<R> {
         let after = if after > self.newest { 0 } else { after };
         let from = after.saturating_add(1).max(self.lowest());
         (from..=self.newest)
-            .filter(|&n| {
-                self.ring
-                    .read_byte(self.slot_of(n), PAYLOAD_AT + seal::RECIPIENT_AT)
-                    == tag
-            })
+            .filter(|&n| self.tag_of(n) == tag)
             .find_map(|n| {
                 self.read_item(n, out)
                     .filter(|&(_, len)| out[..len].get(seal::RECIPIENT_AT) == Some(&tag))
@@ -318,23 +358,22 @@ impl<R: Ring> Mailbox<R> {
             })
     }
 
-    /// The phone at the node has item `n`, and every one before it. It
-    /// counts as sent, so that no fetch sends it again; the phone confirms
-    /// the oldest it has not, [`Mailbox::unread`], so those before it are
-    /// marked or gone.
-    pub fn confirm_read(&mut self, n: u32) {
-        if n > self.read && n <= self.newest {
-            self.mark(n);
-            self.read = n;
-            self.owners_unread.set(None);
-            self.keep();
+    /// Person `i`'s phone has item `n`, and every one of theirs before
+    /// it: it counts as sent to them, so that no fetch of theirs sends it
+    /// again. The phone confirms the oldest it has not,
+    /// [`Mailbox::unread`]. Whether their last confirmed moved, for their
+    /// record to keep.
+    pub fn confirm_read(&mut self, i: usize, n: u32) -> bool {
+        let Some(p) = self.people[i].as_mut() else {
+            return false;
+        };
+        if n <= p.read || n > self.newest {
+            return false;
         }
-    }
-
-    /// Items in the ring not yet sent to a fetch or read by the phone at
-    /// the node.
-    pub fn unsent(&self) -> u32 {
-        self.unsent
+        p.read = n;
+        self.mark(i, n);
+        self.unread[i].set(None);
+        true
     }
 
     fn slots(&self) -> u32 {
@@ -350,69 +389,50 @@ impl<R: Ring> Mailbox<R> {
         self.newest.saturating_sub(self.slots() - 1).max(1)
     }
 
-    /// The number and the payload's length in slot `s`, and whether it is
-    /// marked sent, if it holds a whole item.
-    fn slot(&self, s: u32) -> Option<(u32, usize, bool)> {
+    /// The number and the payload's length in slot `s`, if it holds a
+    /// whole item.
+    fn slot(&self, s: u32) -> Option<(u32, usize)> {
         let mut b = [0u8; SLOT_LEN];
         self.ring.read(s, &mut b);
         let check = be(&b[CHECK_AT..]);
         let len = usize::from(b[seal::NUMBER_LEN]);
         let n = be(&b[..seal::NUMBER_LEN]);
-        (slot_check(&b) == check && len <= MAX_PAYLOAD && n != 0).then_some((
-            n,
-            len,
-            b[MARK_AT] != 0xff,
-        ))
+        (slot_check(&b) == check && len <= MAX_PAYLOAD && n != 0).then_some((n, len))
     }
 
-    /// Whether item `n` is in the ring and not marked sent. The mark is
-    /// read first: most slots a batch passes over are sent.
-    fn is_unsent(&self, n: u32) -> bool {
-        if n < self.lowest() || n > self.newest {
+    /// Whether item `n` is in the ring, person `i`'s and not yet sent to
+    /// them. The mark is read first: most slots a batch passes over are
+    /// not.
+    fn is_unsent(&self, i: usize, n: u32) -> bool {
+        let Some(p) = self.people[i] else {
+            return false;
+        };
+        if n <= p.from || n < self.lowest() || n > self.newest {
             return false;
         }
         let s = self.slot_of(n);
-        self.ring.read_byte(s, MARK_AT) == 0xff
-            && self.slot(s).is_some_and(|(got, _, sent)| got == n && !sent)
+        self.ring.read_byte(s, MARK_AT) & (1 << i) != 0
+            && self.slot(s).is_some_and(|(got, _)| got == n)
     }
 
-    /// Marks item `n` sent, if it is unsent.
-    fn mark(&mut self, n: u32) {
-        if self.is_unsent(n) {
-            self.ring.clear(self.slot_of(n), MARK_AT);
-            self.unsent = self.unsent.saturating_sub(1);
+    /// Clears person `i`'s bit of item `n`, if it is set.
+    fn mark(&mut self, i: usize, n: u32) {
+        if self.is_unsent(i, n) {
+            self.ring.clear(self.slot_of(n), MARK_AT, 1 << i);
         }
     }
 
-    /// Whether the node is someone's home.
+    /// Person `i`'s items in the ring not yet sent to them, counted down
+    /// from `top`.
+    fn unsent_below(&self, i: usize, top: u32) -> u32 {
+        (self.lowest()..=top)
+            .filter(|&n| self.is_unsent(i, n))
+            .count() as u32
+    }
+
+    /// Whether the node is anyone's home.
     pub fn is_home(&self) -> bool {
-        self.key.is_some()
-    }
-
-    /// Whether the ring keeps what arrives: on a home, and on a public
-    /// node, whose owner's messages it keeps as a home's while guests
-    /// come and go (spec "Phone link", Public).
-    pub fn keeps(&self) -> bool {
-        self.key.is_some() || self.public
-    }
-
-    /// The node is public, or no longer; not kept here, as the setting is
-    /// kept with the bond (`bark_link::bond`).
-    pub fn set_public(&mut self, public: bool) {
-        self.public = public;
-    }
-
-    /// Makes the node a home with this mailbox key, or no home with
-    /// `None` (the phone link's Home characteristic). A new key forgets
-    /// the last fetch, which was under the old one.
-    pub fn set_key(&mut self, key: Option<[u8; KEY_LEN]>) {
-        if self.key != key {
-            self.key = key;
-            self.last_fetch = 0;
-            self.reply = None;
-            self.in_flight = None;
-            self.keep();
-        }
+        self.people.iter().flatten().any(|p| p.key.is_some())
     }
 
     /// The highest number kept, 0 before any.
@@ -440,7 +460,7 @@ impl<R: Ring> Mailbox<R> {
         let s = self.slot_of(n);
         let mut b = [0u8; SLOT_LEN];
         self.ring.read(s, &mut b);
-        let (got, len, _) = self.slot(s)?;
+        let (got, len) = self.slot(s)?;
         if got != n {
             return None;
         }
@@ -453,20 +473,8 @@ impl<R: Ring> Mailbox<R> {
     /// item by it, and computed again from the node's address it would
     /// change whenever the address does.
     pub fn arrive(&mut self, msg_id: MsgId, payload: &[u8]) -> Arrival {
-        if !self.keeps() {
-            return Arrival::NotHome;
-        }
         if Form::of(payload) == Ok(Form::Fetch) {
-            let Some(key) = self.key else {
-                return Arrival::Refused;
-            };
-            return match Fetch::open(&key, payload) {
-                Ok(f) if f.sent > self.last_fetch => {
-                    self.take(f);
-                    Arrival::Fetch
-                }
-                _ => Arrival::Refused,
-            };
+            return self.fetch(payload);
         }
         if payload.len() > MAX_PAYLOAD || self.newest == MAX_NUMBER {
             return Arrival::Refused;
@@ -474,18 +482,15 @@ impl<R: Ring> Mailbox<R> {
         let n = self.newest + 1;
         let s = self.slot_of(n);
         if s.is_multiple_of(SLOTS_PER_PAGE) {
-            for o in s..s + SLOTS_PER_PAGE {
-                let gone = self.slot(o).filter(|&(k, ..)| self.slot_of(k) == o);
-                let lost = u32::from(gone.is_some_and(|(.., sent)| !sent));
-                self.unsent = self.unsent.saturating_sub(lost);
-            }
             self.ring.erase(s / SLOTS_PER_PAGE);
+            for u in &self.unread {
+                u.set(None);
+            }
         }
-        let owners = match self.owner {
-            Owner::All => true,
-            Owner::Nobody => false,
-            Owner::Tag(t) => seal::recipient_of(payload) == Some(t),
-        };
+        let tag = seal::recipient_of(payload);
+        let mark = (0..PEOPLE)
+            .filter(|&i| tag.is_some() && self.people[i].is_some_and(|p| p.tag == tag))
+            .fold(0u8, |m, i| m | 1 << i);
         let mut b = [0xffu8; SLOT_LEN];
         b[..seal::NUMBER_LEN].copy_from_slice(&n.to_be_bytes()[1..]);
         b[seal::NUMBER_LEN] = payload.len() as u8;
@@ -493,63 +498,103 @@ impl<R: Ring> Mailbox<R> {
         b[ID_AT..CHECK_AT].copy_from_slice(&msg_id.0.to_be_bytes());
         let check = slot_check(&b);
         b[CHECK_AT..].copy_from_slice(&check.to_be_bytes());
-        // A guest's item is sent as it is written: no fetch of the
-        // owner's sends it. The check reads the mark as erased.
-        if !owners {
-            b[MARK_AT] = 0;
-        }
+        // The check reads the mark as erased.
+        b[MARK_AT] = mark;
         self.ring.write(s, &b);
         self.newest = n;
-        self.unsent += u32::from(owners);
-        self.owners_unread.set(None);
+        // Each person whose tag it carries has one more unread.
+        for i in (0..PEOPLE).filter(|&i| mark & (1 << i) != 0) {
+            if let Some(u) = self.unread[i].get() {
+                self.unread[i].set(Some(Unread {
+                    first: u.first.or(Some((n, msg_id))),
+                    count: u.count + 1,
+                }));
+            }
+        }
         Arrival::Kept(n)
     }
 
-    fn take(&mut self, f: Fetch) {
+    /// A fetch: taken by the first person whose key opens it, if it is
+    /// later than the last they took (spec "Mailbox", The fetch).
+    fn fetch(&mut self, payload: &[u8]) -> Arrival {
+        let opened = (0..PEOPLE).find_map(|i| {
+            let key = self.people[i]?.key?;
+            Fetch::open(&key, payload).ok().map(|f| (i, f))
+        });
+        match opened {
+            Some((i, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
+                self.take(i, f);
+                Arrival::Fetch(i)
+            }
+            _ => Arrival::Refused,
+        }
+    }
+
+    fn take(&mut self, i: usize, f: Fetch) {
         let lowest = self.lowest();
         let mut count = 0;
         let mut bottom = self.newest + 1;
         let mut n = self.newest;
         while count < MAX_REPLIES && n >= lowest {
-            if self.is_unsent(n) {
+            if self.is_unsent(i, n) {
                 count += 1;
                 bottom = n;
             }
             n -= 1;
         }
-        self.last_fetch = f.sent;
-        self.reply = Some(Reply {
+        let remaining = self.unsent_below(i, bottom.saturating_sub(1));
+        if let Some(p) = self.people[i].as_mut() {
+            p.last_fetch = f.sent;
+        }
+        self.replies[i] = Some(Reply {
             round: f.sent,
             address: f.address,
             recipient: f.recipient,
             next: self.newest,
             bottom,
             handed: 0,
-            remaining: u16::try_from(self.unsent.saturating_sub(count)).unwrap_or(u16::MAX),
+            remaining: u16::try_from(remaining).unwrap_or(u16::MAX),
             again: None,
             answered: false,
         });
-        self.in_flight = None;
-        self.keep();
+        if self.in_flight.is_some_and(|f| f.person == i) {
+            self.in_flight = None;
+        }
     }
 
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
-    /// finds that the phone at the node has read the rest meanwhile, after
+    /// finds that the person's phone has read the rest meanwhile, after
     /// which none is due.
     pub fn reply_due(&self) -> bool {
-        self.key.is_some()
-            && self
-                .reply
-                .is_some_and(|r| r.again.is_some() || r.next >= r.bottom || !r.answered)
+        (0..PEOPLE).any(|i| self.due(i))
+    }
+
+    fn due(&self, i: usize) -> bool {
+        self.people[i].is_some_and(|p| p.key.is_some()) && self.replies[i].is_some_and(|r| r.due())
     }
 
     /// The next reply to hand the core, sealed into `out`, if one is due;
     /// call it while `accepts_send` holds, and send what it gives. Its
-    /// item is marked sent as it is handed over. A round with no item to
-    /// send gets one reply that says nothing is new.
+    /// item has its person's bit cleared as it is handed over. A round with
+    /// no item to send gets one reply that says nothing is new. The rounds
+    /// of several people take turns.
     pub fn next(&mut self, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
-        let key = self.key?;
-        let mut r = self.reply?;
+        for k in 1..=PEOPLE {
+            let i = (self.turn + k) % PEOPLE;
+            if !self.due(i) {
+                continue;
+            }
+            if let Some(o) = self.next_of(i, out) {
+                self.turn = i;
+                return Some(o);
+            }
+        }
+        None
+    }
+
+    fn next_of(&mut self, i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
+        let key = self.people[i]?.key?;
+        let mut r = self.replies[i]?;
         let mut sealed = None;
         if let Some((n, place)) = r.again.take() {
             sealed = self.seal_item(&key, &r, n, place, out);
@@ -557,10 +602,10 @@ impl<R: Ring> Mailbox<R> {
         while sealed.is_none() && r.next >= r.bottom {
             let n = r.next;
             r.next -= 1;
-            if self.is_unsent(n) {
+            if self.is_unsent(i, n) {
                 sealed = self.seal_item(&key, &r, n, r.handed + 1, out);
                 r.handed += 1;
-                self.mark(n);
+                self.mark(i, n);
             }
         }
         if sealed.is_none() && !r.answered {
@@ -570,11 +615,12 @@ impl<R: Ring> Mailbox<R> {
         }
         // Kept with nothing to send too, so that no reply is due after.
         r.answered |= sealed.is_some();
-        self.reply = Some(r);
+        self.replies[i] = Some(r);
         let (number, place, len) = sealed?;
         let msg_id = MsgId::of(r.address.position, r.address.node, &out[..len]);
         self.in_flight = Some(InFlight {
             msg_id,
+            person: i,
             number,
             place,
         });
@@ -583,6 +629,7 @@ impl<R: Ring> Mailbox<R> {
             number,
             len,
             msg_id,
+            person: i,
         })
     }
 
@@ -618,65 +665,65 @@ impl<R: Ring> Mailbox<R> {
     /// The core gave the message back: if it is the last reply, it goes
     /// again when the node next takes one.
     pub fn given_back(&mut self, msg_id: MsgId) {
-        if let (Some(f), Some(r)) = (self.in_flight, self.reply.as_mut()) {
-            if f.msg_id == msg_id {
-                if f.number == 0 {
-                    r.answered = false;
-                } else {
-                    r.again = Some((f.number, f.place));
-                }
-                self.in_flight = None;
+        let Some(f) = self.in_flight.filter(|f| f.msg_id == msg_id) else {
+            return;
+        };
+        if let Some(r) = self.replies[f.person].as_mut() {
+            if f.number == 0 {
+                r.answered = false;
+            } else {
+                r.again = Some((f.number, f.place));
             }
         }
+        self.in_flight = None;
     }
+}
 
-    /// The state: the key, the last fetch and what the phone at the node
-    /// has read. A round is not kept, to spare a write a reply: after a
-    /// reboot its items not yet handed over wait, unsent, for the next
-    /// fetch, and no place is sealed twice.
-    fn keep(&mut self) {
-        let mut s = [0u8; STATE_LEN];
-        if let Some(k) = self.key {
-            s[0] = 1;
-            s[1..33].copy_from_slice(&k);
-        }
-        s[33..37].copy_from_slice(&self.last_fetch.to_be_bytes());
-        s[57..60].copy_from_slice(&self.read.to_be_bytes()[1..]);
-        let check = fnv1a(&s[..STATE_LEN - 4]);
-        s[STATE_LEN - 4..].copy_from_slice(&check.to_be_bytes());
-        self.ring.keep_state(&s);
+/// What a mailbox kept of its one home before its people's records held
+/// it: the key, the last fetch's `sent` and the last item the phone
+/// confirmed; `None` for a state that is not whole. Read once, to make
+/// the first record (`bark-link` `phones::Load`).
+pub fn old_state(s: &[u8; STATE_LEN]) -> Option<(Option<[u8; KEY_LEN]>, u32, u32)> {
+    if fnv1a(&s[..STATE_LEN - 4]) != be(&s[STATE_LEN - 4..]) {
+        return None;
     }
+    let key = (s[0] == 1).then(|| s[1..33].try_into().expect("32 bytes"));
+    Some((key, be(&s[33..37]), be(&s[57..60])))
+}
 
-    fn restore(&mut self, s: &[u8; STATE_LEN]) {
-        if fnv1a(&s[..STATE_LEN - 4]) != be(&s[STATE_LEN - 4..]) {
-            return;
-        }
-        if s[0] == 1 {
-            let mut k = [0u8; KEY_LEN];
-            k.copy_from_slice(&s[1..33]);
-            self.key = Some(k);
-        }
-        self.last_fetch = be(&s[33..37]);
-        self.read = be(&s[57..60]).min(self.newest);
+/// The state an older mailbox kept, for the tests of [`old_state`].
+#[cfg(test)]
+pub(crate) fn old_state_of(
+    key: Option<[u8; KEY_LEN]>,
+    last_fetch: u32,
+    read: u32,
+) -> [u8; STATE_LEN] {
+    let mut s = [0u8; STATE_LEN];
+    if let Some(k) = key {
+        s[0] = 1;
+        s[1..33].copy_from_slice(&k);
     }
+    s[33..37].copy_from_slice(&last_fetch.to_be_bytes());
+    s[57..60].copy_from_slice(&read.to_be_bytes()[1..]);
+    let check = fnv1a(&s[..STATE_LEN - 4]);
+    s[STATE_LEN - 4..].copy_from_slice(&check.to_be_bytes());
+    s
 }
 
 /// A ring in RAM of `SLOTS` slots, a whole number of pages, for the
 /// simulator and the tests.
 pub struct RamRing<const SLOTS: usize> {
     slots: [[u8; SLOT_LEN]; SLOTS],
-    state: Option<[u8; STATE_LEN]>,
 }
 
 impl<const SLOTS: usize> RamRing<SLOTS> {
-    /// An erased ring with no state.
+    /// An erased ring.
     pub fn new() -> Self {
         assert!(
             SLOTS.is_multiple_of(SLOTS_PER_PAGE as usize) && SLOTS >= 2 * SLOTS_PER_PAGE as usize
         );
         RamRing {
             slots: [[0xff; SLOT_LEN]; SLOTS],
-            state: None,
         }
     }
 }
@@ -701,19 +748,13 @@ impl<const SLOTS: usize> Ring for RamRing<SLOTS> {
             *d &= s;
         }
     }
-    fn clear(&mut self, slot: u32, at: usize) {
-        self.slots[slot as usize][at] = 0;
+    fn clear(&mut self, slot: u32, at: usize, bits: u8) {
+        self.slots[slot as usize][at] &= !bits;
     }
     fn erase(&mut self, page: u32) {
         let first = (page * SLOTS_PER_PAGE) as usize;
         for s in &mut self.slots[first..first + SLOTS_PER_PAGE as usize] {
             *s = [0xff; SLOT_LEN];
         }
-    }
-    fn state(&self) -> Option<[u8; STATE_LEN]> {
-        self.state
-    }
-    fn keep_state(&mut self, state: &[u8; STATE_LEN]) {
-        self.state = Some(*state);
     }
 }

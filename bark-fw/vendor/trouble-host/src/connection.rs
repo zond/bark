@@ -733,6 +733,14 @@ impl<'stack, P: PacketPool> Connection<'stack, P> {
         self.manager.set_bondable(self.index, bondable)
     }
 
+    /// Set whether a Pairing Request from the peer is answered with Pairing
+    /// Failed, unspecified reason (Bluetooth Core Vol 3 Part H §3.5.5), in
+    /// place of a Pairing Response; the application then gets
+    /// [`ConnectionEvent::PairingFailed`]. By default a pairing is taken.
+    pub fn set_refuses_pairing(&self, refuses: bool) -> Result<(), Error> {
+        self.manager.set_refuses_pairing(self.index, refuses)
+    }
+
     /// Confirm that the displayed pass key matches the one displayed on the other party
     pub fn pass_key_confirm(&self) -> Result<(), Error> {
         self.manager.pass_key_confirm(self.index, true)
