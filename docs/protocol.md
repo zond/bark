@@ -343,44 +343,31 @@ Its sleepy nodes follow it:
 ## Position
 
 A node's position is its GPS fix, unless the app sets a map point, which
-wins. A rooftop relay with no sky view uses one.
+wins; a rooftop relay with no sky view uses one. Which fixes a node takes
+as its position is in [nodes](#nodes).
 
-**A node's place.** A node has a place when it was given one where it
-was built, has one stored as a fixed node
-([implementation notes](#implementation-notes)), or the app sets a map
-point. One with none takes its first accepted fix as its place, fixed,
-at once, and sends no heartbeat before it; it rebuilds the positions it
-heard near its place then, and a relay heartbeats its first rotation's
-burst ([heartbeat](#heartbeat)) from then, as at boot (roadmap D83).
+**A node's place.** A node has a place when it was given one where it was
+built, has one stored as a fixed node
+([implementation notes](#implementation-notes)), or has a map point. A
+carried node's stored place is none: it is where the node last stood, and
+rebuilding short positions near it could put every neighbour a period
+off (roadmap D133). A node with no place takes its first accepted fix as
+its place, fixed, at once, without the carried rule below, and sends no
+heartbeat before it: a heartbeat carries only the short position
+([positions on the wire](#positions-on-the-wire)), which a node with no
+place can neither rebuild nor give. Its driver checks that first fix
+against no neighbour. Once it has a place it rebuilds the positions it
+heard near it, and a relay heartbeats its burst
+([heartbeat](#heartbeat)) from then, as at boot (roadmap D83).
 
-*Why no heartbeat before.* A heartbeat says where the node is, and
-carries only the short position ([positions on the wire](#positions-on-the-wire)):
-a node with no place can rebuild neither its neighbours' positions nor
-its own beyond the short form's period, so any position or address it
-gave would send its neighbours elsewhere. For the same reason its driver
-checks its first fix against no neighbour.
+**The map point.** The app sets and clears it
+([settings](#settings)); only a person ends it. While it is set, the node
+takes no fix, its driver hands none, a relay's GPS rests (below) and a
+sleepy node starts no search ([beats](#beats)). Cleared, the node stays
+where it is, says so at once ([heartbeat](#heartbeat)), and its next
+accepted fix is its place (roadmap D84).
 
-*Why a carried node's stored place is none.* It is where the node
-stood when last fixed, not where it is, and a node that boots there
-rebuilds every neighbour's short position near it: a period off, every
-true fix is beyond them all and dropped, and the node heartbeats a
-position its neighbours rebuild as far from them, so their fixes are
-dropped too (roadmap D133).
-
-*Why the first fix and not the fixed rule.* Measured from a position it
-never had, the first fix is a far fix, and the node would be carried
-for four hours, holding no mail, at the place it has just found.
-
-**The map point.** The app sets and clears it. While it is set, the
-node takes no fix, its driver hands none, a relay's GPS rests (below)
-and a sleepy node starts no search ([beats](#beats)); cleared, the node stays where it is, says so at once
-([heartbeat](#heartbeat)), and its next accepted fix is its place
-(roadmap D84).
-
-*Why the app clears it.* A person set it, so a person ends it; a fix
-cannot, since none is read while it is set.
-
-A fix is dropped as unreliable, a sign of spoofing, when:
+**Checks.** A fix is dropped as unreliable, a sign of spoofing, when:
 
 - it is farther than the hearing radius, 3 km
   ([physical layer](#physical-layer)), from every relay the node knows;
@@ -389,11 +376,14 @@ A fix is dropped as unreliable, a sign of spoofing, when:
   not what a real sky gives; the band is a bench number (O18).
 
 A jammed receiver gives no fix, and the node keeps the position it has.
+No bound applies to the distance from the last fix: one wrong rejection
+would hold the node there for good (roadmap D63, D74).
 
-Two fixes of a still node may differ by 50 m. That is the **allowance**
-the [owner](#owner) rule uses. Indoors at a window they wander farther:
-a fix of a still node may lie up to 250 m from another of its fixes
-for minutes. That is the **carried radius**.
+**Allowance and carried radius.** Two fixes of a still node may differ
+by 50 m, the **allowance** the [owner](#owner) rule uses. Indoors at a
+window a still node's fixes may lie up to 250 m from another of its
+fixes for minutes, the **carried radius**: five allowances, clearing the
+199 m measured on the bench (roadmap D136).
 
 **Fixed and carried.** Every node measures from its fixes whether it
 moves, but a sleepy node with an anchor, which takes none and keeps the
@@ -403,76 +393,26 @@ flag it has ([beats](#beats)):
 |---|---|
 | the place it stands | its first accepted fix, its map point, or the fix it had when last made fixed |
 | far fix | an accepted fix more than the carried radius from that place |
-| carried | after 72 s of far fixes with none near between, counting only time in which the GPS gave fixes |
-| fixed again | after four hours of fixes within the carried radius of one place; it keeps the fix it has then |
+| carried | after 72 s of far fixes with none near between, counting only time in which the GPS gave fixes; 72 s is the time a walker at 1.4 m/s takes to cross the allowance's width, 2 × 50 m, at the L76K's one fix a second. For a sleepy node without an anchor, which fixes once a delivery TTL ([beats](#beats)), it is two far fixes at least 72 s apart |
+| time without fixes | while the GPS runs and gives no fix that passes the checks, the driver says so, and the time until the next fix does not count; a search ends at a fix, so a sleepy node's time between searches counts |
+| fixed again | after four hours of fixes within the carried radius of one place; it keeps the fix it has then. A node that stopped for less would take mail for new sleepy nodes and strand it (roadmap D70) |
 | map point | fixed at once; cleared, the next accepted fix is the place |
-| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has (roadmap D85) |
+| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has, since a sleepy node's last fix may be hours old (roadmap D85) |
 
-Which fixes a node takes as its position, and what a carried node gives
-up, is in [nodes](#nodes). A node whose position changes heartbeats the
-new one ([node identity](#node-identity)). At its first far fix a relay
-that holds mail flushes its delivery queue ([delivery](#delivery)), since
-once it has left it will hear none of its sleepy nodes' beats.
+A node whose position changes heartbeats the new one
+([node identity](#node-identity)). At its first far fix a relay that
+holds mail flushes its delivery queue ([delivery](#delivery)): once it
+has left it will hear none of its sleepy nodes' beats.
 
-*Why 250 m.* The place is one fix, which may itself lie at the edge of
-the wander, so the radius must hold the wander's whole width. On the
-bench of 2026-11-06 three still boards at a window had fixes up to
-199 m from one of their own fixes for 72 s, and no two of their fixes
-lay more than 218 m apart; measured against the allowance's 50 m, the
-three turned carried ten times in three and a half hours (roadmap
-D136). 250 m, five allowances, clears both. A walker at 1.4 m/s, a
-common walking pace, is past it after 179 s and carried after 251 s,
-351 m away; at a brisk 1.5 m/s after 239 s. Until then it heartbeats
-the place it left, and the [owner](#owner) rule sends mail for that
-place to it as if it were still there.
-
-*Why 72 s.* A walker crosses the allowance's whole width, 2 × 50 m, in
-72 of the L76K's one-a-second fixes, so it is carried an owner area
-beyond the radius. A still node's stray fix comes back inside; a
-walker's keeps going. A sleepy node without an anchor fixes once a
-delivery TTL ([beats](#beats)), so for it 72 s is two far fixes at least
-72 s apart.
-
-*Why only time with fixes.* While the GPS runs and gives no fix, the
-node may be anywhere; two far fixes with a minute without a fix between
-are not a minute far. The driver says when the GPS, running, stops
-giving fixes that pass the checks, and that time until the next fix
-does not count. Its searches end at a fix, so a sleepy node's time
-between them counts.
-
-*Why four hours.* A node that stopped for less would take mail for new
-sleepy nodes and strand it when it moved on. A node carried by mistake
-loses little, since its sleepy nodes have anchored elsewhere already
-(roadmap D70).
-
-*Why a node plugged in takes its first fix.* A sleepy node with an
-anchor takes no fix ([beats](#beats)), so its last fix may be hours and
-kilometres old. Measured from it, the fix at the place
-it was plugged in is a far fix, and the node would be carried for four
-hours there, holding no mail. Until it was plugged in nobody addressed
-it at its own position, only at its anchor's; from its first heartbeat
-as a relay its sleepy nodes and its own messages may, and their
-addresses change with its position ([node identity](#node-identity)). A
-relay's GPS runs on external power, so under the sky the first fix comes
-within a search's limit and few have the old place by then. A fix that
-comes later is of a node that does not see the sky, as likely a stray as
-a move, and is checked as any other.
-
-*Why no bound on the distance from the last fix.* Such a bound holds a
-node wherever one wrong rejection leaves it, since every true fix after
-it is far from the last accepted one too. And a sleepy node fixes
-seldom, so in a car it moves farther between fixes than any bound a
-walker passes allows, and the bound would hide the motion the carried rule
-looks for. A spoofed jump beyond the hearing radius the neighbour check
-catches; a spoofed drift inside it no bound on distance catches, only
-the C/N0 check or a map point (roadmap D63, D74).
-
-**A relay's GPS.** A relay's GPS runs all the time on external power
-and for the grace after it is lost ([sleepy nodes](#sleepy-nodes)).
-After the grace, and whenever its position is a map point, it rests in
-standby (roadmap D82). A resting relay searches as a sleepy node does
-([beats](#beats)), with no back-off, at boot and when the radio says it
-may have moved: over each worst-case rotation it sums the squared
+**A relay's GPS.** A relay's GPS runs all the time on external power and
+for the grace after it is lost ([sleepy nodes](#sleepy-nodes)), when a
+person may walk off with it. After the grace, and whenever its position
+is a map point, it rests in standby (roadmap D81, D82). A resting relay
+searches as a sleepy node does ([beats](#beats)), with no back-off, at
+boot and when the radio says it may have moved. A move changes every
+neighbour's signal, by 36 log10(1 + x/r) dB for a move x towards or away
+from a neighbour r away at path-loss exponent 3.6; a still node sees only
+fading. Over each worst-case rotation the relay sums the squared
 **surprises** of the heartbeats of its fixed relay neighbours, each
 heartbeat's RSSI less that neighbour's averaged RSSI before it
 ([neighbour table](#neighbour-table)), and searches when the sum passes
@@ -485,45 +425,15 @@ until the node is carried or a fix is near again.
 | a surprise's variance | 4σ²/3, 21.3 dB²: the heartbeat's σ² and the average's σ²/3, each frame counting half in it |
 | the sum | the squared surprises of a rotation, 195 s, each over 4σ²/3; for a node that does not move, chi-square with as many degrees as heartbeats |
 | the point | two standard deviations above the sum's mean, by the Wilson–Hilferty approximation, k (1 − 2/(9k) + 2 √(2/(9k)))³ for k heartbeats; the switching margin's convention ([relay choice](#relay-choice)) |
-
-*Why it runs through the grace.* A person who unplugs a node and walks
-off with it does so then, and the 72 s of far fixes that make it
-carried need the GPS running; carried on battery, it is sleepy then,
-and takes fixes as a sleepy node does ([beats](#beats)). A relay on battery past the grace is one
-left where it stands, in an outage (roadmap D81), and the L76K's 29 mA
-beside the radio's 6.4 mA would take its battery to the low level in 19
-hours instead of 106.
-
-*Why the radio.* Moving changes every neighbour's signal: by
-36 log10(1 + x/r) dB for a move x towards or away from a neighbour r
-away under the path-loss exponent of 3.6, and more where the node steps
-out of a building or past the walls that shadow it. A node that does
-not move sees only fading.
-
-*Why the test errs towards silence.* A frame in a deep fade is not
-heard, so the heartbeats that reach a relay are cut off below
-sensitivity, and their RSSI adds the noise to the signal; a still
-relay's surprises vary less than 4σ²/3, measured a third to a half of it
-(roadmap D82). It searches for nothing less often than the 2.3 % of
-rotations the point allows.
-
-*Why no back-off.* At the most the point allows, 2.3 % of 18.5
-rotations an hour, a relay that never sees the sky searches 0.42 times
-an hour, 60 s each at 29 mA: 0.20 mA, 3 % of its 6.4 mA.
-
-*Why a map point rests it.* No fix moves a node with a map point
-([nodes](#nodes)), so the GPS has nothing to do.
+| cost | at most 2.3 % of 18.5 rotations an hour, 0.42 searches an hour of 60 s at 29 mA: 0.20 mA, 3 % of a relay's 6.4 mA |
 
 **Time.** The protocol has no network time: every timer is local and
 monotonic, and nothing depends on two nodes agreeing on a clock. A node
-keeps the time of day for the people who read it, its display and the
-phone: UTC from a fix, or from the phone while it has none
-([settings](#settings)), carried on by its own clock while the error
-can be under a minute, and the phone's UTC offset (roadmap D129, D130).
-
-*Why under a minute.* A clock that shows minutes needs no better, and
-past that the node shows no time rather than a wrong one: on a crystal
-taken at ±250 ppm, 2.7 days after the fix.
+keeps the time of day for its display and the phone: UTC from a fix, or
+from the phone while it has none ([settings](#settings)), carried on by
+its own clock while the error can be under a minute, and the phone's UTC
+offset (roadmap D129, D130). On a crystal taken at ±250 ppm, a minute is
+reached 2.7 days after the fix; past that the node shows no time.
 
 ## Heartbeat
 
@@ -540,19 +450,27 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 | id | 48 | the node's ID ([node identity](#node-identity)) |
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
-13 bytes, 14.4 ms on air at SF5 ([physical layer](#physical-layer)); with
-an update's section, 26 bytes, 22.08 ms
+13 bytes, 14.4 ms on air ([physical layer](#physical-layer)); with an
+update's section, 26 bytes, 22.08 ms
 ([updates over the mesh](#updates-over-the-mesh)).
 
 | | |
 |---|---|
 | interval | a fixed T for each node, from the last byte b of its node ID: T = 5 s + 10 s × b / 256, mean 10 s |
-| first heartbeat | at a random time within T after boot |
+| first heartbeat | at a random time within T after boot, so that nodes booted together are not in step |
 | **burst** | the first 13 slots, a burst gap of 1.1 s apart, each with the anchorless flag; every slot after it T after the one before |
-| channel | steps `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not |
+| channel | steps `k ← (k + 1) mod 13` every slot, from a random start, whether the heartbeat went or not; a fixed cycle reaches every neighbour once a rotation, where a random channel would need ≈41 heartbeats to cover all 13 |
 | **rotation** | 13 heartbeats, which reach every neighbour once: ≈130 s, at most 13 × 15 s = 195 s |
-| lateness | none early; at most 872.8 ms after its slot |
-| deaf time | 19 ms per heartbeat (procedure below), 0.2 % |
+| lateness | none early; at most 872.8 ms after its slot: an attempt under way (a full frame with the long preamble, 372.8 ms, and the ACK timeout, 100 ms) and two backoffs of 200 ms before its last check. A check held for a reception in progress waits at most that frame |
+| deaf time | 19 ms per heartbeat, 0.2 % |
+
+The 256 intervals are 39.1 ms apart, more than two heartbeats' airtime,
+2 × 14.4 = 28.8 ms, so two nodes with different intervals slide past
+each other and meet at most once in a row; 10 s / 28.8 ms = 347 steps
+would do, and 256 is the largest power of two below it, one byte. Two
+nodes that share an interval and are in step are unlocked by clock
+drift: crystals of about ±50 ppm part by up to 1 ms a heartbeat, so an
+overlap of 28.8 ms ends within 29 heartbeats (roadmap D47).
 
 **Procedure.** Retune to channel k, listen before talking (one check,
 3.1 ms), up to three checks a random 0–200 ms apart; if every check is
@@ -560,128 +478,70 @@ busy, skip; else send; retune home.
 
 | | |
 |---|---|
-| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.1 ms from listening to listening, 2.18 ms of it the detection's 8 symbols and half a symbol of processing (roadmap D88) |
+| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.1 ms from listening to listening, 2.18 ms of it the detection's 8 symbols and half a symbol of processing. The datasheet documents the reading for receive only, so the driver checks at boot that the two agree on the home channel, keeps the offset it finds, and reads after the detection if they do not (roadmap D88) |
 | transmission | its airtime and 1.8 ms more, from listening to listening (roadmap D88) |
 
-*Why the reading inside the detection.* Read after it, the reading
-needs the receiver started again on the channel and four symbol
-periods to settle, 1.1 ms, and a return to listening between the two
-checks, as many ms again; read inside it, the receiver is up already,
-and the reading is right from four symbol periods in, as in receive.
-The datasheet documents the reading for receive only, so the driver
-checks at boot that the two agree on the home channel, keeps the
-offset it finds, and reads after the detection if they do not
-(roadmap D88).
-
 **A radio that reads every channel busy.** A heartbeat skipped on every
-channel with no check found clear in between is 39 busy checks in a
-row, three to each of the 13 channels. At the 35 % of airtime a channel
-can carry ([capacity and sizing](#capacity-and-sizing)) that comes by
-chance about once in 0.35³⁹, 10⁻¹⁸, so it is taken to mean the radio
-reads wrong, not that the air is full: the driver resets the radio,
-measures again what it measured at boot, its oscillator's start and the
-offset above, and logs it. A sleepy node, which beats on its home
-channel alone, is not watched this way (roadmap D192).
+channel with no check found clear between is 39 busy checks in a row,
+three on each of the 13 channels. At the 35 % of airtime a channel can
+carry ([capacity and sizing](#capacity-and-sizing)) that comes by chance
+about once in 0.35³⁹, 10⁻¹⁸, so it is taken to mean the radio reads
+wrong: the driver resets the radio, measures again its oscillator's
+start and the offset above, and logs it. A sleepy node, which beats on
+its home channel alone, is not watched this way (roadmap D192).
 
-No scanning is needed: every relay's heartbeat visits all channels, so a
-node listening on any one channel hears every relay in range within one
-rotation. The heartbeat load per channel is in
-[capacity and sizing](#capacity-and-sizing).
+Every relay's heartbeat visits all channels, so a node listening on any
+one channel hears every relay in range within one rotation, with no
+scanning. A neighbour that has heard one heartbeat of a node knows its
+interval from its ID, and so when the next comes to any channel: on
+channel c at time t, on c + j at t + j × T, and on c again at t + 13 × T.
+A sleeping node uses this to wake for its anchor's
+([relay choice](#relay-choice)), and a relay to tell a heartbeat that did
+not come.
 
-A neighbour that has heard one heartbeat of a node knows the node's
-interval from its ID, and so when its next comes to any channel: on
-channel c at time t, on channel c + j at t + j × T, and on c again at
-t + 13 × T. A sleeping node uses this to wake for its anchor's
-([relay choice](#relay-choice)), and a relay to tell a heartbeat that
-did not come.
-
-**A heartbeat due and not heard.** A relay, which listens all the time,
-expects each neighbour's heartbeat on its own channel once a rotation,
-in a window around the slot: from the slot less what the last one
-heard may have waited behind its own (the lateness above) and the
-clocks' drift since, to the slot plus that lateness, that drift and the
-heartbeat's airtime, about 1.8 s. When the window closes without the
-heartbeat, the relay enters a reading at its noise floor
-([busy estimate](#busy-estimate)) into the neighbour's average
-([neighbour table](#neighbour-table)), weighted by the share of the
-window through which its radio was listening on the channel: a
-heartbeat it was away for, reading another channel, sending, or under
-another frame, it could not have heard. The slot passes to the next rotation either way.
-A heartbeat of a burst is in no slot and says the node's slots start
-anew; a heartbeat heard in a slot sets the slots afresh. A sleepy node,
-which hears only in its windows, counts nothing.
-
-*Why a reading at the floor.* An average of the heartbeats that got
-through stands above the link: a neighbour at or below sensitivity is
-heard on its good moments and averaged on those (roadmap D103).
-Counted as what was sent, heard or not, the average is of the link
-(roadmap D105). A heartbeat sent and not heard had a packet RSSI under the level
-half of all heartbeats arrive at, 3.1 dB below a full frame's
-([neighbour table](#neighbour-table)): 5.2 dB of signal below the
-noise, which packet RSSI reads as 1.2 dB above the floor. The floor
-itself, what the radio reads of an empty channel, is the reading an
-absent frame gives, and the two differ by 0.6 dB in an average that
-counts a reading half. A heartbeat the neighbour skipped for a busy
-channel or deferred for its budget is counted the same, wrongly: a skip
-needs three checks busy, one time in a thousand on a channel busy a
-tenth of the time, and the next frame heard halves the error.
-
-*Why weighted by the window.* The radio reads another channel once a
-second ([busy estimate](#busy-estimate)) and sends its own heartbeats
-and ACKs, so few windows pass with it listening throughout. A heartbeat
-that came at some moment of the window was lost to the radio's absence
-with the probability of the absence's share of the window, and with the
-rest to the link; a frame the radio did not decode is not known to it,
-so a collision it lost counts as the link's.
-
-*Why a fixed cycle.* A fixed cycle reaches every neighbour once per
-rotation; a random channel per heartbeat would need ≈41 heartbeats on
-average to cover all 13.
-
-*Why a heartbeat can be late.* It may find a hand-over attempt under
-way, a full frame with the long preamble to a sleepy node outside its
-window and the ACK timeout ([hand-over](#hand-over)), and then back off
-twice before its last check, 372.8 + 100 + 2 × 200 ms. A check held for
-a reception in progress waits less, at most that frame.
+**A heartbeat due and not heard.** A relay expects each neighbour's
+heartbeat on its own channel once a rotation, in a window around the
+slot: from the slot less what the last one heard may have waited behind
+its own (the lateness above) and the clocks' drift since, to the slot
+plus that lateness, that drift and the heartbeat's airtime, about 1.8 s.
+When the window closes without the heartbeat, the relay enters a reading
+at its noise floor ([busy estimate](#busy-estimate)) into the
+neighbour's average ([neighbour table](#neighbour-table)), weighted by
+the share of the window through which its radio was listening on the
+channel. The slot passes to the next rotation either way. A heartbeat of
+a burst is in no slot and says the node's slots start anew; a heartbeat
+heard in a slot sets the slots afresh. A sleepy node counts nothing. So
+the average is of the link, not of the frames that got through (roadmap
+D103, D105).
 
 **The burst.** A relay's first rotation reaches every neighbour within
-12 burst gaps of its first heartbeat, 13.0 s, where its later rotations
-take up to 195 s; the 13 heartbeats cost no more airtime than
-any rotation's. The anchorless flag on them asks the relays that hear
-one to answer it (below), so that the new relay learns its neighbours
-as fast as they learn it, and tells every receiver that the heartbeat
-is in no slot: a neighbour times a relay's slots only by its heartbeats
-without the flag.
-
-*Why 1.1 s.* The answers to one heartbeat of the burst come within a
-backoff of it, 200 ms, and may then wait as long behind their slot as
-any heartbeat, 872.8 ms, and take a heartbeat's airtime, 14.4 ms: 1087.2
-ms. The next heartbeat goes after them, so that the node is on its home
-when they arrive.
+12 burst gaps of its first heartbeat, 13.0 s, at no more airtime than
+any rotation. The anchorless flag on its heartbeats asks the relays that
+hear one to answer it (below), so the new relay learns its neighbours as
+fast as they learn it, and tells every receiver that the heartbeat is in
+no slot: a neighbour times a relay's slots only by heartbeats without
+the flag. The gap, 1.1 s, lets the answers arrive while the node is on
+its home channel: a backoff of 200 ms, a heartbeat's lateness of
+872.8 ms and its airtime of 14.4 ms, 1087.2 ms.
 
 **Outside the slots.** A relay that is past its own first rotation,
 neither carried nor flushing to turn sleepy
-([sleepy nodes](#sleepy-nodes)), answers a heartbeat with the
-anchorless flag with one of its own on the channel the heartbeat names,
-at a random time within a listen-before-talk backoff, 0–200 ms, of it:
+([sleepy nodes](#sleepy-nodes)), answers a heartbeat with the anchorless
+flag with one of its own on the channel the heartbeat names, at a random
+time within a listen-before-talk backoff, 0–200 ms, of it, so that the
+relays that hear it do not all send together:
 
-- a relay's, of its burst: once, with the ordinary preamble, since it
-  listens all the time;
+- a relay's, of its burst: once, with the ordinary preamble;
 - a sleepy node's: as [sleepy nodes alone](#sleepy-nodes-alone) says,
   with the long preamble.
 
-*Why within a backoff.* Every relay on the channel hears the same
-heartbeat; checking the channel in the same instant, they would all
-find it free and send together.
+A node in its first rotation does not answer: nodes switched on together
+learn each other from their bursts.
 
-*Why a node in its first rotation does not answer.* Nodes switched on
-together learn each other from their bursts, which are heartbeats like
-any other; answers would add to the busiest minute after a power cut.
-
-And a node, sleepy or not, heartbeats once when its sleepy or
-carried flag changes or its map point is cleared, and a relay also
-when a map point is set or its place moves to a fix it takes
-([position](#position), roadmap D71, D72). That heartbeat:
+**A heartbeat at a change.** A node, sleepy or not, heartbeats once when
+its sleepy or carried flag changes or its map point is cleared, and a
+relay also when a map point is set or its place moves to a fix it takes
+([position](#position); roadmap D71, D72). That heartbeat:
 
 - goes on its home channel, with the ordinary preamble, the long one if
   it is anchorless, and listen-before-talk;
@@ -692,41 +552,11 @@ when a map point is set or its place moves to a fix it takes
   beat goes there anyway ([sleepy nodes](#sleepy-nodes));
 - is one heartbeat for any number of changes before it goes.
 
-A position that changes with each fix is not announced. Sleeping nodes
-hear none of this, receiving duty-cycled; they learn a change at the
-next slot they wake for.
-
-*Why a heartbeat at a change.* Its neighbours on that channel then
-address it anew at once instead of a rotation later, and an old anchor
-that holds mail for a node turned relay hears it as a relay and hands
-the mail over. The flags change seldom: the sleepy flag only as a
-carried node goes on or off its charger or a fixed relay's battery runs
-low or recovers, and the carried flag is cleared only after four hours
-still.
-
-*Why not at each fix.* A carried relay's slots carry its position every
-T (roadmap D71); a sleepy node, carried or not, is a last resort to its
-neighbours, and its beats carry its address: its anchor's position, or
-its last fix without an anchor ([beats](#beats)).
-
-**The 256 intervals** are 39.1 ms apart, more than two heartbeats'
-airtime, 2 × 14.4 = 28.8 ms, so two nodes whose intervals differ slide
-past each other by more than an overlap at every heartbeat and meet at
-most once in a row, as random intervals would. 10 s / 28.8 ms = 347
-steps would do, and 256 is the largest power of two below it, one byte.
-
-*Why a shared interval does little harm.* Two nodes in reach share an
-interval with probability 1/256, which matters only if they are also in
-step, within 28.8 ms in a 10 s interval, 0.29 % of such pairs; their
-heartbeats then meet each time they are on one channel, as do those of a
-pair in step whose intervals stand 2:1 or 3:2.
-
-Clock drift unlocks them: a 32.768 kHz watch crystal is good to about
-±50 ppm, so two clocks part by up to 1 ms per 10 s heartbeat, and an
-overlap of 28.8 ms ends within 29 heartbeats, under five minutes,
-longer for clocks that drift alike. Nodes that boot together, after a
-power cut, would start in step but for the random first phase (roadmap
-D47).
+Its neighbours then address it anew at once, and an old anchor that
+holds mail for a node turned relay hears it as a relay and hands the
+mail over. A position that changes with each fix is not announced: a
+carried relay's slots carry it every T (roadmap D71). Sleeping nodes,
+receiving duty-cycled, learn a change at the next slot they wake for.
 
 ## Neighbours
 
