@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::task::Poll;
 
 use bark_driver::{
-    App, Clock, Driver, Gps, Heard, Outgoing, Radio, Request, MAX_AIRTIME, RSSI_DWELL,
+    App, Clock, Driver, Gps, Heard, Outgoing, Radio, Ready, Request, MAX_AIRTIME, RSSI_DWELL,
 };
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::update::{Image, ImageTag, Piece};
@@ -327,6 +327,9 @@ struct TestApp {
     /// due that it then did not give; and how many times it resolved.
     eager: bool,
     readies: u32,
+    /// Work of its own the loop that runs the driver serves after the
+    /// step, as the node does a phone's read of the neighbour table.
+    own: bool,
     /// What it queues, without a signal, when the core hands it a
     /// message, as a home's mailbox does a reply to a fetch.
     reply: Option<(Outgoing, Vec<u8>)>,
@@ -356,19 +359,22 @@ impl TestApp {
 impl App for TestApp {
     /// At a signal, resolves if the driver gets something, and otherwise
     /// takes the signal and waits on.
-    async fn ready(&mut self, offer: bool) {
-        poll_fn(|_| {
-            let new = core::mem::take(&mut self.signalled)
+    async fn ready(&mut self, offer: bool) -> Ready {
+        let ready = poll_fn(|_| {
+            let signalled = core::mem::take(&mut self.signalled);
+            let new = signalled
                 && ((offer && self.outgoing.is_some())
                     || self.power != self.read
                     || !self.requests.is_empty());
-            match self.eager || new {
-                true => Poll::Ready(()),
-                false => Poll::Pending,
+            match (self.eager || new, signalled && self.own) {
+                (true, _) => Poll::Ready(Ready::Driver),
+                (false, true) => Poll::Ready(Ready::Own),
+                (false, false) => Poll::Pending,
             }
         })
         .await;
         self.readies += 1;
+        ready
     }
 
     fn power(&mut self) -> Option<bool> {
@@ -1368,6 +1374,30 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
         "after the boot and each event but the last"
     );
     assert_eq!(d.stats().empty_readies, 5);
+}
+
+/// A readiness for the application's own turn, as the node's for a
+/// phone's read of the neighbour table or the inbox, which only the loop
+/// that runs the driver serves, ends the step at once and is no empty
+/// readiness: the next signal ends the next step as quickly, rather than
+/// waiting for the clock or the radio (bench 2026-11-10, core-interface §4).
+#[test]
+fn a_ready_for_the_application_itself_ends_the_step() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(100), at_ms(200)]);
+    let mut d = driver(core, &world, Duration::ZERO);
+    step(&mut d, &world);
+    d.app_mut().own = true;
+    for _ in 0..2 {
+        d.app_mut().signal();
+        step(&mut d, &world);
+        assert_eq!(world.now(), Instant::ZERO, "not woken by the clock");
+    }
+    d.app_mut().own = false;
+    run_bounded(&mut d, &world, at_ms(100), 1);
+    assert_eq!(seen(&d), [(0, "boot"), (100_000, "wakeup")]);
+    assert_eq!(d.stats().own_readies, 2);
+    assert_eq!(d.stats().empty_readies, 0);
 }
 
 /// A message the application has goes to the core at once, and so does

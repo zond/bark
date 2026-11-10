@@ -250,16 +250,29 @@ pub enum Gps {
     Track,
 }
 
+/// What [`App::ready`] resolved for (core-interface §4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ready {
+    /// Something for the driver: a request, a change of power or a
+    /// message.
+    Driver,
+    /// Nothing for the driver: the step ends so that the loop that runs
+    /// the driver serves the application with what only the core holds,
+    /// such as the page of the neighbour table a phone reads.
+    Own,
+}
+
 /// The application side of the node (core-interface §4).
 pub trait App {
-    /// Resolves when something new arrived for the driver since it last
-    /// resolved: a [`Request`], a change of power since [`App::power`]
-    /// last answered, or, if `offer`, a message. It resolves only when the
-    /// driver will get something, never for what already waited when it
-    /// began. `offer` is whether the core accepts a message now; one that
-    /// arrives while it does not, the application holds or refuses.
-    /// Cancel-safe (core-interface §4).
-    async fn ready(&mut self, offer: bool);
+    /// Resolves when something new arrived since it last resolved: for
+    /// the driver ([`Ready::Driver`]), a [`Request`], a change of power
+    /// since [`App::power`] last answered, or, if `offer`, a message; or
+    /// for the loop that runs the driver ([`Ready::Own`]). It resolves
+    /// with [`Ready::Driver`] only when the driver will get something,
+    /// never for what already waited when it began. `offer` is whether
+    /// the core accepts a message now; one that arrives while it does not,
+    /// the application holds or refuses. Cancel-safe (core-interface §4).
+    async fn ready(&mut self, offer: bool) -> Ready;
 
     /// The next request waiting, if any. The driver takes every one each
     /// time [`App::ready`] resolves, before it offers a message.
@@ -334,9 +347,12 @@ pub struct Stats {
     /// Longest stretch the loop spent away from the radio while the radio
     /// kept listening: a frame that ends in it waits in the radio.
     pub longest_away: Duration,
-    /// Times [`App::ready`] resolved and the application gave nothing,
-    /// against its contract.
+    /// Times [`App::ready`] resolved for the driver and the application
+    /// gave nothing, against its contract.
     pub empty_readies: u32,
+    /// Times [`App::ready`] resolved for the application's own turn
+    /// ([`Ready::Own`]).
+    pub own_readies: u32,
     /// Pieces the application could not fill, not sent ([`App::serve`]).
     pub unserved: u32,
 }
@@ -513,7 +529,13 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             },
             Either3::Second(Ok(())) => self.service().await,
             Either3::Second(Err(e)) => Err(self.failed(e)),
-            Either3::Third(()) => self.serve_app(start).await,
+            Either3::Third(Ready::Driver) => self.serve_app(start).await,
+            // Not a fault: the application gives the driver nothing by
+            // design, and what woke it is served once the step returns.
+            Either3::Third(Ready::Own) => {
+                self.stats.own_readies += 1;
+                Ok(())
+            }
         };
         if listening.is_some() && self.listening == listening {
             let away = self.clock.now().since(start);

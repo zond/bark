@@ -158,13 +158,15 @@ panic or never offer it.
 The firmware's driver too offers the application's message after every `handle`, before
 it waits again, so a message that waits goes whatever woke the loop. While it waits it
 also waits for its application with `bark_driver::App::ready`, which resolves only for
-something new for the driver since it last resolved: a request, a change of power, or,
-while the core accepts one, a message. A signal with nothing behind it, such as a power
-event that changed nothing, the application takes and keeps waiting; a message that
-arrives while the core accepts none it holds for a later offer or refuses. A readiness
-that gives the driver nothing breaks this: the driver counts it, does not wait on the
-application again until its clock or its radio wakes it, and logs it at most once a
-minute. An application that kept saying it is ready and giving nothing would otherwise
+something new since it last resolved, and says for whom. For the driver it is a request, a
+change of power, or, while the core accepts one, a message. For the loop that runs the
+driver it is work only that loop can do, as it alone reads the core between steps, such
+as a phone's read of the neighbour table: the driver counts it (`own_readies`) and ends
+the step. A signal with nothing behind it, such as a power event that changed nothing,
+the application takes and keeps waiting; a message that arrives while the core accepts
+none it holds for a later offer or refuses. A readiness for the driver that gives it
+nothing breaks this: the driver counts it, does not wait on the application again until
+its clock or its radio wakes it, and logs it at most once a minute. An application that kept saying it is ready and giving nothing would otherwise
 keep the loop from ever waiting: on a board that starves every other task of the
 processor and drains the battery.
 
