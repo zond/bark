@@ -889,12 +889,12 @@ fn now() -> Instant {
 
 /// The status as the phone in `slot` reads it now: ready in its turn
 /// alone, and its count its own person's items not confirmed, none for a
-/// guest.
+/// guest. It moves no turn: whatever moves it tells every phone
+/// ([`turn_moved`], [`publish`]).
 fn status_now(slot: usize) -> Status {
     LINK.lock(|l| {
-        let mut l = l.borrow_mut();
+        let l = l.borrow();
         let now = now();
-        l.advance(now);
         let inbox = l.phones[slot].record.map_or(0, |i| l.counts[i]);
         Status {
             ready: l.status.ready && l.request.is_none() && l.turn.holder() == Some(slot),
@@ -2106,6 +2106,7 @@ fn refresh(
     if let Err(e) = conn.raw().set_refuses_pairing(refuses) {
         log::error!("ble: refusing pairing {}", HostError(&e));
     }
+    turn_moved();
     let status = status_now(slot).encode();
     let staged = update
         .try_lock()
