@@ -61,8 +61,8 @@
 use core::fmt;
 
 use crate::battery::Battery;
-use bark_driver::sx1262::{irq, TxTiming};
-use bark_driver::{tcxo, Heard};
+use bark_driver::sx1262::TxTiming;
+use bark_driver::{tcxo, Failure, Heard};
 use bark_proto::radio::{
     time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME,
 };
@@ -1100,7 +1100,7 @@ impl<'a> Console<'a> {
                 report_heartbeat(&self.rx[..len]);
                 Ok(Some(bench))
             }
-            Heard::Failed if self.radio.last_flags() & irq::CRC_ERR != 0 => {
+            Heard::Failed(Failure::Crc) => {
                 // The bytes are in the chip's buffer still: what arrived.
                 self.counters.rx_crc_error += 1;
                 let (len, rssi_dbm, snr_db) = self.radio.read_last_frame(&mut self.rx).await?;
@@ -1109,7 +1109,7 @@ impl<'a> Console<'a> {
                 report_frame(ch, &self.rx[..len], rssi_dbm, snr_db, "error", at_us, bench);
                 Ok(Some(None))
             }
-            Heard::Failed => {
+            Heard::Failed(Failure::Header | Failure::Timeout) => {
                 self.counters.rx_header_error += 1;
                 log::info!("rx ch={} header_crc=error", ch.index());
                 Ok(None)

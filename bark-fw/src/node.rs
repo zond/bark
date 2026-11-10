@@ -694,11 +694,14 @@ pub async fn run<'a>(
             let r = driver.radio().stats();
             let t = driver.radio().tcxo();
             log::info!(
-                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} own_readies={} \
+                "driver events={} frames={} failed={} failed_header={} failed_crc={} failed_timeout={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} own_readies={} \
 resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}{}",
                 s.events,
                 s.frames,
                 s.failed,
+                s.failed_header,
+                s.failed_crc,
+                s.failed_timeout,
                 s.held,
                 s.radio_errors,
                 s.sniffs,

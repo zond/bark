@@ -14,9 +14,11 @@ Every 10 s the driver logs `frames` and `failed`, counted since boot
 or not they were meant for this node. `failed` are packets the radio
 began and ended without a frame: the header CRC failed, the payload CRC
 failed, or the receive timed out (`Sx1262::service`, the HeaderErr,
-CrcErr and Timeout bits of the datasheet's interrupt status). The
-running node does not say which; the console build's `rx` prints
+CrcErr and Timeout bits of the datasheet's interrupt status). The logs
+read here do not say which; the console build's `rx` prints
 `header_crc=error` and `crc=error` apart, with each frame's RSSI and SNR.
+Since this note the line also gives `failed_header`, `failed_crc` and
+`failed_timeout`, which add up to `failed`.
 
 Below, the failed share is failed ÷ (frames + failed): of the packets
 the radio began, the share that gave nothing.
@@ -171,10 +173,10 @@ What it costs where it happens:
    channel k and a sender beaconing on k+1, then k+2, at 10 dBm and then
    at −9 dBm. The header and CRC errors per beacon give the detection
    rate against level and channel distance, the number O5 asks for.
-3. **The counter split.** Counting header errors, payload CRC errors and
-   timeouts apart in the driver's line would show the mix in normal
-   running without a console build: noise that triggers the preamble
-   detector fails at the header, a leak shows both.
+3. **The mix.** Read `failed_header`, `failed_crc` and `failed_timeout`
+   off the normal log: noise that triggers the preamble detector fails
+   at the header, a leak shows both, and runs 1 and 2 should move the
+   payload failures most.
 4. **All on one channel.** A night with every node held on one channel
    should show almost no failures, as on 3 November; any left are noise.
 

@@ -86,10 +86,25 @@ pub enum Heard {
     },
     /// A packet has begun (preamble or header seen) and is still arriving.
     Started,
-    /// A packet ended without a frame: its header or payload CRC failed.
-    Failed,
+    /// A packet ended without a frame.
+    Failed(Failure),
     /// Nothing that concerns the core.
     Nothing,
+}
+
+/// Why a packet the radio began gave no frame. They are counted apart
+/// because they have different causes: noise that triggers the preamble
+/// detector fails at the header, while a packet from a neighbouring
+/// channel often passes it and fails the payload
+/// (`docs/crc-failures-2026-11-10.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    /// The header's CRC failed.
+    Header,
+    /// The header passed and the payload's CRC failed.
+    Crc,
+    /// The receive timed out.
+    Timeout,
 }
 
 /// The node a bench build's radio is deaf to, from `BARK_IGNORE` at build
@@ -333,8 +348,14 @@ pub struct Stats {
     pub events: u32,
     /// Frames received with a good CRC.
     pub frames: u32,
-    /// Packets that began and failed their CRC.
+    /// Packets that began and gave no frame: the sum of the three below.
     pub failed: u32,
+    /// Of `failed`, those whose header CRC failed.
+    pub failed_header: u32,
+    /// Of `failed`, those whose header passed and payload CRC failed.
+    pub failed_crc: u32,
+    /// Of `failed`, those that timed out.
+    pub failed_timeout: u32,
     /// Checks held for a reception in progress.
     pub held: u32,
     /// Radio operations that failed.
@@ -586,7 +607,14 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         }
         match heard {
             Heard::Started | Heard::Nothing => {}
-            Heard::Failed => self.stats.failed += 1,
+            Heard::Failed(why) => {
+                self.stats.failed += 1;
+                *match why {
+                    Failure::Header => &mut self.stats.failed_header,
+                    Failure::Crc => &mut self.stats.failed_crc,
+                    Failure::Timeout => &mut self.stats.failed_timeout,
+                } += 1;
+            }
             Heard::Frame {
                 len,
                 rssi_dbm,
