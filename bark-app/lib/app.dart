@@ -1190,7 +1190,6 @@ class AppModel extends ChangeNotifier {
   /// Whether the search has started, which only the app on a phone does:
   /// a test starts it to drive it.
   bool _searchStarted = false;
-  bool get searchStarted => _searchStarted;
 
   /// Bluetooth is on, by Android's word.
   bool bluetoothOn = false;
@@ -1516,8 +1515,8 @@ class AppModel extends ChangeNotifier {
 
   /// The node heard strongest of those Android lists a bond with that the
   /// app does not count as paired, as after its data was cleared or on a
-  /// new install: the node may still hold the phone's bond. None that refused the bond already, nor
-  /// while a link is up.
+  /// new install: the node may still hold the phone's bond. None that
+  /// refused the bond already, nor while a link is up.
   Future<FoundNode?> _bondedNode(Iterable<FoundNode> heard) async {
     if (session.connected) return null;
     final byRssi = [...heard]
@@ -1689,6 +1688,7 @@ class AppModel extends ChangeNotifier {
     _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();
     session.removeListener(_nodeAddress);
+    session.removeListener(_installs);
     session.removeListener(_queuedFetch);
     session.removeListener(_link);
     session.removeListener(_search);

@@ -252,22 +252,18 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     ),
   );
 
-  Widget _connection(BuildContext context) {
-    final s = app.session;
-    final guest = guestLine(app);
-    final text = connectionLine(app);
-    return ListTile(
-      dense: true,
-      leading: Icon(
-        s.connected || guest != null
-            ? Icons.bluetooth_connected
-            : Icons.bluetooth_disabled,
-      ),
-      title: Text(text),
-      trailing: ConnectionHelpButton(app),
-      onTap: () => _open(context, SettingsScreen(app)),
-    );
-  }
+  /// Which node the phone is on, a guest's between errands too.
+  Widget _connection(BuildContext context) => ListTile(
+    dense: true,
+    leading: Icon(
+      app.nodeLine != null
+          ? Icons.bluetooth_connected
+          : Icons.bluetooth_disabled,
+    ),
+    title: Text(connectionLine(app)),
+    trailing: ConnectionHelpButton(app),
+    onTap: () => _open(context, SettingsScreen(app)),
+  );
 
   /// A swipe either way archives, with an undo, as the row is gone at
   /// once.

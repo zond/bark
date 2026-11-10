@@ -534,13 +534,6 @@ String? lookingLine(AppModel app) {
   return app.scanning ? null : AppModel.searchLine(app.sought, bluetooth: true);
 }
 
-/// Which public node the phone uses as a guest, during an errand there
-/// and between them; null while it uses none.
-String? guestLine(AppModel app) {
-  final s = app.session;
-  return s.connected && !s.guest ? null : app.nodeLine;
-}
-
 /// The line on the phone's node, one of four: on its home, on another
 /// node it is paired with, on a public node as a guest, or on none, as
 /// when a paired node is away to install a new version. Why is
