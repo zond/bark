@@ -10,7 +10,10 @@ import 'dart:convert';
 import 'package:bark_app/alerts.dart';
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_ble.dart';
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
@@ -399,7 +402,7 @@ void main() {
       await t.pump();
       expect(find.text(appBar), findsNothing);
       expect(app.releases.dismissedApp, 5);
-      app.dispose();
+      app.disposeWithNode();
     });
 
     testWidgets('a node behind: the update screen with the image chosen, '
@@ -408,7 +411,6 @@ void main() {
       await t.pumpWidget(BarkApp(app));
       expect(find.text(appBar), findsNothing, reason: 'a development build');
       expect(find.text(nodeBar), findsNothing, reason: 'no node');
-      app.setFake(true);
       app.connectFake();
       await t.pump();
       expect(find.text(nodeBar), findsOneWidget);
@@ -426,7 +428,7 @@ void main() {
       await t.pumpWidget(const SizedBox());
       await app.session.disconnect();
       await t.pump();
-      app.dispose();
+      app.disposeWithNode();
     });
   });
 
@@ -461,7 +463,6 @@ void main() {
       );
       await t.runAsync(a.load);
       if (image != null) {
-        a.setFake(true);
         a.fakeNode = FakeNode(
           now: DateTime.now,
           sodium: sodium,
@@ -484,7 +485,7 @@ void main() {
       await t.pumpWidget(const SizedBox());
       await a.session.disconnect();
       await t.pump();
-      a.dispose();
+      a.disposeWithNode();
     }
 
     testWidgets('up to date', (t) async {

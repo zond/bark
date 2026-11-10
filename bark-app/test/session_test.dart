@@ -11,7 +11,9 @@ import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/conversations.dart';
 import 'package:bark_app/emojis.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/messenger.dart';
@@ -842,9 +844,15 @@ void main() {
       final again = p.again(sodium, () => start);
       async.flushMicrotasks();
       // The one connected last, last.
-      expect(again.session.pairedWith.toList(), [b, a]);
-      expect(again.session.pairingLost, {a});
-      expect((p.session.store as MemoryStore).state!['pairedWith'], [b, a]);
+      expect(again.session.nodes.paired.toList(), [b, a]);
+      expect(again.session.nodes.lost, {a});
+      expect(
+        [
+          for (final r in (p.session.store as MemoryStore).state!['nodes'])
+            r['name'],
+        ],
+        [b, a],
+      );
     });
   });
 
@@ -854,13 +862,13 @@ void main() {
       async.flushMicrotasks();
       var again = p.again(sodium, () => start);
       async.flushMicrotasks();
-      expect(again.session.pairedWith, {'bark-fa4e00000001'});
-      expect(again.session.pairingLost, isEmpty);
+      expect(again.session.nodes.paired, {'bark-fa4e00000001'});
+      expect(again.session.nodes.lost, isEmpty);
       again.session.setPaired('bark-fa4e00000001', lost: true);
       async.flushMicrotasks();
       again = again.again(sodium, () => start);
       async.flushMicrotasks();
-      expect(again.session.pairingLost, contains(nodeName(FakeNode.id)));
+      expect(again.session.nodes.lost, contains(nodeName(FakeNode.id)));
       expect(again.session.stopped, isFalse);
       again.session.setStopped(true);
       async.flushMicrotasks();

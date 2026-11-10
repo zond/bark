@@ -14,7 +14,10 @@ import 'package:bark_app/alerts.dart';
 import 'package:bark_app/app.dart';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/contacts.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_ble.dart';
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
@@ -100,13 +103,12 @@ void main() {
       final app = model(n, () => start.add(async.elapsed));
       app.load();
       async.flushMicrotasks();
-      app.setFake(true);
       app.connectFake();
       async.flushMicrotasks();
       body(async, app, n);
       app.session.disconnect();
       async.flushMicrotasks();
-      app.dispose();
+      app.disposeWithNode();
     });
   }
 
@@ -132,6 +134,7 @@ void main() {
         // The first state goes out even when nothing is held: the app
         // may have started with the phone, under the link's notification.
         'let go',
+        'hold Connected to ID FA4E00000001, paired',
         'Fake friend: Hello from the fake node.',
         'Fake friend: Hello from the fake node. | '
             'A second message, waiting in the inbox.',
@@ -248,26 +251,16 @@ void main() {
     });
   });
 
-  test('the link notification is up while a Bluetooth link is', () {
+  test('the link notification is up while a link is', () {
     run((async, app, n) {
-      // The fake node is no connected device.
-      expect(n.log.where((l) => l.startsWith('hold')), isEmpty);
-      app.session.disconnect();
-      async.flushMicrotasks();
-
-      // A link that is not the fake, as Bluetooth's is.
-      app.setFake(false);
-      final node = FakeNode(now: app.now, sodium: sodium, app: app.me.identity);
-      app.session.attach(node.connect());
-      async.flushMicrotasks();
+      expect(n.log, contains('hold Connected to ID FA4E00000001, paired'));
       n.log.clear();
       app.session.disconnect();
       async.flushMicrotasks();
       expect(n.log, ['let go']);
-      app.session.attach(node.connect());
+      app.connectFake();
       async.flushMicrotasks();
       expect(n.log, ['let go', 'hold Connected to ID FA4E00000001, paired']);
-      node.dispose();
     });
   });
 
@@ -276,7 +269,7 @@ void main() {
     run((async, app, n) {
       const looking =
           'Not connected. Looking for ID FA4E00000001; texts wait on the phone';
-      expect(n.boot, [null, looking]);
+      expect(n.boot.last, looking);
       app.disconnect();
       async.flushMicrotasks();
       expect(n.boot.last, isNull);
@@ -313,13 +306,14 @@ void main() {
       async.flushMicrotasks();
       app.connectFake().catchError((_) {});
       async.flushMicrotasks();
-      expect(app.session.pairingLost, contains(nodeName(FakeNode.id)));
+      expect(app.session.nodes.lost, contains(nodeName(FakeNode.id)));
       expect(n.boot.last, isNull);
     });
   });
 
+  /// The person taps their paired node's row in Settings.
   Future<void> connectFake(WidgetTester t) async {
-    await t.tap(find.text('Connect'));
+    await t.tap(find.text('ID FA4E00000001'));
     await t.pumpAndSettle();
   }
 
@@ -329,7 +323,8 @@ void main() {
     final n = FakeNotifier(notify: false, exempt: false);
     final app = model(n, DateTime.now);
     await t.runAsync(app.load);
-    app.setFake(true);
+    app.fakeNode = FakeNode(now: app.now, sodium: sodium, app: app.me.identity);
+    await app.session.setPaired(nodeName(FakeNode.id));
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
 
@@ -338,7 +333,7 @@ void main() {
     await t.ensureVisible(find.text('Let bark run'));
     await t.tap(find.text('Let bark run'));
     expect(n.log.last, 'ask exempt');
-    await t.ensureVisible(find.text('Connect'));
+    await t.ensureVisible(find.text('ID FA4E00000001'));
 
     await connectFake(t);
     expect(find.text('Notifications'), findsOneWidget);
@@ -358,7 +353,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a tapped notification opens its thread', (t) async {
@@ -366,7 +361,6 @@ void main() {
     final app = model(n, DateTime.now);
     await t.runAsync(app.load);
     await t.pumpWidget(BarkApp(app));
-    app.setFake(true);
     await app.connectFake();
     await t.pumpAndSettle();
     n.taps.add(friend(app));
@@ -377,6 +371,6 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 }

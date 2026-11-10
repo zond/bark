@@ -87,16 +87,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       body: ListView(
         children: [
           ..._releases(context),
-          if (app.fake)
-            Card(
-              color: Theme.of(context).colorScheme.tertiaryContainer,
-              child: const ListTile(
-                leading: Icon(Icons.science_outlined),
-                title: Text('Demo: nothing leaves this phone'),
-              ),
-            ),
           NoticeCard(app),
-          StaleBondLine(app),
+          BondKeptLine(app),
           HomeOfferLine(app),
           ..._gettingStarted(context),
           // Once there is a contact, there is someone to lose.

@@ -878,7 +878,7 @@ List<int> nameBytes(String name) {
   return out;
 }
 
-/// Recipient, written, for the fake node.
+/// Recipient, written, as the node reads it.
 ({int tag, int version, int oldest, String name}) decodeRecipient(
   List<int> b,
 ) => switch (b) {

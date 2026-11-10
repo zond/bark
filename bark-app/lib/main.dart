@@ -42,7 +42,7 @@ class _BarkAppState extends State<BarkApp> {
       // forgotten a node there.
       onResume: () {
         unawaited(app.checkBluetooth());
-        unawaited(app.recheckStale());
+        unawaited(app.recheckKept());
       },
     );
     _taps = app.notifier.tapped.listen(_openThread);

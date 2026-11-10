@@ -230,11 +230,10 @@ class BleLink implements NodeLink {
   /// the person for the code on the node's screen, and `paired` once the
   /// bond is made; returns the MTU agreed.
   ///
-  /// As a `guest` of a public node it does not pair, and reads to check a
-  /// bond only where the phone holds one: without, Android may start a
-  /// pairing by itself on a read the node refuses for want of one, and
-  /// the node is not the person's. Throws [StaleBond] for a guest's link
-  /// the node refuses for the phone's bond, as for [NotOurs] below.
+  /// As a `guest` of a public node it neither pairs nor reads: Android
+  /// may start a pairing by itself on a read the node refuses for want of
+  /// a bond, and the node is not the person's. The phone holds no bond
+  /// with a node it joins as a guest ([AppModel]).
   ///
   /// Throws [NotOurs] for a node, `name`, that no longer holds the
   /// phone's bond: one that ends the link it took before the app has
@@ -281,17 +280,14 @@ class BleLink implements NodeLink {
     } catch (e) {
       final ended = link._closed.isCompleted;
       await link.close();
-      if (await setUpRefused(deviceId, hadBond: hadBond)) {
-        throw guest ? StaleBond(name) : NotOurs(name);
+      if (!guest && await setUpRefused(deviceId, hadBond: hadBond)) {
+        throw NotOurs(name);
       }
       if (ended) throw LinkEnded(name);
       rethrow;
     }
     try {
-      if (guest) {
-        if (await bonded(deviceId)) await link._probe(name, guest: true);
-        return (link, mtu);
-      }
+      if (guest) return (link, mtu);
       if (await UniversalBle.isPaired(deviceId) ?? false) {
         await link._probe(name);
       } else if (hadBond) {
@@ -368,14 +364,12 @@ class BleLink implements NodeLink {
   }
 
   /// A bonded phone's first read, which shows whether the node still
-  /// holds its bond: [NotOurs] if not, or for a `guest`, [StaleBond].
-  Future<void> _probe(String name, {bool guest = false}) async {
+  /// holds its bond: [NotOurs] if not.
+  Future<void> _probe(String name) async {
     try {
       await _read(Uuids.node);
     } catch (e) {
-      if (bondRefused(e, closed: _closed.isCompleted)) {
-        throw guest ? StaleBond(name) : NotOurs(name);
-      }
+      if (bondRefused(e, closed: _closed.isCompleted)) throw NotOurs(name);
       rethrow;
     }
   }
