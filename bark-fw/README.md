@@ -1169,8 +1169,16 @@ paired phone writes 0 to Public, private, a setting of the node's, kept
 in the settings entry, so a node never paired, and one whose bond an
 older image kept public, is public; with the last bond gone it is public
 again. Each paired phone writes its person's tag at every connection,
-and from link version 13 their name after it, which its record keeps;
-an older app's tag alone is taken, the name left empty. Each link is
+and from link version 13 the app's link version, the oldest node version
+it serves and the person's name after it, which its record keeps; an
+older app's tag alone is taken as version 12's, the name left empty.
+Node says the oldest app version the node serves, 12
+(`bark_link::OLDEST`, which says why). An app and the node that do not
+serve each other, one's version below the other's oldest, get the ATT
+error 0x82 for Recipient's write and the link ends, the log saying `ble:
+the app in slot 1 speaks link version 14 and serves nodes from version
+14; this node speaks 13 and serves apps from 12: they do not serve each
+other, closed` (spec "Phone link", Versions; roadmap D177). Each link is
 served by a task of its own (`slot`), so that its future lies in static
 storage and the stack holds one poll at a time; one slot advertises at a
 time. A guest's link ends 30 s after it began, and a second guest's as
@@ -1212,7 +1220,7 @@ phones::Code`), the removed bond's phone's link closed and the bond
 gone from the host. Node's `room` says how many more phones may pair.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
-5a slot 1 record Some(1) name 5 bytes` as a phone writes its tag, `ble:
+5a slot 1 record Some(1) app version 13 name 5 bytes` as a phone writes its tag, `ble:
 public false`, `ble: record 1 unpaired by its phone; its home stays`,
 `ble: home of record 1 set`, `ble: removal, the code shown`, `ble:
 record 2 number 7 removed: bond true, home false`, `ring: id=...

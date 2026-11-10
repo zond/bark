@@ -28,6 +28,26 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// in Home (roadmap D168).
 pub const VERSION: u8 = 13;
 
+/// The oldest link version whose apps this node still serves, in
+/// [`Node::oldest`] (spec "Phone link", Versions; roadmap D177): 12, as
+/// every read and write of a version 12 app still means what it meant.
+/// Version 13 appended `room` and `oldest` to Node and `mine` to Home,
+/// which such an app does not read; it writes Recipient's tag alone,
+/// which the node still takes; it does not know Phones, which it never
+/// touches; and its Inbox, Home and Public act on its own person's
+/// record, which is what they acted on when the node kept one phone. An
+/// app older than 12 cannot be told from one of 12, as it too writes the
+/// tag alone, so 12 is the oldest the node can vouch for.
+pub const OLDEST: u8 = 12;
+
+/// Whether an app of link version `version`, which serves nodes of link
+/// version `oldest` and later, and this node can serve each other: each
+/// side's version at least the other's oldest (spec "Phone link",
+/// Versions).
+pub const fn compatible(version: u8, oldest: u8) -> bool {
+    version >= OLDEST && VERSION >= oldest
+}
+
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
 /// Vol 6 Part B §2.4), less the 4-byte L2CAP header (Vol 3 Part A §3.1).
@@ -138,6 +158,10 @@ pub mod att {
     /// The node refused a begin, a commit or a reboot of an update; Update
     /// says why ([`crate::update::Refusal`]).
     pub const REFUSED: u8 = 0x81;
+    /// The app's link version and the node's do not serve each other: one
+    /// is below the other's oldest (spec "Phone link", Versions). The node
+    /// answers Recipient's write so, then ends the link.
+    pub const INCOMPATIBLE: u8 = 0x82;
 }
 
 /// Why a value was not taken.
@@ -203,11 +227,14 @@ pub struct Node {
     /// How many more phones may pair with it (spec "Phone link", Node);
     /// `None` from a node of link version 12 or before, which kept one.
     pub room: Option<u8>,
+    /// The oldest link version whose apps it serves ([`OLDEST`]); `None`
+    /// from a node of link version 12 or before.
+    pub oldest: Option<u8>,
 }
 
 impl Node {
     /// Bytes in the value.
-    pub const LEN: usize = Self::LEN_12 + 1;
+    pub const LEN: usize = Self::LEN_12 + 2;
     /// Bytes in the value of link version 12 and before.
     const LEN_12: usize = 1 + ID + 4;
 
@@ -218,6 +245,7 @@ impl Node {
         b[1..1 + ID].copy_from_slice(&self.id.0);
         b[1 + ID..Self::LEN_12].copy_from_slice(&self.image.to_be_bytes());
         b[Self::LEN_12] = self.room.unwrap_or(0);
+        b[Self::LEN_12 + 1] = self.oldest.unwrap_or(0);
         b
     }
 
@@ -231,6 +259,7 @@ impl Node {
             id: node_id(&b[1..]),
             image: u32::from_be_bytes(b[1 + ID..Self::LEN_12].try_into().expect("four bytes")),
             room: b.get(Self::LEN_12).copied(),
+            oldest: b.get(Self::LEN_12 + 1).copied(),
         })
     }
 }
@@ -656,36 +685,60 @@ impl NodeTime {
 /// Recipient, write: the phone's recipient tag at this node, by which the
 /// node hands it the payloads that are its own (spec "Phone link",
 /// Recipient tag; `bark_app_layer::seal::recipient`), and from link
-/// version 13 its person's name as their card has it, which a paired
-/// phone's record keeps (spec "Phone link", Pairing). An older app writes
-/// the tag alone, and its person's name stays empty.
+/// version 13 the app's link version, the oldest node version it serves
+/// (spec "Phone link", Versions) and its person's name as their card has
+/// it, which a paired phone's record keeps (spec "Phone link", Pairing).
+/// An app of version 12 or older writes the tag alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Recipient {
     /// The tag.
     pub tag: u8,
+    /// The app's link version.
+    pub version: u8,
+    /// The oldest node link version the app serves.
+    pub oldest: u8,
     /// The name: UTF-8, at most [`phones::NAME_MAX`] bytes.
     pub name: phones::Name,
 }
 
 impl Recipient {
     /// Bytes in the longest value.
-    pub const MAX_LEN: usize = 1 + phones::NAME_MAX;
+    pub const MAX_LEN: usize = 3 + phones::NAME_MAX;
+    /// What a write of the tag alone says of its app: version 12 or older,
+    /// which declared no oldest and so serves any node.
+    const ALONE: (u8, u8) = (12, 0);
 
     /// The value, into `b`; its length.
     pub fn encode(&self, b: &mut [u8; Self::MAX_LEN]) -> usize {
         let name = self.name.as_bytes();
-        b[0] = self.tag;
-        b[1..1 + name.len()].copy_from_slice(name);
-        1 + name.len()
+        b[..3].copy_from_slice(&[self.tag, self.version, self.oldest]);
+        b[3..3 + name.len()].copy_from_slice(name);
+        3 + name.len()
     }
 
-    /// Take a written value whole: a name that is not UTF-8 is not taken.
+    /// Take a written value whole: the tag alone as version 12's, and a
+    /// name that is not UTF-8 is not taken.
     pub fn decode(b: &[u8]) -> Result<Recipient, Malformed> {
-        let (&tag, name) = b.split_first().ok_or(Malformed::Length)?;
-        Ok(Recipient {
-            tag,
-            name: phones::Name::new(name)?,
-        })
+        match b {
+            [tag] => Ok(Recipient {
+                tag: *tag,
+                version: Self::ALONE.0,
+                oldest: Self::ALONE.1,
+                name: phones::Name::EMPTY,
+            }),
+            [tag, version, oldest, name @ ..] => Ok(Recipient {
+                tag: *tag,
+                version: *version,
+                oldest: *oldest,
+                name: phones::Name::new(name)?,
+            }),
+            _ => Err(Malformed::Length),
+        }
+    }
+
+    /// Whether the app and this node serve each other ([`compatible`]).
+    pub fn compatible(&self) -> bool {
+        compatible(self.version, self.oldest)
     }
 }
 
