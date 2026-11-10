@@ -2695,10 +2695,11 @@ else when the link ended; and a display name in UTF-8 (0 to 32): 38 to
 100 bytes. As text, `BARK:` and the bytes in base32 (RFC 4648, its base32
 alphabet) without padding. A card with a later time replaces a contact's
 card, as does one of the same time, which may name another node; the
-person sends their card to their contacts when it changes. A card
-without a home is **temporary**: the node on it keeps the person's mail
-in its ring, by their recipient tag, only for as long as they come back
-to it (roadmap D162).
+person sends their card to their contacts when it changes. Without
+a home, the node on the card keeps the person's mail in its ring, by
+their recipient tag, so a text there waits until they come back to it;
+the card says that node is **temporary**, so nobody takes it for a home
+(roadmap D162).
 
 The sender's address travels inside the encrypted payload, so that the
 relays past the first hop do not learn who sent it
@@ -2776,7 +2777,10 @@ items: what it had not handed over stays unsent.
 A batch of 32 fits the 33 full frames a full bucket sends with the reply
 reserve left ([send queue](#send-queue)), so it leaves at the pace of the
 hand-overs and within the fetch address's life, the delivery TTL; the
-count tells the person what is left.
+count tells the person what is left. A reply the requester's node has
+no room for is refused and waits at its sender ([receiving](#receiving)),
+and one the home node's neighbours refuse is given back to the mailbox
+and goes again.
 
 ## Screen and buttons
 
@@ -2889,8 +2893,7 @@ version, the signer's key, its blocks and the pieces of its last, or
 none; how many of its blocks the node holds from the first; and how many
 pieces it holds of the block after those. A node that knows neither the
 version it runs nor an image tells no section. The count of pieces goes
-as it stands when sent. A section costs one block of symbols, 7.68 ms
-more a heartbeat.
+as it stands when sent. A section costs 7.68 ms more a heartbeat.
 
 A relay's heartbeats carry the section in a **rotation of sections**:
 once on each channel, at its next heartbeat there, so that a heartbeat
