@@ -11,6 +11,7 @@
 use bark_app_layer::carry::{decode, encode, HELD_MAX, SLOT_LEN};
 use bark_driver::Outgoing;
 use bark_image::layout::external::{CARRY, SECTOR};
+use bark_image::layout::Region;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Held, MsgId};
 use core::cell::Cell;
@@ -112,7 +113,13 @@ pub async fn tidy() {
     if !done {
         return;
     }
-    erase(st.next.div_ceil(PER_SECTOR).max(1)).await;
+    // The sectors written, at least the first, which `open` reads.
+    let sectors = st.next.div_ceil(PER_SECTOR).max(1) as u32;
+    let written = Region {
+        len: (sectors * SECTOR).min(CARRY.len),
+        ..CARRY
+    };
+    ext_flash::erase_region(written, "carry").await;
     STATE.lock(|c| {
         c.set(State {
             kept: false,
@@ -123,18 +130,10 @@ pub async fn tidy() {
     log::info!("carry: every message offered again; {} kept", st.next);
 }
 
-async fn erase(sectors: usize) {
-    for k in 0..sectors.min(CARRY.len as usize / SECTOR as usize) {
-        if let Err(e) = ext_flash::erase(CARRY.start + k as u32 * SECTOR).await {
-            log::error!("carry: erase {:?}", e);
-        }
-    }
-}
-
 /// Keep what the core holds, just before the reset: each message logged
 /// by its ID.
 pub async fn keep<'a>(held: impl Iterator<Item = Held<'a>>) {
-    erase(CARRY.len as usize / SECTOR as usize).await;
+    ext_flash::erase_region(CARRY, "carry").await;
     let mut n = 0;
     for m in held.take(SLOTS) {
         let Some(s) = encode(&m) else { continue };

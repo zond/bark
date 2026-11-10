@@ -12,7 +12,7 @@
 
 use bark_app_layer::tables::{bytes, Check, Header, HEADER_LEN, MAX_LEN};
 use bark_image::ext_flash::PROGRAM_PAGE;
-use bark_image::layout::external::{SECTOR, TABLES};
+use bark_image::layout::external::TABLES;
 use bark_proto::Duration;
 use embedded_storage::nor_flash::ReadNorFlash;
 
@@ -25,11 +25,7 @@ const _: () = assert!(MAX_LEN as u32 <= TABLES.len);
 const PAGE: usize = PROGRAM_PAGE as usize;
 
 async fn erase() {
-    for k in 0..TABLES.len / SECTOR {
-        if let Err(e) = ext_flash::erase(TABLES.start + k * SECTOR).await {
-            log::error!("tables: erase {:?}", e);
-        }
-    }
+    ext_flash::erase_region(TABLES, "tables").await;
 }
 
 /// Keep `core`'s tables, just before the reset: the entries a page at a

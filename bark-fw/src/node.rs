@@ -648,30 +648,30 @@ pub async fn run<'a>(
             Timer::after(RETRY_PAUSE).await;
         }
         let now = bark_driver::Clock::now(&clock);
-        let core = &driver.core().0;
-        // An image gathered over the mesh and staged: the node drains, and
-        // the reboot into it waits for a moment that loses nothing
-        // (`bark_image::policy`). The phones are told while it drains, and
-        // since the told status is a notification not yet sent, the reboot
-        // waits for it.
-        let moment = || crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
-        let staged = crate::update::mesh::staged();
-        let installing = staged.filter(|_| bark_image::policy::drains(moment()));
-        let status = status(core, now, driver.app().battery_mv, installing);
-        crate::update::note_power(crate::update::Power {
-            external: status.external_power,
-            battery_mv: core.battery_millivolts(driver.app().battery_mv),
-        });
         // Every message is placed in the ring one at a time, each confirmed
         // to the core once it is (`request`); the phones read their own
         // from the ring.
-        let head = core.inbox().map(|(id, p)| {
+        let head = driver.core().0.inbox().map(|(id, p)| {
             let mut payload = [0; MAX_PAYLOAD];
             payload[..p.len()].copy_from_slice(p);
             (id, p.len() as u8, payload)
         });
         let oldest = head.as_ref().map(|(id, n, p)| (*id, &p[..usize::from(*n)]));
         driver.app_mut().place(oldest);
+        let core = &driver.core().0;
+        // An image gathered over the mesh and staged: the node drains, and
+        // the reboot into it waits for a moment that loses nothing
+        // (`bark_image::policy`). The phones are told while it drains, and
+        // since the told status is a notification not yet sent, the reboot
+        // waits for it.
+        let staged = crate::update::mesh::staged();
+        let moment = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
+        let installing = staged.filter(|_| bark_image::policy::drains(moment));
+        let status = status(core, now, driver.app().battery_mv, installing);
+        crate::update::note_power(crate::update::Power {
+            external: status.external_power,
+            battery_mv: core.battery_millivolts(driver.app().battery_mv),
+        });
         publish_ring(status);
         let core = &driver.core().0;
         crate::ble::serve_read(|r, b| match *r {
@@ -684,15 +684,12 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        // An image gathered over the mesh and staged: the node drains, and
-        // the reboot into it waits for a moment that loses nothing
-        // (`bark_image::policy`), keeps what the core still holds at the
-        // bound and its tables, and ends the phones' links first.
+        // At the quiet moment the node keeps what the core still holds and
+        // its tables, and ends the phones' links first.
         if let Some(version) = staged {
             let core = &driver.core().0;
-            let m = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
-            crate::update::mesh::drain(bark_image::policy::drains(m), core.draining());
-            if bark_image::policy::quiet(m) {
+            crate::update::mesh::drain(bark_image::policy::drains(moment), core.draining());
+            if bark_image::policy::quiet(moment) {
                 log::info!(
                     "update: rebooting into version {} at a quiet moment",
                     version

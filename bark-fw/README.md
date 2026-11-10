@@ -64,6 +64,11 @@ after its `node id=` line, and its screen says `DISCHARGE BENCH` in
 place of the image's line and of the ID under the code, so that the
 board is not taken for a node.
 
+`BARK_ADV_INTERVAL_MS=<ms>` at build time sets the phone link's
+advertising interval, a multiple of 5 ms from 20 to 10 240, in place of
+its 1 022.5 ms (`src/ble.rs`), to see on the bench whether how often
+the node advertises changes how often a phone connects.
+
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
 describes it. A node's place can be set when it is built, from `BARK_LAT`
@@ -150,10 +155,10 @@ Verified on the host:
   each build, plain, with `--features console` and with `BARK_OPEN=1`.
 - The ELF's first loadable byte (the vector table) is at `0x06000`, the
   initial stack pointer is `0x20040000`. The open node image is
-  526 564 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
-  of the 929 792 B slot, and uses 195 896 B of RAM before the stack
-  (`.data` and `.bss`), which leaves the stack 65 216 B (2026-11-10 with
-  roadmap D186, `size -A`, `scripts/uf2.py --stack`). The relay,
+  532 916 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
+  of the 929 792 B slot, and uses 197 312 B of RAM before the stack
+  (`.data` and `.bss`), which leaves the stack 63 800 B (2026-11-10,
+  `size -A`, `scripts/uf2.py --stack`). The relay,
   95 536 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. The
   stack's depth is in "Tasks and the stack", below.
@@ -174,7 +179,7 @@ Verified on the host:
   order inside `0x01000..0xEA000`; the loader's at `0x01000`, the rest
   of the old SoftDevice's pages erased, the firmware's at `0x06000`, the
   erased state page and record.
-- The loader builds to 8 948 B at `0x01000` (roadmap D148), and
+- The loader builds to 8 964 B at `0x01000` (roadmap D148), and
   `cargo clippy --release -- -D warnings` passes in `../bark-loader`.
 - The swap, on a flash in RAM with the board's layout
   (`cargo test -p bark-image` in the host workspace): a staged image is
@@ -305,7 +310,7 @@ Inside:
 | Region | Start | Size | Why |
 |---|---|---|---|
 | MBR | `0x00000` | 4 KiB | the chip's first code; the bootloader's linker script |
-| loader | `0x01000` | 16 KiB, 4 pages | where the bootloader jumps with no SoftDevice; 8.6 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field; a UF2 with the loader erases what is left of the SoftDevice up to `0x26000` |
+| loader | `0x01000` | 16 KiB, 4 pages | where the bootloader jumps with no SoftDevice; 8.8 KiB as built, the fourth page room to grow, since the layout cannot move once boards are in the field; a UF2 with the loader erases what is left of the SoftDevice up to `0x26000` |
 | loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 910 of its 1024); a UF2 writes it erased |
 | firmware, running | `0x06000` | 908 KiB, 227 pages | the CPU runs from internal flash; everything up to the record |
 | staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
@@ -358,11 +363,9 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit: the open node image of version 14 is 478 704 B of
-the 929 792 B slot, 451 088 B free (2026-11-09, without a place); the
-pairing of roadmap D135 took 55.8 KB of it
-(`docs/flash-2026-11-06.md` measures the options,
-`docs/pairing-2026-11-06.md` the pairing's). The core's slowest
+and one codegen unit, which keeps the open node image under three
+fifths of its slot (Verified and unverified, above;
+`docs/flash-2026-11-06.md` measures the options). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
 
 The same line counts what the radio heard since boot: `frames` passed
@@ -1061,12 +1064,9 @@ reset.
 SPIM3, whose transmitted data can be corrupted while the CPU or another
 EasyDMA master uses its buffer's RAM block, nRF52840 Errata anomaly
 198) and shares no pin with the radio. Its refreshes run as a task of
-their own beside the radio's loop, with the picture in a static: joined
-into the main task as a future, they grew that task's stack frame, the
-deepest, from 29 184 B to 42 752 B and a nested 8 000 B beside, past
-the 43 KiB left for the stack, and the first image hung at boot before
-USB came up (bench, 2026-11-05); "Tasks and the stack", below, has the
-rest. In its task the picture is drawn a line at a time,
+their own beside the radio's loop, with the picture in a static, so
+that no other task's frame holds them ("Tasks and the stack", below).
+In its task the picture is drawn a line at a time,
 tens of microseconds each, the executor given back between lines; the
 5000-byte RAM writes are DMA; and every wait on the controller's BUSY
 line is on an interrupt, bounded at 6 s, three times the 2 s refresh.
@@ -1275,11 +1275,9 @@ log says `ble: ask [..]` for the write and `status of [..]: Status {
 .. }` for each answer.
 
 A link costs 5.9 KB of static RAM, taken from the stack: the
-controller's 2 434 B, the host's 1 200 B and its slot's task, 2 240 B
-(2026-11-10, `nm`). A third, as first built, left the stack under its
-floor once the mesh spread's tables came, and two boards faulted at
-boot; nine leave it 65 864 B, as the relay has shrunk since (roadmap
-D155; Tasks and the stack, below).
+controller's 2 434 B, the host's 1 200 B and its slot's task, about
+2.3 KB (2026-11-10, `nm`); the nine links leave the stack the figure
+in Verified and unverified, above (Tasks and the stack, below).
 
 ## Mailbox
 
@@ -1329,12 +1327,6 @@ programmed again (1 so far)`, again at each power of two of the count.
 The second means a reading or a fetch may leave its record's bit set, so
 that a fetch sends an item again, or clear another record's.
 
-The cost (release, with a place, against `a3d9fbe`): 15 688 B of flash,
-374 012 B of the 401 408 B slot; 2 880 B of static RAM, the mailbox
-with its queue of eight ops; the flash task's deepest chain 1 064 B, the
-others unchanged within 1.2 KB, the radio's 9 392 B now the deepest,
-and the main task's 6 344 B at boot, where it opens the ring.
-
 ## Tasks and the stack
 
 In the node image every long-lived part of the firmware is an embassy
@@ -1350,73 +1342,38 @@ a read raced against a timer. The console keeps its one-shot structure,
 its radio, LED and picture joined in the main task, which holds no
 relay; its USB device, log, touch and watchdog are tasks as in the node.
 
-Measured with `llvm-objdump` (the release image with a place): the
-largest single frames, and the deepest chain of calls the disassembly
-shows from each task's poll, an upper bound since calls through
-pointers are not followed.
-
-| | before (`5248d65`) | after |
-|---|---|---|
-| main task's frame | 29 312 B | 1 372 B |
-| main task's deepest chain | 38 840 B | 2 476 B |
-| phone link's deepest chain | in the main task's | 10 352 B (its own frame 8 384 B) |
-| radio and core's deepest chain | in the main task's | 9 344 B (its own frame 2 224 B) |
-| screen, GPS, store | 880, 760, 516 B | 880, 760, 516 B |
-| any other task | in the main task's | under 400 B |
-
-The main task's 29 KB frame was mostly the relay's set-up at boot: the
-neighbour table, the heard table, the delivery queue and the inbox,
-each built and assigned, passed through it, 32 KB together; they are
-now emptied in place (`Relay::reset`, `docs/core-interface.md` §6). So
-the stack's high-water mark should fall from the 37.0 KB painted
-(`stack_used`) to about 11 KB, the phone link's chain and the executor's
-200 B, with the interrupts' frames above it, of the 41.7 KB the stack
-has.
+The relay, 95 536 B, is built in place in its static
+(`Relay::reset`, `docs/core-interface.md` §6), so that no task's frame
+holds it. The deepest poll the disassembly shows (`llvm-objdump`, an
+upper bound, since calls through pointers are not followed) is the
+phone link's, about 10 KB, with the radio and core's about 9 KB beside
+it; every other task's is under 1 KB.
 
 **The floor.** The stack is the RAM static memory leaves, and nothing
-else bounds it: an image whose statics grow past it faults at boot, as
-two boards did on 2026-11-08, with 14.6 KiB left, after the public
-node's links and the mesh spread's tables came together. The most a
-node image has used is what the boards painted (`stack_used`) over a
-day, 2026-11-08: 16 564 B on version 4 (`42dd68f`), 15 412 B on version
-0, against a deepest poll of 9.5 KiB by the disassembly, which does not
-follow calls through pointers or count the interrupts. So the stack
-keeps at least 24 KiB: the measured 16.2 KiB and 6 KiB for what an image
-since may add, 22.2 KiB, rounded up. `scripts/uf2.py` refuses to pack an
-image that leaves less, from its `__sheap` and `_stack_start`, and
-`uf2.py --stack` only checks, which CI runs on the release build. A
+else bounds it: an image whose statics grow past it faults at boot. The
+most a node image has used is what the boards painted (`stack_used`)
+over a day, 2026-11-08: 16 564 B, against a deepest poll of 9.5 KiB by
+the disassembly, which does not count the interrupts. So the stack
+keeps at least 24 KiB: the measured 16.2 KiB and 6 KiB for what an
+image since may add, 22.2 KiB, rounded up. `scripts/uf2.py` refuses to
+pack an image that leaves less, from its `__sheap` and `_stack_start`,
+and `uf2.py --stack` only checks, which CI runs on the release build. A
 measurement above it raises the floor.
 
-To get there, the phone link keeps no copy of what the node holds: a
-read of Neighbours or of Inbox asks the node, which writes the page or
-the message into one buffer as the phone reads it (`ble::READ`), where
-the link kept the whole neighbour table, 2.6 KB, and two messages; the
-host keeps no room for L2CAP's connection-oriented channels, which the
-node never opens; the update's header is kept once, not in every link's
+The phone link keeps no copy of what the node holds: a read of
+Neighbours or of Inbox asks the node, which writes the page or the
+message into one buffer as the phone reads it (`ble::READ`); the host
+keeps no room for L2CAP's connection-oriented channels, which the node
+never opens; the update's header is kept once, not in every link's
 task; and the mailbox queues 6 flash ops, twice the 3 a message or a
-confirmation takes, not 8.
+confirmation takes.
 
-| node image, release, open, version 6 | data + bss | stack |
+| release, open | data + bss | stack |
 |---|---|---|
-| merged with 3 links (`4fdcf58`) | 246 136 B | 14 984 B |
-| 2 links | 240 520 B | 20 576 B |
-| 2 links, no copies (above) | 236 280 B | 24 832 B |
-| one guest's link, its mail in the ring | 236 472 B | 24 640 B |
-| console | 16 264 B | 244 840 B |
+| node image | 197 312 B | 63 800 B |
+| console | 18 264 B | 242 840 B |
 
-Since the send queue holds 64 of its hop places at once (roadmap D155),
-the relay is 95 600 B smaller: the open release image of version 14
-left the stack 112 008 B, and with the trial of roadmap D159 version 16
-leaves it 111 528 B (2026-11-09, `uf2.py --stack`).
-
-Eight phones' records (roadmap D168) take nine links in place of two,
-7 × 5 874 B: the controller's memory 17 040 B more, the slots' tasks
-15 680 B and the host's 8 400 B; with the records, 1 036 B, the mailbox's
-eight people and rounds, 756 B, and the attribute table's Phones, the
-links' state and the screen's codes, 1 640 B, the static RAM grows
-44 552 B, and the stack has 65 864 B where `main` (`03ff9f6`) had
-110 408 B, above the 24 KiB floor (2026-11-10, `nm`, `uf2.py --stack`).
-The flash grows 16 480 B.
+(2026-11-10, `size -A`, `uf2.py --stack`.)
 
 ## Radio power
 
@@ -1861,9 +1818,7 @@ cannot read. The console's echoes and answers take the same path.
 
 The line buffer is 638 bytes, the longest line the firmware writes: the
 console's report of a received frame of 255 bytes in hex, with its time
-and fields. A longer line is cut and ends in `...`. It is the only static
-memory the change added: the open release image of version 19 leaves the
-stack 110 752 B against 111 392 B before (`uf2.py --stack`).
+and fields. A longer line is cut and ends in `...`.
 
 Nothing waits on the log, and it masks interrupts for at most one
 64-byte copy. The buffer is held by a lock that masks nothing, which is
@@ -1873,3 +1828,30 @@ formatted, is dropped and counted rather than waited for. So the record
 in the buffer is the ring's only writer: the room it found only grows
 while it goes in, and it goes in 64 bytes, one USB packet, at a time,
 each copy inside a critical section of its own.
+
+Every 10 s the node logs one line of counts since boot, `driver ...`,
+whose fields are, in order:
+
+| Field | Counts |
+|---|---|
+| `events` | events handed to the core |
+| `frames` | frames received with a good CRC |
+| `failed` | packets that began and gave no frame: `failed_header`, the header's CRC failed; `failed_crc`, the payload's; `failed_timeout`, none ended |
+| `held` | listen-before-talk checks held back for a reception under way |
+| `radio_errors` | radio operations that failed |
+| `recoveries` | times the radio was brought back as at boot because every channel read busy (Radio driver, above) |
+| `sniffs` | starts of duty-cycled receive |
+| `longest_handle_us` | the core's longest step |
+| `longest_away_us` | the longest the loop was away from a radio left listening |
+| `empty_readies`, `own_readies` | wakes of the loop that gave the driver nothing, and those for the application's own turn |
+| `resets`, `configured` | radio resets after the one at boot, and times the whole configuration was sent |
+| `cold_starts`, `tcxo_us`, `tcxo_errors` | starts of the oscillator from cold, their delay now and the starts that failed |
+| `restarts`, `restart_us`, `restart_errors` | the same of its restarts within a millisecond of stopping |
+| `stack_used` | the stack's high-water mark, bytes |
+| `unserved` | pieces of an image the node could not read to send |
+| `update` | the update over the mesh (Updates, above) |
+
+then, once the node knows the time, `utc_s`, `offset_min` and `from`,
+and on battery `battery_left_min` and the two drains learned,
+`drain_relay` and `drain_sleepy`, in ten-thousandths of a percent of
+the cell an hour (Display, above).

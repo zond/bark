@@ -406,6 +406,9 @@ pub struct Sx1262<C, K> {
     remeasure: bool,
     /// The last start of the oscillator.
     last_start: Start,
+    /// The start whose error word is not read yet: the one a reset after
+    /// an error blames a start error on.
+    unread: Start,
 }
 
 impl<C: Chip, K: Clock> Sx1262<C, K> {
@@ -424,6 +427,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             stats: Stats::default(),
             remeasure: false,
             last_start: Start::Running,
+            unread: Start::Running,
         };
         radio.ready().await?;
         radio.stats.resets = 0;
@@ -526,10 +530,11 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                     if let Ok(errors) = self.chip.errors().await {
                         log::warn!("radio: device errors {:#x} before the reset", errors);
                         // Every start's word is read after it, so a start
-                        // error here is the last start's, cut off by the
-                        // error before its read.
+                        // error here is that of a start the error cut off
+                        // before its read, if any; one after a clean read
+                        // came from no start.
                         if errors & START_ERRORS != 0 {
-                            self.start_failed(self.last_start).await;
+                            self.start_failed(self.unread).await;
                         }
                     }
                 }
@@ -562,6 +567,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                     self.note(r)?;
                 }
                 self.last_start = Start::Running;
+                self.unread = Start::Running;
             }
             Mode::Sniff => {
                 // Asleep in the cycle the chip takes no command until a
@@ -709,6 +715,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         };
         self.held.osc_stopped = None;
         self.last_start = start;
+        self.unread = start;
         Ok(start)
     }
 
@@ -728,6 +735,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     async fn start_errors(&mut self, start: Start) -> Result<bool, Error<C::Error>> {
         let r = self.chip.errors().await;
         let errors = self.note(r)?;
+        self.unread = Start::Running;
         if errors != 0 {
             let r = self.chip.clear_errors().await;
             self.note(r)?;
@@ -842,6 +850,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             gap: None,
             delay: self.cold.delay,
         };
+        self.unread = self.last_start;
         Ok(())
     }
 
@@ -2146,6 +2155,30 @@ mod tests {
         // The reset measures again, and the search finds what it needs.
         assert_eq!(radio.restart().delay, Duration::from_micros(300));
         assert_eq!(radio.restart().errors, 1);
+    }
+
+    /// A start error found before a reset whose start's word was already
+    /// read clean, as a PLL that failed to lock on an entry to receive
+    /// from a running oscillator: no start is blamed, and neither delay
+    /// steps up.
+    #[test]
+    fn an_error_after_a_clean_start_is_blamed_on_no_start() {
+        let (mut radio, cmds, _) = booted(board());
+        run(radio.lbt(ch(5))).unwrap();
+        run(radio.listen(ch(3))).unwrap();
+        let restarts = radio.restart().errors;
+        let colds = radio.cold().errors;
+        // The next check runs from the oscillator left running, and fails.
+        radio.chip().errors = PLL_LOCK_ERR;
+        radio.chip().board.borrow_mut().fail_on = Some(Cmd::Rssi);
+        assert!(run(radio.lbt(ch(5))).is_err());
+        take(&cmds);
+        logged();
+        run(radio.listen(ch(3))).unwrap();
+        let lines = logged();
+        assert!(!lines.iter().any(|l| l.contains("failed at")), "{lines:?}");
+        assert_eq!(radio.restart().errors, restarts);
+        assert_eq!(radio.cold().errors, colds);
     }
 
     /// The boot's search for the restart: the real sequence, a CAD and

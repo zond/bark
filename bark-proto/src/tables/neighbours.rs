@@ -1053,6 +1053,7 @@ const ANCHORLESS: u8 = 4;
 const CARRIED: u8 = 8;
 const SLOTTED: u8 = 16;
 const UNANSWERED: u8 = 32;
+const LEAVING: u8 = 64;
 
 impl Neighbours {
     /// Every entry as kept across a reset, taken at `now`, with its slot,
@@ -1077,6 +1078,7 @@ impl Neighbours {
                 (n.carried, CARRIED),
                 (n.slotted, SLOTTED),
                 (n.unanswered, UNANSWERED),
+                (n.leaving, LEAVING),
             ];
             b[16] = flags
                 .iter()
@@ -1141,9 +1143,8 @@ impl Neighbours {
             sleepy: flag(SLEEPY),
             anchorless: flag(ANCHORLESS),
             carried: flag(CARRIED),
-            // Not kept: a drain it announced is likely over by our return,
-            // and its next heartbeat says.
-            leaving: false,
+            // Until a heartbeat without it, as any (roadmap D181).
+            leaving: flag(LEAVING),
             beats: b[46],
             beat_at: at(3).unwrap_or(Instant::ZERO),
             beat_on: Channel::new(b[47])?,

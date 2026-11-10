@@ -91,7 +91,7 @@ pub fn with<R>(f: impl FnOnce(&mut Chip) -> R) -> Option<R> {
 const NO_CHIP: Error = Error::Absent([0; 3]);
 
 #[cfg(not(feature = "console"))]
-pub use mailbox::{erase, program};
+pub use mailbox::{erase, erase_region, program};
 
 #[cfg(not(feature = "console"))]
 pub use dfu::Dfu;
@@ -100,8 +100,9 @@ pub use dfu::Dfu;
 #[cfg(not(feature = "console"))]
 mod mailbox {
     use bark_image::ext_flash::{
-        Error, ERASE_MAX_US, ERASE_TYP_US, POLL_US, PROGRAM_MAX_US, PROGRAM_TYP_US,
+        Error, ERASE_MAX_US, ERASE_TYP_US, POLL_US, PROGRAM_MAX_US, PROGRAM_TYP_US, SECTOR,
     };
+    use bark_image::layout::Region;
     use embassy_time::Timer;
 
     use super::{with, NO_CHIP};
@@ -111,6 +112,15 @@ mod mailbox {
     pub async fn erase(address: u32) -> Result<(), Error> {
         let started = with(|c| c.start_erase(address));
         wait(started, ERASE_TYP_US, ERASE_MAX_US).await
+    }
+
+    /// Erase the sectors `region` spans, a failure logged as `user`'s.
+    pub async fn erase_region(region: Region, user: &str) {
+        for at in (region.start..region.end()).step_by(SECTOR as usize) {
+            if let Err(e) = erase(at).await {
+                log::error!("{}: erase {:?}", user, e);
+            }
+        }
     }
 
     /// Program `data` at `address`, within one page of the chip, the

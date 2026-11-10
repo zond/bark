@@ -305,7 +305,7 @@ impl Flash {
             .erase(STORE.start, STORE.end())
             .await;
         if let Err(e) = erased {
-            log::error!("store erase failed: {:?}", e);
+            log::error!("store: erase failed: {:?}", e);
             return;
         }
         self.next = 0;
@@ -331,7 +331,7 @@ impl Flash {
         self.next += (record.len() / RECORD_LEN) as u32;
         let written = self.flash.lock().await.write(at, record).await;
         if let Err(e) = written {
-            log::error!("store write failed: {:?}", e);
+            log::error!("store: write failed: {:?}", e);
         }
     }
 }
