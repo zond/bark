@@ -437,9 +437,8 @@ with and connects to the first of them it hears, in this order: the
 home, when the phone is paired with it; else the paired node heard
 strongest, by the best RSSI each node had over the round. When it is
 paired with none that is still its own, or they are out of reach, it
-goes on its errands at the public node heard strongest (spec "Phone
-link", Which node a phone uses). The paired nodes are out of reach
-once two rounds in a row, 30 s, have reached none of them, heard or
+goes on its errands at the public node heard strongest (spec "Phone link",
+Which node a phone uses). The paired nodes are out of reach once two rounds in a row, 30 s, have reached none of them, heard or
 connected (`ownGone`): one round with the screen off may miss a node in
 reach. A paired node always comes first, and the app moves to it in the
 first round that hears it, so at the edge of its reach, heard every
