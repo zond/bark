@@ -1,8 +1,6 @@
 // Archiving: a conversation alone, or a contact with its conversation;
 // either brought back with the other; and kept across a restart.
 
-import 'dart:convert';
-
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/link.dart';
