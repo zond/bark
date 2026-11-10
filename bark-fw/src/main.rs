@@ -437,8 +437,8 @@ async fn main(spawner: Spawner) {
         let (flash, kept) = store::Flash::open(mpsl_flash);
         let (stored, offset_min) = (kept.stored, kept.offset_min);
         // The phones' records, for the phone link, the mailbox and the
-        // first picture; an older image's bond and home become record one.
-        phones::init(kept.phones.phones(mailbox::old_home()));
+        // first picture.
+        phones::init(kept.phones.phones());
         // The mailbox's writes (`mailbox.rs`); the mailbox opens once the
         // radio has raised the rail its ring's flash is on (`node_radio`).
         spawner.spawn(mailbox::run().expect("spawned once"));

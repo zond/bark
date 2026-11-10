@@ -248,12 +248,6 @@ class Updater extends ChangeNotifier {
     if (session.guest) {
       throw StateError('only the phone paired with the node updates it');
     }
-    if (n.version < updateVersion) {
-      throw StateError(
-        'the node\'s firmware is from before updates over Bluetooth: '
-        'update it by USB once',
-      );
-    }
     return l;
   }
 

@@ -29,9 +29,7 @@ pub fn init(phones: Phones) {
         phones.room(),
         phones.public()
     );
-    // Records made of what an older image kept are written at once; the
-    // mailbox takes its people as it opens.
-    crate::store::keep_phones();
+    // The mailbox takes its people as it opens.
     crate::display::phone_at_boot(line());
 }
 

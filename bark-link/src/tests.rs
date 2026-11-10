@@ -19,35 +19,24 @@ fn payload() -> impl Strategy<Value = std::vec::Vec<u8>> {
 
 proptest! {
     #[test]
-    fn node_round_trips(version: u8, id in id(), image: u32, room: u8, oldest: u8) {
-        let n = Node { version, id, image, room: Some(room), oldest: Some(oldest) };
+    fn node_round_trips(version: u8, oldest: u8, id in id(), image: u32, room: u8) {
+        let n = Node { version, oldest, id, image, room };
         prop_assert_eq!(Node::decode(&n.encode()), Ok(n));
-        // A node of link version 12 has neither.
-        prop_assert_eq!(
-            Node::decode(&n.encode()[..11]),
-            Ok(Node { room: None, oldest: None, ..n })
-        );
     }
 
     #[test]
-    fn status_round_trips(flags: u8, relays: u8, boot_left_s: u16, address in pos(), battery_mv: u16, inbox: u8, heard: u8, installing: u16) {
+    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8) {
         let bit = |b: u8| flags & (1 << b) != 0;
         let placed = bit(5);
         let s = Status {
             ready: bit(0), external_power: bit(1), sleepy: bit(2), carried: bit(3),
             map_point: bit(4), placed, booting: bit(6), anchorless: bit(7),
-            relays, boot_left_s,
             address: if placed { address } else { Position::default() },
-            battery_mv, inbox, heard, installing,
+            battery_mv, relays, heard, boot_left_s, installing, inbox,
         };
         let b = s.encode();
         prop_assert_eq!(b[0], flags);
         prop_assert_eq!(Status::decode(&b), Ok(s));
-        // A node of link version 12 says nothing of an install.
-        prop_assert_eq!(
-            Status::decode(&b[..15]),
-            Ok(Status { installing: 0, ..s })
-        );
     }
 
     #[test]
@@ -158,7 +147,7 @@ fn vectors() {
     };
     assert_eq!(
         status.encode(),
-        [0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, 5, 0x01, 0x18]
+        [0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2]
     );
 
     let given = GivenBack {
@@ -169,12 +158,12 @@ fn vectors() {
 
     let node = Node {
         version: VERSION,
+        oldest: OLDEST,
         id: to,
         image: 7,
-        room: Some(3),
-        oldest: Some(OLDEST),
+        room: 3,
     };
-    assert_eq!(node.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3, 12]);
+    assert_eq!(node.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -231,8 +220,8 @@ fn vectors() {
         [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
     );
     assert_eq!(Answer::decode(&answer.encode()), Ok(Some(answer)));
-    // Link version 9's answer, and a notification's 20 bytes at the
-    // default MTU: gathering none.
+    // A notification's 20 bytes at the default MTU, and the least it may
+    // carry: gathering none.
     let gathers_none = Answer {
         status: bark_proto::status::Status {
             gathering: Default::default(),
@@ -328,7 +317,21 @@ fn reads_ignore_what_a_later_version_appends() {
     longer[..Status::LEN].copy_from_slice(&s.encode());
     assert_eq!(Status::decode(&longer), Ok(s));
     assert_eq!(
-        Status::decode(&longer[..Status::LEN - 3]),
+        Status::decode(&longer[..Status::LEN - 1]),
+        Err(Malformed::Length)
+    );
+    let n = Node {
+        version: VERSION,
+        oldest: OLDEST,
+        id: NodeId([4; 6]),
+        image: 9,
+        room: 2,
+    };
+    let mut longer = [0xAA; Node::LEN + 1];
+    longer[..Node::LEN].copy_from_slice(&n.encode());
+    assert_eq!(Node::decode(&longer), Ok(n));
+    assert_eq!(
+        Node::decode(&longer[..Node::LEN - 1]),
         Err(Malformed::Length)
     );
     let g = GivenBack {
@@ -377,7 +380,6 @@ fn seconds_round_up_and_saturate() {
 #[test]
 fn versions_serve_each_other_when_each_meets_the_other_s_oldest() {
     assert!(compatible(VERSION, OLDEST));
-    assert!(compatible(OLDEST, 0), "an app of version 12");
     assert!(
         !compatible(OLDEST - 1, 0),
         "an app older than the node serves"
@@ -406,41 +408,6 @@ fn the_empty_status_is_the_default() {
     assert_eq!(Status::EMPTY, Status::default());
 }
 
-proptest! {
-    #[test]
-    fn a_bond_round_trips(
-        kind in 0u8..2,
-        addr: [u8; 6],
-        irk: Option<[u8; 16]>,
-        ltk: [u8; 16],
-        seen: u8,
-        service_changed: bool,
-        private: bool,
-        owner: Option<u8>,
-    ) {
-        let b = bond::Bond { kind, addr, irk, ltk, seen, service_changed, private, owner };
-        prop_assert_eq!(bond::Bond::from_record(&b.record()), Some(b));
-    }
-
-    #[test]
-    fn a_bond_cut_short_is_none(addr: [u8; 6], ltk: [u8; 16], words in 0usize..16) {
-        let b = bond::Bond {
-            kind: 1,
-            addr,
-            irk: None,
-            ltk,
-            seen: VERSION,
-            service_changed: true,
-            private: true,
-            owner: Some(0),
-        };
-        let mut r = b.record();
-        // Flash erased to ones past the last word written.
-        r[words * 4..].fill(0xff);
-        prop_assert_eq!(bond::Bond::from_record(&r), None);
-    }
-}
-
 #[test]
 fn public_writes() {
     assert_eq!(
@@ -460,125 +427,33 @@ fn public_writes() {
 }
 
 #[test]
-fn a_forgotten_bond_is_none_and_older_images_skip_it() {
-    let r = bond::forgotten();
-    assert_eq!(bond::read(&r), Some(None));
-    // An older image reads a bond record with `from_record` alone.
-    assert_eq!(bond::Bond::from_record(&r), None);
-    let mut cut = r;
-    cut[60..].fill(0xff);
-    assert_eq!(bond::read(&cut), None);
-    let b = bond::Bond {
-        kind: 1,
-        addr: [1; 6],
-        irk: None,
-        ltk: [2; 16],
-        seen: 12,
-        service_changed: false,
-        private: true,
-        owner: Some(3),
-    };
-    assert_eq!(bond::read(&b.record()), Some(Some(b)));
-}
-
-/// A record written before the bond kept the seen version, the
-/// subscription, the private setting and the owner's tag has zeros there:
-/// a phone that saw no version, has not subscribed and wrote no tag, on a
-/// public node.
-#[test]
-fn an_older_bond_saw_no_version() {
-    let b = bond::Bond {
-        kind: 1,
-        addr: [1; 6],
-        irk: None,
-        ltk: [2; 16],
-        seen: 0,
-        service_changed: false,
-        private: false,
-        owner: None,
-    };
-    let mut r = b.record();
-    assert_eq!(r[9..16], [0; 7]);
-    assert_eq!(bond::Bond::from_record(&r), Some(b));
-    r[10] = 2;
-    assert_eq!(bond::Bond::from_record(&r), None);
-}
-
-/// Nodes are public unless the owner says otherwise: with no bond, and
-/// with a bond written while byte 11 said public, 1, or not, 0.
-#[test]
-fn a_node_is_public_unless_made_private() {
-    let public = |b: Option<bond::Bond>| {
-        let mut load = phones::Load::default();
-        if let Some(b) = b {
-            load.entry(&b.record());
-        }
-        load.phones(phones::OldHome::default()).public()
-    };
-    assert!(public(None));
-    let b = bond::Bond {
-        kind: 1,
-        addr: [1; 6],
-        irk: None,
-        ltk: [2; 16],
-        seen: 7,
-        service_changed: false,
-        private: false,
-        owner: Some(3),
-    };
-    for said in [0, 1] {
-        let mut r = b.record();
-        r[11] = said;
-        let got = bond::Bond::from_record(&r);
-        assert!(public(got), "byte 11 = {said}");
-    }
-    assert!(!public(Some(bond::Bond { private: true, ..b })));
-}
-
-#[test]
 fn recipient_and_public_are_taken_whole() {
-    // An app of version 12's tag alone, and the tag with the versions and
-    // the person's name.
-    let alone = Recipient {
-        tag: 0xab,
-        version: 12,
-        oldest: 0,
-        name: phones::Name::EMPTY,
-    };
-    assert_eq!(Recipient::decode(&[0xab]), Ok(alone));
-    assert!(alone.compatible());
+    // The tag, the versions and the person's name; a guest's, no name.
     let named = Recipient {
         tag: 0xab,
-        version: 13,
-        oldest: 13,
+        version: 1,
+        oldest: 1,
         name: phones::Name::new("Åsa".as_bytes()).unwrap(),
     };
+    assert!(named.compatible());
     let mut b = [0; Recipient::MAX_LEN];
     let n = named.encode(&mut b);
-    assert_eq!(&b[..n], &[0xab, 13, 13, 0xc3, 0x85, b's', b'a']);
+    assert_eq!(&b[..n], &[0xab, 1, 1, 0xc3, 0x85, b's', b'a']);
     assert_eq!(Recipient::decode(&b[..n]), Ok(named));
     assert_eq!(
         Recipient::decode(&b[..3]).map(|r| r.name),
         Ok(phones::Name::EMPTY)
     );
     assert_eq!(Recipient::decode(&[]), Err(Malformed::Length));
-    assert_eq!(Recipient::decode(&[1, 13]), Err(Malformed::Length));
+    assert_eq!(Recipient::decode(&[0xab]), Err(Malformed::Length));
+    assert_eq!(Recipient::decode(&[1, 1]), Err(Malformed::Length));
     assert_eq!(Recipient::decode(&[1; 36]), Err(Malformed::Length));
     // Not UTF-8: 0xFF never is, so a name never reads as erased flash.
-    assert_eq!(Recipient::decode(&[1, 13, 12, 0xff]), Err(Malformed::Value));
+    assert_eq!(Recipient::decode(&[1, 1, 1, 0xff]), Err(Malformed::Value));
     assert_eq!(Public::decode(&Public(true).encode()), Ok(Public(true)));
     assert_eq!(Public::decode(&[0]), Ok(Public(false)));
     assert_eq!(Public::decode(&[2]), Err(Malformed::Value));
     assert_eq!(Public::decode(&[1, 1]), Err(Malformed::Length));
-}
-
-#[test]
-fn other_records_are_no_bond() {
-    let mut r = [0xffu8; bond::Bond::LEN];
-    assert_eq!(bond::Bond::from_record(&r), None);
-    // The UTC offset's record (`bark-fw/src/store.rs`).
-    r[..8].copy_from_slice(&[0x80, 0, 60, 0, 0x7f, 0xff, 0xc3, 0xff]);
-    assert_eq!(bond::Bond::from_record(&r), None);
 }
 
 #[test]
@@ -597,47 +472,4 @@ fn a_guest_item_round_trips_and_after_is_three_bytes() {
     assert_eq!(GuestItem::decode(&b[..n]), Ok(Some(item)));
     assert_eq!(GuestItem::decode(&[]), Ok(None));
     assert_eq!(GuestItem::decode(&b[..6]), Err(Malformed::Length));
-}
-
-/// The node rewrites its bond as the phone saw a table, subscribed, wrote
-/// its tag or made the node private (`bark-fw/src/ble.rs`, `keep`): each
-/// record reads back with the phone's address, its kind, its identity
-/// resolving key and the long-term key as the pairing left them.
-#[test]
-fn a_rewritten_bond_keeps_the_phone_s_keys() {
-    let paired = bond::Bond {
-        kind: 0,
-        addr: [1, 2, 3, 4, 5, 6],
-        irk: Some([0x4d; 16]),
-        ltk: [0x37; 16],
-        seen: 6,
-        service_changed: false,
-        private: false,
-        owner: None,
-    };
-    let mut b = paired;
-    for step in 0..4 {
-        b = match step {
-            0 => bond::Bond {
-                seen: VERSION,
-                service_changed: true,
-                ..b
-            },
-            1 => bond::Bond {
-                owner: Some(0x5a),
-                ..b
-            },
-            2 => bond::Bond { private: true, ..b },
-            _ => bond::Bond {
-                private: false,
-                ..b
-            },
-        };
-        let back = bond::Bond::from_record(&b.record()).expect("a whole record");
-        assert_eq!(
-            (back.kind, back.addr, back.irk, back.ltk),
-            (paired.kind, paired.addr, paired.irk, paired.ltk),
-            "step {step}"
-        );
-    }
 }

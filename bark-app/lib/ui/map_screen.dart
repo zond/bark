@@ -235,8 +235,7 @@ class _MapScreenState extends State<MapScreen> {
     super.dispose();
   }
 
-  bool get _readable =>
-      _s.connected && !_s.guest && (_s.node?.version ?? 0) >= neighboursVersion;
+  bool get _readable => _s.connected && !_s.guest;
 
   Future<void> _read() async {
     if (!_readable) return;
@@ -244,9 +243,7 @@ class _MapScreenState extends State<MapScreen> {
       final t = await _s.readNeighbours();
       if (mounted) setState(() => _error = null);
       final link = _s.link;
-      if ((_ask || link != _askedOn) &&
-          mounted &&
-          (_s.node?.version ?? 0) >= askVersion) {
+      if ((_ask || link != _askedOn) && mounted) {
         _ask = false;
         _askedOn = link;
         await _s.askNeighbours(t.list);
@@ -291,12 +288,6 @@ class _MapScreenState extends State<MapScreen> {
       return _say(
         'Connected as a guest: only the phone paired with this node sees '
         'its neighbours.',
-      );
-    }
-    if (n.version < neighboursVersion) {
-      return _say(
-        'This node\'s firmware, version ${n.image}, cannot tell its '
-        'neighbours: update it to see the map.',
       );
     }
     final t = _s.neighbours;

@@ -7,22 +7,16 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 13;
+const int linkVersion = 1;
 
 /// The oldest node link version this app still serves (spec "Phone link",
-/// Versions; roadmap D177): 1. Every value of version 1, Node, Status,
-/// Send, Inbox, Given back and Map point, is read and written as it was
-/// then, and every characteristic or field a later version brought is
-/// used only on a node of that version or later: Clock from 2, Home from
-/// 3, Neighbours from 4, Update from 6, Recipient and Public from 7, Guest
-/// from 8, Ask from 9, unpairing from 12, Phones and the name from 13.
-const int oldestNode = 1;
+/// Versions): its own, as no node of another is kept (roadmap D188).
+const int oldestNode = linkVersion;
 
 /// Whether this app and the node `n` serve each other: each side's version
-/// at least the other's oldest, a node before link version 13, which says
-/// no oldest, serving only its own version (spec "Phone link", Versions).
+/// at least the other's oldest (spec "Phone link", Versions).
 bool servesEachOther(NodeInfo n) =>
-    linkVersion >= (n.oldest ?? n.version) && n.version >= oldestNode;
+    linkVersion >= n.oldest && n.version >= oldestNode;
 
 /// What the person reads of a node that, by [servesEachOther], this app
 /// and it do not serve: the side to update.
@@ -43,7 +37,7 @@ const int defaultAttMtu = 23;
 const int maxPayload = 227;
 
 /// One random UUID, its second 16 bits counting the service and its
-/// characteristics.
+/// characteristics in the order of the spec's table.
 class Uuids {
   static const service = '28bc0001-a1b8-4893-9537-2ee3559d7644';
   static const node = '28bc0002-a1b8-4893-9537-2ee3559d7644';
@@ -52,32 +46,21 @@ class Uuids {
   static const inbox = '28bc0005-a1b8-4893-9537-2ee3559d7644';
   static const givenBack = '28bc0006-a1b8-4893-9537-2ee3559d7644';
   static const mapPoint = '28bc0007-a1b8-4893-9537-2ee3559d7644';
-
-  /// From link version 2.
   static const clock = '28bc0008-a1b8-4893-9537-2ee3559d7644';
 
-  /// From link version 3 (spec "Mailbox").
+  /// The mailbox's (spec "Mailbox").
   static const home = '28bc0009-a1b8-4893-9537-2ee3559d7644';
-
-  /// From link version 4.
   static const neighbours = '28bc000a-a1b8-4893-9537-2ee3559d7644';
-
-  /// From link version 6.
   static const update = '28bc000b-a1b8-4893-9537-2ee3559d7644';
   static const image = '28bc000c-a1b8-4893-9537-2ee3559d7644';
-
-  /// From link version 7.
   static const recipient = '28bc000d-a1b8-4893-9537-2ee3559d7644';
   static const public = '28bc000e-a1b8-4893-9537-2ee3559d7644';
 
-  /// From link version 8, write only: a guest reads its items through
-  /// [inbox].
+  /// Write only: a guest reads its items through [inbox].
   static const guest = '28bc000f-a1b8-4893-9537-2ee3559d7644';
 
-  /// From link version 9, the paired phone's alone.
+  /// The paired phone's alone.
   static const ask = '28bc0010-a1b8-4893-9537-2ee3559d7644';
-
-  /// From link version 13.
   static const phones = '28bc0011-a1b8-4893-9537-2ee3559d7644';
 
   /// What a public node advertises in place of [service], which no
@@ -254,46 +237,44 @@ String nodeLabel(List<int> id) => shownName(nodeName(id));
 /// Node, read. Decoders of values the node writes ignore what a later
 /// version appends.
 class NodeInfo {
-  static const len = 1 + nodeIdLen + 4;
+  static const len = 1 + 1 + nodeIdLen + 4 + 1;
   final int version;
+
+  /// The oldest link version whose apps the node serves
+  /// ([servesEachOther]).
+  final int oldest;
   final Uint8List id;
   final int image;
 
-  /// From link version 13: how many more phones may pair with the node, 0
-  /// when it would refuse a pairing (spec "Phone link", Node).
-  final int? room;
-
-  /// From link version 13: the oldest link version whose apps the node
-  /// serves ([servesEachOther]).
-  final int? oldest;
-  NodeInfo(this.version, List<int> id, this.image, {this.room, this.oldest})
-    : id = Uint8List.fromList(id);
+  /// How many more phones may pair with the node, 0 when it would refuse
+  /// a pairing (spec "Phone link", Node).
+  final int room;
+  NodeInfo(
+    List<int> id,
+    this.image, {
+    this.version = linkVersion,
+    this.oldest = linkVersion,
+    this.room = 0,
+  }) : id = Uint8List.fromList(id);
 
   Uint8List encode() =>
-      Uint8List.fromList([version, ...id, ..._be32(image), ?room, ?oldest]);
+      Uint8List.fromList([version, oldest, ...id, ..._be32(image), room]);
 
   static NodeInfo decode(List<int> b) {
     if (b.length < len) throw const Malformed('Node');
     return NodeInfo(
-      b[0],
-      b.sublist(1, 1 + nodeIdLen),
-      _u32(b, 1 + nodeIdLen),
-      room: b.length > len ? b[len] : null,
-      oldest: b.length > len + 1 ? b[len + 1] : null,
+      b.sublist(2, 2 + nodeIdLen),
+      _u32(b, 2 + nodeIdLen),
+      version: b[0],
+      oldest: b[1],
+      room: b[2 + nodeIdLen + 4],
     );
   }
 }
 
 /// Status, read and notify.
 class Status {
-  static const len = len12 + 2;
-
-  /// Its bytes before the version it installs, as link version 12 had
-  /// them.
-  static const len12 = len10 + 1;
-
-  /// Its bytes before the neighbours heard, as link version 10 had them.
-  static const len10 = 1 + 1 + 2 + Position.wireLen + 2 + 1;
+  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1;
   final bool ready;
   final bool externalPower;
   final bool sleepy;
@@ -302,20 +283,20 @@ class Status {
   final bool placed;
   final bool booting;
   final bool anchorless;
-  final int relays;
-  final int bootLeftS;
   final Position address;
   final int batteryMv;
-  final int inbox;
+  final int relays;
 
-  /// Its live neighbours, sleepy ones too; before link version 11 the
-  /// node says only [relays], which stand in for it.
+  /// Its live neighbours, sleepy ones too.
   final int heard;
+  final int bootLeftS;
 
   /// The low 16 bits of the firmware version the node is about to install,
-  /// 0 when none and before link version 13 (spec "Updates over the
-  /// mesh", the install).
+  /// 0 when none (spec "Updates over the mesh", the install).
   final int installing;
+
+  /// The phone's messages in the node's ring not yet confirmed.
+  final int inbox;
 
   const Status({
     this.ready = false,
@@ -382,17 +363,18 @@ class Status {
 
   Uint8List encode() => Uint8List.fromList([
     _flags,
-    relays,
-    ..._be16(bootLeftS),
     ...(placed ? address.encode() : List.filled(Position.wireLen, 0)),
     ..._be16(batteryMv),
-    inbox,
+    relays,
     heard,
+    ..._be16(bootLeftS),
     ..._be16(installing),
+    inbox,
   ]);
 
   static Status decode(List<int> b) {
-    if (b.length < len10) throw const Malformed('Status');
+    if (b.length < len) throw const Malformed('Status');
+    const at = 1 + Position.wireLen;
     bool flag(int bit) => b[0] & (1 << bit) != 0;
     return Status(
       ready: flag(0),
@@ -403,13 +385,13 @@ class Status {
       placed: flag(5),
       booting: flag(6),
       anchorless: flag(7),
-      relays: b[1],
-      bootLeftS: _u16(b, 2),
-      address: Position.decode(b.sublist(4, 4 + Position.wireLen)),
-      batteryMv: _u16(b, 4 + Position.wireLen),
-      inbox: b[6 + Position.wireLen],
-      heard: b.length < len12 ? b[1] : b[len10],
-      installing: b.length < len ? 0 : _u16(b, len12),
+      address: Position.decode(b.sublist(1, at)),
+      batteryMv: _u16(b, at),
+      relays: b[at + 2],
+      heard: b[at + 3],
+      bootLeftS: _u16(b, at + 4),
+      installing: _u16(b, at + 6),
+      inbox: b[at + 8],
     );
   }
 }
@@ -459,9 +441,6 @@ class GivenBack {
   }
 }
 
-/// The link version that has Clock.
-const int clockVersion = 2;
-
 /// The UTC offsets in use, minutes: UTC−12:00 to UTC+14:00.
 const int minOffsetMin = -12 * 60;
 const int maxOffsetMin = 14 * 60;
@@ -510,9 +489,6 @@ Uint8List encodeMapPoint(Position? p) => p == null
     ? Uint8List.fromList([0])
     : Uint8List.fromList([1, ...p.encode()]);
 
-/// The link version that has Home.
-const int homeVersion = 3;
-
 /// Bytes of the mailbox key.
 const int mailboxKeyLen = 32;
 
@@ -524,46 +500,35 @@ Uint8List encodeHome(List<int>? key) {
   return Uint8List.fromList([1, ...key]);
 }
 
-/// Home, read: whether the node holds a mailbox key, anyone's, the
-/// numbers of the oldest and newest items its ring holds, 0 when none,
-/// and from link version 13 whether the key is this phone's person's.
+/// Home, read: whether the node holds a mailbox key, anyone's, whether
+/// the key is this phone's person's, and the numbers of the oldest and
+/// newest items its ring holds, 0 when none.
 class NodeHome {
-  static const len = 1 + 3 + 3;
+  static const len = 1 + 1 + 3 + 3;
   final bool set;
+
+  /// The node is the reading phone's person's home.
+  final bool mine;
   final int oldest;
   final int newest;
-
-  /// The node is the reading phone's person's home; null before link
-  /// version 13, when [set] is all a node says.
-  final bool? mine;
-  const NodeHome(this.set, this.oldest, this.newest, {this.mine});
+  const NodeHome(this.set, this.oldest, this.newest, {this.mine = false});
 
   Uint8List encode() => Uint8List.fromList([
     set ? 1 : 0,
+    mine ? 1 : 0,
     ..._be32(oldest).sublist(1),
     ..._be32(newest).sublist(1),
-    if (mine != null) mine! ? 1 : 0,
   ]);
 
   static NodeHome decode(List<int> b) {
-    if (b.length < len || b[0] > 1) throw const Malformed('Home');
-    if (b.length > len && b[len] > 1) throw const Malformed('Home');
+    if (b.length < len || b[0] > 1 || b[1] > 1) throw const Malformed('Home');
     int n(int at) => (b[at] << 16) | (b[at + 1] << 8) | b[at + 2];
-    return NodeHome(
-      b[0] == 1,
-      n(1),
-      n(4),
-      mine: b.length > len ? b[len] == 1 : null,
-    );
+    return NodeHome(b[0] == 1, n(2), n(5), mine: b[1] == 1);
   }
 
   @override
   String toString() {
-    final whose = switch (mine) {
-      null => '',
-      true => ', yours',
-      false => ', not yours',
-    };
+    final whose = mine ? ', yours' : ', not yours';
     return !set
         ? 'not a home'
         : oldest == 0
@@ -571,9 +536,6 @@ class NodeHome {
         : 'a home$whose, items $oldest to $newest';
   }
 }
-
-/// The link version that has Neighbours.
-const int neighboursVersion = 4;
 
 /// Neighbours, write: read the table from this slot on.
 Uint8List encodeNeighboursFrom(int slot) => Uint8List.fromList([slot & 0xff]);
@@ -693,7 +655,7 @@ class Neighbour {
 
 /// Neighbours, read: one page of the table.
 class NeighbourPage {
-  static const header = 1 + 1 + 1 + Position.wireLen;
+  static const header = 1 + 1 + Position.wireLen + 1;
 
   /// Neighbours in a full page, as many as fit one PDU at [attMtu].
   static const perPage = (attMtu - 3 - header) ~/ Neighbour.len;
@@ -713,10 +675,10 @@ class NeighbourPage {
   Uint8List encode() {
     if (neighbours.length > perPage) throw const Malformed('Neighbours');
     return Uint8List.fromList([
-      floorDbm & 0xff,
       next,
-      Neighbour.len,
+      floorDbm & 0xff,
       ...own.encode(),
+      Neighbour.len,
       for (final n in neighbours) ...n.encode(),
     ]);
   }
@@ -725,14 +687,14 @@ class NeighbourPage {
   /// later version appends are skipped.
   static NeighbourPage decode(List<int> b) {
     if (b.length < header) throw const Malformed('Neighbours');
-    final each = b[2];
+    final each = b[header - 1];
     if (each < Neighbour.len || (b.length - header) % each != 0) {
       throw const Malformed('Neighbours');
     }
     return NeighbourPage(
-      b[0] >= 0x80 ? b[0] - 0x100 : b[0],
-      b[1],
-      Position.decode(b.sublist(3)),
+      b[1] >= 0x80 ? b[1] - 0x100 : b[1],
+      b[0],
+      Position.decode(b.sublist(2)),
       [
         for (var at = header; at < b.length; at += each)
           Neighbour.decode(b.sublist(at, at + each)),
@@ -740,9 +702,6 @@ class NeighbourPage {
     );
   }
 }
-
-/// The link version that has Update and Image.
-const int updateVersion = 6;
 
 /// A firmware image as `bark-fw/scripts/image.py pack` writes it: a
 /// header of 256 bytes, then the image (`bark-fw/README.md`, "Updates").
@@ -897,23 +856,16 @@ class UpdateProgress {
   }
 }
 
-/// The link version that has Recipient and Public.
-const int publicVersion = 7;
-
 /// Bytes of the person's name a node keeps (spec "Phone link", Pairing).
 const int nameMax = 32;
 
-/// Recipient, write: the phone's recipient tag at this node; to a node of
-/// link version 13 or later, with a `name`, empty for a guest, also this
-/// app's link version and [oldestNode], and the person's name as their
-/// card has it, cut to [nameMax] bytes of UTF-8 at a character's end.
-/// Without one, the tag alone, the form of every version before.
-Uint8List encodeRecipient(int tag, [String? name]) {
+/// Recipient, write: the phone's recipient tag at this node, this app's
+/// link version and [oldestNode], and the person's name as their card has
+/// it, empty for a guest, cut to [nameMax] bytes of UTF-8 at a
+/// character's end.
+Uint8List encodeRecipient(int tag, String name) {
   if (tag < 0 || tag > 0xff) throw const Malformed('recipient tag');
-  return Uint8List.fromList([
-    tag,
-    if (name != null) ...[linkVersion, oldestNode, ...nameBytes(name)],
-  ]);
+  return Uint8List.fromList([tag, linkVersion, oldestNode, ...nameBytes(name)]);
 }
 
 /// `name` in UTF-8, cut to [nameMax] bytes without splitting a character.
@@ -927,12 +879,10 @@ List<int> nameBytes(String name) {
   return out;
 }
 
-/// Recipient, written, for the fake node: the tag alone is an app of link
-/// version 12 or older, which serves any node, so its oldest is 0.
+/// Recipient, written, for the fake node.
 ({int tag, int version, int oldest, String name}) decodeRecipient(
   List<int> b,
 ) => switch (b) {
-  [final tag] => (tag: tag, version: 12, oldest: 0, name: ''),
   [final tag, final version, final oldest, ...final name]
       when name.length <= nameMax =>
     (tag: tag, version: version, oldest: oldest, name: utf8.decode(name)),
@@ -941,9 +891,6 @@ List<int> nameBytes(String name) {
 
 /// Public, write: whether the node serves phones that have not paired.
 Uint8List encodePublic(bool public) => Uint8List.fromList([public ? 1 : 0]);
-
-/// The link version whose Public takes the owner's unpairing.
-const int unpairVersion = 12;
 
 /// Public, write: the node is to forget its bond (spec "Phone link",
 /// Public).
@@ -954,9 +901,6 @@ bool decodePublic(List<int> b) {
   if (b.length != 1 || b[0] > 1) throw const Malformed('Public');
   return b[0] == 1;
 }
-
-/// The link version that has Guest.
-const int guestVersion = 8;
 
 /// Bytes of an item's number in the ring.
 const int itemNumberLen = 3;
@@ -995,9 +939,6 @@ class GuestItem {
   }
 }
 
-/// The link version that has Ask.
-const int askVersion = 9;
-
 /// Ask, write: the neighbour, by its node ID, that the node asks for its
 /// status.
 Uint8List encodeAsk(List<int> id) {
@@ -1010,9 +951,9 @@ Uint8List encodeAsk(List<int> id) {
 class NeighbourStatus {
   static const len = 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
 
-  /// Its bytes before the image gathered, as link version 9 had them; a
-  /// notification at the default MTU also carries no more of it.
-  static const len9 = 1 + 1 + 1 + 1 + 1 + 4;
+  /// Its bytes before the image gathered, which a notification at the
+  /// default MTU carries whole.
+  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 4;
 
   /// The battery byte at or below the level at which a fixed relay turns
   /// sleepy.
@@ -1102,7 +1043,7 @@ class NeighbourStatus {
   /// The flags' spare bits, for a later version, are ignored; without the
   /// image gathered whole it gathers none.
   static NeighbourStatus decode(List<int> b) {
-    if (b.length < len9) throw const Malformed('neighbour status');
+    if (b.length < ungatheredLen) throw const Malformed('neighbour status');
     bool flag(int bit) => b[0] & (1 << bit) != 0;
     final whole = b.length >= len;
     return NeighbourStatus(
@@ -1169,7 +1110,7 @@ class Answer {
 
   static Answer? decode(List<int> b) {
     if (b.isEmpty) return null;
-    if (b.length < nodeIdLen + NeighbourStatus.len9) {
+    if (b.length < nodeIdLen + NeighbourStatus.ungatheredLen) {
       throw const Malformed('Ask');
     }
     return Answer(
@@ -1178,16 +1119,6 @@ class Answer {
     );
   }
 }
-
-/// The link version that has Phones, the person's name in Recipient,
-/// Node's room and Home's mine (spec "Phone link"; roadmap D168).
-const int phonesVersion = 13;
-
-/// The link version from which a node gives the turn at its one message
-/// only to a phone that asks, by writing Send while Ready is not set for
-/// it, and from which the app asks (spec "Phone link", Sending; roadmap
-/// D184). An app of an older version cannot ask.
-const int turnVersion = 13;
 
 /// The phones a node keeps at most (spec "Phone link", Pairing).
 const int maxPhones = 8;

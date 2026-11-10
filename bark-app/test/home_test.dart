@@ -3,9 +3,9 @@
 // to, written again on connection to the home, the home followed to
 // a fixed node's new place, its card sent only when the person asks, but
 // not to a carried node's wandering fix, and a node that does not keep it
-// refused as a home; from link version 13, written again only where the
-// node says it is not the person's and a home of their tag is left there,
-// and told, not overruled, where someone removed it.
+// refused as a home; written again only where the node says it is not
+// the person's and a home of their tag is left there, and told, not
+// overruled, where someone removed it.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/app_layer.dart' show recipientTag;
@@ -104,42 +104,6 @@ void main() {
       expect(app.fakeNode!.homeKey, isNull);
       expect(app.holdsOtherKey, isFalse);
     });
-  });
-
-  /// The node of version `v`, of [FakeNode]'s own otherwise.
-  FakeNode Function(DateTime Function(), List<int>) atVersion(int v) =>
-      (now, app) => FakeNode(now: now, sodium: sodium, app: app)..version = v;
-
-  test('before link version 13, a home that lost the key is given it again '
-      'on connection', () {
-    run((async, app) {
-      said(async, app.makeHome(app.session.address!));
-      // As a reflashed node: its key gone while the person is away.
-      app.fakeNode!.homeKey = null;
-      app.session.disconnect();
-      async.flushMicrotasks();
-      app.connectFake();
-      async.flushMicrotasks();
-      expect(app.fakeNode!.homeKey, app.me.keys.mailbox.extractBytes());
-      expect(app.session.nodeHome!.set, isTrue);
-      expect(log(app), contains(contains('the key written')));
-      expect(app.session.notice, isNull);
-    }, make: atVersion(12));
-  });
-
-  test('before link version 13, a home that holds its key is unchanged by '
-      'the write on connection', () {
-    run((async, app) {
-      said(async, app.makeHome(app.session.address!));
-      expect(app.fakeNode!.homeKeyChanges, 1);
-      app.session.disconnect();
-      async.flushMicrotasks();
-      app.connectFake();
-      async.flushMicrotasks();
-      expect(log(app), contains(contains('the key written')));
-      expect(app.fakeNode!.homeKeyChanges, 1);
-      expect(app.session.nodeHome!.set, isTrue);
-    }, make: atVersion(12));
   });
 
   test('a home that says it is the person\'s is not written again', () {

@@ -219,39 +219,6 @@ bool bondRefused(Object e, {required bool closed}) {
   return closed || (code != null && _notBonded.contains(code));
 }
 
-/// The Generic Attribute service and its Service Changed characteristic
-/// (Bluetooth Core Specification 5.0, Vol 3 Part G §7.1).
-final _gattService = BleUuidParser.string('1801');
-final _serviceChanged = BleUuidParser.string('2a05');
-
-/// Whether `services` hold Service Changed, by which the node tells a
-/// bonded phone that its table changed (spec "Phone link", Changes to
-/// the table).
-bool hasServiceChanged(List<BleService> services) => services.any(
-  (s) =>
-      s.uuid == _gattService &&
-      s.characteristics.any((c) => c.uuid == _serviceChanged),
-);
-
-/// Discovers the node's services. Android keeps a bonded node's table
-/// from one connection to the next, and one kept without Service Changed
-/// is never told of a change, so its handles may name other attributes
-/// now: a node's table from before link version 5, which Android kept on
-/// through the update that added Service Changed and moved every handle
-/// of the service. Such a table is dropped and discovered again; for a
-/// node still on an older version that costs a discovery at each
-/// connection.
-Future<void> discover(String deviceId) async {
-  final services = await UniversalBle.discoverServices(deviceId);
-  if (hasServiceChanged(services)) return;
-  await UniversalBle.discoverServices(
-    deviceId,
-    platformConfig: DiscoverServicesPlatformConfig(
-      android: AndroidDiscoverServicesOptions(clearGattCache: true),
-    ),
-  );
-}
-
 class BleLink implements NodeLink {
   final String deviceId;
   final _closed = Completer<void>();
@@ -310,7 +277,7 @@ class BleLink implements NodeLink {
     });
     final int mtu;
     try {
-      await discover(deviceId);
+      await UniversalBle.discoverServices(deviceId);
       mtu = await UniversalBle.requestMtu(deviceId, attMtu);
     } catch (e) {
       await link.close();
@@ -495,7 +462,7 @@ class BleLink implements NodeLink {
       NeighbourPage.decode(await _read(Uuids.neighbours));
 
   @override
-  Future<void> setRecipient(int tag, [String? name]) =>
+  Future<void> setRecipient(int tag, String name) =>
       _write(Uuids.recipient, encodeRecipient(tag, name));
 
   @override

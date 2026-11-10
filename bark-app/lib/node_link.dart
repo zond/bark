@@ -22,8 +22,7 @@ class AttException implements Exception {
 }
 
 /// The phone's bond no longer opens the node `node`: a phone paired with
-/// it removed this one, or before link version 13 paired in its place
-/// (spec "Phone link", The removed phone).
+/// it removed this one (spec "Phone link", The removed phone).
 class NotOurs implements Exception {
   final String node;
   const NotOurs(this.node);
@@ -81,20 +80,18 @@ abstract class NodeLink {
   Future<void> send(Uint8List value);
   Future<void> setMapPoint(Position? p);
 
-  /// Link version 2 and later.
   Future<void> setClock(int utcS, int offsetMin);
   Future<NodeTime> readClock();
 
-  /// Link version 3 and later: the mailbox key, or none.
+  /// The mailbox key, or none.
   Future<void> setHome(List<int>? key);
   Future<NodeHome> readHome();
 
-  /// Link version 4 and later: the next read of Neighbours starts at
-  /// `slot`.
+  /// The next read of Neighbours starts at `slot`.
   Future<void> setNeighboursFrom(int slot);
   Future<NeighbourPage> readNeighbours();
 
-  /// Link version 6 and later: where an update stands.
+  /// Where an update stands.
   Future<UpdateProgress> readUpdate();
 
   /// Begins, commits or reboots ([encodeBegin], [encodeCommit],
@@ -106,41 +103,40 @@ abstract class NodeLink {
   /// takes it only where the bytes it holds end.
   Future<void> writePiece(Uint8List value);
 
-  /// Link version 7 and later: the phone's recipient tag at this node,
-  /// by which a public node hands it its messages; from link version 13
-  /// with the app's versions and the person's `name`, which a paired
-  /// phone's record keeps ([encodeRecipient]). Throws [AttException] 0x82
-  /// when the node and the app do not serve each other, and the node
-  /// ends the link.
-  Future<void> setRecipient(int tag, [String? name]);
+  /// The phone's recipient tag at this node, by which a public node hands
+  /// it its messages, with the app's versions and the person's `name`,
+  /// which a paired phone's record keeps ([encodeRecipient]). Throws
+  /// [AttException] 0x82 when the node and the app do not serve each
+  /// other, and the node ends the link.
+  Future<void> setRecipient(int tag, String name);
 
-  /// Link version 7 and later, the paired phone's alone: whether the node
-  /// serves phones that have not paired.
+  /// The paired phone's alone: whether the node serves phones that have
+  /// not paired.
   Future<bool> readPublic();
   Future<void> setPublic(bool public);
 
-  /// Link version 12 and later, the paired phone's alone: the node
-  /// forgets its bond and ends the link.
+  /// The paired phone's alone: the node forgets its bond and ends the
+  /// link.
   Future<void> unpair();
 
-  /// Link version 8 and later, on a guest's link: Guest, after which
-  /// [readGuest] gives the oldest item with the phone's tag.
+  /// On a guest's link: Guest, after which [readGuest] gives the oldest
+  /// item with the phone's tag.
   Future<void> setGuestAfter(int number);
 
   /// Inbox as a guest's link gives it, in the Guest form; a guest does
   /// not confirm (spec "Phone link", Public).
   Future<GuestItem?> readGuest();
 
-  /// Link version 9 and later, the paired phone's alone: subscribes to
-  /// Ask, whose answers [answerNotified] gives.
+  /// The paired phone's alone: subscribes to Ask, whose answers
+  /// [answerNotified] gives.
   Future<void> subscribeAsk();
 
   /// Asks the neighbour `id` for its status. The node answers the write
   /// at once; the neighbour's answer, if one comes, is notified.
   Future<void> ask(List<int> id);
 
-  /// Link version 13 and later, the paired phones' alone: the next read
-  /// of Phones lists the records from place `slot` on.
+  /// The paired phones' alone: the next read of Phones lists the records
+  /// from place `slot` on.
   Future<void> setPhonesFrom(int slot);
   Future<PhonesPage> readPhones();
 

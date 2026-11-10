@@ -5,10 +5,10 @@
 //!
 //! Positions and node IDs keep the radio's encodings (`bark_proto`
 //! `Position::encode`, `NodeId`), and multi-byte integers are big-endian
-//! as on the radio (`docs/core-interface.md` §7). Values the node writes
-//! may grow in a later link version, so their decoders ignore what
-//! follows the fields they know; values the app writes are taken only
-//! whole.
+//! as on the radio (`docs/core-interface.md` §7). A later link version
+//! may append fields to the values the node writes, so their decoders
+//! ignore what follows the fields they know; values the app writes are
+//! taken only whole (spec "Phone link", Versions).
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -20,25 +20,13 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// The link version this crate speaks, in [`Node::version`]. Every
 /// change to the node's attribute table comes with a new version, as the
 /// node tells a bonded phone of a change by the version it last saw
-/// (spec "Phone link", Changes to the table); 5 added Service Changed
-/// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
-/// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
-/// the neighbours heard in Status, 12 Public's write that unpairs, 13
-/// Phones, with the person's name in Recipient, `room` in Node, `mine`
-/// in Home (roadmap D168) and `installing` in Status (D182).
-pub const VERSION: u8 = 13;
+/// (spec "Phone link", Changes to the table).
+pub const VERSION: u8 = 1;
 
 /// The oldest link version whose apps this node still serves, in
-/// [`Node::oldest`] (spec "Phone link", Versions; roadmap D177): 12, as
-/// every read and write of a version 12 app still means what it meant.
-/// Version 13 appended `room` and `oldest` to Node and `mine` to Home,
-/// which such an app does not read; it writes Recipient's tag alone,
-/// which the node still takes; it does not know Phones, which it never
-/// touches; and its Inbox, Home and Public act on its own person's
-/// record, which is what they acted on when the node kept one phone. An
-/// app older than 12 cannot be told from one of 12, as it too writes the
-/// tag alone, so 12 is the oldest the node can vouch for.
-pub const OLDEST: u8 = 12;
+/// [`Node::oldest`] (spec "Phone link", Versions): its own, as no app of
+/// another is kept (roadmap D188).
+pub const OLDEST: u8 = VERSION;
 
 /// Whether an app of link version `version`, which serves nodes of link
 /// version `oldest` and later, and this node can serve each other: each
@@ -66,7 +54,8 @@ pub const DEFAULT_ATT_MTU: u16 = 23;
 
 /// The 128-bit UUIDs, as numbers; [`le_bytes`] gives the order on the air.
 /// One random version-4 UUID, its second 16 bits counting the service and
-/// its characteristics.
+/// its characteristics in the order of the spec's table. A change to what
+/// a field means takes a new UUID (spec "Phone link", Versions).
 pub mod uuid {
     /// The service.
     pub const SERVICE: u128 = 0x28bc0001_a1b8_4893_9537_2ee3559d7644;
@@ -84,36 +73,35 @@ pub mod uuid {
     /// Map point: write ([`crate::MapPoint`]).
     pub const MAP_POINT: u128 = 0x28bc0007_a1b8_4893_9537_2ee3559d7644;
     /// Clock: write the phone's time, read the node's ([`crate::Clock`],
-    /// [`crate::NodeTime`]); from link version 2.
+    /// [`crate::NodeTime`]).
     pub const CLOCK: u128 = 0x28bc0008_a1b8_4893_9537_2ee3559d7644;
     /// Home: write the mailbox key or clear it, read the mailbox's
-    /// numbers ([`crate::home`]); from link version 3.
+    /// numbers ([`crate::home`]).
     pub const HOME: u128 = 0x28bc0009_a1b8_4893_9537_2ee3559d7644;
     /// Neighbours: write a slot, read the neighbour table from it
-    /// ([`crate::neighbours`]); from link version 4.
+    /// ([`crate::neighbours`]).
     pub const NEIGHBOURS: u128 = 0x28bc000a_a1b8_4893_9537_2ee3559d7644;
     /// Update: begin, commit and reboot, and read where the update stands
-    /// ([`crate::update`]); from link version 6.
+    /// ([`crate::update`]).
     pub const UPDATE: u128 = 0x28bc000b_a1b8_4893_9537_2ee3559d7644;
     /// Image: write the image's bytes, with or without a response
-    /// ([`crate::update::Piece`]); from link version 6.
+    /// ([`crate::update::Piece`]).
     pub const IMAGE: u128 = 0x28bc000c_a1b8_4893_9537_2ee3559d7644;
     /// Recipient: write the phone's recipient tag at this node
-    /// ([`crate::Recipient`]); from link version 7.
+    /// ([`crate::Recipient`]).
     pub const RECIPIENT: u128 = 0x28bc000d_a1b8_4893_9537_2ee3559d7644;
     /// Public: read and write whether the node serves phones without
-    /// pairing ([`crate::Public`]); from link version 7.
+    /// pairing ([`crate::Public`]).
     pub const PUBLIC: u128 = 0x28bc000e_a1b8_4893_9537_2ee3559d7644;
     /// Guest: write the number of the last item a guest took, after which
     /// its next read of Inbox looks ([`crate::After`],
-    /// [`crate::GuestItem`]); from link version 8.
+    /// [`crate::GuestItem`]).
     pub const GUEST: u128 = 0x28bc000f_a1b8_4893_9537_2ee3559d7644;
     /// Ask: write a neighbour's ID to ask it for its status, read and
-    /// notify the last answer ([`crate::Ask`], [`crate::Answer`]); from
-    /// link version 9.
+    /// notify the last answer ([`crate::Ask`], [`crate::Answer`]).
     pub const ASK: u128 = 0x28bc0010_a1b8_4893_9537_2ee3559d7644;
     /// Phones: list the node's records, and remove one with a code drawn
-    /// on the screen ([`crate::phones`]); from link version 13.
+    /// on the screen ([`crate::phones`]).
     pub const PHONES: u128 = 0x28bc0011_a1b8_4893_9537_2ee3559d7644;
     /// What a public node advertises in place of [`SERVICE`]: the class
     /// of nodes that serve any phone. No attribute has it.
@@ -206,6 +194,10 @@ fn u16_at(b: &[u8], at: usize) -> u16 {
     u16::from_be_bytes([b[at], b[at + 1]])
 }
 
+fn u32_at(b: &[u8], at: usize) -> u32 {
+    u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
+}
+
 /// Whole seconds from `now` to `until`, rounded up so that an app that
 /// waits them is never early, and 0 once `until` has passed; at most
 /// `u16::MAX`, 18 h, beyond the longest wait a refusal tells, 89 min
@@ -216,51 +208,50 @@ pub fn seconds_left(now: Instant, until: Instant) -> u16 {
     us.div_ceil(SECOND_US).min(u16::MAX as u64) as u16
 }
 
-/// Node, read: what the node is, fixed while it runs.
+/// Node, read: what the node is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Node {
     /// The link version the node speaks.
     pub version: u8,
+    /// The oldest link version whose apps it serves ([`OLDEST`]).
+    pub oldest: u8,
     /// The node's ID, the second half of its address (spec "Addresses").
     pub id: NodeId,
     /// The firmware image's version (`bark-fw/README.md`, "Updates").
     pub image: u32,
-    /// How many more phones may pair with it (spec "Phone link", Node);
-    /// `None` from a node of link version 12 or before, which kept one.
-    pub room: Option<u8>,
-    /// The oldest link version whose apps it serves ([`OLDEST`]); `None`
-    /// from a node of link version 12 or before.
-    pub oldest: Option<u8>,
+    /// How many more phones may pair with it (spec "Phone link", Node).
+    pub room: u8,
 }
 
 impl Node {
     /// Bytes in the value.
-    pub const LEN: usize = Self::LEN_12 + 2;
-    /// Bytes in the value of link version 12 and before.
-    const LEN_12: usize = 1 + ID + 4;
+    pub const LEN: usize = 1 + 1 + ID + 4 + 1;
+    const AT_ID: usize = 2;
+    const AT_IMAGE: usize = Self::AT_ID + ID;
+    const AT_ROOM: usize = Self::AT_IMAGE + 4;
 
     /// The value.
     pub fn encode(&self) -> [u8; Self::LEN] {
         let mut b = [0u8; Self::LEN];
         b[0] = self.version;
-        b[1..1 + ID].copy_from_slice(&self.id.0);
-        b[1 + ID..Self::LEN_12].copy_from_slice(&self.image.to_be_bytes());
-        b[Self::LEN_12] = self.room.unwrap_or(0);
-        b[Self::LEN_12 + 1] = self.oldest.unwrap_or(0);
+        b[1] = self.oldest;
+        b[Self::AT_ID..Self::AT_IMAGE].copy_from_slice(&self.id.0);
+        b[Self::AT_IMAGE..Self::AT_ROOM].copy_from_slice(&self.image.to_be_bytes());
+        b[Self::AT_ROOM] = self.room;
         b
     }
 
     /// Read a value, ignoring what a later version appends.
     pub fn decode(b: &[u8]) -> Result<Node, Malformed> {
-        if b.len() < Self::LEN_12 {
+        if b.len() < Self::LEN {
             return Err(Malformed::Length);
         }
         Ok(Node {
             version: b[0],
-            id: node_id(&b[1..]),
-            image: u32::from_be_bytes(b[1 + ID..Self::LEN_12].try_into().expect("four bytes")),
-            room: b.get(Self::LEN_12).copied(),
-            oldest: b.get(Self::LEN_12 + 1).copied(),
+            oldest: b[1],
+            id: node_id(&b[Self::AT_ID..]),
+            image: u32_at(b, Self::AT_IMAGE),
+            room: b[Self::AT_ROOM],
         })
     }
 }
@@ -287,32 +278,36 @@ pub struct Status {
     pub booting: bool,
     /// A sleepy node without an anchor (spec "Sleepy nodes alone").
     pub anchorless: bool,
-    /// The relays it knows, nodes that are not sleepy.
-    pub relays: u8,
-    /// Seconds left of the first rotation, rounded up; 0 once it is over.
-    pub boot_left_s: u16,
     /// The position of the node's address: its own, or a sleepy node's
     /// anchor's (spec "Addresses").
     pub address: Position,
     /// The battery in millivolts as last read, uncalibrated; 0 on external
     /// power and before the first reading.
     pub battery_mv: u16,
-    /// Messages in the inbox.
-    pub inbox: u8,
+    /// The relays it knows, nodes that are not sleepy.
+    pub relays: u8,
     /// Its live neighbours, sleepy or not (spec "Neighbour status",
     /// heard).
     pub heard: u8,
+    /// Seconds left of the first rotation, rounded up; 0 once it is over.
+    pub boot_left_s: u16,
     /// The low 16 bits of the image version the node drains to install
-    /// (spec "Updates over the mesh", the install); 0 when none, and from
-    /// a node of link version 12 or before.
+    /// (spec "Updates over the mesh", the install); 0 when none.
     pub installing: u16,
+    /// The phone's messages in the node's ring not yet confirmed.
+    pub inbox: u8,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = Self::LEN_12 + 2;
-    /// Bytes in the value of link version 12 and before.
-    const LEN_12: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
+    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1;
+    const AT_ADDRESS: usize = 1;
+    const AT_BATTERY: usize = Self::AT_ADDRESS + POS;
+    const AT_RELAYS: usize = Self::AT_BATTERY + 2;
+    const AT_HEARD: usize = Self::AT_RELAYS + 1;
+    const AT_BOOT_LEFT: usize = Self::AT_HEARD + 1;
+    const AT_INSTALLING: usize = Self::AT_BOOT_LEFT + 2;
+    const AT_INBOX: usize = Self::AT_INSTALLING + 2;
 
     /// Every flag clear and every count zero: a node that has said
     /// nothing yet.
@@ -325,13 +320,13 @@ impl Status {
         placed: false,
         booting: false,
         anchorless: false,
-        relays: 0,
-        boot_left_s: 0,
         address: Position { lat: 0, lon: 0 },
         battery_mv: 0,
-        inbox: 0,
+        relays: 0,
         heard: 0,
+        boot_left_s: 0,
         installing: 0,
+        inbox: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -354,21 +349,21 @@ impl Status {
     pub fn encode(&self) -> [u8; Self::LEN] {
         let mut b = [0u8; Self::LEN];
         b[0] = self.flags();
-        b[1] = self.relays;
-        b[2..4].copy_from_slice(&self.boot_left_s.to_be_bytes());
         if self.placed {
-            b[4..4 + POS].copy_from_slice(&self.address.encode());
+            b[Self::AT_ADDRESS..Self::AT_BATTERY].copy_from_slice(&self.address.encode());
         }
-        b[4 + POS..6 + POS].copy_from_slice(&self.battery_mv.to_be_bytes());
-        b[6 + POS] = self.inbox;
-        b[7 + POS] = self.heard;
-        b[Self::LEN_12..].copy_from_slice(&self.installing.to_be_bytes());
+        b[Self::AT_BATTERY..Self::AT_RELAYS].copy_from_slice(&self.battery_mv.to_be_bytes());
+        b[Self::AT_RELAYS] = self.relays;
+        b[Self::AT_HEARD] = self.heard;
+        b[Self::AT_BOOT_LEFT..Self::AT_INSTALLING].copy_from_slice(&self.boot_left_s.to_be_bytes());
+        b[Self::AT_INSTALLING..Self::AT_INBOX].copy_from_slice(&self.installing.to_be_bytes());
+        b[Self::AT_INBOX] = self.inbox;
         b
     }
 
     /// Read a value, ignoring what a later version appends.
     pub fn decode(b: &[u8]) -> Result<Status, Malformed> {
-        if b.len() < Self::LEN_12 {
+        if b.len() < Self::LEN {
             return Err(Malformed::Length);
         }
         let flag = |bit: u8| b[0] & (1 << bit) != 0;
@@ -381,16 +376,13 @@ impl Status {
             placed: flag(5),
             booting: flag(6),
             anchorless: flag(7),
-            relays: b[1],
-            boot_left_s: u16_at(b, 2),
-            address: position(&b[4..]),
-            battery_mv: u16_at(b, 4 + POS),
-            inbox: b[6 + POS],
-            heard: b[7 + POS],
-            installing: match b.len() < Self::LEN {
-                true => 0,
-                false => u16_at(b, Self::LEN_12),
-            },
+            address: position(&b[Self::AT_ADDRESS..]),
+            battery_mv: u16_at(b, Self::AT_BATTERY),
+            relays: b[Self::AT_RELAYS],
+            heard: b[Self::AT_HEARD],
+            boot_left_s: u16_at(b, Self::AT_BOOT_LEFT),
+            installing: u16_at(b, Self::AT_INSTALLING),
+            inbox: b[Self::AT_INBOX],
         })
     }
 }
@@ -698,11 +690,10 @@ impl NodeTime {
 
 /// Recipient, write: the phone's recipient tag at this node, by which the
 /// node hands it the payloads that are its own (spec "Phone link",
-/// Recipient tag; `bark_app_layer::seal::recipient`), and from link
-/// version 13 the app's link version, the oldest node version it serves
-/// (spec "Phone link", Versions) and its person's name as their card has
-/// it, which a paired phone's record keeps (spec "Phone link", Pairing).
-/// An app of version 12 or older writes the tag alone.
+/// Recipient tag; `bark_app_layer::seal::recipient`), the app's link
+/// version, the oldest node version it serves (spec "Phone link",
+/// Versions) and its person's name as their card has it, which a paired
+/// phone's record keeps (spec "Phone link", Pairing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Recipient {
     /// The tag.
@@ -711,35 +702,28 @@ pub struct Recipient {
     pub version: u8,
     /// The oldest node link version the app serves.
     pub oldest: u8,
-    /// The name: UTF-8, at most [`phones::NAME_MAX`] bytes.
+    /// The name: UTF-8, at most [`phones::NAME_MAX`] bytes; empty for a
+    /// guest.
     pub name: phones::Name,
 }
 
 impl Recipient {
+    /// Bytes before the name.
+    const HEADER: usize = 3;
     /// Bytes in the longest value.
-    pub const MAX_LEN: usize = 3 + phones::NAME_MAX;
-    /// What a write of the tag alone says of its app: version 12 or older,
-    /// which declared no oldest and so serves any node.
-    const ALONE: (u8, u8) = (12, 0);
+    pub const MAX_LEN: usize = Self::HEADER + phones::NAME_MAX;
 
     /// The value, into `b`; its length.
     pub fn encode(&self, b: &mut [u8; Self::MAX_LEN]) -> usize {
         let name = self.name.as_bytes();
-        b[..3].copy_from_slice(&[self.tag, self.version, self.oldest]);
-        b[3..3 + name.len()].copy_from_slice(name);
-        3 + name.len()
+        b[..Self::HEADER].copy_from_slice(&[self.tag, self.version, self.oldest]);
+        b[Self::HEADER..Self::HEADER + name.len()].copy_from_slice(name);
+        Self::HEADER + name.len()
     }
 
-    /// Take a written value whole: the tag alone as version 12's, and a
-    /// name that is not UTF-8 is not taken.
+    /// Take a written value whole; a name that is not UTF-8 is not taken.
     pub fn decode(b: &[u8]) -> Result<Recipient, Malformed> {
         match b {
-            [tag] => Ok(Recipient {
-                tag: *tag,
-                version: Self::ALONE.0,
-                oldest: Self::ALONE.1,
-                name: phones::Name::EMPTY,
-            }),
             [tag, version, oldest, name @ ..] => Ok(Recipient {
                 tag: *tag,
                 version: *version,
@@ -784,8 +768,7 @@ impl Public {
 
 /// Public, as the owner writes it: whether the node is public, or that
 /// the node is to forget its bond, unpaired, and be public again as a
-/// node nobody has paired with is (spec "Phone link", Public); the
-/// unpairing from link version 12.
+/// node nobody has paired with is (spec "Phone link", Public).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicWrite {
     /// Public or private.
@@ -936,15 +919,19 @@ impl Answer {
     }
 
     /// Read a value, `None` when empty, ignoring what a later version
-    /// appends; one without the image gathered whole, link version 9's or
-    /// a notification's at the default MTU, as gathering none.
+    /// appends; one without the image gathered whole, a notification's at
+    /// the default MTU, as gathering none.
     pub fn decode(b: &[u8]) -> Result<Option<Answer>, Malformed> {
         let mut status = [0u8; STATUS];
         match b.len() {
             0 => Ok(None),
-            n if n < ID + STATUS_9 => Err(Malformed::Length),
+            n if n < ID + STATUS_UNGATHERED => Err(Malformed::Length),
             n => {
-                let whole = if n >= Self::LEN { STATUS } else { STATUS_9 };
+                let whole = if n >= Self::LEN {
+                    STATUS
+                } else {
+                    STATUS_UNGATHERED
+                };
                 status[..whole].copy_from_slice(&b[ID..ID + whole]);
                 Ok(Some(Answer {
                     from: node_id(b),
@@ -958,8 +945,9 @@ impl Answer {
 /// Bytes of a status, as on the radio.
 const STATUS: usize = bark_proto::wire::STATUS_LEN;
 
-/// Bytes of a status before the image gathered, as link version 9 had it.
-const STATUS_9: usize = 9;
+/// Bytes of a status before the image it gathers, which a notification at
+/// the default MTU carries whole.
+const STATUS_UNGATHERED: usize = 9;
 
 // Every value the node or the app writes fits one ATT PDU at the MTU the
 // node offers; the status fits one at the default MTU.
@@ -971,7 +959,7 @@ const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
 // Ask's answer needs the MTU the app asks for; a notification at the
 // default one still carries all but the image gathered.
 const _: () = assert!(Answer::LEN <= value_room(ATT_MTU));
-const _: () = assert!(ID + STATUS_9 <= value_room(DEFAULT_ATT_MTU));
+const _: () = assert!(ID + STATUS_UNGATHERED <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));
@@ -979,7 +967,6 @@ const _: () = assert!(update::Progress::LEN <= value_room(ATT_MTU));
 const _: () = assert!(Recipient::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(phones::PhonesWrite::MAX_LEN <= value_room(DEFAULT_ATT_MTU));
 
-pub mod bond;
 pub mod home;
 pub mod neighbours;
 pub mod phones;

@@ -170,10 +170,9 @@ bool canBeHome(Status? s) => s != null && !s.sleepy && !s.carried;
 
 /// A public node as the phone's last errand there read it: how to reach
 /// it, its address once it has a place, and whether it can be a home
-/// ([canBeHome]). Between errands the link is down and the session knows
-/// none of it.
-/// From link version 13 it also says how many more phones may pair with
-/// it, `room`, 0 on a node that would refuse a pairing.
+/// ([canBeHome]), and how many more phones may pair with it, `room`, 0 on
+/// a node that would refuse a pairing. Between errands the link is down
+/// and the session knows none of it.
 typedef GuestNode = ({
   FoundNode found,
   Address? address,
@@ -670,19 +669,17 @@ class AppModel extends ChangeNotifier {
   }
 
   /// The connected node holds a mailbox key the phone can clear and is
-  /// not the person's home: a former home of theirs, and before link
-  /// version 13, which does not say whose a key is, anyone's.
+  /// not the person's home: a former home of theirs.
   bool get holdsOtherKey {
     final h = session.nodeHome;
-    return !atHome && h != null && (h.mine ?? h.set);
+    return !atHome && h != null && h.mine;
   }
 
-  /// The connected node, not the person's home, is someone else's: from
-  /// link version 13, which says whose a key is. Only its keeper, or a
-  /// removal by the code on its screen, takes that key.
+  /// The connected node, not the person's home, is someone else's. Only
+  /// its keeper, or a removal by the code on its screen, takes that key.
   bool get othersHome {
     final h = session.nodeHome;
-    return !atHome && h != null && h.mine == false && h.set;
+    return !atHome && h != null && !h.mine && h.set;
   }
 
   /// The person's home does not hold their mailbox key now: a phone
@@ -754,12 +751,8 @@ class AppModel extends ChangeNotifier {
   Future<String> makeHome(Address a) async {
     final n = session.node;
     if (n == null) return 'Not connected to a node';
-    if (n.version < homeVersion) {
-      return 'This node\'s firmware, version ${n.image}, has no mailbox: '
-          'update it to make it a home. Nothing changed.';
-    }
     final h = await session.writeHome(me.keys.mailbox.extractBytes());
-    if (!(h.mine ?? h.set)) {
+    if (!h.mine) {
       return 'The node did not keep your mailbox key, so it cannot be your '
           'home. Nothing changed.';
     }
@@ -776,7 +769,7 @@ class AppModel extends ChangeNotifier {
     if (me.home == null) return 'No home node';
     final at = atHome;
     final h = at ? await session.writeHome(null) : null;
-    if (h != null && (h.mine ?? h.set)) {
+    if (h != null && h.mine) {
       return 'The node still says it holds a mailbox key, so it is still '
           'your home. Nothing changed.';
     }
@@ -787,7 +780,7 @@ class AppModel extends ChangeNotifier {
   /// Takes the mailbox key from a connected node that is not the home.
   Future<String> clearKey() async {
     final h = await session.writeHome(null);
-    return h.mine ?? h.set
+    return h.mine
         ? 'The node still says it holds your mailbox key'
         : 'The node no longer holds your mailbox key';
   }
@@ -1468,9 +1461,8 @@ class AppModel extends ChangeNotifier {
   }
 
   /// The node heard strongest of those Android lists a bond with that the
-  /// app does not count as paired, as after its data was cleared, on a new
-  /// install, or from an older app that kept one paired node: the node may
-  /// still hold the phone's bond. None that refused the bond already, nor
+  /// app does not count as paired, as after its data was cleared or on a
+  /// new install: the node may still hold the phone's bond. None that refused the bond already, nor
   /// while a link is up.
   Future<FoundNode?> _bondedNode(Iterable<FoundNode> heard) async {
     if (session.connected) return null;

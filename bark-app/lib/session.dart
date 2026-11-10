@@ -139,12 +139,8 @@ class Outgoing {
     'error': error,
   };
 
-  /// An acknowledgement an app before reactions kept is listed as a
-  /// reaction, so that the file still reads.
   static Outgoing fromJson(Map<String, dynamic> j) {
-    final kind = j['kind'] == 'ack'
-        ? OutKind.reaction
-        : OutKind.values.byName(j['kind'] as String);
+    final kind = OutKind.values.byName(j['kind'] as String);
     return Outgoing(
         Address.parse(j['dst'] as String)!,
         parseHex(j['payload'] as String)!,
@@ -156,11 +152,11 @@ class Outgoing {
         toward: j['toward'] == null
             ? null
             : Toward.values.byName(j['toward'] as String),
-        part: j['part'] as int? ?? 1,
-        of: j['of'] as int? ?? 1,
-        acked: kind == OutKind.fetch && j['acked'] as bool,
-        reaction: _emoji(j['reaction']),
-        reactionSent: j['reactionSent'] as int? ?? 0,
+        part: j['part'] as int,
+        of: j['of'] as int,
+        acked: j['acked'] as bool,
+        reaction: j['reaction'] as String?,
+        reactionSent: j['reactionSent'] as int,
         state: OutState.values.byName(j['state'] as String),
       )
       ..retryAt = j['retryAt'] == null
@@ -249,16 +245,12 @@ class Received {
     sent: j['sent'] as int?,
     body: j['body'] as String?,
     mailbox: j['mailbox'] as bool,
-    part: j['part'] as int? ?? 1,
-    of: j['of'] as int? ?? 1,
-    intro: j['intro'] as bool? ?? false,
-    reaction: _emoji(j['reaction']),
+    part: j['part'] as int,
+    of: j['of'] as int,
+    intro: j['intro'] as bool,
+    reaction: j['reaction'] as String?,
   );
 }
-
-/// A stored reaction; a build before reactions were any emoji kept an
-/// index, which no longer names one.
-String? _emoji(Object? j) => j is String ? j : null;
 
 /// The node's neighbour table: its noise floor, its own position, zero
 /// while it has none, its neighbours, and when it was read.
@@ -302,7 +294,7 @@ class Session extends ChangeNotifier {
   int Function(NodeInfo)? recipient;
 
   /// The person's name as their card has it, which the app writes to
-  /// Recipient beside the tag from link version 13, so that the node's
+  /// Recipient beside the tag, so that the node's
   /// other phones see who is paired (spec "Phone link", Pairing).
   String Function()? name;
 
@@ -325,15 +317,15 @@ class Session extends ChangeNotifier {
   /// The node's time as last read, after the app wrote its own.
   NodeTime? nodeTime;
 
-  /// The node's Home as last read, from link version 3.
+  /// The node's Home as last read.
   NodeHome? nodeHome;
 
-  /// The node's records of phones as last read, from link version 13; the
-  /// paired phones' alone to read (spec "Phone link", Phones).
+  /// The node's records of phones as last read; the paired phones' alone
+  /// to read (spec "Phone link", Phones).
   List<PhoneRecord>? phones;
 
-  /// Whether the node serves phones that have not paired, as last read,
-  /// from link version 7; the paired phone's alone to read.
+  /// Whether the node serves phones that have not paired, as last read;
+  /// the paired phone's alone to read.
   bool? nodePublic;
 
   /// The link is a guest's, on a public node that is not the person's:
@@ -342,12 +334,11 @@ class Session extends ChangeNotifier {
   /// the node refuses for want of the bond (spec "Phone link", Public).
   bool guest = false;
 
-  /// The node's neighbour table as last read, from link version 4.
+  /// The node's neighbour table as last read.
   NeighbourTable? neighbours;
   Future<NeighbourTable>? _readingNeighbours;
 
-  /// What each neighbour answered when last asked, by its ID in hex,
-  /// from link version 9.
+  /// What each neighbour answered when last asked, by its ID in hex.
   final Map<String, NeighbourStatus> answers = {};
 
   /// When each of [answers] came.
@@ -381,8 +372,8 @@ class Session extends ChangeNotifier {
   final Set<String> pairedWith = {};
 
   /// The nodes of [pairedWith] that no longer hold this phone's bond: a
-  /// phone paired with each removed it, or before link version 13 paired
-  /// in its place (spec "Phone link", The removed phone).
+  /// phone paired with each removed it (spec "Phone link", The removed
+  /// phone).
   final Set<String> pairingLost = {};
 
   /// The person closed the link or stopped looking for the paired node:
@@ -439,28 +430,15 @@ class Session extends ChangeNotifier {
           for (final e in j['received'] as List)
             Received.fromJson(e as Map<String, dynamic>),
         ],
-        // Added after the format's first version: absent means none.
-        // A file from before a phone kept several held one name and
-        // whether it was lost.
-        pairedWith: switch (j['pairedWith']) {
-          final String one => [one],
-          final List<dynamic> many => many.cast<String>(),
-          _ => const <String>[],
-        },
-        pairingLost: switch (j['pairingLost']) {
-          true when j['pairedWith'] is String => [j['pairedWith'] as String],
-          final List<dynamic> many => many.cast<String>(),
-          _ => const <String>[],
-        },
-        stopped: j['stopped'] as bool? ?? false,
+        pairedWith: (j['pairedWith'] as List).cast<String>(),
+        pairingLost: (j['pairingLost'] as List).cast<String>(),
+        stopped: j['stopped'] as bool,
         guestAfter: {
-          for (final e
-              in (j['guestAfter'] as Map<String, dynamic>? ?? {}).entries)
+          for (final e in (j['guestAfter'] as Map<String, dynamic>).entries)
             e.key: e.value as int,
         },
         reactionsUsed: {
-          for (final e
-              in (j['reactionsUsed'] as Map<String, dynamic>? ?? {}).entries)
+          for (final e in (j['reactionsUsed'] as Map<String, dynamic>).entries)
             e.key: e.value as int,
         },
       ),
@@ -555,7 +533,7 @@ class Session extends ChangeNotifier {
       await link.close();
       note(
         'Node: ${nodeName(n.id)}, link version ${n.version}, oldest '
-        '${n.oldest ?? n.version}; this app $linkVersion, oldest $oldestNode',
+        '${n.oldest}; this app $linkVersion, oldest $oldestNode',
       );
       _tell(notServedLine(n));
       return false;
@@ -575,9 +553,7 @@ class Session extends ChangeNotifier {
       ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue))
       ..add(link.answerNotified.listen(_onAnswer, onError: _badValue));
     unawaited(link.closed.then((_) => _detach(link)));
-    if (n.version >= publicVersion && !await _setRecipient(link, n)) {
-      return false;
-    }
+    if (!await _setRecipient(link, n)) return false;
     try {
       await link.subscribe();
       _onStatus(await link.readStatus());
@@ -586,14 +562,14 @@ class Session extends ChangeNotifier {
       _tell('Reading the node failed: $e');
     }
     if (guest) {
-      guestRead = n.version >= guestVersion && await _readGuest(link, n);
+      guestRead = await _readGuest(link, n);
       return true;
     }
-    if (n.version >= clockVersion) await _setClock(link);
-    if (n.version >= phonesVersion) await _readPhones(link);
-    if (n.version >= homeVersion) await _keepHome(link, n);
-    if (n.version >= publicVersion) await _readPublic(link);
-    if (n.version >= askVersion) await _subscribeAsk(link);
+    await _setClock(link);
+    await _readPhones(link);
+    await _keepHome(link, n);
+    await _readPublic(link);
+    await _subscribeAsk(link);
     return true;
   }
 
@@ -670,23 +646,19 @@ class Session extends ChangeNotifier {
 
   /// Writes the person's recipient tag at the node: a public node hands a
   /// phone only the messages that carry its tag, and keeps the paired
-  /// phone's to place its messages while it is away.
-  /// From link version 13 it writes this app's versions with it, and a
-  /// paired phone the person's name; a guest's name is left empty, as the
-  /// node keeps nothing of a guest's. False when the node finds that it and
-  /// the app do not serve each other, which [servesEachOther] tells before
-  /// the write; the node then ends the link.
+  /// phone's to place its messages while it is away. It writes this app's
+  /// versions with it, and a paired phone the person's name; a guest's
+  /// name is left empty, as the node keeps nothing of a guest's. False
+  /// when the node finds that it and the app do not serve each other,
+  /// which [servesEachOther] tells before the write; the node then ends
+  /// the link.
   Future<bool> _setRecipient(NodeLink link, NodeInfo n) async {
     final tag = recipient?.call(n);
     if (tag == null) return true;
-    final who = n.version < phonesVersion
-        ? null
-        : guest
-        ? ''
-        : name?.call() ?? '';
+    final who = guest ? '' : name?.call() ?? '';
     try {
       await link.setRecipient(tag, who);
-      note('Recipient: tag $tag${who?.isNotEmpty ?? false ? ', a name' : ''}');
+      note('Recipient: tag $tag${who.isNotEmpty ? ', a name' : ''}');
     } on AttException catch (e) {
       if (e.code != AttError.incompatible) {
         note('Recipient: $e');
@@ -711,21 +683,17 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The link, if the paired phone's and of `version` or later.
-  NodeLink _owned(int version, String what) {
+  /// The link, if the paired phone's.
+  NodeLink _owned(String what) {
     final link = _link;
-    final n = node;
-    if (link == null || n == null) throw StateError('not connected');
+    if (link == null || node == null) throw StateError('not connected');
     if (guest) throw StateError('$what is the paired phone\'s alone');
-    if (n.version < version) {
-      throw StateError('no $what before link version $version');
-    }
     return link;
   }
 
   /// Makes the node public, or the person's alone, and reads it back.
   Future<bool> writePublic(bool public) async {
-    final link = _owned(publicVersion, 'Public');
+    final link = _owned('Public');
     await link.setPublic(public);
     nodePublic = await link.readPublic();
     note('Public: wrote ${public ? 'yes' : 'no'}, reads ${nodePublic!}');
@@ -739,7 +707,7 @@ class Session extends ChangeNotifier {
   /// only when the write failed and the link stayed up: the node then
   /// keeps the phone.
   Future<void> unpair() async {
-    final link = _owned(unpairVersion, 'Unpairing');
+    final link = _owned('Unpairing');
     final name = nodeName(node!.id);
     try {
       await link.unpair();
@@ -777,23 +745,22 @@ class Session extends ChangeNotifier {
   /// may have been reflashed, or the identity restored from its words;
   /// the node changes nothing when it holds that key already.
   ///
-  /// From link version 13 the node says whether the home is this phone's
-  /// person's, and the key goes silently only where a record with the
-  /// person's tag holds a home: one their phone left by unpairing, which
+  /// The node says whether the home is this phone's person's, and the key
+  /// goes silently only where a record with the person's tag holds a home: one their phone left by unpairing, which
   /// the write joins to this phone's, or another phone of theirs. With
   /// none, a phone paired with the node removed the home (spec "Phone
   /// link", Phones), and the person is told rather than overruled.
   Future<void> _keepHome(NodeLink link, NodeInfo n) async {
     try {
       var key = homeKey?.call(n);
-      if (key != null && n.version >= phonesVersion) {
+      if (key != null) {
         final h = await link.readHome();
         final tag = recipient?.call(n);
         final kept = (phones ?? const <PhoneRecord>[]).any(
           (r) => r.home && !r.mine && r.tag != null && r.tag == tag,
         );
-        if (h.mine == true || !kept) key = null;
-        if (h.mine == false && !kept) {
+        if (h.mine || !kept) key = null;
+        if (!h.mine && !kept) {
           homeRemoved = true;
           _tell(
             'Your home node, ${nodeLabel(n.id)}, does not hold your '
@@ -845,11 +812,11 @@ class Session extends ChangeNotifier {
   }
 
   /// Reads the node's records again.
-  Future<void> readPhones() => _readPhones(_owned(phonesVersion, 'Phones'));
+  Future<void> readPhones() => _readPhones(_owned('Phones'));
 
   /// Has the node draw a fresh removal code on its screen.
   Future<void> askRemovalCode() async {
-    await _owned(phonesVersion, 'Phones').askRemovalCode();
+    await _owned('Phones').askRemovalCode();
     note('Phones: a removal code asked for');
   }
 
@@ -863,7 +830,7 @@ class Session extends ChangeNotifier {
     required bool home,
     required int code,
   }) async {
-    final link = _owned(phonesVersion, 'Phones');
+    final link = _owned('Phones');
     try {
       await link.removePhone(r.number, bond: bond, home: home, code: code);
       note(
@@ -883,11 +850,11 @@ class Session extends ChangeNotifier {
 
   /// Writes Home, the mailbox key or none, and reads it back.
   Future<NodeHome> writeHome(List<int>? key) async {
-    final link = _owned(homeVersion, 'Home');
+    final link = _owned('Home');
     await link.setHome(key);
     nodeHome = await link.readHome();
-    if (nodeHome!.mine ?? nodeHome!.set) homeRemoved = false;
-    if (node!.version >= phonesVersion) await _readPhones(link);
+    if (nodeHome!.mine) homeRemoved = false;
+    await _readPhones(link);
     note('Home: wrote ${key == null ? 'no key' : 'the key'}, reads $nodeHome');
     notifyListeners();
     return nodeHome!;
@@ -899,7 +866,7 @@ class Session extends ChangeNotifier {
       _readNeighbours().whenComplete(() => _readingNeighbours = null);
 
   Future<NeighbourTable> _readNeighbours() async {
-    final link = _owned(neighboursVersion, 'Neighbours');
+    final link = _owned('Neighbours');
     final list = <Neighbour>[];
     var slot = 0;
     NeighbourPage page;
@@ -939,7 +906,7 @@ class Session extends ChangeNotifier {
   /// asks again, not the node. A look that starts while another runs
   /// replaces it.
   Future<void> askNeighbours(List<Neighbour> list) async {
-    final link = _owned(askVersion, 'Ask');
+    final link = _owned('Ask');
     stopAsking();
     final look = _look;
     final t = now();
@@ -1266,7 +1233,6 @@ class Session extends ChangeNotifier {
     final ready = status?.ready ?? false;
     if (!ready) {
       final asked = _askedAt;
-      if ((node?.version ?? 0) < turnVersion) return;
       if (asked != null && now().difference(asked) < turnWait) return;
     }
     _writing = true;

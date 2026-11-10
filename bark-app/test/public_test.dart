@@ -6,7 +6,7 @@
 // links and restarts, reading taking nothing; one guest's link at a time,
 // ended after 30 s; and the owner and a guest take turns at the one
 // message it holds, the turn being Ready, which goes only to a phone
-// that asks or whose app is too old to ask.
+// that asks.
 
 import 'dart:typed_data';
 
@@ -14,7 +14,6 @@ import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/node_link.dart';
-import 'package:bark_app/session.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
@@ -278,68 +277,6 @@ void main() {
       async.flushMicrotasks();
       expect(ready(), [true]);
       sub.cancel();
-    });
-  });
-
-  test('a phone of link version 12 cannot ask: alone it has Ready as '
-      'before, and beside a newer one it has the turn after one ban unused '
-      'and keeps it until the newer one asks', () {
-    run((async, owner, guest, node) {
-      node.close();
-      async.flushMicrotasks();
-      final g = node.connectGuest();
-      // The tag alone: an app of version 12.
-      g.setRecipient(tagOf(guest));
-      async.flushMicrotasks();
-      expect(readyOf(async, [g]), [true]);
-      expect(
-        sendOn(async, g, encodeSend(there, payloadFor(tagOf(guest), 1))),
-        isNull,
-      );
-      async.elapse(FakeNode.handOver);
-      expect(readyOf(async, [g]), [true]);
-      g.close();
-      async.flushMicrotasks();
-      // Beside the owner's newer app, which has the turn first.
-      final link = node.connect();
-      owner.session.attach(link);
-      async.flushMicrotasks();
-      final old = node.connectGuest();
-      old.setRecipient(tagOf(guest));
-      async.flushMicrotasks();
-      final links = <NodeLink>[node, old];
-      expect(readyOf(async, links), [true, false]);
-      async.elapse(FakeNode.ban);
-      expect(readyOf(async, links), [false, true]);
-      async.elapse(FakeNode.ban * 10);
-      expect(readyOf(async, links), [false, true]);
-      // The owner's app has a message: it asks, and has the turn after
-      // the old phone's ban unused, and the message is taken.
-      final o = Outgoing(
-        there,
-        payloadFor(tagOf(owner), 7),
-        at: start,
-        kind: OutKind.text,
-        sent: 1,
-      );
-      owner.session.queue(o);
-      async.flushMicrotasks();
-      expect(o.state, OutState.taken);
-      // A second waits for the turn, which the old phone has again.
-      async.elapse(FakeNode.handOver);
-      expect(readyOf(async, links), [false, true]);
-      final o2 = Outgoing(
-        there,
-        payloadFor(tagOf(owner), 8),
-        at: start,
-        kind: OutKind.text,
-        sent: 2,
-      );
-      owner.session.queue(o2);
-      async.flushMicrotasks();
-      expect(o2.state, OutState.queued);
-      async.elapse(FakeNode.ban);
-      expect(o2.state, OutState.taken);
     });
   });
 }

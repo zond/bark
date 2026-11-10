@@ -1548,10 +1548,7 @@ impl fmt::Display for CutOp {
 /// "Phone link", Public; `store.rs`): its page read where it lies in the
 /// chip's address space, as the console writes no flash of the node's.
 fn public() -> bool {
-    kept()
-        .phones
-        .phones(bark_link::phones::OldHome::default())
-        .public()
+    kept().phones.phones().public()
 }
 
 /// The battery drains the node image learned and kept, a relay's and a

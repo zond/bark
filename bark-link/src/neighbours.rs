@@ -1,7 +1,6 @@
 //! Neighbours: the characteristic by which the app reads the node's
 //! neighbour table (spec "Neighbour table"), for a map of the node and the
-//! links around it, `28bc000a-…` ([`crate::uuid::NEIGHBOURS`]) from link
-//! version 4.
+//! links around it, `28bc000a-…` ([`crate::uuid::NEIGHBOURS`]).
 //!
 //! | | value | bytes |
 //! |---|---|---|
@@ -33,12 +32,12 @@ pub fn decode_from(b: &[u8]) -> Result<u8, Malformed> {
 /// The page's first bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Header {
-    /// The node's noise floor, dBm (spec "Busy estimate"), against which
-    /// a link's margin is read ([`quality`]).
-    pub floor_dbm: i8,
     /// The slot to write for the next page; 0 when this page reached the
     /// table's end.
     pub next: u8,
+    /// The node's noise floor, dBm (spec "Busy estimate"), against which
+    /// a link's margin is read ([`quality`]).
+    pub floor_dbm: i8,
     /// The node's own position (spec "Position"), which for a sleepy node
     /// is not its address; zero while it has no place.
     pub own: Position,
@@ -77,9 +76,11 @@ pub struct Neighbour {
     pub proven: bool,
 }
 
-/// Bytes before the first neighbour: the noise floor, the next slot, the
-/// bytes of each neighbour, and the node's position.
-pub const HEADER: usize = 1 + 1 + 1 + POS;
+/// Bytes before the first neighbour: the next slot, the noise floor, the
+/// node's position, and the bytes of each neighbour.
+pub const HEADER: usize = 1 + 1 + POS + 1;
+/// Where the header says the bytes of each neighbour.
+const AT_ENTRY: usize = HEADER - 1;
 /// Bytes of one neighbour in this version: ID, position, RSSI, age and
 /// flags. A later version may append fields to each; the header says how
 /// long each is.
@@ -136,10 +137,10 @@ impl Neighbour {
 /// A page, into `b`; returns its length.
 pub fn encode(header: &Header, page: &[Neighbour], b: &mut [u8; MAX_LEN]) -> usize {
     assert!(page.len() <= PER_PAGE, "page too long");
-    b[0] = header.floor_dbm as u8;
-    b[1] = header.next;
-    b[2] = ENTRY as u8;
-    b[3..HEADER].copy_from_slice(&header.own.encode());
+    b[0] = header.next;
+    b[1] = header.floor_dbm as u8;
+    b[2..AT_ENTRY].copy_from_slice(&header.own.encode());
+    b[AT_ENTRY] = ENTRY as u8;
     for (n, chunk) in page.iter().zip(b[HEADER..].as_chunks_mut::<ENTRY>().0) {
         n.encode(chunk);
     }
@@ -152,14 +153,14 @@ pub fn decode(b: &[u8]) -> Result<(Header, impl Iterator<Item = Neighbour> + '_)
     if b.len() < HEADER {
         return Err(Malformed::Length);
     }
-    let entry = usize::from(b[2]);
+    let entry = usize::from(b[AT_ENTRY]);
     if entry < ENTRY || !(b.len() - HEADER).is_multiple_of(entry) {
         return Err(Malformed::Length);
     }
     let header = Header {
-        floor_dbm: b[0] as i8,
-        next: b[1],
-        own: position(&b[3..]),
+        next: b[0],
+        floor_dbm: b[1] as i8,
+        own: position(&b[2..]),
     };
     Ok((
         header,
@@ -255,7 +256,7 @@ mod tests {
         assert_eq!(
             &b[..len],
             [
-                0x8a, 20, 18, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, //
+                20, 0x8a, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 18, //
                 1, 2, 3, 4, 5, 6, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0xfb, 0xaf, 0x01, 0x2c,
                 0x91,
             ]
@@ -281,7 +282,7 @@ mod tests {
         // The same two neighbours, each with three bytes more.
         let mut longer = [0xAA; HEADER + 2 * (ENTRY + 3)];
         longer[..HEADER].copy_from_slice(&b[..HEADER]);
-        longer[2] = (ENTRY + 3) as u8;
+        longer[AT_ENTRY] = (ENTRY + 3) as u8;
         for i in 0..2 {
             let at = HEADER + i * (ENTRY + 3);
             longer[at..at + ENTRY]
@@ -292,7 +293,7 @@ mod tests {
         assert!(decode(&b[..len - 1]).is_err());
         assert!(decode(&b[..HEADER - 1]).is_err());
         let mut short = b;
-        short[2] = (ENTRY - 1) as u8;
+        short[AT_ENTRY] = (ENTRY - 1) as u8;
         assert!(decode(&short[..HEADER]).is_err());
     }
 
