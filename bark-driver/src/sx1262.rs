@@ -355,6 +355,8 @@ pub struct Sx1262<C, K> {
     /// oscillator's delay and the reading inside a CAD are measured again
     /// before it next listens.
     remeasure: bool,
+    /// The last start of the oscillator was a short restart.
+    short_last: bool,
 }
 
 impl<C: Chip, K: Clock> Sx1262<C, K> {
@@ -371,6 +373,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             lbt: LbtRead::After,
             stats: Stats::default(),
             remeasure: false,
+            short_last: false,
         };
         radio.ready().await?;
         radio.stats.resets = 0;
@@ -452,6 +455,12 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                     // chip that does not answer has nothing to say.
                     if let Ok(errors) = self.chip.errors().await {
                         log::warn!("radio: device errors {:#x} before the reset", errors);
+                        // On the bench every `OpError(170)` came at the
+                        // return to receive after a busy check, a short
+                        // restart (`docs/radio-recovery-2026-11-10.md`).
+                        if errors & (XOSC_START_ERR | PLL_LOCK_ERR) != 0 && self.short_last {
+                            self.short_failed();
+                        }
                     }
                 }
                 let r = self.chip.reset().await;
@@ -625,6 +634,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.set_tcxo(delay).await?;
         self.held.osc_stopped = None;
         self.held.errors_clear = false;
+        self.short_last = !cold;
         Ok(cold)
     }
 
@@ -639,13 +649,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let r = self.chip.errors().await;
         let errors = self.note(r)?;
         if errors & XOSC_START_ERR != 0 {
-            self.tcxo.short = false;
-            log::warn!(
-                "tcxo: a restart within {} us of stopping failed at {} us; every start now takes {} us",
-                tcxo::STILL_RUNNING.as_micros(),
-                tcxo::SHORT.as_micros(),
-                self.tcxo.delay.as_micros()
-            );
+            self.short_failed();
         }
         if errors != 0 {
             let r = self.chip.clear_errors().await;
@@ -653,6 +657,21 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         }
         self.held.errors_clear = true;
         Ok(())
+    }
+
+    /// A short restart failed: from now on every start takes the probed
+    /// delay.
+    fn short_failed(&mut self) {
+        if !self.tcxo.short {
+            return;
+        }
+        self.tcxo.short = false;
+        log::warn!(
+            "tcxo: a restart within {} us of stopping failed at {} us; every start now takes {} us",
+            tcxo::STILL_RUNNING.as_micros(),
+            tcxo::SHORT.as_micros(),
+            self.tcxo.delay.as_micros()
+        );
     }
 
     /// After a cold start: the error flag, and a step up if it is set.
@@ -1793,6 +1812,24 @@ mod tests {
             take(&cmds).iter().filter(|c| **c == Cmd::ClearIrq).count(),
             1
         );
+    }
+
+    /// A short restart that fails outright leaves the chip in STDBY_RC
+    /// and the next status read fails (`OpError(170)`): the error word
+    /// read before the reset blames the restart, and short restarts end.
+    #[test]
+    fn a_short_restart_that_fails_outright_ends_short_restarts() {
+        let (mut radio, cmds, _) = booted(board());
+        radio.chip().board.borrow_mut().warm_start = Duration::from_micros(300);
+        run(radio.lbt(ch(5))).unwrap();
+        run(radio.listen(ch(3))).unwrap();
+        radio.chip().board.borrow_mut().fail_next = true;
+        let mut buf = [0; MAX_FRAME];
+        assert!(run(radio.service(&mut buf)).is_err());
+        take(&cmds);
+        run(radio.listen(ch(3))).unwrap();
+        assert_eq!(take(&cmds)[..2], [Cmd::Errors, Cmd::Reset]);
+        assert!(!radio.tcxo().short);
     }
 
     /// A board whose oscillator does not restart within the short delay:

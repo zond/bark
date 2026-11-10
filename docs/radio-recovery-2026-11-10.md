@@ -75,6 +75,36 @@ bac7 is not the only board with these errors:
   (up to 170 an hour on 3112, 100 on c367), some after resets and some
   with none.
 
+The live logs at 15:39 show the same on today's images. c367 (version
+25, booted 14:27, streaming update pieces) had four errors and 3112
+(version 24, booted 13:20) six:
+
+| Board | Uptime | Line | One to two ms before it |
+|---|---:|---|---|
+| c367 | 704 s | `NotDone(20)` | `update: serving` a piece |
+| c367 | 887 s | `NotDone(4)` | `update: serving` a piece |
+| c367 | 2 198 s | `NotDone(4)` | `update: serving` a piece |
+| c367 | 2 694 s | `NotDone(4)` | |
+| 3112 | 5 185 s | `Chip(OpError(170))` | `HeartbeatSkipped` 47 ms before |
+| 3112 | 5 756–5 773 s | `NotDone(22)` twice, `NotDone(20)` three times | `update: serving` each of five pieces in a row, 4.3 s apart |
+
+Every `NotDone` came at the transmission of a served piece, which
+leaves straight from receive: a frame arriving at that moment (22 is a
+preamble, a valid header and a packet received) held DIO1 high, the
+transmission was taken for failed, and the reset that followed cut the
+piece off on the air. Every `OpError(170)` on any board, four in all
+(bac7 at 3.2 s, 3112 at 5 185 s and in image 19 at 5 853 s, c367 in
+image 19 at 6 804 s), came within a second after a skipped heartbeat,
+that is at the return to receive after a busy check, the short restart.
+Over 3 800 s today the cold delay of 3112 stepped from 500 to 2 250 µs.
+Reception and skipped heartbeats in the ten minutes after each error
+were as in the ten before (c367: 19 to 36 frames and no skip either
+side; 3112: 134 to 150 frames, 2 to 4 skips). No change merged today
+touches the radio sequencer, and image 19 showed the same errors
+yesterday. So these errors are provoked by the driver on every board,
+not by bac7's hardware; what is particular to bac7 is the busy state,
+which none of these errors brought on any other board.
+
 ## The error decoded
 
 `OpError(170)` is the status byte 0xAA that the chip returned with a
@@ -90,8 +120,8 @@ datasheet's status byte (SX1261/2 DS §13.5.1, `GetStatus`):
 | 0 | 0 | reserved |
 
 So the chip was in STDBY_RC, with its oscillator off, when the driver
-believed it was receiving: the last mode change had failed. On bac7 it
-came a millisecond after a heartbeat's last check, at the first
+believed it was receiving: the last mode change had failed. On every
+board it came after a heartbeat's last check, at the first
 `GetIrqStatus` after the return to receive, which is the restart within
 a millisecond of a CAD that the driver programs with the short 100 µs
 delay (`tcxo.rs`, `SHORT`). A start fails like this when the oscillator
@@ -147,19 +177,23 @@ Three faults of the driver turned up on the way, on every board:
 1. **Receive flags ended a CAD or a transmission.** A preamble the
    receiver flagged just before the driver left it held DIO1 high, so
    the wait for the CAD's or the transmission's interrupt ended at once,
-   without a done flag: the `NotDone` errors, each a reset.
-2. **Start errors were blamed on the cold delay.** The error flag stays
-   set until read, and the driver read it only after a cold start; a
-   flag a short restart had left was taken for the cold start's own and
-   stepped the cold delay up. On 3112 that walked the delay to 3 250 µs.
+   without a done flag: the `NotDone` errors, each a reset, and for a
+   served piece the piece cut off.
+2. **The short restart fails, and its errors were blamed on the cold
+   delay.** The restart 100 µs after a CAD is where every
+   `OpError(170)` came. The error flag stays set until read, and the
+   driver read it only after a cold start; a flag a short restart had
+   left was taken for the cold start's own and stepped the cold delay
+   up. On 3112 that walked the delay to 3 250 µs.
 3. **No recovery from a radio that answers but reads wrong.** The driver
    reset the chip only on an error.
 
 ## What is the board's and what is ours
 
-The board's: its oscillator sometimes misses a start, short or cold, as
-the others' do, and on this board once in the first seconds. That is the
-hardware, and the driver's job is to survive it.
+The board's: like every board's, its oscillator does not always restart
+within 100 µs of stopping. The bench of 30 October saw no failure in 90
+restarts at 50 µs; in use, with thousands of restarts a day, all four
+boards fail one now and then. That the driver relied on it is ours.
 
 Ours: the state after recovery was not the state after boot, the three
 faults above, and nothing that noticed a radio reading every channel
@@ -186,8 +220,10 @@ missing. The candidates, and what tells them apart:
 - The error word is read before every cold start. A flag found there
   came from a short restart: `tcxo: a restart within 1000 us of stopping
   failed at 100 us; every start now takes N us`, and from then on every
-  start takes the probed delay. The cold delay steps up only for its own
-  errors.
+  start takes the probed delay. The same follows a reset whose error
+  word, read before it, shows the oscillator or the PLL failed after a
+  short restart, the `OpError(170)` case. The cold delay steps up only
+  for its own errors.
 - After a receive, the receiver's flags are cleared before a CAD or a
   transmission.
 - A heartbeat skipped on every channel with no check found clear in
