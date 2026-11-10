@@ -6,11 +6,6 @@
 use bark_proto::tables::budget::BAN;
 use bark_proto::{Duration, Instant};
 
-/// The first link version whose app asks for the turn, by writing Send
-/// while ready is not set for it. An older app writes only while ready is
-/// set, so it cannot ask.
-pub const ASKS: u8 = 13;
-
 /// How long a turn lasts unused while another phone wants it: a ban, the
 /// shortest wait the protocol tells, as nothing in it acts sooner (spec
 /// "Bans").
@@ -21,9 +16,6 @@ pub const UNUSED: Duration = BAN;
 struct Phone {
     /// A link is up.
     live: bool,
-    /// Its Recipient write said an app older than [`ASKS`], which cannot
-    /// ask and so is taken to want the turn whenever it lacks it.
-    old: bool,
     /// It asked for the turn and has not had it since.
     asked: bool,
 }
@@ -51,7 +43,6 @@ impl<const N: usize> Turn<N> {
         Turn {
             phones: [Phone {
                 live: false,
-                old: false,
                 asked: false,
             }; N],
             holder: None,
@@ -64,8 +55,7 @@ impl<const N: usize> Turn<N> {
         self.holder
     }
 
-    /// A link came up in `slot`. Until its Recipient write says otherwise
-    /// its phone neither asks nor wants: every app writes Recipient first.
+    /// A link came up in `slot`: its phone wants the turn once it asks.
     pub fn linked(&mut self, slot: usize) {
         self.phones[slot] = Phone {
             live: true,
@@ -76,11 +66,6 @@ impl<const N: usize> Turn<N> {
     /// The link in `slot` ended.
     pub fn ended(&mut self, slot: usize) {
         self.phones[slot] = Phone::default();
-    }
-
-    /// The phone in `slot` wrote Recipient, saying its app's link version.
-    pub fn app(&mut self, slot: usize, version: u8) {
-        self.phones[slot].old = version < ASKS;
     }
 
     /// The phone in `slot` wrote Send: if the turn is not its, it asks.
@@ -124,10 +109,10 @@ impl<const N: usize> Turn<N> {
             .map(|t| t + UNUSED)
     }
 
-    /// Whether the phone in `slot` wants the turn: it asked, or cannot.
+    /// Whether the phone in `slot` wants the turn: it asked.
     fn wants(&self, slot: usize) -> bool {
         let p = &self.phones[slot];
-        p.live && (p.asked || p.old)
+        p.live && p.asked
     }
 
     /// The first phone after `after`, in the order of the slots and coming
@@ -168,13 +153,11 @@ mod tests {
         T0 + UNUSED.mul(n)
     }
 
-    /// Two phones of version 13 linked and idle.
+    /// Two phones linked and idle.
     fn two() -> Turn<3> {
         let mut t = Turn::<3>::new();
         t.linked(0);
-        t.app(0, 13);
         t.linked(1);
-        t.app(1, 13);
         t.advance(T0, true);
         t
     }
@@ -226,7 +209,6 @@ mod tests {
         let mut t = Turn::<3>::new();
         for s in 0..3 {
             t.linked(s);
-            t.app(s, 13);
         }
         t.advance(T0, true);
         assert_eq!(t.holder(), Some(0));
@@ -258,55 +240,11 @@ mod tests {
     }
 
     #[test]
-    fn an_old_phone_alone_has_the_turn_as_before() {
-        let mut t = Turn::<3>::new();
-        t.linked(1);
-        t.app(1, 12);
-        assert!(t.advance(T0, true));
-        assert_eq!(t.holder(), Some(1));
-        t.taken();
-        assert_eq!(t.holder(), Some(1));
-        for n in 1..10 {
-            assert!(!t.advance(at(n), true));
-        }
-    }
-
-    #[test]
     fn a_phone_alone_has_the_turn_before_it_asks() {
         let mut t = Turn::<3>::new();
         t.linked(2);
-        t.app(2, 13);
         assert!(t.advance(T0, true));
         assert_eq!(t.holder(), Some(2));
-    }
-
-    #[test]
-    fn an_old_phone_beside_a_new_one_has_it_once_unused_and_keeps_it() {
-        let mut t = two();
-        t.app(1, 12);
-        assert!(t.advance(at(1), true));
-        assert_eq!(t.holder(), Some(1));
-        for n in 2..10 {
-            assert!(!t.advance(at(n), true));
-        }
-        // The new phone asks, and has it after the old one's unused ban.
-        t.ask(0);
-        assert!(t.advance(at(10), true));
-        assert_eq!(t.holder(), Some(0));
-        // Its message taken, the old phone, which always wants it.
-        t.taken();
-        assert_eq!(t.holder(), Some(1));
-    }
-
-    #[test]
-    fn two_old_phones_take_turns_as_before() {
-        let mut t = two();
-        t.app(0, 12);
-        t.app(1, 12);
-        assert!(t.advance(at(1), true));
-        assert_eq!(t.holder(), Some(1));
-        assert!(t.advance(at(2), true));
-        assert_eq!(t.holder(), Some(0));
     }
 
     #[test]

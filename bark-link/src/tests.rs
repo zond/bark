@@ -19,35 +19,24 @@ fn payload() -> impl Strategy<Value = std::vec::Vec<u8>> {
 
 proptest! {
     #[test]
-    fn node_round_trips(version: u8, id in id(), image: u32, room: u8, oldest: u8) {
-        let n = Node { version, id, image, room: Some(room), oldest: Some(oldest) };
+    fn node_round_trips(version: u8, oldest: u8, id in id(), image: u32, room: u8) {
+        let n = Node { version, oldest, id, image, room };
         prop_assert_eq!(Node::decode(&n.encode()), Ok(n));
-        // A node of link version 12 has neither.
-        prop_assert_eq!(
-            Node::decode(&n.encode()[..11]),
-            Ok(Node { room: None, oldest: None, ..n })
-        );
     }
 
     #[test]
-    fn status_round_trips(flags: u8, relays: u8, boot_left_s: u16, address in pos(), battery_mv: u16, inbox: u8, heard: u8, installing: u16) {
+    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8) {
         let bit = |b: u8| flags & (1 << b) != 0;
         let placed = bit(5);
         let s = Status {
             ready: bit(0), external_power: bit(1), sleepy: bit(2), carried: bit(3),
             map_point: bit(4), placed, booting: bit(6), anchorless: bit(7),
-            relays, boot_left_s,
             address: if placed { address } else { Position::default() },
-            battery_mv, inbox, heard, installing,
+            battery_mv, relays, heard, boot_left_s, installing, inbox,
         };
         let b = s.encode();
         prop_assert_eq!(b[0], flags);
         prop_assert_eq!(Status::decode(&b), Ok(s));
-        // A node of link version 12 says nothing of an install.
-        prop_assert_eq!(
-            Status::decode(&b[..15]),
-            Ok(Status { installing: 0, ..s })
-        );
     }
 
     #[test]
@@ -158,7 +147,7 @@ fn vectors() {
     };
     assert_eq!(
         status.encode(),
-        [0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, 5, 0x01, 0x18]
+        [0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2]
     );
 
     let given = GivenBack {
@@ -169,12 +158,12 @@ fn vectors() {
 
     let node = Node {
         version: VERSION,
+        oldest: OLDEST,
         id: to,
         image: 7,
-        room: Some(3),
-        oldest: Some(OLDEST),
+        room: 3,
     };
-    assert_eq!(node.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3, 12]);
+    assert_eq!(node.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -231,8 +220,8 @@ fn vectors() {
         [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
     );
     assert_eq!(Answer::decode(&answer.encode()), Ok(Some(answer)));
-    // Link version 9's answer, and a notification's 20 bytes at the
-    // default MTU: gathering none.
+    // A notification's 20 bytes at the default MTU, and the least it may
+    // carry: gathering none.
     let gathers_none = Answer {
         status: bark_proto::status::Status {
             gathering: Default::default(),
@@ -328,7 +317,21 @@ fn reads_ignore_what_a_later_version_appends() {
     longer[..Status::LEN].copy_from_slice(&s.encode());
     assert_eq!(Status::decode(&longer), Ok(s));
     assert_eq!(
-        Status::decode(&longer[..Status::LEN - 3]),
+        Status::decode(&longer[..Status::LEN - 1]),
+        Err(Malformed::Length)
+    );
+    let n = Node {
+        version: VERSION,
+        oldest: OLDEST,
+        id: NodeId([4; 6]),
+        image: 9,
+        room: 2,
+    };
+    let mut longer = [0xAA; Node::LEN + 1];
+    longer[..Node::LEN].copy_from_slice(&n.encode());
+    assert_eq!(Node::decode(&longer), Ok(n));
+    assert_eq!(
+        Node::decode(&longer[..Node::LEN - 1]),
         Err(Malformed::Length)
     );
     let g = GivenBack {
@@ -377,7 +380,6 @@ fn seconds_round_up_and_saturate() {
 #[test]
 fn versions_serve_each_other_when_each_meets_the_other_s_oldest() {
     assert!(compatible(VERSION, OLDEST));
-    assert!(compatible(OLDEST, 0), "an app of version 12");
     assert!(
         !compatible(OLDEST - 1, 0),
         "an app older than the node serves"
@@ -426,35 +428,28 @@ fn public_writes() {
 
 #[test]
 fn recipient_and_public_are_taken_whole() {
-    // An app of version 12's tag alone, and the tag with the versions and
-    // the person's name.
-    let alone = Recipient {
-        tag: 0xab,
-        version: 12,
-        oldest: 0,
-        name: phones::Name::EMPTY,
-    };
-    assert_eq!(Recipient::decode(&[0xab]), Ok(alone));
-    assert!(alone.compatible());
+    // The tag, the versions and the person's name; a guest's, no name.
     let named = Recipient {
         tag: 0xab,
-        version: 13,
-        oldest: 13,
+        version: 1,
+        oldest: 1,
         name: phones::Name::new("Åsa".as_bytes()).unwrap(),
     };
+    assert!(named.compatible());
     let mut b = [0; Recipient::MAX_LEN];
     let n = named.encode(&mut b);
-    assert_eq!(&b[..n], &[0xab, 13, 13, 0xc3, 0x85, b's', b'a']);
+    assert_eq!(&b[..n], &[0xab, 1, 1, 0xc3, 0x85, b's', b'a']);
     assert_eq!(Recipient::decode(&b[..n]), Ok(named));
     assert_eq!(
         Recipient::decode(&b[..3]).map(|r| r.name),
         Ok(phones::Name::EMPTY)
     );
     assert_eq!(Recipient::decode(&[]), Err(Malformed::Length));
-    assert_eq!(Recipient::decode(&[1, 13]), Err(Malformed::Length));
+    assert_eq!(Recipient::decode(&[0xab]), Err(Malformed::Length));
+    assert_eq!(Recipient::decode(&[1, 1]), Err(Malformed::Length));
     assert_eq!(Recipient::decode(&[1; 36]), Err(Malformed::Length));
     // Not UTF-8: 0xFF never is, so a name never reads as erased flash.
-    assert_eq!(Recipient::decode(&[1, 13, 12, 0xff]), Err(Malformed::Value));
+    assert_eq!(Recipient::decode(&[1, 1, 1, 0xff]), Err(Malformed::Value));
     assert_eq!(Public::decode(&Public(true).encode()), Ok(Public(true)));
     assert_eq!(Public::decode(&[0]), Ok(Public(false)));
     assert_eq!(Public::decode(&[2]), Err(Malformed::Value));

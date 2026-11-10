@@ -1041,10 +1041,10 @@ pub async fn run(
     let (server, gatt) = SERVER.init(server(name));
     let node = Node {
         version: bark_link::VERSION,
+        oldest: bark_link::OLDEST,
         id,
         image,
-        room: None,
-        oldest: Some(bark_link::OLDEST),
+        room: 0,
     };
     LINK.lock(|l| l.borrow_mut().node = Some(node));
     static ADVERTISING: StaticCell<Advertising> = StaticCell::new();
@@ -2214,8 +2214,8 @@ async fn write_map_point(
     Ok(())
 }
 
-/// Recipient, written: the phone's recipient tag at the node, and from
-/// link version 13 its person's name; a paired phone's record keeps both,
+/// Recipient, written: the phone's recipient tag at the node, and its
+/// person's name; a paired phone's record keeps both,
 /// so that the node knows its person's messages while they are away and
 /// the node's phones see who is paired (spec "Phone link", Pairing,
 /// Public). A guest's name is not kept.
@@ -2258,12 +2258,9 @@ this node speaks {} and serves apps from {}: they do not serve each other, close
         let busy = !from.owner() && other;
         if !busy {
             l.phones[from.slot].tag = Some(r.tag);
-            l.turn.app(from.slot, r.version);
         }
         busy
     });
-    // An app that cannot ask for the turn may now take it from one unused.
-    turn_moved();
     if busy {
         log::info!("ble: a second guest in slot {}, closed", from.slot);
         return (Ok(()), true);
@@ -2278,11 +2275,10 @@ this node speaks {} and serves apps from {}: they do not serve each other, close
         }
     }
     log::info!(
-        "ble: recipient {:02x} slot {} record {:?} app version {} name {} bytes",
+        "ble: recipient {:02x} slot {} record {:?} name {} bytes",
         r.tag,
         from.slot,
         from.record,
-        r.version,
         r.name.as_bytes().len()
     );
     (Ok(()), false)
@@ -2333,13 +2329,7 @@ fn write_public(
 fn node_now() -> [u8; Node::LEN] {
     let node = LINK.lock(|l| l.borrow().node);
     let room = crate::phones::read(|p| p.room());
-    node.map_or([0; Node::LEN], |n| {
-        Node {
-            room: Some(room),
-            ..n
-        }
-        .encode()
-    })
+    node.map_or([0; Node::LEN], |n| Node { room, ..n }.encode())
 }
 
 /// Home as the phone of record `record` reads it: whether the node is
@@ -2350,9 +2340,9 @@ fn home_now(record: Option<usize>) -> bark_link::home::Home {
         record.is_some_and(|i| crate::phones::read(|p| p.get(i).is_some_and(|r| r.key.is_some())));
     crate::mailbox::with(|m| bark_link::home::Home {
         set: m.is_home(),
+        mine,
         oldest: m.oldest(),
         newest: m.newest(),
-        mine: Some(mine),
     })
     .unwrap_or_default()
 }

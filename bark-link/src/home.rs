@@ -1,12 +1,11 @@
 //! Home: the characteristic by which the app makes its node a person's
 //! home and reads its mailbox (spec "Mailbox"), `28bc0009-…`
-//! ([`crate::uuid::HOME`]) from link version 3, as a new characteristic
-//! takes a new version (roadmap D117).
+//! ([`crate::uuid::HOME`]).
 //!
 //! | | value | bytes |
 //! |---|---|---|
 //! | write | 0, no home; or 1 then the mailbox key | 1, 33 |
-//! | read | 1 if anyone's home, else 0; the oldest item's number (3); the newest's (3); from link version 13, 1 if the reading phone's person's home, else 0 | 8 |
+//! | read | 1 if anyone's home, else 0; 1 if the reading phone's person's home, else 0; the oldest item's number (3); the newest's (3) | 8 |
 //!
 //! The numbers are 0 while the mailbox holds nothing. A write sets or
 //! clears the writing phone's person's key alone (spec "Phone link",
@@ -67,34 +66,32 @@ impl SetHome {
 pub struct Home {
     /// The node holds a mailbox key, anyone's.
     pub set: bool,
+    /// The node is the reading phone's person's home.
+    pub mine: bool,
     /// The oldest item's number, 0 when none.
     pub oldest: u32,
     /// The newest item's number, 0 when none.
     pub newest: u32,
-    /// The node is the reading phone's person's home; `None` from a node
-    /// of link version 12 or before.
-    pub mine: Option<bool>,
 }
 
 impl Home {
     /// Bytes in the value.
-    pub const LEN: usize = Self::LEN_12 + 1;
-    /// Bytes in the value of link version 12 and before.
-    const LEN_12: usize = 1 + 3 + 3;
+    pub const LEN: usize = 1 + 1 + 3 + 3;
 
     /// The value.
     pub fn encode(&self) -> [u8; Self::LEN] {
         let mut b = [0u8; Self::LEN];
         b[0] = u8::from(self.set);
-        b[1..4].copy_from_slice(&self.oldest.to_be_bytes()[1..]);
-        b[4..7].copy_from_slice(&self.newest.to_be_bytes()[1..]);
-        b[7] = u8::from(self.mine == Some(true));
+        b[1] = u8::from(self.mine);
+        b[2..5].copy_from_slice(&self.oldest.to_be_bytes()[1..]);
+        b[5..8].copy_from_slice(&self.newest.to_be_bytes()[1..]);
         b
     }
 
-    /// The value the node wrote; bytes it appends later are ignored.
+    /// The value the node wrote; bytes a later version appends are
+    /// ignored.
     pub fn decode(b: &[u8]) -> Result<Home, Malformed> {
-        if b.len() < Self::LEN_12 {
+        if b.len() < Self::LEN {
             return Err(Malformed::Length);
         }
         let n = |x: &[u8]| u32::from_be_bytes([0, x[0], x[1], x[2]]);
@@ -105,9 +102,9 @@ impl Home {
         };
         Ok(Home {
             set: flag(b[0])?,
-            oldest: n(&b[1..4]),
-            newest: n(&b[4..7]),
-            mine: b.get(Self::LEN_12).map(|&m| flag(m)).transpose()?,
+            mine: flag(b[1])?,
+            oldest: n(&b[2..5]),
+            newest: n(&b[5..8]),
         })
     }
 }
@@ -131,21 +128,24 @@ mod tests {
         assert_eq!(SetHome::decode(&[2]), Err(Malformed::Value));
         let h = Home {
             set: true,
+            mine: false,
             oldest: 17,
             newest: 0x01_0203,
-            mine: Some(false),
         };
-        assert_eq!(h.encode(), [1, 0, 0, 17, 1, 2, 3, 0]);
-        assert_eq!(Home::decode(&[1, 0, 0, 17, 1, 2, 3, 0, 9]), Ok(h));
+        assert_eq!(h.encode(), [1, 0, 0, 0, 17, 1, 2, 3]);
+        assert_eq!(Home::decode(&[1, 0, 0, 0, 17, 1, 2, 3, 9]), Ok(h));
         assert_eq!(
-            Home::decode(&[1, 0, 0, 17, 1, 2, 3]),
-            Ok(Home { mine: None, ..h })
+            Home::decode(&[1, 0, 0, 0, 17, 1, 2]),
+            Err(Malformed::Length)
         );
         assert_eq!(
-            Home::decode(&[1, 0, 0, 17, 1, 2, 3, 2]),
+            Home::decode(&[1, 2, 0, 0, 17, 1, 2, 3]),
             Err(Malformed::Value)
         );
-        assert_eq!(Home::decode(&[2, 0, 0, 0, 0, 0, 0]), Err(Malformed::Value));
+        assert_eq!(
+            Home::decode(&[2, 0, 0, 0, 0, 0, 0, 0]),
+            Err(Malformed::Value)
+        );
         assert_eq!(Home::decode(&[1]), Err(Malformed::Length));
     }
 }

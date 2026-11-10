@@ -1,8 +1,7 @@
 //! Update and Image: the characteristics by which the app stages a new
 //! firmware image on its node and asks for the swap (spec "Phone link",
 //! Updates; `bark-fw/README.md`, "Updates"), `28bc000b-…` and
-//! `28bc000c-…` ([`crate::uuid::UPDATE`], [`crate::uuid::IMAGE`]) from
-//! link version 6.
+//! `28bc000c-…` ([`crate::uuid::UPDATE`], [`crate::uuid::IMAGE`]).
 //!
 //! | | value | bytes |
 //! |---|---|---|
