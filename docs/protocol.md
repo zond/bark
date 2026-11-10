@@ -4717,7 +4717,14 @@ count 0 with no parent here, so a search from this node that runs out of
 neighbours ends here instead of going back to the parent it came from
 ([return to parent](#return-to-parent)). A message for the node's own
 application comes back to its inbox, and one for a sleepy node it holds
-for to its delivery queue.
+for to its delivery queue. It keeps its neighbour table across the swap
+too, and its records of the messages active within the delivery TTL but
+those it offers again, every time in them aged by the swap's length:
+an entry that expired meanwhile is gone, and a heartbeat due meanwhile
+passes unheard as one the radio was away for ([heartbeat](#heartbeat)).
+Just back, it would otherwise know no neighbour to send what it carries
+to, and a message returned to it would find no record of where it came
+from (roadmap D180).
 
 *Why a bound.* Taking nothing, the node's queues only shrink, but a
 message for a sleepy node that stays dark waits in the delivery queue
