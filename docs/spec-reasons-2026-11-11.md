@@ -691,3 +691,318 @@ offer it every few seconds to a node whose channel is full.
 within a TTL, so a relay in reach on any channel hears the node, and two
 nodes in anchorless mode find each other, within the least time the
 network keeps what it holds for them (spec "Sleepy nodes").
+
+## Finding the node
+
+*Why the name in the scan response.* A legacy advertisement holds 31
+bytes (Vol 6 Part B §2.3.1): the flags take 3 and a 128-bit UUID 18,
+which leaves 10, too few for the name's 17.
+
+*Why 1022.5 ms.* A person who opens the app waits about a second for
+the node to show, and an iPhone finds a node quickly only at one of the
+intervals Apple's accessory guidelines list, of which this is the one
+nearest a second (spec "Sources"). Faster costs a sleepy node more: an
+advertising event on the three channels is about 2 ms of the radio at
+4.8 mA, about 11 µA at this interval, near a tenth of its duty-cycled
+receive (an estimate from the nRF52840 Product Specification's radio
+currents, for the bench to measure).
+
+## Pairing
+
+*Why every paired phone is an owner.* The passkey shows only on the
+node's screen, so a phone can pair only while its person is at the
+node: being there is what a person can show without accounts or a
+server. The node trusts everyone who pairs alike, each with every
+owner's setting: being at the node is the only guard, for the second
+person who pairs as for the first. A pairing adds and does not replace,
+so a visitor who pairs with a café's node by the code on its screen
+takes it from nobody, and its keepers see the visitor among the node's
+phones and may remove them (spec "Phones"). Each phone sets or
+clears only its own person's mailbox key (spec "Settings").
+
+*Why eight.* A record has a bit of its own in each slot's mark in the
+ring (spec "Mailbox", The ring), and the mark is a byte, so that
+one person's reading marks nothing of another's; eight covers a
+household of four to six with room. Nothing else bounds it lower: the
+BLE host holds nine bonds, the eight and the one a pairing makes before
+the node takes or refuses it; eight records of at most 128 bytes are
+1 KiB, a quarter of one 4 KiB page of flash; and the links fit (below).
+
+*Why end the link.* The node could instead refuse the key and keep the
+link unencrypted (LE Long Term Key Request Negative Reply, Vol 4 Part E
+§7.8.26), and the phone's first read would fail with insufficient
+authentication. But a phone refused its key may start pairing by itself
+and ask its person for a code before the app can say why. The BLE host
+ends the link, and the node keeps that.
+
+## The service
+
+*Why both.* An Android app must ask for the MTU, and iOS chooses it
+itself, which the app cannot raise; a notification has no long form.
+
+So the app can show "listening, 3 relays heard, 1:40 to go", and the
+address the person gives others to reach them. Sleepy and carried are
+measured, not set (spec "Nodes"). The fields go from what the node is
+to what it is doing: its flags, its address and its battery; whom it
+hears; its first rotation and an install; and what waits for the phone.
+
+*Why one value, with ready in it.* Ready and the count are the reading
+phone's own, the rest the node's, but every field is something the app
+shows or acts on as soon as it changes, and one value is one
+notification and one read at a connection. Ready is the cue to write
+Send, and a value of its own would be one more subscription for one
+bit. The eight flags fill one byte; booting is told beside boot_left
+because the end of the first rotation changes no other notified field,
+and the countdown is not notified.
+
+## Sending
+
+*Why the value stays.* The phone may not be connected when the message
+is given back, and the node takes no other message before the wait is
+over, so the app learns of it whenever it next connects.
+
+## Receiving
+
+*Why read and confirmed, not notified.* The phone is often not
+connected: the app is closed, the phone is out of range or off. A
+notification is confirmed by nobody, an indication only by the phone's
+Bluetooth stack, not by the app that must keep the message; the ID
+written back is the app's own word that it has it.
+
+*Why the ID it arrived with, kept.* An ID is a hash of the node's
+address (spec "Packet formats"), which changes whenever the
+node's position does, at every fix while it is carried
+(spec "Position"); worked out again at each read, an item's ID
+would change between the phone's read and its confirmation.
+
+## The neighbour map
+
+A link's **quality** is the margin of its averaged RSSI over the noise
+floor, reckoned as the node's margin is (spec "Neighbour table"): fragile below that margin, 4.1 dB, where a
+full frame is lost more than one time in a hundred in a fade of one
+standard deviation, 4 dB, and the node sends through the neighbour only
+when no other is left; good from 6.9 dB, where a full frame gets
+through a fade of two, 8 dB, which comes one time in 44, the convention
+of the switching margin (spec "Relay choice"); fair between.
+The floor and the RSSI in tenths are there so that the app reads the
+margin as the node does.
+
+*Why pages from a slot.* The table holds 64 neighbours of 18 bytes, more
+than one value holds, and every value fits one PDU
+(spec "The service"). A neighbour keeps its slot while it
+stays in the table, so when one leaves between two reads the others
+stay where they were, and the next page skips none of them; counted
+from the first live one, they would shift down by one, and one would be
+skipped.
+
+*Why a characteristic of its own.* The answer is notified, and a
+notified value is the characteristic's own: Neighbours' is a page of
+the table. A write of an ID to Neighbours would also change what the
+app writes there, which only a new version may (spec "Versions").
+
+## Updates from the phone
+
+*Why without a response, seven at a time.* A write request is answered
+in a later connection event than the one that carried it, so a phone
+that waits for each answer sends one piece every two events; without
+a response it sends as many as an event carries. The node's host
+queues 8 ATT PDUs for a link and drops one more, so seven pieces and
+the read fit; the read is answered only once the node has written the
+pieces before it, so it is also the flow control.
+
+*How long it takes.* An app asks Android for a short connection
+interval for the transfer, 11.25 to 15 ms (spec "Sources"). A
+packet of 251 bytes takes 2.12 ms on the 1 Mbit/s PHY, 2.5 ms with the
+node's empty answer and the two 150 µs gaps between (Vol 6 Part B
+§2.1, §4.1.1), so the node's connection event of 7.5 ms and its three
+receive buffers take three pieces an event. Seven pieces take three
+events at 15 ms; the node writes them meanwhile, each 240 bytes over its
+external flash's bus at about 1 Mbit/s, 2 ms, two page programs on
+average, 2.6 ms, and a sector erase every 17 pieces, 0.6 ms each: 36 ms.
+The read's answer goes in the next event and the next pieces in the one
+after: about five events, 75 ms, for 1680 bytes, 22 KB/s. An image of
+400 KB takes about 18 s, and the commit's hash, a read of it over the
+same bus, about 3 s more. At Android's default of 30 to 50 ms the node's
+writing hides inside the three events, and the same five events take
+twice as long or more, 40 to 60 s; with a write request for each piece,
+two events a piece, it would be 50 s at 15 ms.
+
+## Public nodes
+
+*Why on Public.* It is the owners' setting of whom the node serves, and
+the last unpairing ends at the node public by default, its end state; a
+characteristic of its own would add to the table for one byte.
+
+*Why the public node's UUID, not a flag beside the service's.* The 10
+bytes the advertisement has left beside the flags and the service's
+UUID hold one more AD structure (Core Specification Supplement, Part
+A, Data types); those that carry a value of one's own name it by a
+company identifier or a 16- or 32-bit UUID that the Bluetooth SIG
+assigns, of which bark holds none, and the form with a 128-bit UUID,
+service data, takes 19 bytes. A second UUID costs no byte, and both
+phone systems filter a scan by service UUID in the controller, where a
+flag would be read only by the app.
+
+*Why one guest's link, and short.* A link costs 5.9 KB of static RAM
+whether it is used or not (spec "Pairing"), and one held open buys
+a guest nothing the ring does not: the ring already holds mail for a
+phone that is away, as it does a paired phone's, so a guest needs a
+link only for its errand.
+
+*Why the ring, by tag.* The tag says whose a message is without opening
+it, and the ring keeps it in flash until it wraps whether its phone is
+there or not, across reboots; the guest's number says what it has read,
+so the node keeps nothing per guest.
+
+*Why Inbox, with a number written to Guest.* A guest's mail is its
+inbox, read as a paired phone's is; it carries the item's number, which
+the guest writes back to read on. A readable value of its own would add
+a characteristic to the table, and 235 B of RAM, for what Inbox already
+reads.
+
+## Phones
+
+*Why a code, and not the bond alone.* Every paired phone is trusted
+alike, and the link reaches through walls, tens of metres: with the
+bond alone, a phone paired once and gone, lost, stolen or a former
+household's, could take a person's phone or home from anywhere in
+reach. The code asks what pairing asks, being at the node. A phone that
+unpairs itself needs none (spec "Public nodes").
+
+*Why the day.* The node writes a record again when its phone's day
+changes, at most once a day for each, so that phones coming and going
+do not wear out the flash; a day tells a lost phone from one in use.
+
+*Why 30 s, and one try.* 30 s is the time a pairing gives its person to
+type the code, the Security Manager's timeout for each step (Vol 3 Part
+H §3.4). A code is one in a million, and one try for each code drawn
+makes guessing cost a code on the screen, where the people at the node
+see it.
+
+## The payload
+
+*Why keyed with the identity, over the node.* Only someone who holds
+the recipient's card can make the tag, and it differs from node to
+node, so it ties together only the payloads for one person at one
+node, which their destination address already groups by node.
+
+*Why one byte.* A phone handed a payload that is not its own fails to
+open it and drops it, so a wrong match costs a read and a failed open,
+not a message. A node's ring holds the mail of the people paired with
+it and of its guests, read by tag: a person's inbox passes over
+another's item unless the tags match, and a guest reads, beside its
+own, the items of anyone whose tag at the node is the same, each other
+person's with odds of 1 in 256, 0.4 %; a second byte would make that
+rarer at a byte on every message, and would tie a person's payloads at
+a node together more surely.
+
+sender: sealed to the sender's identity, it shows that the receiver
+holds the sender's card. Waiting for a boxed one instead would leave two
+people who hold each other's cards sending introductions for ever, as
+
+*Why the time without a home.* Clearing the home changes the card too,
+and a card that drops it must replace an older one only if it is later.
+
+*Why unique.* Two messages to one destination with identical payloads
+are one message to every relay that still keeps the first one's record
+(spec "Message records", spec "Bounds"), and the second
+is not delivered.
+
+## Where a text goes
+
+The app keeps a contact's home, from their card, apart from one place
+they were last known at, and when: the address a message from them was
+written from, at its `sent`, or at its arrival when `sent` is ahead of
+the phone's clock, and the node on a card of theirs, at its link time;
+the newer wins, and a message without an address keeps the place and
+moves its time. While the place is under a minute old, a text goes
+there; past it, with a home, the person chooses between where they were
+and the home's mailbox, for each text, and without one it goes there,
+as nothing else is, the app saying how old it is. With a home and no
+place, or the place the home, it goes to the home (roadmap D132, D162).
+
+*Why where they write from.* A reply goes straight to where the person
+is, rather than to their home's mailbox to wait for a fetch, at
+13 bytes on a message after a change.
+
+*Why a minute.* In a minute a person on foot, at a brisk 1.5 m/s, moves
+about 90 m, well within the ≈750 m a relay hears a handheld in the
+street (spec "Physical layer"); a person driving has left
+that reach by then, so a longer wait would not make the guess better.
+Past it the app cannot tell whether they are still there, and the
+person may know.
+
+## Which node a phone uses
+
+A phone may be paired with many nodes, each holding its bond. Of the
+nodes it hears well, at −85 dBm or above, it uses its home when it is
+paired with it, else the node it is paired with that it hears
+strongest, and is the owner there. It uses the public node it hears
+strongest, as a guest, while it is paired with none that is still its
+own (spec "Pairing", the removed phone), while those are out of
+reach, and while it hears them only weakly. A node is out of reach when
+the app's scans, 15 s apart, have reached it in neither of the last two,
+30 s; for a node that said it was installing, counted from 55 s after
+it ended the link, the time a node is away for its swap
+(spec "Updates over the mesh", the install), and
+while it waits for that node it uses no other. A node
+heard weakly is passed over for one further down the order heard well;
+when the phone hears no node well, it uses the one it hears strongest,
+of whatever kind. A scan that hears one of its own nodes well takes the
+phone back to it at once.
+
+On a node it is paired with that is not its home, the phone listens for
+the home once a minute and moves to it once it hears it well and nothing
+on the link is under way: no message written and not yet taken, none
+read and not yet confirmed, no fetch awaiting its answer, no update. It
+moves only up, from a public node to one it is paired with, from such a
+node to the home; never between two of its own nodes nor two public
+ones; and not from a node the person chose, until that link drops. A
+phone joins a node over a bond only as its owner, never as a guest, as
+the node takes a link encrypted with its bond as the owner's or ends
+it: a bond with a node the app does not count as the person's it has
+the phone remove as soon as it hears that node, before any link.
+
+On a public node the phone is a guest like any other: its texts go from
+that node, so replies come to it, and it reads them there by its
+recipient tag; a fetch it sends there carries its tag at that node, so
+the home's answer comes there too (spec "Mailbox", The fetch)
+(roadmap D163, D166, D171, D172).
+
+*Why the home first.* The home keeps the person's mail and its address
+is on their card, so on it nothing waits elsewhere for them; on another
+of their nodes, texts sent to the home wait there to be fetched.
+
+*Why a weak node is passed over.* A link to a node at the edge of its
+reach may not hold, while a node nearer would. −85 dBm is a choice, the
+line below which the app calls a signal weak, as the phone hears an
+advertisement before any link. Below it the order gives way to signal,
+as of nodes that may all fail to hold a link the strongest is the
+likeliest to hold. It is applied only when the phone takes a node: a
+link once up is not left for its signal, so a node heard about the line
+does not move the phone back and forth.
+
+*Why two scans, and back at once.* A scan lasts four of the node's
+advertising intervals, 4.1 s, and hears a node in reach while the
+phone's screen is on; with the screen off the phone listens less and
+may miss it in one scan, so one miss does not prove the node gone. A
+node heard weakly was not missed, so the public node goes before it at
+once. A scan every 15 s is two in 30 s, within the five Android lets an
+app start in 30 s. A node the phone is paired with serves the person
+whole, its inbox and its settings, so the phone goes back to one at
+once. The two differ on purpose: at the edge of such a node's reach,
+heard in some scans and not others, the phone stays with it rather than
+going back and forth, and a text and the replies to it do not go by a
+public node the phone then leaves.
+
+*Why a minute, and only up.* On a standing link a scan serves only this
+and costs the phone's battery: 4.1 s a minute listens 7 % of the time,
+against 27 % every 15 s, for a home reached at most 45 s sooner. A
+minute is also how long a person on foot stays within a relay's reach
+(`bark-app/README.md`, "Where a text goes"). A guest's link lasts one
+errand, so the next scan, at most 15 s on, takes a node the phone is
+paired with. Between two nodes of one place in the order, heard in turn
+at like signals, the phone would move back and forth. Nothing under way
+is cut, as a message cut between its write and the node's answer may go
+twice, and a fetch's answer comes to the node it was sent from. A node
+the person chose they may be at for its settings or an update.

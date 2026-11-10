@@ -2107,33 +2107,26 @@ with it.
 ## Phone link
 
 A person's app talks to their node over Bluetooth LE, through one GATT
-service on the nRF52840 (TrouBLE, roadmap D5). The app owns identity
-and end-to-end encryption; the node sees opaque payloads. A node serves
-the phones paired with it, its **owners**, and on a public node any
-other phone too, as a **guest**. Section numbers below are of the
-Bluetooth Core Specification 5.0 ([sources](#sources)).
+service on the nRF52840 (TrouBLE, roadmap D5). The app owns identity and
+end-to-end encryption; the node sees opaque payloads. A node serves the
+phones paired with it, its **owners**, and on a public node any other
+phone too, as a **guest**. Section numbers below are of the Bluetooth
+Core Specification 5.0 ([sources](#sources)). How the app chooses a node
+and where it sends a text are the app's own (`bark-app/README.md`).
 
 ### Finding the node
 
-The node advertises, connectable, every 1022.5 ms: its flags and the
-service's UUID, which the app scans for, in the advertisement; its
-name, `bark-` and the twelve hex digits of its ID as its display shows
-them, in the scan response. A public node advertises another UUID in
-place of the service's ([public nodes](#public-nodes)). The node
-advertises while it has a link free ([pairing](#pairing); roadmap D120).
-
-*Why the name in the scan response.* A legacy advertisement holds 31
-bytes (Vol 6 Part B §2.3.1): the flags take 3 and a 128-bit UUID 18,
-which leaves 10, too few for the name's 17.
-
-*Why 1022.5 ms.* A person who opens the app waits about a second for
-the node to show, and an iPhone finds a node quickly only at one of the
-intervals Apple's accessory guidelines list, of which this is the one
-nearest a second ([sources](#sources)). Faster costs a sleepy node more: an
-advertising event on the three channels is about 2 ms of the radio at
-4.8 mA, about 11 µA at this interval, near a tenth of its duty-cycled
-receive (an estimate from the nRF52840 Product Specification's radio
-currents, for the bench to measure).
+The node advertises, connectable, every 1022.5 ms, while it has a link
+free ([pairing](#pairing); roadmap D120): its flags and the service's
+UUID, which the app scans for, in the advertisement; its name, `bark-`
+and the twelve hex digits of its ID as its display shows them, in the
+scan response, since a legacy advertisement's 31 bytes (Vol 6 Part B
+§2.3.1) leave 10 after the flags' 3 and a 128-bit UUID's 18. A public
+node advertises another UUID in place of the service's
+([public nodes](#public-nodes)). 1022.5 ms is the interval nearest a
+second of those Apple's accessory guidelines list for an iPhone to find
+an accessory quickly ([sources](#sources)); it costs a sleepy node about
+11 µA, an estimate from the nRF52840's radio currents.
 
 ### Pairing
 
@@ -2142,129 +2135,92 @@ D168). Every characteristic of the service needs a link encrypted with
 an authenticated key, but on a public node those a guest needs
 ([public nodes](#public-nodes)); a read, write or subscription on any
 other link is answered with the ATT error 0x05, insufficient
-authentication (Vol 3 Part F §3.4.1.1), which is the phone's cue to
-pair. The node's name and appearance stay open, as the advertisement
-says them anyway.
+authentication (Vol 3 Part F §3.4.1.1), the phone's cue to pair. The
+node's name and appearance stay open.
 
 The pairing is LE Secure Connections with passkey entry (Vol 3 Part H
-§2.3.5.6.3). The node can display and cannot take input, so the method
-is that the node shows a six-digit passkey and the person types it into
-the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
+§2.3.5.6.3): the node shows a six-digit passkey and the person types it
+into the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it
-([screen and buttons](#screen-and-buttons)). Only an open build, for
-the bench, also writes the passkey to its USB log, as a protected
-node's log must not let a cable stand in for being at the node
-(roadmap D138). The app pairs only once the phone holds no bond for the
-node: it has the phone remove any it holds first, as a link encrypted
-with a key the node no longer holds is ended (the removed phone, below),
-and where the phone keeps the bond it tells the person and does not
-pair (roadmap D194).
+([screen and buttons](#screen-and-buttons)); only an open build, for the
+bench, also writes it to its USB log (roadmap D138). Being at the node is
+the only guard, for every person who pairs: each paired phone is an
+owner with every owner's setting. The app pairs only once the phone holds
+no bond for the node: it has the phone remove any first, and where the
+phone keeps the bond it tells the person and does not pair (roadmap
+D194).
 
 The node keeps a **record** for each person paired with it, at most
 eight, in flash across reboots: the bond with their phone, its identity
 address, the identity resolving key by which it knows the phone's
 changing address (Vol 6 Part B §1.3.2.2) and the long-term key; the
-person's recipient tag at the node and their name as their card has
-it, which the phone writes to Recipient as it connects
-([the service](#the-service)); their mailbox key once they make the
-node their home ([settings](#settings)); the number of the last of
-their messages the phone confirmed ([receiving](#receiving)); the day
-the phone was last linked; the record's number, one more than the last
-the node gave; and the number of the newest item in the ring when the
-record was made ([mailbox](#mailbox), The ring).
+person's recipient tag at the node and their name as their card has it,
+which the phone writes to Recipient as it connects
+([the service](#the-service)); their mailbox key once they make the node
+their home ([settings](#settings)); the number of the last of their
+messages the phone confirmed ([receiving](#receiving)); the day the phone
+was last linked; the record's number, one more than the last the node
+gave; and the number of the newest item in the ring when the record was
+made ([mailbox](#mailbox), The ring). Eight because a ring slot's mark is
+a byte, a bit a record; eight records of at most 128 bytes are 1 KiB.
 
-A record holds a bond, a home or both, as a phone that unpairs leaves
-its home ([public nodes](#public-nodes)), and is freed when it holds
-neither. Two phones of one person are two records holding the same key
-and tag: an item with their tag sets both records' bits, so both phones
-read it, a fetch opens under the first record whose key fits and clears
-only that record's bit, and no rule merges them.
+A record holds a bond, a home or both, as a phone that unpairs leaves its
+home ([public nodes](#public-nodes)), and is freed when it holds neither.
+Two phones of one person are two records holding the same key and tag:
+an item with their tag sets both records' bits, so both phones read it,
+a fetch opens under the first record whose key fits and clears only that
+record's bit, and no rule merges them.
 
 A pairing takes a free record; from a phone whose identity address a
 record's bond names, it replaces that bond and keeps the rest of the
 record. With no record free the node refuses a pairing from a phone no
-record's bond names: it answers the phone's Pairing Request with
-Pairing Failed, unspecified reason (Vol 3 Part H §3.5.5), shows no
-code, and its screen says `PHONES FULL` for 30 s; Node's `room` tells
-an app so before it pairs. A phone whose record holds its bond, and
-whose address the node resolves by that bond's key, pairs again as on
-any node. A node no phone is paired with refuses none: its eight
-records are then homes left by phones that unpaired, and the pairing
-takes the one whose phone was linked longest ago, forgetting that home,
-so that a node can always be paired again. A pairing that is not
-authenticated, as with a phone that has no keyboard (Just Works), or
-that does not bond, changes nothing, and the node closes its link.
+record's bond names: it answers the phone's Pairing Request with Pairing
+Failed, unspecified reason (Vol 3 Part H §3.5.5), shows no code, and its
+screen says `PHONES FULL` for 30 s; Node's `room` tells an app so before
+it pairs. A phone whose record holds its bond, and whose address the node
+resolves by that bond's key, pairs again as on any node. A node no phone
+is paired with refuses none: its eight records are then homes left by
+phones that unpaired, and the pairing takes the one whose phone was
+linked longest ago, forgetting that home. A pairing that is not
+authenticated (Just Works), or that does not bond, changes nothing, and
+the node closes its link.
 
 Each paired phone keeps its link while it is in reach, so that Status
 tells it at once of what changes. The node takes a link for each phone
-paired with it and one more, which lets a phone pair, or on a public
-node a guest come, while every paired phone is linked: nine links at
-most.
-
-*Why every paired phone is an owner.* The passkey shows only on the
-node's screen, so a phone can pair only while its person is at the
-node: being there is what a person can show without accounts or a
-server. The node trusts everyone who pairs alike, each with every
-owner's setting: being at the node is the only guard, for the second
-person who pairs as for the first. A pairing adds and does not replace,
-so a visitor who pairs with a café's node by the code on its screen
-takes it from nobody, and its keepers see the visitor among the node's
-phones and may remove them ([phones](#phones)). Each phone sets or
-clears only its own person's mailbox key ([settings](#settings)).
-
-*Why eight.* A record has a bit of its own in each slot's mark in the
-ring ([mailbox](#mailbox), The ring), and the mark is a byte, so that
-one person's reading marks nothing of another's; eight covers a
-household of four to six with room. Nothing else bounds it lower: the
-BLE host holds nine bonds, the eight and the one a pairing makes before
-the node takes or refuses it; eight records of at most 128 bytes are
-1 KiB, a quarter of one 4 KiB page of flash; and the links fit (below).
-
-*Why nine links.* A link costs 5.9 KB of static RAM, reserved whether
-it is used or not: the controller's 2.4 KB by `sdc.h`'s formulas, the
-host's 1.2 KB and the task that serves it, 2.2 KB, all of it out of the
-stack (roadmap D150, D168). Nine take 52.9 KB, and the stack keeps
-65.2 KB, above its floor of 24 KiB (`bark-fw/README.md`, "Tasks and the
-stack"). Each linked phone also costs a sleepy node its connection
-events, for the bench to measure.
+paired with it and one more, which lets a phone pair, or on a public node
+a guest come, while every paired phone is linked: nine links at most. A
+link costs 5.9 KB of static RAM, reserved whether it is used or not
+(roadmap D150, D168); nine take 52.9 KB, and the stack keeps 65.2 KB
+(`bark-fw/README.md`, "Tasks and the stack").
 
 **The removed phone.** A phone whose bond the node no longer holds, as
 another phone removed it ([phones](#phones)), learns it at its next
-connection. The phone encrypts the link with its old key as soon as it
-connects; the node holds no such key and ends the link, authentication
-failure (error code 0x05, Vol 1 Part F), before the app has read
-anything. So a link that a phone holding a bond for the node loses
+connection: the phone encrypts the link with its old key as soon as it
+connects, and the node, holding no such key, ends the link with
+authentication failure (error code 0x05, Vol 1 Part F) before the app has
+read anything. So a link that a phone holding a bond for the node loses
 before its first read tells the app that the node is no longer the
-person's; the app says so and offers to pair again, which takes the
-code on the node's screen.
-
-*Why end the link.* The node could instead refuse the key and keep the
-link unencrypted (LE Long Term Key Request Negative Reply, Vol 4 Part E
-§7.8.26), and the phone's first read would fail with insufficient
-authentication. But a phone refused its key may start pairing by itself
-and ask its person for a code before the app can say why. The BLE host
-ends the link, and the node keeps that.
+person's; the app says so and offers to pair again. The node ends the
+link rather than refusing the key (Vol 4 Part E §7.8.26), as a phone
+refused its key may start pairing by itself.
 
 ### The service
 
 The node offers an ATT MTU of 247, the longest link-layer payload with
-the data length extension, 251 bytes (Vol 6 Part B §2.4), less the
-L2CAP header's 4 (Vol 3 Part A §3.1). The app asks for 247 by an MTU
-exchange (Vol 3 Part F §3.4.2) as soon as it connects; every value but
-an update's begin ([updates from the phone](#updates-from-the-phone))
-then fits one ATT PDU and one link-layer packet. The node also takes
-long writes and serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5), so a
-phone that settles on less still works, in more round trips. A notified
-value fits the 20 bytes a notification carries at the default MTU of 23
-(Vol 3 Part F §3.4.7.1) (roadmap D119), but Ask's, 22: at that MTU its
+the data length extension, 251 bytes (Vol 6 Part B §2.4), less the L2CAP
+header's 4 (Vol 3 Part A §3.1). The app asks for 247 by an MTU exchange
+(Vol 3 Part F §3.4.2) as soon as it connects; every value but an update's
+begin ([updates from the phone](#updates-from-the-phone)) then fits one
+ATT PDU and one link-layer packet. The node also takes long writes and
+serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5), so a phone that
+settles on less still works; iOS chooses the MTU itself. A notified value
+fits the 20 bytes a notification carries at the default MTU of 23 (Vol 3
+Part F §3.4.7.1) (roadmap D119), but Ask's, 22: at that MTU its
 notification carries all but what the neighbour gathers, which the app
 then shows as nothing gathered (roadmap D158).
 
-*Why both.* An Android app must ask for the MTU, and iOS chooses it
-itself, which the app cannot raise; a notification has no long form.
-
-The service has one random UUID, its second 16 bits counting the
-service and its characteristics in the order of this table:
+The service has one random UUID, its second 16 bits counting the service
+and its characteristics in the order of this table:
 
 | | UUID | properties | value | bytes |
 |---|---|---|---|---|
@@ -2297,33 +2253,32 @@ service and its characteristics in the order of this table:
 Positions and IDs are in the radio's encodings
 ([positions on the wire](#positions-on-the-wire),
 [node identity](#node-identity)), a message ID is the 32-bit hash of
-[packet formats](#packet-formats), and every integer is big-endian.
-The codecs are `bark-link`, shared by the firmware and the tests. A
-write is a write request, which the node answers, but for Image's,
-which may be a write without response
-([updates from the phone](#updates-from-the-phone)); a write that is
-not whole is answered with the ATT error 0x0D, invalid length, and one
-with a field the node does not take with 0x13, value not allowed (Vol 3
-Part F §3.4.1.1).
+[packet formats](#packet-formats), and every integer is big-endian. The
+codecs are `bark-link`, shared by the firmware and the tests. A write is
+a write request, which the node answers, but for Image's, which may be a
+write without response; a write that is not whole is answered with the
+ATT error 0x0D, invalid length, and one with a field the node does not
+take with 0x13, value not allowed (Vol 3 Part F §3.4.1.1).
 
 **Node.** The link version and `oldest`, the oldest link version whose
 apps the node serves ([versions](#versions)); the node's ID, the second
 half of its address ([addresses](#addresses)); the version of its
 firmware image; and `room`, how many more phones may pair with it: the
-records free, 0 when it would refuse a pairing, and 1 on a node nobody
-is paired with that has none free ([pairing](#pairing)).
+records free, 0 when it would refuse a pairing, and 1 on a node nobody is
+paired with that has none free ([pairing](#pairing)).
 
 **Recipient.** The app writes it as it connects, after reading Node: the
 person's recipient tag at this node ([the payload](#the-payload)), by
 which the node hands the phone its own messages; the app's link version
-and the oldest node version it serves ([versions](#versions)); and on
-an owner's link the person's name as their card has it, which the
-phone's record keeps with the tag ([pairing](#pairing)). A guest
-writes no name, and the node keeps a guest's tag only for its link
+and the oldest node version it serves ([versions](#versions)); and on an
+owner's link the person's name as their card has it, which the phone's
+record keeps with the tag ([pairing](#pairing)). A guest writes no name,
+and the node keeps a guest's tag only for its link
 ([public nodes](#public-nodes)).
 
 **Status.** How the node stands now, notified at every change but the
-countdown of `boot_left`:
+countdown of `boot_left`; one value is one notification and one read at
+a connection:
 
 | | |
 |---|---|
@@ -2336,36 +2291,10 @@ countdown of `boot_left`:
 | address | the position of its address: its own, or a sleepy node's anchor's ([addresses](#addresses)) |
 | battery | millivolts as last read, uncalibrated; 0 on external power and before the first reading |
 | relays | the relays it knows |
-| heard | its live neighbours, sleepy or not, as its screen counts them ([neighbour status](#neighbour-status)) |
+| heard | its live neighbours, sleepy or not, as its screen counts them ([neighbour status](#neighbour-status); roadmap D159) |
 | boot_left | seconds left of its first rotation, rounded up; 0 once it is over |
-| installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none |
+| installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none. The node ends its phones' links for the minute a swap takes, and the app waits for it (roadmap D182) |
 | inbox | the phone's messages not yet confirmed ([receiving](#receiving)) |
-
-So the app can show "listening, 3 relays heard, 1:40 to go", and the
-address the person gives others to reach them. Sleepy and carried are
-measured, not set ([nodes](#nodes)). The fields go from what the node is
-to what it is doing: its flags, its address and its battery; whom it
-hears; its first rotation and an install; and what waits for the phone.
-
-*Why one value, with ready in it.* Ready and the count are the reading
-phone's own, the rest the node's, but every field is something the app
-shows or acts on as soon as it changes, and one value is one
-notification and one read at a connection. Ready is the cue to write
-Send, and a value of its own would be one more subscription for one
-bit. The eight flags fill one byte; booting is told beside boot_left
-because the end of the first rotation changes no other notified field,
-and the countdown is not notified.
-
-*Why heard beside relays.* Relays say where a message can go; heard
-says whether the node hears anyone at all. A node whose only neighbours
-are sleepy hears them but knows no relay, and its radio works (roadmap
-D159).
-
-*Why installing.* A node that installs ends its phones' links and is
-away for the minute a swap takes; told beforehand, the app says so and
-waits for it rather than calling it out of reach (roadmap D182). It
-gives the version, which the app shows, so it is not a flag; two bytes,
-as with one every 256th release would read as none.
 
 ### Sending
 
@@ -2374,96 +2303,57 @@ taken the message, or with the ATT error 0x80, not ready, when it takes
 none now; the app then waits for ready. A message taken is the node's:
 the app hears of it again only if the node gives it back
 ([addresses](#addresses)). The node holds one message of its app's at a
-time ([receiving DATA](#receiving-data)), so the phone is the queue: it
-keeps the rest and offers the next when ready is set again.
+time ([receiving DATA](#receiving-data)), so the phone is the queue.
 
-The node's phones, owners and guests, take turns at that one message,
-and the turn is ready: the node sets it, while it takes a message, for
-one phone at a time, and gives it only to a phone that wants it. A
-phone asks for it by writing Send while ready is not set for it, and so
-wants it until it has it. The phone that has the turn keeps it until
-the node takes its message, its link ends, or it has had ready for a
-ban while another phone wants it ([bans](#bans): 1.58 s, the shortest
-wait the protocol tells). The turn then goes to the next phone that
-wants it, in the order of the links, and stays where it is if none
-does; with no phone holding it, as at the first link, it goes to the
-next that wants it or else the next linked. The node answers a Send out
-of turn 0x80, not ready, unless the turn passes to the phone at that
-write, and then takes it. An app with a message waits for ready after
-asking, and asks again if ready has not come within 12.64 s: a ban for
-each of the eight other links, the longest the turn takes to reach it
-while the node takes messages (roadmap D184).
+The node's phones, owners and guests, take turns at that one message, and
+the turn is ready: the node sets it, while it takes a message, for one
+phone at a time, and gives it only to a phone that wants it. A phone asks
+for it by writing Send while ready is not set for it, and so wants it
+until it has it. The phone that has the turn keeps it until the node
+takes its message, its link ends, or it has had ready for a ban while
+another phone wants it ([bans](#bans): 1.58 s). The turn then goes to the
+next phone that wants it, in the order of the links, and stays where it
+is if none does; with no phone holding it, as at the first link, it goes
+to the next that wants it or else the next linked. The node answers a
+Send out of turn 0x80, not ready, unless the turn passes to the phone at
+that write, and then takes it. An app with a message waits for ready
+after asking, and asks again if ready has not come within 12.64 s: a ban
+for each of the eight other links (roadmap D184).
 
-*Why the turn is ready, and goes only to a phone that asks.* One
-message at a time is the node's rule for its application ([receiving
-DATA](#receiving-data)), and ready is already how the node says it
-takes one: one rule for one slot. Set for every phone at once, the slot
-would go to whichever write reached the node first, and a phone with a
-queue would keep it. A refusal with a wait would need the person, as
-the app offers a given-back message again only when they say so; an
-app waits for ready by itself. Passed round to phones that want
-nothing, the turn would flip every 1.58 s while two were linked and
-idle, each flip a notification to every phone for nothing. The Send the
-app writes anyway is the ask, so nothing new crosses the link. The
-holder keeps the turn unused a ban, as nothing in the protocol acts
-sooner.
-
-**Given back.** When the node gives the app's message back, it sets
-Given back to the message's ID and the seconds left of the wait the
-refusal asked for, rounded up, and notifies it. The value is that
-phone's own, and stays until the node takes another message from it,
-the wait counting down to 0; a message given back to a guest whose link
-has ended is dropped, as the guest's app still holds it, as taken. The
-app finds the message by its ID among those it sent, computing each
-one's as the node does, shows the person the wait, and offers it again
-once ready is set, or gives it up, as the person chooses.
-
-*Why the value stays.* The phone may not be connected when the message
-is given back, and the node takes no other message before the wait is
-over, so the app learns of it whenever it next connects.
+**Given back.** When the node gives the app's message back, it sets Given
+back to the message's ID and the seconds left of the wait the refusal
+asked for, rounded up, and notifies it. The value is that phone's own,
+and stays until the node takes another message from it, the wait
+counting down to 0, so a phone not connected then learns of it at its
+next connection; a message given back to a guest whose link has ended is
+dropped, as the guest's app still holds it, as taken. The app finds the
+message by its ID among those it sent, computing each one's as the node
+does, shows the person the wait, and offers it again once ready is set,
+or gives it up, as the person chooses.
 
 ### Receiving
 
 The node keeps every message for its application in its ring
-([mailbox](#mailbox), The ring), with the recipient tag it carries in
-the payload's second byte ([the payload](#the-payload)), and confirms
-it to the core once its slot is written, so that a reboot meanwhile
-loses none ([receiving DATA](#receiving-data)). It shows a message to a
-phone, paired or a guest, only then too: one read before could be
-confirmed, or a guest's number pass it, and lost to a reboot, its number
-would go to the next message, which would then count as read. A paired phone's
-messages are those with its record's tag ([pairing](#pairing)); a
-record whose phone has not written a tag yet has none. Inbox reads the
-oldest of the phone's messages after the last it confirmed, with the
-message ID it arrived with; the app keeps it and writes the ID back,
-which confirms it. A write of another ID is answered 0x13. Status's
-count is the phone's messages not yet confirmed. The ring keeps them
-either way, until it wraps, and the guests' as well
-([public nodes](#public-nodes)).
-
-*Why read and confirmed, not notified.* The phone is often not
-connected: the app is closed, the phone is out of range or off. A
-notification is confirmed by nobody, an indication only by the phone's
-Bluetooth stack, not by the app that must keep the message; the ID
-written back is the app's own word that it has it.
-
-*Why the ring.* Each of a node's people reads their own messages, when
-they come by. The core's inbox, one queue of 23 for the application
-([delivery queue](#delivery-queue)), would hold every message behind
-one for a person who is away, give theirs up once stale to make room,
-and lose all at a reboot; the ring holds 1024 in flash, by tag, whether
-their phone is there or not (roadmap D168).
-
-*Why the ID it arrived with, kept.* An ID is a hash of the node's
-address ([packet formats](#packet-formats)), which changes whenever the
-node's position does, at every fix while it is carried
-([position](#position)); worked out again at each read, an item's ID
-would change between the phone's read and its confirmation.
+([mailbox](#mailbox), The ring), in flash, with the recipient tag it
+carries in the payload's second byte ([the payload](#the-payload)), and
+confirms it to the core once its slot is written, so that a reboot
+meanwhile loses none ([receiving DATA](#receiving-data)). It shows a
+message to a phone, paired or a guest, only then too. A paired phone's
+messages are those with its record's tag ([pairing](#pairing)); a record
+whose phone has not written a tag yet has none. Inbox reads the oldest of
+the phone's messages after the last it confirmed, with the message ID it
+arrived with, kept since an ID worked out again would change with the
+node's position; the app keeps it and writes the ID back, which confirms
+it: the app's own word that it has it, where a notification is confirmed
+by nobody. A write of another ID is answered 0x13. Status's count is the
+phone's messages not yet confirmed. The ring keeps them either way, until
+it wraps, and the guests' as well ([public nodes](#public-nodes);
+roadmap D168).
 
 ### Settings
 
-**Map point.** A write of 1 and a position sets the node's map point,
-and of 0 clears it ([position](#position)).
+**Map point.** A write of 1 and a position sets the node's map point, and
+of 0 clears it ([position](#position)).
 
 **Clock.** The app writes the phone's time, UTC seconds since 1970, and
 its UTC offset in minutes, −720 to +840, at every connection; another
@@ -2471,39 +2361,38 @@ offset is answered 0x13. The node keeps the offset across a reboot and
 takes the time only while it has none from its GPS
 ([position](#position)). A read gives the node's time, the offset it
 keeps, and where the time came from: 0 none, 1 GPS, 2 the phone; with
-none the time is 0 (roadmap D130).
+none the time is 0. The phone, not the node, holds the time zones' rules
+(roadmap D130).
 
-*Why the offset from the phone.* Turning a position into a time zone
-takes the zones' boundaries and rules, which the node has no room for
-and which change by law; the phone has them, set by its person.
-
-**Home.** A write of 1 and the mailbox key makes the node the home of
-the phone's person, the key kept in the phone's record across reboots,
-and of 0 forgets that key ([mailbox](#mailbox)). A record that holds the
-same key and no bond, this person's home left by a phone that
-unpaired, then takes this phone's bond, name and tag, and the phone's
-own record is freed: the person's mail that waited for a fetch keeps
-its bits in the ring's marks, which are that record's
-([mailbox](#mailbox), The ring). Another person's key is removed only
-through Phones ([phones](#phones)). A read says whether the node is
-anyone's home, whether it is this phone's person's, and the numbers of
-the oldest and the newest item its ring holds, 0 when none.
+**Home.** A write of 1 and the mailbox key makes the node the home of the
+phone's person, the key kept in the phone's record across reboots, and of
+0 forgets that key ([mailbox](#mailbox)). A record that holds the same
+key and no bond, this person's home left by a phone that unpaired, then
+takes this phone's bond, name and tag, and the phone's own record is
+freed: the person's mail that waited for a fetch keeps its bits in the
+ring's marks, which are that record's ([mailbox](#mailbox), The ring).
+Another person's key is removed only through Phones ([phones](#phones)).
+A read says whether the node is anyone's home, whether it is this phone's
+person's, and the numbers of the oldest and the newest item its ring
+holds, 0 when none.
 
 ### The neighbour map
 
-**Neighbours.** The node's neighbour table ([neighbour
-table](#neighbour-table)), for the app to draw the node and its links
-on a map. The app writes a slot of the table, 0 first, and a read gives
-the live neighbours in that slot and after it, as many as fit, 13, and
-the slot to write next, 0 once the page reached the table's end; 64
-neighbours take five reads. The slot read from is 0 at each connection.
-A read starts with the slot to write next, the node's noise floor in
-dBm, signed ([busy estimate](#busy-estimate)), the node's own position,
-zero while it has none, which for a sleepy node is not its address
-([position](#position)), and the bytes of each neighbour, 18, by which
-the app steps. Each neighbour then gives its ID, its position, the
-averaged RSSI of its link (`rssi_ema`) in tenths of a dBm, signed, the
-whole seconds since it was last heard, at most 65 535, and its flags:
+**Neighbours.** The node's neighbour table
+([neighbour table](#neighbour-table)), for the app to draw on a map. The
+app writes a slot of the table, 0 first, and a read gives the live
+neighbours in that slot and after it, as many as fit, 13, and the slot to
+write next, 0 once the page reached the table's end; 64 neighbours take
+five reads. The slot read from is 0 at each connection. A neighbour keeps
+its slot while it stays in the table, so a page skips none when one
+leaves between reads. A read starts with the slot to write next, the
+node's noise floor in dBm, signed ([busy estimate](#busy-estimate)), the
+node's own position, zero while it has none, which for a sleepy node is
+not its address ([position](#position)), and the bytes of each neighbour,
+18, by which the app steps. Each neighbour then gives its ID, its
+position, the averaged RSSI of its link (`rssi_ema`) in tenths of a dBm,
+signed, the whole seconds since it was last heard, at most 65 535, and
+its flags:
 
 | | |
 |---|---|
@@ -2517,68 +2406,56 @@ whole seconds since it was last heard, at most 65 535, and its flags:
 | bit 7 | it has taken a message from this node, so it hears this node too |
 
 A link's **quality** is the margin of its averaged RSSI over the noise
-floor, reckoned as the node's margin is ([neighbour
-table](#neighbour-table)): fragile below that margin, 4.1 dB, where a
-full frame is lost more than one time in a hundred in a fade of one
-standard deviation, 4 dB, and the node sends through the neighbour only
-when no other is left; good from 6.9 dB, where a full frame gets
-through a fade of two, 8 dB, which comes one time in 44, the convention
-of the switching margin ([relay choice](#relay-choice)); fair between.
-The floor and the RSSI in tenths are there so that the app reads the
-margin as the node does.
-
-*Why pages from a slot.* The table holds 64 neighbours of 18 bytes, more
-than one value holds, and every value fits one PDU
-([the service](#the-service)). A neighbour keeps its slot while it
-stays in the table, so when one leaves between two reads the others
-stay where they were, and the next page skips none of them; counted
-from the first live one, they would shift down by one, and one would be
-skipped.
+floor, reckoned as the node's margin is
+([neighbour table](#neighbour-table)): fragile below that margin, 4.1 dB;
+good from 6.9 dB, where a full frame gets through a fade of two standard
+deviations, 8 dB, the switching margin's convention
+([relay choice](#relay-choice)); fair between.
 
 **Ask.** The app writes a neighbour's ID, and the node asks that
 neighbour for its status ([neighbour status](#neighbour-status)); the
-write is answered once the node has taken it, whether or not the ID is
-a live neighbour's, as nobody answers an ask of anything else. The app
-asks the neighbours it shows when the person opens or refreshes the
-map, and asks again those that do not answer, as
-[neighbour status](#neighbour-status) says, never at other times. Each
-answer the node is given, the neighbour's ID and its status as the
-radio carries it, is Ask's value from then on, notified to the paired
-phones; the value is empty before the first since the node booted. An
-answer comes within about a second of the ask, or not at all. The app
-shows it on the neighbour in the words of the neighbour's own screen.
-
-*Why a characteristic of its own.* The answer is notified, and a
-notified value is the characteristic's own: Neighbours' is a page of
-the table. A write of an ID to Neighbours would also change what the
-app writes there, which only a new version may ([versions](#versions)).
+write is answered once the node has taken it, whether or not the ID is a
+live neighbour's. The app asks the neighbours it shows when the person
+opens or refreshes the map, never at other times (its retries are in
+`bark-app/README.md`). Each answer the node is given, the neighbour's ID
+and its status as the radio carries it, is Ask's value from then on,
+notified to the paired phones; the value is empty before the first since
+the node booted. An answer comes within about a second of the ask, or not
+at all. A characteristic of its own, as a notified value is the
+characteristic's own.
 
 ### Updates from the phone
 
-The app stages a new firmware image on the node, which the node's
-loader swaps in at its next boot (roadmap D79; `bark-fw/README.md`,
-"Updates"): so a node on a roof is updated from the street. The image
-is a header of 256 bytes, which holds its version, its length and its
-SHA-256, and then its bytes. The app writes 0 and the header to Update
-to begin: the node forgets any image staged before, and takes the
-header if its version is above the node's own, a signature in it
-verifies under a key the node holds (roadmap D144), and no swap is
-asked for already. Then the app writes the image to Image in pieces,
-each its offset in the image and as many bytes as one write carries,
-240 at the MTU of 247, without a response; the node writes each into
-its external flash, and takes a piece only at the offset where the
-bytes it holds end. Update's read gives the state, 0 idle, 1 receiving,
-2 staged, every byte held, 3 committed; why the last begin, commit or
-reboot was refused, 0 if it was not; the bytes held; and the header's
-version and hash, zero while idle. The app reads it after every seven
-pieces and goes on from the bytes held, so that a piece or a connection
-lost is sent again from there; a hash not its image's is another image
-being staged, which it begins again. With every byte held, the app
-writes 1 to commit: the node checks the image against the header's
-hash, and every other check its console's commit makes, and asks the
-loader for the swap. Then it writes 2 to reboot: the node answers, ends
-the link and resets. A begin, a commit or a reboot the node refuses is
-answered with the ATT error 0x81, refused, and Update says why:
+The app stages a new firmware image on the node, which the node's loader
+swaps in at its next boot (roadmap D79; `bark-fw/README.md`, "Updates").
+The image is a header of 256 bytes, which holds its version, its length
+and its SHA-256, and then its bytes.
+
+1. The app writes 0 and the header to Update to begin: the node forgets
+   any image staged before, and takes the header if its version is above
+   the node's own, a signature in it verifies under a key the node holds
+   (roadmap D144), and no swap is asked for already.
+2. The app writes the image to Image in pieces, each its offset in the
+   image and as many bytes as one write carries, 240 at the MTU of 247,
+   without a response; the node writes each into its external flash, and
+   takes a piece only at the offset where the bytes it holds end. The
+   app reads Update after every seven pieces and goes on from the bytes
+   held, so that a piece or a connection lost is sent again from there;
+   a hash not its image's is another image being staged, which it begins
+   again. The node's host queues 8 ATT PDUs for a link, so seven pieces
+   and the read fit, and the read, answered only once the pieces before
+   it are written, is the flow control.
+3. With every byte held, the app writes 1 to commit: the node checks the
+   image against the header's hash, and every other check its console's
+   commit makes, and asks the loader for the swap.
+4. The app writes 2 to reboot: the node answers, ends the link and
+   resets.
+
+Update's read gives the state, 0 idle, 1 receiving, 2 staged, every byte
+held, 3 committed; why the last begin, commit or reboot was refused, 0 if
+it was not; the bytes held; and the header's version and hash, zero
+while idle. A begin, a commit or a reboot the node refuses is answered
+with the ATT error 0x81, refused, and Update says why:
 
 | refused | |
 |---|---|
@@ -2592,109 +2469,58 @@ answered with the ATT error 0x81, refused, and Update says why:
 | 8, signature | no signature in the header verifies under a key the node holds |
 
 What is staged lasts across connections until the node resets (roadmap
-D145).
-
-An image from the phone keeps itself once the node has started, whether
-or not the node then hears anyone: the node may be the only one in
-reach. So the app, after an update it drove, reads Status's count of
-neighbours heard, and if the node still hears none 585.9 s after it came
-back, as long as an image from the mesh listens before it gives itself
-up ([updates over the mesh](#updates-over-the-mesh), the install), it
-tells the person plainly that the node hears no one and that the new
-firmware may have broken its radio. It says the way back too: the node
-stages no image at or below its own version, so the firmware it ran
-before goes on over USB, and a newer firmware, once a release carries
-one, from the phone (roadmap D159). A release names the firmware's
-version apart from the app's, and a release that changes only the app
-carries the previous firmware on under its old version, so a node is
-offered an image only when the firmware changed (roadmap D164).
-
-*Why without a response, seven at a time.* A write request is answered
-in a later connection event than the one that carried it, so a phone
-that waits for each answer sends one piece every two events; without
-a response it sends as many as an event carries. The node's host
-queues 8 ATT PDUs for a link and drops one more, so seven pieces and
-the read fit; the read is answered only once the node has written the
-pieces before it, so it is also the flow control.
-
-*How long it takes.* An app asks Android for a short connection
-interval for the transfer, 11.25 to 15 ms ([sources](#sources)). A
-packet of 251 bytes takes 2.12 ms on the 1 Mbit/s PHY, 2.5 ms with the
-node's empty answer and the two 150 µs gaps between (Vol 6 Part B
-§2.1, §4.1.1), so the node's connection event of 7.5 ms and its three
-receive buffers take three pieces an event. Seven pieces take three
-events at 15 ms; the node writes them meanwhile, each 240 bytes over its
-external flash's bus at about 1 Mbit/s, 2 ms, two page programs on
-average, 2.6 ms, and a sector erase every 17 pieces, 0.6 ms each: 36 ms.
-The read's answer goes in the next event and the next pieces in the one
-after: about five events, 75 ms, for 1680 bytes, 22 KB/s. An image of
-400 KB takes about 18 s, and the commit's hash, a read of it over the
-same bus, about 3 s more. At Android's default of 30 to 50 ms the node's
-writing hides inside the three events, and the same five events take
-twice as long or more, 40 to 60 s; with a write request for each piece,
-two events a piece, it would be 50 s at 15 ms.
+D145). An image from the phone keeps itself once the node has started,
+whether or not the node then hears anyone ([updates over the mesh](#updates-over-the-mesh),
+the install), so the app tells the person when the node still hears none
+585.9 s after it came back (roadmap D159, D164; `bark-app/README.md`,
+"Updating a node").
 
 ### Versions
 
 Node's `version` and Recipient's say the link version each side speaks,
 and their `oldest` the oldest version of the other side it still serves.
 An app and a node serve each other when each side's version is at least
-the other's oldest. When they do not, the node answers Recipient's
-write with the ATT error 0x82, incompatible, and ends the link, and the
-app, which reads Node first, tells the person which side to update
-(roadmap D177). This specification is link version 1, and each side's
-oldest is its own version: nothing older is kept (roadmap D188).
+the other's oldest: only the newer side can know what a later version
+changed. When they do not, the node answers Recipient's write with the
+ATT error 0x82, incompatible, and ends the link, and the app, which reads
+Node first, tells the person which side to update (roadmap D177). This
+specification is link version 1, and each side's oldest is its own
+version: nothing older is kept (roadmap D188).
 
-A later version may add characteristics and append fields to the
-values the node writes, Node, Status, Given back, Clock, Home, Update,
-Ask, and each neighbour of Neighbours; an app reads the fields it knows
-and ignores the rest, as a node reads a heartbeat. The values the app
-writes change only with the version. A change an older side cannot
-follow raises the newer side's `oldest`. A change to what a field means
-takes a new service UUID, so that an app that does not know it finds no
-node and asks the person to update it.
+A later version may add characteristics and append fields to the values
+the node writes, Node, Status, Given back, Clock, Home, Update, Ask, and
+each neighbour of Neighbours; an app reads the fields it knows and
+ignores the rest, as a node reads a heartbeat. The values the app writes
+change only with the version. A change an older side cannot follow
+raises the newer side's `oldest`. A change to what a field means takes a
+new service UUID, so that an app that does not know it finds no node and
+asks the person to update it.
 
-*Why the newer side decides.* The older side cannot know what a later
-version changed, so only the newer one can say whether it still serves
-the older. Each side's oldest is that statement, and the rule takes the
-newer side's.
-
-**Changes to the table.** Besides the service, the node's attribute
-table holds the GAP service, with the node's name and appearance, and
-the GATT service, with Service Changed, indicate only (Vol 3 Part G
-§7.1), and the database hash, readable on any link (Bluetooth Core
-Specification 5.1, Vol 3 Part G §7.3). Every change to the table comes
-with a new link version. The node keeps in each record the link version
-whose table its phone last saw, and whether the phone has subscribed to
-Service Changed, as a bonded client's subscription is kept across
-connections (Vol 3 Part G §3.3.3.3). On a link encrypted with a bond,
-while the phone is subscribed and the version it saw is not the node's,
-the node indicates Service Changed over every handle, 0x0001 to 0xFFFF,
-and once the phone confirms, keeps the node's version as seen. A
-pairing keeps the node's version, as the phone discovers the table as it
-pairs; a link without a bond is told nothing (roadmap D142).
-
-*Why.* A phone keeps the table of a bonded node across connections and
-discovers it again only when the node says it changed (Vol 3 Part G
-§2.5.2); with an old table, its handles name other attributes, or none.
-The version says which table the phone saw, as the app reads it anyway
-and every change to the table takes one: a change to the table without
-a new version is not allowed. Every handle, because the phone then
-discovers the whole table, a few round trips once per version. The hash
-lets a phone that reads it as it connects find a change before the
-indication comes.
+**Changes to the table.** Besides the service, the node's attribute table
+holds the GAP service, with the node's name and appearance, and the GATT
+service, with Service Changed, indicate only (Vol 3 Part G §7.1), and the
+database hash, readable on any link (Bluetooth Core Specification 5.1,
+Vol 3 Part G §7.3). Every change to the table comes with a new link
+version. The node keeps in each record the link version whose table its
+phone last saw, and whether the phone has subscribed to Service Changed,
+as a bonded client's subscription is kept across connections (Vol 3 Part
+G §3.3.3.3). On a link encrypted with a bond, while the phone is
+subscribed and the version it saw is not the node's, the node indicates
+Service Changed over every handle, 0x0001 to 0xFFFF, and once the phone
+confirms, keeps the node's version as seen. A pairing keeps the node's
+version, as the phone discovers the table as it pairs; a link without a
+bond is told nothing (roadmap D142). A bonded phone discovers the table
+again only when told it changed (Vol 3 Part G §2.5.2).
 
 ### Public nodes
 
-A node is public, serving guests as well as its owners, unless its
-owners make it private: a shared node serves the people around it with
-nothing to set, and owners who want it theirs alone say so. Any paired
-phone writes 0 to Public to make the node private and 1 to make it
-public again; a read gives 1 for public. The setting is the node's, one
-for all its phones. A node nobody has paired with is public. The node
-keeps the setting across reboots, and a pairing keeps it (roadmap
-D150). Public needs a bond ([pairing](#pairing)), so only a paired
-phone sets it.
+A node is public, serving guests as well as its owners, unless its owners
+make it private. Any paired phone writes 0 to Public to make the node
+private and 1 to make it public again; a read gives 1 for public. The
+setting is the node's, one for all its phones. A node nobody has paired
+with is public. The node keeps the setting across reboots, and a pairing
+keeps it (roadmap D150). Public needs a bond ([pairing](#pairing)), so
+only a paired phone sets it.
 
 A paired phone writes 2 to **unpair**: the node forgets that phone's
 bond, in flash too, and keeps its record's home, if it has one
@@ -2702,90 +2528,58 @@ bond, in flash too, and keeps its record's home, if it has one
 which is no longer an owner's. With the last bond gone the node is one
 nobody has paired with, public; anyone at the node may pair with it by
 the code its screen shows. No code is asked, as a phone that unpairs
-takes nothing from anyone but itself. The phone keeps its own copy of
-the bond until it is removed: the app removes it once the node has
-answered, or, on a phone that does not let it, its person does in the
-phone's settings. A link the phone encrypts with that copy the node
-ends, as for a removed phone ([pairing](#pairing)), a guest's link too,
-so a phone holding it cannot use the node at all.
-
-*Why on Public.* It is the owners' setting of whom the node serves, and
-the last unpairing ends at the node public by default, its end state; a
-characteristic of its own would add to the table for one byte.
+takes nothing from anyone but itself. The phone keeps its own copy of the
+bond until it is removed: the app removes it once the node has answered,
+or, on a phone that does not let it, its person does in the phone's
+settings. A link the phone encrypts with that copy the node ends, as for
+a removed phone ([pairing](#pairing)), a guest's link too, so a phone
+holding it cannot use the node at all.
 
 On a public node:
 
-- *The advertisement* holds, in place of the service's UUID, the
-  public node's, `28bc1001-a1b8-4893-9537-2ee3559d7644`, which no
-  attribute has: an app finds the public nodes in reach in a scan,
-  without connecting. The scan response is the same.
-- *Node, Status, Send, Inbox, Given back, Recipient and Guest* take
-  any link, encrypted or not, and so do the subscriptions to Status and
-  Given back; Map point, Clock, Home, Neighbours, Update, Image,
-  Public, Ask and Phones stay the paired phones', as on any node.
-- *Its one link more is a guest's* ([pairing](#pairing)), and it keeps
-  no state for a guest beyond its link. A guest's link is short: the
-  guest connects, writes its recipient tag at the node to Recipient,
-  sends what it has, reads what waits for it, and leaves, so that any
-  number of guests share the one link in turn. The node ends a guest's
-  link 30 s after it began, the ATT transaction's timeout (Vol 3 Part F
-  §3.3.3), longer than a guest's errand; a phone that is not paired and
-  writes Recipient while another guest's link is up is closed at once,
-  as the other links are the paired phones' to take. Made private
-  again, the node closes the guest's link.
-- *A guest's messages* are those in the ring that no record's tag
-  claims ([receiving](#receiving)): written with every bit of the mark
-  clear, so that no fetch sends them ([mailbox](#mailbox), The ring),
-  they leave the ring only as it wraps. A guest reads its own through
-  Inbox, after the number of the last item it took, which it writes to
-  Guest, 0 at first: a read gives the oldest item after it with the
-  guest's tag, its number, the message ID it arrived with and the
-  payload, or nothing; a number above the newest item's, from before
-  the ring began again, counts as 0. The guest keeps the number, for
-  each node; it confirms nothing, as reading takes nothing from the
-  ring, and a write to Inbox on its link is answered 0x13. A guest that
-  was away reads what came meanwhile, as long as the ring holds it.
-
-*Why the public node's UUID, not a flag beside the service's.* The 10
-bytes the advertisement has left beside the flags and the service's
-UUID hold one more AD structure (Core Specification Supplement, Part
-A, Data types); those that carry a value of one's own name it by a
-company identifier or a 16- or 32-bit UUID that the Bluetooth SIG
-assigns, of which bark holds none, and the form with a 128-bit UUID,
-service data, takes 19 bytes. A second UUID costs no byte, and both
-phone systems filter a scan by service UUID in the controller, where a
-flag would be read only by the app.
-
-*Why one guest's link, and short.* A link costs 5.9 KB of static RAM
-whether it is used or not ([pairing](#pairing)), and one held open buys
-a guest nothing the ring does not: the ring already holds mail for a
-phone that is away, as it does a paired phone's, so a guest needs a
-link only for its errand.
-
-*Why the ring, by tag.* The tag says whose a message is without opening
-it, and the ring keeps it in flash until it wraps whether its phone is
-there or not, across reboots; the guest's number says what it has read,
-so the node keeps nothing per guest.
-
-*Why Inbox, with a number written to Guest.* A guest's mail is its
-inbox, read as a paired phone's is; it carries the item's number, which
-the guest writes back to read on. A readable value of its own would add
-a characteristic to the table, and 235 B of RAM, for what Inbox already
-reads.
+- *The advertisement* holds, in place of the service's UUID, the public
+  node's, `28bc1001-a1b8-4893-9537-2ee3559d7644`, which no attribute has:
+  an app finds the public nodes in reach in a scan, without connecting,
+  and both phone systems filter a scan by service UUID in the
+  controller. The scan response is the same.
+- *Node, Status, Send, Inbox, Given back, Recipient and Guest* take any
+  link, encrypted or not, and so do the subscriptions to Status and Given
+  back; Map point, Clock, Home, Neighbours, Update, Image, Public, Ask and
+  Phones stay the paired phones', as on any node.
+- *Its one link more is a guest's* ([pairing](#pairing)), and it keeps no
+  state for a guest beyond its link. A guest connects, writes its
+  recipient tag at the node to Recipient, sends what it has, reads what
+  waits for it, and leaves, so that any number of guests share the one
+  link in turn. The node ends a guest's link 30 s after it began, the ATT
+  transaction's timeout (Vol 3 Part F §3.3.3); a phone that is not paired
+  and writes Recipient while another guest's link is up is closed at
+  once. Made private again, the node closes the guest's link.
+- *A guest's messages* are those in the ring that no record's tag claims
+  ([receiving](#receiving)): written with every bit of the mark clear, so
+  that no fetch sends them ([mailbox](#mailbox), The ring), they leave
+  the ring only as it wraps. A guest reads its own through Inbox, after
+  the number of the last item it took, which it writes to Guest, 0 at
+  first: a read gives the oldest item after it with the guest's tag, its
+  number, the message ID it arrived with and the payload, or nothing; a
+  number above the newest item's, from before the ring began again,
+  counts as 0. The guest keeps the number, for each node; it confirms
+  nothing, as reading takes nothing from the ring, and a write to Inbox
+  on its link is answered 0x13. So the node keeps nothing per guest.
 
 ### Phones
 
-Any paired phone reads the node's records ([pairing](#pairing)), so
-that its person sees who else is paired and whose home the node is,
-and removes one without that record's phone. The app writes 0 and a
-slot, 0 first, and a read gives the records in that slot and after it,
-as many whole ones as fit, and the slot to write next, 0 once the read
-reached the last; eight records take two reads at most. The slot read
-from is 0 at each connection. Each record gives its number, its flags,
-the day its phone was last linked, counted from 1 on 2026-01-01 UTC,
-the first day of `sent` ([the payload](#the-payload)), 0 when the node
-had no time at any of its links, the person's recipient tag at the
-node, and their name, as long as its length byte says:
+Any paired phone reads the node's records ([pairing](#pairing)), so that
+its person sees who else is paired and whose home the node is, and
+removes one without that record's phone. The app writes 0 and a slot, 0
+first, and a read gives the records in that slot and after it, as many
+whole ones as fit, and the slot to write next, 0 once the read reached
+the last; eight records take two reads at most. The slot read from is 0
+at each connection. Each record gives its number, its flags, the day its
+phone was last linked, counted from 1 on 2026-01-01 UTC, the first day of
+`sent` ([the payload](#the-payload)), 0 when the node had no time at any
+of its links, the person's recipient tag at the node, and their name, as
+long as its length byte says. The node writes a record again when its
+phone's day changes, at most once a day, to spare the flash.
 
 | flags | |
 |---|---|
@@ -2795,53 +2589,37 @@ node, and their name, as long as its length byte says:
 | bit 3 | it is the reading phone's |
 | bit 4 | its tag is known; else the tag is 0 |
 
-To remove, the app writes 1, and the node draws a fresh six-digit code
-on its screen at once ([screen and buttons](#screen-and-buttons)). Then
-the app writes 2, the record's number, what to remove, 1 the bond, 2
-the home or 3 both, and the code, as a number. The node takes it only
-within 30 s of drawing the code and with that code: it forgets the
-bond, in flash too, ending its link if it has one, or the mailbox key,
-or both, and frees the record if it then holds neither. A removed
-bond's phone learns of it as the removed phone does
-([pairing](#pairing)); a removed home's person learns of it at their
-phone's next link to the node, whose Home then says it is not theirs,
-while their fetches from elsewhere go unanswered, as a fetch the node
-cannot open names no address to answer ([mailbox](#mailbox)). A write
-with another code, or after the 30 s, is answered with the ATT error
-0x81, refused, and the code is forgotten; a number no record has, or a
-part the record does not hold, is answered 0x13, and the code stays, as
-it was not tried. The last bond removed leaves the node one nobody has
-paired with, as the last unpairing does
-([public nodes](#public-nodes)).
-
-*Why a code, and not the bond alone.* Every paired phone is trusted
-alike, and the link reaches through walls, tens of metres: with the
-bond alone, a phone paired once and gone, lost, stolen or a former
-household's, could take a person's phone or home from anywhere in
-reach. The code asks what pairing asks, being at the node. A phone that
-unpairs itself needs none ([public nodes](#public-nodes)).
-
-*Why the day.* The node writes a record again when its phone's day
-changes, at most once a day for each, so that phones coming and going
-do not wear out the flash; a day tells a lost phone from one in use.
-
-*Why 30 s, and one try.* 30 s is the time a pairing gives its person to
-type the code, the Security Manager's timeout for each step (Vol 3 Part
-H §3.4). A code is one in a million, and one try for each code drawn
-makes guessing cost a code on the screen, where the people at the node
-see it.
+To remove, the app writes 1, and the node draws a fresh six-digit code on
+its screen at once ([screen and buttons](#screen-and-buttons)). Then the
+app writes 2, the record's number, what to remove, 1 the bond, 2 the home
+or 3 both, and the code, as a number. The node takes it only within 30 s
+of drawing the code, the Security Manager's timeout for each step of a
+pairing (Vol 3 Part H §3.4), and with that code: it forgets the bond, in
+flash too, ending its link if it has one, or the mailbox key, or both,
+and frees the record if it then holds neither. A removed bond's phone
+learns of it as the removed phone does ([pairing](#pairing)); a removed
+home's person learns of it at their phone's next link to the node, whose
+Home then says it is not theirs, while their fetches from elsewhere go
+unanswered, as a fetch the node cannot open names no address to answer
+([mailbox](#mailbox)). A write with another code, or after the 30 s, is
+answered with the ATT error 0x81, refused, and the code is forgotten: one
+try for each code drawn. A number no record has, or a part the record
+does not hold, is answered 0x13, and the code stays. The last bond
+removed leaves the node one nobody has paired with, as the last unpairing
+does ([public nodes](#public-nodes)). The code asks what pairing asks,
+being at the node, since the link reaches through walls and a phone
+paired once may be lost or stolen.
 
 ### The payload
 
 The app owns it; this is its layout (roadmap D123 to D127, D150). The
-reasons, and the alternatives a reader would ask about, are in
-`docs/app-layer-2026-11-05.md`; the codec and the vectors the app is
-tested against are `bark-app-layer`.
+reasons are in `docs/app-layer-2026-11-05.md`; the codec and the vectors
+the app is tested against are `bark-app-layer`.
 
-*Keys.* A person's **identity** is an X25519 public key. Every key
-comes from a 128-bit random seed, which the person backs up as 12 words:
-the seed and the first 4 bits of its SHA-256, 11 bits a word, from a
-fixed list of 2048 (`bark-app-layer/src/words.txt`). All cryptography is
+*Keys.* A person's **identity** is an X25519 public key. Every key comes
+from a 128-bit random seed, which the person backs up as 12 words: the
+seed and the first 4 bits of its SHA-256, 11 bits a word, from a fixed
+list of 2048 (`bark-app-layer/src/words.txt`). All cryptography is
 libsodium's: the master key is `crypto_generichash(seed, 32)`, the
 identity's key pair `crypto_box_seed_keypair` of
 `crypto_kdf_derive_from_key(master, 1, "bark-key")`, and the mailbox key
@@ -2849,9 +2627,9 @@ identity's key pair `crypto_box_seed_keypair` of
 keys do not change.
 
 *Forms.* A payload's first byte is its format: the version, 2, in the
-high four bits, the form in the low four. Its second is the recipient
-tag (below), which every version keeps there, as a node reads it. A
-receiver drops a payload of a version or form it does not know.
+high four bits, the form in the low four. Its second is the recipient tag
+(below), which every version keeps there, as a node reads it. A receiver
+drops a payload of a version or form it does not know.
 
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
@@ -2871,33 +2649,19 @@ carries its recipient's tag at the node it is sent to, a fetch the
 requester's at its home node, and a reply the one the fetch asks for. A
 node keeps a payload in its ring for the phone whose tag it carries
 ([receiving](#receiving), [public nodes](#public-nodes)); every app
-ignores it.
-
-*Why keyed with the identity, over the node.* Only someone who holds
-the recipient's card can make the tag, and it differs from node to
-node, so it ties together only the payloads for one person at one
-node, which their destination address already groups by node.
-
-*Why one byte.* A phone handed a payload that is not its own fails to
-open it and drops it, so a wrong match costs a read and a failed open,
-not a message. A node's ring holds the mail of the people paired with
-it and of its guests, read by tag: a person's inbox passes over
-another's item unless the tags match, and a guest reads, beside its
-own, the items of anyone whose tag at the node is the same, each other
-person's with odds of 1 in 256, 0.4 %; a second byte would make that
-rarer at a byte on every message, and would tie a person's payloads at
-a node together more surely.
+ignores it. Only someone who holds the recipient's card can make the tag,
+and it differs from node to node. One byte lets two people at a node
+share a tag with odds of 1 in 256; a phone handed a payload not its own
+fails to open it and drops it.
 
 A boxed payload names no sender: the receiver tries the key of each
-contact, `crypto_box_beforenm` of each made once, until one opens it.
-An introduction carries the sender's card; its sender is shown as
+contact, `crypto_box_beforenm` of each made once, until one opens it. An
+introduction carries the sender's card; its sender is shown as
 unverified until a boxed payload from that identity opens. It is used
 until a payload from the receiver, of either form, has opened at the
-sender: sealed to the sender's identity, it shows that the receiver
-holds the sender's card. Waiting for a boxed one instead would leave two
-people who hold each other's cards sending introductions for ever, as
-only a box verifies. An introduction naming an identity the receiver
-has verified is dropped. Payloads are not padded.
+sender, which shows that the receiver holds the sender's card. An
+introduction naming an identity the receiver has verified is dropped.
+Payloads are not padded.
 
 *Plaintext.* Forms 0 and 1 hold a header, then records:
 
@@ -2916,167 +2680,51 @@ has verified is dropped. Payloads are not padded.
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
-that of the node the sender writes from, the one their phone is
-connected to or was last, included until the contact has answered a
-message that carried it and whenever it changes; a message without one
-says it has not changed. The app sends nothing by itself: a reaction is
-a message the person chooses to send, and a text is sent again only
-when the person says so (roadmap D126). A reaction names the text by
-its first part's `sent`; the newest by its message's `sent` stands. A
-reader drops a message whose reaction is no character, more than one,
-or longer than the bound; that the character is an emoji is the app's
-to offer (roadmap D185, D187).
+that of the node the sender writes from, the one their phone is connected
+to or was last, included until the contact has answered a message that
+carried it and whenever it changes; a message without one says it has
+not changed. The app sends nothing by itself: a reaction is a message the
+person chooses to send, and a text is sent again only when the person
+says so (roadmap D126). A reaction names the text by its first part's
+`sent`; the newest by its message's `sent` stands. A reader drops a
+message whose reaction is no character, more than one, or longer than the
+bound; that the character is an emoji is the app's to offer (roadmap
+D185, D187).
 
-*Long texts.* A text longer than one message holds is split into
-parts, each a message of its own with its own `sent`, delivered as a
-text is. The parts take consecutive `sent`, so a part's `sent` less its
-number and one is the first part's, which names the text: the receiver
-puts parts together in any order of arrival, knows from the count which
-have not come, and needs no byte more for it. A part costs one byte
-over a whole text, 155 bytes of text in a box without an address; 16
+*Long texts.* A text longer than one message holds is split into parts,
+each a message of its own with its own `sent`, delivered as a text is.
+The parts take consecutive `sent`, so a part's `sent` less its number and
+one is the first part's, which names the text: the receiver puts parts
+together in any order of arrival and knows from the count which have not
+come. A part holds 155 bytes of text in a box without an address; 16
 parts hold about 2.5 KB (roadmap D137).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
-flags (1), bit 0 set when a home address follows, bit 1 when the
-node's address follows, the others zero; the identity (32); when the
-home was set or cleared, as `sent` (4); the home node's address (0 or
-13); the address of the node the phone is linked to, or was last, when
-the card is made or shown, unless it is the home, then when the phone
-was last linked to it, as `sent` (0 or 13 + 4): now, to the minute,
-while it is linked, else when the link ended; and a display name in
-UTF-8 (0 to 32): 38 to 100 bytes. 4 bytes of seconds hold 136 years
-from the epoch of `sent`. As text, `BARK:` and the bytes in base32
-(RFC 4648, its base32 alphabet) without padding. A card with a later
-time replaces a contact's card, as does one of the same time, which
-may name another node; the person sends their card to their contacts
-when it changes.
-
-*Why the node too.* A home's [mailbox](#mailbox) keeps a person's mail
-until they fetch it. A person without one could be written to only
-after they wrote, and someone handed their card could not start. The
-node their phone uses keeps mail for them in its ring, by their
-recipient tag, as a paired phone's inbox or as a guest's
-([receiving](#receiving), [public nodes](#public-nodes)), so a text
-there waits until they come back to it; the card says it is temporary,
-so nobody takes it for a home.
-
-*Why the time without a home.* Clearing the home changes the card too,
-and a card that drops it must replace an older one only if it is later.
+flags (1), bit 0 set when a home address follows, bit 1 when the node's
+address follows, the others zero; the identity (32); when the home was
+set or cleared, as `sent` (4); the home node's address (0 or 13); the
+address of the node the phone is linked to, or was last, when the card is
+made or shown, unless it is the home, then when the phone was last linked
+to it, as `sent` (0 or 13 + 4): now, to the minute, while it is linked,
+else when the link ended; and a display name in UTF-8 (0 to 32): 38 to
+100 bytes. As text, `BARK:` and the bytes in base32 (RFC 4648, its base32
+alphabet) without padding. A card with a later time replaces a contact's
+card, as does one of the same time, which may name another node; the
+person sends their card to their contacts when it changes. A card
+without a home is **temporary**: the node on it keeps the person's mail
+in its ring, by their recipient tag, only for as long as they come back
+to it (roadmap D162).
 
 The sender's address travels inside the encrypted payload, so that the
-relays past the first hop do not learn who sent it: a DATA with hop
-count 0 names its sending node, and anyone in radio range of that node
-learns its node ID and position from its heartbeats
+relays past the first hop do not learn who sent it
 ([what the protocol omits](#what-the-protocol-omits)).
 
 A message has no ID field: the network identifies it by a hash of its
-destination and payload ([packet formats](#packet-formats)). The app
-must make every payload unique; the random nonce, the introduction's
-ephemeral key and a reply's round do that.
-
-*Why unique.* Two messages to one destination with identical payloads
-are one message to every relay that still keeps the first one's record
-([message records](#message-records), [bounds](#bounds)), and the second
-is not delivered.
-
-### Where a text goes
-
-The app keeps a contact's home, from their card, apart from one place
-they were last known at, and when: the address a message from them was
-written from, at its `sent`, or at its arrival when `sent` is ahead of
-the phone's clock, and the node on a card of theirs, at its link time;
-the newer wins, and a message without an address keeps the place and
-moves its time. While the place is under a minute old, a text goes
-there; past it, with a home, the person chooses between where they were
-and the home's mailbox, for each text, and without one it goes there,
-as nothing else is, the app saying how old it is. With a home and no
-place, or the place the home, it goes to the home (roadmap D132, D162).
-
-*Why where they write from.* A reply goes straight to where the person
-is, rather than to their home's mailbox to wait for a fetch, at
-13 bytes on a message after a change.
-
-*Why a minute.* In a minute a person on foot, at a brisk 1.5 m/s, moves
-about 90 m, well within the ≈750 m a relay hears a handheld in the
-street ([physical layer](#physical-layer)); a person driving has left
-that reach by then, so a longer wait would not make the guess better.
-Past it the app cannot tell whether they are still there, and the
-person may know.
-
-### Which node a phone uses
-
-A phone may be paired with many nodes, each holding its bond. Of the
-nodes it hears well, at −85 dBm or above, it uses its home when it is
-paired with it, else the node it is paired with that it hears
-strongest, and is the owner there. It uses the public node it hears
-strongest, as a guest, while it is paired with none that is still its
-own ([pairing](#pairing), the removed phone), while those are out of
-reach, and while it hears them only weakly. A node is out of reach when
-the app's scans, 15 s apart, have reached it in neither of the last two,
-30 s; for a node that said it was installing, counted from 55 s after
-it ended the link, the time a node is away for its swap
-([updates over the mesh](#updates-over-the-mesh), the install), and
-while it waits for that node it uses no other. A node
-heard weakly is passed over for one further down the order heard well;
-when the phone hears no node well, it uses the one it hears strongest,
-of whatever kind. A scan that hears one of its own nodes well takes the
-phone back to it at once.
-
-On a node it is paired with that is not its home, the phone listens for
-the home once a minute and moves to it once it hears it well and nothing
-on the link is under way: no message written and not yet taken, none
-read and not yet confirmed, no fetch awaiting its answer, no update. It
-moves only up, from a public node to one it is paired with, from such a
-node to the home; never between two of its own nodes nor two public
-ones; and not from a node the person chose, until that link drops. A
-phone joins a node over a bond only as its owner, never as a guest, as
-the node takes a link encrypted with its bond as the owner's or ends
-it: a bond with a node the app does not count as the person's it has
-the phone remove as soon as it hears that node, before any link.
-
-On a public node the phone is a guest like any other: its texts go from
-that node, so replies come to it, and it reads them there by its
-recipient tag; a fetch it sends there carries its tag at that node, so
-the home's answer comes there too ([mailbox](#mailbox), The fetch)
-(roadmap D163, D166, D171, D172).
-
-*Why the home first.* The home keeps the person's mail and its address
-is on their card, so on it nothing waits elsewhere for them; on another
-of their nodes, texts sent to the home wait there to be fetched.
-
-*Why a weak node is passed over.* A link to a node at the edge of its
-reach may not hold, while a node nearer would. −85 dBm is a choice, the
-line below which the app calls a signal weak, as the phone hears an
-advertisement before any link. Below it the order gives way to signal,
-as of nodes that may all fail to hold a link the strongest is the
-likeliest to hold. It is applied only when the phone takes a node: a
-link once up is not left for its signal, so a node heard about the line
-does not move the phone back and forth.
-
-*Why two scans, and back at once.* A scan lasts four of the node's
-advertising intervals, 4.1 s, and hears a node in reach while the
-phone's screen is on; with the screen off the phone listens less and
-may miss it in one scan, so one miss does not prove the node gone. A
-node heard weakly was not missed, so the public node goes before it at
-once. A scan every 15 s is two in 30 s, within the five Android lets an
-app start in 30 s. A node the phone is paired with serves the person
-whole, its inbox and its settings, so the phone goes back to one at
-once. The two differ on purpose: at the edge of such a node's reach,
-heard in some scans and not others, the phone stays with it rather than
-going back and forth, and a text and the replies to it do not go by a
-public node the phone then leaves.
-
-*Why a minute, and only up.* On a standing link a scan serves only this
-and costs the phone's battery: 4.1 s a minute listens 7 % of the time,
-against 27 % every 15 s, for a home reached at most 45 s sooner. A
-minute is also how long a person on foot stays within a relay's reach
-([where a text goes](#where-a-text-goes)). A guest's link lasts one
-errand, so the next scan, at most 15 s on, takes a node the phone is
-paired with. Between two nodes of one place in the order, heard in turn
-at like signals, the phone would move back and forth. Nothing under way
-is cut, as a message cut between its write and the node's answer may go
-twice, and a fetch's answer comes to the node it was sent from. A node
-the person chose they may be at for its settings or an update.
+destination and payload ([packet formats](#packet-formats)). The app must
+make every payload unique, or a second message identical to one a relay
+still has a record of is not delivered
+([message records](#message-records)); the random nonce, the
+introduction's ephemeral key and a reply's round do that.
 
 ## Mailbox
 

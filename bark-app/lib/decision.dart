@@ -1,6 +1,6 @@
 // Which node the phone uses, and when it listens for one: one pure
 // function from what the phone knows now to what the search does next
-// (spec "Phone link", Which node a phone uses). The search carries the
+// (`bark-app/README.md`, "Screens"; roadmap D163, D171). The search carries the
 // decision out and feeds what came of it back; nothing else decides.
 
 import 'ble_link.dart';
@@ -9,8 +9,8 @@ import 'nodes.dart';
 
 /// How often the app reads a public node's ring for the person's mail
 /// while it has nothing to send, short of the paired node: a minute, the
-/// span the spec takes for a person on foot to stay within a relay's reach
-/// ("Where a text goes", Why a minute), which a sender's app takes as how
+/// span the app takes for a person on foot to stay within a relay's reach
+/// (`bark-app/README.md`, "Where a text goes"), which a sender's app takes as how
 /// long a reply should go to where the person wrote from; a reply that
 /// came there is thus read within about as long as it was aimed there.
 /// Four of the search's rounds of 15 s, so it costs the phone no scan
@@ -42,7 +42,7 @@ const Duration lookAround = guestCheck;
 /// differ on purpose: at the edge of a paired node's reach, heard in some
 /// rounds and not others, the phone stays with it rather than going back
 /// and forth, and its texts and the replies to them do not go by a public
-/// node it then leaves (spec "Phone link", Which node a phone uses;
+/// node it then leaves (`bark-app/README.md`, "Screens";
 /// roadmap D163, D166).
 const int ownGone = 2;
 

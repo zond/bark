@@ -479,7 +479,7 @@ search chooses again, the home first (roadmap D179).
 
 The app goes on an errand at a public node when it has something to
 send, at the next round, and otherwise once a minute (`guestCheck`): a
-minute is how long the spec takes a person on foot to stay within a
+minute is how long the app takes a person on foot to stay within a
 relay's reach (Where a text goes), and a sender's app sends a reply to
 where the person wrote from for that long, so a reply that came is read
 within about as long as it was aimed there. It is four of the search's
@@ -525,8 +525,8 @@ it hears, in this order: the
 home, when the phone is paired with it; else the paired node heard
 strongest, by the best RSSI each node had over the round. When it is
 paired with none that is still its own, or they are out of reach, it
-goes on its errands at the public node heard strongest (spec "Phone link",
-Which node a phone uses). The order holds among the nodes heard
+goes on its errands at the public node heard strongest (roadmap D163,
+D171). The order holds among the nodes heard
 at −85 dBm or above, where Settings stops saying "weak"
 (`FoundNode.usable`): a home or paired node heard below it is passed
 over for a node further down the order heard above it, a public one at
@@ -942,7 +942,8 @@ when it was last linked to it, so the app knows two addresses for a
 contact: the home on their card, if they have one, and one place they
 were last known at, from whichever of their messages and cards is
 newest: a message counted from the time it was written, or from when
-it arrived if that is earlier, a card from its link time. While that
+it arrived if that is earlier, a card from its link time; a message
+without an address keeps the place and moves its time. While that
 place is under a minute old, a text goes there without asking, straight to
 where they are, with no fetch from their mailbox: in a minute a person
 on foot, at a brisk 1.5 m/s, moves about 90 m, within the ≈750 m a
