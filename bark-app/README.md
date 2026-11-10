@@ -174,7 +174,8 @@ is a prototype for the bench, not the app people will carry.
   scan that has found nothing after about 10 s, or was stopped, says
   "No node found nearby" and to switch a node on or come closer; a
   public node says so, and a tap on one the phone is not paired with
-  uses it as a guest), how the connected node fares, and under
+  uses it as a guest, its **Pair** pairs with it (A guest's home,
+  below)), how the connected node fares, and under
   "Paired with" the nodes the phone is paired with, the home first, each
   marked as the home, connected, not in reach while the search looks,
   "Not looking. Tap to connect" once the person has stopped the search,
@@ -202,8 +203,7 @@ is a prototype for the bench, not the app people will carry.
   the connected node your home if it is not, or none; the dialog says
   so, and on **Go ahead** your new card goes to every contact; on a
   public node the phone uses as a guest the same button pairs first,
-  and its dialog says so (A guest's home, below), with **Pair with this
-  node** after the home node for whoever keeps the node; **Send
+  and its dialog says so (A guest's home, below); **Send
   my card**, as on the first screen; clear the mailbox key of a node
   that holds one and is not your home. A node without a place says
   "This node has no place yet", with **Use this phone's location**,
@@ -281,15 +281,18 @@ is a prototype for the bench, not the app people will carry.
 A node keeps up to eight phones, each its owner (spec "Phone link",
 Pairing; roadmap D168), and a phone may be paired with many nodes, and
 Android keeps a bond for each (roadmap D166). The phone pairs with a node when the person makes it their
-home or pairs with it in Settings (A guest's home, below), or taps a
-private node: Settings says to type the six-digit code the node's screen shows, and Android
+home or presses **Pair** on its row in Settings (A guest's home, below),
+or taps a private node: Settings says to type the six-digit code the node's screen shows, and Android
 asks for it in its own dialog; Android then takes about five seconds
 before it reports the bond, and Settings says "Paired, connecting…"
 until the node is read. While a connection is being made no other
 starts, and the connected node's row in the scan says "Connected" and
 does nothing: a second connect to it would close the link the first
 made. Tapping another node's row closes the link and connects to that
-one. The bond is the phone's from then on and
+one. A connection the person asks for holds against the search: from
+the close of the old link until the new one is up the search neither
+scans nor connects, as a round started by the close would take the
+home before the tap's own connect was made (roadmap D179). The bond is the phone's from then on and
 every later connection is encrypted without a code. When a phone paired
 with the node has removed this one (Phones at the node, below), or, on
 a node before link version 13, which kept one phone, another phone has
@@ -460,6 +463,14 @@ it for one phone at a time, so the app's queue waits for Ready as on
 any node. A phone that connects while another guest has the link is
 closed as it writes its tag; the next round tries again.
 
+A guest's link the person makes by a tap on a public node in Settings
+is not an errand: the app does not leave when the errand would, and
+the search does not run beside it, so it lasts until the node ends it
+after its 30 s, or the person goes to another node. The line says so,
+"Connected to ID … as a guest, until the node ends a guest's link after
+30 s", and its help that the node serves one guest at a time. Then the
+search chooses again, the home first (roadmap D179).
+
 The app goes on an errand at a public node when it has something to
 send, at the next round, and otherwise once a minute (`guestCheck`): a
 minute is how long the spec takes a person on foot to stay within a
@@ -481,17 +492,28 @@ wait there and their card gets a fixed address, and that the phone
 pairs with the node first, by the code its screen shows. Settings has
 the same button under the home node, its dialog saying the same and
 that a node keeps up to eight phones, so those paired with it before
-keep theirs; after it comes **Pair with this node**, for whoever keeps
-the node and wants its settings without making it their home. The link
+keep theirs. The link
 is down between errands, so the app keeps the node's address, whether
 it can be a home and, from link version 13, Node's `room` from the last
 errand there. A node whose `room` was 0 keeps eight phones already and
 would refuse the pairing: the first screen does not offer it, the home
-button is off, and in place of **Pair with this node** a line says that
+button is off, and a line says that
 the node takes no more pairings and that someone paired with it can
 remove a phone in Settings, at the node. A pairing that fails, a
 wrong code or one cancelled, says why, and the phone goes on using the
 node as a guest.
+
+Whoever keeps a public node, or wants a standing link to it without
+making it their home, presses **Pair** on its row in Settings' scan,
+shown on each public node the phone is not paired with. Its dialog says
+what pairing gives, the node's settings, its place and its updates on
+this phone and a link the phone keeps while the node is in reach unless
+the home is too, that a node keeps up to eight phones, and that the home
+is set apart, under the home node. **Pair** connects and pairs at once
+by the code on the node's screen, with no guest's errand first, so it
+works while the home is in reach; a pairing that fails says why, and the
+search then chooses again. A node whose `room` was 0 at the last errand
+says it takes no more pairings instead (roadmap D179).
 
 While it is not connected, the app looks for the nodes it is paired
 with and connects to the first of them it hears, in this order: the
@@ -1014,7 +1036,9 @@ phones in two lists with their names and days, remove another's with
 the code its screen shows, and offer a new code after a wrong one; say
 that a full node takes no more pairings, and try none there; make a
 guest's node the home by pairing first, offered on the first screen
-and in Settings, and stay a guest after a wrong code; take back among
+and in Settings, and stay a guest after a wrong code; from the home,
+take a tapped public node as a guest with no round between and keep it
+until the node ends it, and pair with one by its Pair at once; take back among
 the paired nodes a node Android holds a bond with that the app does not
 count as paired and that still holds the phone's, at once, by the
 search or a guest's tap, and never as a guest; have
@@ -1307,8 +1331,8 @@ a phone (Trying it, With a node).
     old pairing", and the line goes within a round of forgetting it
     there, after which the phone uses the node as a guest.
 17. Two paired nodes, A and B. Make A the home, then pair with B in
-    Settings (**Pair with this node** while the phone uses it as a
-    guest, or a tap on it if private). Settings lists both under "Paired
+    Settings (**Pair** on its row in the scan if public, a tap on it if
+    private). Settings lists both under "Paired
     with", A first as "Your home". Switch B off and take the phone to A:
     within a round the first screen says "Connected to your home, ID …",
     A's ID, never "as a guest". With A switched off and B on, it says
@@ -1319,3 +1343,13 @@ a phone (Trying it, With a node).
     **Disconnect**, below the list: both rows say "Not looking. Tap to
     connect", and a tap on A's connects to it, within a scan when it was
     not heard in the last 30 s.
+18. A tap on a public node from the home. On the home, with a public
+    node C in reach that the phone is not paired with, **Settings**,
+    **Scan**, a tap on C's row: the line says "Connected to ID … as a
+    guest, until the node ends a guest's link after 30 s", C's ID, the
+    node logs the phone's Recipient, and the log has no `Found …,
+    connecting` until C ends the link about 30 s after it began; then
+    the phone is back on the home within a round. **Pair** on C's row,
+    **Pair**: Android asks for the code on C's screen, and Settings
+    lists C under "Paired with"; the phone stays on C, as the person
+    chose it, until its link drops.
