@@ -75,10 +75,14 @@ impl<const N: usize> Turn<N> {
         }
     }
 
-    /// The node took the holder's message: the turn goes to the next phone
-    /// that wants it, or stays.
-    pub fn taken(&mut self) {
-        self.pass();
+    /// The node took the message of the phone in `slot`: if the turn is
+    /// still its, it goes to the next phone that wants it, or stays. A
+    /// write that waited for another phone's request may be taken after
+    /// the turn passed on, and does not end the new holder's.
+    pub fn taken(&mut self, slot: usize) {
+        if self.holder == Some(slot) {
+            self.pass();
+        }
     }
 
     /// Move the turn on to `now`, `ready` saying whether the node takes a
@@ -215,12 +219,12 @@ mod tests {
         t.ask(1);
         t.ask(2);
         // The holder's message taken: on to the next that asked.
-        t.taken();
+        t.taken(0);
         assert_eq!(t.holder(), Some(1));
-        t.taken();
+        t.taken(1);
         assert_eq!(t.holder(), Some(2));
         // Nobody asks: the turn stays.
-        t.taken();
+        t.taken(2);
         assert_eq!(t.holder(), Some(2));
         // 1 asks again, 2 leaves it unused for a ban.
         t.ask(1);
@@ -245,6 +249,22 @@ mod tests {
         t.linked(2);
         assert!(t.advance(T0, true));
         assert_eq!(t.holder(), Some(2));
+    }
+
+    /// The holder's write waited behind another phone's request, and the
+    /// turn passed on meanwhile: its message taken late leaves the new
+    /// holder its turn.
+    #[test]
+    fn a_message_taken_after_its_turn_passed_leaves_the_new_holders() {
+        let mut t = two();
+        t.ask(1);
+        assert!(t.advance(at(1), true));
+        assert_eq!(t.holder(), Some(1));
+        t.ask(0);
+        t.taken(0);
+        assert_eq!(t.holder(), Some(1));
+        t.taken(1);
+        assert_eq!(t.holder(), Some(0));
     }
 
     #[test]

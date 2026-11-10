@@ -824,7 +824,7 @@ pub fn take_request<R>(f: impl FnOnce(From, &Request) -> Option<(R, bool)>) -> O
                 }
                 let id = MsgId::of(dst_pos, dst_id, &payload[..usize::from(len)]);
                 l.took = Some((id, from, l.phones[from.slot].link));
-                l.turn.taken();
+                l.turn.taken(from.slot);
             }
         }
         l.request = None;
@@ -897,7 +897,7 @@ fn status_now(slot: usize) -> Status {
         let now = now();
         let inbox = l.phones[slot].record.map_or(0, |i| l.counts[i]);
         Status {
-            ready: l.status.ready && l.request.is_none() && l.turn.holder() == Some(slot),
+            ready: l.status.ready && l.turn.holder() == Some(slot),
             boot_left_s: l.boot_ends.map_or(0, |e| seconds_left(now, e)),
             inbox,
             ..l.status
@@ -2223,6 +2223,8 @@ async fn write_send(
     if !status_now(from.slot).ready {
         return Err(NOT_READY);
     }
+    // Ready says the turn is this phone's (roadmap D184): a request of
+    // another phone's under way is waited for, not answered not ready.
     match ask(from, request).await {
         true => Ok(()),
         false => Err(NOT_READY),
