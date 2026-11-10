@@ -71,6 +71,7 @@ sleeps in a pocket.
   place it stands, so that no later fix, true or spoofed, moves it
   (roadmap D63). A sleepy node with an anchor takes no fix: its position
   is its anchor's, and it keeps the carried flag it has ([beats](#beats)).
+  A carried relay is otherwise like any other.
 
 Holding mail for sleepy nodes, owning a destination by its position
 ([owner](#owner)) and being a sleepy node's anchor
@@ -660,8 +661,8 @@ newcomer replaces, in this order:
 1. the least recently heard demoted entry;
 2. the least recently heard entry, if it has missed a worst-case
    rotation, and so certainly a heartbeat on this channel;
-3. if the newcomer is a fixed relay that holds mail within 50 m, the
-   owner radius ([owner](#owner)), the least recently heard entry beyond
+3. if the newcomer is a fixed relay, one that holds mail, within 50 m,
+   the owner radius ([owner](#owner)), the least recently heard entry beyond
    50 m: the owner rule reads from the table that no relay that near is
    closer to a destination (roadmap D68, D70).
 
@@ -1159,6 +1160,8 @@ none returns the message to its parent. A ban does not take a neighbour
 out: a banned next hop is waited for, and the message is routed again
 when the ban ends ([overload waits](#overload-waits)); the neighbour table
 holds the failures and the ban for every message alike (roadmap D106).
+A neighbour that arrives, recovers or expires changes the answer the next
+time a message is routed, and nothing else does.
 The one exception is a neighbour that refused the message
 ([bans](#bans)): the queued message keeps a bit per neighbour-table slot
 for its refusers, cleared when the ban ends, and while a refuser is
@@ -1291,7 +1294,7 @@ message: it refuses every DATA that would give it work, to send on, to
 hold for a sleepy node or for its own application, as for want of room
 ([bans](#bans)), and takes none from its application. A take it answered
 before stands. Refused, a message waits at its sender, so nothing is lost
-to the reset.
+to the reset; the application keeps its own message meanwhile.
 
 **Choosing what to send.** Whenever no hand-over is under way and the
 radio is free, the relay routes every queued message from the state as it
