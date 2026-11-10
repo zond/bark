@@ -720,14 +720,21 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             return Ok(Start::Running);
         }
         let stopped = self.held.osc_stopped;
-        let now = self.clock.now();
-        let restart = stopped.is_some_and(|t| now.since(t) < tcxo::STILL_RUNNING);
-        let delay = if restart {
+        let running = |now: Instant| stopped.is_some_and(|t| now.since(t) < tcxo::STILL_RUNNING);
+        let mut restart = running(self.clock.now());
+        let mut delay = if restart {
             self.restart_delay()
         } else {
             self.cold.delay
         };
         self.set_tcxo(delay).await?;
+        // Other tasks may run while the command waits for the chip, so the
+        // window may have passed by the start: a cold start then.
+        if restart && !running(self.clock.now()) {
+            restart = false;
+            delay = self.cold.delay;
+            self.set_tcxo(delay).await?;
+        }
         let start = match stopped.map(|t| self.clock.now().since(t)) {
             Some(gap) if restart => Start::Restart { gap, delay },
             gap => Start::Cold { gap, delay },
@@ -1390,6 +1397,9 @@ mod tests {
         irq_late: Duration,
         /// Fail the next command that is this one.
         fail_on: Option<Cmd>,
+        /// How long `SetDIO3AsTCXOCtrl` holds the driver: the time another
+        /// task held the processor while the command waited for the chip.
+        tcxo_takes: Duration,
     }
 
     #[derive(Clone)]
@@ -1541,6 +1551,9 @@ mod tests {
             self.cmd(Cmd::Tcxo(delay.as_micros()))?;
             assert!(delay > Duration::ZERO, "a delay of zero hangs the chip");
             self.delay = delay;
+            let takes = self.board.borrow().tcxo_takes;
+            let now = self.clock.now();
+            *self.clock.0.borrow_mut() = now + takes;
             Ok(())
         }
         async fn errors(&mut self) -> Result<(u16, u8), &'static str> {
@@ -1693,6 +1706,7 @@ mod tests {
             warm_start: Duration::ZERO,
             irq_late: Duration::ZERO,
             fail_on: None,
+            tcxo_takes: Duration::ZERO,
         }
     }
 
@@ -1946,6 +1960,37 @@ mod tests {
         assert_eq!(take(&cmds)[..2], [Cmd::Errors, Cmd::Reset]);
         assert_eq!(radio.cold().delay, Duration::from_micros(1_500));
         assert_eq!(radio.held().mode, Mode::Rx);
+        assert_eq!(radio.chip().mode, Mode::Rx);
+    }
+
+    /// The choice of a restart holds for the start it is made for: the
+    /// oscillator's delay programmed, the window may have passed while
+    /// another task ran, and the start is then made cold.
+    #[test]
+    fn a_restart_whose_window_passed_while_the_delay_was_set_is_made_cold() {
+        let (mut radio, cmds, clock) = booted(board());
+        // The cold delay programmed last, so that the restart's is sent.
+        run(radio.lbt(ch(5))).unwrap();
+        run(clock.at(clock.now() + Duration::from_millis(3)));
+        run(radio.listen(ch(3))).unwrap();
+        run(radio.lbt(ch(5))).unwrap();
+        radio.chip().board.borrow_mut().tcxo_takes = tcxo::STILL_RUNNING;
+        take(&cmds);
+        run(radio.listen(ch(3))).unwrap();
+        assert_eq!(
+            take(&cmds),
+            [
+                Cmd::Freq(3),
+                Cmd::Tcxo(100),
+                Cmd::Tcxo(500),
+                Cmd::Rx,
+                Cmd::Errors
+            ]
+        );
+        assert!(
+            matches!(radio.last_start(), Start::Cold { gap: Some(g), .. } if g >= tcxo::STILL_RUNNING)
+        );
+        assert_eq!((radio.cold().errors, radio.restart().errors), (0, 0));
         assert_eq!(radio.chip().mode, Mode::Rx);
     }
 
