@@ -1,6 +1,6 @@
 //! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
 //! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
-//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--tables] [--margin FILE]`. Prints a short table; writes the JSON summary, the CSV
+//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--installs FILE] [--tables] [--margin FILE]`. Prints a short table; writes the JSON summary, the CSV
 //! time series, the per-message CSV, the per-node event trace, the links
 //! between relays and the per-minute series of every relay when asked;
 //! `--tables` adds what the neighbour tables hold to the JSON summary;
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--tables] [--margin FILE]";
+    "usage: bark-sim SCENARIO.toml [--seed N] [--duration-s S] [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE] [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--installs FILE] [--tables] [--margin FILE]";
 
 fn main() -> ExitCode {
     match run() {
@@ -31,6 +31,7 @@ fn run() -> Result<(), String> {
     let (mut messages, mut links, mut series, mut minutes) = (None, None, None, None);
     let mut battery = None;
     let mut update = None;
+    let mut installs = None;
     let mut tables = false;
     let mut margin = None;
     while let Some(a) = args.next() {
@@ -62,6 +63,7 @@ fn run() -> Result<(), String> {
             "--message-minutes" => minutes = Some(PathBuf::from(val("--message-minutes")?)),
             "--battery" => battery = Some(PathBuf::from(val("--battery")?)),
             "--update" => update = Some(PathBuf::from(val("--update")?)),
+            "--installs" => installs = Some(PathBuf::from(val("--installs")?)),
             "--tables" => tables = true,
             "--margin" => margin = Some(PathBuf::from(val("--margin")?)),
             "-h" | "--help" => {
@@ -108,6 +110,9 @@ fn run() -> Result<(), String> {
     let summary = sim.summary();
     print!("{}", summary.table());
     print!("{}", sim.places_report());
+    if let Some(r) = sim.install_report() {
+        print!("{r}");
+    }
     println!(
         "wall time: build {:.2} s, run {:.2} s",
         built.as_secs_f64(),
@@ -129,6 +134,9 @@ fn run() -> Result<(), String> {
         std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let (Some(p), Some(s)) = (update, sim.update_csv()) {
+        std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    if let (Some(p), Some(s)) = (installs, sim.install_csv()) {
         std::fs::write(&p, s).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     if let (Some(p), Some(s)) = (series, sim.series()) {

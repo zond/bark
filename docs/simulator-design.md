@@ -162,6 +162,8 @@ S3 are the twins of bring-up steps 4, 5 and 3 (roadmap, Phase 2).
 | `s4-boot.toml` | S4 with a dozen relays and a dozen sleepy nodes planted in its settled hour, and two dozen relays restarted, half with their stored state and half wiped | how soon a node switched on takes part; `fast-boot-2026-10-23.md` |
 | `s4-mass-boot.toml` | S4 with every node switched on in the same second | the boot after a power cut; `fast-boot-2026-10-23.md` |
 | `grid-down.toml` | S4 with every node's battery, and the grid down for four hours after an hour of the settled network | relays on battery in an outage; `battery-role-2026-10-25.md` |
+| `district-x64.toml` | `district.toml` at 64 times the rate for an hour and a half | the baseline of the install run below; `update-under-load-2026-11-10.md` |
+| `district-x64-install.toml` | `district-x64.toml` with every node rebooting into a new image, each staged at a time drawn within the hour after the settle time | that nodes install under load and lose nothing; `update-under-load-2026-11-10.md` |
 | `dark-groups.toml` | four square kilometres at S4's densities, a relay at the centre and a building of 400 people beside it; a run adds the group that goes dark | the delivery queue while a group is dark; `unproven-2026-10-18.md` |
 
 The meshes' links follow S2's model with shadowing drawn from the run's
@@ -211,6 +213,24 @@ and boots (spec "Channel at boot"), while its neighbours still list it.
 A scripted `wipe` does the same with the stored state erased, as a fresh
 board in its place. The summary counts the writes of stored state per
 node and day.
+
+**Install.** A node whose image, gathered over the mesh, is whole
+stages it and reboots into it as the firmware does
+(spec "Updates over the mesh", the install; `bark-sim/src/install.rs`). With `[update]` the
+image is whole when the node holds every block; with `[install]` each
+node chosen by `share` holds it at a time drawn uniformly within
+`over_s` from `from_s`, the settle time by default, without the pieces.
+After every event at a node with an image staged the driver asks its
+core to drain while `bark_image::policy::drains` says so, and reboots
+it once `policy::quiet` says so, with no phone links and no mailbox
+write under way, as the simulator has none. It keeps what the core
+holds (`Relay::held`) in the slots the firmware writes to its flash,
+is off for the swap, 46.6 s from the loader's figures
+(`bark-fw/README.md`, "Updates"), and comes back as after a restart,
+with a new core and its stored state. It then offers the kept messages
+again one at a time, ahead of its application's. The summary gives,
+per node, the time from staging to reboot and what it kept, and the
+fate of every kept message (`--installs FILE` writes the rows).
 
 **Boots.** Every boot, a node's switch-on and every scripted `start`,
 `restart` and `wipe`, is followed until the node takes part: when it
