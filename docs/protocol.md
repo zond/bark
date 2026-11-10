@@ -4137,9 +4137,10 @@ read and not yet confirmed, no fetch awaiting its answer, no update. It
 moves only up, from a public node to one it is paired with, from such a
 node to the home; never between two of its own nodes nor two public
 ones; and not from a node the person chose, until that link drops. A
-phone that holds a bond with a node joins it only as its owner, never as
-a guest, as the node takes a link encrypted with its bond as the
-owner's or ends it.
+phone joins a node over a bond only as its owner, never as a guest, as
+the node takes a link encrypted with its bond as the owner's or ends
+it: a bond with a node the app does not count as the person's it has
+the phone remove as soon as it hears that node, before any link.
 
 On a public node the phone is a guest like any other: its texts go from
 that node, so replies come to it, and it reads them there by its
