@@ -30,37 +30,25 @@ class NotOurs implements Exception {
   String toString() => '${shownName(node)} no longer knows this phone';
 }
 
-/// The phone still holds a bond for the node `node` that the node no
-/// longer has: its owner unpaired it, or another phone paired with it.
-/// Android encrypts every link to it with that bond, which the node
-/// refuses, so the phone cannot use it even as a guest until the bond is
-/// forgotten (spec "Phone link", Public).
-class StaleBond implements Exception {
-  final String node;
-  const StaleBond(this.node);
-  @override
-  String toString() => staleBondLine(node);
-}
-
-/// What the person reads of a [StaleBond] at `node`: what happened and the
-/// way out.
-String staleBondLine(String node) =>
-    '${shownName(node)} rejects this phone\'s old pairing. Forget it in '
-    'Bluetooth settings.';
-
-/// Android kept its bond with the node `node` when asked to remove it
-/// before a new pairing, which cannot run over it: Android would pair
-/// with its old keys while the node runs a new pairing (bench,
-/// 2026-11-10). No pairing was tried.
+/// Android kept its bond with the node `node`, which the app does not
+/// count as the phone's, when asked to remove it. Android encrypts every
+/// link to the node with it, which the node takes as its owner's or ends,
+/// and pairs with its old keys while the node runs a new pairing (bench,
+/// 2026-11-10), so the phone cannot use the node until the person
+/// forgets it in the phone's Bluetooth settings (spec "Phone link",
+/// Pairing, Public).
 class BondKept implements Exception {
   final String node;
   const BondKept(this.node);
   @override
-  String toString() =>
-      'The phone kept its old pairing with ${shownName(node)}, so no new '
-      'one was tried. Forget the node in Bluetooth settings, then try '
-      'again.';
+  String toString() => bondKeptLine(node);
 }
+
+/// What the person reads of a [BondKept] at `node`: what happened and the
+/// way out.
+String bondKeptLine(String node) =>
+    'The phone kept its old pairing with ${shownName(node)}, so it cannot '
+    'use the node. Forget it in Bluetooth settings.';
 
 /// The link to the node `node` ended before the app had read it: the
 /// node ended it, or went out of reach.

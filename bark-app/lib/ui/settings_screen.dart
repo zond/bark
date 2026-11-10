@@ -158,8 +158,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await f();
     } on NotOurs catch (e) {
       if (mounted) await _notOurs(e);
-    } on StaleBond catch (e) {
-      if (mounted) await askToForget(context, app, staleBondLine(e.node));
     } on BondKept catch (e) {
       if (mounted) await askToForget(context, app, '$e');
     } catch (e) {
@@ -298,7 +296,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               NoticeCard(app),
-              StaleBondLine(app),
+              BondKeptLine(app),
               ..._connection(),
               ..._home(),
               ..._thisNode(),

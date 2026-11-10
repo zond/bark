@@ -1495,11 +1495,11 @@ void main() {
     );
     await t.runAsync(app.load);
     const line =
-        'ID 0CE400000004 rejects this phone\'s old pairing. Forget it in '
-        'Bluetooth settings.';
+        'The phone kept its old pairing with ID 0CE400000004, so it cannot '
+        'use the node. Forget it in Bluetooth settings.';
     await t.pumpWidget(BarkApp(app));
     expect(find.text(line), findsNothing);
-    app.staleBonds['bark-0ce400000004'] = 'aa:bb:cc:dd:ee:04';
+    app.bondsKept['bark-0ce400000004'] = 'aa:bb:cc:dd:ee:04';
     app.notifyListeners();
     await t.pump();
     expect(find.text(line), findsOneWidget);
@@ -1733,9 +1733,11 @@ void main() {
       ..keepsBonds = true
       ..nodes[device]!.paired = false;
     await pair();
+    const kept = 'The phone kept its old pairing with ID 0CE400000004';
     expect(
-      find.textContaining(
-        'The phone kept its old pairing with ID 0CE400000004',
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining(kept),
       ),
       findsOneWidget,
     );
@@ -1746,6 +1748,8 @@ void main() {
     expect(ble.pairings, 0);
     await t.tap(find.text('Not now'));
     await t.pumpAndSettle();
+    // Settings goes on saying so until the person forgets the node.
+    expect(find.textContaining(kept), findsOneWidget);
     await done(t, app, ble);
   });
 

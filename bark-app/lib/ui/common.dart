@@ -249,15 +249,16 @@ class NoticeCard extends StatelessWidget {
   }
 }
 
-/// While a node refuses the phone's old bond ([AppModel.staleBond]): the
-/// line that says so, with the way to the phone's Bluetooth settings.
-class StaleBondLine extends StatelessWidget {
+/// While Android keeps a bond the app asked it to remove
+/// ([AppModel.bondKept]): the line that says so, with the way to the
+/// phone's Bluetooth settings.
+class BondKeptLine extends StatelessWidget {
   final AppModel app;
-  const StaleBondLine(this.app, {super.key});
+  const BondKeptLine(this.app, {super.key});
 
   @override
   Widget build(BuildContext context) {
-    final n = app.staleBond;
+    final n = app.bondKept;
     if (n == null) return const SizedBox.shrink();
     return Card(
       color: Theme.of(context).colorScheme.errorContainer,
@@ -266,7 +267,7 @@ class StaleBondLine extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(staleBondLine(n)),
+            Text(bondKeptLine(n)),
             Align(
               alignment: Alignment.centerRight,
               child: BluetoothSettingsButton(app),
@@ -283,10 +284,9 @@ class StaleBondLine extends StatelessWidget {
 String notPairedLine(Object e) =>
     '${e is NotPaired ? '$e' : 'Pairing failed: $e'}. Still a guest here.';
 
-/// While no home is set and the phone is on a node that can be one
-/// ([AppModel.offerHome]), the node the search found still paired with the
-/// phone or a public node it uses as a guest: makes it the home in one tap,
-/// pairing first with a guest's.
+/// While no home is set and the phone uses a public node as a guest that
+/// can be one ([AppModel.offerHome]): makes it the home in one tap,
+/// pairing first.
 class HomeOfferLine extends StatelessWidget {
   final AppModel app;
   const HomeOfferLine(this.app, {super.key});
@@ -294,7 +294,6 @@ class HomeOfferLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!app.offerHome) return const SizedBox.shrink();
-    final guest = app.guestHere != null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
@@ -303,8 +302,8 @@ class HomeOfferLine extends StatelessWidget {
           children: [
             Text(
               'No home node yet. Make this one your home? It keeps texts '
-              'to you while you are away.'
-              '${guest ? ' You pair first, with the code on its screen.' : ''}',
+              'to you while you are away. You pair first, with the code on '
+              'its screen.',
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -321,14 +320,7 @@ class HomeOfferLine extends StatelessWidget {
                             final r = await app.homeHere();
                             if (context.mounted) say(context, r);
                           } catch (e) {
-                            if (context.mounted) {
-                              say(
-                                context,
-                                guest
-                                    ? notPairedLine(e)
-                                    : 'Setting the home failed: $e',
-                              );
-                            }
+                            if (context.mounted) say(context, notPairedLine(e));
                           }
                         },
                   child: const Text('Make this node my home'),

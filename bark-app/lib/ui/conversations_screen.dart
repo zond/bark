@@ -88,7 +88,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         children: [
           ..._releases(context),
           NoticeCard(app),
-          StaleBondLine(app),
+          BondKeptLine(app),
           HomeOfferLine(app),
           ..._gettingStarted(context),
           // Once there is a contact, there is someone to lose.

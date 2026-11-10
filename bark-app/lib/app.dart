@@ -53,8 +53,8 @@ FoundNode? _strongest(Iterable<FoundNode> nodes) {
 /// this order: the `home` when it is one of the `paired` nodes, as it
 /// serves the person whole and keeps their mail; else the paired node
 /// heard strongest; else the public node heard strongest, never one of
-/// `lost` nor of `stale`, whose bond the phone still holds and which ends
-/// a link encrypted with it (spec "Phone link", The replaced phone,
+/// `kept`, whose bond Android keeps though the node is not the phone's,
+/// as a link encrypted with it the node ends (spec "Phone link",
 /// Public); else none.
 ///
 /// The order holds among the nodes heard at a signal a link holds at
@@ -73,8 +73,7 @@ FoundNode? chooseNode(
   Iterable<FoundNode> heard, {
   String? home,
   Set<String> paired = const {},
-  Set<String> lost = const {},
-  Set<String> stale = const {},
+  Set<String> kept = const {},
   String? on,
 }) {
   int place(String name) => name == home && paired.contains(name)
@@ -84,8 +83,7 @@ FoundNode? chooseNode(
       : 2;
   // A node the phone may use at all, whatever its signal.
   bool may(FoundNode n) =>
-      paired.contains(n.name) ||
-      (n.public && !lost.contains(n.name) && !stale.contains(n.name));
+      paired.contains(n.name) || (n.public && !kept.contains(n.name));
   final good = heard.where((n) => n.usable && may(n));
   final own = good.where((n) => paired.contains(n.name));
   final FoundNode? n;
@@ -294,23 +292,60 @@ class AppModel extends ChangeNotifier {
   /// old bond and connects again, which pairs.
   Future<void> Function()? pairAgain;
 
-  /// The nodes, by name, whose links failed for a bond the phone holds and
-  /// the node does not, each with its device ([StaleBond]). The search
-  /// passes them over until Android no longer lists the bond, as every
-  /// link to them would fail the same way.
-  final Map<String, String> staleBonds = {};
+  /// The nodes, by name, each with its device, whose bond Android kept
+  /// when the app asked it to remove it, as the node is not the phone's.
+  /// Every link to them would be encrypted with that bond, which the node
+  /// ends, so the app passes them over until the person forgets them in
+  /// the phone's Bluetooth settings ([BondKept]).
+  final Map<String, String> bondsKept = {};
 
-  /// A node of [staleBonds], for the line that tells the person.
-  String? get staleBond => staleBonds.keys.firstOrNull;
+  /// A node of [bondsKept], for the line that tells the person.
+  String? get bondKept => bondsKept.keys.firstOrNull;
 
-  /// Drops from [staleBonds] each node whose bond Android no longer lists:
+  /// Drops from [bondsKept] each node whose bond Android no longer lists:
   /// the person has forgotten it in the phone's settings.
-  Future<void> recheckStale() async {
-    for (final MapEntry(key: name, value: device) in [...staleBonds.entries]) {
+  Future<void> recheckKept() async {
+    for (final MapEntry(key: name, value: device) in [...bondsKept.entries]) {
       if (await BleLink.bonded(device)) continue;
-      staleBonds.remove(name);
-      session.note('Pairing: the phone no longer holds a bond for $name');
+      bondsKept.remove(name);
+      session.note('Pairing: the phone no longer holds a bond with $name');
       notifyListeners();
+    }
+  }
+
+  /// Has Android remove its bond with the node `name` at `device`, if it
+  /// lists one, as the app makes no link over a bond to a node it does
+  /// not count as its own: the node would take the link as its owner's,
+  /// or end it (spec "Phone link", Public). True once none is left; where
+  /// Android keeps it, false, and the node joins [bondsKept].
+  Future<bool> _forgetBond(String name, String device) async {
+    if (!await BleLink.bonded(device)) return true;
+    if (await BleLink.forget(device)) {
+      // Android forgot with the bond what kind of address the node has,
+      // and connects to it only once a scan has told it again ([seen]).
+      _unseen.add(device);
+      session.note('Pairing: the phone forgot its bond with $name');
+      return true;
+    }
+    if (!bondsKept.containsKey(name)) {
+      session.note('Pairing: the phone kept its bond with $name');
+    }
+    bondsKept[name] = device;
+    notifyListeners();
+    return false;
+  }
+
+  /// The devices whose bond Android removed since a scan last heard them.
+  final Set<String> _unseen = {};
+
+  /// Removes the bond Android holds with each node of `heard` that the app
+  /// does not count as its own, as it hears it, so that the node is a
+  /// public node like any other.
+  Future<void> _forgetBonds(Iterable<FoundNode> heard) async {
+    for (final n in heard) {
+      if (n.name == n.deviceId || pairedNodes.contains(n.name)) continue;
+      if (bondsKept.containsKey(n.name)) continue;
+      await _forgetBond(n.name, n.deviceId);
     }
   }
 
@@ -319,7 +354,7 @@ class AppModel extends ChangeNotifier {
   /// later link to the node with it, a guest's too, and the node refuses
   /// it (spec "Phone link", Public). Returns whether the phone's bond is
   /// gone; where Android keeps it, the person forgets the node in the
-  /// phone's Bluetooth settings, and [staleBond] says so meanwhile.
+  /// phone's Bluetooth settings, and [bondKept] says so meanwhile.
   Future<bool> unpair() async {
     _unpairing = true;
     notifyListeners();
@@ -345,15 +380,7 @@ class AppModel extends ChangeNotifier {
     // Nothing learned of the node unpaired bears on the next.
     _ownMissed = 0;
     _guestAt = null;
-    final gone = await BleLink.forget(device);
-    if (gone) {
-      session.note('Pairing: the phone forgot its bond with $name too');
-    } else {
-      session.note('Pairing: the phone kept its bond with $name');
-      staleBonds[name] = device;
-      notifyListeners();
-    }
-    return gone;
+    return _forgetBond(name, device);
   }
 
   /// The device of each node heard in this run, by name: Android names a
@@ -365,6 +392,7 @@ class AppModel extends ChangeNotifier {
       if (n.name == n.deviceId) continue;
       _devices[n.name] = n.deviceId;
       _lastHeard[n.name] = (found: n, at: now());
+      _unseen.remove(n.deviceId);
     }
   }
 
@@ -418,23 +446,15 @@ class AppModel extends ChangeNotifier {
   /// it paired no more, and has Android remove its bond with the node, as
   /// [unpair] does, where it has heard the node in this run (roadmap
   /// D173). Returns true once no bond is left, false where Android kept
-  /// it ([staleBond] then says so), and null where the app has not heard
-  /// the node: it removes the bond once it does ([_bondedNode]), or the
+  /// it ([bondKept] then says so), and null where the app has not heard
+  /// the node: it removes the bond once it does ([_forgetBonds]), or the
   /// person forgets the node in the phone's Bluetooth settings. The home
   /// stays, as the node keeps the mailbox key.
   Future<bool?> forget(String name) async {
     await session.forget(name);
     final device = _devices[name];
     if (device == null) return null;
-    if (!await BleLink.bonded(device)) return true;
-    if (await BleLink.forget(device)) {
-      session.note('Pairing: the phone forgot its bond with $name too');
-      return true;
-    }
-    session.note('Pairing: the phone kept its bond with $name');
-    staleBonds[name] = device;
-    notifyListeners();
-    return false;
+    return _forgetBond(name, device);
   }
 
   /// Keeps the node's address for the card, and the home's.
@@ -819,6 +839,7 @@ class AppModel extends ChangeNotifier {
       await startScan((n) {
         found[n.deviceId] = n;
         _heard([n]);
+        unawaited(_forgetBonds([n]));
         notifyListeners();
       });
     } catch (e) {
@@ -908,19 +929,17 @@ class AppModel extends ChangeNotifier {
   /// read the ring's items for the person ([Session.attach]), send what
   /// waits while Ready comes, and leave, as the node shares its one guest
   /// link among every guest in reach (spec "Phone link", Public); not an
-  /// `errand` but the person's tap, the link stays until it ends. A node
-  /// Android lists a bond with is connected over it first ([_overBond]),
-  /// and used as a guest only once it refused the bond and Android has
-  /// removed it, after a scan, as the bond went with what Android knew of
-  /// the address's type.
+  /// `errand` but the person's tap, the link stays until it ends. A bond
+  /// Android holds with the node goes first ([_forgetBond]): a guest's
+  /// link is never made over one; where Android keeps it, [BondKept].
   Future<void> _connectGuest(FoundNode n, {bool errand = true}) async {
-    final bonded = await BleLink.bonded(n.deviceId);
+    if (!await _forgetBond(n.name, n.deviceId)) throw BondKept(n.name);
     // A connect of the person's that came meanwhile goes first.
     if (errand && _tapHeld) return;
-    if (bonded) {
-      if (await _overBond(n)) return;
-      if (!await seen(n.deviceId)) throw NotSeen(shownName(n.name));
+    if (_unseen.contains(n.deviceId) && !await seen(n.deviceId)) {
+      throw NotSeen(shownName(n.name));
     }
+    _unseen.remove(n.deviceId);
     await _open(n.deviceId, n.name, () async {
       await _searchStopped();
       await stopScan();
@@ -1049,13 +1068,12 @@ class AppModel extends ChangeNotifier {
       // ends before a pairing can start (bench, 2026-11-10). So the bond
       // goes first, as on Forget; a node that still held it takes the new
       // pairing in its place (spec "Phone link", Pairing).
-      final bonded = !ours && await BleLink.bonded(n.deviceId);
-      if (bonded) {
-        if (!await BleLink.forget(n.deviceId)) throw BondKept(n.name);
-        s.note('Pairing: the phone forgot its old bond with ${n.name}');
+      if (!ours && !await _forgetBond(n.name, n.deviceId)) {
+        throw BondKept(n.name);
       }
-      if (bonded || again) {
+      if (_unseen.contains(n.deviceId) || again) {
         if (!await seen(n.deviceId)) throw NotSeen(shownName(n.name));
+        _unseen.remove(n.deviceId);
       }
       return BleLink.connect(
         n.deviceId,
@@ -1077,10 +1095,9 @@ class AppModel extends ChangeNotifier {
   /// search the person made. Unless the link is a `guest`'s, the node
   /// holds this phone's bond then and is kept as the paired node; one
   /// that no longer does is kept as lost, with `again` to pair with it
-  /// anew, and [NotOurs] goes on to the caller; one refused for a bond
-  /// the node no longer has is kept in [staleBonds], and [StaleBond] goes
-  /// on. An owner's link to `name` that ended while it was read is not
-  /// taken as the node holding the bond: [LinkEnded] goes on.
+  /// anew, and [NotOurs] goes on to the caller. An owner's link to `name`
+  /// that ended while it was read is not taken as the node holding the
+  /// bond: [LinkEnded] goes on.
   Future<void> _open(
     String device,
     String name,
@@ -1101,10 +1118,6 @@ class AppModel extends ChangeNotifier {
       _phase(Linking.attaching);
       mtu = m;
       session.note('Connected, MTU $m');
-      if (staleBonds.containsValue(device)) {
-        staleBonds.removeWhere((_, d) => d == device);
-        notifyListeners();
-      }
       if (await session.attach(link, guest: guest) && !guest) {
         if (!session.connected) throw LinkEnded(name);
         if (ownAway) session.note('Back on a paired node');
@@ -1119,10 +1132,6 @@ class AppModel extends ChangeNotifier {
     } on NotOurs catch (e) {
       await session.setPaired(e.node, lost: true);
       pairAgain = again;
-      rethrow;
-    } on StaleBond catch (e) {
-      staleBonds[e.node] = device;
-      session.note('${e.node} refused this phone\'s old bond');
       rethrow;
     } finally {
       _phase(Linking.none);
@@ -1313,12 +1322,13 @@ class AppModel extends ChangeNotifier {
   /// When the search last started a scan, a round's or a look-around's.
   DateTime? _scanned;
 
-  /// Each round scans, then connects to the node [chooseNode] picks from
-  /// what it heard: the home, another paired node, a node Android holds a
-  /// bond with that the app does not count as paired ([_bondedNode]), or
-  /// the strongest public node while the phone has no paired node or they
-  /// are out of reach ([ownGone]); while a paired node is away for its
-  /// install, that node alone ([_installWaits]).
+  /// Each round scans, has Android remove its bond with each node heard
+  /// that the app does not count as its own ([_forgetBonds]), then
+  /// connects to the node [chooseNode] picks from what it heard: the
+  /// home, another paired node, or the strongest public node while the
+  /// phone has no paired node or they are out of reach ([ownGone]); while
+  /// a paired node is away for its install, that node alone
+  /// ([_installWaits]).
   Future<void> _rounds() async {
     try {
       while (_awake()) {
@@ -1332,7 +1342,8 @@ class AppModel extends ChangeNotifier {
         _round = round;
         final heard = await round;
         _round = null;
-        await recheckStale();
+        await recheckKept();
+        await _forgetBonds(heard.values);
         // A round cut short by the person's scan or tap heard too little
         // to call anything out of reach.
         final looked = lookingNow;
@@ -1346,8 +1357,7 @@ class AppModel extends ChangeNotifier {
                 heard.values.where((h) => !waits || h.name == awaited),
                 home: homeName,
                 paired: pairedNodes,
-                lost: await _lostBonded(heard.values),
-                stale: staleBonds.keys.toSet(),
+                kept: bondsKept.keys.toSet(),
                 on: session.connected ? _nodeOn : null,
               )
             : null;
@@ -1358,11 +1368,6 @@ class AppModel extends ChangeNotifier {
         // tell that it is there.
         final weakOwn =
             !waits && heard.values.any((h) => paired.contains(h.name));
-        final errands = !waits && (usesPublic || weakOwn);
-        final bonded = looked && !mine && !waits
-            ? await _bondedNode(heard.values)
-            : null;
-        if (bonded != null) await _adopt(bonded, errand: errands);
         if (looked &&
             paired.isNotEmpty &&
             !(session.connected && !session.guest) &&
@@ -1379,7 +1384,6 @@ class AppModel extends ChangeNotifier {
         if (looked) ownWeak = weakOwn && !mine;
         if (n != null &&
             !mine &&
-            bonded == null &&
             !waits &&
             (usesPublic || weakOwn) &&
             _guestDue(n)) {
@@ -1393,16 +1397,6 @@ class AppModel extends ChangeNotifier {
       _searching = false;
     }
   }
-
-  /// The nodes no longer this phone's that were `heard` and that Android
-  /// still lists the bond with, which they refuse; without the bond each
-  /// serves the phone as a guest like any public node.
-  Future<Set<String>> _lostBonded(Iterable<FoundNode> heard) async => {
-    for (final n in heard)
-      if (session.pairingLost.contains(n.name) &&
-          await BleLink.bonded(n.deviceId))
-        n.name,
-  };
 
   /// The name of the node the phone has a link to.
   String? get _nodeOn {
@@ -1482,97 +1476,12 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  /// The node heard strongest of those Android lists a bond with that the
-  /// app does not count as paired, as after its data was cleared or on a
-  /// new install: the node may still hold the phone's bond. None that
-  /// refused the bond already, nor while a link is up.
-  Future<FoundNode?> _bondedNode(Iterable<FoundNode> heard) async {
-    if (session.connected) return null;
-    final byRssi = [...heard]
-      ..sort((a, b) => (b.rssi ?? noRssi).compareTo(a.rssi ?? noRssi));
-    for (final n in byRssi) {
-      if (session.pairedWith.contains(n.name)) continue;
-      if (staleBonds.containsKey(n.name)) continue;
-      if (await BleLink.bonded(n.deviceId)) return n;
-    }
-    return null;
-  }
-
-  /// Connects to `n`, whose bond Android lists, over that bond, as its
-  /// owner: a link over a bond is never a guest's, as the node takes it as
-  /// its owner's or ends it. A node that still holds the bond, its first
-  /// read on the encrypted link succeeding, is kept among the paired
-  /// nodes. One that refuses it has Android remove the bond; where Android
-  /// keeps it, [staleBonds] keeps the node, the person is told, and
-  /// [StaleBond] goes on. Returns false only once the bond is gone, when
-  /// the node may serve the phone as a guest.
-  Future<bool> _overBond(FoundNode n) async {
-    try {
-      await _open(n.deviceId, n.name, () async {
-        await _searchStopped();
-        await stopScan();
-        try {
-          return await BleLink.connect(n.deviceId, name: n.name, hadBond: true);
-        } on NotOurs {
-          throw StaleBond(n.name);
-        }
-      });
-    } on StaleBond {
-      if (!await BleLink.forget(n.deviceId)) rethrow;
-      staleBonds.remove(n.name);
-      session.note('Pairing: the phone forgot its old bond with ${n.name}');
-      notifyListeners();
-      return false;
-    }
-    // A node whose version does not serve this app's, as the session's
-    // notice says, is not used as a guest either.
-    if (!session.connected || session.guest) return true;
-    session.note('Pairing: ${n.name} still holds this phone\'s bond');
-    adopted = n.name;
-    notifyListeners();
-    return true;
-  }
-
-  /// The search found `n`, whose bond Android holds: taken back as a
-  /// paired node, or, refused and its bond removed, used as a guest when
-  /// public and the round goes on an `errand` at all, after a scan, as the
-  /// bond went with what Android knew of the address's type
-  /// ([_overBond]); without one the paired nodes are not yet out of reach
-  /// ([ownGone]). Nothing while a connect of the person's is under way,
-  /// which holds ([_byTap]).
-  Future<void> _adopt(FoundNode n, {required bool errand}) async {
-    if (connecting) return;
-    session.note('Found ${n.name}, bonded: connecting as its owner');
-    _tapped = false;
-    try {
-      if (await _overBond(n)) return;
-    } on StaleBond {
-      return;
-    } catch (e) {
-      session.note('Connecting to ${n.name} failed: $e');
-      return;
-    }
-    if (errand && n.public && await seen(n.deviceId)) await _connectPublic(n);
-  }
-
-  /// The node the search found still paired with this phone though the
-  /// app knew of no pairing, until the person makes it their home or
-  /// declines: the first screen offers it as the home while none is set.
-  String? adopted;
-
-  /// Whether the first screen offers the node the phone is on as the
-  /// home, while none is set: the connected node, [adopted], or the one it
-  /// uses as a guest ([guestHere]), once it has a place and if it can be a
-  /// home. Not again in the app's run once the person said not now.
+  /// Whether the first screen offers the public node the phone uses as a
+  /// guest ([guestHere]) as the home, while none is set, once it has a
+  /// place and if it can be a home and takes a pairing. Not again in the
+  /// app's run once the person said not now.
   bool get offerHome {
     if (_homeNotNow || me.home != null) return false;
-    final s = session;
-    final n = s.connected && !s.guest ? s.node : null;
-    if (n != null) {
-      return nodeName(n.id) == adopted &&
-          s.address != null &&
-          canBeHome(s.status);
-    }
     final g = guestHere;
     return g != null && g.address != null && g.homeable && g.room != 0;
   }
@@ -1583,7 +1492,6 @@ class AppModel extends ChangeNotifier {
   /// The person declines the offer of the home.
   void notHome() {
     _homeNotNow = true;
-    adopted = null;
     notifyListeners();
   }
 
