@@ -8,7 +8,8 @@
 // disconnected, not to a node no longer theirs, and gives way to the
 // person's tap on another node; and with no paired node, or while it
 // is not heard, the strongest public node, joined as a guest, but not
-// one that refuses the phone's old bond until the bond is forgotten; and
+// one that refuses the phone's old bond until the bond is forgotten, nor
+// any other node while a paired node is away for its install; and
 // the owner's unpairing, after which Android forgets its bond too; and
 // Pair, which removes a bond Android holds first and tries nothing where
 // Android keeps it, Pair again on a lost node heard lately, a link the
@@ -1313,6 +1314,118 @@ void main() {
       });
     });
 
+    /// The paired node, linked, says it installs version 24, reboots and
+    /// is out of reach; the bond the phone holds with the strong public
+    /// node, which the app does not count as paired, it refuses, as on
+    /// the bench, 2026-11-10.
+    FakeNode installs(FakeAsync async, AppModel app, FakeNodes ble) {
+      ble.nodes[strong]!.paired = false;
+      async.elapse(round);
+      expect(app.linkDevice, paired);
+      final node = ble.nodes[paired]!;
+      node.gathered(24);
+      async.flushMicrotasks();
+      ble.inReach.remove(paired);
+      node.install();
+      ble.drop(paired);
+      async.flushMicrotasks();
+      return node;
+    }
+
+    test('while the paired node installs the search looks for it alone: no '
+        'node Android holds a bond with, no errand, until it is back', () {
+      run(withPaired: true, pairedInReach: true, bonds: {strong}, (
+        async,
+        app,
+        ble,
+      ) {
+        final node = installs(async, app, ble);
+        // A text written meanwhile waits on the phone.
+        final dst = Address(Position.fromDegrees(50, 30), [9, 9, 9, 9, 9, 9]);
+        final o = Outgoing(
+          dst,
+          mail(app, [9, 9, 9, 9, 9, 9], 7),
+          at: start,
+          kind: OutKind.text,
+          sent: 1,
+        );
+        app.session.queue(o);
+        async.elapse(swapAway);
+        expect(ble.connects, [paired]);
+        expect(ble.bonds, contains(strong));
+        expect(o.state, isNot(OutState.taken));
+        expect(
+          connectionLine(app),
+          'ID FA4E00000001 is installing version 24, back in about a minute',
+        );
+        ble.inReach.add(paired);
+        async.elapse(lookRound);
+        expect(ble.connects, [paired, paired]);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(node.image, 24);
+        expect(
+          connectionLine(app),
+          'Connected to ID FA4E00000001, paired, updated to version 24',
+        );
+      });
+    });
+
+    test('a paired node that never comes back from its install: after the '
+        'wait and two rounds the search goes on as before', () {
+      run(withPaired: true, pairedInReach: true, bonds: {strong}, (
+        async,
+        app,
+        ble,
+      ) {
+        installs(async, app, ble);
+        async.elapse(swapAway + lookRound);
+        expect(ble.connects, [paired]);
+        expect(app.ownAway, isFalse);
+        async.elapse(lookRound * 2 + seenWait);
+        expect(app.ownAway, isTrue);
+        expect(ble.bonds, isNot(contains(strong)));
+        expect(app.guestNode, nodeName(strongId));
+      });
+    });
+
+    test('a tap during the wait for an installing node connects at once', () {
+      run(withPaired: true, pairedInReach: true, bonds: {strong}, (
+        async,
+        app,
+        ble,
+      ) {
+        installs(async, app, ble);
+        async.elapse(lookRound);
+        app.connectGuest(FoundNode(weak, nodeName(weakId), -70));
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.connects, [paired, weak]);
+        expect((app.session.connected, app.session.guest), (true, true));
+        // The node ends a guest's link after 30 s; the wait goes on.
+        async.elapse(const Duration(seconds: 30));
+        expect(ble.connects, [paired, weak]);
+        expect(ble.bonds, contains(strong));
+        ble.inReach.add(paired);
+        async.elapse(lookRound);
+        expect(ble.connects, [paired, weak, paired]);
+        expect(app.session.connected, isTrue);
+      });
+    });
+
+    test('a node Android holds a bond with that refuses it, while the paired '
+        'node was missed in one round only: no errand until the second', () {
+      run(withPaired: true, bonds: {strong}, (async, app, ble) {
+        ble.nodes[strong]!.paired = false;
+        async.elapse(round + seenWait);
+        expect(ble.connects, [strong]);
+        expect(ble.bonds, isNot(contains(strong)));
+        expect(app.session.connected, isFalse);
+        async.elapse(lookRound);
+        expect(app.ownAway, isTrue);
+        expect(ble.connects, [strong, strong]);
+        expect(app.guestNode, nodeName(strongId));
+      });
+    });
+
     test('a node whose drain reopened is not waited for: out of reach after '
         'the ordinary two rounds', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
@@ -2145,6 +2258,24 @@ void main() {
         async.elapse(const Duration(minutes: 5));
         expect(ble.scans - scans, 5);
         expect(ble.connects, [near]);
+      });
+    });
+
+    test('a move to the home from a paired node that drains to install is '
+        'no reboot: nothing is waited for', () {
+      run((async, app, ble) {
+        ble.inReach.remove(home);
+        async.elapse(round);
+        expect(app.linkDevice, near);
+        ble.nodes[near]!.gathered(24);
+        async.flushMicrotasks();
+        expect(app.install, isNotNull);
+        ble.inReach.add(home);
+        async.elapse(lookAround);
+        expect(app.linkDevice, home);
+        expect(app.install, isNull);
+        final log = [for (final l in app.session.log) l.text];
+        expect(log.where((l) => l.contains('reboots')), isEmpty);
       });
     });
 
