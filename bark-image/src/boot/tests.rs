@@ -754,33 +754,28 @@ fn an_image_gathered_over_the_mesh_that_hears_no_one_is_swapped_back_and_given_u
     let (a, b) = (a(), b());
     let board = board(&a);
     stage_gathered(&board, &b).unwrap();
-    let name = crate::pieces::name(&header_for(&b, RUNNING + 1));
     assert_eq!(boot(&board), Ok(Boot::Trial));
     assert_eq!(start(&board.internal), Ok(Started::OnTrial));
     // The deadline: it resets itself without confirming.
     assert_eq!(boot(&board), Ok(Boot::Reverted));
     assert_eq!(active(&board, a.len()), a);
-    assert_eq!(given_up::contains(&board.internal, &name), Ok(false));
+    assert_eq!(given_up::contains(&board.internal, RUNNING + 1), Ok(false));
     assert_eq!(
         start(&board.internal),
         Ok(Started::Reverted {
             gave_up: Some(RUNNING + 1)
         })
     );
-    assert_eq!(given_up::contains(&board.internal, &name), Ok(true));
-    assert_eq!(given_up::contains(&board.internal, &name[..4]), Ok(true));
+    assert_eq!(given_up::contains(&board.internal, RUNNING + 1), Ok(true));
     assert_eq!(boot(&board), Ok(Boot::Normal));
     assert_eq!(start(&board.internal), Ok(Started::Normal));
-    // A release after it is another name.
-    let c = image(3, 20_001);
-    let next = crate::pieces::name(&header_for(&c, RUNNING + 2));
-    assert_eq!(given_up::contains(&board.internal, &next[..4]), Ok(false));
+    // A release after it is another version.
+    assert_eq!(given_up::contains(&board.internal, RUNNING + 2), Ok(false));
 }
 
 #[test]
 fn a_power_cut_after_a_swap_back_still_gives_the_image_up() {
     let (a, b) = (a(), b());
-    let name = crate::pieces::name(&header_for(&b, RUNNING + 1));
     let setup = || {
         let board = board(&a);
         stage_gathered(&board, &b).unwrap();
@@ -799,47 +794,37 @@ fn a_power_cut_after_a_swap_back_still_gives_the_image_up() {
             start(&f.internal).unwrap();
             assert_eq!(start(&f.internal), Ok(Started::Normal), "cut at {k}");
             assert_eq!(
-                given_up::contains(&f.internal, &name),
+                given_up::contains(&f.internal, RUNNING + 1),
                 Ok(true),
                 "cut at {k}"
             );
             assert_eq!(active(f, a.len()), a, "cut at {k}");
         },
     );
-    // The name's write, then the state page's progress word, erase and
+    // The version's write, then the state page's progress word, erase and
     // magic.
     assert_eq!(cuts, 4);
 }
 
 #[test]
-fn the_names_given_up_round_trip_and_start_again_on_a_full_page() {
+fn the_versions_given_up_round_trip_and_start_again_on_a_full_page() {
     let board = board(&a());
-    let name = |i: u32| {
-        let mut n = [0u8; crate::HASH_LEN];
-        n[..4].copy_from_slice(&i.to_be_bytes());
-        n[4] = 0x5a;
-        n
-    };
+    let version = |i: u32| 0x5a00_0000 + i;
     for i in 0..given_up::SLOTS {
-        given_up::add(&board.internal, &name(i)).unwrap();
+        given_up::add(&board.internal, version(i)).unwrap();
         // Twice is once.
-        given_up::add(&board.internal, &name(i)).unwrap();
+        given_up::add(&board.internal, version(i)).unwrap();
     }
     for i in 0..given_up::SLOTS {
-        assert_eq!(given_up::contains(&board.internal, &name(i)[..4]), Ok(true));
+        assert_eq!(given_up::contains(&board.internal, version(i)), Ok(true));
     }
-    assert_eq!(
-        given_up::contains(&board.internal, &name(given_up::SLOTS)[..4]),
-        Ok(false)
-    );
-    given_up::add(&board.internal, &name(given_up::SLOTS)).unwrap();
-    assert_eq!(
-        given_up::contains(&board.internal, &name(given_up::SLOTS)),
-        Ok(true)
-    );
-    assert_eq!(given_up::contains(&board.internal, &name(0)), Ok(false));
-    given_up::add(&board.internal, &name(0)).unwrap();
-    assert_eq!(given_up::contains(&board.internal, &name(0)), Ok(true));
+    let next = version(given_up::SLOTS);
+    assert_eq!(given_up::contains(&board.internal, next), Ok(false));
+    given_up::add(&board.internal, next).unwrap();
+    assert_eq!(given_up::contains(&board.internal, next), Ok(true));
+    assert_eq!(given_up::contains(&board.internal, version(0)), Ok(false));
+    given_up::add(&board.internal, version(0)).unwrap();
+    assert_eq!(given_up::contains(&board.internal, version(0)), Ok(true));
 }
 
 mod cut;

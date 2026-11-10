@@ -115,3 +115,9 @@ the same version. Without the change the third is never offered it;
 with it, it is offered within a rotation and comes to hold it.
 `a_gatherer_with_a_holder_keeps_its_image` checks that a gatherer that
 hears a holder of its image is offered no other of its version.
+
+Resolved otherwise the same day (roadmap D198): a version names one
+image, as a release's does, so the rule above and its tests were removed,
+and a node now only logs that two builds may carry one number: since
+D199, when blocks of the image it gathers fail their check a second
+time, as the mesh names an image by its version alone.

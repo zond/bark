@@ -15,8 +15,9 @@ use std::fmt::Write;
 pub const SAMPLE_US: u64 = 600_000_000;
 
 /// The pieces each block of an image of `bytes` bytes is made of: block 0
-/// the block table, the image's hash and 8 bytes of each block's hash,
-/// one piece up to 26 blocks, two up to 57 (spec "Updates over the mesh"); then the image in blocks
+/// the block table, the image's name and 8 bytes of each block's hash, its
+/// own last, one piece up to 26 blocks, two up to 48
+/// (spec "Updates over the mesh"); then the image in blocks
 /// of [`BLOCK_PIECES`] pieces, the last one shorter.
 pub fn blocks(bytes: u32) -> Vec<usize> {
     let pieces = (bytes as usize).div_ceil(PIECE_BYTES);
@@ -26,7 +27,7 @@ pub fn blocks(bytes: u32) -> Vec<usize> {
     if !pieces.is_multiple_of(BLOCK_PIECES) {
         b.push(pieces % BLOCK_PIECES);
     }
-    b[0] = (32 + 8 * (b.len() - 1)).div_ceil(PIECE_BYTES);
+    b[0] = (32 + 8 * b.len()).div_ceil(PIECE_BYTES);
     b
 }
 
@@ -83,13 +84,18 @@ pub struct UpdateRun {
     pub stored_sleepy: u64,
     /// Anchors' home heartbeats, by whether the slot opened after them.
     opens: std::collections::BTreeMap<(bool, &'static str), u64>,
+    /// Pieces of the image heard by relays that gather it, those of a
+    /// block they held already, and those whose index of the block they
+    /// had heard before: what the senders spent for nothing.
+    gathered: [u64; 3],
+    /// The pieces each gathering relay heard, by block and index.
+    heard_by: std::collections::HashSet<(u32, u8, u8)>,
 }
 
 impl UpdateRun {
     pub fn new(image_bytes: u32, holder: u32, at: Instant, nodes: usize) -> UpdateRun {
         let needs = blocks(image_bytes);
         let image = Image {
-            name: bark_proto::update::ImageTag([0x5a; 4]),
             version: 2,
             blocks: needs.len() as u8,
             last: *needs.last().expect("blocks") as u8,
@@ -123,6 +129,8 @@ impl UpdateRun {
             listened: std::collections::HashSet::new(),
             stored_sleepy: 0,
             opens: std::collections::BTreeMap::new(),
+            gathered: [0; 3],
+            heard_by: std::collections::HashSet::new(),
         }
     }
 
@@ -197,7 +205,7 @@ impl UpdateRun {
     }
 
     /// Whether a frame of `node` at `now` is the one right after its slot
-    /// heartbeat: within the heartbeat's airtime with its section, 23.36
+    /// heartbeat: within the heartbeat's airtime with its section, 22.08
     /// ms, and the piece's check and start, under 5 ms, with a margin, 40
     /// ms from the heartbeat's start.
     pub fn after_home_beat(&self, node: u32, now: Instant) -> bool {
@@ -242,6 +250,17 @@ impl UpdateRun {
             self.targeted[k] += 1;
             // A target that missed the last copy of this piece missed it.
             self.expected.insert((block, index, t), k);
+        }
+    }
+
+    /// Relay `node`, which gathers the image, heard piece `index` of
+    /// `block`: whether it needed it.
+    pub fn gatherer_heard(&mut self, node: u32, block: u8, index: u8) {
+        self.gathered[0] += 1;
+        if self.has.contains(&(node, block)) {
+            self.gathered[1] += 1;
+        } else if !self.heard_by.insert((node, block, index)) {
+            self.gathered[2] += 1;
         }
     }
 
@@ -402,6 +421,17 @@ impl UpdateRun {
             self.foreign[0],
             self.foreign[1],
             100.0 * self.foreign[1] as f64 / self.foreign[0].max(1) as f64,
+        );
+        let g = self.gathered;
+        let share = |n: u64| 100.0 * n as f64 / g[0].max(1) as f64;
+        let _ = writeln!(
+            out,
+            "# pieces heard by relays that gathered: {}, of a block held already {} ({:.1} %), a piece heard before {} ({:.1} %)",
+            g[0],
+            g[1],
+            share(g[1]),
+            g[2],
+            share(g[2]),
         );
         for (k, who) in ["relays", "sleepy nodes after their anchor's slot"]
             .iter()

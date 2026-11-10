@@ -2276,7 +2276,18 @@ impl Sim {
         if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
             use bark_proto::wire::{Packet, Update};
             match Packet::decode(bytes) {
-                Ok(Packet::Update(Update::Piece { block, index, .. })) => {
+                Ok(Packet::Update(Update::Piece {
+                    version,
+                    block,
+                    index,
+                    ..
+                })) => {
+                    let r = &self.relays[node as usize];
+                    let gathers =
+                        !r.sleepy() && r.gathering().is_some_and(|(i, _)| i.version == version);
+                    if gathers {
+                        u.gatherer_heard(node, block, index);
+                    }
                     u.piece_heard(node, block, index)
                 }
                 Ok(Packet::Heartbeat(hb)) => {
@@ -2748,7 +2759,7 @@ impl Sim {
             .map(|(_, n)| n)
             .filter(|n| n.sleepy && n.home == r.home())
             .filter_map(|n| table.section(n))
-            .filter(|x| x.gathers(image.tag()))
+            .filter(|x| x.gathers(image.version))
             .any(|x| {
                 (x.complete..image.blocks)
                     .any(|b| holds(b) && (b > x.complete || x.have < image.pieces(b)))
@@ -2884,7 +2895,7 @@ impl Sim {
                                 .filter(|n| n.home == f.channel)
                                 .filter(|n| {
                                     table.section(n).is_some_and(|s| {
-                                        s.gathers(image.tag())
+                                        s.gathers(image.version)
                                             && (s.complete < block
                                                 || s.complete == block
                                                     && s.have < image.pieces(block))
@@ -2923,7 +2934,9 @@ impl Sim {
                                             .live(local)
                                             .find(|(_, n)| n.id == me)
                                             .and_then(|(_, n)| t.section(n))
-                                            .filter(|x| x.image.is_some_and(|i| i.tag() == g.tag()))
+                                            .filter(|x| {
+                                                x.image.is_some_and(|i| i.version == g.version)
+                                            })
                                             .map_or(0, |x| x.complete);
                                         let heard_beat =
                                             self.beat_from.get(&s).is_some_and(|&(k, t)| {

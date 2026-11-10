@@ -314,7 +314,7 @@ Inside:
 | loader state | `0x05000` | 4 KiB | the swap's request, progress and confirmation (embassy-boot's state page: 2 + 4 words a slot page, 910 of its 1024); a UF2 writes it erased |
 | firmware, running | `0x06000` | 908 KiB, 227 pages | the CPU runs from internal flash; everything up to the record |
 | staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
-| given up | `0xEA000` | 4 KiB | the names of the images the node swapped back, 128, which it never gathers again (Updates, below); outside every UF2, so a copy over USB keeps them |
+| given up | `0xEA000` | 4 KiB | the versions of the images the node swapped back, 1 024, which it never gathers again (Updates, below); outside every UF2, so a copy over USB keeps them |
 | spare | `0xEB000` | 32 KiB, 8 pages | unused, outside every UF2: for secrets to come; its pages hold what earlier layouts left, so a use erases them first |
 | stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the phones' records, their bonds' keys and mailbox keys among them; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
@@ -580,11 +580,11 @@ watchdog; one that panics resets itself through `panic-persist`, and the
 watchdog runs on through that soft reset (Product Specification, POWER,
 reset behaviour); either way the loader swaps the previous image back,
 which logs `update: the new image did not confirm itself` and, before
-it confirms itself, gives the failed image up: it writes its name, from
+it confirms itself, gives the failed image up: it writes its version, from
 the header the swap back left in the record, into the given-up page and
 logs `update: version N given up: never gathered again`
 (`bark_image::given_up`). The mesh then never gathers an image of that
-name, and so never serves it; a later release is another name.
+version, and so never serves it; a later release has a higher one.
 
 Each update erases each page of the running slot once, twice if it is
 swapped back, and the state page twice: the internal flash's 10 000
@@ -783,7 +783,7 @@ the board serves nothing. Both hold the key image 8 is signed with: the project'
 
 ```
 A: update: holds version=8 blocks=31 name=[..] key=255
-B: update: offered version=8 blocks=31 key=255 name=[..]: taken
+B: update: offered version=8 blocks=31 key=255: taken
 B: update: gathering version=8 blocks=31 (Started)
 A: update: serving block=0 piece=113 (1 of this block)
 B: update: block 0 decoded and written, 1 of 31
@@ -803,7 +803,11 @@ about 2 390 pieces, 2.8 hours at the gap and 9.2 at the pace, and each
 block's decode about 8.6 s of reads more. A line `update: piece ... not
 filled; not sent` or a rising `unserved=` says the holder could not fill
 a piece in time; `block N failed its check` more than now and then, that
-pieces arrive wrong.
+pieces arrive wrong. The second failure of one image's blocks logs
+`update: blocks of version N keep failing their check: two builds under
+one number?`: the mesh names an image by its version, so pieces of two
+builds flashed under one version mix. The `name=` of a `holds` line,
+the first bytes of the build's own name, tells such builds apart.
 
 The revert, on the same two boards: A holds version 9 built deaf, and B,
 running version 8, gathers it (roadmap Phase 2, "An image that hears no
@@ -827,7 +831,7 @@ B: reboot
 B: update: the new image did not confirm itself; version 8 is back
 B: update: version 9 given up: never gathered again
 B: heard a node
-B: update: offered version=9 blocks=31 key=255 name=[..]: not taken, given up
+B: update: offered version=9 blocks=31 key=255: not taken, given up
 ```
 
 The last line comes again after a reset, and after a UF2 of version 8

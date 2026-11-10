@@ -1035,7 +1035,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if let Some(section) = crate::wire::decode_section(bytes) {
                     self.section_heard(hb.id, section, now, emit);
                 }
-                self.another_image(now, emit);
             }
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
