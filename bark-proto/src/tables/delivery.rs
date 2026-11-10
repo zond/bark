@@ -17,6 +17,10 @@
 //! [`TEXTS_PER_DAY`] each that the network carries (spec "Capacity and sizing"):
 //! `256 × 23 × 10 min / 1 day = 40.9`, so 41.
 //!
+//! A message refused by a neighbour leaving the air, where it may end,
+//! waits here for that neighbour by the same rules ([`Queued::waits_for`]).
+//! Its 6 bytes fit in what the entry's alignment left free.
+//!
 //! A message already queued is not queued twice (same `msg_id`): a
 //! duplicate that slipped past the per-message records costs nothing here.
 //! A message that finds the queue full of messages that are not stale is
@@ -67,6 +71,10 @@ pub struct Queued {
     pub dst_pos: Position,
     /// The node it is for.
     pub node: NodeId,
+    /// The neighbour it waits for, which refused it while leaving the air
+    /// and where it may end; [`NodeId::NONE`] for a message to deliver
+    /// from here (spec "Delivery queue", roadmap D186).
+    pub waits_for: NodeId,
     /// When it was queued.
     pub enqueued: Instant,
     /// It went once with the long preamble after a far fix (spec
@@ -99,6 +107,7 @@ impl Queued {
             msg_id,
             dst_pos,
             node,
+            waits_for: NodeId::NONE,
             enqueued: now,
             flushed: false,
             relay_home: None,
@@ -114,6 +123,12 @@ impl Queued {
     pub fn payload(&self) -> &[u8] {
         &self.payload[..self.len as usize]
     }
+
+    /// Whether it waits for a neighbour leaving the air, not for
+    /// delivery from here.
+    pub fn waits(&self) -> bool {
+        self.waits_for != NodeId::NONE
+    }
 }
 
 impl core::fmt::Debug for Queued {
@@ -121,6 +136,7 @@ impl core::fmt::Debug for Queued {
         f.debug_struct("Queued")
             .field("msg_id", &self.msg_id)
             .field("node", &self.node)
+            .field("waits_for", &self.waits_for)
             .field("enqueued", &self.enqueued)
             .field("payload", &self.payload())
             .finish()
@@ -158,6 +174,7 @@ impl<const N: usize> DeliveryQueue<N> {
             msg_id: MsgId(0),
             dst_pos: Position { lat: 0, lon: 0 },
             node: NodeId::NONE,
+            waits_for: NodeId::NONE,
             enqueued: Instant::ZERO,
             flushed: false,
             relay_home: None,

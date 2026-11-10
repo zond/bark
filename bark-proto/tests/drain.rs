@@ -6,6 +6,7 @@
 
 mod common;
 
+use bark_proto::tables::delivery::DELIVERY_QUEUE;
 use bark_proto::{
     AppCommand, AppEvent, Config, DropReason, Instant, MsgId, NodeId, Position, Relay, Trace,
 };
@@ -260,4 +261,209 @@ fn a_neighbour_hears_a_draining_relay_leaving() {
         h.run_until(h.now + rotation, |h| !leaving(h)),
         "still leaving"
     );
+}
+
+/// Whether `node`'s traces have message `id` wait for `by`.
+fn waits(h: &Harness<Relay>, node: usize, id: MsgId, by: NodeId) -> bool {
+    h.nodes[node].traces.iter().any(|(_, t)| {
+        *t == Trace::Waits {
+            msg_id: id,
+            node: by,
+        }
+    })
+}
+
+/// Whether any node dropped message `id` at the hop cap.
+fn at_cap(h: &Harness<Relay>, id: MsgId) -> bool {
+    h.nodes.iter().any(|n| {
+        n.traces.iter().any(|(_, t)| {
+            *t == Trace::Dropped {
+                msg_id: id,
+                reason: DropReason::HopCap,
+            }
+        })
+    })
+}
+
+/// S sends through N a message that can end only at L, which drains: to
+/// L itself, or with `dark` to a sleepy node at L's position, which L
+/// holds mail for. M is a neighbour of N and L that the message could
+/// be passed round to. Returns the harness, the message, and the nodes
+/// S, N, M and L.
+fn for_a_draining_node(dark: bool) -> (Harness<Relay>, MsgId, [usize; 4]) {
+    let (s, n, m, l) = (0, 1, 2, 3);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 1),
+            relay(300.0, 0.0, 2),
+            relay(450.0, 250.0, 3),
+            relay(600.0, 0.0, 4),
+        ],
+        &[(s, n), (n, m), (n, l), (m, l)],
+    );
+    let lid = h.nodes[l].core.id();
+    h.command(l, AppCommand::Drain(true));
+    let rotation = Config::default().boot_listen;
+    let leaving = |h: &Harness<Relay>| {
+        [n, m].iter().all(|&i| {
+            h.nodes[i]
+                .core
+                .neighbours()
+                .any(|x| x.id == lid && x.leaving)
+        })
+    };
+    assert!(h.run_until(h.now + rotation, leaving), "not heard leaving");
+    let dst_pos = h.nodes[l].core.config().position;
+    let dst_id = if dark { NodeId([9; 6]) } else { lid };
+    let payload = b"for a node that is leaving";
+    h.command(
+        s,
+        AppCommand::Send {
+            dst_pos,
+            dst_id,
+            payload,
+        },
+    );
+    let id = MsgId::of(dst_pos, dst_id, payload);
+    assert!(
+        h.run_until(h.now + secs(60), |h| waits(h, n, id, lid)),
+        "not waiting at N"
+    );
+    (h, id, [s, n, m, l])
+}
+
+/// A message that can end only at a node that drains waits at the
+/// neighbour that holds it, and is not passed round among the node's
+/// neighbours; once the node is back from its swap it is delivered
+/// (spec "Delivery queue", roadmap D186).
+#[test]
+fn a_message_for_a_draining_node_waits_at_its_neighbour_until_it_is_back() {
+    for dark in [false, true] {
+        let (mut h, id, [_, n, m, l]) = for_a_draining_node(dark);
+        let lid = h.nodes[l].core.id();
+        // The drain's whole bound, then the swap off the air.
+        let ttl = Config::default().delivery_ttl;
+        h.run_until(h.now + ttl, |_| false);
+        assert!(!h.nodes[m].core.knows(id), "passed round to M");
+        assert!(h.nodes[n].core.holding().any(|x| x == id));
+        h.kill(l);
+        h.run_until(h.now + secs(59), |_| false);
+        // The same node, so the same ID.
+        h.reboot(l, relay(600.0, 0.0, 4));
+        let arrived = |h: &Harness<Relay>| {
+            if dark {
+                h.nodes[l].core.delivery_queue().any(|(x, _)| x == id)
+            } else {
+                delivered(h, l).contains(&id)
+            }
+        };
+        let rotation = Config::default().boot_listen;
+        assert!(
+            h.run_until(h.now + rotation + secs(60), arrived),
+            "not delivered after the swap, dark {dark}"
+        );
+        assert!(!h.nodes[m].core.knows(id), "passed round to M");
+        assert!(!at_cap(&h, id));
+        assert!(!waits(&h, m, id, lid));
+    }
+}
+
+/// A message that waits for a node still leaving past the delivery TTL
+/// is stale, as any in the delivery queue: it stays until a message
+/// arriving at the full queue needs its place, and is then dropped for
+/// its age, the queue's own end (spec "Delivery queue", roadmap D186).
+#[test]
+fn a_message_that_waits_past_the_ttl_goes_as_a_stale_one() {
+    let (mut h, id, [s, n, m, _]) = for_a_draining_node(false);
+    let ttl = Config::default().delivery_ttl;
+    h.run_until(h.now + ttl + secs(1), |_| false);
+    assert!(h.nodes[n].core.holding().any(|x| x == id), "gone early");
+    // Messages for nodes N holds mail for fill its delivery queue.
+    let dst_pos = h.nodes[n].core.config().position;
+    let expired = |h: &Harness<Relay>| {
+        h.nodes[n].traces.iter().any(|(_, t)| {
+            *t == Trace::Dropped {
+                msg_id: id,
+                reason: DropReason::QueueExpired,
+            }
+        })
+    };
+    let mut k = 0u32;
+    while !expired(&h) && k < 2 * DELIVERY_QUEUE as u32 {
+        if h.accepts(s) {
+            let payload = k.to_be_bytes();
+            let dst_id = NodeId([10, 0, 0, 0, 0, k as u8]);
+            h.command(
+                s,
+                AppCommand::Send {
+                    dst_pos,
+                    dst_id,
+                    payload: &payload,
+                },
+            );
+            k += 1;
+        }
+        let step = h.now + bark_proto::Duration::from_millis(500);
+        h.run_until(step, |_| false);
+    }
+    assert!(expired(&h), "not dropped as stale");
+    assert!(!h.nodes[m].core.knows(id), "passed round to M");
+    assert!(!at_cap(&h, id));
+}
+
+/// Two neighbours that drain in turn do not hold each other up. A
+/// draining node takes nothing, so what one holds for the other it took
+/// before its own drain, and the other, draining then, took nothing to
+/// hold for it: here L holds a message for N, which drains, and then
+/// drains itself. Once N is back from its swap, L hands the message on
+/// and has drained well within its bound (spec "Delivery queue",
+/// "Updates over the mesh", roadmap D170, D186).
+#[test]
+fn two_neighbours_draining_in_turn_do_not_hold_each_other_up() {
+    let (n, l, b) = (0, 1, 2);
+    let mut h = build(
+        vec![
+            relay(0.0, 0.0, 1),
+            relay(300.0, 0.0, 2),
+            relay(600.0, 0.0, 3),
+        ],
+        &[(n, l), (l, b)],
+    );
+    let rotation = Config::default().boot_listen;
+    let ttl = Config::default().delivery_ttl;
+    let nid = h.nodes[n].core.id();
+    h.command(n, AppCommand::Drain(true));
+    h.run_until(h.now + rotation, |_| false);
+    let (dst_pos, payload) = (h.nodes[n].core.config().position, b"to N");
+    h.command(
+        b,
+        AppCommand::Send {
+            dst_pos,
+            dst_id: nid,
+            payload,
+        },
+    );
+    let id = MsgId::of(dst_pos, nid, payload);
+    assert!(h.run_until(h.now + secs(60), |h| waits(h, l, id, nid)));
+    h.command(l, AppCommand::Drain(true));
+    let close = h.now;
+    assert!(!h.nodes[l].core.drained(h.now), "L holds the message");
+    // N holds nothing: it reboots at once, and is off the air for its
+    // swap.
+    assert!(h.nodes[n].core.drained(h.now));
+    h.kill(n);
+    h.run_until(h.now + secs(59), |_| false);
+    h.reboot(n, relay(0.0, 0.0, 1));
+    assert!(
+        h.run_until(close + ttl, |h| h.nodes[l].core.drained(h.now)),
+        "L not drained within its bound"
+    );
+    std::println!("L drained {:?} after its close", h.now.since(close));
+    let half = bark_proto::Duration::from_micros(ttl.as_micros() / 2);
+    assert!(h.now.since(close) < half, "L waited long");
+    assert!(
+        h.run_until(h.now + secs(10), |h| delivered(h, n).contains(&id)),
+        "not delivered"
+    );
+    assert!(!at_cap(&h, id));
 }

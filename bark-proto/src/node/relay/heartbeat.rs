@@ -496,7 +496,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        if !self.sleepy() {
+        if !self.sleepy() && !hb.leaving {
             self.heard_as_relay(hb.id, hb.home);
         }
         if self.sleepy() && self.booting() {

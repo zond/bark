@@ -964,6 +964,13 @@ impl Neighbours {
         }
     }
 
+    /// When the entry of `id` expires, if there is one and it is not kept.
+    pub fn expiry_of(&self, id: NodeId) -> Option<Instant> {
+        self.get(id)
+            .filter(|n| Some(n.id) != self.pinned)
+            .map(|n| n.last_heard + self.expire_after(n))
+    }
+
     /// When the next entry expires, if any.
     pub fn next_expiry(&self) -> Option<Instant> {
         self.iter()

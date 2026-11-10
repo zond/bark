@@ -471,10 +471,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Whether each message of the delivery queue has had its flush,
-    /// and no hand-over to a sleepy node or of the flush is queued.
+    /// Whether each message of the delivery queue has had its flush, but
+    /// those that wait for a neighbour, which the turn hands on, and no
+    /// hand-over to a sleepy node or of the flush is queued.
     fn flushed(&self) -> bool {
-        !self.delivery.iter().any(|q| !q.flushed) && !self.queue.iter().any(|o| o.kind.delivers())
+        !self.delivery.iter().any(|q| !q.flushed && !q.waits())
+            && !self.queue.iter().any(|o| o.kind.delivers())
     }
 
     /// Plugged in, or its battery high again: a relay at once, on `power`,

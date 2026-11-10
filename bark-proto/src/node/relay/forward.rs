@@ -1451,6 +1451,129 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// The forward `out`, refused by `by`, waits for it in the delivery
+    /// queue if `by` is leaving the air and the message may end there
+    /// ([`Self::ends_at`]): sent round it, it would only wander among its
+    /// neighbours to the hop cap (spec "Delivery queue", roadmap D186).
+    /// Not at a node that is sleepy or leaving to turn sleepy, which holds
+    /// mail for nobody, nor where the queue has no place; then it goes
+    /// round as any refused forward. Returns whether it waits.
+    fn wait_for(
+        &mut self,
+        out: &Outgoing,
+        by: NodeId,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) -> bool {
+        if self.sleepy() || self.leaving() {
+            return false;
+        }
+        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
+            return false;
+        };
+        let ends = self
+            .neighbours
+            .get(by)
+            .is_some_and(|n| n.leaving && self.ends_at(n, (d.dst_id, d.dst_pos)));
+        let id = d.msg_id();
+        let Some(mut q) = Queued::new(id, d.dst_pos, d.dst_id, d.payload, now).filter(|_| ends)
+        else {
+            return false;
+        };
+        // The count it arrived with, which it goes on from (`release`).
+        q.hops = self
+            .records
+            .get(id)
+            .map_or(d.hops.saturating_sub(1), Record::highest_hops);
+        q.waits_for = by;
+        self.make_room(now, emit);
+        if self.delivery.push(q) == Pushed::Full {
+            return false;
+        }
+        self.cancel_handover();
+        self.queue.take_current();
+        self.forwarding.feed_due = true;
+        if self.own.id == Some(id) {
+            // The node keeps it now, as a first hop would.
+            self.set_own(None);
+        }
+        emit(Action::Trace(Trace::Waits {
+            msg_id: id,
+            node: by,
+        }));
+        true
+    }
+
+    /// Whether a message that waits for `id` waits no longer at `now`:
+    /// `id`'s last heartbeat no longer says it is leaving, as after its
+    /// swap, or it is no live neighbour.
+    fn waited(&self, id: NodeId, now: Instant) -> bool {
+        self.neighbours
+            .live(now)
+            .find(|(_, n)| n.id == id)
+            .is_none_or(|(_, n)| !n.leaving)
+    }
+
+    /// Each message that waits for a neighbour that has come back, or is
+    /// gone, goes into the send queue as a forward from here, admitted as
+    /// any forward received with its count, and is routed as any: to that
+    /// neighbour, where it ends, or on as the state now says. What finds
+    /// no room waits for it (spec "Delivery queue", roadmap D186).
+    pub(super) fn release(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        if self.sleepy() {
+            // What it held goes on by `hand_on`.
+            return;
+        }
+        loop {
+            let Some(q) = self
+                .delivery
+                .iter()
+                .find(|q| q.waits() && self.waited(q.waits_for, now))
+                .copied()
+            else {
+                return;
+            };
+            let (id, hops) = (q.msg_id, q.hops);
+            if hops == MAX_HOPS {
+                self.delivery.remove(id);
+                self.drop_msg(id, DropReason::HopCap, emit);
+                continue;
+            }
+            let d = Data {
+                sender_home: self.home,
+                dst_hop: NodeId::NONE,
+                src_hop: self.me(),
+                dst_pos: q.dst_pos,
+                dst_id: q.node,
+                hops: hops + 1,
+                payload: q.payload(),
+            };
+            let frame = data_frame(&d, self.home, self.forward_preamble());
+            let air = mac::airtime(&frame);
+            let Ok(place) = self.admit(air, Duration::ZERO, hops, false, now) else {
+                return;
+            };
+            if self.records.get(id).is_none() {
+                // Its record made way meanwhile: its search starts here.
+                let Some(at) = self.record_place() else {
+                    return;
+                };
+                self.records.put(at, Record::new(id, None, hops, now));
+            }
+            let out = Outgoing {
+                place,
+                since: now,
+                ..Outgoing::new(frame, Kind::Forward)
+            };
+            if self.queue.push(out).is_err() {
+                return;
+            }
+            self.delivery.remove(id);
+            self.forwarding.feed_due = true;
+            emit(Action::Trace(Trace::Released { msg_id: id }));
+        }
+    }
+
     // --- The relay's own application (spec "Routing") ---
 
     /// Whether the application may send now (roadmap D29 rule 6, D34): the
@@ -2224,6 +2347,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.answer_from(by, now, emit);
             self.neighbours.refused(by, now + wait);
             self.neighbours.told(by, wait);
+        }
+        if out.kind != Kind::Deliver
+            && out.kind != Kind::Direct
+            && self.wait_for(&out, by, now, emit)
+        {
+            return;
         }
         if self.sleepy() && self.own.id == Some(msg_id) && out.kind == Kind::Forward {
             // A sleepy node's own message goes back to its application,

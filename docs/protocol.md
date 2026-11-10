@@ -1774,7 +1774,8 @@ holds mail, to a position within the owner radius of it
 worse a last resort, and the next hop where none is. Nothing is counted
 against it, no ban and no demotion. Sent round a node where it ends, a
 message would only wander among that node's neighbours, each passing it
-over in turn, to the hop cap.
+over in turn, to the hop cap. Refused by that node, it waits for it in
+the delivery queue ([delivery queue](#delivery-queue)).
 
 *Why a ban is a wait.* A neighbour that does not answer stays the first
 candidate until it is demoted or gone, for the reasons of
@@ -2953,6 +2954,28 @@ TTLs in a day = 40.9, so 41 messages.
 A flow to one node that pauses longer than a hand-over waits for the
 next beat, at most 41 messages a period, and the rest are refused.
 
+**A neighbour leaving the air.** A message refused by a neighbour whose
+last heartbeat had the leaving flag, where the message may end, addressed
+to it or to a position it may own ([next hop](#next-hop)), waits in the
+queue for that neighbour, by the same rules of age and place. Once its
+heartbeat comes without the flag, as after its swap, or its entry is
+gone, the message goes into the send queue as a forward received with
+its count, and is routed as any. Where the queue has no place, it goes
+round as any refused message. A node that is sleepy or leaving to turn
+sleepy holds none, as it holds mail for nobody.
+
+*Why it waits.* A leaving node is there but not now, as a sleepy node is
+between its beats, and is back within the drain's bound and its swap.
+Sent round it, a message that can end only there would wander among its
+neighbours to the hop cap.
+
+*Why two nodes do not wait for each other.* A node that drains takes no
+message ([updates over the mesh](#updates-over-the-mesh), the install),
+so what a node holds for a draining neighbour it took before its own
+drain, and the neighbour took nothing to hold for it meanwhile. Its own
+drain then waits for the neighbour's return or ends at its bound, and
+what it holds goes across its reboot (roadmap D186).
+
 The owner remembers 41 delivered message IDs
 ([packet formats](#packet-formats)) and ACKs a repeat without delivering
 it twice. When it needs the place, it forgets the one delivered or last
@@ -3057,7 +3080,8 @@ windows, after the deliveries above and one at a time.
   comes is done; the rest stay and go at beats as before until their
   place is needed.
 - **A node heard as a relay.** A holder that hears a heartbeat without
-  the sleepy flag from a node it holds messages for, carried or not,
+  the sleepy or the leaving flag from a node it holds messages for,
+  carried or not,
   sends them at once, one after the other, with the ordinary preamble on
   the home channel the heartbeat names. Each is done on its ACK;
   unanswered ones wait for the node's next heartbeat or beat heard.

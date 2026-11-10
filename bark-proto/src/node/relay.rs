@@ -913,6 +913,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the next be tried.
     fn schedule(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.release_held(now, emit);
+        self.release(now, emit);
         if self.forwarding.feed_due || self.timers.feed_at.is_some_and(|t| t <= now) {
             self.feed(false, now);
         }
