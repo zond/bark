@@ -1109,10 +1109,41 @@ void main() {
       findsOneWidget,
     );
 
-    // Or pair again, at the node.
+    // Its row offers to pair again, beside Forget, and a tap on it says
+    // what happened and what each does.
+    final again = find.widgetWithText(TextButton, 'Pair again');
+    expect(again, findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Forget'), findsOneWidget);
+    await t.tap(find.text('ID FA4E00000001'));
+    await t.pumpAndSettle();
+    expect(
+      find.text('ID FA4E00000001 no longer knows this phone'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Pair again makes it yours again'), findsOne);
+    expect(find.textContaining('Forget gives the node up'), findsOne);
+    await t.tapAt(const Offset(10, 10));
+    await t.pumpAndSettle();
+
+    // Or pair again from the dialog, at the node.
     await t.tap(find.text('Connect'));
     await t.pumpAndSettle();
-    await t.tap(find.text('Pair again'));
+    await t.tap(find.widgetWithText(FilledButton, 'Pair again'));
+    await t.pumpAndSettle();
+    expect(app.session.connected, isTrue);
+    expect(app.session.pairingLost, isEmpty);
+    expect(again, findsNothing);
+
+    // Lost once more, and paired again from its row, in one press.
+    app.fakeNode!.pairElsewhere();
+    await app.session.disconnect();
+    await t.pump();
+    await t.tap(find.text('Connect'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Not now'));
+    await t.pumpAndSettle();
+    expect(app.session.pairingLost, isNotEmpty);
+    await t.tap(again);
     await t.pumpAndSettle();
     expect(app.session.connected, isTrue);
     expect(app.session.pairingLost, isEmpty);
@@ -1613,6 +1644,70 @@ void main() {
     expect((app.session.connected, app.session.guest), (true, false));
     expect(app.pairedNodes, contains('bark-0ce400000004'));
     expect(app.me.home, isNull);
+    await done(t, app, ble);
+  });
+
+  testWidgets('Pair that ends without a pairing says why in a dialog: the '
+      'node ended the link; Android kept the old bond', (t) async {
+    final (app, ble) = await guestOnce(t);
+    const device = 'aa:bb:cc:dd:ee:04';
+    app.found[device] = FoundNode(
+      device,
+      'bark-0ce400000004',
+      -50,
+      public: true,
+    );
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    Future<void> pair() async {
+      final pair = find.widgetWithText(TextButton, 'Pair');
+      await t.ensureVisible(pair);
+      await t.tap(pair);
+      await t.pumpAndSettle();
+      await t.tap(find.widgetWithText(FilledButton, 'Pair'));
+      // Past the wait for Android to remove a bond.
+      for (var i = 0; i < 30; i++) {
+        await t.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    ble.endsLinks.add(device);
+    await pair();
+    expect(find.text('Not paired'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'The link to ID 0CE400000004 ended before the node '
+        'was read: the node ended it, or is out of reach.',
+      ),
+      findsOneWidget,
+    );
+    expect(ble.pairings, 0);
+    await t.tap(find.text('OK'));
+    await t.pumpAndSettle();
+
+    // Android holds a bond with it, which the node no longer knows, and
+    // will not let it go.
+    await app.stopLooking();
+    ble
+      ..endsLinks.clear()
+      ..bonds.add(device)
+      ..keepsBonds = true
+      ..nodes[device]!.paired = false;
+    await pair();
+    expect(
+      find.textContaining(
+        'could not forget its old pairing with ID '
+        '0CE400000004',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'Bluetooth settings'),
+      findsOneWidget,
+    );
+    expect(ble.pairings, 0);
+    await t.tap(find.text('Not now'));
+    await t.pumpAndSettle();
     await done(t, app, ble);
   });
 
