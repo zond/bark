@@ -3,6 +3,11 @@
 //! hour apart on battery and at each boot and change of power or mode,
 //! and says at boot what the log holds; the console prints it
 //! (`discharge`) and erases it (`discharge erase`).
+//!
+//! A discharge bench build ([`BENCH`], roadmap D190) empties the cell in
+//! about a day to learn the curve's shape: it relays at any battery level
+//! (`node.rs`), keeps its GPS tracking as a steady load (`gps.rs`), and
+//! samples every ten minutes, marking each sample.
 
 use bark_image::discharge::LEN;
 use bark_image::ext_flash::PROGRAM_PAGE;
@@ -10,6 +15,34 @@ use bark_image::layout::external::DISCHARGE;
 use embedded_storage::nor_flash::ReadNorFlash;
 
 use crate::ext_flash;
+
+/// A discharge bench build, from `BARK_DISCHARGE_BENCH=1` at build time:
+/// an open node image only, as it ignores the battery's low level and
+/// would flatten a cell in the field. Any other value fails the build.
+pub const BENCH: bool = match option_env!("BARK_DISCHARGE_BENCH") {
+    None => false,
+    Some(v) => {
+        assert!(
+            matches!(v.as_bytes(), b"1"),
+            "BARK_DISCHARGE_BENCH is 1 or unset"
+        );
+        assert!(
+            matches!(crate::protect::BUILD, bark_image::protect::Build::Open),
+            "BARK_DISCHARGE_BENCH needs BARK_OPEN=1"
+        );
+        assert!(
+            !cfg!(feature = "console"),
+            "BARK_DISCHARGE_BENCH is a node image's, not the console's"
+        );
+        assert!(
+            option_env!("BARK_ON_BATTERY").is_none(),
+            "BARK_DISCHARGE_BENCH relays on battery; BARK_ON_BATTERY would make it sleepy"
+        );
+        true
+    }
+};
+// Checked in every build, the console's too, where nothing reads it.
+const _: bool = BENCH;
 
 /// Slots in the region.
 const SLOTS: u32 = DISCHARGE.len / LEN as u32;
@@ -76,7 +109,12 @@ mod node {
             );
         }
         let ring = Ring::open(SLOTS, reader());
-        LOG.lock(|c| c.set(Some((ring, Sampler::new()))));
+        let sampler = if super::BENCH {
+            Sampler::bench()
+        } else {
+            Sampler::new()
+        };
+        LOG.lock(|c| c.set(Some((ring, sampler))));
     }
 
     /// The driver read the battery: `mv`, uncalibrated.
@@ -105,12 +143,13 @@ mod node {
             return;
         };
         log::info!(
-            "discharge: {} mv={} external={} sleepy={} gps={}",
+            "discharge: {} mv={} external={} sleepy={} gps={} bench={}",
             s.why.name(),
             s.mv,
             s.external,
             s.sleepy,
-            s.gps
+            s.gps,
+            s.bench
         );
         let written = match w.erase {
             Some(e) => ext_flash::erase(DISCHARGE.start + e).await,
@@ -128,7 +167,7 @@ pub use console::{erase, print};
 /// The console's side: the log printed and erased.
 #[cfg(feature = "console")]
 mod console {
-    use bark_image::discharge::{Oldest, EVERY_S};
+    use bark_image::discharge::{Oldest, BENCH_EVERY_S, EVERY_S};
     use bark_image::layout::external::DISCHARGE;
     use embassy_time::{Duration, Timer};
     use embedded_storage::nor_flash::NorFlash;
@@ -145,11 +184,25 @@ mod console {
     /// Every sample, oldest first, a line each between a header and an
     /// end line; `scale` is the calibration the node image keeps, in
     /// 2^-15, by which a reading is multiplied before the levels read it
-    /// (`bark_proto::Stored::battery_scale`).
+    /// (`bark_proto::Stored::battery_scale`). The header gives both
+    /// intervals, a node image's and a bench build's, as each sample says
+    /// which took it.
     pub async fn print(scale: Option<u16>) {
+        let (every, bench) = (EVERY_S, BENCH_EVERY_S);
         match scale {
-            Some(k) => log::info!("discharge slots={} every_s={} scale={}", SLOTS, EVERY_S, k),
-            None => log::info!("discharge slots={} every_s={} scale=none", SLOTS, EVERY_S),
+            Some(k) => log::info!(
+                "discharge slots={} every_s={} bench_every_s={} scale={}",
+                SLOTS,
+                every,
+                bench,
+                k
+            ),
+            None => log::info!(
+                "discharge slots={} every_s={} bench_every_s={} scale=none",
+                SLOTS,
+                every,
+                bench
+            ),
         }
         let mut read = reader();
         let mut it = Oldest::start(SLOTS, &mut read);
@@ -157,7 +210,7 @@ mod console {
         while let Some(s) = it.next(&mut read) {
             count += 1;
             log::info!(
-                "discharge seq={} utc_s={} uptime_s={} mv={} external={} sleepy={} gps={} why={}",
+                "discharge seq={} utc_s={} uptime_s={} mv={} external={} sleepy={} gps={} bench={} why={}",
                 s.seq,
                 s.utc_s,
                 s.uptime_s,
@@ -165,6 +218,7 @@ mod console {
                 u8::from(s.external),
                 u8::from(s.sleepy),
                 u8::from(s.gps),
+                u8::from(s.bench),
                 s.why.name()
             );
             Timer::after(LINE_DRAIN).await;
