@@ -125,10 +125,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 if (to.card.home == null && stale != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                    child: Text(
-                      'Last seen there ${ago(stale)}: it keeps their mail '
-                      'only while they come back',
-                    ),
+                    child: Text('Last seen there ${ago(stale)}'),
                   ),
                 for (final t in options)
                   SimpleDialogOption(
@@ -230,9 +227,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                       if (await confirm(
                         context,
                         'Remove ${contact.name}?',
-                        'Their card goes from this phone. Their texts stay, '
-                            'but you cannot write to them until you add '
-                            'their card again.',
+                        'Their texts stay; to write again, add their card.',
                         'Remove',
                       )) {
                         await app.contacts.remove(contact);
@@ -254,8 +249,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: Text(
-                  'Not verified yet: a first message can come from anyone. '
-                  'Their first reply to you proves it is them.',
+                  'Not verified yet: their first reply proves it is them.',
                 ),
               ),
             Expanded(
@@ -296,12 +290,12 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 child: Text('This contact was removed.'),
               )
             else if (contact.towards(app.now()).isEmpty)
-              // Only a card from an app before D162 names no node at all.
+              // A card made before its phone used any node names none.
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  '${contact.name}\'s card is from an older app and names '
-                  'no node: ask them for a new card.',
+                  '${contact.name}\'s card names no node yet: ask them for a '
+                  'new one.',
                 ),
               )
             else
@@ -744,10 +738,7 @@ class _ReactionSheetState extends State<_ReactionSheet> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(
-              'React: ${widget.to.name} sees it on their text. Pick another '
-              'to change it.',
-            ),
+            child: Text('${widget.to.name} sees your reaction on their text.'),
           ),
           Row(
             key: const ValueKey('frequent'),

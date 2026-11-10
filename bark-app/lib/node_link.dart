@@ -27,9 +27,7 @@ class NotOurs implements Exception {
   final String node;
   const NotOurs(this.node);
   @override
-  String toString() =>
-      '${shownName(node)} is no longer yours: it no longer knows this '
-      'phone\'s pairing';
+  String toString() => '${shownName(node)} no longer knows this phone';
 }
 
 /// The phone still holds a bond for the node `node` that the node no
@@ -47,8 +45,8 @@ class StaleBond implements Exception {
 /// What the person reads of a [StaleBond] at `node`: what happened and the
 /// way out.
 String staleBondLine(String node) =>
-    '${shownName(node)} no longer knows this phone\'s old pairing. Forget '
-    'it in the phone\'s Bluetooth settings, then try again.';
+    '${shownName(node)} rejects this phone\'s old pairing. Forget it in '
+    'Bluetooth settings.';
 
 /// Android kept its bond with the node `node` when asked to remove it
 /// before a new pairing, which cannot run over it: Android would pair
@@ -59,9 +57,9 @@ class BondKept implements Exception {
   const BondKept(this.node);
   @override
   String toString() =>
-      'This phone could not forget its old pairing with ${shownName(node)}, '
-      'and a new pairing needs it gone, so none was tried. Forget the node '
-      'in the phone\'s Bluetooth settings, then try again.';
+      'The phone kept its old pairing with ${shownName(node)}, so no new '
+      'one was tried. Forget the node in Bluetooth settings, then try '
+      'again.';
 }
 
 /// The link to the node `node` ended before the app had read it: the
@@ -71,8 +69,7 @@ class LinkEnded implements Exception {
   const LinkEnded(this.node);
   @override
   String toString() =>
-      'The link to ${shownName(node)} ended before the node was read: the '
-      'node ended it, or is out of reach. Try again nearer to it';
+      'The link to ${shownName(node)} ended. Try again nearer to it';
 }
 
 /// The pairing did not complete: it was cancelled, the code typed was
@@ -82,9 +79,8 @@ class NotPaired implements Exception {
   const NotPaired();
   @override
   String toString() =>
-      'Pairing did not complete: it was cancelled, the code typed was not '
-      'the one on the node\'s screen, or the node already keeps eight '
-      'phones, when its screen says PHONES FULL';
+      'Not paired: cancelled, a wrong code, or the node is full (its '
+      'screen says PHONES FULL)';
 }
 
 abstract class NodeLink {

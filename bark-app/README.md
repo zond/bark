@@ -18,13 +18,13 @@ is a prototype for the bench, not the app people will carry.
   an identity, the name its owner chose, their home node's address
   when the person has set one, and, unless it is the home, the
   address of the node their phone is linked to, or was last, where to
-  reach them now, with when it was last linked to it (roadmap D162). Without a home the card is temporary: the node on it keeps
-  their mail only while they come back to it.
+  reach them now, with when it was last linked to it (roadmap D162).
+  Without a home the card is temporary: the node on it keeps their mail
+  only while they come back to it.
 - **Contact**: a card with the name this phone gives it, or else the
-  card's own, known by its identity. A card from an older app may have
-  no name: its contact is listed as "Unnamed" with the first eight
-  characters of its identity until a card with a name comes or the
-  person renames it.
+  card's own, known by its identity. A contact with neither is listed
+  as "Unnamed" with the first eight characters of its identity until a
+  card with a name comes or the person renames it.
 - **Home node**: a node on USB that stays where it is, set in Settings;
   it holds the person's mailbox key, and the person fetches their mail
   from it, when they ask, to the node they are connected to.
@@ -53,15 +53,14 @@ is a prototype for the bench, not the app people will carry.
   "ID … is installing version N, back in about a minute" in place of
   looking for it; back on that version, it adds ", updated to version
   N" for a minute (Updating a node, below). Why the phone is on that node,
-  or on none, is not in the line: its info button opens a few sentences
-  that say, such as that none of the paired nodes has been in reach for
-  30 s or that they are heard too weakly, or that the phone is paired
-  with no node near the person.
+  or on none, is not in the line: its info button opens a few short
+  sentences that say, such as that none of the paired nodes has been in
+  reach for 30 s, that they are heard too weakly, or that no node of the
+  person's is near.
   Settings' Node section shows the same line and button. Tapping the
   line opens Settings. Once there is a contact and
   until the backup words are written down, a card says "If you lose
-  this phone, these words are the only way to keep your contacts able
-  to reach you"; a tap opens Settings scrolled to the backup, which
+  this phone, they are the only way back to your contacts"; a tap opens Settings scrolled to the backup, which
   shows tinted for a moment and is announced. While the demo is on, a
   card says "Demo: nothing leaves this phone".
   A row swiped aside either way archives its conversation, with
@@ -76,11 +75,11 @@ is a prototype for the bench, not the app people will carry.
   if the home has nothing new, or the node gives the fetch back. With
   no node connected the fetch waits, the button saying "Fetch waits for
   a node", and goes from the next node the phone links to, addressed to
-  it. It sends nothing, and says why, when the connected node is the
-  home, whose own inbox already holds the mail.
+  it. On the home it sends nothing and says "At your home, your mail
+  comes by itself".
   When the person's card has changed and has not gone to their
-  contacts, a line says why, "Your card changed: your home node has a
-  new address" or "…: you have no home now", with **Send my card**,
+  contacts, a line says why, "Your card changed: new home address" or
+  "Your card changed: no home", with **Send my card**,
   which sends it to every contact, one message each; the line then
   goes. The app sends no card by itself (roadmap D126).
 - **A thread.** The texts sent to and received from one identity, in
@@ -95,7 +94,8 @@ is a prototype for the bench, not the app people will carry.
   text the network gave back shows an hourglass and "The
   network is busy, sending again in m:ss", and the app sends it again
   by itself once the wait is over, also after a restart; until then it
-  can be cancelled. A refused text says why in words. A tap
+  can be cancelled. A text the node refuses says "Refused by the node",
+  and Debug gives the node's answer. A tap
   anywhere on a sent text's bubble, its words too, opens a sheet that
   explains the states and their reaction, and a tap anywhere on a
   received one a sheet that explains the marks a received text can
@@ -108,8 +108,8 @@ is a prototype for the bench, not the app people will carry.
   was sealed and its message IDs. The top line says
   when the contact last wrote, and, when their card names a home,
   whether from it. A long press on a received text opens the emoji
-  picker, under a line that says the sender sees the one picked on
-  their text and that another replaces it: first a row of the six you
+  picker, under a line that says the sender sees the reaction on their
+  text: first a row of the six you
   react with most, in 48 dp buttons, the one used last first on a tie,
   and thumbs up, heart, laugh, surprise, sad and thanks until you have
   used six; then **Copy text**, as the long press no longer selects the
@@ -139,9 +139,9 @@ is a prototype for the bench, not the app people will carry.
   card the person scanned or pasted is not, as the card came from its
   holder. Once it is verified, or for a scanned one, a text
   that came in a first message has a mark of its own, as anyone could
-  have made it. A contact whose card is from an app before D162, with
-  no home and no node, and who has not written yet, cannot be written
-  to: a line says so where the field would be. The menu renames the
+  have made it. A contact whose card names no home and no node, shared
+  before its phone used a node, and who has not written yet, cannot be
+  written to: a line where the field would be asks for a new card. The menu renames the
   contact,
   sends them your card, archives the conversation or the contact (both
   leave the thread, with **Undo**), or removes them, after asking; a removed
@@ -180,61 +180,69 @@ is a prototype for the bench, not the app people will carry.
   name it shows no card: it says "Set your
   name first", with **Set my name**, as whoever scans a card needs to
   know whose it is.
-- **Settings**, from the menu. The node to connect to (scan, then tap
-  one; each says its signal as strong, at −70 dBm or above, fair, or
-  weak, below −85 dBm, a choice, with the number in small print; a
-  scan that has found nothing after about 10 s, or was stopped, says
-  "No node found nearby" and to switch a node on or come closer; a
-  public node says so, and a tap on one the phone is not paired with
-  uses it as a guest, its **Pair** pairs with it (A guest's home,
-  below)), how the connected node fares, and under
-  "Paired with" the nodes the phone is paired with, the home first, each
-  marked as the home, connected, not in reach while the search looks,
-  "Not looking. Tap to connect" once the person has stopped the search,
-  or no longer yours, with **Pair again** while the app has heard it in
-  the last 30 s and **Forget** (Unpairing, below), and a tap on that
-  row opening a few sentences on what happened and what each does. A tap on
-  another paired node's row connects to it as its owner: at once when
-  the app heard it in the last 30 s, the span the search takes to call a
-  node out of reach, else after a scan of one round, saying it was not
-  seen if it is not in reach. Below the list comes **Disconnect** while
-  connected, or **Stop looking** while the search runs, apart from the
-  rows so that Disconnect, which only ends the link, is not taken for
-  Unpair. On a paired node the
-  switch **Public: serve phones without pairing**, on unless the owner
-  turns it off (Public nodes, below); the node's phones (Phones at the
-  node, below); and **Unpair**, on this phone's own row of the node's
-  phones: a dialog names the node and
-  says that it forgets this phone, shows `UNPAIRED` and is public again,
-  that anyone at the node can pair with it by the code on its screen,
-  that texts and contacts stay on the phone, which forgets its own
-  pairing with the node too, and, with other paired nodes, that the
-  phone stays paired with them; on **Unpair** the node forgets its bond
-  and ends the link, the app forgets that node and looks for it no
-  more, and then has Android remove its bond with the node (Unpairing,
-  below). Then the home node: make
-  the connected node your home if it is not, or none; the dialog says
-  so, and on **Go ahead** your new card goes to every contact; where
-  the card does not change by it, as on a home that lost the mailbox
-  key, the dialog says the card stays as it is, and, while an earlier
-  change has not gone out, that it still waits for **Send my card**; on a
-  public node the phone uses as a guest the same button pairs first,
-  and its dialog says so (A guest's home, below); **Send
-  my card**, as on the first screen; clear the mailbox key of a node
-  that holds one and is not your home. A node without a place says
-  "This node has no place yet", with **Use this phone's location**,
-  which gives it the phone's position as its place at once and says the
-  coordinates it set, as the same button under **Node's place** does; a
-  sleepy or
-  carried node cannot be made home, and the button is off with "A home
-  must be a node that stays on power at a fixed place" (spec
-  "Mailbox"). Then **Updates** (Newer releases, below), whether the app is
-  exempt from battery optimisation (next section), your name, your 12
-  words (show them, or restore an identity from them, after a warning
-  that contacts holding the current card cannot reach the restored
-  identity), and **Node's place**: set from typed degrees or the
-  phone's location, or cleared. At the bottom, **Try without a node
-  (demo)**, a node in the app, and **Debug**.
+- **Settings**, from the menu, in the order a person looks for things.
+  Copy is short throughout, and the reasons are behind an info button
+  where they matter: by the connection line, Home node and the node's
+  phones.
+  - **Node**: the connection line and its help (as on the first
+    screen), how the connected node fares, the nodes the phone is
+    paired with, then **Disconnect** while connected or **Stop looking**
+    while the search runs, apart from the rows so that Disconnect,
+    which only ends the link, is not taken for Unpair; then **Scan** and
+    the nodes found. Each found node says its signal as strong, at
+    −70 dBm or above, fair, or weak, below −85 dBm, a choice, with the
+    number in small print, and "public" for a public node; a scan that
+    has found nothing after about 10 s, or was stopped, says "No node
+    found nearby" and "Switch one on, or come closer". A tap on a
+    public node the phone is not paired with uses it as a guest; its
+    **Pair** pairs with it (A guest's home, below). Under "Paired
+    with" each paired node, the home first, says "Your home",
+    "connected", "not in reach" while the search looks, "Not looking.
+    Tap to connect" once the person has stopped the search, or "No
+    longer yours", with **Pair again** while the app has heard it in
+    the last 30 s and **Forget** (Unpairing, below); a tap on that row
+    opens a few sentences on what happened and what each does. A tap on
+    another paired node's row connects to it as its owner: at once when
+    the app heard it in the last 30 s, the span the search takes to
+    call a node out of reach, else after a scan of one round, saying it
+    was not found if it is not in reach.
+  - **Home node**: "None: your card is temporary." or "At" and its
+    address, with **Make this node my home** where the node is not
+    the home, **No home node** while one is set, and **Send my card**
+    as on the first screen. The dialog names its action on the button,
+    **Make it my home** or **No home**, and says what happens to the
+    card: "Your new card goes to your N contacts", "Your card stays the
+    same", or, while an earlier change has not gone out, that it still
+    waits for **Send my card**; on a public node the phone uses as a
+    guest it first says "First you pair: type the code on its screen"
+    (A guest's home, below). A node without a place says "This node has
+    no place yet, so it cannot be a home. Set it under This node."; a
+    sleepy or carried node cannot be made home, the button is off, and
+    a line says "A home must stay on power in one place" (spec
+    "Mailbox"). On a node that keeps the person's mail and is not
+    their home, a line says so with **Stop keeping my mail** (Making a
+    node the home, below).
+  - **This node**, on a paired node: the switch **Public**, "Any phone
+    near it can text through it", on unless the owners turn it off
+    (Public nodes, below); **Place**, from its GPS or set by a person,
+    set from typed degrees or **Use this phone's location**, which says
+    the coordinates it set, or cleared; and the node's phones (Phones
+    at the node, below), whose own row has **Unpair**: its dialog says
+    "The node and this phone forget each other; texts and contacts
+    stay", adds "With no phone left, it turns public" when this is the
+    node's last phone, and, with other paired nodes, that the phone
+    stays paired with them; on **Unpair** the node forgets its bond and
+    ends the link, the app forgets that node and looks for it no more,
+    and then has Android remove its bond with the node (Unpairing,
+    below).
+  - **Updates** (Newer releases, below).
+  - **My name** and **Backup**: show the 12 words, or restore an
+    identity from them, after a warning that contacts reach it only
+    once they have its card.
+  - **Battery**: whether Android may close the link with the screen
+    off, with **Let bark run**, which opens Android's dialog to exempt
+    the app from battery optimisation (next section).
+  - **Try without a node (demo)**, a node in the app, and **Debug**.
 - **Nearby nodes**, from the menu: a map. The connected node and every neighbour it
   knows on an OpenStreetMap street map, a line from the node to each
   coloured by the link's quality: green good, amber fair, red fragile,
@@ -296,8 +304,8 @@ A node keeps up to eight phones, each its owner (spec "Phone link",
 Pairing; roadmap D168), and a phone may be paired with many nodes, and
 Android keeps a bond for each (roadmap D166). The phone pairs with a node when the person makes it their
 home or presses **Pair** on its row in Settings (A guest's home, below),
-or taps a private node: Settings says to type the six-digit code the node's screen shows, and Android
-asks for it in its own dialog; Android then takes about five seconds
+or taps a private node: Settings says "Type the code on the node's
+screen", and Android asks for it in its own dialog; Android then takes about five seconds
 before it reports the bond, and Settings says "Paired, connecting…"
 until the node is read. While a connection is being made no other
 starts, and the connected node's row in the scan says "Connected" and
@@ -317,9 +325,10 @@ which fails the MTU request (Android's status 133, the connection's 5);
 a refused first read, or a bond Android has dropped after such a
 failure, count the same. A link that never comes up is a plain failure
 to connect. The app then says "This node is
-no longer yours", with **Not now** and **Pair again**, which forgets the
+no longer yours", "ID … no longer knows this phone. Pair again with the
+code on its screen.", with **Not now** and **Pair again**, which forgets the
 phone's old bond, scans until it sees the node again (about ten seconds
-at most, else it says the node was not seen), and pairs anew, at the
+at most, else it says the node was not found), and pairs anew, at the
 node. The scan is needed because the node's address is random static,
 and Android, with neither a bond nor a scan result to tell it so,
 connects to it as a public address and times out after 30 s; the
@@ -328,11 +337,10 @@ nodes paired with, and for each whether it was lost, are kept with the
 queue and listed in Settings; pairing with one more adds it and keeps
 the others. A pairing that ends without one always says why, in a
 dialog on the screen where it was started, as the person's eyes are on
-the node's screen then: cancelled or with a wrong code, or refused by a
-node that already keeps eight phones, its screen then saying `PHONES
-FULL`, which Android does not tell apart; the node ended the link, or
-went out of reach, before the app had read it; the node was not seen;
-or Android kept an old bond with it (A pairing found again, below). An
+the node's screen then: "Not paired: cancelled, a wrong code, or the node
+is full (its screen says PHONES FULL)", as Android does not tell them
+apart; "The link to ID … ended. Try again nearer to it"; "ID … not
+found: come nearer and try again"; or Android kept an old bond with it (A pairing found again, below). An
 owner's link that ends while the app reads it is such an ending, not a
 node that holds the bond. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
 bond), which needs no code of the app's own on the Android side.
@@ -371,54 +379,51 @@ Bluetooth plugin's `UniversalBle.unpair`, and waits up to 2 s for
 Android to list it no more. Android hides the removal from apps
 (`BluetoothDevice.removeBond`, which the plugin calls by reflection and
 whose failure it does not report), so the bond's state is the only
-answer. Where the bond stays, a dialog says the node is public again
-but that the phone could not forget its own pairing, with **Bluetooth
-settings**, which opens the phone's Bluetooth settings (the intent
+answer. Where the bond stays, a dialog says "Unpaired", then "Forget
+the node in Bluetooth settings too: the phone kept its pairing", with
+**Bluetooth settings**, which opens the phone's Bluetooth settings (the intent
 `android.settings.BLUETOOTH_SETTINGS`, `MainActivity.kt`), where the
 person forgets the node. Either way, if the node was the person's home,
-the line adds that it stays their home, so texts to them still go to
-it: the node keeps the mailbox key. The search then uses the node as a
+the line adds "It stays your home": the node keeps the mailbox key. The search then uses the node as a
 guest; the texts, the contacts, the home and the card stay as they
 were.
 
 **Forget**, on the row of a node no longer the phone's, takes the node
-from the paired nodes after a dialog that says it no longer knows this
-phone, so it is no longer the person's, that this phone stops listing it and forgets its own pairing
-with it, that pairing by the code on its screen makes it the person's
-again, and, for the home, that it stays the home, as after Unpair.
+from the paired nodes after a dialog, "This phone stops listing it",
+adding "It stays your home" for the home, as after Unpair.
 Android names a bond by the device address, which the app learns only
 by hearing the node in a scan, and does not keep across runs. Where it
 has heard the node since it started, it has Android remove the bond as
 on unpairing, and where Android keeps it, says so with **Bluetooth
-settings**. Where it has not, a dialog says that the app removes the
-bond once it hears the node (A pairing found again, below) and that the
-person may forget the node in the phone's Bluetooth settings now, with
-the same button.
+settings**. Where it has not, a dialog says the phone drops its
+pairing when it next hears the node (A pairing found again, below), or
+to forget it in Bluetooth settings now, with the same button.
 
-**Phones at the node.** On an owner's link, Settings shows "Phones at this node", read from Phones page by
-page at each connection and after each removal (spec "Phone link",
-Phones): a line that a node keeps up to eight phones, that anyone at it
-can pair by the six-digit code it shows and that every phone paired with
-it may change its settings, so a phone not known or gone is best
-removed; on a full node, that it takes no more pairings until one is
-removed; then "Phones paired with this node" and "Phones with a home
-here", a record that holds both listed in both, marked "has a home here
+**Phones at the node.** On an owner's link, Settings shows under This
+node the node's phones, read from Phones page by page at each
+connection and after each removal (spec "Phone link", Phones): "Phones
+paired with this node", whose info button says that a node keeps up to
+eight phones, that anyone at it can pair by the code it shows and that
+every paired phone can change its settings, so a phone not known or
+gone is best removed; on a full node "Full: remove one before another
+can pair"; then "Phones with a home here", a record that holds both listed in both, marked "has a home here
 too" and "paired too". Each row is the person's name as their app wrote
 it to Recipient (Versions, below), or "A phone with no name" while its
 phone has written none, with "this phone" on the reader's own, and
 "linked now" or the day last linked as "today", "yesterday", "N days
 ago" or "never", for a node that had no time at the phone's links.
 Another's row has **Remove**, for what its record holds. Its dialog says
-what goes and what that person sees: a pairing removed, the node ends
-their phone's next link and their app says the node is no longer
-theirs, to pair again by the code on the node's screen; a home removed,
-the node forgets their mailbox key, their app says so at their next
-link there, and their fetches from elsewhere go unanswered; and that
-the node shows a code to type within 30 s. **Show the code** asks the
-node for one, and its screen shows `REMOVE` and six digits; the person
-types them and **Remove** writes the removal. A wrong code, or one after
-30 s, says "Not removed", that each code takes one try, and offers
-**New code**; a record the node no longer holds reads the list again.
+what goes, "Ann's phone can no longer use the node unless paired
+again." and "The node stops keeping their mail.", and "You type the
+code the node then shows." **Show the code** asks the node for one, and
+its screen shows `REMOVE` and six digits; the person types them within
+30 s and **Remove** writes the removal. A removed phone's app finds the
+node no longer its own at its next link; a removed home tells its
+person at their next link there, and their fetches from elsewhere go
+unanswered. A wrong code, or one after 30 s, says "Not removed", "Wrong
+code, or too late. Each code works once.", and offers **New code**; a
+record the node no longer holds says "Already gone" and reads the list
+again.
 This phone's own paired row has **Unpair**; its own home is changed
 under the home node.
 
@@ -433,9 +438,9 @@ on such a node as a public one, or the search's errand there, takes
 the same way. A first read that succeeds on the encrypted link shows
 the node still holds the bond: it is kept among the paired nodes. With
 no home set and the node placed and able to be a home, the first screen
-offers **Make this node my home** in one line, which says when the new
-card would go to the contacts, and **Not now**, which hides it until
-the app is started again. A node that refuses the bond goes the
+offers in one line "No home node yet. Make this one your home? It keeps
+texts to you while you are away.", with **Make this node my home** and
+**Not now**, which hides it until the app is started again. A node that refuses the bond goes the
 way of a stale bond, below.
 
 A phone can hold such a stale bond in another way too: with a node that
@@ -445,8 +450,8 @@ first read is refused, while Android lists a bond with the node, is
 taken as the node refusing that bond. The app then has Android remove
 the bond, as on unpairing, scans until it sees the node again and
 connects once more. Only where Android keeps the bond does it show one
-line on the first screen and in Settings, "ID … no longer knows this phone's old
-pairing. Forget it in the phone's Bluetooth settings, then try again.",
+line on the first screen and in Settings, "ID … rejects this phone's old
+pairing. Forget it in Bluetooth settings.",
 with the same **Bluetooth settings** button, and a tap on the node in
 the scan says the same in a dialog. The search passes the node over,
 as every link to it would fail alike, until Android no longer lists the
@@ -464,8 +469,8 @@ again** on a node Android lists a bond with have Android remove the
 bond first, as Forget does, scan until they see the node, and pair with
 the code its screen shows; a node that still held the old bond takes
 the new one in its place (spec "Phone link", Pairing). Where Android
-keeps the bond, a dialog says the phone could not forget its old
-pairing, so no pairing was tried, with **Bluetooth settings**
+keeps the bond, a dialog says "The phone kept its old pairing with
+ID …, so no new one was tried", with **Bluetooth settings**
 (roadmap D194).
 
 **A guest's errand.** A public node takes one guest's link at a time
@@ -491,8 +496,8 @@ A guest's link the person makes by a tap on a public node in Settings
 is not an errand: the app does not leave when the errand would, and
 the search does not run beside it, so it lasts until the node ends it
 after its 30 s, or the person goes to another node. The line says so,
-"Connected to ID … as a guest, until the node ends a guest's link after
-30 s", and its help that the node serves one guest at a time. Then the
+"Connected to ID … as a guest for 30 s", and its help that the node
+serves one guest at a time. Then the
 search chooses again, the home first (roadmap D179).
 
 The app goes on an errand at a public node when it has something to
@@ -511,33 +516,29 @@ in the ring meanwhile, so the interval delays it and loses none.
 with. While the phone uses a public node as a guest and has no home,
 and the node has a place and can be a home, the first screen offers
 **Make this node my home** as it does for a pairing found again
-(above), its line saying what a home gives, that texts to the person
-wait there and their card gets a fixed address, and that the phone
-pairs with the node first, by the code its screen shows. Settings has
-the same button under the home node, its dialog saying the same and
-that a node keeps up to eight phones, so those paired with it before
-keep theirs. The link
+(above), its line adding "You pair first, with the code on its
+screen". Settings has the same button under the home node, its dialog
+saying the same. The link
 is down between errands, so the app keeps the node's address, whether
 it can be a home and Node's `room` from the last
 errand there. A node whose `room` was 0 keeps eight phones already and
 would refuse the pairing: the first screen does not offer it, the home
-button is off, and a line says that
-the node takes no more pairings and that someone paired with it can
-remove a phone in Settings, at the node. A pairing that fails, a
-wrong code or one cancelled, says why, and the phone goes on using the
+button is off, and a line says "This node is full: eight phones are
+paired with it." A pairing that fails, a wrong code or one cancelled,
+says why, adding "Still a guest here", and the phone goes on using the
 node as a guest.
 
 Whoever keeps a public node, or wants a standing link to it without
 making it their home, presses **Pair** on its row in Settings' scan,
-shown on each public node the phone is not paired with. Its dialog says
-what pairing gives, the node's settings, its place and its updates on
-this phone and a link the phone keeps while the node is in reach unless
-the home is too, that a node keeps up to eight phones, and that the home
-is set apart, under the home node. **Pair** connects and pairs at once
+shown on each public node the phone is not paired with. Its dialog,
+"Pair with ID …?", says "You can then change its settings and update
+it. Type the code on its screen." Pairing does not make it the home,
+and the phone keeps a link to a paired node while it is in reach
+unless the home is too. **Pair** connects and pairs at once
 by the code on the node's screen, with no guest's errand first, so it
 works while the home is in reach; a pairing that fails says why, and the
 search then chooses again. A node whose `room` was 0 at the last errand
-says it takes no more pairings instead (roadmap D179).
+says it is full instead (roadmap D179).
 
 While it is not connected, the app looks for the nodes it is paired
 with and connects to the first of them it hears, in this order: the
@@ -628,18 +629,17 @@ version, `oldestNode` (roadmap D188). The node says in Node the oldest
 app version it serves. The app reads Node first and goes on only when
 each side's version is at least the other's oldest (spec "Phone link",
 Versions; roadmap D177); otherwise it closes the link and says which
-side to update: "This app is older than this node's firmware serves:
-update the app.", or "This node's firmware is older than this app
-serves: update the node's firmware." It then writes Recipient with the
+side to update: "This app is too old for this node: update the app.",
+or "This node's firmware is too old for this app: update the node." It
+then writes Recipient with the
 tag, its own link version and `oldestNode`, and the person's name from
 their card on an owner's link,
 cut to 32 bytes at a character's end; a guest writes no name, as the
 node keeps nothing of a guest's. A node that finds the two do not serve
 each other answers 0x82 and ends the link, and the app says the same.
 A newer node that serves the app is used as one of its own version; the
-**App** row in Settings' Updates says, without a notice, that the
-node's firmware is newer and that an update of the app brings its new
-features.
+**App** row in Settings' Updates adds, without a notice, "Update it
+for the node's new features".
 The first rotation's countdown runs on the phone,
 since the node does not notify it. On every connection the app writes
 the phone's UTC time and offset to Clock,
@@ -664,22 +664,23 @@ list a home of their tag: one a phone of theirs left by unpairing,
 which the write joins to this phone's record, or another phone of
 theirs. Where none is listed, someone paired with the node may have
 removed the home there, and the app tells the person rather than
-overrule them: a notice says the home does not hold their mailbox
-key and answers no fetch of theirs, and Settings shows **Make this node
-my home** on the home, with the same line, to set it again.
+overrule them: a notice says "Your home no longer keeps your mail. Set
+it again in Settings.", and Settings shows **Make this node my home**
+on the home, with the line "Your home no longer keeps your mail", to
+set it again; until then the home answers no fetch of theirs.
 
 The queue and the received texts, the contacts and what is archived,
 and the person (seed, name, home, the last `sent`, the mailbox's
 state) are kept in three
 files in the app's private storage, so they survive a restart. The
 seed is kept there in the clear: anyone who can read the app's storage
-has the identity. Each file names the version of its format, 1 if it
-names none; a file of another version, or one with any part that does
-not read, is renamed to `<name>.old-<version>` or `<name>.old-bad`, with
+has the identity. Each file names the version of its format; a file of
+another version or none, or one with any part that does not read, is
+renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 `-2`, `-3` and on added if that name is taken, so no file set aside is
 ever overwritten; the debug screen's log says so, and the app starts that
-file empty (for the person, with a new identity). A contacts file from
-before archiving names nothing archived and reads as such.
+file empty (for the person, with a new identity). The app reads only
+the forms it writes.
 
 ## Notifications and the background link
 
@@ -841,19 +842,19 @@ whatever the node hears, since the node may stand alone
 sleepy ones counted, 585.9 s after it came back, as long as an image
 from the mesh would listen, the update screen and a bar at the top of
 the conversations say that the node hears no one and that the new
-firmware may have broken its radio, and how to bring it back: the release it ran before, `bark-fw-<M>.uf2`, copied to
-it over USB after a double tap of its reset button, since the node
-takes no older version from the phone; or a newer release, once there
-is one. The bar's × hides it until the next update.
+firmware may have broken its radio; the update screen says how to go
+back: a double tap of its reset button and the release it ran before,
+`bark-fw-<M>.uf2`, copied to it over USB, as the phone cannot send an
+older version. A newer release, once there is one, can be sent as
+usual. The bar's × hides it until the next update.
 
 A node also installs an image it gathered over the mesh by itself
 (spec "Updates over the mesh", the install). From the moment it drains
 for the reboot its Status says the version, `installing`. The
 connection line then says
 "Connected to ID …, installing version N", and its help that the node
-passes on the texts it holds within at most ten minutes, then restarts
-and is back about a minute later, and that the phone connects again by
-itself. When the node ends the link to reboot, the line says "ID … is
+passes on the texts it holds, at most ten minutes, then restarts for
+about a minute, and that the phone reconnects by itself. When the node ends the link to reboot, the line says "ID … is
 installing version N, back in about a minute", and the search does not
 count the node out of reach until 55 s have passed (`swapAway`): from a
 reboot into an image of 227 pages to the node back on the bench,
@@ -872,14 +873,13 @@ API, without an account, for the repository's latest release `v<N>`
 (`lib/releases.dart`; `README.md`, "Releases"), and downloads its
 `release.json`, `{"release": N, "app": A, "firmware": F}`: the app's
 version A and the node firmware's F that the release carries, each N
-when the release built it or an earlier release's carried on unchanged.
-A release without the file, v21 and older, carried one version, N, and
-the app reads both as N. When the release carries an APK newer than the
-app, a bar at the top of the conversations says "A newer app, version A,
-is available"; a tap opens the APK's download in the browser, and
-Android asks before it installs it over the app. When the connected node
-runs a version below F, a bar says "Your node runs version M; version F
-is available"; a tap opens **Update firmware**
+when the release built it or an earlier release's carried on unchanged;
+a release without the file is not read. When the release carries an APK
+newer than the app, a bar at the top of the conversations says "App
+version A is out", "Tap to download"; a tap opens the APK's download in
+the browser, and Android asks before it installs it over the app. When
+the connected node runs a version below F, a bar says "Node firmware F
+is out", "Tap to update the node"; a tap opens **Update firmware**
 with the release's image downloaded and chosen (Updating a node). A
 bar's × hides it until a newer version, the node's for that
 node alone. The app learns its own version from the release workflow,
@@ -897,8 +897,7 @@ Settings' **Updates** section has **Check for updates**, which asks at
 once by the same check, with a spinner while it runs, and then says in
 one line how this app and the node stand against the latest release,
 such as "App up to date (22); node firmware 21, up to date", "App up to
-date (22); node firmware 21; version 23 is newer: send it under Node
-firmware below", "A newer app, version 22, is available: get it under
+date (22); node firmware 23 is out: send it below", "App 22 is out: tap
 App below; no node linked", or "Could not reach the release list"
 without a network. Under it the **App** row gives the app's version and,
 when the release is newer, a tap downloads it; the **Node firmware** row
@@ -941,12 +940,12 @@ back, and makes the node the home only if it then says it holds the
 person's (`mine`); otherwise it says so and changes nothing. **No home node** while
 connected to the home writes 0, and the node forgets the key. Away from
 the home the key cannot be taken back: the app forgets the home and says
-that the old home holds the key until the person connects to it and
-presses **Clear its mailbox key** there, which writes 0. The same
-happens to the old home when another node is made the home. Settings
-shows that button on any node that holds the person's key and is not
-their home, with a line saying it still holds their key, from when it
-was their home. A node that holds another person's key says "This node is someone else's
+"Your old home keeps your mail until you stop it there": the person
+connects to it and presses **Stop keeping my mail**, which writes 0.
+The same happens to the old home when another node is made the home.
+Settings shows that button on any node that holds the person's key and
+is not their home, with the line "This node still keeps your mail from
+when it was your home". A node that holds another person's key says "This node is someone else's
 home", with no button: a phone writes and clears only its own person's
 key, and another's goes only by a removal (Phones at the node).
 
@@ -970,8 +969,7 @@ button asks, for that text only: "Where <name> was <age> ago", "Fast if
 they are still near there", or "Their home mailbox", "Waits at their
 home until they fetch it". Without a home it goes where they were, as
 nothing else is; when that is old, the dialog says "Last seen there 2 h
-ago: it keeps their mail only while they come back" and still sends
-there. With a home and no place known yet, it goes to the home (roadmap
+ago" and still sends there. With a home and no place known yet, it goes to the home (roadmap
 D132, D162). Reactions and
 cards go without asking, to the home's mailbox when there is a choice.
 
@@ -1034,7 +1032,9 @@ The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; check keys,
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
-messages, reactions of one character and no more, the picker's first
+messages, reactions of one character and no more, the stored files
+and cards in their current forms alone, a release read only with its
+manifest, the picker's first
 row after picks and a restart, a reflected
 message, a forged first message,
 the header's written-from address kept apart from the card's, the
@@ -1075,7 +1075,7 @@ serves, saying which side to update; write the name and the versions
 to Recipient; list a node's
 phones in two lists with their names and days, remove another's with
 the code its screen shows, and offer a new code after a wrong one; say
-that a full node takes no more pairings, and try none there; make a
+that a full node is full, and try no pairing there; make a
 guest's node the home by pairing first, offered on the first screen
 and in Settings, and stay a guest after a wrong code; from the home,
 take a tapped public node as a guest with no round between and keep it
@@ -1092,7 +1092,8 @@ node's neighbours, in one page and across several; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
 choose where a text goes; decide what notifies, and when the app starts
 with the phone, against a notifier that writes down what it is asked;
-and drive the screens: a text to the fake friend, its echo, a
+and drive the screens: Settings' sections in their order, a text to
+the fake friend, its echo, a
 reaction each way, from the first row, the full list and a search,
 on the bubble's lower edge, the backup words, a contact from a pasted or a scanned
 card, my card, the debug screen, the fetch button, the choice of where
@@ -1139,9 +1140,9 @@ a phone (Trying it, With a node).
    and a second `reaction` is listed. Close and reopen the app; the
    first row is as it was.
 6. Send three more. The third is given back with a wait counting down
-   from 0:26. When the wait is over, press **Send again**. This is the
-   fourth write, which the fake answers not ready: the text stays
-   queued for about two seconds, then it is taken.
+   from 0:26. When the wait is over the app sends it again by itself.
+   This is the fourth write, which the fake answers not ready: the text
+   stays queued for about two seconds, then it is taken.
 7. Wait a minute after the last echo, then send a text: the send
    button asks "Where Fake friend was 1 min ago" or
    "Their home mailbox". Pick the mailbox: the text says "to their
@@ -1156,22 +1157,24 @@ a phone (Trying it, With a node).
    temporary without a home; **Share** opens Android's share sheet with
    the card's text and the code's image, and **Details** your identity
    and the card as text, `BARK:` and capitals.
-10. Menu, **Settings**, under **Node's place**: press **Use this
+10. Menu, **Settings**, under **This node**, **Place**: press **Use this
     phone's location** (allow location): a line says the coordinates
     set, Debug's address changes, and the
     next text to the fake friend names it. **Clear** brings back the
     fake's own fix.
 11. **Settings**, under **Home node**: **Make this node my home**. The
-    dialog says your card changes and goes to your contact. **Go ahead**: "This node is your home". Debug's Home reads "a home, its
+    dialog says "Your new card goes to your contact." **Make it my
+    home**: "This node is your home". Debug's Home reads "a home, its
     mailbox empty". Go back: the bar has the inbox button, **Fetch my
-    mail**. Press it: it says you are connected to your home node, and
-    sends nothing. Disconnect and press it: it says no node is
-    connected.
-12. Connect again. **Settings**, **No home node**, **Go ahead**: the
+    mail**. Press it: "At your home, your mail comes by itself", and
+    nothing is sent. Disconnect and press it: "The fetch waits for a
+    node".
+12. Connect again. **Settings**, **No home node**, **No home**: the
     node forgets the key, and Home reads "not a home". Make it your home
-    again, disconnect, press **No home node**: the app says the old home
-    still holds the key. Connect: Settings says the node holds a mailbox key; **Clear its
-    mailbox key** clears it.
+    again, disconnect, press **No home node**: "Your old home keeps your
+    mail until you stop it there". Connect: Settings says "This node
+    still keeps your mail from when it was your home"; **Stop keeping
+    my mail** clears it.
 13. Menu, **Nearby nodes**: the fake node in Kyiv and its five neighbours,
     three green lines, one amber and one red; the red one and a green
     one dashed. Tap the red
@@ -1203,12 +1206,12 @@ a phone (Trying it, With a node).
    Bluetooth. The node shows within about a second as `ID` and those
    digits, as its screen shows them. Tap it: the phone uses it as a
    guest, and Settings says so. Under the home node, **Make this node my
-   home**, whose dialog says the phone pairs first, or **Pair with this
-   node** below it. Android asks for a code and the node's screen shows
+   home**, whose dialog says the phone pairs first, or **Pair** on its
+   row in the scan. Android asks for a code and the node's screen shows
    `PAIR CODE` and six digits within a few seconds: type them. A wrong
-   code says the pairing did not complete, and the phone goes on as a
-   guest. Settings then says "Connected and paired." and how the node
-   fares: "Starting up, m:ss" in its first rotation, "Hears N nodes",
+   code says "Not paired", and the phone goes on as a guest. Settings
+   then says "Connected to ID …, paired" (or "Connected to your home,
+   ID …") and how the node fares: "Starting up, m:ss" in its first rotation, "Hears N nodes",
    sleepy ones counted, or "Hears no other node yet: texts wait here";
    and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
@@ -1221,9 +1224,9 @@ a phone (Trying it, With a node).
 4. A node with a GPS fix or a map point shows "Placed: yes" and an
    address, and **Nearby nodes** draws it with the relays it hears, each line's
    colour its link's quality. Without one, Settings under **Home node**
-   says "This node has no place yet" with **Use this phone's location**,
-   or set a place under **Node's place**: Status changes to
-   placed and map point. A text names the node's address only once it
+   says "This node has no place yet"; set one under **This node**,
+   **Place**, typed or by **Use this phone's location**: Status changes
+   to placed and map point. A text names the node's address only once it
    has one. With neighbours, each marker
    shows its screen's role within a second or, asked again, a few;
    the node's log says `ble: ask` for each ask, `status of` for each
@@ -1263,8 +1266,8 @@ a phone (Trying it, With a node).
     node, its name set too: it asks for the code, the node's screen shows
     a new one, and once typed the screen says `2 PHONES PUBLIC`; the
     first phone stays connected and stays paired. On each phone,
-    **Settings**, "Phones at this node" lists both names under "Phones
-    paired with this node", its own marked "This phone, linked now" and
+    **Settings**, **This node** lists both names under "Phones paired
+    with this node", its own marked "This phone, linked now" and
     the other "Linked now". Make the node the first phone's home: the
     first phone's row shows under "Phones with a home here" too, on both
     phones once they read the list again (connect again). On the first
@@ -1276,9 +1279,9 @@ a phone (Trying it, With a node).
     the screen says `PHONE PUBLIC`. The second phone, connecting again,
     says "This node is no longer yours", with **Pair again**, which takes
     the code on the screen. With eight phones paired, a ninth's pairing
-    shows no code, the screen says `PHONES FULL`, and the ninth says the
-    pairing did not complete, naming a full node among the reasons; as a
-    guest there it says the node takes no more pairings.
+    shows no code, the screen says `PHONES FULL`, and the ninth says "Not
+    paired", naming a full node among the reasons; as a guest there it
+    says "This node is full".
 11. Starting with the phone: open the app once after installing it,
     exempt it from battery optimisation in Settings, and connect to the
     node. Restart the phone and unlock it, without opening the app.
@@ -1335,15 +1338,14 @@ a phone (Trying it, With a node).
     flashed by USB from a build with `BARK_IMAGE_VERSION=1`: Debug says
     app version 1 and "Latest release: N, app A, firmware F, checked" a
     moment ago, A and F as the release's `release.json` names them; the
-    bar "A newer app, version A, is available" opens the APK in the
-    browser, and its × hides it, also after the app is closed and
-    opened again. Connected to the node, the bar "Your node runs
-    version 1; version F is available" opens **Update firmware** with
+    bar "App version A is out" opens the APK in the browser, and its ×
+    hides it, also after the app is closed and opened again. Connected
+    to the node, the bar "Node firmware F is out" opens **Update firmware** with
     "Version F" chosen, and its × hides it for that node; another node
     of version 1 still shows it. A node of version 0 shows none.
 15. A public node, with two phones. On the owner's
-    phone, connected, **Settings**, **Public: serve phones without
-    pairing** is on from the start, and the node's screen says `PHONE
+    phone, connected, **Settings**, **This node**, **Public** is on from
+    the start, and the node's screen says `PHONE
     PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its signal; with no paired node of
@@ -1365,14 +1367,14 @@ a phone (Trying it, With a node).
     "Connected to your home, ID …" within a round of the node's return.
 16. Unpairing. On the owner's phone, connected, **Settings**,
     **Unpair** on this phone's row of the node's phones, **Unpair**:
-    the node's screen says `PHONE UNPAIRED`, Settings says "Unpaired: the node is
-    public again", and the phone's Bluetooth settings no longer list the
+    the node's screen says `PHONE UNPAIRED`, Settings says "Unpaired. The
+    node is public.", and the phone's Bluetooth settings no longer list the
     node; the log shows `Pairing: the phone forgot its bond with … too`.
     Within a round or two the phone goes on an errand at the node as a
     guest. On a phone that keeps the bond, a dialog says to forget the
     node in the phone's Bluetooth settings, and **Bluetooth settings**
-    opens them; the first screen says "ID … no longer knows this phone's
-    old pairing", and the line goes within a round of forgetting it
+    opens them; the first screen says "ID … rejects this phone's old
+    pairing", and the line goes within a round of forgetting it
     there, after which the phone uses the node as a guest.
 17. Two paired nodes, A and B. Make A the home, then pair with B in
     Settings (**Pair** on its row in the scan if public, a tap on it if
@@ -1381,16 +1383,13 @@ a phone (Trying it, With a node).
     within a round the first screen says "Connected to your home, ID …",
     A's ID, never "as a guest". With A switched off and B on, it says
     "Connected to ID …, paired. Home at ID …", B's ID then A's, within a
-    round, without the 30 s wait. A phone updated from an app that kept one
-    paired node, B, and still holding A's bond, connects to A as its
-    owner in its first round there and lists it as paired again.
-    **Disconnect**, below the list: both rows say "Not looking. Tap to
+    round, without the 30 s wait. **Disconnect**, below the list: both rows say "Not looking. Tap to
     connect", and a tap on A's connects to it, within a scan when it was
     not heard in the last 30 s.
 18. A tap on a public node from the home. On the home, with a public
     node C in reach that the phone is not paired with, **Settings**,
     **Scan**, a tap on C's row: the line says "Connected to ID … as a
-    guest, until the node ends a guest's link after 30 s", C's ID, the
+    guest for 30 s", C's ID, the
     node logs the phone's Recipient, and the log has no `Found …,
     connecting` until C ends the link about 30 s after it began; then
     the phone is back on the home within a round. **Pair** on C's row,

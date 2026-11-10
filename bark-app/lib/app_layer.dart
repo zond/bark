@@ -216,7 +216,6 @@ Uint8List openIntro(Sodium s, Keys me, List<int> payload) {
 }
 
 const int numberLen = 3;
-const int maxNumber = (1 << 24) - 1;
 
 /// A fetch: send the newest batch of the items not yet sent to
 /// [address], for the requester's [recipient] tag at that address's node,

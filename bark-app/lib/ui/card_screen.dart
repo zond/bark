@@ -119,8 +119,7 @@ class CardScreen extends StatelessWidget {
     const Padding(
       padding: EdgeInsets.only(top: 8),
       child: Text(
-        'Set your name first: your card carries it, so that whoever scans '
-        'it knows who you are.',
+        'Set your name first: whoever scans your card needs to know it.',
       ),
     ),
     const SizedBox(height: 16),
@@ -143,12 +142,9 @@ class CardScreen extends StatelessWidget {
     const SizedBox(height: 16),
     Text(
       card.temporary
-          ? 'Temporary card: you have no home node, so it names the node '
-                'you use now, which keeps your mail only while you come '
-                'back to it. Set a node that stays where it is as your home '
-                'in Settings.'
-          : 'It carries your home node\'s address, whose mailbox keeps '
-                'your mail.',
+          ? 'Temporary card: with no home node, it names the node you use '
+                'now. Set a home in Settings.'
+          : 'It carries your home node\'s address.',
     ),
   ];
 

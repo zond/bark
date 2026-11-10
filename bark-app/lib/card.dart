@@ -19,9 +19,7 @@ class BadCard implements Exception {
 }
 
 class PersonCard {
-  /// 3 since the card carries the node it was made at; 2 is still read.
   static const version = 3;
-  static const _oldest = 2;
 
   /// Bytes before the addresses: the shortest card.
   static const fixedLen = 1 + 1 + keyLen + 4;
@@ -89,11 +87,10 @@ class PersonCard {
     if (b[0] > version) {
       throw BadCard('A card from a newer app (card version ${b[0]})');
     }
-    if (b[0] < _oldest) {
+    if (b[0] < version) {
       throw BadCard('A card from an older app (card version ${b[0]})');
     }
-    final known = b[0] >= 3 ? _flagHome | _flagNow : _flagHome;
-    if (b.length < fixedLen || b[1] & ~known != 0) {
+    if (b.length < fixedLen || b[1] & ~(_flagHome | _flagNow) != 0) {
       throw const BadCard('Not a card');
     }
     var at = fixedLen;

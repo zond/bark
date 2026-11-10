@@ -65,7 +65,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     setState(
                       () => _problem =
                           'The camera is not allowed. Allow it in the phone\'s '
-                          'settings, or paste the card instead.',
+                          'settings, or paste the card.',
                     );
                   }
                 },

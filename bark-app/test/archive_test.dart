@@ -1,8 +1,5 @@
 // Archiving: a conversation alone, or a contact with its conversation;
-// either brought back with the other; kept across a restart; and a file
-// from before archiving read as nothing archived.
-
-import 'dart:convert';
+// either brought back with the other; and kept across a restart.
 
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
@@ -63,21 +60,4 @@ void main() {
     expect(again.byKey(petro.key)!.archived, isTrue);
     expect(again.byKey(olena.key)!.archived, isFalse);
   });
-
-  test(
-    'a contacts.json from before archiving reads as nothing archived',
-    () async {
-      final c = olena.toJson()..remove('archived');
-      final old = jsonEncode({
-        'version': Contacts.version,
-        'contacts': [c],
-      });
-      final s = MemoryStore('contacts.json')..text = old;
-      final cs = Contacts(s);
-      await cs.load();
-      expect(s.fault, isNull);
-      expect(cs.archived, isEmpty);
-      expect(cs.active.map((c) => c.name), ['Olena']);
-    },
-  );
 }

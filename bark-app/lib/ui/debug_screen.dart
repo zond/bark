@@ -53,7 +53,9 @@ class DebugScreen extends StatelessWidget {
               _raw(
                 '${msgIdHex(o.id)} to ${o.dst}',
                 '${o.kind.name} ${o.sent} to ${_who(o.to)}, '
-                    '${o.state.name}${_wait(s, o)}, queued ${o.at.toLocal()}\n'
+                    '${o.state.name}${_wait(s, o)}'
+                    '${o.error == null ? '' : ', ${o.error}'}, '
+                    'queued ${o.at.toLocal()}\n'
                     '${hex(o.payload)}',
               ),
             heading('Received'),
@@ -85,12 +87,7 @@ class DebugScreen extends StatelessWidget {
     final s = app.session;
     final n = s.node;
     if (n == null || s.guest) {
-      return [
-        const Text(
-          'Connect a node this phone is paired with to pick a firmware '
-          'file for it.',
-        ),
-      ];
+      return [const Text('Connect a paired node to pick a firmware file.')];
     }
     return [
       Align(

@@ -653,7 +653,7 @@ void main() {
           p.messenger.receive(InboxMessage(n, reply));
           async.flushMicrotasks();
         }
-        expect(o.acked, isTrue);
+        expect(o.answered, isTrue);
         expect(p.me.remaining, bottom - 1);
         news.add(p.session.fetchNews);
         p.session.fetchNews = null;

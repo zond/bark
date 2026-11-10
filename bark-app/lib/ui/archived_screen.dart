@@ -38,8 +38,8 @@ class ArchivedScreen extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'Nothing archived. Swipe a conversation or a contact '
-                'aside to archive it.',
+                'Nothing archived. Swipe a conversation or contact aside to '
+                'archive it.',
               ),
             ),
           if (threads.isNotEmpty) title('Conversations'),

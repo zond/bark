@@ -34,9 +34,6 @@ abstract class Store {
   /// none. A file of another version, or one that does not parse,
   /// is set aside and null returned. `parse` reads the whole file before
   /// it changes anything, so a fault leaves nothing half loaded.
-  ///
-  /// Files written before versions were written have no version and are
-  /// read as version 1.
   Future<T?> load<T>(
     int version,
     T Function(Map<String, dynamic>) parse,
@@ -46,7 +43,7 @@ abstract class Store {
     Object? v;
     try {
       final j = jsonDecode(text) as Map<String, dynamic>;
-      v = j['version'] ?? 1;
+      v = j['version'];
       if (v is! int) throw FormatException('version $v');
       if (v == version) return parse(j);
     } catch (e) {

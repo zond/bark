@@ -93,7 +93,10 @@ void main() {
       said(async, app.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
-      expect(said(async, app.noHome()), contains('still holds'));
+      expect(
+        said(async, app.noHome()),
+        contains('Your old home keeps your mail'),
+      );
       expect(app.me.home, isNull);
       expect(app.fakeNode!.homeKey, isNotNull);
 
@@ -156,7 +159,7 @@ void main() {
       app.connectFake();
       async.flushMicrotasks();
       expect(f.homeKey, isNull);
-      expect(app.session.notice, contains('does not hold your mailbox key'));
+      expect(app.session.notice, contains('no longer keeps your mail'));
       expect(app.homeKeyGone, isTrue);
       expect(
         said(async, app.makeHome(app.session.address!)),
@@ -261,7 +264,7 @@ void main() {
   test('a node that does not keep the key is not made the home', () {
     run((async, app) {
       final r = said(async, app.makeHome(app.session.address!));
-      expect(r, contains('did not keep your mailbox key'));
+      expect(r, contains('refused'));
       expect(app.me.home, isNull);
     }, make: (now, me) => KeylessNode(now: now, sodium: sodium, app: me));
   });

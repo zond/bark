@@ -579,10 +579,7 @@ void main() {
         isA<LinkEnded>().having(
           (e) => '$e',
           'words',
-          startsWith(
-            'The link to ID 7572482FC367 ended before the node was '
-            'read: the node ended it, or is out of reach.',
-          ),
+          startsWith('The link to ID 7572482FC367 ended.'),
         ),
       ),
     );
@@ -1265,7 +1262,7 @@ void main() {
           'Connected to ID FA4E00000001, paired, installing version 24',
         );
         expect(connectionHelp(app), contains('at most ten minutes'));
-        expect(connectionHelp(app), contains('back about a minute later'));
+        expect(connectionHelp(app), contains('restarts for about a minute'));
         // The drain is over: it reboots, and ends the link.
         ble.inReach.remove(paired);
         node.install();
@@ -1275,7 +1272,7 @@ void main() {
             'ID FA4E00000001 is installing version 24, back in about '
             'a minute';
         expect(connectionLine(app), away);
-        expect(connectionHelp(app), contains('connects again by itself'));
+        expect(connectionHelp(app), contains('reconnects by itself'));
         // Past the two rounds that call a node out of reach, it waits on.
         async.elapse(lookRound * 3);
         expect(app.ownAway, isFalse);
@@ -1380,8 +1377,8 @@ void main() {
         expect(app.staleBond, nodeName(strongId));
         expect(
           staleBondLine(app.staleBond!),
-          'ID 0CE400000004 no longer knows this phone\'s old pairing. '
-          'Forget it in the phone\'s Bluetooth settings, then try again.',
+          'ID 0CE400000004 rejects this phone\'s old pairing. Forget it in '
+          'Bluetooth settings.',
         );
         // Not tried again every round: the next public node instead.
         async.elapse(lookRound * 2);
@@ -1655,10 +1652,7 @@ void main() {
             'Connected to ID 0CE400000004 as a guest. Home at ID 090909090909';
         expect(connectionLine(app), line);
         expect(app.held?.title, line);
-        expect(
-          connectionHelp(app),
-          startsWith('None of the nodes this phone is paired with'),
-        );
+        expect(connectionHelp(app), startsWith('None of your paired nodes'));
         ble.inReach.add(paired);
         async.elapse(lookRound);
         expect(
@@ -1672,10 +1666,7 @@ void main() {
       run((async, app, ble) {
         async.elapse(round);
         expect(connectionLine(app), 'Connected to ID 0CE400000004 as a guest');
-        expect(
-          connectionHelp(app),
-          startsWith('This phone is paired with no node near you'),
-        );
+        expect(connectionHelp(app), startsWith('No node of yours is near'));
       });
     });
 
@@ -1770,10 +1761,8 @@ void main() {
         expect(failed, isA<NotPaired>());
         expect(
           notPairedLine(failed!),
-          'Pairing did not complete: it was cancelled, the code typed was not '
-          'the one on the node\'s screen, or the node already keeps eight '
-          'phones, when its screen says PHONES FULL. The phone still uses the '
-          'node as a guest.',
+          'Not paired: cancelled, a wrong code, or the node is full (its '
+          'screen says PHONES FULL). Still a guest here.',
         );
         expect(ble.bonds, isEmpty);
         expect(app.session.pairedWith, isEmpty);
@@ -1883,9 +1872,9 @@ void main() {
         expect(failed, isA<BondKept>());
         expect(
           '$failed',
-          'This phone could not forget its old pairing with ID 0CE400000004, '
-              'and a new pairing needs it gone, so none was tried. Forget the '
-              'node in the phone\'s Bluetooth settings, then try again.',
+          'The phone kept its old pairing with ID 0CE400000004, so no new '
+              'one was tried. Forget the node in Bluetooth settings, then try '
+              'again.',
         );
         expect(ble.connects, isEmpty);
         expect(ble.pairings, 0);
@@ -2055,13 +2044,7 @@ void main() {
         expect((app.session.connected, app.session.guest), (true, false));
         expect(connectionLine(app), 'Connected to your home, ID FA4E00000001');
         expect(app.held?.title, 'Connected to your home, ID FA4E00000001');
-        expect(
-          connectionHelp(app),
-          startsWith(
-            'This phone is paired with your '
-            'home node',
-          ),
-        );
+        expect(connectionHelp(app), startsWith('Your home.'));
         // Both stay paired.
         expect(app.pairedNodes, {nodeName(FakeNode.id), nodeName(nearId)});
       });
@@ -2244,8 +2227,8 @@ void main() {
         expect((app.session.connected, app.session.guest), (true, true));
         expect(
           connectionLine(app),
-          'Connected to ID 0CE400000004 as a guest, until the node ends a '
-          'guest\'s link after 30 s. Home at ID FA4E00000001',
+          'Connected to ID 0CE400000004 as a guest for 30 s. Home at ID '
+          'FA4E00000001',
         );
         // No errand's end, no round, no move home while the node keeps it.
         async.elapse(const Duration(seconds: 25));

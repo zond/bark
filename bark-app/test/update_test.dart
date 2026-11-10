@@ -278,19 +278,19 @@ void main() {
       run((async, s, node, u) {
         expect(u.latest, isNull);
         expect(u.noLatest, 'No release known yet.');
-        known = const Release(1, image: 'https://x/img1');
+        known = const Release(1, app: 1, firmware: 1, image: 'https://x/img1');
         expect(u.latest, isNull);
         expect(
           u.noLatest,
           'The node already runs the latest release\'s firmware, version 1.',
         );
         // A release that carries version 1's firmware on is no newer.
-        known = const Release(2, firmware: 1, image: 'https://x/img1');
+        known = const Release(2, app: 2, firmware: 1, image: 'https://x/img1');
         expect(u.latest, isNull);
-        known = const Release(2);
+        known = const Release(2, app: 2, firmware: 2);
         expect(u.latest, isNull);
         expect(u.noLatest, 'Release 2 carries no node firmware.');
-        known = const Release(2, image: 'https://x/img2');
+        known = const Release(2, app: 2, firmware: 2, image: 'https://x/img2');
         expect(u.latest?.n, 2);
         expect(u.noLatest, isNull);
         node.image = 3;
@@ -390,7 +390,12 @@ void main() {
       now: now,
     );
     await t.runAsync(app.load);
-    app.releases.latest = const Release(2, image: 'https://x/img2');
+    app.releases.latest = const Release(
+      2,
+      app: 2,
+      firmware: 2,
+      image: 'https://x/img2',
+    );
     app.setFake(true);
     await app.connectFake();
     final u = app.updater;

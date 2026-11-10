@@ -1,7 +1,7 @@
 // The check for a newer release: the API's answer and its manifest read,
-// or a release's from before the manifest by its files' names, the app's
-// and the node's versions compared, each with its own half of the release, a development build and a bench node never
-// asked to update, dismissals kept, a fetch at start and a day after, a
+// a release without a manifest refused, the app's and the node's versions
+// compared, each with its own half of the release, a development build
+// and a bench node never asked to update, dismissals kept, a fetch at start and a day after, a
 // failed fetch silent, the last answer shown at once at the next start;
 // and the two bars on the home screen against the fake node.
 
@@ -25,7 +25,8 @@ import 'package:sodium/sodium.dart';
 
 import 'update_test.dart' show imageFile;
 
-/// The API's answer for release `v<n>` with its APK and image.
+/// The API's answer for release `v<n>` of app and firmware `n`, with its
+/// APK, its image and its manifest, which [served] gives.
 Map<String, dynamic> answer(int n, {bool apk = true, bool image = true}) => {
   'tag_name': 'v$n',
   'assets': [
@@ -33,8 +34,20 @@ Map<String, dynamic> answer(int n, {bool apk = true, bool image = true}) => {
     {'name': 'bark-fw-$n.uf2', 'browser_download_url': 'https://x/uf2'},
     if (image)
       {'name': 'bark-fw-$n.img', 'browser_download_url': 'https://x/img$n'},
+    {'name': manifestName, 'browser_download_url': 'https://x/manifest$n'},
   ],
 };
+
+/// A download of a file of [answer]'s: release `n`'s manifest, or the
+/// image of version `n`.
+Future<List<int>> served(String url) async {
+  final m = RegExp(r'^https://x/(manifest|img)(\d+)$').firstMatch(url);
+  expect(m, isNotNull, reason: url);
+  final n = int.parse(m![2]!);
+  return m[1] == 'manifest'
+      ? utf8.encode(jsonEncode(manifest(n, n, n)))
+      : imageFile(n, 20001);
+}
 
 /// The API's answer for release `v<n>` with a manifest naming app version
 /// `app` and firmware version `firmware`, and the files named for them.
@@ -106,20 +119,29 @@ NodeInfo node(int image, {int last = 1}) =>
 
 void main() {
   test('a release from the API', () {
-    final r = Release.parse(answer(7))!;
+    final r = Release.parse(answer(7), manifest(7, 7, 7))!;
     expect(r.n, 7);
     expect(r.apk, 'https://x/apk7');
     expect(r.image, 'https://x/img7');
     expect(r.imageName, 'bark-fw-7.img');
-    final bare = Release.parse(answer(7, apk: false, image: false))!;
+    final bare = Release.parse(
+      answer(7, apk: false, image: false),
+      manifest(7, 7, 7),
+    )!;
     expect(bare.apk, isNull);
     expect(bare.image, isNull);
-    // Files named for another N are not this release's.
-    final other = Release.parse({...answer(7), 'tag_name': 'v8'})!;
+    // Files named for another version are not this release's.
+    final other = Release.parse({
+      ...answer(7),
+      'tag_name': 'v8',
+    }, manifest(8, 8, 8))!;
     expect(other.apk, isNull);
     expect(other.image, isNull);
     for (final t in ['7', 'v0', 'v07', 'v1.2', null]) {
-      expect(Release.parse({...answer(7), 'tag_name': t}), isNull);
+      expect(
+        Release.parse({...answer(7), 'tag_name': t}, manifest(7, 7, 7)),
+        isNull,
+      );
     }
   });
 
@@ -132,16 +154,10 @@ void main() {
     expect(r.apk, 'https://x/apk22');
     expect(r.image, 'https://x/img21');
     expect(r.imageName, 'bark-fw-21.img');
-    // Kept and read back, and one kept before the manifest as its N.
+    // Kept and read back.
     final kept = Release.fromJson(r.toJson());
     expect((kept.n, kept.app, kept.firmware), (22, 22, 21));
     expect(kept.image, r.image);
-    final old = Release.fromJson({'n': 7, 'apk': 'a', 'image': 'i'});
-    expect((old.n, old.app, old.firmware), (7, 7, 7));
-    // Without a manifest, v21 and older: one version, the release's.
-    final v21 = Release.parse(answer(21))!;
-    expect((v21.n, v21.app, v21.firmware), (21, 21, 21));
-    expect(v21.image, 'https://x/img21');
     // A manifest that does not fit its release is refused.
     for (final m in [
       manifest(23, 22, 21),
@@ -171,6 +187,7 @@ void main() {
       store ?? MemoryStore(),
       now: () => start.add(async.elapsed),
       fetch: fetch.call,
+      download: served,
       app: app,
     );
     r.load();
@@ -214,6 +231,25 @@ void main() {
       check(async, bad);
       expect(bad.latest, isNull);
       expect(lines.single, startsWith('Checking for a new release failed'));
+      // A release without a manifest is not one this app reads.
+      final bare = answer(22)
+        ..['assets'] = [
+          for (final a in answer(22)['assets'] as List)
+            if ((a as Map)['name'] != manifestName) a,
+        ];
+      lines.clear();
+      final none = Releases(
+        MemoryStore(),
+        now: () => start.add(async.elapsed),
+        fetch: FakeFetch(bare).call,
+        download: served,
+        app: 21,
+      )..noted = lines.add;
+      none.load();
+      async.flushMicrotasks();
+      check(async, none);
+      expect(none.latest, isNull);
+      expect(lines.single, endsWith('no $manifestName'));
     });
   });
 
@@ -339,10 +375,7 @@ void main() {
           MemoryStore(),
           now: DateTime.now,
           fetch: FakeFetch(answer(5)).call,
-          download: (url) async {
-            expect(url, 'https://x/img5');
-            return imageFile(5, 20001);
-          },
+          download: served,
           app: app,
         ),
       );
@@ -351,8 +384,8 @@ void main() {
       return (a, n);
     }
 
-    const appBar = 'A newer app, version 5, is available';
-    const nodeBar = 'Your node runs version 1; version 5 is available';
+    const appBar = 'App version 5 is out';
+    const nodeBar = 'Node firmware 5 is out';
 
     testWidgets('a newer app: opened in the browser, or dismissed', (t) async {
       final (app, n) = await model(t, 3);
@@ -403,7 +436,7 @@ void main() {
 
     /// The app at release `app` with the fake node of image `image`, or
     /// none, against a release list that answers `release`, by default
-    /// release 5 from before the manifest, or none.
+    /// release 5, or none.
     Future<AppModel> settings(
       WidgetTester t, {
       required int app,
@@ -422,7 +455,7 @@ void main() {
           MemoryStore(),
           now: DateTime.now,
           fetch: FakeFetch(online ? release?.$1 ?? answer(5) : null).call,
-          download: release?.$2 ?? httpGet,
+          download: release?.$2 ?? served,
           app: app,
         ),
       );
@@ -467,26 +500,17 @@ void main() {
     testWidgets('a newer app, and no node linked', (t) async {
       final a = await settings(t, app: 3);
       expect(
-        find.text(
-          'A newer app, version 5, is available: get it under App below; '
-          'no node linked',
-        ),
+        find.text('App 5 is out: tap App below; no node linked'),
         findsOneWidget,
       );
-      expect(
-        find.textContaining('version 5 is available: tap'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('5 is out. Tap to download'), findsOneWidget);
       await shut(t, a);
     });
 
     testWidgets('a newer node firmware, sent from Node firmware', (t) async {
       final a = await settings(t, app: 5, image: 1);
       expect(
-        find.text(
-          'App up to date (5); node firmware 1; version 5 is newer: send '
-          'it under Node firmware below',
-        ),
+        find.text('App up to date (5); node firmware 5 is out: send it below'),
         findsOneWidget,
       );
       expect(find.text('Send to the node'), findsOneWidget);
@@ -513,16 +537,10 @@ void main() {
     testWidgets('an app fix: a newer app, the firmware up to date', (t) async {
       final a = await settings(t, app: 21, image: 21, release: appFix);
       expect(
-        find.text(
-          'A newer app, version 22, is available: get it under App below; '
-          'node firmware 21, up to date',
-        ),
+        find.text('App 22 is out: tap App below; node firmware 21, up to date'),
         findsOneWidget,
       );
-      expect(
-        find.textContaining('version 22 is available: tap'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('22 is out. Tap to download'), findsOneWidget);
       expect(find.text('Send to the node'), findsNothing);
       await shut(t, a);
     });
@@ -533,12 +551,11 @@ void main() {
       final a = await settings(t, app: 22, image: 21, release: fwFix);
       expect(
         find.text(
-          'App up to date (22); node firmware 21; version 23 is newer: send '
-          'it under Node firmware below',
+          'App up to date (22); node firmware 23 is out: send it below',
         ),
         findsOneWidget,
       );
-      expect(find.text('Version 21; version 23 is available'), findsOneWidget);
+      expect(find.text('Version 21; 23 is out'), findsOneWidget);
       expect(find.text('Send to the node'), findsOneWidget);
       await shut(t, a);
     });

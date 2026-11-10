@@ -43,7 +43,7 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
     0 => 'the network is busy, sending again now',
     final w => 'the network is busy, sending again in ${clock(w)}',
   },
-  OutState.refused => 'refused: ${o.error}',
+  OutState.refused => 'refused by the node',
 };
 
 /// The day a node's phone was last linked, as a record counts it
@@ -72,8 +72,7 @@ const List<(IconData, String, String)> sentStates = [
   (
     Icons.schedule,
     'Waiting for a node',
-    'It waits on this phone: no node is linked, or the node is not ready '
-        'for it yet.',
+    'On this phone, until a node is linked and ready for it.',
   ),
   (
     Icons.sync,
@@ -83,20 +82,25 @@ const List<(IconData, String, String)> sentStates = [
   (
     Icons.check,
     'Sent into the network',
-    'The node has it and passes it on, hop by hop. The network gives no '
-        'further news: it does not say when it arrives.',
+    'The node has it and passes it on. The network gives no further '
+        'news: it does not say when it arrives.',
   ),
   (
     Icons.hourglass_bottom,
     'The network is busy',
-    'The network could not take it now and gave it back, with a wait. '
-        'The app sends it again by itself once the wait is over.',
+    'The network gave it back for now. The app sends it again by itself '
+        'once the wait is over.',
+  ),
+  (
+    Icons.block,
+    'Refused by the node',
+    'The node will not take it as it is, a fault of the app or the node. '
+        'Cancel removes it; Debug shows the reason.',
   ),
   (
     Icons.add_reaction_outlined,
     'Their reaction',
-    'An emoji on the text\'s corner is how they answered it. Nothing '
-        'answers by itself: they chose to, and it came back like a text.',
+    'The emoji on the text\'s corner, if they picked one.',
   ),
 ];
 
@@ -107,36 +111,30 @@ const List<(IconData, String, String)> receivedMarks = [
   (
     Icons.add_reaction_outlined,
     'Your reaction',
-    'Press and hold a text to answer it with any emoji, or to copy it. '
-        'The sender sees the emoji on their copy once it arrives, which '
-        'like a text may take a while. Pick another to change it. Nothing '
-        'answers by itself.',
+    'Press and hold a text to react with an emoji, or to copy it. They '
+        'see it once it arrives. Pick another to change it.',
   ),
   (
     Icons.gpp_maybe,
     'First message',
-    'It came as a first message, in the form anyone who holds your card '
-        'can make, so it may not be theirs. Texts from them since came in '
-        'the form only they can make; this one is not proven.',
+    'Anyone with your card could have sent a first message, so this one '
+        'is not proven to be theirs.',
   ),
   (
     Icons.markunread_mailbox,
     'From your mailbox',
-    'It waited at your home node while your phone was away, and came '
-        'when the app fetched it.',
+    'It waited at your home node and came when you fetched your mail.',
   ),
   (
     Icons.more_horiz,
     'Parts',
-    'A long text comes in up to 16 parts, each a message of its own, '
-        'which may arrive in any order. A line in italics stands for a '
-        'part not yet here.',
+    'A long text comes in parts, in any order. Italics stand for a part '
+        'not yet here.',
   ),
   (
     Icons.schedule,
     'The time',
-    'When it came to this phone. When the sender wrote it, by their '
-        'phone\'s clock, is under This message.',
+    'When it came. When it was written is under This message.',
   ),
 ];
 
@@ -283,8 +281,7 @@ class StaleBondLine extends StatelessWidget {
 /// What the person reads when pairing with a node the phone uses as a
 /// guest failed for `e`: why, and that the phone goes on as before.
 String notPairedLine(Object e) =>
-    '${e is NotPaired ? '$e' : 'Pairing failed: $e'}. The phone still uses '
-    'the node as a guest.';
+    '${e is NotPaired ? '$e' : 'Pairing failed: $e'}. Still a guest here.';
 
 /// While no home is set and the phone is on a node that can be one
 /// ([AppModel.offerHome]), the node the search found still paired with the
@@ -298,9 +295,6 @@ class HomeOfferLine extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!app.offerHome) return const SizedBox.shrink();
     final guest = app.guestHere != null;
-    final card = app.contacts.list.isEmpty
-        ? ''
-        : ' Your new card then goes to your contacts.';
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
@@ -308,15 +302,9 @@ class HomeOfferLine extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              guest
-                  ? 'This phone has no home node set. As your home, this '
-                        'node keeps texts to you and gives your card a fixed '
-                        'address. The phone pairs with it first: you type '
-                        'the code its screen shows.$card'
-                  : app.contacts.list.isEmpty
-                  ? 'This phone has no home node set.'
-                  : 'This phone has no home node set. Making this node '
-                        'your home sends your new card to your contacts.',
+              'No home node yet. Make this one your home? It keeps texts '
+              'to you while you are away.'
+              '${guest ? ' You pair first, with the code on its screen.' : ''}',
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
@@ -472,7 +460,7 @@ class SendCardLine extends StatelessWidget {
       subtitle: Text(
         n == 1
             ? 'Your contact has the old one.'
-            : 'Your $n contacts have the old one; one message each.',
+            : 'Your $n contacts have the old one.',
       ),
       trailing: FilledButton(
         onPressed: () async {
@@ -534,13 +522,6 @@ String? lookingLine(AppModel app) {
   return app.scanning ? null : AppModel.searchLine(app.sought, bluetooth: true);
 }
 
-/// Which public node the phone uses as a guest, during an errand there
-/// and between them; null while it uses none.
-String? guestLine(AppModel app) {
-  final s = app.session;
-  return s.connected && !s.guest ? null : app.nodeLine;
-}
-
 /// The line on the phone's node, one of four: on its home, on another
 /// node it is paired with, on a public node as a guest, or on none, as
 /// when a paired node is away to install a new version. Why is
@@ -559,74 +540,94 @@ String connectionHelp(AppModel app) {
   final lost = [for (final n in s.pairingLost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
-    [final n] => ' $n is no longer yours: it no longer knows this phone.',
+    [final n] => '\n\n$n is no longer yours: it no longer knows this phone.',
     _ =>
-      ' ${lost.join(', ')} are no longer yours: they no longer know this '
+      '\n\n${lost.join(', ')} are no longer yours: they no longer know this '
           'phone.',
   };
   final install = app.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
     if (app.atHome) {
-      return 'This phone is paired with your home node and keeps a link to '
-          'it while it is in reach: your texts go out through it, and texts '
-          'to you arrive as the node gets them, also with the screen off. '
-          'The phone always goes to your home first.';
+      return 'Your home. The phone stays linked while it is in reach, so '
+          'texts come at once, also with the screen off. It always goes to '
+          'your home first.';
     }
     final home = app.homeName == null
-        ? 'You have no home node, so your card names this node while you '
-              'use it.'
-        : 'Texts to you wait at your home; "Fetch my mail" brings them '
-              'here.${app.movesHome ? ' When your home comes in reach, the '
-                        'phone moves to it within a minute.' : ''}';
-    return 'This phone is paired with this node and keeps a link to it '
-        'while it is in reach: your texts go out through it, and texts that '
-        'come to it for you arrive here. $home';
+        ? 'With no home, your card names this node while you use it.'
+        : 'Texts to you wait at your home; Fetch my mail brings them here.'
+              '${app.movesHome ? ' When your home is in reach, the phone moves to it within a minute.' : ''}';
+    return 'A node you are paired with. The phone stays linked while it is '
+        'in reach. $home';
   }
   if (app.tappedGuest) {
-    return 'You connected to this public node, someone else\'s, as a guest. '
-        'The node serves one guest at a time and ends a guest\'s link 30 '
-        'seconds after it began, so that the others near it get their turn; '
-        'then the phone goes back to choosing a node itself. Texts you send '
-        'meanwhile go out through this node.$lostLine';
+    return 'Someone else\'s public node, which you chose. It serves one '
+        'guest at a time and ends a guest\'s link after 30 seconds; then the '
+        'phone chooses a node itself.$lostLine';
   }
   if (app.nodeLine != null) {
     final why = app.ownWeak
-        ? 'The nodes this phone is paired with are heard here too weakly '
-              'for a link to hold, so it uses this public node meanwhile, and '
-              'goes back to one as soon as it hears it well.'
+        ? 'Your paired nodes are heard too weakly here, so the phone uses '
+              'this public node until it hears one well.'
         : app.ownAway
-        ? 'None of the nodes this phone is paired with has been in reach for '
-              '30 seconds, so it uses this public node meanwhile, and goes '
-              'back to one as soon as it hears it.'
-        : 'This phone is paired with no node near you, so it uses this '
-              'public node, someone else\'s.';
-    return '$why As a guest it visits the node about once a minute, and at '
-        'once when you send, to send your texts and to read those that came '
-        'there for you. Replies to texts you send from here come here.'
-        '$lostLine';
+        ? 'None of your paired nodes has been in reach for 30 seconds, so '
+              'the phone uses this public node until it hears one.'
+        : 'No node of yours is near, so the phone uses this public node, '
+              'someone else\'s.';
+    return '$why As a guest it visits about once a minute, and at once when '
+        'you send. Replies to texts sent from here come here.$lostLine';
   }
   if (lookingLine(app) != null) {
     if (!app.bluetoothOn) {
-      return 'Bluetooth is off, so the phone cannot reach a node. Texts you '
-          'write wait on the phone and go out once Bluetooth is on and a '
+      return 'Bluetooth is off. Texts wait on the phone until it is on and a '
           'node is in reach.$lostLine';
     }
     if (app.searchFor == null) {
-      return 'This phone is paired with no node it can use, so it looks '
-          'every 15 seconds for a public node, someone else\'s, to use as a '
-          'guest. Texts you write wait on the phone until one is in reach.'
-          '$lostLine';
+      return 'No node of yours to use, so the phone looks every 15 seconds '
+          'for a public node to use as a guest.$lostLine';
     }
-    return 'The phone looks every 15 seconds for the nodes it is paired '
-        'with, your home first. If none has been in reach for 30 seconds, it '
-        'uses a public node as a guest meanwhile. Texts you write wait on '
-        'the phone until a node is in reach.$lostLine';
+    return 'The phone looks every 15 seconds for your paired nodes, your '
+        'home first. After 30 seconds without one, it uses a public node '
+        'as a guest meanwhile.$lostLine';
   }
-  return 'The phone is not looking for a node: you stopped it, or it may '
-      'not use Bluetooth yet. Tap a node in Settings to connect. Texts you '
-      'write wait on the phone.$lostLine';
+  return 'The phone is not looking: you stopped it, or it may not use '
+      'Bluetooth yet. Tap a node in Settings to connect.$lostLine';
 }
+
+/// An info button that opens `body` under `title`, for whoever asks.
+class HelpButton extends StatelessWidget {
+  final String title;
+  final String body;
+  const HelpButton(this.title, this.body, {super.key});
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: 'About $title',
+    icon: const Icon(Icons.info_outline),
+    onPressed: () => showHelp(context, title, body),
+  );
+}
+
+/// A sheet of `body` under `title`.
+Future<void> showHelp(BuildContext context, String title, String body) =>
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(body),
+            ],
+          ),
+        ),
+      ),
+    );
 
 /// The button by [connectionLine] that opens [connectionHelp].
 class ConnectionHelpButton extends StatelessWidget {
@@ -637,27 +638,8 @@ class ConnectionHelpButton extends StatelessWidget {
   Widget build(BuildContext context) => IconButton(
     tooltip: 'Why this node',
     icon: const Icon(Icons.info_outline),
-    onPressed: () => showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                connectionLine(app),
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(connectionHelp(app)),
-            ],
-          ),
-        ),
-      ),
-    ),
+    onPressed: () =>
+        showHelp(context, connectionLine(app), connectionHelp(app)),
   );
 }
 
@@ -668,8 +650,8 @@ Future<bool> whyBluetooth(BuildContext context) async =>
       builder: (context) => AlertDialog(
         title: const Text('Bluetooth'),
         content: const Text(
-          'bark sends and receives through a node near you, which it finds '
-          'and talks to over Bluetooth. Android asks you next.',
+          'bark texts through a node near you, over Bluetooth. Android asks '
+          'next.',
         ),
         actions: [
           TextButton(

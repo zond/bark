@@ -21,9 +21,8 @@ bool servesEachOther(NodeInfo n) =>
 /// What the person reads of a node that, by [servesEachOther], this app
 /// and it do not serve: the side to update.
 String notServedLine(NodeInfo n) => n.version < oldestNode
-    ? 'This node\'s firmware is older than this app serves: update the '
-          'node\'s firmware.'
-    : 'This app is older than this node\'s firmware serves: update the app.';
+    ? 'This node\'s firmware is too old for this app: update the node.'
+    : 'This app is too old for this node: update the app.';
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
