@@ -18,7 +18,7 @@
 //! | [`RECORD`] | the staged image's header, which the loader checks |
 //! | [`GIVEN_UP`] | the images this node swapped back, never gathered again |
 //! | [`SPARE`] | nothing yet: room for secrets to come |
-//! | [`MAILBOX_STATE`] | the mailbox's state, its key among it (`docs/app-layer-2026-11-05.md`, section 5) |
+//! | [`MAILBOX_STATE`] | the mailbox's state as an image before the phones' records kept it, its key among it, read once for record one (`docs/app-layer-2026-11-05.md`, section 5; roadmap D168) |
 //! | [`STORE`] | the node's stored state (roadmap D73) |
 //! | `0xF4000`–`0x100000` | the bootloader, its settings, the MBR's parameters |
 //!
@@ -108,7 +108,8 @@ pub const RECORD: Region = Region::pages_from(ACTIVE.end(), 1);
 /// The names of the images this node swapped back (`crate::given_up`):
 /// above [`DRIVE_END`], so that a UF2 copied over USB leaves them.
 pub const GIVEN_UP: Region = Region::pages_from(RECORD.end(), 1);
-/// The mailbox's state page: it holds the mailbox key.
+/// The mailbox's state page: it held the mailbox key before the phones'
+/// records did, and is read once for record one.
 pub const MAILBOX_STATE: Region = Region::pages_from(STORE_START - PAGE, 1);
 /// Between the given-up images and the mailbox's state, above
 /// [`DRIVE_END`]: unused, for secrets to come.

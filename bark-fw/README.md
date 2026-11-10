@@ -138,11 +138,11 @@ Verified on the host:
 - `cargo build --release` and `cargo clippy -- -D warnings` pass with
   each build, plain, with `--features console` and with `BARK_OPEN=1`.
 - The ELF's first loadable byte (the vector table) is at `0x06000`, the
-  initial stack pointer is `0x20040000`. The open node image of version
-  16 is 481 464 B of flash (`.vector_table`, `.text`, `.rodata` and
-  `.data`) of the 929 792 B slot, and uses 149 592 B of RAM before the
-  stack (`.data` and `.bss`), which leaves the stack 111 528 B
-  (2026-11-09 with roadmap D159, `size -A`, `scripts/uf2.py --stack`). The relay,
+  initial stack pointer is `0x20040000`. The open node image is
+  513 144 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
+  of the 929 792 B slot, and uses 195 240 B of RAM before the stack
+  (`.data` and `.bss`), which leaves the stack 65 864 B (2026-11-10 with
+  roadmap D168, `size -A`, `scripts/uf2.py --stack`). The relay,
   95 016 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. The
   stack's depth is in "Tasks and the stack", below.
@@ -174,6 +174,20 @@ Verified on the host:
   the new one after a swap and the old one after a swap back (2026-10-25).
 - `scripts/image.py stage` sends an image whole, in order, through a
   fake console on a pseudo-terminal (2026-10-25).
+- The phones' records (`cargo test -p bark-link`, `phones`): each entry
+  kept whole or, cut at any word, not at all; the last of each kind
+  holding; an older image's bond and home made record one; a pairing
+  added, taken again by the same phone, refused on a full node and given
+  the oldest home on a node nobody is paired with; a home joining the one
+  its person's earlier phone left; a removal of what a record holds; eight
+  records in two reads of Phones; a removal code taken once, within 30 s
+  (2026-11-10, roadmap D168).
+- The ring for eight records (`cargo test -p bark-app-layer`,
+  `mailbox`, `flash_ring`): a bit of the mark for each record, one
+  person's reading and fetching clearing their own; each record's inbox by
+  its tag; two people's fetch rounds taking turns; a record made anew
+  claiming no older item; a slot written before the bits read as the
+  first record's (2026-11-10).
 
 Unverified, in the order they will fail if wrong:
 
@@ -190,8 +204,13 @@ Unverified, in the order they will fail if wrong:
 - Whether USB enumerates when the cable comes after a boot on battery,
   the 32 MHz crystal then asked of the MPSL (`src/main.rs`,
   `src/ble.rs`).
-- That a second phone's pairing replaces the first's bond, and the first
-  phone's reads then fail (Phone link, below; roadmap D135).
+- That the controller's resolving list holds the eight records' phones,
+  and that a phone whose record holds its bond, and that pairs again on a
+  full node, is known by its address and taken (Phone link, below;
+  roadmap D168).
+- That the external flash takes a byte programmed again over a written
+  one, as each record's bit of a slot's mark is (Mailbox, below).
+- What a sleepy node's current pays for a paired phone's standing link.
 - VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
@@ -281,8 +300,8 @@ Inside:
 | staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
 | given up | `0xEA000` | 4 KiB | the names of the images the node swapped back, 128, which it never gathers again (Updates, below); outside every UF2, so a copy over USB keeps them |
 | spare | `0xEB000` | 28 KiB, 7 pages | unused, outside every UF2: for secrets to come |
-| mailbox state | `0xF2000` | 4 KiB | the mailbox key, the last fetch and the phone's last confirmed item; secret, so above `0xEA000` |
-| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the bond's keys with the paired phone; secret, so above `0xEA000` |
+| mailbox state | `0xF2000` | 4 KiB | where an image before roadmap D168 kept the one mailbox key, the last fetch and the phone's last confirmed item, read once to make record one (Phone link, below); secret, so above `0xEA000` |
+| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the phones' records, their bonds' keys and mailbox keys among them; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
 | MBR parameters | `0xFE000` | 4 KiB | |
@@ -909,7 +928,7 @@ its value flush right. Top to bottom:
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
 | `GET V14 14/31` | while it gathers an image over the mesh: its version, the blocks held from the first of all its blocks; no line otherwise | the core's `Status::gathering` (spec "Neighbour status") |
-| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then `PHONE PUBLIC` or, once its owner has made it theirs alone, `PHONE PRIVATE`; while a phone pairs, `PAIR CODE 012345` | the phone link (Phone link, below) |
+| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then with one phone paired `PHONE PUBLIC` or, once its owners have made it theirs alone, `PHONE PRIVATE`, with more `3 PHONES  PUBLIC` or `3 PHONES PRIVATE`; while a phone pairs, `PAIR CODE 012345`; while a removal waits, `REMOVE    012345`; for 30 s after a pairing refused for want of room, `PHONES      FULL`, which the code's line shows too | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the battery lasts, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -1032,47 +1051,70 @@ sleep mode 1. The front light (P1.11) stays off.
 
 ## Phone link
 
-The link (`src/ble.rs`, spec "Phone link") is the paired phone's
-(roadmap D135), and on a public node, as every node is unless its owner
-makes it private, also its guests' (below). Every characteristic of the service needs a link
-encrypted with an authenticated key; any other connection's read, write
-or subscription gets ATT's insufficient authentication, and an Android
+The link (`src/ble.rs`, spec "Phone link") is the paired phones', up
+to eight, each an owner (roadmap D135, D168), and on a public node, as
+every node is unless its owners make it private, also its guests'
+(below). Every characteristic of the service needs a link encrypted
+with an authenticated key; any other connection's read, write or
+subscription gets ATT's insufficient authentication, and an Android
 phone then pairs: it shows a dialog for a code, and the node draws a
 random six-digit one on its screen at once, as `PAIR CODE`. The host,
 TrouBLE (a copy, `vendor/README.md`), runs LE Secure Connections with
-the node displaying and the phone typing. When the pairing completes and
-bonds, the node keeps the bond, the phone's identity address, its
-identity resolving key and the long-term key, as a 64-byte record of two
-slots of the stored-state page (`src/store.rs`, `bark_link::bond`), and
-forgets any other: one phone at a time, and a new pairing replaces the
-last. A pairing that is not authenticated or does not bond leaves the
-bond as it was and its link is closed. The phone whose bond the node
-keeps pairs anew with a code like any other once it has forgotten the
-node, the log first saying `ble: a phone the node holds a bond with pairs
-again`; a pairing that fails leaves the old bond in place. The screen says `PHONE UNPAIRED`
-until a phone has paired, then `PHONE PUBLIC`, or `PHONE PRIVATE` on a
-node its owner has made private.
-The controller is built with LE privacy, as the host puts the bonded
-phone in its resolving list.
+the node displaying and the phone typing.
+
+The node keeps a record for each phone paired (`src/phones.rs`,
+`bark_link::phones`): the bond, its identity address, identity
+resolving key and long-term key; the person's tag and name as the phone
+writes them to Recipient; their mailbox key once they make the node
+their home; the last of their items the phone confirmed and the last
+fetch taken; the day the phone was last linked; the record's number; and
+the ring's newest item when the record was made, so that bits of the
+marks left by a record freed before count for nothing (Mailbox, below).
+The store keeps them in the stored-state page beside the core's state
+(`src/store.rs`): a record as an entry of four slots, written when the
+bond, the tag, the name, the home or the day changes; what each read or
+fetch moves, the last confirmed and the last fetch, as an entry of one
+slot; and the node's settings, private or not and the next record's
+number, one slot. The last entry of each kind is the one that holds, and
+a full page is erased and every kind's latest written again. A page an
+older image wrote holds its one bond instead, which the first boot
+makes record one, with the home the mailbox's state page held, and
+writes at once; such a page holds no settings entry, which is how the
+node tells.
+
+A pairing that completes, is authenticated and bonds takes a free
+record, or replaces the bond of the record whose bond names the same
+phone; on a node nobody is paired with whose eight records all hold
+homes left behind it takes the one linked longest ago. With every
+record in use and a phone paired, the node refuses: each link's
+`set_refuses_pairing` (`vendor/README.md`) answers the phone's Pairing
+Request with Pairing Failed and the node shows no code, its screen
+saying `PHONES FULL` for 30 s, unless the phone's address resolves to a
+record's bond. A pairing that is not authenticated or does not bond
+changes no record and its link is closed. After each pairing the host
+holds the records' bonds and no other (`hold_records`). Each paired
+phone has a link of its own, and the node takes one more for a phone
+that pairs or a guest: nine at most, advertising while one is free.
+The controller is built with LE privacy, as the host puts each bonded
+phone in its resolving list; at boot the log says `ble: resolving list
+holds N keys, the 8 records need 8`, an error if N is less, as the
+controller's documentation does not give it.
 
 The log says `ble: pairing, the code shown`, in an open build with the
 code, `ble: pairing, the code shown: 123456`, so that the bench pairs a
 phone without reading the screen, and never in a protected build, whose
-cable must not stand in for being at the node; then `ble: paired; the bond
-replaces any before it` or `ble: pairing failed ..`, and at boot `ble:
-bond kept` for a node with one; each names the bond's phone by its
-identity address, kind and an IRK fingerprint, and each connection says
-whether the peer is the bond's (`the bond's=Some(true)`). Only an
-authenticated pairing that bonds replaces the kept bond
-(`bark_link::bond::after_pairing`). A phone whose node's bond names
-another phone, as the log then shows, is no longer the owner and pairs
-again; c367's bond came to name another phone on 2026-11-08, when its
-owner paired a second phone with it while it ran on battery with no
-USB log, and the first phone paired again. A disconnect's reason, and a host error
+cable must not stand in for being at the node; then `ble: paired,
+Added(2), phone ..`, `Again(..)` or `Took(..)`, `ble: pairing refused,
+every record in use; the screen says PHONES FULL` or `ble: pairing
+failed ..`, and at boot `phones: 2 paired, 3 kept, room 5, public true`
+and `ble: record 0 number 1 table seen at version 13, ..` for each
+record with a bond; each names its phone by its identity address, kind
+and an IRK fingerprint, and each connection says which record's bond
+the peer is (`record=Some(0)`). A disconnect's reason, and a host error
 that carries an HCI or ATT error, is logged as that code in hex
 (Bluetooth Core, Vol 1, Part F, and Vol 3, Part F, 3.4.1.1): `ble:
 disconnected 0x13` when the phone ends the link, `0x16` when the node
-does; other host errors by name. A phone whose bond the node replaced
+does; other host errors by name. A phone whose bond the node removed
 asks to encrypt with its old key as soon as it connects; the node has no
 such key, and the host ends the link, authentication failure (bench,
 2026-11-06: `ble: disconnected 0x16`, terminated by the node, half a
@@ -1098,12 +1140,13 @@ taken from the stack (2026-11-07, `llvm-size`).
 The node builds the GAP and GATT services itself (`src/ble.rs`,
 `server`), as the host's builder leaves the GATT service empty: Service
 Changed and the database hash, which the host computes once the table is
-whole (spec "Phone link", Changes to the table). The bond's record keeps
-the link version the phone last saw and its subscription to Service
-Changed. At boot the log says `ble: bond kept, table seen at version 4,
-service changed false` or the like; on the bond's encrypted link, while
-the phone is subscribed and saw another version, `ble: service changed:
-the phone saw version 4, this is 5` and, once the phone confirms,
+whole (spec "Phone link", Changes to the table). Each record keeps the
+link version its phone last saw and its subscription to Service
+Changed. At boot the log says `ble: record 0 number 1 table seen at
+version 12, service changed true, ..` or the like; on the phone's
+encrypted link, while it is subscribed and saw another version, `ble:
+service changed: the phone of record 0 saw version 12, this is 13` and,
+once the phone confirms,
 `ble: service changed confirmed`. It costs 4 KB of flash and 0.4 KB of
 static RAM (2026-11-07, `llvm-size`).
 
@@ -1121,95 +1164,127 @@ SHA-256 among it, which the node build did not have before
 (2026-11-07, `llvm-size`, an open build).
 
 Recipient and Public (link version 7) serve guests on a public node
-(spec "Phone link", Public; roadmap D150). A node is public unless the
-paired phone writes 0 to Public, private; the bond's record keeps that
-in its byte 14, so a node never paired, and a bond kept before, is
-public, and it keeps the paired phone's recipient tag, which it writes
-to Recipient at every connection. The host takes 2 links, the owner's
-and one guest's at a time, each served by a task of its own (`slot`),
-so that its future lies in static storage and the stack holds one poll
-at a time; one slot advertises at a time, and on a node that is not
-public only while no link is up. A guest's link ends 30 s after it
-began, and a second guest's as soon as it writes Recipient while one is
-up. Node, Status, Send, Inbox, Given back, Recipient and Guest have no
-permission in the attribute table, as the host cannot tell a public node
-from another, and `allowed` refuses them on a link that is not the
-bond's while the node is not public, as the host refused them before.
-The node's loop puts every message for its application on a public
-node into the ring (`src/node.rs`, `Placing`), a guest's written as
-sent, and confirms it to the core once it is written; the mailbox tells
-the owner's from the guests' by tag (`bark_app_layer::mailbox::Owner`),
-and a guest's read of Inbox asks the node for the oldest item after the
-number it wrote to Guest (`for_tag`). Whose turn it is at the one
-message the node holds, and so whose Ready is set, is `Turn` in
-`src/ble.rs`. The
-console's `status` has `public=true` or `public=false`, read from
-the bond in the stored-state page, and then `drain_relay=` and
-`drain_sleepy=`, the drains the node image kept there, or the first
-ones while it has learned none.
+(spec "Phone link", Public; roadmap D150). A node is public unless a
+paired phone writes 0 to Public, private, a setting of the node's, kept
+in the settings entry, so a node never paired, and one whose bond an
+older image kept public, is public; with the last bond gone it is public
+again. Each paired phone writes its person's tag at every connection,
+and from link version 13 their name after it, which its record keeps;
+an older app's tag alone is taken, the name left empty. Each link is
+served by a task of its own (`slot`), so that its future lies in static
+storage and the stack holds one poll at a time; one slot advertises at a
+time. A guest's link ends 30 s after it began, and a second guest's as
+soon as it writes Recipient while one is up. Node, Status, Send, Inbox,
+Given back, Recipient and Guest have no permission in the attribute
+table, as the host cannot tell a public node from another, and
+`allowed` refuses them on a link that is no record's while the node is
+not public, as the host refused them before. The node's loop puts every
+message for its application into the ring (`src/node.rs`, `Placing`)
+and confirms it to the core once it is written; each paired phone's
+Inbox reads its own person's from it, and a guest's read of Inbox asks
+the node for the oldest item after the number it wrote to Guest
+(`for_tag`). Whose turn it is at the one message the node holds, and so
+whose Ready is set, is `Turn` in `src/ble.rs`. A message given back is
+kept with its phone's record, a guest's with its link. The console's
+`status` has `public=true` or `public=false`, read from the phones in
+the stored-state page, and then `drain_relay=` and `drain_sleepy=`, the
+drains the node image kept there, or the first ones while it has learned
+none.
 
-The paired phone unpairs by writing 2 to Public (link version 12): the
-node answers, removes the bond from the host, writes a forgotten bond's
-record (`bark_link::bond::forgotten`, byte 14 at 2, which an older image
-skips, keeping the bond before it), follows it as a node never paired,
-public with the screen's `PHONE UNPAIRED`, and closes the link.
+A paired phone unpairs by writing 2 to Public (link version 12): the
+node answers, removes its bond from its record and from the host,
+keeping the record's home, and closes the link; the record is freed if
+it holds no home.
+
+Home sets or clears the writing phone's person's key alone, in its
+record; a record that holds the same key and no bond, the home the
+person's earlier phone left, takes this phone's bond, name and tag, and
+the phone's own record is freed, so that the bits the person's unfetched
+mail has in the ring's marks stay theirs. Home's read says, from link
+version 13, whether the node is the reading phone's person's home.
+
+Phones (link version 13) lists the records and removes one's bond, home
+or both (spec "Phone link", Phones): a write of 1 draws a fresh code on
+the screen, `REMOVE` and six digits, for 30 s, logged in an open build
+as a pairing's is; a write of 2 with a record's number, the parts and
+that code removes them, within the 30 s and on one try (`bark_link::
+phones::Code`), the removed bond's phone's link closed and the bond
+gone from the host. Node's `room` says how many more phones may pair.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
-5a slot 1 owner false` as a phone writes its tag, `ble: public false`, `ble: unpaired by the owner; the bond is
-forgotten and the node is public`,
-`public: id=... tag=Some(5a) kept` for each message kept on a public
-node, `ble: a second guest in slot 1, closed`, and `ble: the guest in
-slot 1 closed after its time`.
+5a slot 1 record Some(1) name 5 bytes` as a phone writes its tag, `ble:
+public false`, `ble: record 1 unpaired by its phone; its home stays`,
+`ble: home of record 1 set`, `ble: removal, the code shown`, `ble:
+record 2 number 7 removed: bond true, home false`, `ring: id=...
+tag=Some(5a) kept` for each message kept, `ble: a second guest in slot
+1, closed`, and `ble: the guest in slot 1 closed after its time`.
 
 Ask (link version 9, the image gathered from 10) asks a neighbour for
 its status (spec "Neighbour status", "Phone link", Ask; roadmap D157,
 D158). The phone's write of an ID goes to the core as
 `bark_driver::Request::Ask`; the core sends the ask, and the answer
 comes back as `AppEvent::Status`, which the node keeps as Ask's value
-and notifies to the paired phone (`told_status` in `src/ble.rs`). The
+and notifies to every paired phone (`told_status` in `src/ble.rs`). The
 log says `ble: ask [..]` for the write and `status of [..]: Status {
 .. }` for each answer.
 
-A link beyond the first costs 5.6 KB of static RAM, taken from the
-stack; a third, as first built, left the stack under its floor once the
-mesh spread's tables came, and two boards faulted at boot (Tasks and the
-stack, below).
+A link costs 5.9 KB of static RAM, taken from the stack: the
+controller's 2 434 B, the host's 1 200 B and its slot's task, 2 240 B
+(2026-11-10, `nm`). A third, as first built, left the stack under its
+floor once the mesh spread's tables came, and two boards faulted at
+boot; nine leave it 65 864 B, as the relay has shrunk since (roadmap
+D155; Tasks and the stack, below).
 
 ## Mailbox
 
-A node set as a person's home (spec "Mailbox"; Home on the phone link)
-keeps every message for its application in a ring on the external flash,
-64 sectors of 16 slots of 256 bytes, the oldest sector erased when the
-ring is full, and its state in a page inside, since it holds the mailbox
-key (`bark-image/src/layout.rs`; `bark_app_layer::flash_ring`,
-`src/mailbox.rs`). Its phone's Inbox reads
-from the ring, and a fetch from the person's phone elsewhere is answered
-with a batch of the items not yet sent, sealed again, through the core's
-one application send slot, the phone's own message first (`src/node.rs`,
-`LinkApp::take`). An item sent, or confirmed by the phone at home, is
-marked by clearing one byte of its slot, a write without an
-erase; it stays in the ring.
+Every node keeps every message for its application in a ring on the
+external flash, 64 sectors of 16 slots of 256 bytes, the oldest sector
+erased when the ring is full (spec "Mailbox", "Phone link",
+Receiving; `bark-image/src/layout.rs`; `bark_app_layer::mailbox`,
+`flash_ring`, `src/mailbox.rs`). Each paired phone's Inbox reads its
+own person's from the ring, by the tag its record keeps, after the last
+it confirmed; a guest reads its own by tag after the number it keeps. A
+slot's mark is a byte, a bit for each of the eight records, written set
+for the records whose tag the item carries; a fetch that opens under one
+record's mailbox key is answered with a batch of that record's items
+whose bit is set, sealed again, through the core's one application send
+slot, the phone's own message first (`src/node.rs`, `LinkApp::take`),
+the rounds of several records in turn. An item sent to a record, or
+confirmed by its phone, has that record's bit cleared, a program of
+one byte without an erase; it stays in the ring. A slot written before
+the bits, its mark 0xFF unsent or 0 sent, reads so for record one, the
+older image's owner, and a record made since claims nothing from before
+it. The keys and what each record has read and fetched are kept with
+the records (Phone link, above); the mailbox's state page inside, where
+an older image kept its one key, is read once to make record one.
 
 The mailbox reads a slot when asked, about a millisecond on the
 external flash's bus, and never waits on a write: its writes and erases
-are queued and done by a task of their own, the ring's on the external
-flash with the executor free while the chip erases (10 ms) or programs
-a slot (1.3 ms), the state's through the MPSL's flash timeslots, the
-flash shared with the store, each op a timeslot (an erase 85 ms, a
-record 1.3 ms). A read that meets an erase under way waits for it, up
-to 12 ms; the mailbox's users all run in thread mode, so that wait
-masks no interrupt. At boot the mailbox opens once the radio has raised
-the rail: it reads all 1024 slots, 256 KiB, and logs how long that
-took, `mailbox: ... 1024 slots read in N ms`, which gives the bus's
-speed; about a second by its instructions. The same read counts the
-items not yet sent. A message the core delivered
-is confirmed to the core only once its slot is written, so that a
-reboot meanwhile loses none: the core keeps it and delivers it again. A
-cut write leaves a slot that fails its check, and a cut state record
-the one before it, as the store's does; the host tests cut every write
+are queued and done by a task of their own, on the external flash with
+the executor free while the chip erases (10 ms) or programs a slot
+(1.3 ms). A read that meets an erase under way waits for it, up to
+12 ms; the mailbox's users all run in thread mode, so that wait masks
+no interrupt. At boot the mailbox opens once the radio has raised the
+rail: it reads all 1024 slots, 256 KiB, and logs how long that took,
+`mailbox: ... 1024 slots read in N ms`, which gives the bus's speed;
+about a second by its instructions. A message the core delivered is
+confirmed to the core only once its slot is written, so that a reboot
+meanwhile loses none: the core keeps it and delivers it again. A cut
+write leaves a slot that fails its check; the host tests cut every write
 of a run at every eighth byte (`bark-app-layer`, `flash_ring` tests).
-While the node is nobody's home nothing changes: its inbox is the
-core's, read and confirmed by the phone as before.
+Each record's oldest unread item and count are kept in RAM until
+something changes, and an arrival adds to them without a scan.
+
+A mark takes up to eight programs of its byte between erases, one for
+each record's bit. Whether the ZD25WQ16B allows a byte programmed again
+over a written one, keeping the AND of the two, its datasheet, not in the
+repository, says; so each mark is read back after its program, and the
+log says once `mailbox: a mark programmed over 0x03 read back 0x02, as it
+should`, or, if the chip does not, `mailbox: a mark at 0x.. programmed
+0xfd over 0x03 read back .., not 0x01: the flash does not take a byte
+programmed again (1 so far)`, again at each power of two of the count.
+The second means a reading or a fetch may leave its record's bit set, so
+that a fetch sends an item again, or clear another record's.
 
 The cost (release, with a place, against `a3d9fbe`): 15 688 B of flash,
 374 012 B of the 401 408 B slot; 2 880 B of static RAM, the mailbox
@@ -1290,6 +1365,15 @@ Since the send queue holds 64 of its hop places at once (roadmap D155),
 the relay is 95 600 B smaller: the open release image of version 14
 left the stack 112 008 B, and with the trial of roadmap D159 version 16
 leaves it 111 528 B (2026-11-09, `uf2.py --stack`).
+
+Eight phones' records (roadmap D168) take nine links in place of two,
+7 × 5 874 B: the controller's memory 17 040 B more, the slots' tasks
+15 680 B and the host's 8 400 B; with the records, 1 036 B, the mailbox's
+eight people and rounds, 756 B, and the attribute table's Phones, the
+links' state and the screen's codes, 1 640 B, the static RAM grows
+44 552 B, and the stack has 65 864 B where `main` (`03ff9f6`) had
+110 408 B, above the 24 KiB floor (2026-11-10, `nm`, `uf2.py --stack`).
+The flash grows 16 480 B.
 
 ## Radio power
 
