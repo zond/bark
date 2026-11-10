@@ -24,8 +24,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
 /// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
 /// the neighbours heard in Status, 12 Public's write that unpairs, 13
-/// Phones, with the person's name in Recipient, `room` in Node and `mine`
-/// in Home (roadmap D168).
+/// Phones, with the person's name in Recipient, `room` in Node, `mine`
+/// in Home (roadmap D168) and `installing` in Status (D182).
 pub const VERSION: u8 = 13;
 
 /// The oldest link version whose apps this node still serves, in
@@ -152,7 +152,8 @@ pub mod att {
     /// The value has the right length and a field it does not take.
     pub const VALUE_NOT_ALLOWED: u8 = 0x13;
     /// Not now: the node takes no message from its application at the
-    /// moment; the app waits for [`crate::Status::ready`]. The first of
+    /// moment, or the turn is another phone's ([`crate::turn`]); the app
+    /// waits for [`crate::Status::ready`]. The first of
     /// the application error codes, 0x80 to 0x9F.
     pub const NOT_READY: u8 = 0x80;
     /// The node refused a begin, a commit or a reboot of an update; Update
@@ -301,11 +302,17 @@ pub struct Status {
     /// Its live neighbours, sleepy or not (spec "Neighbour status",
     /// heard).
     pub heard: u8,
+    /// The low 16 bits of the image version the node drains to install
+    /// (spec "Updates over the mesh", the install); 0 when none, and from
+    /// a node of link version 12 or before.
+    pub installing: u16,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
+    pub const LEN: usize = Self::LEN_12 + 2;
+    /// Bytes in the value of link version 12 and before.
+    const LEN_12: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
 
     /// Every flag clear and every count zero: a node that has said
     /// nothing yet.
@@ -324,6 +331,7 @@ impl Status {
         battery_mv: 0,
         inbox: 0,
         heard: 0,
+        installing: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -354,12 +362,13 @@ impl Status {
         b[4 + POS..6 + POS].copy_from_slice(&self.battery_mv.to_be_bytes());
         b[6 + POS] = self.inbox;
         b[7 + POS] = self.heard;
+        b[Self::LEN_12..].copy_from_slice(&self.installing.to_be_bytes());
         b
     }
 
     /// Read a value, ignoring what a later version appends.
     pub fn decode(b: &[u8]) -> Result<Status, Malformed> {
-        if b.len() < Self::LEN {
+        if b.len() < Self::LEN_12 {
             return Err(Malformed::Length);
         }
         let flag = |bit: u8| b[0] & (1 << bit) != 0;
@@ -378,12 +387,17 @@ impl Status {
             battery_mv: u16_at(b, 4 + POS),
             inbox: b[6 + POS],
             heard: b[7 + POS],
+            installing: match b.len() < Self::LEN {
+                true => 0,
+                false => u16_at(b, Self::LEN_12),
+            },
         })
     }
 }
 
 /// Send, write: a message for the node to originate, as
 /// `AppCommand::Send` takes it (spec "Receiving DATA").
+/// Written while ready is not set, it asks for the turn ([`turn`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Send<'a> {
     /// The destination's position (spec "Addresses").
@@ -969,6 +983,7 @@ pub mod bond;
 pub mod home;
 pub mod neighbours;
 pub mod phones;
+pub mod turn;
 pub mod update;
 
 #[cfg(test)]

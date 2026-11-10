@@ -1037,6 +1037,129 @@ impl Neighbours {
     }
 }
 
+/// Bytes of a neighbour entry kept across a reset ([`Neighbours::kept`]).
+pub const KEPT_LEN: usize = 57;
+
+const MAP_POINT: u8 = 1;
+const SLEEPY: u8 = 2;
+const ANCHORLESS: u8 = 4;
+const CARRIED: u8 = 8;
+const SLOTTED: u8 = 16;
+const UNANSWERED: u8 = 32;
+
+impl Neighbours {
+    /// Every entry as kept across a reset, taken at `now`, with its slot,
+    /// which the records' tried sets name (`tables/records.rs`). Its local
+    /// point is the plane's, its section is heard again with its next
+    /// heartbeat that carries one, how long the radio had been away when
+    /// its window opened is the radio's before the reset, and a status
+    /// asked or owed went with the application's link: none is kept.
+    pub fn kept(&self, now: Instant) -> impl Iterator<Item = [u8; KEPT_LEN]> + '_ {
+        use super::kept::{put, Round, LEN};
+        self.slots().map(move |(slot, n)| {
+            let mut b = [0u8; KEPT_LEN];
+            b[0] = slot as u8;
+            b[1..7].copy_from_slice(&n.id.0);
+            b[7..14].copy_from_slice(&n.position.encode());
+            b[14] = n.home.index();
+            b[15] = n.format;
+            let flags = [
+                (n.map_point, MAP_POINT),
+                (n.sleepy, SLEEPY),
+                (n.anchorless, ANCHORLESS),
+                (n.carried, CARRIED),
+                (n.slotted, SLOTTED),
+                (n.unanswered, UNANSWERED),
+            ];
+            b[16] = flags
+                .iter()
+                .filter(|(on, _)| *on)
+                .fold(0, |f, (_, bit)| f | bit);
+            let mut at = 17;
+            for (t, round) in [
+                (n.last_heard, Round::Earlier),
+                (n.demoted_at, Round::Earlier),
+                (n.banned_until, Round::Later),
+                (n.beat_at, Round::Earlier),
+                (n.taken_at, Round::Earlier),
+                (n.line_end, Round::Later),
+            ] {
+                put(&mut b[at..at + LEN], t, now, round);
+                at += LEN;
+            }
+            b[41..45].copy_from_slice(&n.rssi.to_bits().to_be_bytes());
+            b[45] = n.fail_count;
+            b[46] = n.beats;
+            b[47] = n.beat_on.index();
+            b[48] = n.answered;
+            b[49..53].copy_from_slice(&n.service.to_be_bytes());
+            b[53..57].copy_from_slice(&n.told.to_be_bytes());
+            b
+        })
+    }
+
+    /// Put back an entry [`Neighbours::kept`] gave, taken at `then`, into
+    /// its slot, its local point on `plane`: its slot's entry, or `None`
+    /// if the slot is taken or out of the table, or the entry has expired
+    /// by `now` or was last heard before the clock's epoch.
+    pub fn restore(
+        &mut self,
+        b: &[u8; KEPT_LEN],
+        then: super::kept::Then,
+        plane: &LocalPlane,
+        now: Instant,
+    ) -> Option<&Neighbour> {
+        use super::kept::{get, LEN};
+        let slot = usize::from(b[0]);
+        if self.slots.get(slot)?.is_some() {
+            return None;
+        }
+        let word = |at: usize| u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
+        let at = |k: usize| get(&b[17 + k * LEN..], then);
+        let position = Position::decode(b[7..14].try_into().ok()?);
+        let flag = |bit: u8| b[16] & bit != 0;
+        let n = Neighbour {
+            id: NodeId(b[1..7].try_into().ok()?),
+            position,
+            local: plane.point(position),
+            home: Channel::new(b[14])?,
+            format: b[15],
+            map_point: flag(MAP_POINT),
+            update: Told::NONE,
+            last_heard: at(0)?,
+            demoted_at: at(1).unwrap_or(Instant::ZERO),
+            banned_until: at(2).unwrap_or(Instant::ZERO),
+            rssi: f32::from_bits(word(41)),
+            fail_count: b[45],
+            sleepy: flag(SLEEPY),
+            anchorless: flag(ANCHORLESS),
+            carried: flag(CARRIED),
+            // Not kept: a drain it announced is likely over by our return,
+            // and its next heartbeat says.
+            leaving: false,
+            beats: b[46],
+            beat_at: at(3).unwrap_or(Instant::ZERO),
+            beat_on: Channel::new(b[47])?,
+            // Its slots are timed from a heartbeat the clock still holds.
+            slotted: flag(SLOTTED) && at(3).is_some(),
+            away_base: None,
+            answered: b[48],
+            service: word(49),
+            told: word(53),
+            taken_at: at(4).unwrap_or(Instant::ZERO),
+            line_end: at(5).unwrap_or(Instant::ZERO),
+            unanswered: flag(UNANSWERED),
+            ask: false,
+            tell: false,
+        };
+        if self.slot_of(n.id).is_some() || self.is_expired(&n, now) {
+            return None;
+        }
+        self.slots[slot] = Some(n);
+        self.slots[slot].as_ref()
+    }
+}
+
 /// `avg` with a new reading `dbm` counting half.
 fn average(avg: f32, dbm: i16) -> f32 {
     (avg + dbm as f32) / 2.0

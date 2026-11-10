@@ -33,8 +33,8 @@ enum OutKind {
   /// A text.
   text,
 
-  /// An acknowledgement of a received text.
-  ack,
+  /// A reaction to a received text.
+  reaction,
 
   /// The person's card.
   card,
@@ -79,8 +79,14 @@ class Outgoing {
   final int part;
   final int of;
 
-  /// The other side acknowledged it; a fetch, the home node answered.
+  /// A fetch: the home node answered.
   bool acked;
+
+  /// A text: the other side's reaction, an index in `reactions` (app_layer.dart), and the
+  /// `sent` of the message that carried it, so that an older one coming
+  /// late does not replace it.
+  int? reaction;
+  int reactionSent;
   OutState state;
   DateTime? retryAt;
   String? error;
@@ -97,6 +103,8 @@ class Outgoing {
     this.part = 1,
     this.of = 1,
     this.acked = false,
+    this.reaction,
+    this.reactionSent = 0,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
 
@@ -105,7 +113,7 @@ class Outgoing {
 
   String get text => switch (kind) {
     OutKind.text => body ?? '',
-    OutKind.ack => 'Got it',
+    OutKind.reaction => 'Reaction ${body ?? ''}',
     OutKind.card => 'Your card',
     OutKind.fetch => 'Fetch from your mailbox',
   };
@@ -122,6 +130,8 @@ class Outgoing {
     'part': part,
     'of': of,
     'acked': acked,
+    'reaction': reaction,
+    'reactionSent': reactionSent,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
     'state': (state == OutState.writing ? OutState.queued : state).name,
@@ -129,27 +139,37 @@ class Outgoing {
     'error': error,
   };
 
-  static Outgoing fromJson(Map<String, dynamic> j) =>
-      Outgoing(
-          Address.parse(j['dst'] as String)!,
-          parseHex(j['payload'] as String)!,
-          at: DateTime.parse(j['at'] as String),
-          kind: OutKind.values.byName(j['kind'] as String),
-          to: j['to'] as String?,
-          sent: j['sent'] as int,
-          body: j['body'] as String?,
-          toward: j['toward'] == null
-              ? null
-              : Toward.values.byName(j['toward'] as String),
-          part: j['part'] as int? ?? 1,
-          of: j['of'] as int? ?? 1,
-          acked: j['acked'] as bool,
-          state: OutState.values.byName(j['state'] as String),
-        )
-        ..retryAt = j['retryAt'] == null
+  /// A sent text an app before reactions stored as acknowledged shows
+  /// the thumbs up an acknowledgement now reads as.
+  static Outgoing fromJson(Map<String, dynamic> j) {
+    final kind = j['kind'] == 'ack'
+        ? OutKind.reaction
+        : OutKind.values.byName(j['kind'] as String);
+    final acked = j['acked'] as bool;
+    final older = kind == OutKind.text && acked && !j.containsKey('reaction');
+    return Outgoing(
+        Address.parse(j['dst'] as String)!,
+        parseHex(j['payload'] as String)!,
+        at: DateTime.parse(j['at'] as String),
+        kind: kind,
+        to: j['to'] as String?,
+        sent: j['sent'] as int,
+        body: j['body'] as String?,
+        toward: j['toward'] == null
             ? null
-            : DateTime.parse(j['retryAt'] as String)
-        ..error = j['error'] as String?;
+            : Toward.values.byName(j['toward'] as String),
+        part: j['part'] as int? ?? 1,
+        of: j['of'] as int? ?? 1,
+        acked: kind == OutKind.fetch && acked,
+        reaction: older ? 0 : j['reaction'] as int?,
+        reactionSent: j['reactionSent'] as int? ?? 0,
+        state: OutState.values.byName(j['state'] as String),
+      )
+      ..retryAt = j['retryAt'] == null
+          ? null
+          : DateTime.parse(j['retryAt'] as String)
+      ..error = j['error'] as String?;
+  }
 }
 
 /// A received text, or a payload that did not open: kept for the debug
@@ -162,7 +182,7 @@ class Received {
   /// The sender's identity in hex; null if the payload did not open.
   final String? from;
 
-  /// Its `sent`, by which an acknowledgement names it.
+  /// Its `sent`, by which a reaction names it.
   final int? sent;
 
   /// The text.
@@ -180,8 +200,8 @@ class Received {
   /// and its sender's could have made.
   final bool intro;
 
-  /// The person acknowledged it.
-  bool acked;
+  /// The person's reaction to it, an index in `reactions` (app_layer.dart).
+  int? reaction;
 
   Received(
     this.id,
@@ -194,7 +214,7 @@ class Received {
     this.part = 1,
     this.of = 1,
     this.intro = false,
-    this.acked = false,
+    this.reaction,
   }) : payload = Uint8List.fromList(payload);
 
   String get text => body ?? '(did not open) ${hex(payload)}';
@@ -220,7 +240,7 @@ class Received {
     'part': part,
     'of': of,
     'intro': intro,
-    'acked': acked,
+    'reaction': reaction,
   };
 
   static Received fromJson(Map<String, dynamic> j) => Received(
@@ -234,7 +254,9 @@ class Received {
     part: j['part'] as int? ?? 1,
     of: j['of'] as int? ?? 1,
     intro: j['intro'] as bool? ?? false,
-    acked: j['acked'] as bool,
+    // An app before reactions stored a pressed Got it, which an older
+    // app took as the thumbs up's record.
+    reaction: j['reaction'] as int? ?? (j['acked'] == true ? 0 : null),
   );
 }
 
@@ -1007,6 +1029,8 @@ class Session extends ChangeNotifier {
     answers.clear();
     _answeredAt.clear();
     stopAsking();
+    _askedAt = null;
+    _askAgain?.cancel();
     note('Disconnected');
   }
 
@@ -1204,28 +1228,51 @@ class Session extends ChangeNotifier {
     await save();
   }
 
+  /// How long the app waits for Ready after asking for the turn before it
+  /// asks again (spec "Phone link", Sending): a ban, 1.58 s, for each
+  /// other of the node's [maxPhones] + 1 links, the longest the turn takes
+  /// to reach it while the node takes messages.
+  static const turnWait = Duration(milliseconds: maxPhones * 1580);
+
+  /// When the app last asked for the turn on this link, by a write
+  /// answered not ready.
+  DateTime? _askedAt;
+  Timer? _askAgain;
+
   Future<void> _pump() async {
     final link = _link;
-    if (_writing || link == null || !(status?.ready ?? false)) return;
+    if (_writing || link == null) return;
     final o = outbox.where((o) => o.state == OutState.queued).firstOrNull;
     if (o == null) return;
+    // Out of turn, the write asks for it, unless it asked lately.
+    final ready = status?.ready ?? false;
+    if (!ready) {
+      final asked = _askedAt;
+      if ((node?.version ?? 0) < turnVersion) return;
+      if (asked != null && now().difference(asked) < turnWait) return;
+    }
     _writing = true;
     o.state = OutState.writing;
     notifyListeners();
     var again = true;
     try {
       await link.send(encodeSend(o.dst, o.payload));
+      _askedAt = null;
       o.state = OutState.taken;
       note('Send ${msgIdHex(o.id)}: taken');
     } on AttException catch (e) {
       note('Send ${msgIdHex(o.id)}: $e');
       if (e.code == AttError.notReady) {
-        // Ready turned false between the status read and the write; wait
-        // for the node to say ready again, and read it in case that
+        // Not this phone's turn, which the write asked for, or Ready
+        // turned false between the status read and the write; wait for
+        // the node to say ready again, and read it in case that
         // notification came before this answer.
         o.state = OutState.queued;
         status = status?.copyWith(ready: false);
         again = false;
+        _askedAt = now();
+        _askAgain?.cancel();
+        _askAgain = Timer(turnWait, _pump);
         unawaited(link.readStatus().then(_onStatus, onError: (_) {}));
       } else {
         o.state = OutState.refused;
@@ -1298,6 +1345,7 @@ class Session extends ChangeNotifier {
   @override
   void dispose() {
     _retry?.cancel();
+    _askAgain?.cancel();
     for (final s in _subs) {
       s.cancel();
     }

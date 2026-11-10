@@ -132,7 +132,7 @@ pub const STORE: Region = Region::pages_from(STORE_START, 1);
 /// | [`external::MAILBOX`] | the mailbox's ring |
 /// | [`external::CARRY`] | what a node carries across a reboot into a new image |
 /// | [`external::DISCHARGE`] | the battery's discharge log |
-/// | the rest | free |
+/// | [`external::TABLES`] | the neighbours and records a node keeps across a reboot into a new image |
 pub mod external {
     use super::{Region, ACTIVE_PAGES};
 
@@ -149,8 +149,9 @@ pub mod external {
     /// node keeps the pieces of every block it lacks (`crate::pieces`,
     /// roadmap D151). 48 lanes and the head are what the chip has room
     /// for beside the staged image and the mailbox, with about 108 KiB to
-    /// spare before what a reboot carries took 44 and the discharge log
-    /// 32: an image of 47 blocks, 743 KB packed, today's 28.
+    /// spare before what a reboot carries took 44, the discharge log 32
+    /// and the tables kept across a reboot 32: an image of 47 blocks,
+    /// 743 KB packed, today's 28.
     pub const PIECE_LANES: u32 = 48;
 
     /// Sectors for coded pieces: a head of what has been gathered, then a
@@ -173,6 +174,11 @@ pub mod external {
     /// samples, so 8, half of what was free.
     const DISCHARGE_SECTORS: u32 = 8;
 
+    /// Sectors for the tables a node keeps across a reboot into a new
+    /// image (`bark_app_layer::tables`): a full neighbour table and every
+    /// record take 25 248 bytes, 6.2 sectors; the 8 the chip had left.
+    const TABLES_SECTORS: u32 = 8;
+
     /// The staged image (embassy-boot's DFU partition), one sector more
     /// than the running one (embassy-boot, `BootLoader::new`: "The dfu
     /// partition must be at least PAGE_SIZE bigger than the active
@@ -194,11 +200,11 @@ pub mod external {
     /// at each boot and change of power (`crate::discharge`, roadmap
     /// D178). Kept across reboots and image swaps.
     pub const DISCHARGE: Region = Region::pages_from(CARRY.end(), DISCHARGE_SECTORS);
-    /// Free.
-    pub const FREE: Region = Region {
-        start: DISCHARGE.end(),
-        len: END - DISCHARGE.end(),
-    };
+    /// The neighbour table and message records a node keeps across a
+    /// reboot into an image gathered over the mesh, given back to the
+    /// core after it (roadmap D180). The records name messages by their
+    /// IDs and neighbours by theirs, as every frame on the air does.
+    pub const TABLES: Region = Region::pages_from(DISCHARGE.end(), TABLES_SECTORS);
 }
 
 /// What the loader write-protects before it jumps (nRF52840 Product
@@ -260,9 +266,8 @@ const _: () = {
     assert!(STORE.start == 0xF3000);
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(external::DFU.len == ACTIVE.len + external::SECTOR);
-    assert!(external::DISCHARGE.end() <= external::END);
-    // About 32 KiB stay free.
-    assert!(external::FREE.len >= 8 * external::SECTOR);
+    // The chip is full.
+    assert!(external::TABLES.end() == external::END);
     assert!(PROTECT_LOW.len.is_multiple_of(PAGE) && PROTECT_LOW.len <= FLASH_END / 2);
     assert!(PROTECT_HIGH.start.is_multiple_of(PAGE) && PROTECT_HIGH.len <= FLASH_END / 2);
     // embassy-boot keeps two progress words a page for the swap and two for
@@ -397,7 +402,7 @@ mod tests {
             }
         );
         assert_eq!(
-            external::FREE,
+            external::TABLES,
             Region {
                 start: 0x1F8000,
                 len: 8 * PAGE
@@ -423,7 +428,7 @@ mod tests {
             external::MAILBOX,
             external::CARRY,
             external::DISCHARGE,
-            external::FREE,
+            external::TABLES,
         ];
         for order in [&inside[..], &outside[..]] {
             for pair in order.windows(2) {

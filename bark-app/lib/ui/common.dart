@@ -66,7 +66,8 @@ String capital(String s) =>
     s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
 
 /// The states of a sent text, in the order it moves through them, each
-/// with its icon, for the sheet a tap on a state opens.
+/// with its icon, and the reaction it may get, for the sheet a tap on the
+/// text opens.
 const List<(IconData, String, String)> sentStates = [
   (
     Icons.schedule,
@@ -86,15 +87,16 @@ const List<(IconData, String, String)> sentStates = [
         'further news: it does not say when it arrives.',
   ),
   (
-    Icons.done_all,
-    'Confirmed by the recipient',
-    'They tapped Got it, and their confirmation came back.',
-  ),
-  (
     Icons.hourglass_bottom,
     'The network is busy',
     'The network could not take it now and gave it back, with a wait. '
         'The app sends it again by itself once the wait is over.',
+  ),
+  (
+    Icons.add_reaction_outlined,
+    'Their reaction',
+    'An emoji under the text is how they answered it. Nothing answers by '
+        'itself: they chose to, and it came back like a text.',
   ),
 ];
 
@@ -103,17 +105,12 @@ const List<(IconData, String, String)> sentStates = [
 /// sections and the parts of a long text (roadmap D137).
 const List<(IconData, String, String)> receivedMarks = [
   (
-    Icons.check,
-    'Got it',
-    'Tap it to tell the sender you read it. The app sends them a short '
-        'confirmation of its own, and their copy shows two checks once it '
-        'arrives. Nothing is confirmed by itself.',
-  ),
-  (
-    Icons.check,
-    'You tapped Got it',
-    'The app sent the sender your confirmation. Like any text, it may '
-        'take a while to reach them.',
+    Icons.add_reaction_outlined,
+    'Your reaction',
+    'Press and hold a text to answer it with an emoji, or to copy it. '
+        'The sender sees the emoji under their copy once it arrives, which '
+        'like a text may take a while. Pick another to change it. Nothing '
+        'answers by itself.',
   ),
   (
     Icons.gpp_maybe,
@@ -199,25 +196,20 @@ Future<void> explainMessage(
 
 /// Whether a sent text's parts are all in one state, so that one part's
 /// marks stand for them all.
-bool partsAgree(List<Outgoing> outs) => outs.every(
-  (o) => o.state == outs.first.state && o.acked == outs.first.acked,
-);
+bool partsAgree(List<Outgoing> outs) =>
+    outs.every((o) => o.state == outs.first.state);
 
 /// A sent text's parts' states in words when they differ: how many the
-/// node has taken, how many are confirmed, and the first problem.
+/// node has taken and the first problem.
 String partsLabel(Session s, List<Outgoing> outs) {
-  final taken = outs.where((o) => o.acked || o.state == OutState.taken);
-  final acked = outs.where((o) => o.acked);
+  final taken = outs.where((o) => o.state == OutState.taken);
   final problem = outs
       .where(
-        (o) =>
-            !o.acked &&
-            (o.state == OutState.givenBack || o.state == OutState.refused),
+        (o) => o.state == OutState.givenBack || o.state == OutState.refused,
       )
       .firstOrNull;
   return [
     '${taken.length} of ${outs.length} sent',
-    if (acked.isNotEmpty) '${acked.length} confirmed',
     if (problem != null) 'part ${problem.part}: ${stateLabel(s, problem)}',
   ].join(', ');
 }
@@ -550,10 +542,14 @@ String? guestLine(AppModel app) {
 }
 
 /// The line on the phone's node, one of four: on its home, on another
-/// node it is paired with, on a public node as a guest, or on none.
-/// Why is [connectionHelp]'s to say.
+/// node it is paired with, on a public node as a guest, or on none, as
+/// when a paired node is away to install a new version. Why is
+/// [connectionHelp]'s to say.
 String connectionLine(AppModel app) =>
-    app.nodeLine ?? lookingLine(app) ?? AppModel.notLookingLine;
+    app.nodeLine ??
+    app.installingLine ??
+    lookingLine(app) ??
+    AppModel.notLookingLine;
 
 /// Why the phone is on the node [connectionLine] names, or on none, in
 /// a few plain sentences for the person who asks (spec "Phone link",
@@ -568,6 +564,8 @@ String connectionHelp(AppModel app) {
       ' ${lost.join(', ')} are no longer yours: they no longer know this '
           'phone.',
   };
+  final install = app.installHelp;
+  if (install != null) return install;
   if (s.connected && !s.guest) {
     if (app.atHome) {
       return 'This phone is paired with your home node and keeps a link to '

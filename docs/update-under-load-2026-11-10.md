@@ -4,7 +4,8 @@
 reboot into an image gathered over the mesh (`bark-sim/src/install.rs`),
 `scenarios/district-x64.toml` and `scenarios/district-x64-install.toml`.
 Spec references are to `protocol.md` by section name; roadmap D170 is
-the rule tested.
+the rule tested. The addition at the end tests D180, the tables kept
+across the swap.
 
 ## Summary
 
@@ -212,6 +213,107 @@ files differ only by `[install]` and that `district-x64.toml` is
 within 601 s of its staging and come back after the swap, no kept
 message may be dropped or lost without a trace, and every text to a
 reachable destination must be accounted for.
+
+## Addition, 2026-11-10: the tables kept across the swap
+
+Roadmap D180 has a node keep its neighbour table and its message
+records across the swap, aged by the swap's length. The same three
+seeds were run again with it. Two things changed at once, so a third
+run of each seed separates them:
+
+- *The swap is longer.* The simulator now takes the swap's length from
+  the loader's figures in `bark_image::boot::time`, with the external
+  flash's bus at the 1 Mbit/s measured on the bench, not the 2 to
+  3 Mbit/s of its instructions, and the hash of an image that fills the
+  slot: 59.0 s, not 46.6 s. The bench measured 55 s from the reboot to
+  the port back.
+- *The tables come back.* At its reboot the node writes its tables as
+  the firmware does (`bark_app_layer::tables`), and its new core takes
+  them back before its first event.
+
+"Swap 59.0 s" is this branch with the tables not given back; "tables"
+is this branch.
+
+| seed | | sent | delivered | still on its way at the end | given up at the sender | lost in the network | lost, not counting expired delivery TTL | without a trace | latency p50 / p90, s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | without | 79 830 | 64 631 (81.0 %) | 10 939 | 3 959 | 301 | 137 | 0 | 222 / 956 |
+| 1 | installs, swap 46.6 s | 60 821 | 42 381 (69.7 %) | 12 871 | 5 189 | 379 | 214 | 1 | 376 / 1 409 |
+| 1 | installs, swap 59.0 s | 62 244 | 42 315 (68.0 %) | 14 049 | 5 405 | 474 | 319 | 1 | 413 / 1 430 |
+| 1 | installs, tables | 61 686 | 44 845 (72.7 %) | 11 559 | 5 062 | 220 | 157 | 0 | 414 / 1 407 |
+| 2 | without | 77 887 | 63 967 (82.1 %) | 9 317 | 4 007 | 596 | 148 | 0 | 194 / 946 |
+| 2 | installs, swap 46.6 s | 61 994 | 42 896 (69.2 %) | 13 115 | 5 244 | 739 | 241 | 0 | 349 / 1 490 |
+| 2 | installs, swap 59.0 s | 59 146 | 40 816 (69.0 %) | 12 384 | 5 262 | 684 | 322 | 0 | 349 / 1 510 |
+| 2 | installs, tables | 60 455 | 44 173 (73.1 %) | 10 979 | 4 915 | 388 | 189 | 0 | 351 / 1 480 |
+| 3 | without | 71 675 | 56 900 (79.4 %) | 9 828 | 4 555 | 392 | 143 | 0 | 263 / 1 100 |
+| 3 | installs, swap 46.6 s | 57 167 | 37 031 (64.8 %) | 13 832 | 5 786 | 517 | 231 | 1 | 459 / 1 611 |
+| 3 | installs, swap 59.0 s | 58 052 | 37 672 (64.9 %) | 13 993 | 5 704 | 683 | 339 | 0 | 454 / 1 587 |
+| 3 | installs, tables | 57 333 | 39 830 (69.5 %) | 11 751 | 5 421 | 331 | 164 | 0 | 463 / 1 567 |
+
+Network losses by cause, and of "no route" and "return failed" those
+at a node that came back from its swap less than 60 s before:
+
+| seed | | expired delivery TTL | no route | of them just back | return failed | of them just back | hop cap | banned | budget | other |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | without | 164 | 12 | | 19 | | 52 | 46 | 8 | 0 |
+| 1 | swap 46.6 s | 165 | 75 | 33 | 34 | 18 | 61 | 36 | 8 | 0 |
+| 1 | swap 59.0 s | 155 | 109 | 88 | 74 | 17 | 91 | 36 | 7 | 2 |
+| 1 | tables | 63 | 18 | 1 | 21 | 0 | 78 | 34 | 6 | 0 |
+| 2 | without | 448 | 27 | | 20 | | 38 | 53 | 9 | 1 |
+| 2 | swap 46.6 s | 498 | 53 | 22 | 65 | 39 | 74 | 42 | 3 | 4 |
+| 2 | swap 59.0 s | 362 | 150 | 124 | 59 | 27 | 74 | 33 | 5 | 1 |
+| 2 | tables | 199 | 18 | 3 | 43 | 0 | 79 | 47 | 2 | 0 |
+| 3 | without | 249 | 32 | | 24 | | 35 | 49 | 3 | 0 |
+| 3 | swap 46.6 s | 286 | 85 | 43 | 60 | 29 | 37 | 45 | 4 | 0 |
+| 3 | swap 59.0 s | 344 | 189 | 146 | 57 | 30 | 38 | 48 | 6 | 1 |
+| 3 | tables | 167 | 27 | 0 | 23 | 0 | 48 | 59 | 5 | 2 |
+
+"Just back" counts a drop at a node whose swap ended less than 60 s
+before it, from the drop's time and node in the messages file and the
+nodes' return in the installs file.
+
+What was kept and what came back, with the tables:
+
+| seed | neighbour entries kept | taken back | records kept | taken back | messages kept | dropped later |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 68 739 | 62 320 (91 %) | 43 177 | 36 833 (85 %) | 3 720 | 40 |
+| 2 | 67 975 | 61 508 (90 %) | 41 075 | 35 254 (86 %) | 3 725 | 155 |
+| 3 | 64 017 | 57 850 (90 %) | 41 220 | 34 917 (85 %) | 4 203 | 170 |
+
+An entry is not taken back when it expired during the swap; most of
+those are a sleepy node's, whose entries are old since it hears only in
+its windows, or a relay's record last active nearly 600 s before.
+
+### What it means
+
+**The losses at a node just back are gone.** Without the tables, and
+with the longer swap, 88 to 146 texts a run end as "no route" at a node
+less than a minute back, and 17 to 30 as "return failed"; with them, 0
+to 3 and none. Mechanisms 1 and 3 above were the empty neighbour table
+and the lost records, as traced.
+
+**The extra losses fall by about three quarters.** Leaving out the
+expired delivery TTL, the runs lose 20, 41 and 21 texts more than
+without the installs, against 77, 93 and 88 with the shorter swap and
+no tables, and 182, 174 and 196 with the longer swap and no tables.
+More texts are delivered while the installs go on: 72.7 %, 73.1 % and
+69.5 %, against 68.0 %, 69.0 % and 64.9 %. Expired delivery TTL falls
+too, by 92 to 177 a run: kept messages for sleepy nodes find their
+nodes sooner, and 40 to 170 kept messages are dropped later, against
+124 to 354. Median latency does not change; the drain before the
+reboot sets it.
+
+**The swap's length matters.** With no tables, 12.4 s more off the air
+adds 81 to 108 losses a run, nearly all "no route" at a node just back:
+in a longer swap more of its neighbours' entries go unheard, and more
+of its senders give up on it. The longer figure is the right one: it
+matches the bench.
+
+**What is left** is mechanism 2: the hop cap, 48 to 79 against 35 to
+52 without the installs, and "return failed" away from a returning
+node in seed 2, 43 against 20. These come from searches that run long
+around relays that are draining or off, not from a node's state after
+its boot. Nothing was tuned to these runs. No text was lost without a
+trace in the three runs with the tables.
 
 ## Addition, 2026-11-10: the leaving flag (roadmap D181)
 

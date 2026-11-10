@@ -370,6 +370,85 @@ impl Records {
     }
 }
 
+/// Bytes of a record kept across a reset ([`Records::kept`]).
+pub const KEPT_LEN: usize = 32;
+
+impl Records {
+    /// Every record whose message was received or sent here within `ttl`
+    /// of `now`, as kept across a reset, taken at `now`; but those of the
+    /// messages `held`, which the node offers again as its own and new
+    /// (spec "Updates over the mesh", the install). After the delivery
+    /// TTL no copy of a message is left to come back
+    /// (spec "Delivery queue"), so a record older than that serves nothing.
+    pub fn kept<'a>(
+        &'a self,
+        ttl: Duration,
+        held: impl Fn(MsgId) -> bool + 'a,
+        now: Instant,
+    ) -> impl Iterator<Item = [u8; KEPT_LEN]> + 'a {
+        use super::kept::{put, Round};
+        self.entries[..self.len]
+            .iter()
+            .filter(move |r| now.since(r.last_active) < ttl && !held(r.id))
+            .map(move |r| {
+                let mut b = [0u8; KEPT_LEN];
+                b[0..4].copy_from_slice(&r.id.0.to_be_bytes());
+                b[4..10].copy_from_slice(&r.parent.0);
+                b[10..16].copy_from_slice(&r.last_from.0);
+                b[16] = r.parent_home.index();
+                b[17] = r.highest_hops;
+                b[18] = r.last_hops;
+                b[19] = r.flags;
+                b[20..28].copy_from_slice(&r.handed.to_be_bytes());
+                put(&mut b[28..32], r.last_active, now, Round::Earlier);
+                b
+            })
+    }
+
+    /// Put back a record [`Records::kept`] gave, taken at `then`: whether
+    /// it was, not if the message has a record, the table is full, or the
+    /// message was last active `ttl` or more before `now` or before the
+    /// clock's epoch. Its tried set names the slots the neighbour table
+    /// keeps across the reset.
+    pub fn restore(
+        &mut self,
+        b: &[u8; KEPT_LEN],
+        then: super::kept::Then,
+        ttl: Duration,
+        now: Instant,
+    ) -> bool {
+        let Some(last_active) = super::kept::get(&b[28..32], then) else {
+            return false;
+        };
+        let (Ok(parent), Ok(last_from), Ok(handed)) = (
+            b[4..10].try_into(),
+            b[10..16].try_into(),
+            b[20..28].try_into(),
+        ) else {
+            return false;
+        };
+        let Some(parent_home) = Channel::new(b[16]) else {
+            return false;
+        };
+        let r = Record {
+            id: MsgId(u32::from_be_bytes([b[0], b[1], b[2], b[3]])),
+            parent: NodeId(parent),
+            last_from: NodeId(last_from),
+            parent_home,
+            highest_hops: b[17],
+            last_hops: b[18],
+            flags: b[19],
+            handed: u64::from_be_bytes(handed),
+            last_active,
+        };
+        if now.since(last_active) >= ttl || self.is_full() || self.get(r.id).is_some() {
+            return false;
+        }
+        self.put(self.len, r);
+        true
+    }
+}
+
 impl Default for Records {
     fn default() -> Self {
         Records::new()

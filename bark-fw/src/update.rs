@@ -146,7 +146,9 @@ static CONFIRMED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// ([`trial`]), if it came over the mesh. Until it is kept, a reset swaps
 /// the previous image back. It writes the internal flash through the
 /// NVMC directly, so it runs before the phone link's controller starts.
-pub fn started(flash: &Flash) {
+/// Returns the length of the image a swap has just put in place, at its
+/// first boot, for the time the swap took (`tables.rs`).
+pub fn started(flash: &Flash) -> Option<u32> {
     // What the loader protected, as the ACL reads back (nRF52840 Product
     // Specification, ACL): all zeros if this image runs without it.
     for n in 0..2 {
@@ -169,11 +171,11 @@ pub fn started(flash: &Flash) {
                 "the loader's page erase returned {:?}: not protected",
                 erased
             );
-            return;
+            return None;
         }
         Some(Bench::Unconfirmed) => {
             log::warn!("bench image: not confirming");
-            return;
+            return None;
         }
         Some(Bench::Panic) => panic!("bench image: panicking before it confirms"),
         Some(Bench::Hang) => {
@@ -183,7 +185,8 @@ pub fn started(flash: &Flash) {
             }
         }
     }
-    let on_trial = match start(flash) {
+    let started = start(flash);
+    let on_trial = match started {
         Ok(Started::Normal) => false,
         Ok(Started::Confirmed) => {
             log::info!("update: version {} confirmed", BARK_IMAGE_VERSION);
@@ -232,6 +235,18 @@ pub fn started(flash: &Flash) {
         true => on_trial_now(flash),
         false => kept(),
     }
+    matches!(started, Ok(Started::Confirmed | Started::OnTrial))
+        .then(|| recorded_length(flash))
+        .flatten()
+}
+
+/// The length of the image the record names, the one swapped in.
+fn recorded_length(flash: &Flash) -> Option<u32> {
+    use embedded_storage::nor_flash::ReadNorFlash;
+    let mut b = [0u8; HEADER_LEN];
+    let at = bark_image::layout::RECORD.start + bark_image::record::HEADER_AT;
+    flash.lock(|f| f.borrow_mut().read(at, &mut b)).ok()?;
+    Header::decode(&b).ok().map(|h| h.length)
 }
 
 /// The image is kept: the watchdog is fed from now on, and the update over

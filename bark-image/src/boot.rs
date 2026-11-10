@@ -545,6 +545,7 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
 }
 
 pub mod cut;
+pub mod time;
 
 #[cfg(test)]
 mod tests;

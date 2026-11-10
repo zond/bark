@@ -9,6 +9,7 @@ pub mod busy;
 pub mod delivered;
 pub mod delivery;
 pub mod heard;
+pub mod kept;
 pub mod neighbours;
 pub mod records;
 pub mod send_queue;

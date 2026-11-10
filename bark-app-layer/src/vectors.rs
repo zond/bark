@@ -12,7 +12,7 @@ use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
 use crate::keys::{self, Keys};
-use crate::plain::{self, Header, Record, Writer};
+use crate::plain::{self, Header, Reaction, Record, Writer};
 use crate::seal::{self, Fetch};
 use crate::text;
 use crate::{Address, MAX_PAYLOAD};
@@ -194,28 +194,28 @@ pub fn json() -> String {
     ));
     let box_payload = payload;
 
-    // A text in UTF-8, from Bob to Alice, with an acknowledgement before it.
+    // A text in UTF-8, from Bob to Alice, with a thumbs up before it: the
+    // bytes of an acknowledgement from an app before reactions.
     let words = "ok 👍";
     let header = Header {
         greater: plain::greater(&f.bob.identity, &f.alice.identity),
         sent: 1_000_060,
         address: None,
     };
-    let p = plaintext(
-        &header,
-        &[
-            Record::Acknowledge { sent: 1_000_000 },
-            text_record(words, &mut tb),
-        ],
-    );
+    let thumbs_up = Record::React {
+        sent: 1_000_000,
+        reaction: Reaction::ThumbsUp,
+    };
+    let p = plaintext(&header, &[thumbs_up, text_record(words, &mut tb)]);
     let nonce = core::array::from_fn(|i| 0x80 + i as u8);
     parts.push(entry(
-        "box_utf8_ack",
+        "box_utf8_reaction",
         &[
             ("text", q(words)),
             ("sent", format!("{}", header.sent)),
             ("greater", format!("{}", header.greater)),
-            ("acknowledges", "1000000".into()),
+            ("reacts_to", "1000000".into()),
+            ("reaction", q("👍")),
             ("plaintext", h(&p)),
             ("nonce", h(&nonce)),
             (
@@ -225,27 +225,40 @@ pub fn json() -> String {
         ],
     ));
 
-    // An acknowledgement alone, Bob to Alice.
-    let header = Header {
-        greater: plain::greater(&f.bob.identity, &f.alice.identity),
-        sent: 1_000_120,
-        address: None,
-    };
-    let p = plaintext(&header, &[Record::Acknowledge { sent: 1_000_000 }]);
-    let nonce = core::array::from_fn(|i| 0xc0 + i as u8);
-    parts.push(entry(
-        "box_ack",
-        &[
-            ("sent", format!("{}", header.sent)),
-            ("acknowledges", "1000000".into()),
-            ("plaintext", h(&p)),
-            ("nonce", h(&nonce)),
-            (
-                "payload",
-                h(&boxed(&f.bob, &f.alice, f.away.node, nonce, &p)),
-            ),
-        ],
-    ));
+    // A reaction alone, Bob to Alice: a thumbs up, as an acknowledgement
+    // was, and a heart.
+    for (name, reaction, emoji, sent, nonce) in [
+        ("box_reaction", Reaction::ThumbsUp, "👍", 1_000_120, 0xc0),
+        ("box_heart", Reaction::Heart, "❤️", 1_000_180, 0xe0),
+    ] {
+        let header = Header {
+            greater: plain::greater(&f.bob.identity, &f.alice.identity),
+            sent,
+            address: None,
+        };
+        let p = plaintext(
+            &header,
+            &[Record::React {
+                sent: 1_000_000,
+                reaction,
+            }],
+        );
+        let nonce: [u8; 24] = core::array::from_fn(|i| nonce + i as u8);
+        parts.push(entry(
+            name,
+            &[
+                ("sent", format!("{}", header.sent)),
+                ("reacts_to", "1000000".into()),
+                ("reaction", q(emoji)),
+                ("plaintext", h(&p)),
+                ("nonce", h(&nonce)),
+                (
+                    "payload",
+                    h(&boxed(&f.bob, &f.alice, f.away.node, nonce, &p)),
+                ),
+            ],
+        ));
+    }
 
     // A text too long for one box, Alice to Bob, in two parts of
     // consecutive `sent`: cut after the last space that leaves the first

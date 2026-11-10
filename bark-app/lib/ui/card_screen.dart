@@ -17,10 +17,22 @@ class CardScreen extends StatelessWidget {
   final AppModel app;
   const CardScreen(this.app, {super.key});
 
+  /// The card as text, once per card, in the Android log: a bench reads
+  /// it over adb and pastes it on another phone where no camera can scan
+  /// the code.
+  static String? _logged;
+  static void _log(PersonCard? card) {
+    final text = card?.toText();
+    if (text == null || text == _logged) return;
+    _logged = text;
+    debugPrint('bark card $text');
+  }
+
   @override
   Widget build(BuildContext context) => Watch(app, (context) {
     final me = app.me;
     final card = me.shownCard;
+    _log(card);
     final mono = const TextStyle(fontFamily: 'monospace');
     Widget copyable(String title, String value, String what) => ListTile(
       contentPadding: EdgeInsets.zero,

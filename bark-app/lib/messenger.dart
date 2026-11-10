@@ -1,8 +1,7 @@
-// Texts, acknowledgements, cards and fetches, sealed for the network and
+// Texts, reactions, cards and fetches, sealed for the network and
 // opened from it (spec "Phone link", "Mailbox"): what the person sends
 // and receives, on top of the session's queue and inbox.
 
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:sodium/sodium.dart';
@@ -142,39 +141,31 @@ class Messenger {
     }
   }
 
-  /// Acknowledges a received text: every part of it that has come and is
-  /// not acknowledged yet, a record naming each, in as few messages as
-  /// hold them, and no text.
-  Future<void> acknowledge(Received r) async {
+  /// Sends the person's reaction, an index in [reactions], to the text
+  /// of `r`, naming it by its first part's `sent`; one replaces the one
+  /// before, and goes again even if the same, as the person asked.
+  Future<void> react(Received r, int reaction) async {
     final c = contacts.byKey(r.from);
     final t = c?.unasked(now());
-    if (c == null || t == null) return;
-    final open = [
-      for (final x in session.partsOf(r))
-        if (x != null && x.sent != null && !x.acked) x,
-    ];
-    final each = _recordRoom(c) ~/ (1 + 4);
+    final first = r.first;
+    if (c == null || t == null || first == null) return;
     final dst = c.addressOf(t);
-    for (var i = 0; i < open.length; i += each) {
-      final some = open.sublist(i, min(i + each, open.length));
-      final (p, sent) = await _seal(c, dst, [
-        for (final x in some) AckRecord(x.sent!),
-      ]);
-      for (final x in some) {
-        x.acked = true;
-      }
-      await session.queue(
-        Outgoing(
-          dst,
-          p,
-          at: now(),
-          kind: OutKind.ack,
-          to: c.key,
-          sent: sent,
-          toward: t,
-        ),
-      );
+    final (p, sent) = await _seal(c, dst, [ReactionRecord(first, reaction)]);
+    for (final x in session.partsOf(r)) {
+      x?.reaction = reaction;
     }
+    await session.queue(
+      Outgoing(
+        dst,
+        p,
+        at: now(),
+        kind: OutKind.reaction,
+        to: c.key,
+        sent: sent,
+        body: reactions[reaction],
+        toward: t,
+      ),
+    );
   }
 
   /// Sends the person's card to `c`.
@@ -391,10 +382,21 @@ class Messenger {
               ),
             );
           }
-        case AckRecord(:final sent):
+        case ReactionRecord(:final sent, :final reaction):
+          // Any part's `sent` names its text, as an older app named each
+          // part it acknowledged.
+          final named = session.outbox
+              .where(
+                (o) => o.to == from && o.sent == sent && o.kind == OutKind.text,
+              )
+              .firstOrNull;
+          if (named == null || h.sent <= named.reactionSent) break;
           for (final o in session.outbox) {
-            if (o.to == from && o.sent == sent && o.kind == OutKind.text) {
-              o.acked = true;
+            if (o.to == from &&
+                o.kind == OutKind.text &&
+                o.first == named.first) {
+              o.reaction = reaction;
+              o.reactionSent = h.sent;
             }
           }
           await session.save();

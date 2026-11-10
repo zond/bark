@@ -216,6 +216,36 @@ fn a_sleepy_node_owns_no_other_node_s_message() {
     assert_eq!(r.load(now).delivery_queue, 0);
 }
 
+/// The record of a message the node holds is not kept across a reboot:
+/// the node offers the message again as its own and new, and the record
+/// would make that offer a repeat (spec "Updates over the mesh", the
+/// install).
+#[test]
+fn the_record_of_a_message_held_is_not_remembered() {
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 7);
+    let pending = on_battery(&mut r);
+    let mut now = Instant::ZERO;
+    drive_from(
+        &mut r,
+        &mut now,
+        Instant::ZERO + Duration::from_secs(5),
+        pending,
+    );
+    let send = AppCommand::Send {
+        dst_pos: config.position,
+        dst_id: name(78),
+        payload: b"held over the reboot",
+    };
+    r.handle(Event::App(send), now, &mut |_| {});
+    let id = r.holding().next().expect("held");
+    assert!(r.knows(id));
+    assert!(!r.remembered(now).any(|k| matches!(k, Kept::Record(_))));
+}
+
 /// Boot `r` on battery, as its driver reports at boot
 /// (`docs/core-interface.md` §4): sleepy. Returns the excursions it
 /// asked for, for [`drive_from`].

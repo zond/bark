@@ -4,9 +4,11 @@
 //! and staged it drains while `bark_image::policy::drains` says so, and
 //! after each event checks `policy::quiet`; at the quiet moment it keeps
 //! what its core still holds (`Relay::held`) in the slots the firmware
-//! writes to its external flash (`bark_app_layer::carry`), goes off the
-//! air for the swap, and comes back with a new core that offers each kept
-//! message again as its own, one at a time, before its application's.
+//! writes to its external flash (`bark_app_layer::carry`) and its tables
+//! as the firmware writes them (`bark_app_layer::tables`, roadmap D180),
+//! goes off the air for the swap, and comes back with a new core that
+//! takes its tables back, aged by the swap, and offers each kept message
+//! again as its own, one at a time, before its application's.
 //!
 //! The image becomes whole either when the update's pieces make it so
 //! (`update.rs`, with `[update]`) or at a time drawn for each node
@@ -17,21 +19,17 @@
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::sim::{secs, Ev, Sim};
 use bark_app_layer::carry::{decode, encode, HELD_MAX, SLOT_LEN};
+use bark_app_layer::tables::{self, Check, Header};
 use bark_image::policy::{self, Links, Moment};
 use bark_proto::update::Image;
 use bark_proto::{AppCommand, BatteryLevels, Config, Core, Duration, Event, Instant, MsgId, Relay};
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Write;
 
-/// The swap's time off the air: the loader copies the 227 pages of the
-/// running slot, each an internal erase of 85 ms and 1024 word writes of
-/// 41 µs (nRF52840 Product Specification, NVMC), an external erase of
-/// 10 ms and 16 page programs of 1.3 ms (ZD25WQ16B datasheet, Table 4-3)
-/// and 8 KiB over the external flash's bus, about 30 ms; then the hash,
-/// 3 s, and the start of the 32.768 kHz clock, at most 1 s
-/// (`bark-fw/README.md`, "Updates").
-pub const SWAP_US: u64 =
-    227 * (85_000 + 1024 * 41 + 10_000 + 16 * 1_300 + 30_000) + 3_000_000 + 1_000_000;
+/// The swap's time off the air, 59.0 s: the loader's figures for an image
+/// that fills the slot (`bark_image::boot::time`), as the simulator does
+/// not model the image's length.
+pub const SWAP_US: u64 = bark_image::boot::time::swap_us(bark_image::layout::ACTIVE.len);
 
 /// Where a node's install stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +62,9 @@ pub struct InstallRow {
     pub back: Option<Instant>,
     /// Refusals for draining by its core, from its staging to its reboot.
     pub refused: u64,
+    /// Its neighbour entries and its message records kept across the
+    /// reboot, and of them those its new core took back.
+    pub tables: [usize; 4],
 }
 
 /// The installs of a run.
@@ -79,6 +80,8 @@ pub(crate) struct InstallModel {
     carry: Vec<VecDeque<[u8; SLOT_LEN]>>,
     /// The slot offered last, until its message is given back.
     offered: Vec<Option<[u8; SLOT_LEN]>>,
+    /// The tables kept across the reboot, as the firmware writes them.
+    tables: Vec<Vec<u8>>,
     /// Per node, its row in `rows` while it installs.
     row: Vec<Option<usize>>,
     /// Refusals for draining at the node before its staging.
@@ -98,6 +101,7 @@ impl InstallModel {
             due: vec![false; n],
             carry: vec![VecDeque::new(); n],
             offered: vec![None; n],
+            tables: vec![Vec::new(); n],
             row: vec![None; n],
             refused_before: vec![0; n],
             rows: Vec::new(),
@@ -119,6 +123,48 @@ impl InstallModel {
             .chain(self.offered.iter().flatten())
             .filter_map(|s| decode(s).map(|m| m.msg_id))
     }
+}
+
+/// The tables `core` keeps across a reboot at `now`, as the firmware
+/// writes them (`bark-fw/src/tables.rs`), and how many neighbour entries
+/// and records they hold.
+fn written_tables(core: &Relay, now: Instant) -> (Vec<u8>, [usize; 2]) {
+    let mut check = Check::new();
+    let mut body = Vec::new();
+    let mut counts = [0; 2];
+    for k in core.remembered(now) {
+        counts[usize::from(matches!(k, bark_proto::Kept::Record(_)))] += 1;
+        check.add(tables::bytes(&k));
+        body.extend_from_slice(tables::bytes(&k));
+    }
+    let h = Header::new(counts[0] as u16, counts[1] as u16, 0, check);
+    let mut out = h.encode().to_vec();
+    out.extend(body);
+    (out, counts)
+}
+
+/// Give `core`, new after the swap, the tables `written` kept, as the
+/// firmware does at its boot at `now`, the swap having taken [`SWAP_US`]:
+/// the neighbour entries and records it took back.
+fn take_back(core: &mut Relay, written: &[u8], now: Instant) -> [usize; 2] {
+    let mut back = [0; 2];
+    let Some(h) = written
+        .get(..tables::HEADER_LEN)
+        .and_then(|b| Header::decode(b.try_into().ok()?))
+    else {
+        return back;
+    };
+    let ago = Duration::from_micros(SWAP_US + u64::from(h.written_us));
+    for i in 0..h.entries() {
+        let (at, len) = h.place(i);
+        let Some(k) = written.get(at..at + len).and_then(|b| h.entry(i, b)) else {
+            return back;
+        };
+        if core.remember(&k, ago, now) {
+            back[usize::from(matches!(k, bark_proto::Kept::Record(_)))] += 1;
+        }
+    }
+    back
 }
 
 impl Sim {
@@ -176,6 +222,7 @@ impl Sim {
             kept_delivering: 0,
             back: None,
             refused: 0,
+            tables: [0; 4],
         });
         self.check_moment(node);
     }
@@ -251,6 +298,7 @@ impl Sim {
             .filter_map(|h| encode(&h))
             .collect();
         let core = &self.relays[i];
+        let (written, counts) = written_tables(core, self.clocks[i].local(self.now));
         let delivering = core.delivery_queue().count() + core.inbox_len();
         let refused = self.metrics.nodes[i].core.refused.draining;
         let m = self.install.as_mut().expect("installs");
@@ -260,6 +308,8 @@ impl Sim {
         r.kept = slots.len();
         r.kept_delivering = delivering;
         r.refused = refused - m.refused_before[i];
+        r.tables[..2].copy_from_slice(&counts);
+        m.tables[i] = written;
         for s in &slots {
             if let Some(h) = decode(s) {
                 m.kept.insert(h.msg_id.0);
@@ -293,6 +343,9 @@ impl Sim {
             ..*r.config()
         };
         *r = Relay::new(config, seed);
+        let written = core::mem::take(&mut self.install.as_mut().expect("installs").tables[i]);
+        let back = take_back(r, &written, self.clocks[i].local(self.now));
+        self.install.as_mut().expect("installs").rows[row].tables[2..].copy_from_slice(&back);
         self.power_on(node);
         if let Some(im) = image {
             self.deliver(node, Event::App(AppCommand::Holds(im)));
@@ -403,6 +456,15 @@ impl Sim {
                 bound.map_or(0.0, |b| b.as_micros() as f64 / 1e6),
             );
         }
+        let sum = |k: usize| m.rows.iter().map(|r| r.tables[k]).sum::<usize>();
+        let _ = writeln!(
+            out,
+            "  tables kept across a reboot: {} neighbour entries, {} taken back; {} records, {} taken back",
+            sum(0),
+            sum(2),
+            sum(1),
+            sum(3),
+        );
         let fates = self.kept_fates();
         let _ = writeln!(
             out,
@@ -429,7 +491,8 @@ impl Sim {
 
     /// Per node that installed, one row: node, relay, staged, drained
     /// from, rebooted, back (s), messages kept and of them those for its
-    /// sleepy nodes and itself, refusals for draining.
+    /// sleepy nodes and itself, refusals for draining, and the neighbour
+    /// entries and records kept and taken back.
     pub fn install_csv(&self) -> Option<String> {
         let m = self.install.as_ref()?;
         let s = |t: Option<Instant>| {
@@ -437,11 +500,11 @@ impl Sim {
                 format!("{:.3}", t.as_micros() as f64 / 1e6)
             })
         };
-        let mut out = String::from("node,relay,staged_s,drained_from_s,rebooted_s,back_s,kept,kept_delivering,refused_draining\n");
+        let mut out = String::from("node,relay,staged_s,drained_from_s,rebooted_s,back_s,kept,kept_delivering,refused_draining,neighbours_kept,records_kept,neighbours_back,records_back\n");
         for r in &m.rows {
             let _ = writeln!(
                 out,
-                "{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 r.node,
                 u8::from(r.relay),
                 s(Some(r.staged)),
@@ -450,7 +513,11 @@ impl Sim {
                 s(r.back),
                 r.kept,
                 r.kept_delivering,
-                r.refused
+                r.refused,
+                r.tables[0],
+                r.tables[1],
+                r.tables[2],
+                r.tables[3]
             );
         }
         Some(out)

@@ -21,6 +21,7 @@ pub mod keys;
 pub mod mailbox;
 pub mod plain;
 pub mod seal;
+pub mod tables;
 pub mod text;
 
 #[cfg(test)]

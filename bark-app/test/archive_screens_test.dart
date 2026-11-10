@@ -1,7 +1,7 @@
 // The archive on screen: a row swiped aside, with an undo; the line at
 // the bottom of each list and the Archived screen it leads to, also from
-// the menu; a thread archived from its menu; an archived thread read-only
-// until Unarchive.
+// the menu; a thread archived from its menu; an archived thread read-only,
+// its texts copied but not reacted to, until Unarchive.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -136,7 +136,21 @@ void main() {
     await t.tap(find.text('Olena'));
     await t.pumpAndSettle();
     expect(find.byType(ThreadScreen), findsOneWidget);
-    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
+    // A long press offers the reactions and a copy.
+    Future<void> hold() async {
+      await t.longPress(find.text('from Olena'));
+      await t.pumpAndSettle();
+    }
+
+    Future<void> letGo() async {
+      Navigator.pop(t.element(find.byType(BottomSheet)));
+      await t.pumpAndSettle();
+    }
+
+    await hold();
+    expect(find.byTooltip('Heart'), findsOneWidget);
+    expect(find.text('Copy text'), findsOneWidget);
+    await letGo();
     await t.tap(find.byType(PopupMenuButton<void Function()>));
     await t.pumpAndSettle();
     await t.tap(find.text('Archive contact'));
@@ -156,12 +170,18 @@ void main() {
     expect(find.text('from Olena'), findsOneWidget);
     expect(find.text('This conversation is archived.'), findsOneWidget);
     expect(find.byType(TextField), findsNothing);
-    expect(find.byTooltip('Tell the sender you read it'), findsNothing);
+    // Read-only: a copy, and no reactions.
+    await hold();
+    expect(find.byTooltip('Heart'), findsNothing);
+    expect(find.text('Copy text'), findsOneWidget);
+    await letGo();
     expect(find.byType(PopupMenuButton<void Function()>), findsNothing);
     await t.tap(find.text('Unarchive'));
     await t.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
+    await hold();
+    expect(find.byTooltip('Heart'), findsOneWidget);
+    await letGo();
     expect(app.contacts.byKey(olena.key)!.archived, isFalse);
     await done(t, app);
   });

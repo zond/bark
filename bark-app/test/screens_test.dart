@@ -1,6 +1,7 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
-// the echo is acknowledged, its button no taller than the small text;
+// the person reacts to the echo by a long press, and the friend's
+// reaction shows under the sent text;
 // the card, and without a name a prompt in its place, the backup words,
 // adding a contact from a pasted card or from a scanned one without a
 // name, its thread opened at once, and the debug screen; the fetch button, on the first screen and
@@ -44,7 +45,7 @@ import 'alerts_test.dart' show FakeNotifier;
 import 'ble_link_test.dart' show FakeNodes, OtherNode;
 
 /// The one check's words: no news from the network past it.
-const sentTip = 'Sent into the network; no further news until they confirm';
+const sentTip = 'Sent into the network, which does not say when it arrives';
 
 void main() {
   test('a found node\'s signal in a word, at the thresholds chosen', () {
@@ -137,47 +138,77 @@ void main() {
     expect(find.text('Echo: hello'), findsOneWidget);
     expect(find.textContaining('Not verified yet'), findsNothing);
 
-    // Acknowledge the echo: its button becomes one plain check. The
-    // friend's acknowledgement of "hello" shows two marks on the sent
-    // text, in place of the node's one mark.
+    // React to the echo: a long press opens the reactions, with a line on
+    // what one does; the heart goes, and shows under the echo. The
+    // friend's heart for "hello" shows under it when it comes. Nothing is
+    // pressed for the person, and no mark waits for one.
     Finder inBubble(String text, Finder f) => find.descendant(
       of: find.ancestor(of: find.text(text), matching: find.byType(Card)),
       matching: f,
     );
-    final mark = find.byWidgetPredicate(
-      (w) => w is Icon && w.icon == Icons.done_all && w.semanticLabel != null,
-    );
     final taken = find.byTooltip(sentTip);
-    final button = find.byTooltip('Tell the sender you read it');
-    expect(inBubble('Echo: hello', button), findsOneWidget);
-    expect(inBubble('Echo: hello', mark), findsNothing);
-    expect(inBubble('hello', mark), findsNothing);
     expect(inBubble('hello', taken), findsOneWidget);
-    // A labelled chip with a tap target of 48 dp, and a hint, once.
-    expect(inBubble('Echo: hello', find.text('Got it')), findsOneWidget);
+    expect(find.textContaining('Got it'), findsNothing);
+    expect(find.byType(ActionChip), findsNothing);
+    await t.longPress(find.text('Echo: hello'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('sees it under their text'), findsOneWidget);
+    expect(find.text('Copy text'), findsOneWidget);
+    for (final name in reactionNames) {
+      expect(find.byTooltip(name), findsOneWidget);
+    }
     expect(
-      t.getSize(inBubble('Echo: hello', find.byType(ActionChip))).height,
+      t.getSize(find.widgetWithText(IconButton, '❤️')).height,
       greaterThanOrEqualTo(48),
     );
-    const hint = 'Tap Got it so the sender sees you read it.';
-    expect(find.text(hint), findsOneWidget);
-    app.session.outbox.singleWhere((o) => o.body == 'hello').acked = true;
-    await t.tap(inBubble('Echo: hello', button));
-    await t.pump();
-    await t.pump();
-    expect(inBubble('Echo: hello', button), findsNothing);
-    expect(inBubble('Echo: hello', mark), findsNothing);
-    expect(inBubble('hello', mark), findsOneWidget);
-    expect(inBubble('hello', taken), findsNothing);
-    final check = find.byWidgetPredicate(
-      (w) => w is Icon && w.icon == Icons.check && w.semanticLabel != null,
-    );
-    expect(inBubble('Echo: hello', check), findsOneWidget);
-    expect(find.text(hint), findsNothing);
-    // A tap on a state explains them all.
-    await t.tap(inBubble('hello', mark));
+    await t.tap(find.byTooltip('Heart'));
     await t.pumpAndSettle();
-    expect(find.text('Confirmed by the recipient'), findsOneWidget);
+    expect(find.byTooltip('You reacted: Heart'), findsOneWidget);
+    final reacted = app.session.outbox.last;
+    expect(reacted.kind, OutKind.reaction);
+    expect(reacted.body, '❤️');
+    // A second press replaces it, and goes again.
+    await t.longPress(find.text('Echo: hello'));
+    await t.pumpAndSettle();
+    await t.tap(find.byTooltip('Laugh'));
+    await t.pumpAndSettle();
+    expect(find.byTooltip('You reacted: Heart'), findsNothing);
+    expect(find.byTooltip('You reacted: Laugh'), findsOneWidget);
+    expect(
+      app.session.outbox.where((o) => o.kind == OutKind.reaction).length,
+      2,
+    );
+    final hello = app.session.outbox.firstWhere((o) => o.body == 'hello');
+    final f = app.fakeNode!.friend;
+    final heart = writePlain(
+      Header(greater(f.identity, app.me.identity), hello.sent + 60),
+      [ReactionRecord(hello.sent, 1)],
+    );
+    final pair = sodium.crypto.box.precalculate(
+      publicKey: app.me.identity,
+      secretKey: f.pair.secretKey,
+    );
+    await t.runAsync(
+      () => app.messenger.receive(
+        InboxMessage(
+          4242,
+          sealBox(pair, 0, sodium.randombytes.buf(nonceLen), heart),
+        ),
+      ),
+    );
+    await t.pump();
+    expect(find.byTooltip('They reacted: Heart'), findsOneWidget);
+    // An acknowledgement from an app before reactions is a thumbs up.
+    hello.reaction = 0;
+    app.session.dismissNotice();
+    await t.pump();
+    expect(find.byTooltip('They reacted: Thumbs up'), findsOneWidget);
+    expect(inBubble('hello', taken), findsOneWidget);
+    // A tap on a state explains them all, the reaction too.
+    await t.tap(inBubble('hello', taken));
+    await t.pumpAndSettle();
+    expect(find.text('Their reaction'), findsOneWidget);
+    expect(find.text('Confirmed by the recipient'), findsNothing);
     expect(
       find.textContaining('The network gives no further news'),
       findsOneWidget,
@@ -770,20 +801,10 @@ void main() {
     out[1].state = OutState.taken;
     await redraw();
     expect(find.byTooltip(sentTip), findsOneWidget);
-    final both = find.byWidgetPredicate(
-      (w) => w is Icon && w.icon == Icons.done_all,
-    );
-    out[0].acked = true;
-    await redraw();
-    expect(find.text('2 of 2 sent, 1 confirmed'), findsOneWidget);
-    expect(both, findsNothing);
-    out[1].acked = true;
-    await redraw();
-    expect(both, findsOneWidget);
     expect(find.textContaining('of 2'), findsNothing);
 
     // Received: the parts that came, a line where one has not, and the
-    // button until every part that came is acknowledged.
+    // person's reaction under them, which a part that comes later keeps.
     Future<void> receive(int sent, int part, String body) =>
         app.session.addReceived(
           Received(
@@ -801,17 +822,16 @@ void main() {
     await t.runAsync(() => receive(7000, 1, 'one '));
     await t.pump();
     expect(find.textContaining('part 2 of 3 not yet here'), findsOneWidget);
-    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
     for (final r in app.session.received) {
-      r.acked = true;
+      r.reaction = 5;
     }
     await redraw();
-    expect(find.byTooltip('Tell the sender you read it'), findsNothing);
+    expect(find.byTooltip('You reacted: Thanks'), findsOneWidget);
     await t.runAsync(() => receive(7001, 2, 'two '));
     await t.pump();
     expect(find.textContaining('not yet here'), findsNothing);
     expect(find.text('one two three'), findsOneWidget);
-    expect(find.byTooltip('Tell the sender you read it'), findsOneWidget);
+    expect(find.byTooltip('You reacted: Thanks'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

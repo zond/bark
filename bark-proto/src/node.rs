@@ -20,7 +20,9 @@ mod mac;
 mod relay;
 mod transfer;
 
-pub use relay::{Anchor, Forced, Held, Load, NeighbourCounts, Node, Relay, SleepyNode};
+pub use relay::{
+    remembered_within, Anchor, Forced, Held, Kept, Load, NeighbourCounts, Node, Relay, SleepyNode,
+};
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).

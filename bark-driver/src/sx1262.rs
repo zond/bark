@@ -20,7 +20,7 @@ use bark_proto::sniff::{periods, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{Frame, MAX_FRAME};
 
 use crate::tcxo::{self, Probe, Search};
-use crate::{Clock, Duration, Heard, Instant};
+use crate::{Clock, Duration, Failure, Heard, Instant};
 
 /// Interrupt flags (DS Table 13-29), as `GetIrqStatus` reports them.
 pub mod irq {
@@ -340,8 +340,6 @@ pub struct Sx1262<C, K> {
     tcxo: tcxo::Delay,
     lbt: LbtRead,
     stats: Stats,
-    /// The flags the last `service` read.
-    flags: u16,
 }
 
 impl<C: Chip, K: Clock> Sx1262<C, K> {
@@ -357,7 +355,6 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             tcxo: tcxo::Delay::new(now),
             lbt: LbtRead::After,
             stats: Stats::default(),
-            flags: 0,
         };
         radio.ready().await?;
         radio.stats.resets = 0;
@@ -391,12 +388,6 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// Counters.
     pub fn stats(&self) -> Stats {
         self.stats
-    }
-
-    /// The interrupt flags the last [`Sx1262::service`] read, for a log
-    /// that tells a header failure from a payload one.
-    pub fn last_flags(&self) -> u16 {
-        self.flags
     }
 
     /// The bytes of the last packet, whatever its CRC said, for a log of
@@ -653,7 +644,6 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     pub async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, Error<C::Error>> {
         let r = self.chip.irq_status().await;
         let flags = self.note(r)?;
-        self.flags = flags;
         let r = self.chip.clear_irq().await;
         self.note(r)?;
         let failed = irq::HEADER_ERR | irq::CRC_ERR | irq::TIMEOUT;
@@ -662,8 +652,16 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             self.held.mode = Mode::StandbyRc;
             self.held.osc_stopped = None;
         }
-        if flags & failed != 0 {
-            return Ok(Heard::Failed);
+        // The payload is checked only after the header passed, so a
+        // payload error says the header was good.
+        if flags & irq::CRC_ERR != 0 {
+            return Ok(Heard::Failed(Failure::Crc));
+        }
+        if flags & irq::HEADER_ERR != 0 {
+            return Ok(Heard::Failed(Failure::Header));
+        }
+        if flags & irq::TIMEOUT != 0 {
+            return Ok(Heard::Failed(Failure::Timeout));
         }
         if flags & irq::RX_DONE != 0 {
             let r = self.chip.read_frame(buf).await;
@@ -1481,6 +1479,25 @@ mod tests {
                 Cmd::Payload(13),
             ]
         );
+    }
+
+    #[test]
+    fn a_failure_says_which_check_failed() {
+        let (mut radio, _, _) = booted(board());
+        run(radio.listen(ch(3))).unwrap();
+        let mut buf = [0; MAX_FRAME];
+        for (flags, why) in [
+            (irq::PREAMBLE_DETECTED | irq::HEADER_ERR, Failure::Header),
+            (
+                irq::HEADER_VALID | irq::CRC_ERR | irq::RX_DONE,
+                Failure::Crc,
+            ),
+            (irq::TIMEOUT, Failure::Timeout),
+        ] {
+            radio.chip().board.borrow_mut().flags = Some(flags);
+            let heard = run(radio.service(&mut buf)).unwrap();
+            assert_eq!(heard, Heard::Failed(why));
+        }
     }
 
     #[test]
