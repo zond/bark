@@ -403,6 +403,13 @@ pub enum Trace {
     /// its home channel, for its sleepy nodes
     /// (spec "Updates over the mesh").
     SlotPiece(SlotPiece),
+    /// A neighbour's section came to name another image of a version this
+    /// node holds or gathers: two builds carry one version, which a
+    /// release never does (spec "Updates over the mesh"). Nothing follows.
+    TwoBuilds {
+        /// The version.
+        version: u32,
+    },
     /// The home channel changed: chosen at the end of the first rotation
     /// (spec "Channel at boot") or moved by the move rule (spec "Channel moves").
     HomeChannelMoved {

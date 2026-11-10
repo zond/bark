@@ -157,22 +157,6 @@ pub const SECTION_EVERY: Duration = Duration::from_secs(3600);
 /// (spec "Updates over the mesh").
 pub const LEASE_ROTATIONS: u64 = 2;
 
-/// How long a gatherer waits for a relay it hears to hold the block it
-/// lacks before another image of its version may take its place, and how
-/// long it then leaves the image it gave up: an hour. A neighbour that
-/// gathers the same image and is served shows a block more within it: a
-/// helper sends a block and its margin, [`sweep_pieces`] of 64, 80
-/// pieces, in 80 paces, 18.5 min, so even at a third of the pace
-/// (spec "Updates over the mesh", rule 1).
-pub const UNSERVED: Duration = SECTION_EVERY;
-
-#[cfg(test)]
-#[test]
-fn a_block_at_a_third_of_the_pace_fits_the_wait_for_a_source() {
-    let block = PACE.mul(3 * u64::from(sweep_pieces(BLOCK_PIECES as u8)));
-    assert!(block <= UNSERVED, "{block:?}");
-}
-
 /// How many worst-case rotations of heartbeats an image gathered over the
 /// mesh listens for a node before it gives itself up
 /// (spec "Updates over the mesh", the install). Every neighbour's

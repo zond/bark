@@ -4452,7 +4452,10 @@ in **blocks**: block 0 is the block table, the whole name and the first
 and two up to 48; then the packed image, in blocks of 64 pieces of 247
 bytes, the last block shorter and its last piece padded (`bark-image`,
 `pieces.rs`). Block 1 begins with the signed header, which hashes to
-the name. Each block is sent as up to 255 coded pieces, and any 64
+the name. A version names one image, as a release takes its version
+from its tag; a node that hears a neighbour name another image of a
+version it holds or gathers only logs it, once each time that
+neighbour's section comes to name it. Each block is sent as up to 255 coded pieces, and any 64
 distinct ones of a block, or as many as it has, give it back (a
 Reed-Solomon code over GF(2⁸), the firmware's, `code.rs`). Today's node
 image, 478 704 bytes (the open build of main `9b693a0` on 2026-11-09,
@@ -4564,15 +4567,7 @@ bytes and 14.4 ms.
 1. A node that hears a section naming an image of a version above the
    one it runs and the one it gathers asks its firmware, once, whether
    its policy takes the image. If it does, the node gathers it; an image
-   of a higher version heard later replaces it. So may an image of the
-   version it gathers under another name, held from its first block by
-   a relay the node hears, once the node's own is **stranded**: no relay
-   it hears holds the block it lacks, and none has for an hour, or no
-   relay it hears names its image at all, holding or gathering it, and
-   none has for a lease of two of the longest rotations and a
-   heartbeat's lag, 391 s ([heartbeat](#heartbeat)). The node asks for
-   it once, and does not ask again within the hour for the image it
-   gave up.
+   of a higher version heard later replaces it.
 2. A node that gathers hands its firmware every piece it has not handed
    before of every block it lacks, and no other: at most 48 blocks of
    64, the lanes the firmware keeps them in (`bark-image`, `pieces.rs`).
@@ -4618,28 +4613,6 @@ bytes and 14.4 ms.
    channel, at the gap or the pace (pace and priority, below). The
    piece after a slot heartbeat is apart from this (sleepy nodes,
    below).
-
-*Why another image of the same version.* Two builds can carry one
-version number, and on the bench they do, several a day. Two relays
-flashed with a second build of the version a neighbour gathered from
-the first stopped serving it, since its section named an image they no
-longer held, and it was offered theirs only once a higher version came:
-an hour with nothing sent (`update-stall-2026-11-10.md`). *Why wait
-for a neighbour that gathers the same image.* A node that has caught up
-with such a neighbour is served nothing until the neighbour holds its
-next block. Offered the other image at that moment, a node threw its
-blocks away and, a block later, was offered the first again: in a line
-of five relays holding two builds the middle one was offered them in
-turn four to seven times (roadmap D195). So the node waits, but for an
-hour only: a helper sends a block and its margin, 80 pieces, in
-18.5 min at the pace, so a neighbour that is served comes to hold the
-node's next block within the hour even at a third of the pace, and two
-gatherers that wait only for each other take the other image then.
-Where no relay names the image at all, nothing will come of it; the
-lease rides out the rotation in which a neighbour that took it up says
-so, and one lost. *Why not take back the image given up within the
-hour.* Each swap costs the node the blocks it held, so it swaps at most
-once an hour, whatever its neighbours say.
 
 *Why a stream.* Every piece on a channel serves every node there that
 lacks its block, whenever that node began, so the nodes of a channel
@@ -4974,9 +4947,7 @@ it sent pieces on and when; the times of the last 8 pieces it heard
 from others on its home channel; what its section last told, the
 channels its rotation of sections has still to reach, when that
 rotation began and when the hour's is due, whether it owes a lagging
-neighbour an answer, and its helper's ID; when a relay it hears last
-held the block it lacks and last named its image, and the image it last
-gave up and when: 1 928 bytes beside the
+neighbour an answer, and its helper's ID: 1 888 bytes beside the
 tables, and 16 bytes in each neighbour's entry for its section and
 when it was heard (`core-interface.md`, Memory).
 
