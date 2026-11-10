@@ -5,8 +5,8 @@ reboot into an image gathered over the mesh (`bark-sim/src/install.rs`),
 `scenarios/district-x64.toml` and `scenarios/district-x64-install.toml`.
 Spec references are to `protocol.md` by section name; roadmap D170 is
 the rule tested. The additions at the end test D180, the tables kept
-across the swap, D181, the leaving flag, and D186, the wait for a leaving
-node.
+across the swap, D181, the leaving flag, D186, the wait for a leaving
+node, and D201, a carried text put back where it was.
 
 ## Summary
 
@@ -490,3 +490,95 @@ cap, so D186 has little to act on there: the losses are "no route" and
 failed returns. That the ring delivers less with D181 than with D180
 alone, more of its texts still on their way at the end, 243 against 55,
 is one run of one seed and was not traced.
+
+## Addition, 2026-11-10: a carried text keeps its count and its parent (roadmap D201)
+
+D201 puts what a node holds at its reboot back where it was: a forward
+into the send queue with its count, its parent and its place, a message
+in the delivery queue or the inbox back there with its age and the time
+away; only the application's own message is offered again as new. The
+first addition's "kept across the swap, lost after" was mostly the hop
+cap: a kept text started again at count 0 and could go further than the
+cap means, and one with no parent ended its search at the node just back.
+
+The runs are the same files, release builds of main `cb2137d` and of
+this branch. The runs without installs are the same with both builds,
+line for line, as D201 touches only the reboot. Seeds 1 to 3 were asked
+for; seeds 4 to 6 were run to tell a mechanism from a seed's noise.
+Lost texts are counted as above: "lost" leaves out the expired delivery
+TTL.
+
+| seed | | sent | delivered | still on its way | given up at the sender | lost | of them at the hop cap | without a trace | latency p50 / p90, s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | without | 79 105 | 64 542 (81.6 %) | 10 597 | 3 746 | 127 | 38 | 0 | 203 / 902 |
+| 1 | main | 72 541 | 56 276 (77.6 %) | 11 557 | 4 393 | 209 | 89 | 0 | 321 / 1 117 |
+| 1 | D201 | 72 399 | 56 292 (77.8 %) | 11 238 | 4 501 | 208 | 66 | 0 | 296 / 1 073 |
+| 2 | without | 74 424 | 61 261 (82.3 %) | 8 689 | 4 074 | 142 | 35 | 0 | 181 / 1 011 |
+| 2 | main | 70 192 | 54 668 (77.9 %) | 10 584 | 4 487 | 147 | 47 | 0 | 295 / 1 256 |
+| 2 | D201 | 69 187 | 54 280 (78.5 %) | 9 748 | 4 587 | 166 | 49 | 0 | 295 / 1 231 |
+| 3 | without | 73 335 | 57 634 (78.6 %) | 10 870 | 4 459 | 167 | 45 | 0 | 250 / 1 082 |
+| 3 | main | 65 560 | 48 781 (74.4 %) | 11 177 | 5 248 | 187 | 68 | 0 | 357 / 1 298 |
+| 3 | D201 | 66 005 | 49 273 (74.7 %) | 11 235 | 5 100 | 132 | 40 | 0 | 339 / 1 265 |
+| 4 | main | 63 094 | 49 317 (78.2 %) | 8 715 | 4 778 | 187 | 76 | 1 | 263 / 1 162 |
+| 4 | D201 | 62 744 | 48 436 (77.2 %) | 9 173 | 4 826 | 188 | 56 | 0 | 255 / 1 200 |
+| 5 | main | 68 551 | 51 267 (74.8 %) | 12 101 | 4 687 | 213 | 88 | 1 | 353 / 1 249 |
+| 5 | D201 | 67 429 | 50 366 (74.7 %) | 11 777 | 4 728 | 232 | 80 | 0 | 331 / 1 248 |
+| 6 | main | 67 287 | 51 889 (77.1 %) | 10 203 | 4 713 | 197 | 112 | 0 | 298 / 1 187 |
+| 6 | D201 | 66 217 | 51 884 (78.4 %) | 9 280 | 4 614 | 166 | 73 | 0 | 287 / 1 150 |
+
+The messages kept across the swap, by what became of them at the end of
+the run, and of those dropped the ones lost not by the delivery TTL:
+
+| seed | main: kept | delivered | dropped | of them lost | still on its way | D201: kept | delivered | dropped | of them lost | still on its way |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 3 122 | 1 132 | 121 | 37 | 1 869 | 3 099 | 796 | 95 | 21 | 2 208 |
+| 2 | 3 246 | 1 160 | 186 | 31 | 1 900 | 3 314 | 968 | 265 | 21 | 2 081 |
+| 3 | 3 582 | 1 291 | 208 | 25 | 2 083 | 3 661 | 1 152 | 287 | 25 | 2 222 |
+
+### What it means
+
+**The hop cap falls.** Over the six seeds 364 texts die at the hop cap
+against 480 on main, and the kept texts that do fall from 16, 18 and 14
+to 4, 8 and 7 in seeds 1 to 3: a kept text no longer starts its count
+again. Nothing is lost without a trace with D201; main loses one text in
+seeds 4 and 5, the copy of a kept text that the first addition
+described.
+
+**The losses do not fall on every seed.** Seeds 1 and 4 are level with
+main, seeds 3 and 6 lose 55 and 31 fewer texts, and seeds 2 and 5 lose
+19 more; over the six seeds 1 092 against 1 140. Delivered and latency
+move within a point and 25 s either way.
+
+*Seed 2.* The kept texts lose fewer there, 21 against 31. Each text lost
+in the network was traced and put in the first class of the first
+addition that fits it. The rise is among texts that were not kept: 26
+against 10 had an earlier hop send them to a node draining or off, and
+21 against 13 passed through a node back from its swap within 600 s,
+while 36 against 43 fit no class. Those classes come from the installs
+and not from what a node does with what it kept, and seeds 3 and 6 move
+the other way by more, so this is the seeds' noise, which the earlier
+additions put at tens a run, not a mechanism of D201.
+
+*Seed 5.* Here the kept texts are the rise: 41 kept in a delivery queue
+end as "no route", against 19 kept texts of any kind on main. A trace of
+seed 5 shows the mechanism. A relay back from its swap holds delivery
+entries for sleepy nodes that have not come, some queued half an hour
+before. When such an entry leaves the queue as a forward, as when the
+relay turns sleepy and hands on what it holds, its search starts at the
+relay with no parent, and a neighbour that has its record answers seen,
+so it ends there. On main the same entry had been offered again as new,
+so it was fresh in the queue and, at a relay turning sleepy, went to the
+anchor as the sleepy node's own message, a search that starts afresh. So
+main's restart gave old texts for absent sleepy nodes a second life, past
+the delivery TTL that D201 now counts across the swap. Of the losses
+above, those of a text queued for delivery at least the TTL before its
+drop are about as many on both builds, 17 to 31 a run against 21 to 42
+on main.
+
+**Fewer kept texts arrive within the run.** In seeds 1 to 3, 796 to
+1 152 against 1 132 to 1 291, and more are still on their way at the
+end. Nine in ten kept texts are in a delivery queue, waiting for a
+sleepy node. On main they went back in as new, with a fresh TTL; with
+D201 they keep their age, as D180 ages everything else, and turn stale
+on time: more of them make way for newer texts, counted as the expired
+TTL, 74 to 262 a run against 84 to 185, and fewer are delivered late.
