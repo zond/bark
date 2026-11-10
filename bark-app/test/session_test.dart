@@ -1,6 +1,6 @@
 // The app's side of the link against the fake node: the queue, the
 // inbox, given back and a node of a newer link version used; and what is sealed and
-// opened on top of them: texts, acknowledgements, first messages and
+// opened on top of them: texts, reactions, first messages and
 // the mailbox's replies; and the node paired with, and whether the person
 // stopped looking for it, kept across a restart.
 
@@ -371,27 +371,67 @@ void main() {
     });
   });
 
-  test('an acknowledgement marks the text it names, and one is sent', () {
+  test('a reaction shows on the text it names, and one is sent', () {
     run((async, p, node) {
       final f = friendOf(p, node);
       p.messenger.sendText(f, 'a');
       async.elapse(const Duration(seconds: 6));
       final a = p.session.outbox.single;
-      expect(a.acked, isFalse);
-      final ack = fromFriend(node, p, 99, [AckRecord(a.sent)]);
-      p.messenger.receive(InboxMessage(1, ack));
+      expect(a.reaction, isNull);
+      final heart = fromFriend(node, p, 99, [ReactionRecord(a.sent, 1)]);
+      p.messenger.receive(InboxMessage(1, heart));
       async.flushMicrotasks();
-      expect(a.acked, isTrue);
+      expect(a.reaction, 1);
+      // An older one coming late does not replace it; a newer one does.
+      final older = fromFriend(node, p, 98, [ReactionRecord(a.sent, 2)]);
+      p.messenger.receive(InboxMessage(2, older));
+      async.flushMicrotasks();
+      expect(a.reaction, 1);
+      // An acknowledgement from an app before reactions is a thumbs up.
+      final ack = fromFriend(node, p, 100, [ReactionRecord(a.sent, 0)]);
+      p.messenger.receive(InboxMessage(3, ack));
+      async.flushMicrotasks();
+      expect(a.reaction, 0);
 
       final echo = p.session.received.last;
-      p.messenger.acknowledge(echo);
+      p.messenger.react(echo, 3);
       async.elapse(const Duration(seconds: 1));
-      expect(echo.acked, isTrue);
+      expect(echo.reaction, 3);
       final sent = p.session.outbox.last;
-      expect(sent.kind, OutKind.ack);
+      expect(sent.kind, OutKind.reaction);
       expect(formOf(sent.payload), Form.boxed);
+      // A second press replaces it, and goes again.
+      p.messenger.react(echo, 5);
+      async.elapse(const Duration(seconds: 1));
+      expect(echo.reaction, 5);
+      expect(
+        p.session.outbox.where((o) => o.kind == OutKind.reaction).length,
+        2,
+      );
     });
   });
+
+  test(
+    'a stored acknowledgement of an app before reactions is a thumbs up',
+    () {
+      final out = Outgoing(
+        Address(const Position(0, 0), Uint8List(6)),
+        Uint8List(1),
+        at: DateTime.utc(2026),
+        kind: OutKind.text,
+        sent: 1,
+        body: 'a',
+      ).toJson()..remove('reaction');
+      final old = {...out, 'acked': true};
+      expect(Outgoing.fromJson(old).reaction, 0);
+      expect(Outgoing.fromJson(old).acked, isFalse);
+      expect(Outgoing.fromJson({...old, 'kind': 'ack'}).kind, OutKind.reaction);
+      final r = Received(1, [], DateTime.utc(2026), sent: 1, body: 'b').toJson()
+        ..remove('reaction');
+      expect(Received.fromJson({...r, 'acked': true}).reaction, 0);
+      expect(Received.fromJson({...r, 'acked': false}).reaction, isNull);
+    },
+  );
 
   group('long texts', () {
     /// The records of a payload from the phone to the fake friend.
@@ -440,7 +480,7 @@ void main() {
       });
     });
 
-    test('come together in any order; a tap acknowledges what has come', () {
+    test('come together in any order; a reaction names the text', () {
       run((async, p, node) {
         void part(int id, int sent, String t, int n) => p.messenger.receive(
           InboxMessage(id, fromFriend(node, p, sent, [TextRecord(t, n, 3)])),
@@ -460,32 +500,20 @@ void main() {
         expect(entry().text, 'one \npart 2 of 3 not yet here\nthree');
         expect(entry().pieces.map((x) => x.missing), [false, true, false]);
 
-        // One tap: one message naming both parts that came.
-        p.messenger.acknowledge(last);
+        // One reaction, naming the text by its first part's sent, which
+        // has not come.
+        p.messenger.react(last, 1);
         async.flushMicrotasks();
-        final ack = s.outbox.last;
-        expect(ack.kind, OutKind.ack);
-        expect(
-          opened(p, node, ack.payload).$2.map((r) => (r as AckRecord).sent),
-          [5000, 5002],
-        );
-        expect(entry().arrived.every((r) => r.acked), isTrue);
+        final sent = s.outbox.last;
+        expect(sent.kind, OutKind.reaction);
+        final r = opened(p, node, sent.payload).$2.single as ReactionRecord;
+        expect((r.sent, r.reaction), (5000, 1));
+        expect(entry().arrived.map((r) => r.reaction), [1, 1]);
 
-        // The part that comes later is the next tap's, alone.
+        // The part that comes later shows in the text the reaction is on.
         part(13, 5001, 'two ', 2);
         async.flushMicrotasks();
         expect(entry().text, 'one two three');
-        expect(entry().arrived.every((r) => r.acked), isFalse);
-        p.messenger.acknowledge(s.received.last);
-        async.flushMicrotasks();
-        expect(
-          opened(
-            p,
-            node,
-            s.outbox.last.payload,
-          ).$2.map((r) => (r as AckRecord).sent),
-          [5001],
-        );
         // Its copy, read again, is not kept twice.
         part(14, 5001, 'two ', 2);
         async.flushMicrotasks();
@@ -493,25 +521,21 @@ void main() {
       });
     });
 
-    test('a sent text is acknowledged when every part is', () {
+    test('a reaction naming any part is on the whole text', () {
       run((async, p, node) {
         final f = friendOf(p, node);
         p.messenger.sendText(f, List.filled(60, 'word').join(' '));
         async.flushMicrotasks();
         final out = [...p.session.outbox];
+        // As an older app acknowledged each part that came.
         p.messenger.receive(
           InboxMessage(
             21,
-            fromFriend(node, p, 9000, [
-              for (final o in out.skip(1)) AckRecord(o.sent),
-            ]),
+            fromFriend(node, p, 9000, [ReactionRecord(out.last.sent, 0)]),
           ),
         );
         async.flushMicrotasks();
-        expect(out.map((o) => o.acked), [
-          false,
-          ...out.skip(1).map((_) => true),
-        ]);
+        expect(out.map((o) => o.reaction), out.map((_) => 0));
       });
     });
   });

@@ -51,21 +51,18 @@ void main() {
     expect(cs.first.contact, same(olena));
   });
 
-  test(
-    'acknowledgements, cards, fetches and what did not open are in none',
-    () {
-      final cs = conversations(
-        [olena],
-        [
-          out(id(1), 'hi', 0),
-          out(id(1), '', 1, kind: OutKind.ack),
-          out(id(1), '', 2, kind: OutKind.card),
-        ],
-        [got(null, 'noise', 3)],
-      );
-      expect(cs.single.entries.map((e) => e.text), ['hi']);
-    },
-  );
+  test('reactions, cards, fetches and what did not open are in none', () {
+    final cs = conversations(
+      [olena],
+      [
+        out(id(1), 'hi', 0),
+        out(id(1), '', 1, kind: OutKind.reaction),
+        out(id(1), '', 2, kind: OutKind.card),
+      ],
+      [got(null, 'noise', 3)],
+    );
+    expect(cs.single.entries.map((e) => e.text), ['hi']);
+  });
 
   test('at the same time, sent before received, each in its order', () {
     final c = conversations([olena], [out(id(1), 'a', 0), out(id(1), 'b', 0)], [

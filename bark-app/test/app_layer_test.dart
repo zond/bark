@@ -113,8 +113,8 @@ void main() {
     expect((rs.single as TextRecord).text, m['text']);
   });
 
-  test('boxed: an acknowledgement and a UTF-8 text', () {
-    for (final name in ['box_utf8_ack', 'box_ack']) {
+  test('boxed: reactions, one an older acknowledgement, and a UTF-8 text', () {
+    for (final name in ['box_utf8_reaction', 'box_reaction', 'box_heart']) {
       final m = at(name);
       final ab = s.crypto.box.precalculate(
         publicKey: bob.identity,
@@ -125,10 +125,15 @@ void main() {
       expect(h(m, 'payload')[1], at('alice')['recipient_away']);
       final (hd, rs) = readPlain(plain);
       expect(hd.greater, greater(bob.identity, alice.identity));
-      expect((rs.first as AckRecord).sent, m['acknowledges']);
+      final r = rs.first as ReactionRecord;
+      expect(r.sent, m['reacts_to']);
+      expect(reactions[r.reaction], m['reaction']);
       if (m['text'] != null) expect((rs.last as TextRecord).text, m['text']);
       final records = [
-        AckRecord(m['acknowledges'] as int),
+        ReactionRecord(
+          m['reacts_to'] as int,
+          reactions.indexOf(m['reaction'] as String),
+        ),
         if (m['text'] != null) TextRecord(m['text'] as String),
       ];
       expect(
