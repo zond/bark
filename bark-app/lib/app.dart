@@ -271,8 +271,11 @@ class AppModel extends ChangeNotifier {
   /// Where a connection stands until the link is attached.
   Linking linking = Linking.none;
 
-  /// A connection is being made: no other may start.
-  bool get connecting => linking != Linking.none;
+  /// A connection is being made: no other may start, and the search
+  /// does not scan. A tap's covers the whole of its connect, from the
+  /// close of the old link to the new link up, as the search would take
+  /// another node in the moments between ([_byTap]).
+  bool get connecting => linking != Linking.none || _tapHeld;
 
   /// The device of the link connected or being connected: a found
   /// node's ID, or [fakeDevice].
@@ -369,19 +372,21 @@ class AppModel extends ChangeNotifier {
     if (connecting) return;
     final f = fakeNode;
     if (fake && f != null && name == nodeName(f.nodeId)) return connectFake();
-    final last = _lastHeard[name];
-    var n = last != null && now().difference(last.at) < lookRound * ownGone
-        ? last.found
-        : null;
-    if (n == null) {
-      await _searchStopped();
-      await stopScan();
-      final heard = await listen(until: (f) => f.name == name);
-      _heard(heard.values);
-      n = heard.values.where((f) => f.name == name).firstOrNull;
-    }
-    if (n == null) throw NotSeen(shownName(name));
-    await connect(n);
+    await _byTap(() async {
+      final last = _lastHeard[name];
+      var n = last != null && now().difference(last.at) < lookRound * ownGone
+          ? last.found
+          : null;
+      if (n == null) {
+        await stopScan();
+        final heard = await listen(until: (f) => f.name == name);
+        _heard(heard.values);
+        n = heard.values.where((f) => f.name == name).firstOrNull;
+      }
+      if (n == null) throw NotSeen(shownName(name));
+      if (connectedTo(n.deviceId) && !session.guest) return;
+      await _connect(n);
+    });
   }
 
   /// Forgets `name`, a paired node no longer this phone's: the app counts
@@ -739,28 +744,48 @@ class AppModel extends ChangeNotifier {
   /// the same node would close the link the first made.
   Future<void> connect(FoundNode n, {bool again = false}) async {
     if (connecting || (connectedTo(n.deviceId) && !session.guest)) return;
-    _tapped = true;
-    await _connect(n, again: again);
+    await _byTap(() => _connect(n, again: again));
   }
 
   /// The person connects to `n`, a public node, as a guest: without
   /// pairing, so that it stays its owner's. It ends a search round, as
-  /// [connect] does.
+  /// [connect] does, and the link lasts until the node ends it, after a
+  /// guest's 30 s, or the person leaves, not one errand (roadmap D179).
   Future<void> connectGuest(FoundNode n) async {
     if (connecting || connectedTo(n.deviceId)) return;
-    _tapped = true;
-    await _connectGuest(n);
+    await _byTap(() => _connectGuest(n, errand: false));
   }
+
+  /// Runs the connect `f` the person asked for, holding [connecting]
+  /// until it ends, so that the search neither scans nor connects
+  /// meanwhile: a round started when the tap closed the old link took
+  /// the home before the tap's own connect was made (bench, 2026-11-10).
+  Future<void> _byTap(Future<void> Function() f) async {
+    _tapHeld = true;
+    _tapped = true;
+    notifyListeners();
+    try {
+      await _searchStopped();
+      await f();
+    } finally {
+      _tapHeld = false;
+      notifyListeners();
+    }
+  }
+
+  /// A connect the person asked for is under way ([_byTap]).
+  bool _tapHeld = false;
 
   /// A guest's errand at `n`: connect without pairing, write the tag and
   /// read the ring's items for the person ([Session.attach]), send what
   /// waits while Ready comes, and leave, as the node shares its one guest
-  /// link among every guest in reach (spec "Phone link", Public). A node
+  /// link among every guest in reach (spec "Phone link", Public); not an
+  /// `errand` but the person's tap, the link stays until it ends. A node
   /// Android lists a bond with is connected over it first ([_overBond]),
   /// and used as a guest only once it refused the bond and Android has
   /// removed it, after a scan, as the bond went with what Android knew of
   /// the address's type.
-  Future<void> _connectGuest(FoundNode n) async {
+  Future<void> _connectGuest(FoundNode n, {bool errand = true}) async {
     if (await BleLink.bonded(n.deviceId)) {
       if (await _overBond(n)) return;
       if (!await seen(n.deviceId)) throw NotSeen(n.name);
@@ -779,9 +804,12 @@ class AppModel extends ChangeNotifier {
       room: session.node?.room,
     );
     if (session.guestRead) _guestChecked[n.name] = now();
+    if (!errand) return;
+    final link = session.link;
     await _sendQueuedFetch();
     await _sent();
-    if (session.connected && session.guest) await session.disconnect();
+    // Only the errand's own link: a tap may have replaced it meanwhile.
+    if (session.connected && session.link == link) await session.disconnect();
   }
 
   /// Completes once nothing waits to be offered to the node, or the link
@@ -821,8 +849,14 @@ class AppModel extends ChangeNotifier {
   bool get usesPublic => pairedNodes.isEmpty || ownAway;
 
   /// The public node the phone uses as a guest, between its errands too:
-  /// the node of the last, while the search runs.
-  String? get guestNode => searchOn ? _guestAt : null;
+  /// the node of the last, while the search runs; or the node of a guest's
+  /// link the person made by a tap, while it is up.
+  String? get guestNode =>
+      tappedGuest || (searchOn && !_tapped) ? _guestAt : null;
+
+  /// The link up is a guest's the person made by a tap, which the node
+  /// ends after a guest's 30 s (spec "Phone link", Public).
+  bool get tappedGuest => _tapped && session.connected && session.guest;
 
   /// The last errand's node as it read it.
   GuestNode? _guestSeen;
@@ -850,6 +884,10 @@ class AppModel extends ChangeNotifier {
     final g = n != null && session.guest ? nodeName(n.id) : guestNode;
     final h = homeName;
     final home = h == null ? '' : '. Home at ${shownName(h)}';
+    if (g != null && tappedGuest) {
+      return 'Connected to ${shownName(g)} as a guest, until the node ends '
+          'a guest\'s link after 30 s$home';
+    }
     if (g != null && (n == null || session.guest)) {
       return 'Connected to ${shownName(g)} as a guest$home';
     }
@@ -1030,10 +1068,11 @@ class AppModel extends ChangeNotifier {
   }
 
   /// Whether the search runs: not once the person stopped it, nor with the
-  /// fake node in use, nor on a paired node, nor while unpairing.
+  /// fake node in use, nor on a paired node, nor on a guest's link the
+  /// person made by a tap ([tappedGuest]), nor while unpairing.
   bool get searchOn {
     if (!_searchStarted || fake || session.stopped || _unpairing) return false;
-    return !session.connected || session.guest;
+    return !session.connected || (session.guest && !_tapped);
   }
 
   /// The paired node the search looks for first, while it runs
@@ -1367,8 +1406,10 @@ class AppModel extends ChangeNotifier {
   /// The search found `n`, whose bond Android holds: taken back as a
   /// paired node, or, refused and its bond removed, used as a guest when
   /// public, after a scan, as the bond went with what Android knew of the
-  /// address's type ([_overBond]).
+  /// address's type ([_overBond]). Nothing while a connect of the
+  /// person's is under way, which holds ([_byTap]).
   Future<void> _adopt(FoundNode n) async {
+    if (connecting) return;
     session.note('Found ${n.name}, bonded: connecting as its owner');
     _tapped = false;
     try {
@@ -1438,8 +1479,10 @@ class AppModel extends ChangeNotifier {
   }
 
   /// Connects to the public node the search found, as a guest; a failure
-  /// waits for the next round, which takes the strongest again.
+  /// waits for the next round, which takes the strongest again. Nothing
+  /// while a connect of the person's is under way ([_byTap]).
   Future<void> _connectPublic(FoundNode n) async {
+    if (connecting) return;
     session.note(
       'Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting '
       '${session.toSend ? 'to send' : 'for mail'}',
@@ -1455,7 +1498,9 @@ class AppModel extends ChangeNotifier {
   /// Connects to the paired node the search found, by the person's path.
   /// A node no longer this phone's leaves the paired nodes the search
   /// looks for ([pairedNodes]); another failure waits for the next round.
+  /// Nothing while a connect of the person's is under way ([_byTap]).
   Future<void> _connectFound(FoundNode n) async {
+    if (connecting) return;
     session.note('Found ${n.name}, connecting');
     _tapped = false;
     try {
