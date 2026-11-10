@@ -25,10 +25,9 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
-import 'package:bark_app/ble_link.dart' show FoundNode;
+import 'package:bark_app/ble_link.dart' show FoundNode, strongDbm, weakDbm;
 import 'package:universal_ble/universal_ble.dart' show UniversalBle;
-import 'package:bark_app/ui/common.dart'
-    show receivedMarks, signalWord, strongDbm, weakDbm;
+import 'package:bark_app/ui/common.dart' show receivedMarks, signalWord;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';
@@ -1081,6 +1080,55 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('Forget on a node no longer yours: the dialog says what '
+      'follows; not heard, the phone\'s pairing is left to Bluetooth '
+      'settings; the home stays', (t) async {
+    final app = await model(t);
+    const lost = 'bark-0ce400000002';
+    final home = Address(Position.fromDegrees(50, 30), [
+      0x0c,
+      0xe4,
+      0,
+      0,
+      0,
+      2,
+    ]);
+    await app.me.setHome(home);
+    await app.session.setPaired(lost, lost: true);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    final forget = find.widgetWithText(TextButton, 'Forget');
+    await t.ensureVisible(forget);
+    await t.tap(forget);
+    await t.pumpAndSettle();
+    expect(find.text('Forget ID 0CE400000002?'), findsOneWidget);
+    expect(
+      find.textContaining('It stays your home node, so texts to you still'),
+      findsOneWidget,
+    );
+    await t.tap(find.widgetWithText(FilledButton, 'Forget'));
+    await t.pumpAndSettle();
+    expect(app.session.pairedWith, isEmpty);
+    expect(app.me.home.toString(), home.toString());
+    expect(
+      find.textContaining(
+        'To do it now, forget the node in the phone\'s '
+        'Bluetooth settings.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'Bluetooth settings'),
+      findsOneWidget,
+    );
+    await t.tap(find.text('Not now'));
+    await t.pumpAndSettle();
+    expect(find.text('Paired with'), findsNothing);
+
+    await t.pumpWidget(const SizedBox());
     app.dispose();
   });
 

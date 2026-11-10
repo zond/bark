@@ -72,10 +72,7 @@ class _UpdateScreenState extends State<UpdateScreen> {
     final latest = u.latest;
     final noLatest = u.noLatest;
     final updated = u.updated;
-    final busy =
-        u.phase == Phase.sending ||
-        u.phase == Phase.committing ||
-        u.phase == Phase.rebooting;
+    final busy = u.underWay;
     return Scaffold(
       appBar: AppBar(title: const Text('Update firmware')),
       body: SafeArea(
