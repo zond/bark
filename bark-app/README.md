@@ -1038,7 +1038,9 @@ closed, read a guest's ring items by its tag after the number it keeps
 for the node, across links and restarts, close a second guest, end a
 guest's link after 30 s, and take turns as Ready, given only to a phone
 that asks, two idle phones seeing no flips;
-choose the home among the paired nodes, else the strongest paired
+decide what the search does in tables of situations, the combinations
+met on the bench among them (`test/decision_test.dart`); choose the home
+among the paired nodes, else the strongest paired
 node, else the strongest public node; go on a guest's errand (connect,
 tag, read, send, leave) when something waits to be sent and otherwise
 once a minute, try again after being closed for another guest, and move
