@@ -21,7 +21,8 @@ mod relay;
 mod transfer;
 
 pub use relay::{
-    remembered_within, Anchor, Forced, Held, Kept, Load, NeighbourCounts, Node, Relay, SleepyNode,
+    remembered_within, Anchor, Forced, Held, HeldAt, Kept, Load, NeighbourCounts, Node, Relay,
+    SleepyNode,
 };
 
 /// Protocol parameters. Defaults are the design's values; the simulator

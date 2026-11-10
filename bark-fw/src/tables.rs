@@ -28,11 +28,11 @@ async fn erase() {
     ext_flash::erase_region(TABLES, "tables").await;
 }
 
-/// Keep `core`'s tables, just before the reset: the entries a page at a
-/// time, then the header.
-pub async fn keep(core: &Role) {
+/// Keep `core`'s tables as they were at `taken`, when what it holds was
+/// kept too (`carry::keep`), just before the reset: the entries a page at
+/// a time, then the header, with the time since `taken`.
+pub async fn keep(core: &Role, taken: embassy_time::Instant) {
     erase().await;
-    let taken = embassy_time::Instant::now();
     let now = crate::clock::core(taken);
     let mut page = [0xFFu8; PAGE];
     let mut fill = 0;
@@ -82,31 +82,35 @@ fn read<'a>(h: &Header, i: usize, buf: &'a mut [u8; PAGE]) -> Option<&'a [u8]> {
 
 /// At boot, after `update::started`: give `core` the tables kept, if the
 /// boot is the first of an image of `swapped` bytes just swapped in, and
-/// erase them. Tables found at any other boot are from a reboot whose
-/// time away is not known, and are only erased.
-pub async fn restore(core: &mut Role, swapped: Option<u32>) {
+/// erase them; the time since they were taken, if it is known. Tables
+/// found at any other boot are from a reboot whose time away is not known,
+/// and are only erased.
+pub async fn restore(core: &mut Role, swapped: Option<u32>) -> Option<Duration> {
     let mut buf = [0u8; PAGE];
     let header = (ext_flash::with(|c| c.read(TABLES.start, &mut buf)) == Some(Ok(())))
         .then(|| Header::decode(&buf))
         .flatten();
-    let Some(h) = header else {
-        return;
-    };
+    let h = header?;
     let Some(length) = swapped else {
         log::info!("tables: kept, but this boot follows no swap; erased unused");
-        return erase().await;
+        erase().await;
+        return None;
     };
     // A torn write fails the check and gives nothing back.
     let mut check = Check::new();
     for i in 0..h.entries() {
         match read(&h, i, &mut buf) {
             Some(b) => check.add(b),
-            None => return erase().await,
+            None => {
+                erase().await;
+                return None;
+            }
         }
     }
     if !h.matches(check) {
         log::warn!("tables: the write was cut short; erased unused");
-        return erase().await;
+        erase().await;
+        return None;
     }
     let now = crate::clock::core_now();
     let ago = Duration::from_micros(
@@ -132,4 +136,5 @@ pub async fn restore(core: &mut Role, swapped: Option<u32>) {
         ago.as_millis()
     );
     erase().await;
+    Some(ago)
 }

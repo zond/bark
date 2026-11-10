@@ -3909,7 +3909,7 @@ impl Sim {
     /// Every application event the core can emit is interpreted here and
     /// nowhere else: a message for this node's application, or its own
     /// message given back.
-    fn app_event(&mut self, node: u32, e: AppEvent) {
+    pub(crate) fn app_event(&mut self, node: u32, e: AppEvent) {
         let (len, payload) = match e {
             // The application reads the message at once and confirms it,
             // so the inbox never fills (core-interface §4).

@@ -1417,16 +1417,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::HopCap, emit);
                 continue;
             }
-            let d = Data {
-                sender_home: self.home,
-                dst_hop: NodeId::NONE,
-                src_hop: self.me(),
-                dst_pos: q.dst_pos,
-                dst_id: q.node,
-                hops: hops + 1,
-                payload: q.payload(),
-            };
-            let frame = data_frame(&d, self.home, self.forward_preamble());
+            let frame = self.onward(q.dst_pos, q.node, q.payload(), hops);
             let air = mac::airtime(&frame);
             let Ok(place) = self.admit(air, Duration::ZERO, hops, false, now) else {
                 return;
@@ -1437,16 +1428,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return;
             };
             self.records.put(at, Record::new(id, None, hops, now));
-            let out = Outgoing {
-                place,
-                since: now,
-                ..Outgoing::new(frame, Kind::Forward)
-            };
-            if self.queue.push(out).is_err() {
+            if !self.push_forward(frame, place, now) {
                 return;
             }
             self.delivery.remove(id);
-            self.forwarding.feed_due = true;
             emit(Action::Trace(Trace::HandedOn { msg_id: id }));
         }
     }
@@ -1539,16 +1524,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::HopCap, emit);
                 continue;
             }
-            let d = Data {
-                sender_home: self.home,
-                dst_hop: NodeId::NONE,
-                src_hop: self.me(),
-                dst_pos: q.dst_pos,
-                dst_id: q.node,
-                hops: hops + 1,
-                payload: q.payload(),
-            };
-            let frame = data_frame(&d, self.home, self.forward_preamble());
+            let frame = self.onward(q.dst_pos, q.node, q.payload(), hops);
             let air = mac::airtime(&frame);
             let Ok(place) = self.admit(air, Duration::ZERO, hops, false, now) else {
                 return;
@@ -1560,18 +1536,47 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 };
                 self.records.put(at, Record::new(id, None, hops, now));
             }
-            let out = Outgoing {
-                place,
-                since: now,
-                ..Outgoing::new(frame, Kind::Forward)
-            };
-            if self.queue.push(out).is_err() {
+            if !self.push_forward(frame, place, now) {
                 return;
             }
             self.delivery.remove(id);
-            self.forwarding.feed_due = true;
             emit(Action::Trace(Trace::Released { msg_id: id }));
         }
+    }
+
+    /// The frame of a message this node sends on as a forward, going on
+    /// from count `hops`, which places it among waiting entries until its
+    /// hand-over stamps the count it goes with (spec "Hop count").
+    pub(super) fn onward(
+        &self,
+        dst_pos: Position,
+        dst_id: NodeId,
+        payload: &[u8],
+        hops: u8,
+    ) -> Frame {
+        let d = Data {
+            sender_home: self.home,
+            dst_hop: NodeId::NONE,
+            src_hop: self.me(),
+            dst_pos,
+            dst_id,
+            hops: hops.saturating_add(1),
+            payload,
+        };
+        data_frame(&d, self.home, self.forward_preamble())
+    }
+
+    /// Queue `frame`, a forward whose record is in the table, into
+    /// `place`, addressed when its hand-over starts: whether it was.
+    pub(super) fn push_forward(&mut self, frame: Frame, place: u8, now: Instant) -> bool {
+        let out = Outgoing {
+            place,
+            since: now,
+            ..Outgoing::new(frame, Kind::Forward)
+        };
+        let pushed = self.queue.push(out).is_ok();
+        self.forwarding.feed_due |= pushed;
+        pushed
     }
 
     // --- The relay's own application (spec "Routing") ---

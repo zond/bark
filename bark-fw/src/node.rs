@@ -160,9 +160,9 @@ impl App for LinkApp<'_> {
         })
     }
 
-    /// The one place the core's application send slot is shared: what the
-    /// node kept across a reboot first (`carry.rs`), then the phone's
-    /// message, then the mailbox's reply (spec "Mailbox").
+    /// The one place the core's application send slot is shared: the
+    /// application's own message kept across a reboot first (`carry.rs`),
+    /// then the phone's message, then the mailbox's reply (spec "Mailbox").
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         // What the network took before a reboot goes before what is new.
         if let Some(out) = crate::carry::take(payload) {
@@ -694,12 +694,16 @@ pub async fn run<'a>(
                     "update: rebooting into version {} at a quiet moment",
                     version
                 );
-                if core.held().next().is_some() {
-                    crate::carry::keep(core.held()).await;
+                // One moment for all that is kept, which the tables'
+                // header times from.
+                let taken = embassy_time::Instant::now();
+                let now = crate::clock::core(taken);
+                if core.held(now).next().is_some() {
+                    crate::carry::keep(core.held(now)).await;
                 }
                 crate::ble::close_all().await;
                 // Last, so that the time it took is known after the reset.
-                crate::tables::keep(core).await;
+                crate::tables::keep(core, taken).await;
                 crate::update::reboot().await;
             }
         }

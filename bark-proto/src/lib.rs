@@ -35,7 +35,7 @@ pub use event::{
 };
 pub use ids::{MsgId, NodeId};
 pub use node::{
-    remembered_within, Anchor, BatteryLevels, Config, Core, Forced, Held, Kept, Load,
+    remembered_within, Anchor, BatteryLevels, Config, Core, Forced, Held, HeldAt, Kept, Load,
     NeighbourCounts, Node, Relay, SleepyNode,
 };
 pub use position::{Position, ShortName};

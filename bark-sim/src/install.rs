@@ -7,8 +7,9 @@
 //! writes to its external flash (`bark_app_layer::carry`) and its tables
 //! as the firmware writes them (`bark_app_layer::tables`, roadmap D180),
 //! goes off the air for the swap, and comes back with a new core that
-//! takes its tables back, aged by the swap, and offers each kept message
-//! again as its own, one at a time, before its application's.
+//! takes its tables back, aged by the swap, and puts back each kept
+//! message where it was (roadmap D199); the application's own message,
+//! if it held one, it offers again first.
 //!
 //! The image becomes whole either when the update's pieces make it so
 //! (`update.rs`, with `[update]`) or at a time drawn for each node
@@ -22,7 +23,9 @@ use bark_app_layer::carry::{decode, encode, HELD_MAX, SLOT_LEN};
 use bark_app_layer::tables::{self, Check, Header};
 use bark_image::policy::{self, Links, Moment};
 use bark_proto::update::Image;
-use bark_proto::{AppCommand, BatteryLevels, Config, Core, Duration, Event, Instant, MsgId, Relay};
+use bark_proto::{
+    AppCommand, BatteryLevels, Config, Core, Duration, Event, HeldAt, Instant, MsgId, Relay,
+};
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Write;
 
@@ -75,8 +78,8 @@ pub(crate) struct InstallModel {
     image: Vec<Option<Image>>,
     /// A check of the moment is queued.
     due: Vec<bool>,
-    /// The messages kept across the reboot not yet offered again, in the
-    /// slots the firmware writes.
+    /// The messages kept across the reboot not yet put back or offered
+    /// again, in the slots the firmware writes.
     carry: Vec<VecDeque<[u8; SLOT_LEN]>>,
     /// The slot offered last, until its message is given back.
     offered: Vec<Option<[u8; SLOT_LEN]>>,
@@ -145,26 +148,27 @@ fn written_tables(core: &Relay, now: Instant) -> (Vec<u8>, [usize; 2]) {
 
 /// Give `core`, new after the swap, the tables `written` kept, as the
 /// firmware does at its boot at `now`, the swap having taken [`SWAP_US`]:
-/// the neighbour entries and records it took back.
-fn take_back(core: &mut Relay, written: &[u8], now: Instant) -> [usize; 2] {
+/// the neighbour entries and records it took back, and how long before
+/// `now` they were taken.
+fn take_back(core: &mut Relay, written: &[u8], now: Instant) -> ([usize; 2], Option<Duration>) {
     let mut back = [0; 2];
     let Some(h) = written
         .get(..tables::HEADER_LEN)
         .and_then(|b| Header::decode(b.try_into().ok()?))
     else {
-        return back;
+        return (back, None);
     };
     let ago = Duration::from_micros(SWAP_US + u64::from(h.written_us));
     for i in 0..h.entries() {
         let (at, len) = h.place(i);
         let Some(k) = written.get(at..at + len).and_then(|b| h.entry(i, b)) else {
-            return back;
+            return (back, Some(ago));
         };
         if core.remember(&k, ago, now) {
             back[usize::from(matches!(k, bark_proto::Kept::Record(_)))] += 1;
         }
     }
-    back
+    (back, Some(ago))
 }
 
 impl Sim {
@@ -294,13 +298,14 @@ impl Sim {
     /// Keep what the core holds and go off the air for the swap.
     fn install_reboot(&mut self, node: u32) {
         let i = node as usize;
+        let local = self.clocks[i].local(self.now);
         let slots: Vec<[u8; SLOT_LEN]> = self.relays[i]
-            .held()
+            .held(local)
             .take(HELD_MAX)
             .filter_map(|h| encode(&h))
             .collect();
         let core = &self.relays[i];
-        let (written, counts) = written_tables(core, self.clocks[i].local(self.now));
+        let (written, counts) = written_tables(core, local);
         let delivering = core.delivery_queue().count() + core.inbox_len();
         let refused = self.metrics.nodes[i].core.refused.draining;
         let m = self.install.as_mut().expect("installs");
@@ -324,7 +329,8 @@ impl Sim {
     }
 
     /// The swap is done: the node starts the new image, with what it kept
-    /// in flash, and offers the kept messages again.
+    /// in flash, puts back the kept messages and offers its application's
+    /// own again.
     pub(crate) fn swapped(&mut self, node: u32) {
         let i = node as usize;
         let m = self.install.as_mut().expect("installs");
@@ -345,10 +351,33 @@ impl Sim {
             ..*r.config()
         };
         *r = Relay::new(config, seed);
-        let written = core::mem::take(&mut self.install.as_mut().expect("installs").tables[i]);
-        let back = take_back(r, &written, self.clocks[i].local(self.now));
-        self.install.as_mut().expect("installs").rows[row].tables[2..].copy_from_slice(&back);
+        let local = self.clocks[i].local(self.now);
+        let m = self.install.as_mut().expect("installs");
+        let written = core::mem::take(&mut m.tables[i]);
+        let (back, ago) = take_back(r, &written, local);
+        m.rows[row].tables[2..].copy_from_slice(&back);
+        // Unknown, the time away is taken as the delivery TTL: a queued
+        // message is then stale, never fresher than it is.
+        let ago = ago.unwrap_or(r.config().delivery_ttl);
+        let mut own = VecDeque::new();
+        let mut lost = Vec::new();
+        for s in core::mem::take(&mut m.carry[i]) {
+            let h = decode(&s).expect("a slot kept is whole");
+            if h.at == HeldAt::Own {
+                own.push_back(s);
+            } else if !r.put_back(&h, ago, local) {
+                lost.push(h.msg_id);
+            }
+        }
+        m.carry[i] = own;
+        for id in lost {
+            self.message_dropped(node, id, bark_proto::DropReason::SendQueueFull);
+        }
         self.power_on(node);
+        // What it put back in its inbox, its application reads now.
+        while let Some((msg_id, _)) = self.relays[i].inbox() {
+            self.app_event(node, bark_proto::AppEvent::Message { msg_id });
+        }
         if let Some(im) = image {
             self.deliver(node, Event::App(AppCommand::Holds(im)));
         }
@@ -356,8 +385,8 @@ impl Sim {
         self.offer(node);
     }
 
-    /// Offer `node`'s core the next kept message, ahead of its
-    /// application's: whether one was offered.
+    /// Offer `node`'s core its application's own message kept across the
+    /// reboot, ahead of what is new: whether it was.
     pub(crate) fn offer_kept(&mut self, node: u32) -> bool {
         let i = node as usize;
         let Some(m) = self.install.as_mut() else {

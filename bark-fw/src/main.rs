@@ -666,10 +666,13 @@ async fn node_radio(n: NodeRadio) {
             radio_up(&radio, &clock, t0);
             ext_flash::init(n.flash);
             mailbox::open();
-            carry::open();
             discharge::open();
             let swapped = update::started(n.shared);
-            tables::restore(n.core, swapped).await;
+            let ago = tables::restore(n.core, swapped).await;
+            // Unknown, the time away is taken as the delivery TTL: a queued
+            // message is then stale, never fresher than it is.
+            let ago = ago.unwrap_or(n.core.config().delivery_ttl);
+            carry::put_back(n.core, ago).await;
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
         }
