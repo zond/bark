@@ -15,8 +15,8 @@
 //! rx <k> [ms]                listen on k for ms (default 10 s), reporting every frame
 //! cad <k>                    one channel activity detection alone, nothing read inside it
 //! lbt <k>                    one listen-before-talk: its phases and its reading
-//! tcxo                       the oscillator's probed delay and the last probe
-//! probe                      probe the oscillator's start now, below the delay in use
+//! tcxo                       the oscillator's two probed delays, their probes and schedules
+//! probe                      probe both of the oscillator's delays now, below those in use
 //! rssi <k> [dwell_us]        one RSSI reading
 //! sweep                      one RSSI reading on each channel
 //! noise <k> <n> [gap_us]     n RSSI readings: min, p10, median, max
@@ -61,8 +61,8 @@
 use core::fmt;
 
 use crate::battery::Battery;
-use bark_driver::sx1262::TxTiming;
-use bark_driver::{tcxo, Failure, Heard};
+use bark_driver::sx1262::{Start, TxTiming};
+use bark_driver::{Failure, Heard};
 use bark_proto::radio::{
     time_on_air, Channel, CHANNELS, DUTY_CYCLE_PERCENT, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME,
 };
@@ -364,8 +364,7 @@ const PING_WAIT: Duration = Duration::from_millis(1000);
 /// The per-hop ACK timeout the pong is measured against (spec "Hand-over").
 const ACK_TIMEOUT_US: u32 = 100_000;
 
-const HELP: &str =
-    "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
+const HELP: &str = "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
 survey [n] | discharge [erase] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
 const HELP_OPEN: &str = "cut <swap|back> <op|none>";
@@ -859,7 +858,7 @@ impl<'a> Console<'a> {
             Command::Probe => {
                 self.listening = false;
                 let t0 = self.clock.now();
-                self.radio.reprobe().await?;
+                self.radio.reprobe(self.home).await?;
                 let probe_us = self.clock.since(t0);
                 self.rest().await?;
                 log::info!("probe took_us={}", probe_us);
@@ -1410,7 +1409,7 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={} drai
             r.resets,
             r.configured,
             r.cold_starts,
-            self.radio.tcxo().delay.as_micros(),
+            self.radio.cold().delay.as_micros(),
             public(),
             drains[0],
             drains[1]
@@ -1421,35 +1420,50 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={} drai
         }
     }
 
-    /// The oscillator's delay and the last probe (`bark_driver::tcxo`).
+    /// The oscillator's two delays, the last start and each delay's last
+    /// probe and schedule (`bark_driver::tcxo`).
     fn report_tcxo(&self) {
-        let t = self.radio.tcxo();
         let r = self.radio.stats();
-        // What a restart within a millisecond of stopping takes.
-        let restart = if t.short { tcxo::SHORT } else { t.delay };
-        match t.last {
-            Some(p) => log::info!(
-                "tcxo delay_us={} short_us={} step_us={} probes={} errors={} cold_starts={} last_probe_us={} last_ok={} last_at_s={} last_temp_qc={:?} lbt_read={:?}",
+        let gap = match self.radio.last_start() {
+            Start::Restart { gap, .. } => Some(gap),
+            Start::Cold { gap, .. } => gap,
+            Start::Running => None,
+        };
+        log::info!(
+            "tcxo delay_us={} restart_us={} cold_starts={} restarts={} last_start={} last_gap_us={:?} lbt_read={:?}",
+            self.radio.cold().delay.as_micros(),
+            self.radio.restart_delay().as_micros(),
+            r.cold_starts,
+            r.restarts,
+            match self.radio.last_start() {
+                Start::Running => "none",
+                Start::Restart { .. } => "restart",
+                Start::Cold { .. } => "cold",
+            },
+            gap.map(|g| g.as_micros()),
+            self.radio.lbt_read()
+        );
+        for (name, t) in [
+            ("cold", self.radio.cold()),
+            ("restart", self.radio.restart()),
+        ] {
+            let last = t.last;
+            log::info!(
+                "tcxo {} delay_us={} step_us={} probes={} errors={} settled_qc={:?} due_from_s={} due_by_s={} last_probe_us={:?} last_ok={:?} last_at_s={:?} last_temp_qc={:?} last_gap_us={:?}",
+                name,
                 t.delay.as_micros(),
-                restart.as_micros(),
-                tcxo::STEP.as_micros(),
+                t.step.as_micros(),
                 t.probes,
                 t.errors,
-                r.cold_starts,
-                p.delay.as_micros(),
-                p.ok,
-                p.at.as_micros() / 1_000_000,
-                p.temp,
-                self.radio.lbt_read()
-            ),
-            None => log::info!(
-                "tcxo delay_us={} short_us={} probes=0 errors={} cold_starts={} lbt_read={:?}",
-                t.delay.as_micros(),
-                restart.as_micros(),
-                t.errors,
-                r.cold_starts,
-                self.radio.lbt_read()
-            ),
+                t.settled_temp(),
+                t.due_from().as_micros() / 1_000_000,
+                t.due_by().as_micros() / 1_000_000,
+                last.map(|p| p.delay.as_micros()),
+                last.map(|p| p.ok),
+                last.map(|p| p.at.as_micros() / 1_000_000),
+                last.and_then(|p| p.temp),
+                last.and_then(|p| p.gap).map(|g| g.as_micros())
+            );
         }
     }
 

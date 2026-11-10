@@ -346,8 +346,8 @@ pub struct RadioParams {
     /// From the CAD's end to listening on the resting channel, µs: the
     /// result read and cleared, the frequency, receive, and the
     /// oscillator's restart from the standby a CAD ends in, programmed
-    /// short since it stopped under a millisecond before
-    /// (`bark_driver::tcxo::SHORT`). Measured, 505 to 515 µs on the
+    /// with the restart's probed delay since it stopped under a
+    /// millisecond before (`bark_driver::tcxo`). Measured, 505 to 515 µs on the
     /// lean driver (docs/lean-driver-2026-10-30.md, "Measured on the
     /// board").
     pub lbt_return_us: u64,
