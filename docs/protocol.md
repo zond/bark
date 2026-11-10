@@ -3973,7 +3973,7 @@ has verified is dropped. Payloads are not padded.
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
-| acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
+| reaction | 1 + 4 | type 3, thumbs up, or 7 to 11, heart, laugh, surprise, sad, thanks; the `sent` of the text it answers |
 | card | 1 + 1 + 38 to 100 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
@@ -3982,12 +3982,16 @@ that of the node the sender writes from, the one their phone is
 connected to or was last, included until the contact has answered a
 message that carried it and whenever it changes; a message without one
 says it has not changed. The app sends nothing
-by itself: an acknowledgement is a message the person chooses to send,
-and a text is sent again only when the person says so (roadmap D126).
+by itself: a reaction is a message the person chooses to send, and a
+text is sent again only when the person says so (roadmap D126). A
+reaction names the text by its first part's `sent`, and is read naming
+any part's; the newest by its message's `sent` stands. Type 3 was the
+acknowledgement, which older apps send and read: it is the thumbs up
+(roadmap D185).
 
 *Long texts.* A text longer than one message holds is split into
-parts, each a message of its own with its own `sent`, delivered and
-acknowledged as a text is. The parts take consecutive `sent`, so a
+parts, each a message of its own with its own `sent`, delivered as a
+text is. The parts take consecutive `sent`, so a
 part's `sent` less its number and one is the first part's, which names
 the text: the receiver puts parts together in any order of arrival,
 knows from the count which have not come, and needs no byte more for
