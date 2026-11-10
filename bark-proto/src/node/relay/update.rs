@@ -30,7 +30,7 @@ use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::time::{Duration, Instant};
 use crate::update::{
     sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, GAP, LEASE_ROTATIONS, MAX_BLOCKS,
-    PACE, PASS, PIECES, SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
+    PACE, PASS, PIECES, SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN, UNSERVED,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -113,6 +113,12 @@ pub(super) struct Spread {
     /// The last image offered to the driver.
     offered: Option<(ImageTag, u32)>,
     gather: Option<Gather>,
+    /// When a relay it heard last held the block it lacks of the image it
+    /// gathers, and when one last named that image at all.
+    served_at: Instant,
+    named_at: Instant,
+    /// The image it last gave up for another of its version, and when.
+    gave_up: Option<(ImageTag, Instant)>,
     /// The last channels it sent a piece on, and when: the only ones that
     /// can still be within their pace, since a pace holds at most this
     /// many.
@@ -169,6 +175,9 @@ impl Spread {
             own: None,
             offered: None,
             gather: None,
+            served_at: Instant::ZERO,
+            named_at: Instant::ZERO,
+            gave_up: None,
             sent: [None; SERVED_CHANNELS],
             passed: 0,
             cur: [u8::MAX; CHANNELS as usize],
@@ -398,8 +407,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             g.decoded(b, true);
         }
         self.random_starts();
-        self.spread.gather = Some(g);
-        self.spread.section_at = now;
+        let s = &mut self.spread;
+        if let Some(old) = s.gather.filter(|o| o.image.tag() != image.tag()) {
+            s.gave_up = Some((old.image.tag(), now));
+        }
+        s.gather = Some(g);
+        s.section_at = now;
+        s.served_at = now;
+        s.named_at = now;
     }
 
     /// Each block's pieces from a random start, so that two holders of it
@@ -423,10 +438,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// A heartbeat of `from` carried `section`: the neighbour table keeps
     /// it, and a newer image than this node runs or gathers is offered to
-    /// the driver's policy, once, as is one [`Node::stranded_for`] names. A
-    /// neighbour that names nothing as new as what this relay streams is
-    /// answered with a rotation of its section, at most one a rotation, so
-    /// that it learns of the image within one.
+    /// the driver's policy, once. A neighbour that names nothing as new as
+    /// what this relay streams is answered with a rotation of its section,
+    /// at most one a rotation, so that it learns of the image within one.
     pub(super) fn section_heard(
         &mut self,
         from: NodeId,
@@ -458,7 +472,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if s.offered == Some((image.tag(), image.version)) {
             return;
         }
-        if image.version <= newest && !self.stranded_for(from, image, section.complete, now) {
+        if image.version <= newest {
             return;
         }
         let s = &mut self.spread;
@@ -469,23 +483,63 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::Offered(image));
     }
 
-    /// Whether this node gathers an image no neighbour it hears holds the
-    /// next block of, and `image`, of the same version under another name,
-    /// is held from the first by `complete` blocks of relay `from`, which
-    /// can serve it, as a sleepy node cannot: then it is offered `image`. Two builds can carry one version; one whose holders all
-    /// went over to the other would leave its gatherers waiting for good,
-    /// since only a higher version is offered otherwise
+    /// A heartbeat was heard: a node whose image is stranded is offered
+    /// another image of its version, held from the first block by a relay,
+    /// which can serve it as a sleepy node cannot
+    /// (spec "Updates over the mesh", rule 1). Stranded: no relay it hears
+    /// holds the block it lacks and none has for [`UNSERVED`], or none even
+    /// names the image and none has for a lease, the time a neighbour that
+    /// took it up takes to say so. A neighbour that gathers the same image
+    /// may yet come to hold more of it, so it is waited for, but only for
+    /// [`UNSERVED`], as it may be waiting for this one
     /// (`docs/update-stall-2026-11-10.md`).
-    fn stranded_for(&self, from: NodeId, image: Image, complete: u8, now: Instant) -> bool {
-        let Some(g) = self.spread.gather else {
-            return false;
+    pub(super) fn another_image(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some(g) = self.spread.gather.filter(|g| g.block < g.image.blocks) else {
+            return;
         };
-        g.block < g.image.blocks
-            && complete > 0
-            && self.neighbours.get(from).is_some_and(|n| !n.sleepy)
-            && image.version == g.image.version
-            && image.tag() != g.image.tag()
-            && self.holder_of(g.block, now).is_none()
+        if self.holder_of(g.block, now).is_some() {
+            self.spread.served_at = now;
+            self.spread.named_at = now;
+            return;
+        }
+        let names = |u: Section, tag: ImageTag| u.image.is_some_and(|i| i.tag() == tag);
+        let relays = || {
+            self.neighbours
+                .live(now)
+                .filter(|(_, m)| !m.sleepy)
+                .filter_map(|(_, m)| self.neighbours.section(m))
+        };
+        if relays().any(|u| names(u, g.image.tag())) {
+            self.spread.named_at = now;
+        }
+        let lease = self
+            .config
+            .heartbeat_max
+            .mul(u64::from(CHANNELS) * LEASE_ROTATIONS)
+            + heartbeat_lag(&self.config);
+        let s = &self.spread;
+        if now < s.named_at + lease && now < s.served_at + UNSERVED {
+            return;
+        }
+        let given_up = |i: Image| {
+            s.gave_up
+                .is_some_and(|(tag, at)| tag == i.tag() && now < at + UNSERVED)
+        };
+        let other = relays()
+            .filter(|u| u.complete > 0)
+            .filter_map(|u| u.image.map(|i| (i, u.complete)))
+            .filter(|(i, _)| {
+                i.version == g.image.version
+                    && i.tag() != g.image.tag()
+                    && usize::from(i.blocks) <= MAX_BLOCKS
+                    && s.offered != Some((i.tag(), i.version))
+                    && !given_up(*i)
+            })
+            .max_by_key(|(i, complete)| (*complete, core::cmp::Reverse(i.tag().0)));
+        if let Some((image, _)) = other {
+            self.spread.offered = Some((image.tag(), image.version));
+            emit(Action::Offered(image));
+        }
     }
 
     /// Its slot heartbeat went on its home channel: a relay whose sleepy
@@ -1103,7 +1157,8 @@ mod tests {
 
     /// A gatherer with no holder of its image takes another of its version
     /// from a relay, which can serve it, and not from a sleepy node, which
-    /// never streams (roadmap D191).
+    /// never streams, once no relay has named its image for a lease
+    /// (roadmap D191, D195).
     #[test]
     fn a_stranded_gatherer_takes_another_build_only_from_a_relay() {
         use crate::wire::Heartbeat;
@@ -1133,6 +1188,8 @@ mod tests {
             have: 0,
         };
         let plane = r.plane;
+        let lease = r.config.heartbeat_max.mul(2 * u64::from(CHANNELS)) + heartbeat_lag(&r.config);
+        let later = now + lease;
         for sleepy in [true, false] {
             let hb = Heartbeat {
                 sleepy,
@@ -1145,9 +1202,18 @@ mod tests {
                 id: crate::ids::NodeId::from_u64(at.short().0 as u64),
                 short: at.short(),
             };
-            r.neighbours.heard(&hb, at, -80, &plane, now);
             let mut offered = None;
-            r.section_heard(hb.id, section, now, &mut |a| {
+            r.neighbours.heard(&hb, at, -80, &plane, now);
+            r.section_heard(hb.id, section, now, &mut |_| {});
+            r.another_image(now, &mut |a| {
+                if let Action::Offered(i) = a {
+                    offered = Some(i);
+                }
+            });
+            // Nobody names its image, but it waits a lease for one that does.
+            assert_eq!(offered, None, "sleepy {sleepy}, at once");
+            r.neighbours.heard(&hb, at, -80, &plane, later);
+            r.another_image(later, &mut |a| {
                 if let Action::Offered(i) = a {
                     offered = Some(i);
                 }

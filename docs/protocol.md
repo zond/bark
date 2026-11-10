@@ -4557,9 +4557,14 @@ bytes and 14.4 ms.
    one it runs and the one it gathers asks its firmware, once, whether
    its policy takes the image. If it does, the node gathers it; an image
    of a higher version heard later replaces it. So may an image of the
-   version it gathers under another name: the node asks for it, once,
-   when the neighbour that names it holds its first block and no relay
-   the node hears holds the block the node lacks of its own.
+   version it gathers under another name, held from its first block by
+   a relay the node hears, once the node's own is **stranded**: no relay
+   it hears holds the block it lacks, and none has for an hour, or no
+   relay it hears names its image at all, holding or gathering it, and
+   none has for a lease of two of the longest rotations and a
+   heartbeat's lag, 391 s ([heartbeat](#heartbeat)). The node asks for
+   it once, and does not ask again within the hour for the image it
+   gave up.
 2. A node that gathers hands its firmware every piece it has not handed
    before of every block it lacks, and no other: at most 48 blocks of
    64, the lanes the firmware keeps them in (`bark-image`, `pieces.rs`).
@@ -4608,9 +4613,22 @@ version number, and on the bench they do, several a day. Two relays
 flashed with a second build of the version a neighbour gathered from
 the first stopped serving it, since its section named an image they no
 longer held, and it was offered theirs only once a higher version came:
-an hour with nothing sent (`update-stall-2026-11-10.md`). A gatherer
-that still hears a holder of its own image keeps it, so two such
-images side by side never make it swap back and forth.
+an hour with nothing sent (`update-stall-2026-11-10.md`). *Why wait
+for a neighbour that gathers the same image.* A node that has caught up
+with such a neighbour is served nothing until the neighbour holds its
+next block. Offered the other image at that moment, a node threw its
+blocks away and, a block later, was offered the first again: in a line
+of five relays holding two builds the middle one was offered them in
+turn four to seven times (roadmap D195). So the node waits, but for an
+hour only: a helper sends a block and its margin, 80 pieces, in
+18.5 min at the pace, so a neighbour that is served comes to hold the
+node's next block within the hour even at a third of the pace, and two
+gatherers that wait only for each other take the other image then.
+Where no relay names the image at all, nothing will come of it; the
+lease rides out the rotation in which a neighbour that took it up says
+so, and one lost. *Why not take back the image given up within the
+hour.* Each swap costs the node the blocks it held, so it swaps at most
+once an hour, whatever its neighbours say.
 
 *Why a stream.* Every piece on a channel serves every node there that
 lacks its block, whenever that node began, so the nodes of a channel
@@ -4925,7 +4943,9 @@ it sent pieces on and when; the times of the last 8 pieces it heard
 from others on its home channel; what its section last told, the
 channels its rotation of sections has still to reach, when that
 rotation began and when the hour's is due, whether it owes a lagging
-neighbour an answer, and its helper's ID: 1 888 bytes beside the
+neighbour an answer, and its helper's ID; when a relay it hears last
+held the block it lacks and last named its image, and the image it last
+gave up and when: 1 928 bytes beside the
 tables, and 16 bytes in each neighbour's entry for its section and
 when it was heard (`core-interface.md`, Memory).
 
