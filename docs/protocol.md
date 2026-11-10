@@ -4561,9 +4561,15 @@ paid by the channel's pace.
 **The install.** A node that holds a gathered image whole checks it and
 stages it as the phone's update does ([phone link](#phone-link),
 Updates), noting that it came over the mesh, and reboots into it at the
-first moment that loses nothing: no phone linked, no message held in its
-send queue, its delivery queue, its inbox or a mailbox write, and the
-power a swap needs ([implementation notes](#implementation-notes)). Its
+first moment that loses nothing: no message held in its send queue, its
+delivery queue, its inbox or a mailbox write, no exchange with a phone
+half done, and the power a swap needs
+([implementation notes](#implementation-notes)). Half done is a write
+the node has not yet answered, a notification it has not yet sent, or a
+pairing. A phone's standing link does not hold it back: the node ends the link before it resets, and the
+phone connects again once the node is back, as after an update from the
+phone; held back by it, a home node whose owner is at home would never
+install. Its
 loader swaps the image in and starts a watchdog of 600 s, which the
 image feeds only once it has confirmed itself; a reset before then swaps
 the previous image back (roadmap D79). An image a person staged, from

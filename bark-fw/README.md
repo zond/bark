@@ -664,10 +664,17 @@ confirmed itself.
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for
   (`Stager::written`, `update::commit`). The node then reboots at the
-  first quiet moment (`bark_image::policy::quiet`): no phone link open,
-  no message held that a reset would lose, in its send queue, its
-  delivery queue, its inbox or a mailbox write, no phone update under
-  way, and the power a swap needs. The loader's trial follows as from
+  first quiet moment (`bark_image::policy::quiet`): no message held that
+  a reset would lose, in its send queue, its delivery queue, its inbox or
+  a mailbox write, no phone update under way, no exchange with a phone
+  half done (`ble::doing`: a write not yet answered or its reply not yet
+  sent, a notification not yet sent, a pairing), and the power a swap
+  needs. A phone that stays linked does not hold it back (roadmap D170):
+  the node ends every link first, `ble: disconnected 0x16 slot N` for each, and
+  waits for them to end, at most the longest supervision timeout, 32 s;
+  the app looks for its node and connects again once it is back
+  (`bark-app/README.md`, "Screens"), so for the minute the swap takes
+  its person sees what a node out of reach shows. The loader's trial follows as from
   the phone, but the image confirms itself only once it hears a node,
   and is swapped back and given up if it hears none within 585.9 s
   (The firmware, above). An offer of an image given up is logged
