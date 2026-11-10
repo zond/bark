@@ -275,6 +275,38 @@ pub enum Battery {
     Percent(u8),
 }
 
+/// How long the battery lasts, as the BATTERY line says it beside the
+/// level: in the largest unit that keeps the figure to one or two digits,
+/// but hours up to two days, as the uptime has them, since a day is a
+/// coarse step there. Whole units, rounded down; days at most 99.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Left {
+    Minutes(u8),
+    Hours(u8),
+    Days(u8),
+}
+
+impl Left {
+    /// `minutes` as the line says it.
+    pub fn from_minutes(minutes: u32) -> Left {
+        match minutes {
+            m if m < 60 => Left::Minutes(m as u8),
+            m if m < 48 * 60 => Left::Hours((m / 60) as u8),
+            m => Left::Days((m / (24 * 60)).min(99) as u8),
+        }
+    }
+}
+
+impl fmt::Display for Left {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Left::Minutes(m) => write!(f, "{m}M"),
+            Left::Hours(h) => write!(f, "{h}H"),
+            Left::Days(d) => write!(f, "{d}D"),
+        }
+    }
+}
+
 /// What the screen says of the node's state; the firmware takes it from
 /// the core after each step.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -289,6 +321,9 @@ pub struct State {
     pub anchored: bool,
     pub carried: bool,
     pub battery: Battery,
+    /// How long the battery lasts at the drain the node has measured, if
+    /// it has an estimate (`bark_proto::drain`).
+    pub battery_left: Option<Left>,
     /// Neighbours whose heartbeats it hears now.
     pub heard: u8,
     /// Of them, those heard loudly enough that a full frame reaches it
@@ -471,8 +506,14 @@ pub fn lines(
         match state.battery {
             Battery::Usb => row("POWER", format_args!("USB")),
             Battery::NotRead => row("BATTERY", format_args!("NOT READ")),
-            Battery::Low => row("BATTERY", format_args!("LOW")),
-            Battery::Percent(p) => row("BATTERY", format_args!("{p}%")),
+            Battery::Low => match state.battery_left {
+                Some(left) => row("BATTERY", format_args!("LOW/{left}")),
+                None => row("BATTERY", format_args!("LOW")),
+            },
+            Battery::Percent(p) => match state.battery_left {
+                Some(left) => row("BATTERY", format_args!("{p}%/{left}")),
+                None => row("BATTERY", format_args!("{p}%")),
+            },
         },
         0,
     );

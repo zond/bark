@@ -232,6 +232,10 @@ pub enum Request {
     /// A person at the node forces the other role
     /// (`AppCommand::ForceRole`).
     ForceRole,
+    /// Take no message, so that what the node holds drains before a
+    /// reboot into an image it has staged, or take them again
+    /// (`AppCommand::Drain`).
+    Drain(bool),
 }
 
 /// What the GPS is to do (core-interface §4): rest in standby, search
@@ -669,6 +673,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                         .await?
                 }
                 Request::ForceRole => self.deliver(Event::App(AppCommand::ForceRole)).await?,
+                Request::Drain(on) => self.deliver(Event::App(AppCommand::Drain(on))).await?,
             }
         }
         Ok(any)

@@ -76,6 +76,7 @@ fn a_sleepy_carried_node_on_battery() {
         anchored: true,
         carried: true,
         battery: Battery::Percent(73),
+        battery_left: Some(Left::from_minutes(41 * 24 * 60 + 5)),
         heard: 5,
         strong: 4,
         both_ways: 2,
@@ -90,10 +91,58 @@ fn a_sleepy_carried_node_on_battery() {
             "NODE         V12",
             "PHONE    PRIVATE",
             "KNOWN      5/4/2",
-            "BATTERY      73%",
+            "BATTERY  73%/41D",
             "UP        12 MIN",
         ]
     );
+}
+
+/// The battery's line: the level and how long it lasts, in minutes,
+/// hours to two days, then days; the level alone without an estimate;
+/// and every level with every time fits beside its label.
+#[test]
+fn the_battery_and_how_long_it_lasts() {
+    let line = |battery, minutes: Option<u32>| {
+        let state = State {
+            battery,
+            battery_left: minutes.map(Left::from_minutes),
+            ..State::default()
+        };
+        texts(&state, 0)
+            .into_iter()
+            .find(|t| t.starts_with("BATTERY") || t.starts_with("POWER"))
+            .unwrap()
+    };
+    let (h, d) = (60, 24 * 60);
+    assert_eq!(
+        line(Battery::Percent(90), Some(3 * d + 5 * h)),
+        "BATTERY   90%/3D"
+    );
+    assert_eq!(
+        line(Battery::Percent(10), Some(7 * h + 59)),
+        "BATTERY   10%/7H"
+    );
+    assert_eq!(line(Battery::Percent(55), Some(47 * h)), "BATTERY  55%/47H");
+    assert_eq!(line(Battery::Low, Some(45)), "BATTERY  LOW/45M");
+    assert_eq!(
+        line(Battery::Percent(100), Some(400 * d)),
+        "BATTERY 100%/99D"
+    );
+    assert_eq!(line(Battery::Percent(90), None), "BATTERY      90%");
+    assert_eq!(line(Battery::Low, None), "BATTERY      LOW");
+    assert_eq!(line(Battery::Usb, None), "POWER        USB");
+    for p in 0..=100 {
+        for m in [0, 59, 60, 47 * h + 59, 48 * h, 99 * d, u32::MAX] {
+            for battery in [Battery::Percent(p), Battery::Low] {
+                let t = line(battery, Some(m));
+                let left = std::format!("{}", Left::from_minutes(m));
+                assert_eq!(t.len(), LINE, "{t}");
+                assert!(t.starts_with("BATTERY "), "{t}");
+                assert!(t.ends_with(&std::format!("/{left}")), "{t}");
+                assert!(t.bytes().all(|c| glyph(c).is_some()), "{t}");
+            }
+        }
+    }
 }
 
 /// The image a node gathers, under the one it runs: its version and the

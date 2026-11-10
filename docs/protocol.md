@@ -1534,7 +1534,8 @@ or they would get the same code. The wait told is:
   last took one, its refusals' waits aside, so that a rising load shows
   before the next take.
 - *For want of anything else*, a place for the message's record or in
-  the delivery queue: one ban, in the room's line.
+  the delivery queue, or at a node about to reboot
+  ([send queue](#send-queue)): one ban, in the room's line.
 - In every case, never less than the rest of the ban on the
   packet's next hop, rounded down and without a place in line: the
   packet could not move sooner here.
@@ -1977,6 +1978,20 @@ takes them, the last no further travelled, are not all held: the ones
 past the budget wait their place in line at the relay before, at the
 cost of a refused DATA frame and an ACK each. At the design's rate that
 is rare; under load it is the price of the wait reaching the origin.
+
+**Before a reboot.** A node about to reboot into a new image
+([updates over the mesh](#updates-over-the-mesh), the install) takes no
+message: it refuses every DATA that would give it work, to send on, to
+hold for a sleepy node or for its own application, as for want of room
+([bans](#bans)), and takes none from its application. A take it answered
+before stands.
+
+*Why it refuses.* A reset loses what a node holds in RAM, and under
+load its queues are never empty, so it stops taking to empty them.
+Refused, a message waits at its sender, which sends it round this node
+where another way is left, and the wait travels back to the origin as
+under overload, so nothing is lost. The application keeps its own
+message meanwhile.
 
 **Choosing what to send.** Whenever no hand-over is under way and the
 radio is free, the relay routes every queued message from the state as
@@ -2567,6 +2582,54 @@ Nothing the node held is dropped at the turn.
 [overload waits](#overload-waits) lists (roadmap D31), and a node that walks off or runs low is none of those.
 Its address is still where the network can find the message's node: the
 relay that owns it now, or the node itself as a neighbour, takes it on.
+
+**How long the battery lasts.** A node on battery with the levels above
+shows how long its battery lasts ([screen and buttons](#screen-and-buttons)).
+It keeps two drains, in percent of the cell an hour, one as a relay with
+its GPS at rest and one as a sleepy node, each first what its current
+says and then moved by what its readings show. A sample runs from a
+reading to the first one at least 15 h later while the node runs one of
+the two ways; it starts an hour after any change of that, of the power
+or of the calibration, and a change ends it unused. Its drop in percent
+over its hours moves that way's drain as a moving average over 92.8 h.
+The time left is until the cell is flat under the rules above: a relay
+relays to the low level at its drain and is sleepy from there; a sleepy
+node is sleepy to the end. At or below the low level, where the percent
+shows none, it is the sleepy part less the time since the first low
+reading. The drains are kept across a reboot
+([implementation notes](#implementation-notes)).
+
+| | |
+|---|---|
+| a relay's first drain | 0.754 % an hour: 6.41 mA of the 850 mAh cell, its radio's 6.38 mA (5.8 mA listening, 32 mA for its airtime, `docs/battery-role-2026-10-25.md`), the divider's 12 µA and the GPS in standby, 20 µA |
+| a sleepy node's | 0.0696 % an hour: 0.59 mA, its radio's 0.56 mA ([delivery](#delivery)), the divider and the GPS in standby |
+| a sample | at least 15 h: 1 %, the smallest drop the percent shows, at a sleepy node's drain takes 14.4 h, rounded up to the hour |
+| the average | over 92.8 h: the time a relay takes from full to 30 % at its first drain |
+
+So a full relay on battery shows 16 days, 106 h relaying and 287 h asleep,
+and a full sleepy node 59 days.
+
+*Why so slow.* The board has no fuel gauge: the percent is read off the
+cell's voltage, which is flat over most of its charge. One percent is
+about 5.7 mV between 30 % and full, three of the converter's steps, and
+the load moves a reading by a few millivolts, so a drop over minutes is
+noise. Between 30 % and full the percent is a straight line where the
+cell's curve is not: a percent of charge reads as 0.4 of the line's
+between 30 and 50 %, and as 1.6 near full (Maxim AN4189, Table 1). The
+line is right at its ends, so an average over the time a relay takes to
+cross it is right, where a shorter one would follow the bends. A sleepy
+node's sample sees a step or two of the percent; the average takes in
+about twelve.
+
+*Why the rules and not the drain alone.* A relay on battery turns
+sleepy at the low level, and then draws a tenth as much: its last fifth
+lasts it longer than the four fifths before.
+
+*Why the GPS stops a sample.* A relay's GPS tracks on battery for its
+grace and while it follows a far fix ([position](#position)), at 29 mA,
+four and a half times the radio; counted, it would be taken for the
+relay's own drain. The time left leaves it out, at most 29 mAh, 3.4 % of
+the cell, for the grace's hour.
 
 ### Relay choice
 
@@ -4066,7 +4129,8 @@ line of text, and phones' readers take 2.
 **The touch.** A touch of the pad shows the node's state as lines of
 text for 30 s, or until the next touch, and then the code again: what
 the node is, its ID and image, the image it gathers, the phone, its
-neighbours, its power, its uptime and the time of day
+neighbours, its power and how long its battery lasts, its uptime and
+the time of day
 (`bark-fw/README.md`, Display). The phone's line says `PHONE UNPAIRED`
 before any phone has paired, `PHONE PUBLIC` or `PHONE PRIVATE` with one
 paired, and `3 PHONES, PUBLIC` or `3 PHONES, PRIVATE`, with the count,
@@ -4089,7 +4153,8 @@ is drawn at once, and so is a new pairing or removal code, since a person stands
 the node waiting for each. On the code nothing else changes. While the lines show,
 a change of the role, of the phone's line or of the power is drawn one
 refresh after it, and changes within one refresh are drawn together;
-the neighbour counts and the battery's level wait for the next touch.
+the neighbour counts and the battery's level and time left wait for the
+next touch.
 Nothing else is drawn.
 
 *Why so little.* Each refresh costs a sleepy node's battery
@@ -4560,11 +4625,51 @@ paid by the channel's pace.
 
 **The install.** A node that holds a gathered image whole checks it and
 stages it as the phone's update does ([phone link](#phone-link),
-Updates), noting that it came over the mesh, and reboots into it at the
-first moment that loses nothing: no phone linked, no message held in its
-send queue, its delivery queue, its inbox or a mailbox write, and the
-power a swap needs ([implementation notes](#implementation-notes)). Its
-loader swaps the image in and starts a watchdog of 600 s, which the
+Updates), noting that it came over the mesh, and reboots into it once
+that loses nothing. From then on it drains: it takes no message
+([send queue](#send-queue)), so that its send queue empties to its
+neighbours, its delivery queue to its sleepy nodes at their beats, and
+its inbox to its application. It does so while it has the power a swap
+needs ([implementation notes](#implementation-notes)) and no phone's
+update holds the staged slot; otherwise it takes messages again, since
+no swap can come. It reboots at the first moment that it holds none of
+them, its mailbox has no write under way, and no exchange with a phone
+is half done: a write the node has not yet answered, a notification it
+has not yet sent, or a pairing.
+
+The drain lasts at most the delivery TTL, 600 s
+([nodes](#nodes)), counted from the second it began. By then every
+message in the delivery queue has waited for its node as long as the
+queue gives a node that sleeps or is dark
+([delivery queue](#delivery-queue)), and a message to send on has had
+twenty hops' budgets of 30 s ([send queue](#send-queue)). What the node
+still holds then it writes to its flash, logging each message's ID, and
+after the reboot offers each again as its own application's, one at a
+time, ahead of its phone's and its mailbox's. A message's ID is a hash
+of its destination and its payload alone
+([packet formats](#packet-formats)), so it is the same message, and a
+node that has it already answers it as any copy. It starts again at
+count 0 with no parent here, so a search from this node that runs out of
+neighbours ends here instead of going back to the parent it came from
+([return to parent](#return-to-parent)). A message for the node's own
+application comes back to its inbox, and one for a sleepy node it holds
+for to its delivery queue.
+
+*Why a bound.* Taking nothing, the node's queues only shrink, but a
+message for a sleepy node that stays dark waits in the delivery queue
+until its node beats, and one whose every way on stays banned waits for
+the ban, so a drain without an end could keep the node from its update
+for good. The TTL is how long the protocol waits for a node before its
+message is stale; what is left then is carried across the reboot, not
+dropped.
+
+*Why a standing link does not hold it back.* The node ends the link
+before it resets, and the phone connects again once the node is back,
+as after an update from the phone; held back by it, a home node whose
+owner is at home would never install.
+
+At the reboot its loader swaps the image in and starts a watchdog of
+600 s, which the
 image feeds only once it has confirmed itself; a reset before then swaps
 the previous image back (roadmap D79). An image a person staged, from
 the phone or over USB, confirms itself once its core is set up and its
@@ -4899,6 +5004,7 @@ with it ([channel at boot](#channel-at-boot)):
 | a fixed sleepy node's anchor, ID and position | taken at once ([relay choice](#relay-choice)) |
 | whether it is a relay | a fixed relay that boots on battery relays on ([sleepy nodes](#sleepy-nodes)) |
 | its battery readings' scale | from its last calibration ([sleepy nodes](#sleepy-nodes)) |
+| the drains it learned on battery | a relay's and a sleepy node's, each in steps of 2.2 % of its first, up to 16 times it either way ([sleepy nodes](#sleepy-nodes)); one write a sample at most, 15 h on battery |
 | record | 32 bytes with a checksum, appended to a 4 KiB page of flash, which is erased when its 128 slots are full (`bark-fw/src/store.rs`) |
 
 *Why not time.* The board has no clock that runs while it is off, so

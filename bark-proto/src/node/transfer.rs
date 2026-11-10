@@ -526,6 +526,12 @@ impl Replies {
         self.owed.len() > 0
     }
 
+    /// Whether an owed reply takes a DATA, which the node acts on once it
+    /// has gone out.
+    pub(crate) fn taking(&self) -> bool {
+        self.owed.as_slice().iter().any(|o| o.takes.is_some())
+    }
+
     /// Give up the first owed reply: no budget for it.
     pub(crate) fn abandon(&mut self) {
         self.renew = false;

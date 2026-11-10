@@ -153,9 +153,14 @@ impl App for LinkApp<'_> {
         })
     }
 
-    /// The one place the core's application send slot is shared: the
-    /// phone's message first, then the mailbox's reply (spec "Mailbox").
+    /// The one place the core's application send slot is shared: what the
+    /// node kept across a reboot first (`carry.rs`), then the phone's
+    /// message, then the mailbox's reply (spec "Mailbox").
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
+        // What the network took before a reboot goes before what is new.
+        if let Some(out) = crate::carry::take(payload) {
+            return Some(out);
+        }
         self.phone_message(payload).or_else(|| {
             let out = crate::mailbox::with(|m| m.next(payload)).flatten()?;
             if out.number == 0 {
@@ -186,6 +191,9 @@ impl App for LinkApp<'_> {
             AppEvent::Message { msg_id } => log::info!("message id={:08x}", msg_id.0),
             // The person is to be told and may send again after the wait
             // (spec "A sleepy node's own message").
+            AppEvent::GivenBack { msg_id, .. } if crate::carry::given_back(*msg_id) => {
+                log::info!("carry: id={:08x} given back", msg_id.0);
+            }
             AppEvent::GivenBack { msg_id, .. } if self.replying == Some(*msg_id) => {
                 log::info!("mailbox: reply id={:08x} given back", msg_id.0);
                 crate::mailbox::with(|m| m.given_back(*msg_id));
@@ -489,6 +497,9 @@ fn screen(core: &Role, now: Instant) -> bark_screen::State {
         anchored: s.anchored,
         carried: s.carried,
         battery,
+        battery_left: core
+            .battery_left(now)
+            .map(|d| bark_screen::Left::from_minutes((d.as_micros() / 60_000_000) as u32)),
         heard: s.neighbours.heard,
         strong: s.neighbours.strong,
         both_ways: s.neighbours.both_ways,
@@ -633,20 +644,27 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        // An image gathered over the mesh and staged: the reboot into it
-        // waits for a moment that loses nothing (`update::mesh::quiet`).
+        // An image gathered over the mesh and staged: the node drains, and
+        // the reboot into it waits for a moment that loses nothing
+        // (`bark_image::policy`), keeps what the core still holds at the
+        // bound, and ends the phones' links first.
         if let Some(version) = crate::update::mesh::staged() {
             let core = &driver.core().0;
-            let holding =
-                core.holding().next().is_some() || core.inbox_len() > 0 || !crate::mailbox::idle();
-            if crate::update::mesh::quiet(holding) {
+            let m = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
+            crate::update::mesh::drain(bark_image::policy::drains(m), core.draining());
+            if bark_image::policy::quiet(m) {
                 log::info!(
                     "update: rebooting into version {} at a quiet moment",
                     version
                 );
+                if core.held().next().is_some() {
+                    crate::carry::keep(core.held()).await;
+                }
+                crate::ble::close_all().await;
                 crate::update::reboot().await;
             }
         }
+        crate::carry::tidy().await;
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {
@@ -662,7 +680,7 @@ pub async fn run<'a>(
             let t = driver.radio().tcxo();
             log::info!(
                 "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}{}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -680,7 +698,8 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} u
                 crate::stack::used(),
                 s.unserved,
                 crate::update::mesh::phase(),
-                Time(crate::utc::time())
+                Time(crate::utc::time()),
+                Drain(driver.core().0, now)
             );
         }
     }
@@ -699,6 +718,28 @@ impl core::fmt::Display for Time {
             ),
             _ => Ok(()),
         }
+    }
+}
+
+/// The battery's estimate for the 10 s line, on battery: the time left in
+/// minutes, and the drains learned, a relay's and a sleepy node's, in
+/// ten-thousandths of a percent of the cell an hour, as the core's
+/// `Drain` trace gives them at each sample (`bark_proto::drain`).
+struct Drain<'a>(&'a Role, Instant);
+
+impl core::fmt::Display for Drain<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(left) = self.0.battery_left(self.1) else {
+            return Ok(());
+        };
+        let [relay, sleepy] = self.0.battery_drains().map(|r| (r * 10_000.0) as u32);
+        write!(
+            f,
+            " battery_left_min={} drain_relay={} drain_sleepy={}",
+            left.as_micros() / 60_000_000,
+            relay,
+            sleepy
+        )
     }
 }
 

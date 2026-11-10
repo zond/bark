@@ -36,6 +36,7 @@
 mod anchor;
 mod boot;
 mod delivery;
+mod drain;
 mod forward;
 mod gps;
 mod heartbeat;
@@ -46,6 +47,7 @@ mod sweep;
 mod update;
 
 use boot::random_channel;
+pub use drain::Held;
 use heartbeat::Beacon;
 use status::Asking;
 use sweep::Sweep;
@@ -563,6 +565,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *stage = Stage::Off;
         *mode = Self::mode_at_boot();
         *battery = Battery::at_boot(config.stored.and_then(|s| s.battery_scale));
+        battery.drain = crate::drain::Drain::from_kept(config.stored.and_then(|s| s.drain));
         *radio = Radio::new(
             &config,
             Channel::all().next().expect("the plan has channels"),
@@ -832,6 +835,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // without battery levels writes no more than before.
             relay: !self.sleepy() && self.config.battery.is_some(),
             battery_scale: self.battery.scale,
+            drain: self.battery.drain.kept(),
         }
     }
 
@@ -1064,7 +1068,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::ForceRole => self.force(now, emit),
-            AppCommand::Battery { millivolts } => self.battery_read(millivolts, now),
+            AppCommand::Battery { millivolts } => self.battery_read(millivolts, now, emit),
             AppCommand::ClearMapPoint => self.clear_map_point(),
             AppCommand::Fix { position } => {
                 self.gps_fixed();
@@ -1076,6 +1080,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Gather { image, from } => self.gather(image, from, now),
             AppCommand::Block { index, ok } => self.block_done(index, ok),
             AppCommand::Ask { neighbour } => self.ask(neighbour, now),
+            AppCommand::Drain(on) => self.drain(on, now),
             AppCommand::SetPosition { position } => {
                 // A sleepy node's position is no news, but a change of
                 // its carried flag is.

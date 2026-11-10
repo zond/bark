@@ -2006,6 +2006,7 @@ fn a_return_goes_to_the_parent_s_home_as_it_is_now() {
                     anchor: None,
                     relay: true,
                     battery_scale: None,
+                    drain: None,
                 }),
                 ..Config::default()
             },

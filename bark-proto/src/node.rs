@@ -20,7 +20,7 @@ mod mac;
 mod relay;
 mod transfer;
 
-pub use relay::{Anchor, Forced, Load, NeighbourCounts, Node, Relay, SleepyNode};
+pub use relay::{Anchor, Forced, Held, Load, NeighbourCounts, Node, Relay, SleepyNode};
 
 /// Protocol parameters. Defaults are the design's values; the simulator
 /// sweeps them (roadmap Phase 1 milestone 5).
@@ -177,6 +177,10 @@ impl BatteryLevels {
 /// has finished charging and rested is (spec "Sleepy nodes").
 pub const BATTERY_FULL_MV: u16 = 4177;
 
+/// The charge at the low level, percent: [`BatteryLevels::DESIGN`]'s
+/// `low_mv` on Maxim AN4189's curve.
+pub const BATTERY_LOW_PERCENT: u8 = 20;
+
 /// About how much of a cell's charge is left at `mv`, a calibrated reading
 /// in millivolts, in percent; `None` at or below 20 %, the low level, where
 /// the curve falls steeply and the node turns sleepy. Between the three
@@ -195,7 +199,7 @@ pub fn battery_percent(mv: u16) -> Option<u8> {
         lo + (u32::from(mv - lo_mv) * (hi - lo) + span / 2) / span
     };
     let percent = if mv < high_mv {
-        between(mv, (low_mv, 20), (high_mv, 30))
+        between(mv, (low_mv, BATTERY_LOW_PERCENT.into()), (high_mv, 30))
     } else {
         between(
             mv.min(BATTERY_FULL_MV),

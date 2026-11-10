@@ -290,6 +290,7 @@ static STATE: embassy_sync::blocking_mutex::Mutex<
     anchored: false,
     carried: false,
     battery: bark_screen::Battery::NotRead,
+    battery_left: None,
     heard: 0,
     strong: 0,
     both_ways: 0,

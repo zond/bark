@@ -14,6 +14,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod drain;
 pub mod event;
 pub mod geo;
 pub mod gps;
@@ -34,7 +35,8 @@ pub use event::{
 };
 pub use ids::{MsgId, NodeId};
 pub use node::{
-    Anchor, BatteryLevels, Config, Core, Forced, Load, NeighbourCounts, Node, Relay, SleepyNode,
+    Anchor, BatteryLevels, Config, Core, Forced, Held, Load, NeighbourCounts, Node, Relay,
+    SleepyNode,
 };
 pub use position::{Position, ShortName};
 pub use radio::{Channel, CHANNELS};

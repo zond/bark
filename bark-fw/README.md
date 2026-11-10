@@ -86,7 +86,12 @@ a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
-its longest times and `stack_used`, the call stack's high-water mark.
+its longest times and `stack_used`, the call stack's high-water mark;
+on battery it ends in `battery_left_min=`, how long the battery lasts,
+and `drain_relay=` and `drain_sleepy=`, the drains the core has learned
+as a relay and as a sleepy node, in ten-thousandths of a percent of the
+cell an hour, as each closed sample's `Drain` trace gives them (spec
+"Sleepy nodes", How long the battery lasts).
 Its application is the phone link over BLE (`src/ble.rs`;
 spec "Phone link"), whose bench procedure in nRF Connect is in
 `docs/phone-link-2026-11-05.md`, "On the bench"; since roadmap D135 the
@@ -288,9 +293,10 @@ On the external flash, in sectors of 4 KiB:
 | Region | Start | Size | Why |
 |---|---|---|---|
 | firmware, staged | `0x000000` | 912 KiB, 228 sectors | one sector larger than the running slot, which embassy-boot's swap needs; after a swap it holds the previous image |
-| coded pieces | `0x0E4000` | 88 KiB, 22 sectors | 352 pieces of 256 bytes, five and a half blocks of 64, for the update over the mesh (`docs/mesh-update-2026-10-25.md`, "The code"); unused until then |
-| mailbox ring | `0x0FA000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
-| free | `0x13A000` | 792 KiB, 198 sectors | |
+| coded pieces | `0x0E4000` | 772 KiB, 193 sectors | a head of what has been gathered and a lane of four sectors, 64 pieces of 256 bytes, for each of an image's 48 blocks at most, for the update over the mesh (`bark-image` `pieces.rs`, roadmap D151) |
+| mailbox ring | `0x1A5000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
+| carried | `0x1E5000` | 44 KiB, 11 sectors | what the node still holds when it reboots into an image gathered over the mesh, 167 messages at most, a page each, offered again after the reboot (Updates, below) |
+| free | `0x1F0000` | 64 KiB, 16 sectors | |
 
 RAM, 256 KiB: `0x20000000..0x20000008` is left to the MBR;
 `0x20000008..0x20000400` holds a panic message for the next boot
@@ -663,11 +669,29 @@ confirmed itself.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for
-  (`Stager::written`, `update::commit`). The node then reboots at the
-  first quiet moment (`bark_image::policy::quiet`): no phone link open,
-  no message held that a reset would lose, in its send queue, its
-  delivery queue, its inbox or a mailbox write, no phone update under
-  way, and the power a swap needs. The loader's trial follows as from
+  (`Stager::written`, `update::commit`). The node then drains (spec
+  "Send queue", "Updates over the mesh"; roadmap D170): while its power
+  allows a swap and no phone update is under way, it asks the core to
+  take no message, `update: draining for the reboot: the node takes no
+  message`, and takes them again, `update: taking messages again until
+  the reboot may come`, once either fails. It reboots at the first quiet
+  moment (`bark_image::policy::quiet`): the core drained
+  (`Relay::drained`: nothing in its send queue, its delivery queue or
+  its inbox, or 600 s since it began), the mailbox's writes done, and
+  no exchange with a phone half done (`ble::doing`: a write not yet
+  answered or its reply not yet sent, a notification not yet sent, a
+  pairing). What the core still holds then goes into the carried region
+  of the external flash, `carry: id=... kept across the reboot` for
+  each, and after the reboot back to the core as the node's own, one
+  at a time ahead of the phone's message and the mailbox's replies,
+  `carry: id=... offered again`, the region erased once all have gone
+  (`src/carry.rs`). A phone that stays linked does not hold the reboot
+  back: the node ends every link first, `ble: disconnected 0x16 slot N`
+  for each, and waits for them to end, at most the longest supervision
+  timeout, 32 s; the app looks for its node and connects again once it
+  is back (`bark-app/README.md`, "Screens"), so for the minute the swap
+  takes its person sees what a node out of reach shows. The loader's
+  trial follows as from
   the phone, but the image confirms itself only once it hears a node,
   and is swapped back and given up if it hears none within 585.9 s
   (The firmware, above). An offer of an image given up is logged
@@ -711,6 +735,7 @@ A: update: serving block=0 piece=113 (1 of this block)
 B: update: block 0 decoded and written, 1 of 31
 B: update: block 7 failed its check; gathered again
 B: update: version=8 length=471064 whole and checked: the loader swaps it in at the next boot
+B: update: draining for the reboot: the node takes no message
 B: update: rebooting into version 8 at a quiet moment
 B: reboot
 B: update: version 8 confirmed
@@ -886,7 +911,7 @@ its value flush right. Top to bottom:
 | `GET V14 14/31` | while it gathers an image over the mesh: its version, the blocks held from the first of all its blocks; no line otherwise | the core's `Status::gathering` (spec "Neighbour status") |
 | phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then `PHONE PUBLIC` or, once its owner has made it theirs alone, `PHONE PRIVATE`; while a phone pairs, `PAIR CODE 012345` | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
-| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
+| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the battery lasts, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
 | `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 
@@ -1118,8 +1143,10 @@ and a guest's read of Inbox asks the node for the oldest item after the
 number it wrote to Guest (`for_tag`). Whose turn it is at the one
 message the node holds, and so whose Ready is set, is `Turn` in
 `src/ble.rs`. The
-console's `status` ends in `public=true` or `public=false`, read from
-the bond in the stored-state page.
+console's `status` has `public=true` or `public=false`, read from
+the bond in the stored-state page, and then `drain_relay=` and
+`drain_sleepy=`, the drains the node image kept there, or the first
+ones while it has learned none.
 
 The paired phone unpairs by writing 2 to Public (link version 12): the
 node answers, removes the bond from the host, writes a forgotten bond's
@@ -1311,7 +1338,7 @@ retune times.
 | `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
-| `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`, and whether the node is public, from the bond; `reset` zeroes the counters | |
+| `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`, whether the node is public, from the bond, and the battery drains the node image kept; `reset` zeroes the counters | |
 | `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
