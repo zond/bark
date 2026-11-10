@@ -1006,3 +1006,417 @@ at like signals, the phone would move back and forth. Nothing under way
 is cut, as a message cut between its write and the node's answer may go
 twice, and a fetch's answer comes to the node it was sent from. A node
 the person chose they may be at for its settings or an update.
+
+## Mailbox
+
+*Why a batch with a count.* The fetch's address goes stale when the
+person moves, so a round must end while it is good: the network keeps
+mail for a node for the delivery TTL, 600 s (spec "Nodes"). And one
+press should cost the air of a batch, not of all the ring holds; the
+count tells the person what is left, and they decide whether to fetch
+again. A full bucket sends 33 full frames with the reply reserve left
+(spec "Send queue"), so a batch of 32 leaves the home node, and
+passes each relay on its way, at the pace of its hand-overs, without
+waiting for a refill, and leaves a frame for the relay's other traffic.
+Under load a hop's budget bounds a reply's wait in relays' queues at 4
+to 8 minutes over a crossing (spec "Send queue"), within the
+TTL. The home node sends one reply at a time through its send slot, and
+the network's back-pressure paces a batch: a reply the requester's node
+has no room for is refused and waits at its sender
+(spec "Receiving"), and one the home node's
+neighbours refuse is given back to the mailbox and goes again.
+
+*Why a sent item stays.* Nothing tells the home node that a reply
+arrived. One lost on the way is still in the ring, and the phone reads
+it at home after the last item it confirmed; a text it already has is
+not kept twice (spec "The payload").
+
+*Why the number inside.* Places start at 1 in every round, so a
+requester finds each reply in at most 32 tries without knowing which
+numbers the ring holds; the number, which only it learns, names the
+item in the ring.
+
+## Screen and buttons
+
+**The code.** By default the screen shows a QR code of the project's
+page, `zond.github.io/bark`, where a person gets the app, and one line
+under it: the node's ID, the end of the name the app shows it by, or,
+while a phone pairs, `PAIR CODE` and the pairing code, while a removal
+waits, `REMOVE` and its code, and for 30 s after a pairing refused for
+want of room, `PHONES FULL`
+(spec "Pairing", spec "Phones"). The code is version 3, 29 × 29 modules, at error correction
+level H, the smallest version that holds the address's 19 bytes at H
+(24 bytes; version 2 holds 14), drawn 5 pixels a module, 145 pixels,
+centred across and near the top, with 2 modules clear above and below
+and more at the sides. Level H restores about 30 % of the codewords
+(ISO/IEC 18004), so a small orb web drawn over the code's centre,
+covering 61 of its 841 modules, 7 %, and none of its finder, timing,
+alignment or format patterns, leaves it readable; the web's radials and
+two frame threads go on in the margin outside the clear zone. The
+picture is decoded by three decoders in the repository's tests
+(`bark-screen/scripts/qr.py`).
+
+*Why a code by default.* Most people who see a node do not own it: a
+passer-by who wants the app gets it from the screen, with no address to
+type. A private node's code serves such a guest as well: the app works
+with any public node nearby. *Why 2 modules clear.* The standard asks
+for 4; the screen's height does not leave 4 above and below beside a
+line of text, and phones' readers take 2.
+
+**The touch.** A touch of the pad shows the node's state as lines of
+text for 30 s, or until the next touch, and then the code again: what
+the node is, its ID and image, the image it gathers, the phone, its
+neighbours, its power and how long its battery lasts, its uptime and
+the time of day
+(`bark-fw/README.md`, Display). The phone's line says `PHONE UNPAIRED`
+before any phone has paired, `PHONE PUBLIC` or `PHONE PRIVATE` with one
+paired, and `3 PHONES PUBLIC` or `3 PHONES PRIVATE`, with the count,
+once more than one is (spec "Pairing"): the count
+and `PHONES` at the left and the setting at the right, as every line is
+a label and a value in the line's 16 characters. While a pairing or a removal code
+shows, the screen shows the lines by itself, as a touch would, and
+keeps them, past the 30 s and whatever is touched, until the pairing
+or the removal ends or is abandoned, a removal's code at most 30 s;
+then the usual rule holds again: the code, or the lines for what is
+left of a touch's 30 s.
+
+*Why the lines while pairing.* The person typing the code stands at
+the node, and is the one who wants to see the node's state.
+
+*Why 30 s.* A choice: ten lines of two or three words each take under
+10 s to read at a usual pace, and 30 s is three times that, short
+enough that the next person to pass finds the code again.
+
+**When it is drawn.** A change of picture, a touch or the 30 s ending,
+is drawn at once, and so is a new pairing or removal code, or
+`PHONES FULL`, since a person stands at the node waiting for each. On
+the code nothing else changes. While the lines show,
+a change of the role, of the phone's line or of the power is drawn one
+refresh after it, and changes within one refresh are drawn together;
+the neighbour counts and the battery's level and time left wait for the
+next touch.
+Nothing else is drawn.
+
+*Why so little.* Each refresh costs a sleepy node's battery
+(`bark-fw/README.md`, Display), and the code shows nothing that would
+grow stale.
+
+**The buttons.** Both are on the case's left side as the screen reads:
+the reset button nearer the top, the user button below the glass. Held
+3 s, the user button flips the role (spec "Nodes") the moment the 3 s
+have passed, while it is still held, and the lines are drawn at once
+with the role it took; the release does nothing. A shorter press, let
+go before the 3 s, flips the picture as a touch of the pad does, so a
+board whose pad does not answer still reaches its lines. A press of the reset button resets the chip, and the
+node boots the image it ran. The lines label both at their left edge,
+each on the margin nearer its button, after an arrow pointing at it:
+`REBOOT` at the top, and at the bottom the role a hold would turn the
+node to, `SLEEP (3s)` on a relay and `WAKE (3s)` on a sleepy node. The
+screen says nothing of a forced role, and the code shows no labels.
+
+*Why the reset button only resets.* It is wired to the chip's reset
+pin, and reading a long press from it would take that pin over, which
+would end the bootloader's double tap and a hung board's recovery.
+
+*Why 3 s.* A choice: thirty times an ordinary press of about 100 ms, so
+that a bump, a bag or a curious finger does not change what the node
+does for its neighbours.
+
+## Capacity and sizing
+
+These are orders of magnitude; the hearing radius and hop count are each
+uncertain by 2×. The table assumes a text crosses the city. The city
+centre is the hot spot, and the per-relay 10% cap
+(spec "Duty cycle cap") binds there first. Each row is
+the 14 domains times the row's channels times what of a channel's 35 %
+the heartbeats leave, over 0.72 s a text, and a day of that over the
+300 000 users; a text is about 1 kB of DATA on the air. The heartbeat
+load is a domain's 270 relays' heartbeats, 14.4 ms each, on the
+channels they visit:
+
+- one channel, a heartbeat every 60 s: 270 × 14.4 ms / 60 s = 6.5 %,
+  and 14 × 0.285 / 0.72 s ≈ 6 texts/s;
+- seven colours, each relay heartbeating on every colour every 10 s,
+  the mean interval of spec "Heartbeat":
+  270 × 14.4 ms / 10 s = 39 %, more than the 35 % a channel can use,
+  so no room for texts;
+- this design, one heartbeat every 10 s on each relay's next channel:
+  270 × 14.4 ms / (10 s × 13) = 3.0 %, and
+  14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, over a day 23 for each user,
+  the **design rate** the rest of this document uses.
+
+## Updates over the mesh
+
+*Why the version and not the name.* A version names one image, so the
+name would say nothing more on the air; nothing there is authenticated
+anyway (spec "What the protocol omits"). Every
+block is checked against its entry in the table and block 1's header
+against the name the table begins with, so a piece of another build
+under the same version, which only a bench makes, spoils at most the
+block it lands in, which is gathered again, and is never installed. A
+node whose blocks fail their check twice logs that two builds may
+carry one number. *Why the table has an entry of its own.* Nothing else
+checks it, and a table spoiled by such a piece would hold every other
+block to entries none matches.
+
+*Why boot is a change.* A node that boots knows nothing of its
+neighbours' images, nor they of its, and telling them at once lets a
+holder answer it within a rotation (below). It costs a rotation's 13
+sections, 7.68 ms more each, once a boot.
+
+*Why answer a node that lags.* A node that runs an older image learns
+of a new one only from a holder's section, which would otherwise ride
+hourly; answered, it learns within a rotation of telling its own,
+which it does at boot. Each answer costs a rotation's 13 sections,
+99.8 ms. Once a rotation however many lag bounds a relay to a section
+in every heartbeat; a neighbour that takes the image stops lagging,
+and one whose policy refuses it is answered at most each time it tells
+its section, once an hour.
+
+*Why in the heartbeat.* One frame kind, the piece: the neighbour table knows what
+each neighbour holds and lacks as it knows its channel, and there is
+nothing to ask, to answer or to time. The cost is that a node learns of
+a new image within a rotation of its heartbeats, 130 s, where a frame
+of its own would tell it within a pace.
+
+*Why the shape of the image in it.* The firmware sets up a block's lane
+and knows how many pieces give back each block before the first piece
+comes; block 0's own count follows from the blocks. The two bytes cost
+one block of symbols, 1.28 ms: a heartbeat with its section is 26
+bytes, 22.08 ms on air (spec "Physical layer"), against 13
+bytes and 14.4 ms.
+
+*Why a stream.* Every piece on a channel serves every node there that
+lacks its block, whenever that node began, so the nodes of a channel
+are in step by construction and need no agreement on a block. *Why not
+one code over the whole image.* A receiver would have to solve for
+1 940 unknowns at once from pieces read over the external flash's bus,
+which its bit-banged bus makes slow, and a bad piece would show only at
+the end; blocks of 64 decode as they complete and fail alone. *Why a
+node serves the blocks it holds.* An image then moves through a chain
+of relays, and every relay that gathers becomes a source as its blocks
+pass. *Why it serves only what passed.* A block that fails its hash
+would spread as garbage, and the gatherer could not tell it from a
+forger's. *Why every block.* A node keeps whatever comes, so no piece
+on its channel is wasted on it.
+
+*Why a sweep in order.* A stream that sent one piece of each block in
+turn would finish every block together, at the end, so a neighbour
+could pass nothing on until it held the whole image. A sweep finishes
+the blocks one by one from the first, and the neighbour streams each
+on to the next hop as it passes: the image goes down a chain a block
+behind, not an image behind. A node that joins late takes the sweep
+from the block at hand and the blocks before it in the next sweep.
+*Why the furthest behind and a margin.* The stream serves everyone on
+the channel at once, so it stays on a block until the neighbour that
+lacks most of it should have enough; with fewer, it would leave that
+neighbour a block short until the next sweep, a sweep later. The
+margin makes up the pieces lost on the way on average; a neighbour
+that lost more takes the rest in the block's tail, if it is the lowest
+it lacks, else in the next sweep. *Why a tail.* A holder that stopped
+after a quota cut short would wait for the neighbour's next section to
+learn what is still missing; the tail keeps the stream going until the
+section shows the block, and at the pace it costs at most 1 % of the
+channel. *Why a lease.* Without one the tail runs on while the
+gatherer's sections go unheard, as on the bench (why a gatherer says it
+every rotation, above). The gatherer says its section once a
+rotation where its helper hears it, so two rotations ride out one lost
+or skipped, and a stream to a gatherer that fell silent, moved away or
+completed stops within two; a gatherer heard again is served again at
+once. *Why a random first
+piece.* Two helpers of a block then seldom send the same piece.
+
+*Why a floor.* The mechanism is the same at any rate: the sweep, the
+sections and the sharing do not change with how fast the pieces go.
+The duty cap already bounds a relay's air, and a text at a relay never
+waits behind a piece: a piece goes only when the send queue is empty,
+and the reply reserve stays in the bucket. Where another sender is
+heard, or texts are queued, the pieces fall back to the pace.
+
+*Why 4.16 s.* With no gap an idle holder sends as fast as its bucket
+refills a full frame, 138.6 ms × 600 / 59 = 1.41 s
+(spec "Duty cycle cap"), and texts in the update's first
+hours meet the pieces on the channels. The gap trades how soon the
+relays hold the image against what the pieces take of a channel,
+138.6 ms over the gap. In the district at the design rate, 36 hours,
+seed 1 (`mesh-update-2026-11-07.md`, roadmap D156):
+
+| gap | a channel at most | relays holding 50 / 90 / 100 % | texts of the first 12 h, latency p90 / p99 | relays' busy estimate, hours 1–3 | pieces lost by relays that lacked them |
+|---|---|---|---|---|---|
+| 1.41 s, the bucket | 9.8 % | 2.3 / 2.8 / 5.8 h | 40.9 / 1 389 s | 4.3 % | 35.9 % |
+| 2.77 s | 5 % | 4.0 / 5.3 / 10.3 h | 21.7 / 1 377 s | 2.8 % | 23.8 % |
+| **4.16 s, chosen** | **3.3 %** | **5.3 / 6.3 / 11.5 h** | **21.3 / 1 290 s** | **2.0 %** | **20.5 %** |
+| 6.93 s | 2 % | 7.5 / 8.5 / 14.2 h | 20.2 / 1 267 s | 1.2 % | 18.7 % |
+| 13.86 s, the pace | 1 % | 15.5 / 16.3 / 23.5 h | 19.6 / 1 268 s | 0.8 % | 17.1 % |
+
+Without the update the texts of the first 12 hours wait 17.8 s at the
+90th percentile and 1 053 s at the 99th. From 2.77 s to 6.93 s that
+90th percentile hardly moves, so the gap buys margin on the channels
+rather than latency: at 4.16 s the relays' channels read 2.0 % busy in
+the update's first hours, clear of the 3 to 4 % where the network
+collapses, against 2.8 % at 2.77 s, for the relays reaching 90 % an hour
+later.
+
+*Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
+to 1.4 % of the time at the design rate of
+spec "Capacity and sizing", 2.0 to 2.8 % at twice it,
+and the network collapses at three times
+(`collapse-research-2026-10-16.md`,
+`bandwidth-research-2026-10-16.md`). A channel's pieces at 1 % add
+less than the design rate itself.
+
+*Why nine.* A node at its cap sends 9.83 full frames in one pace, its
+bucket's fill over 13.86 s (spec "Duty cycle cap"). With
+nine frames of the send queue let past, the piece is the tenth: under
+full load the update takes a tenth of the node's airtime, a full frame
+about every 14 s, the same as the pace when the node is idle. A busy
+node's updates go as fast as an idle one's, and its texts lose a tenth
+of their airtime while it serves.
+
+*Why two channels.* A node that sends on another channel is deaf on its
+own for the frame, as for a heartbeat, and a hand-over to it fails.
+Two channels at 1 % each cost it about 2 % of its hand-overs.
+
+**What it costs.** While no update runs, a relay's section rides one
+rotation of its heartbeats an hour, 7.68 ms more on each of 13: over a
+domain's 270 relays (spec "Capacity and sizing"),
+270 × 13 × 7.68 ms an hour over 13 channels, 0.06 % of each channel's
+time. While one runs, a relay's count of blocks grows at most once in
+64 paces, 14.8 minutes, the fewest pieces of a block at the pace: at
+most 4.1 rotations an hour more, 5.1 in all, 0.29 % of each channel's
+time, and each gatherer's section once a rotation on its helper's
+channel 0.12 % more (spec "Updates over the mesh"), so
+the heartbeats take at most 3.4 % against 3.0 % without. Were the
+section in every heartbeat while an update runs, they would take
+270 × 22.08 ms / (10 s × 13) = 4.6 %. A boot, and an answer to a
+neighbour that lags, each add a rotation of sections, 99.8 ms. A busy channel that gathers adds
+a piece a pace, 1 % of its time, however many help; an idle one a piece
+a gap, 3.3 %. Today's image takes a sweep of 2 428 pieces from a helper
+that holds it to a neighbour that holds none, at the margin of rule 4:
+2.8 hours a gap apart on an idle channel, 9.3 hours at the pace.
+
+*What it costs a sleepy node.* One piece a rotation of its anchor, 13
+of its heartbeats, 130 s at the mean interval
+(spec "Heartbeat"): today's image takes 2 428 rotations at
+the margin of rule 4, 88 hours, 3.7 days, and as many
+listens of 143.6 ms, 349 s, at the 5.8 mA of listening
+(spec "Duty-cycled receive and the long preamble"):
+0.56 mAh, 0.07 % of the 850 mAh battery
+(spec "Hardware"). Its beats carry the section while it gathers,
+7.68 ms more on each of its 16 beats an hour, 123 ms an hour on the
+230 ms of its beats (spec "Beats"): 11 s over the 88 hours, 0.1 mAh
+at the 32 mA of transmitting
+(spec "Sleepy nodes alone").
+The pieces it hears in its windows shorten its time. The nodes of an
+anchor gather together, so a district's sleepy nodes take days, not
+days for each.
+
+*Why the slot piece keeps no pace.* Shared, the pace let an anchor send
+after few of its slot heartbeats wherever several streamed on its
+channel: in the district at the design rate, over an update's first
+24 hours, the shared pace held 39 % of the pieces due after slot
+heartbeats, and listen-before-talk, the bucket and the anchor's own
+pace together under 1 % (`mesh-update-2026-11-07.md`). Its own load is bounded by the
+rotation, and a sleepy node can take a piece at no other time.
+
+*Why after the slot heartbeat.* Every sleepy node of the anchor listens
+for it in the same moment, so one frame reaches all of them; in a
+node's own windows a frame reaches one node, and each window would be
+paid by the channel's pace.
+
+*Why a bound.* Taking nothing, the node's queues only shrink, but a
+message for a sleepy node that stays dark waits in the delivery queue
+until its node beats, and one whose every way on stays banned waits for
+the ban, so a drain without an end could keep the node from its update
+for good. The TTL is how long the protocol waits for a node before its
+message is stale; what is left then is carried across the reboot, not
+dropped.
+
+*Why a standing link does not hold it back.* The node ends the link
+before it resets, and the phone connects again once the node is back,
+as after an update from the phone; held back by it, a home node whose
+owner is at home would never install.
+
+*Why hear a node.* A node that gathered an image over the mesh had a
+neighbour to take it from. An image that runs but cannot hear or be
+heard, from a wrong radio setting, a broken frame format or a timing
+fault, would otherwise keep itself, and the node would stay deaf beyond
+the reach of the next image. One frame that decodes proves the image's
+radio and frame format against another node's. It proves the receiving
+side only: an image that hears but is not heard keeps itself. *Why any
+node.* Who sent the frame does not matter for that proof, and a node
+heard before the update may have moved or gone dark since. *Why not
+after the phone's update.* A node updated from the phone may be the
+only node in reach, and would swap every image back for want of
+company; the person holding the phone is told instead
+(spec "Updates from the phone"). *Why three rotations.* Each
+neighbour's heartbeat reaches the node's home channel once a rotation,
+and a listening receiver loses about one in ten
+(spec "Channel at boot"): two rotations miss a lone
+neighbour one time in a hundred, and a third, the margin, one time in
+a thousand, since a revert gives the image up for good. The time fits
+the loader's 600 s, which still ends the trial of an image that hangs
+or never checks its time. *Why give it up.* Its neighbours go on
+telling it; taken again, it would be gathered for hours and swapped
+back again, without end.
+
+## What the protocol omits
+
+*Why no authentication.* A real node of the network with a few
+judicious bugs, by accident or intent, breaks large parts of it whether
+or not frames are signed, since it is a legitimate participant. Signing
+every frame would also need the hardware locked so that its holder
+cannot extract the key, which an open device anyone can buy and build
+cannot be. And no radio network withstands a serious adversary, who can
+jam it in any case.
+
+*Why no location privacy.* A node tells its position every rotation on
+a channel anyone can hear. A node that took a new ID would be linked to
+the old one by anyone who heard the old one fall silent and the new one
+appear in the same place.
+
+## Packet formats
+
+*Why read only the first 13 bytes.* A later format can then add to what
+a heartbeat says, and an old node still sees the neighbour. 13 bytes
+fill 6 blocks of symbols exactly at SF5, so the first byte appended
+costs a block, 1.28 ms.
+
+*Why a flags byte.* A later format can then add to what a heartbeat
+says without a new heartbeat layout, which every node, old or new, must
+read. It costs no airtime: 13 bytes fill the same 6 blocks of symbols
+at SF5 as 11.
+
+*Why a map point is told.* Every node is assumed honest, since the
+design breaks otherwise (spec "What the protocol omits"),
+so a map point is a position a person vouched for, where a fixed relay's
+first GPS fix could have been spoofed. Which checks may lean on that is
+for later; until then the bit is carried, kept and shown.
+
+*Why that size.* A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs 49
+bits, so 51 bits is within 2 bits of the minimum; decimetres would need
+56. Plain fixed point keeps the distance arithmetic trivial.
+
+## Implementation notes
+
+*Why not time.* The board has no clock that runs while it is off, so
+every timer starts afresh: a carried node is still since the boot, and a
+relay on battery begins its grace again.
+
+*Why not a carried node's place, nor a carried sleepy node's anchor and
+home.* They change as it goes, its anchor at each relay it passes, and
+each change would be a write; after a reboot it is somewhere else.
+
+*Why not the noise floor.* The sweep takes a reading a second, and
+their 10th percentile is at the floor within a minute or two
+(spec "Busy estimate"); kept, it would be written whenever it
+crossed a 1 dB step.
+
+*Why the page lasts.* The nRF52840's flash is rated for 10 000 erase
+cycles, and a page holds 128 records between erases: 1.28 million
+writes, 35 years at a hundred a day.
+
+## Open items
+
+| O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s (spec "Position"). Bench 2026-11-06, three boards at a window by day: up to 199 m, no two fixes more than 218 m apart, so the carried radius is 250 m (roadmap D136). The night after, 116 598 fixes, one board's fixes lay beyond 250 m for 63 s, 329 m at the farthest at HDOP 6.7, and it turned carried; counted only at HDOP 3 or under, no run beyond 200 m lasted (`docs/gps-bench-2026-11-06.md`, "The night") | step 2 bench, roadmap D70, D136 |
+| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show (spec "Position"). Bench 2026-11-06: indoors at a window 8 to 32 dB-Hz a satellite, a fix's mean 12 to 26 (`docs/gps-bench-2026-11-06.md`); open sky and a spoofer not yet | step 2 bench, roadmap D74 |

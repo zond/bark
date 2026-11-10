@@ -2731,190 +2731,95 @@ introduction's ephemeral key and a reply's round do that.
 A person may set a node as their **home**, from the app over the phone
 link; the app then puts its address on the person's card. Each person
 paired with a node may make it their home, each with their own key
-([pairing](#pairing), [settings](#settings)). It must be a
-fixed relay, neither sleepy nor carried ([nodes](#nodes)), so that its
-address stays. The app gives it the mailbox key and nothing else, by the
-Home characteristic ([settings](#settings); its values: `bark-link`
-`home`),
+([pairing](#pairing), [settings](#settings)). It must be a fixed relay,
+neither sleepy nor carried ([nodes](#nodes)), so that its address stays.
+The app gives it the mailbox key and nothing else, by the Home
+characteristic ([settings](#settings); its values: `bark-link` `home`),
 so it cannot read the messages it keeps (roadmap D128;
-`docs/app-layer-2026-11-05.md`, "The mailbox").
+`docs/app-layer-2026-11-05.md`, "The mailbox"). The mailbox is an
+application on the node, beside the phone link: it uses the core's
+application interface (`core-interface.md`, Application) and nothing
+else, and the simulator runs it the same way.
 
-**The ring.** A node, a home or not, keeps every payload delivered to
-its node ID but a fetch in a ring of slots in flash, numbered from 1,
-and erases the oldest page when the ring is full; an item leaves the
-ring only so ([receiving](#receiving)). The board's ring
-holds 1024 items (roadmap D139). A slot's mark is a byte, a bit for each
-of the node's eight records ([pairing](#pairing)): a bit
-set says the item is that record's and not yet sent to it. An item is
-written with the bits of the records whose tag it carries set and the
-rest clear, so a guest's item, which no record claims, has every bit
-clear and no fetch sends it. A bit is cleared without an erase, so the
-item stays: when a reply carries the item (below), and when the
-record's phone confirms it through Inbox. So one person's reading marks
-nothing of another's. A record's bit in the marks of the items up to
-the newest when it was made is a freed record's and counts for
-nothing, so none of its fetches sends them; its phone still reads
-those with its tag ([receiving](#receiving)).
+**The ring.** A node, a home or not, keeps every payload delivered to its
+node ID but a fetch in a ring of slots in flash, numbered from 1, and
+erases the oldest page when the ring is full; an item leaves the ring
+only so ([receiving](#receiving)). The board's ring holds 1024 items
+(roadmap D139). A slot's mark is a byte, a bit for each of the node's
+eight records ([pairing](#pairing)): a bit set says the item is that
+record's and not yet sent to it. An item is written with the bits of the
+records whose tag it carries set and the rest clear, so a guest's item,
+which no record claims, has every bit clear and no fetch sends it. A bit
+is cleared without an erase, so the item stays: when a reply carries the
+item (below), and when the record's phone confirms it through Inbox. So
+one person's reading marks nothing of another's. A record's bit in the
+marks of the items up to the newest when it was made is a freed record's
+and counts for nothing, so none of its fetches sends them; its phone
+still reads those with its tag ([receiving](#receiving)).
 
-**The fetch** is a form 2 payload to the home address whose plaintext
-is `sent` (4), the requester's current address (13) and its recipient
-tag at that address's node (1), which the home cannot make, as it does
-not know the identity ([the payload](#the-payload)). The node takes
-it only if it opens under one of its records' mailbox keys and its
-`sent` is later than the last fetch's that record took, which the node
-keeps for each; the record's items are those with its tag.
+**The fetch** is a form 2 payload to the home address whose plaintext is
+`sent` (4), the requester's current address (13) and its recipient tag at
+that address's node (1), which the home cannot make, as it does not know
+the identity ([the payload](#the-payload)). The node takes it only if it
+opens under one of its records' mailbox keys and its `sent` is later than
+the last fetch's that record took, which the node keeps for each; the
+record's items are those with its tag. A fetch is sent only when the
+person asks, so that a mailbox costs air only then (roadmap D128).
 
 **The answer.** The node answers a fetch once, to the fetch's address:
 one reply for each of the newest 32 of the record's items whose bit is
-set, newest first, one at a time through its send slot, or, when there
-is none, one reply that says nothing is new. It clears the item's bit
-when it hands the item's reply to the core; nothing confirms it. A
-record has one round at a time, which a later fetch of its own ends;
-the rounds of several records run at once, the node handing their
-replies to its send slot in turn. An item that arrives
-after the fetch waits for the next one. Each reply is a form 3 payload
-with the fetch's recipient tag, sealed under the record's mailbox key
-with the nonce: the fetch's `sent` (4), the reply's place (3), 17 zero bytes. An item's place is its rank in the
+set, newest first, one at a time through its send slot, or, when there is
+none, one reply that says nothing is new, so the person can tell "no
+mail" from a loss. It clears the item's bit when it hands the item's
+reply to the core; nothing confirms it, and a reply lost on the way stays
+in the ring for the phone to read at home. A record has one round at a
+time, which a later fetch of its own ends; the rounds of several records
+run at once, the node handing their replies to its send slot in turn. An
+item that arrives after the fetch waits for the next one.
+
+Each reply is a form 3 payload with the fetch's recipient tag, sealed
+under the record's mailbox key with the nonce: the fetch's `sent` (4),
+the reply's place (3), 17 zero bytes. An item's place is its rank in the
 round, 1 to 32, and its plaintext is its number (3), the count of the
-record's items still unsent after the round's when the fetch was taken (2), and the
-item; an item longer than the app writes goes empty. The reply that says
-nothing is new has place 0 and an empty plaintext, 18 bytes; none
-remains. The requester tries places 1 to 32 on a reply that carries an
-item. A reboot ends a round, so that no place seals two items: what it
-had not handed over stays unsent.
+record's items still unsent after the round's when the fetch was taken
+(2), and the item; an item longer than the app writes goes empty. The
+reply that says nothing is new has place 0 and an empty plaintext,
+18 bytes; none remains. The requester tries places 1 to 32 on a reply
+that carries an item. A reboot ends a round, so that no place seals two
+items: what it had not handed over stays unsent.
 
-*Why nothing new is an answer.* A person pressed a button and waits:
-without it they cannot tell "no mail" from a fetch or a reply lost on
-the way. It costs one short frame, and the node keeps nothing open, so
-mail moves only when the person asks (roadmap D128).
-
-*Why a batch with a count.* The fetch's address goes stale when the
-person moves, so a round must end while it is good: the network keeps
-mail for a node for the delivery TTL, 600 s ([nodes](#nodes)). And one
-press should cost the air of a batch, not of all the ring holds; the
-count tells the person what is left, and they decide whether to fetch
-again. A full bucket sends 33 full frames with the reply reserve left
-([send queue](#send-queue)), so a batch of 32 leaves the home node, and
-passes each relay on its way, at the pace of its hand-overs, without
-waiting for a refill, and leaves a frame for the relay's other traffic.
-Under load a hop's budget bounds a reply's wait in relays' queues at 4
-to 8 minutes over a crossing ([send queue](#send-queue)), within the
-TTL. The home node sends one reply at a time through its send slot, and
-the network's back-pressure paces a batch: a reply the requester's node
-has no room for is refused and waits at its sender
-([receiving](#receiving)), and one the home node's
-neighbours refuse is given back to the mailbox and goes again.
-
-*Why a sent item stays.* Nothing tells the home node that a reply
-arrived. One lost on the way is still in the ring, and the phone reads
-it at home after the last item it confirmed; a text it already has is
-not kept twice ([the payload](#the-payload)).
-
-*Why the number inside.* Places start at 1 in every round, so a
-requester finds each reply in at most 32 tries without knowing which
-numbers the ring holds; the number, which only it learns, names the
-item in the ring.
-
-**When to fetch.** Only when the person asks, so that a mailbox costs
-air only when a person wants it (roadmap D128).
-
-The mailbox is an application on the node, beside the phone link: it
-uses the core's application interface (`core-interface.md`, Application) and
-nothing else, and the simulator runs it the same way.
+A batch of 32 fits the 33 full frames a full bucket sends with the reply
+reserve left ([send queue](#send-queue)), so it leaves at the pace of the
+hand-overs and within the fetch address's life, the delivery TTL; the
+count tells the person what is left.
 
 ## Screen and buttons
 
 A node has a 200 × 200 e-paper screen, a touch pad and a button
-(`bark-fw/src/board.rs`). The screen keeps its picture without power, so
-it costs the battery only when it changes.
+(`bark-fw/src/board.rs`). What the screen shows and when it is drawn are
+the firmware's (`bark-fw/README.md`, Display); the protocol needs this of
+it:
 
-**The code.** By default the screen shows a QR code of the project's
-page, `zond.github.io/bark`, where a person gets the app, and one line
-under it: the node's ID, the end of the name the app shows it by, or,
-while a phone pairs, `PAIR CODE` and the pairing code, while a removal
-waits, `REMOVE` and its code, and for 30 s after a pairing refused for
-want of room, `PHONES FULL`
-([pairing](#pairing), [phones](#phones)). The code is version 3, 29 × 29 modules, at error correction
-level H, the smallest version that holds the address's 19 bytes at H
-(24 bytes; version 2 holds 14), drawn 5 pixels a module, 145 pixels,
-centred across and near the top, with 2 modules clear above and below
-and more at the sides. Level H restores about 30 % of the codewords
-(ISO/IEC 18004), so a small orb web drawn over the code's centre,
-covering 61 of its 841 modules, 7 %, and none of its finder, timing,
-alignment or format patterns, leaves it readable; the web's radials and
-two frame threads go on in the margin outside the clear zone. The
-picture is decoded by three decoders in the repository's tests
-(`bark-screen/scripts/qr.py`).
-
-*Why a code by default.* Most people who see a node do not own it: a
-passer-by who wants the app gets it from the screen, with no address to
-type. A private node's code serves such a guest as well: the app works
-with any public node nearby. *Why 2 modules clear.* The standard asks
-for 4; the screen's height does not leave 4 above and below beside a
-line of text, and phones' readers take 2.
-
-**The touch.** A touch of the pad shows the node's state as lines of
-text for 30 s, or until the next touch, and then the code again: what
-the node is, its ID and image, the image it gathers, the phone, its
-neighbours, its power and how long its battery lasts, its uptime and
-the time of day
-(`bark-fw/README.md`, Display). The phone's line says `PHONE UNPAIRED`
-before any phone has paired, `PHONE PUBLIC` or `PHONE PRIVATE` with one
-paired, and `3 PHONES PUBLIC` or `3 PHONES PRIVATE`, with the count,
-once more than one is ([pairing](#pairing)): the count
-and `PHONES` at the left and the setting at the right, as every line is
-a label and a value in the line's 16 characters. While a pairing or a removal code
-shows, the screen shows the lines by itself, as a touch would, and
-keeps them, past the 30 s and whatever is touched, until the pairing
-or the removal ends or is abandoned, a removal's code at most 30 s;
-then the usual rule holds again: the code, or the lines for what is
-left of a touch's 30 s.
-
-*Why the lines while pairing.* The person typing the code stands at
-the node, and is the one who wants to see the node's state.
-
-*Why 30 s.* A choice: ten lines of two or three words each take under
-10 s to read at a usual pace, and 30 s is three times that, short
-enough that the next person to pass finds the code again.
-
-**When it is drawn.** A change of picture, a touch or the 30 s ending,
-is drawn at once, and so is a new pairing or removal code, or
-`PHONES FULL`, since a person stands at the node waiting for each. On
-the code nothing else changes. While the lines show,
-a change of the role, of the phone's line or of the power is drawn one
-refresh after it, and changes within one refresh are drawn together;
-the neighbour counts and the battery's level and time left wait for the
-next touch.
-Nothing else is drawn.
-
-*Why so little.* Each refresh costs a sleepy node's battery
-(`bark-fw/README.md`, Display), and the code shows nothing that would
-grow stale.
-
-**The buttons.** Both are on the case's left side as the screen reads:
-the reset button nearer the top, the user button below the glass. Held
-3 s, the user button flips the role ([nodes](#nodes)) the moment the 3 s
-have passed, while it is still held, and the lines are drawn at once
-with the role it took; the release does nothing. A shorter press, let
-go before the 3 s, flips the picture as a touch of the pad does, so a
-board whose pad does not answer still reaches its lines. A press of the reset button resets the chip, and the
-node boots the image it ran. The lines label both at their left edge,
-each on the margin nearer its button, after an arrow pointing at it:
-`REBOOT` at the top, and at the bottom the role a hold would turn the
-node to, `SLEEP (3s)` on a relay and `WAKE (3s)` on a sleepy node. The
-screen says nothing of a forced role, and the code shows no labels.
-
-*Why the reset button only resets.* It is wired to the chip's reset
-pin, and reading a long press from it would take that pin over, which
-would end the bootloader's double tap and a hung board's recovery.
-
-*Why 3 s.* A choice: thirty times an ordinary press of about 100 ms, so
-that a bump, a bag or a curious finger does not change what the node
-does for its neighbours.
+- By default the screen shows a QR code of the project's page,
+  `zond.github.io/bark`, where a person gets the app, and the node's ID
+  under it.
+- While a phone pairs it shows `PAIR CODE` and the passkey, drawn as soon
+  as the pairing asks for it ([pairing](#pairing)); while a removal waits,
+  `REMOVE` and its code ([phones](#phones)); for 30 s after a pairing
+  refused for want of room, `PHONES FULL`. Each is drawn at once, since a
+  person stands at the node waiting for it, and a code shows until the
+  pairing or the removal ends or is abandoned, a removal's at most 30 s.
+- Held 3 s, the user button flips the role ([nodes](#nodes)) the moment
+  the 3 s have passed, while it is still held; a shorter press flips the
+  picture, as a touch of the pad does. The reset button only resets the
+  chip, and the node boots the image it ran. The screen says nothing of a
+  forced role.
 
 ## Capacity and sizing
 
-Rationale, not specification.
+Rationale, not specification: the figures the sizes above are derived
+from. They are orders of magnitude; the hearing radius and the hop count
+are each uncertain by 2×.
 
 Kyiv model: ≈840 km², ≈400 km² built-up, ≈3 M people. Indoor coverage
 needs ≈9.6 relays/km² (≈3,800 relays); outdoor-only ≈1.9/km² (≈750).
@@ -2923,36 +2828,21 @@ collision domain, the area within which transmissions interfere, is
 ≈28 km² with ≈270 relays, ≈14 domains across the built-up city.
 
 One 125 kHz channel at SF5 carries 1.95 kB/s raw (15.6 kbps) and
-≈680 B/s with listen-before-talk (≈35% usable). A 100-byte text over 8 hops with ACKs
-takes ≈0.72 s of channel time: per hop a 128-byte DATA packet (73.3 ms)
-and its ACK (17.0 ms).
+≈680 B/s with listen-before-talk (≈35% usable). A 100-byte text over 8
+hops with ACKs takes ≈0.72 s of channel time: per hop a 128-byte DATA
+packet (73.3 ms) and its ACK (17.0 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
-| Single channel, 60 s heartbeats | 6.5% | ≈6 kB/s | ≈6 | ≈2 |
-| 7-colour fixed grid, 10 s heartbeats on all colours | 39% | none | none | none |
-| **13 channels, measured selection, rotating heartbeat (this design)** | **≈3.0%** | **≈80 kB/s** | **≈80** | **≈23** |
+| Single channel, 60 s heartbeats | 270 × 14.4 ms / 60 s = 6.5% | ≈6 kB/s | 14 × 0.285 / 0.72 s ≈ 6 | ≈2 |
+| 7-colour fixed grid, 10 s heartbeats on all colours | 270 × 14.4 ms / 10 s = 39%, over the 35 % a channel can use | none | none | none |
+| **13 channels, measured selection, rotating heartbeat (this design)** | **270 × 14.4 ms / (10 s × 13) = 3.0%** | **≈80 kB/s** | **14 × 13 × 0.32 / 0.72 s ≈ 80** | **≈23** |
 
-These are orders of magnitude; the hearing radius and hop count are each
-uncertain by 2×. The table assumes a text crosses the city. The city
-centre is the hot spot, and the per-relay 10% cap
-([duty cycle cap](#duty-cycle-cap)) binds there first. Each row is
-the 14 domains times the row's channels times what of a channel's 35 %
-the heartbeats leave, over 0.72 s a text, and a day of that over the
-300 000 users; a text is about 1 kB of DATA on the air. The heartbeat
-load is a domain's 270 relays' heartbeats, 14.4 ms each, on the
-channels they visit:
-
-- one channel, a heartbeat every 60 s: 270 × 14.4 ms / 60 s = 6.5 %,
-  and 14 × 0.285 / 0.72 s ≈ 6 texts/s;
-- seven colours, each relay heartbeating on every colour every 10 s,
-  the mean interval of [heartbeat](#heartbeat):
-  270 × 14.4 ms / 10 s = 39 %, more than the 35 % a channel can use,
-  so no room for texts;
-- this design, one heartbeat every 10 s on each relay's next channel:
-  270 × 14.4 ms / (10 s × 13) = 3.0 %, and
-  14 × 13 × 0.32 / 0.72 s ≈ 80 texts/s, over a day 23 for each user,
-  the **design rate** the rest of this document uses.
+Each row is the 14 domains times the row's channels times what of a
+channel's 35 % the heartbeats leave, over 0.72 s a text, and a day of
+that over the 300 000 users. 23 texts a user a day is the **design rate**
+the rest of this document uses. The city centre is the hot spot, and the
+per-relay 10% cap ([duty cycle cap](#duty-cycle-cap)) binds there first.
 
 The app's encryption and header take 48 to 61 bytes of a payload
 ([the payload](#the-payload)), so the 100-byte payload above holds a text
@@ -2960,72 +2850,62 @@ of 39 to 52 bytes. A message fetched from a [mailbox](#mailbox) crosses
 the city twice: with a share f of messages fetched, the design rate is
 23 / (1 + f) texts a person a day.
 
-Sleepy nodes' beats cost what [beats](#beats) lists, 230 ms an hour
-each, and relays nothing for them. Summed over the domain's 20 000
-sleepy nodes they take 1.28 s of airtime a second, 10 % of one channel's
-time over the 13, where every relay hears every other. A sleepy node in
-anchorless mode costs more ([sleepy nodes alone](#sleepy-nodes-alone)):
-its long beats, a relay's answers, and the long preamble on every DATA
-to it.
+Sleepy nodes' beats cost 230 ms an hour each ([beats](#beats)); over a
+domain's 20 000 sleepy nodes, 1.28 s of airtime a second, 10 % of one
+channel's time over the 13. A sleepy node in anchorless mode costs more
+([sleepy nodes alone](#sleepy-nodes-alone)).
 
 ## Updates over the mesh
 
 A node given a new firmware image, by a phone or over USB, passes it to
 the relays around it, and they to theirs, a piece at a time, at a pace
 that leaves the channels to the texts. The protocol carries the pieces;
-the code that makes them, the flash they wait in and the signature
-check are the node's firmware below it (`core-interface.md`,
-Application). A node's firmware chooses whose images it takes, so that
-a node of another implementation is never overwritten against its will.
+the code that makes them, the flash they wait in and the signature check
+are the node's firmware below it (`core-interface.md`, Application). A
+node's firmware chooses whose images it takes, so that a node of another
+implementation is never overwritten against its will.
 
-**The image.** An image is named by the SHA-256 of its signed header,
-the 48 bytes of its header that its signatures cover: magic, format,
-version, length and the image's own SHA-256 (`bark-image`, `sign.rs`).
-A version names one image, as a release takes its version from its
-tag, so the mesh names an image by its version; the 32-byte name stays
-with the node that holds the image. What
-travels is the image as packed, its 256-byte header and then its bytes,
-in **blocks**: block 0 is the block table, the whole name, the first
-8 bytes of the SHA-256 of each other block, and then 8 bytes of the
-SHA-256 of all of that, its own, one piece up to 26 blocks
-and two up to 48; then the packed image, in blocks of 64 pieces of 247
-bytes, the last block shorter and its last piece padded (`bark-image`,
-`pieces.rs`). Block 1 begins with the signed header, which hashes to
-the name. Each block is sent as up to 255 coded pieces, and any 64
-distinct ones of a block, or as many as it has, give it back (a
-Reed-Solomon code over GF(2⁸), the firmware's, `code.rs`). Today's node
-image, 478 704 bytes (the open build of main `9b693a0` on 2026-11-09,
-`bark-fw/README.md`, "Build and package"), packs to 478 960 bytes,
-1 940 pieces in 31 blocks, 30 of 64 and one of 20; its table is two
-pieces, 32 blocks in all. An image has at most 48 blocks, the
-table's among them, one for each lane the firmware keeps pieces in
-(`pieces.rs`): 47 blocks of packed image, 743 KB, which
-`bark-fw/scripts/image.py pack` refuses to pass.
+**The image.** An image is named by the SHA-256 of its signed header, the
+48 bytes of its header that its signatures cover: magic, format, version,
+length and the image's own SHA-256 (`bark-image`, `sign.rs`). A version
+names one image, as a release takes its version from its tag, so the
+mesh names an image by its version; the 32-byte name stays with the node
+that holds the image. What travels is the image as packed, its 256-byte
+header and then its bytes, in **blocks** (`bark-image`, `pieces.rs`):
 
-*Why the version and not the name.* A version names one image, so the
-name would say nothing more on the air; nothing there is authenticated
-anyway ([what the protocol omits](#what-the-protocol-omits)). Every
-block is checked against its entry in the table and block 1's header
-against the name the table begins with, so a piece of another build
-under the same version, which only a bench makes, spoils at most the
-block it lands in, which is gathered again, and is never installed. A
-node whose blocks fail their check twice logs that two builds may
-carry one number. *Why the table has an entry of its own.* Nothing else
-checks it, and a table spoiled by such a piece would hold every other
-block to entries none matches.
+| block | content |
+|---|---|
+| 0, the block table | the whole name, the first 8 bytes of the SHA-256 of each other block, then 8 bytes of the SHA-256 of all of that, its own; one piece up to 26 blocks, two up to 48 |
+| 1 and on | the packed image in blocks of 64 pieces of 247 bytes, the last block shorter and its last piece padded; block 1 begins with the signed header, which hashes to the name |
+
+Each block is sent as up to 255 coded pieces, and any 64 distinct ones of
+a block, or as many as it has, give it back (a Reed-Solomon code over
+GF(2⁸), the firmware's, `code.rs`). Blocks decode as they complete and
+fail alone. An image has at most 48 blocks, the table's among them, one
+for each lane the firmware keeps pieces in: 47 blocks of packed image,
+743 KB, which `bark-fw/scripts/image.py pack` refuses to pass. Today's
+node image, 478 704 bytes (main `9b693a0`, 2026-11-09), packs to 1 940
+pieces in 31 blocks; with its two-piece table, 32 blocks.
+
+Every block is checked against its entry in the table and block 1's
+header against the name the table begins with, so a piece of another
+build under the same version spoils at most the block it lands in, which
+is gathered again, and is never installed. A node whose blocks fail
+their check twice logs that two builds may carry one number.
 
 A node **holds** an image's blocks once each has decoded and passed its
 hash; it serves those, whether it holds the whole image or some of its
-blocks.
+blocks. A block that failed is never served.
 
 **What a node tells.** A heartbeat may carry a **section** after its
-first 13 bytes ([packet formats](#packet-formats)): the version the
-node runs, 0 if it knows none; the newest image it holds or gathers, by
-its version, the signer's key, its
-blocks and the pieces of its last, or none; how many of its blocks the
-node holds from the first; and how many pieces it holds of the block
-after those. A node that knows neither the version it runs nor an image
-tells no section. The count of pieces goes as it stands when sent.
+first 13 bytes ([packet formats](#packet-formats)): the version the node
+runs, 0 if it knows none; the newest image it holds or gathers, by its
+version, the signer's key, its blocks and the pieces of its last, or
+none; how many of its blocks the node holds from the first; and how many
+pieces it holds of the block after those. A node that knows neither the
+version it runs nor an image tells no section. The count of pieces goes
+as it stands when sent. A section costs one block of symbols, 7.68 ms
+more a heartbeat.
 
 A relay's heartbeats carry the section in a **rotation of sections**:
 once on each channel, at its next heartbeat there, so that a heartbeat
@@ -3036,458 +2916,217 @@ instead of missing it. A rotation of sections starts:
 - when any of the first three changes, the version it runs, its newest
   image or its blocks held;
 - an hour after the last;
-- in answer to a neighbour that **lags**, one whose section names
-  neither an image nor a version run as new as the image the relay
-  streams: at the relay's next heartbeat, unless a rotation of sections
-  began within its own last rotation of heartbeats, however many lag.
+- in answer to a neighbour that **lags**, one whose section names neither
+  an image nor a version run as new as the image the relay streams: at
+  the relay's next heartbeat, unless a rotation of sections began within
+  its own last rotation of heartbeats, however many lag.
 
 While a relay gathers, every heartbeat it sends on the home channel of
-its **helper** carries the section as well, which is once a rotation:
-the helper is the relay it last took a piece from, and before its first
-piece the best holder it hears. A piece does not name its sender, so
-the node takes for it a relay it hears that holds that block: one at
-home on its own channel, whose pieces the node hears with its own,
-else the one that holds the most blocks from the first, then the lowest
-ID. A sleepy node's beats carry the section for one beat after a change,
-in every beat while it gathers, and in one an hour: its anchor hears
-every beat.
-
-*Why boot is a change.* A node that boots knows nothing of its
-neighbours' images, nor they of its, and telling them at once lets a
-holder answer it within a rotation (below). It costs a rotation's 13
-sections, 7.68 ms more each, once a boot.
-
-*Why a gatherer says it every rotation.* A helper streams a block until
-the gatherer's section shows it complete (rule 4), and a rotation after
-a change reaches a channel only if that heartbeat finds it free. On the
-bench a gatherer completed a block while three of its heartbeats were
-skipped for busy channels, then moved home twice, and its holder,
-hearing no section, streamed that block's tail, over 370 pieces, for
-more than an hour (roadmap D158). Said once a rotation on the helper's own channel, the
-section reaches the helper within a rotation of any change. It costs one
-section a rotation for each gatherer: with a domain's 270 relays
-([capacity and sizing](#capacity-and-sizing)) all gathering, 270 ×
-7.68 ms over 130 s and 13 channels, 0.12 % of each channel's time.
-
-*Why answer a node that lags.* A node that runs an older image learns
-of a new one only from a holder's section, which would otherwise ride
-hourly; answered, it learns within a rotation of telling its own,
-which it does at boot. Each answer costs a rotation's 13 sections,
-99.8 ms. Once a rotation however many lag bounds a relay to a section
-in every heartbeat; a neighbour that takes the image stops lagging,
-and one whose policy refuses it is answered at most each time it tells
-its section, once an hour.
+its **helper** carries the section as well, once a rotation, so the
+helper learns of a completed block within a rotation (roadmap D158). The
+helper is the relay it last took a piece from, and before its first
+piece the best holder it hears. A piece does not name its sender, so the
+node takes for it a relay it hears that holds that block: one at home on
+its own channel, whose pieces the node hears with its own, else the one
+that holds the most blocks from the first, then the lowest ID. A sleepy
+node's beats carry the section for one beat after a change, in every
+beat while it gathers, and in one an hour: its anchor hears every beat.
 
 A node keeps each neighbour's last section in its neighbour table
-([neighbour table](#neighbour-table)), as it keeps the rest of what the
-neighbour's heartbeats say, and the images the sections name once, at
-most four: the release spreading, the one before it, an older one of a
-node that was away through a release, and one of another key, a
-bench's, since a release follows the last no sooner than the day it
-takes to reach every relay. A fifth takes the place of the lowest
-version, and the sections that named that one name none; one older than
-the four is kept as naming none. No node that runs a newer image
-gathers the lowest.
-
-*Why in the heartbeat.* One frame kind, the piece: the neighbour table knows what
-each neighbour holds and lacks as it knows its channel, and there is
-nothing to ask, to answer or to time. The cost is that a node learns of
-a new image within a rotation of its heartbeats, 130 s, where a frame
-of its own would tell it within a pace.
-
-*Why the shape of the image in it.* The firmware sets up a block's lane
-and knows how many pieces give back each block before the first piece
-comes; block 0's own count follows from the blocks. The two bytes cost
-one block of symbols, 1.28 ms: a heartbeat with its section is 26
-bytes, 22.08 ms on air ([physical layer](#physical-layer)), against 13
-bytes and 14.4 ms.
+([neighbour table](#neighbour-table)), and the images the sections name
+once, at most four: the release spreading, the one before it, an older
+one of a node that was away through a release, and one of another key, a
+bench's. A fifth takes the place of the lowest version, and the sections
+that named that one name none; one older than the four is kept as naming
+none. No node that runs a newer image gathers the lowest.
 
 **Who sends what.**
 
-1. A node that hears a section naming an image of a version above the
-   one it runs and the one it gathers asks its firmware, once, whether
-   its policy takes the image. If it does, the node gathers it; an image
-   of a higher version heard later replaces it.
+1. A node that hears a section naming an image of a version above the one
+   it runs and the one it gathers asks its firmware, once, whether its
+   policy takes the image. If it does, the node gathers it; an image of a
+   higher version heard later replaces it.
 2. A node that gathers hands its firmware every piece it has not handed
-   before of every block it lacks, and no other: at most 48 blocks of
-   64, the lanes the firmware keeps them in (`bark-image`, `pieces.rs`).
-   When the firmware says a block failed its hash, it takes that
-   block's pieces again, and does not count it held.
+   before of every block it lacks, and no other: at most 48 blocks of 64,
+   the lanes the firmware keeps them in. When the firmware says a block
+   failed its hash, it takes that block's pieces again, and does not
+   count it held.
 3. A relay **helps** a channel where a neighbour's section says it
    gathers the image the relay gathers or holds and lacks a block the
    relay holds: it **streams** there, at the gap or the pace (below),
    from the blocks it holds, to each gatherer from the first block it
-   lacks. It streams to a gatherer on another channel
-   only if it is the best holder it hears for it: no relay it
-   hears that is not at home there, holds more than the gatherer and is
-   no farther from it has more blocks from the first, or as many and a
-   lower ID. It streams on at most two channels: its home, then those
-   with the most neighbours lacking. It stops on a channel when no
-   neighbour there lacks a block it streams there. It streams to a
-   gatherer only on a **lease**: while it heard the gatherer's section
-   within the gatherer's last two rotations and a heartbeat's lag
+   lacks. It streams to a gatherer on another channel only if it is the
+   best holder it hears for it: no relay it hears that is not at home
+   there, holds more than the gatherer and is no farther from it has more
+   blocks from the first, or as many and a lower ID, since relays
+   elsewhere cannot hear each other's pieces on the gatherer's channel. A
+   relay elsewhere does not stand back for one at home there (roadmap
+   D196, D200). It streams on at most two channels: its home, then those with
+   the most neighbours lacking. It stops on a channel when no neighbour
+   there lacks a block it streams there. It streams to a gatherer only on
+   a **lease**: while it heard the gatherer's section within the
+   gatherer's last two rotations and a heartbeat's lag
    ([heartbeat](#heartbeat)), 2 × 13 × T + 872.8 ms, 261 s at the mean
-   interval and 391 s at the longest; a sleepy gatherer's rotation is
-   its beat, so two beat periods and the lag, 601 s
-   ([beats](#beats)).
-4. A stream **sweeps** the blocks in order. Of the block at hand it
-   sends fresh pieces, each block's index climbing from a random start
-   and wrapping at 255, until it has sent what the neighbour there
-   furthest behind on that block lacks, by its section, and a margin
-   for loss: that count over 1 − 20 %, the share of pieces a
-   gatherer missed in the simulator (20.5 % of the pieces sent to
-   relays that lacked them, in the district at the design rate over an
-   update's first 6 hours, `mesh-update-2026-11-07.md`). If that block
-   is the lowest a neighbour there lacks, it goes on with fresh pieces
-   of it, at the pace, until the neighbour's section shows it complete
-   or its lease ends: the block's **tail**. Then it moves to the next block that a
-   neighbour there lacks, skipping the blocks none lacks, and after the
-   last starts the sweep again while any lacks something.
+   interval and 391 s at the longest; a sleepy gatherer's rotation is its
+   beat, so two beat periods and the lag, 601 s ([beats](#beats)).
+4. A stream **sweeps** the blocks in order, so that the blocks complete
+   one by one and a neighbour passes each on as it completes. Of the
+   block at hand it sends fresh pieces, each block's index climbing from
+   a random start and wrapping at 255, until it has sent what the
+   neighbour there furthest behind on that block lacks, by its section,
+   and a margin for loss: that count over 1 − 20 %, the share of pieces a
+   gatherer missed in the simulator (`mesh-update-2026-11-07.md`). If
+   that block is the lowest a neighbour there lacks, it goes on with
+   fresh pieces of it, at the pace, until the neighbour's section shows
+   it complete or its lease ends: the block's **tail**. Then it moves to
+   the next block that a neighbour there lacks, skipping the blocks none
+   lacks, and after the last starts the sweep again while any lacks
+   something.
 5. On its home channel, where it hears the others, a node that heard k
    pieces from other nodes since its last there sends its next there
-   k + 1 paces after its last; having heard none, and on another
-   channel, at the gap or the pace (pace and priority, below). The
-   piece after a slot heartbeat is apart from this (sleepy nodes,
-   below).
+   k + 1 paces after its last, so that the helpers at home on a channel
+   share one piece a pace; having heard none, and on another channel, at
+   the gap or the pace (below). The piece after a slot heartbeat is apart
+   from this (sleepy nodes, below).
 
-*Why a stream.* Every piece on a channel serves every node there that
-lacks its block, whenever that node began, so the nodes of a channel
-are in step by construction and need no agreement on a block. *Why not
-one code over the whole image.* A receiver would have to solve for
-1 940 unknowns at once from pieces read over the external flash's bus,
-which its bit-banged bus makes slow, and a bad piece would show only at
-the end; blocks of 64 decode as they complete and fail alone. *Why a
-node serves the blocks it holds.* An image then moves through a chain
-of relays, and every relay that gathers becomes a source as its blocks
-pass. *Why it serves only what passed.* A block that fails its hash
-would spread as garbage, and the gatherer could not tell it from a
-forger's. *Why every block.* A node keeps whatever comes, so no piece
-on its channel is wasted on it.
+**Pace and priority.** A node sends its next piece on a channel a **gap**
+after its last there, 4.16 s, a full frame's 138.6 ms thirty times over,
+if the bucket allows it with the reply reserve kept, its send queue holds
+nothing else and it has heard no other node's piece on that channel since
+its own last; otherwise at the **pace**: at most one on a channel in
+13.86 s, a full frame a hundred times over. One node's pieces take at
+most 3.3 % of an idle channel's time, and 1 % of a loaded one's, against
+a channel busy 1.0 to 1.4 % at the design rate, where the network
+collapses at three times it (roadmap D156). A node sends pieces on at
+most two channels in any one pace; on another channel it is deaf on its
+own.
 
-*Why a sweep in order.* A stream that sent one piece of each block in
-turn would finish every block together, at the end, so a neighbour
-could pass nothing on until it held the whole image. A sweep finishes
-the blocks one by one from the first, and the neighbour streams each
-on to the next hop as it passes: the image goes down a chain a block
-behind, not an image behind. A node that joins late takes the sweep
-from the block at hand and the blocks before it in the next sweep.
-*Why the furthest behind and a margin.* The stream serves everyone on
-the channel at once, so it stays on a block until the neighbour that
-lacks most of it should have enough; with fewer, it would leave that
-neighbour a block short until the next sweep, a sweep later. The
-margin makes up the pieces lost on the way on average; a neighbour
-that lost more takes the rest in the block's tail, if it is the lowest
-it lacks, else in the next sweep. *Why a tail.* A holder that stopped
-after a quota cut short would wait for the neighbour's next section to
-learn what is still missing; the tail keeps the stream going until the
-section shows the block, and at the pace it costs at most 1 % of the
-channel. *Why a lease.* Without one the tail runs on while the
-gatherer's sections go unheard, as on the bench (why a gatherer says it
-every rotation, above). The gatherer says its section once a
-rotation where its helper hears it, so two rotations ride out one lost
-or skipped, and a stream to a gatherer that fell silent, moved away or
-completed stops within two; a gatherer heard again is served again at
-once. *Why a random first
-piece.* Two helpers of a block then seldom send the same piece.
-
-*Why the helpers share the pace.* Every helper keeps its own pace, so a
-channel with several streaming would carry their sum: in a district run
-with no such rule the update's frames came to 7 % of each channel's
-time once 70 relays held the image. Helpers at home on a channel hear
-each other there and each takes its share, so the channel carries one
-piece a pace whatever their number. A relay hears only its home
-channel, so pieces from elsewhere add up unheard. *Why the best holder alone of the relays elsewhere.*
-They cannot hear each other's pieces on the gatherer's channel; a relay
-stands back only for one that is no farther from the gatherer, which
-reaches it as well. In the district at the design rate over an update's
-first 6 hours the best holder's rule, with the standing back of
-roadmap D151 in place, cut the pieces' airtime from
-69 000 s to 56 900 s and the channels' busy share from 3.5 to 3.2 %,
-the relays a little behind (`mesh-update-2026-11-07.md`). *Why a relay
-elsewhere does not stand back for one at home.* It cannot know whether
-the gatherer hears that relay, and where it stood back a gatherer that
-heard only a holder elsewhere took no piece in twelve hours (roadmap
-D196). The relay at home is helped by the lease alone: a gatherer says
-its section every rotation only on its helper's channel, so a relay
-elsewhere whose channel is not its helper's hears it only when it
-changes or hourly, and stops streaming two rotations after.
-Without the standing back, the relays hold the image no later and the
-pieces take no more air: in `mesh-spread.toml` without its restart
-and with `[update]`, 24
-hours, seeds 1 to 6, the 13th and 19th of 25 relays held it after 6.4
-and 7.4 hours against 6.8 and 8.3, the pieces took 10 220 s against
-10 900 s, and 24.7 relays held it at the end against 23.8; in the
-district at the design rate, 12 hours, seeds 1 to 3, half the 538 relays
-after 7.6 hours against 7.5, 90 % after 8.0 against 8.2, 527 against
-526 at the end, the pieces 271 000 s against 282 000 s, and the texts
-delivered alike (roadmap D200). *Why share and not leave the
-channel to one.* Every helper keeps streaming, each from the blocks it
-holds, so a neighbour that lacks a block one helper does not hold still
-has it from another, and the channel loses nothing when a helper goes.
-
-**Pace and priority.** The pace is a floor, not the rate. A node sends
-its next piece on a channel a **gap** after its last there, 4.16 s, a
-full frame's 138.6 ms thirty times over, if the bucket allows it with
-the reply reserve kept, its send queue holds nothing else and it has
-heard no other node's piece on that channel since its own last;
-otherwise at the pace: at most one on a channel in 13.86 s, a full
-frame a hundred times over. One node's pieces take at most 3.3 % of an
-idle channel's time, and 1 % of a loaded one's. A node sends pieces on
-at most two channels in any one pace. They wait
-behind the frames of the send queue ([send queue](#send-queue)) and go
-after the sweep's readings, but at most 9 frames of the send queue go
-before a piece that is due; then it goes before the next. Each is paid
-from the bucket as a forward is, leaving the reply reserve
+Pieces wait behind the frames of the send queue
+([send queue](#send-queue)) and go after the sweep's readings, but at
+most 9 frames of the send queue go before a piece that is due; then it
+goes before the next: a node at its cap sends 9.83 full frames a pace,
+so under full load the update takes a tenth of its airtime. Each piece is
+paid from the bucket as a forward is, leaving the reply reserve
 ([duty cycle cap](#duty-cycle-cap)), and listens before it talks as a
 heartbeat does ([heartbeat](#heartbeat)): up to three checks, and if
 every one is busy the piece waits its pace. The pieces go on whichever
 channel the pace frees first. A wait for the bucket ends a random time
 within two frames later too, so that two holders the bucket holds alike
-do not send together. Each pace ends a random time within two
-frames, 277 ms, after the piece: two senders that start a pace
-together then part by more than a frame, and hear each other, a quarter
-of the time each pace.
-
-*Why a floor.* The mechanism is the same at any rate: the sweep, the
-sections and the sharing do not change with how fast the pieces go.
-The duty cap already bounds a relay's air, and a text at a relay never
-waits behind a piece: a piece goes only when the send queue is empty,
-and the reply reserve stays in the bucket. Where another sender is
-heard, or texts are queued, the pieces fall back to the pace.
-
-*Why 4.16 s.* With no gap an idle holder sends as fast as its bucket
-refills a full frame, 138.6 ms × 600 / 59 = 1.41 s
-([duty cycle cap](#duty-cycle-cap)), and texts in the update's first
-hours meet the pieces on the channels. The gap trades how soon the
-relays hold the image against what the pieces take of a channel,
-138.6 ms over the gap. In the district at the design rate, 36 hours,
-seed 1 (`mesh-update-2026-11-07.md`, roadmap D156):
-
-| gap | a channel at most | relays holding 50 / 90 / 100 % | texts of the first 12 h, latency p90 / p99 | relays' busy estimate, hours 1–3 | pieces lost by relays that lacked them |
-|---|---|---|---|---|---|
-| 1.41 s, the bucket | 9.8 % | 2.3 / 2.8 / 5.8 h | 40.9 / 1 389 s | 4.3 % | 35.9 % |
-| 2.77 s | 5 % | 4.0 / 5.3 / 10.3 h | 21.7 / 1 377 s | 2.8 % | 23.8 % |
-| **4.16 s, chosen** | **3.3 %** | **5.3 / 6.3 / 11.5 h** | **21.3 / 1 290 s** | **2.0 %** | **20.5 %** |
-| 6.93 s | 2 % | 7.5 / 8.5 / 14.2 h | 20.2 / 1 267 s | 1.2 % | 18.7 % |
-| 13.86 s, the pace | 1 % | 15.5 / 16.3 / 23.5 h | 19.6 / 1 268 s | 0.8 % | 17.1 % |
-
-Without the update the texts of the first 12 hours wait 17.8 s at the
-90th percentile and 1 053 s at the 99th. From 2.77 s to 6.93 s that
-90th percentile hardly moves, so the gap buys margin on the channels
-rather than latency: at 4.16 s the relays' channels read 2.0 % busy in
-the update's first hours, clear of the 3 to 4 % where the network
-collapses, against 2.8 % at 2.77 s, for the relays reaching 90 % an hour
-later.
-
-*Why 1 % of a channel.* In the simulator a relay's channel is busy 1.0
-to 1.4 % of the time at the design rate of
-[capacity and sizing](#capacity-and-sizing), 2.0 to 2.8 % at twice it,
-and the network collapses at three times
-(`collapse-research-2026-10-16.md`,
-`bandwidth-research-2026-10-16.md`). A channel's pieces at 1 % add
-less than the design rate itself.
-
-*Why nine.* A node at its cap sends 9.83 full frames in one pace, its
-bucket's fill over 13.86 s ([duty cycle cap](#duty-cycle-cap)). With
-nine frames of the send queue let past, the piece is the tenth: under
-full load the update takes a tenth of the node's airtime, a full frame
-about every 14 s, the same as the pace when the node is idle. A busy
-node's updates go as fast as an idle one's, and its texts lose a tenth
-of their airtime while it serves.
-
-*Why two channels.* A node that sends on another channel is deaf on its
-own for the frame, as for a heartbeat, and a hand-over to it fails.
-Two channels at 1 % each cost it about 2 % of its hand-overs.
+do not send together. Each pace ends a random time within two frames,
+277 ms, after the piece.
 
 **What it costs.** While no update runs, a relay's section rides one
-rotation of its heartbeats an hour, 7.68 ms more on each of 13: over a
-domain's 270 relays ([capacity and sizing](#capacity-and-sizing)),
-270 × 13 × 7.68 ms an hour over 13 channels, 0.06 % of each channel's
-time. While one runs, a relay's count of blocks grows at most once in
-64 paces, 14.8 minutes, the fewest pieces of a block at the pace: at
-most 4.1 rotations an hour more, 5.1 in all, 0.29 % of each channel's
-time, and each gatherer's section once a rotation on its helper's
-channel 0.12 % more ([what a node tells](#updates-over-the-mesh)), so
-the heartbeats take at most 3.4 % against 3.0 % without. Were the
-section in every heartbeat while an update runs, they would take
-270 × 22.08 ms / (10 s × 13) = 4.6 %. A boot, and an answer to a
-neighbour that lags, each add a rotation of sections, 99.8 ms. A busy channel that gathers adds
-a piece a pace, 1 % of its time, however many help; an idle one a piece
-a gap, 3.3 %. Today's image takes a sweep of 2 428 pieces from a helper
-that holds it to a neighbour that holds none, at the margin of rule 4:
-2.8 hours a gap apart on an idle channel, 9.3 hours at the pace.
+rotation of its heartbeats an hour: over a domain's 270 relays
+([capacity and sizing](#capacity-and-sizing)), 0.06 % of each channel's
+time. While one runs, a relay's count of blocks grows at most once in 64
+paces, 14.8 minutes, so its sections take at most 0.29 % of each
+channel's time, and each gatherer's section to its helper 0.12 % more:
+the heartbeats take at most 3.4 % against 3.0 % without. A boot, and an
+answer to a neighbour that lags, each add a rotation of sections,
+99.8 ms. A busy channel that gathers adds a piece a pace, 1 % of its
+time, however many help; an idle one a piece a gap, 3.3 %. Today's image
+takes a sweep of 2 428 pieces to a neighbour that holds none: 2.8 hours a
+gap apart, 9.3 hours at the pace.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
-alone, and serves nothing. Its beats carry its section, and it takes
-the pieces it hears in its windows ([delivery](#delivery)) and after
-its anchor's slot heartbeats. The anchor sends one piece right after
-each of its slot heartbeats on its home channel, where its sleepy nodes
-listen for that heartbeat ([relay choice](#relay-choice)), while a
-sleepy node there lacks a block it holds: the next piece of its stream
-on that channel. That piece keeps no pace: it is fixed by the rotation,
-one frame of 138.6 ms in a rotation of 130 s
-([heartbeat](#heartbeat)), 0.1 % of the channel for each anchor, so it
-neither waits for the home channel's shared pace nor counts toward it.
-A node that hears a piece end within 143.6 ms of a heartbeat it heard
-takes it for that sender's slot piece and does not count it. The piece
-still pays from the bucket and listens before it talks, and if the
-channel is busy it waits for the next slot. A stream only sleepy nodes
-need goes only then. Every sleepy node of the anchor
-takes the same piece, so all of them gather at once. The node listens
-after its anchor's slot heartbeat for that piece while it gathers and
-the anchor's section says it holds a block the node lacks: 143.6 ms,
-the anchor's check of the channel, about 3 ms, the transmission's
-start, under 1 ms ([heartbeat](#heartbeat)), and a full frame, with a
-margin to 5 ms. It hears the anchor's section in the slot heartbeat it
-wakes for anyway. A sleepy node without an anchor takes no part.
-
-*What it costs a sleepy node.* One piece a rotation of its anchor, 13
-of its heartbeats, 130 s at the mean interval
-([heartbeat](#heartbeat)): today's image takes 2 428 rotations at
-the margin of rule 4, 88 hours, 3.7 days, and as many
-listens of 143.6 ms, 349 s, at the 5.8 mA of listening
-([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
-0.56 mAh, 0.07 % of the 850 mAh battery
-([hardware](#hardware)). Its beats carry the section while it gathers,
-7.68 ms more on each of its 16 beats an hour, 123 ms an hour on the
-230 ms of its beats ([beats](#beats)): 11 s over the 88 hours, 0.1 mAh
-at the 32 mA of transmitting
-([sleepy nodes alone](#sleepy-nodes-alone)).
-The pieces it hears in its windows shorten its time. The nodes of an
-anchor gather together, so a district's sleepy nodes take days, not
-days for each.
-
-*Why the slot piece keeps no pace.* Shared, the pace let an anchor send
-after few of its slot heartbeats wherever several streamed on its
-channel: in the district at the design rate, over an update's first
-24 hours, the shared pace held 39 % of the pieces due after slot
-heartbeats, and listen-before-talk, the bucket and the anchor's own
-pace together under 1 % (`mesh-update-2026-11-07.md`). Its own load is bounded by the
-rotation, and a sleepy node can take a piece at no other time.
-
-*Why after the slot heartbeat.* Every sleepy node of the anchor listens
-for it in the same moment, so one frame reaches all of them; in a
-node's own windows a frame reaches one node, and each window would be
-paid by the channel's pace.
+alone, and serves nothing. Its beats carry its section, and it takes the
+pieces it hears in its windows ([delivery](#delivery)) and after its
+anchor's slot heartbeats. The anchor sends one piece right after each of
+its slot heartbeats on its home channel, where its sleepy nodes listen
+for that heartbeat ([relay choice](#relay-choice)), while a sleepy node
+there lacks a block it holds: the next piece of its stream on that
+channel, which all its sleepy nodes take at once. That piece keeps no
+pace: it is fixed by the rotation, one frame of 138.6 ms in a rotation of
+130 s, 0.1 % of the channel for each anchor, so it neither waits for the
+home channel's shared pace nor counts toward it. A node that hears a
+piece end within 143.6 ms of a heartbeat it heard takes it for that
+sender's slot piece and does not count it. The piece still pays from the
+bucket and listens before it talks, and if the channel is busy it waits
+for the next slot. A stream only sleepy nodes need goes only then. The
+node listens after its anchor's slot heartbeat for that piece while it
+gathers and the anchor's section says it holds a block the node lacks:
+143.6 ms, the anchor's check of the channel, about 3 ms, the
+transmission's start, under 1 ms ([heartbeat](#heartbeat)), and a full
+frame, with a margin to 5 ms. A sleepy node without an anchor takes no
+part. Today's image takes a sleepy node 2 428 rotations, about 3.7 days,
+for 0.56 mAh of listening and 0.1 mAh of sections.
 
 **The install.** A node that holds a gathered image whole checks it and
 stages it as the phone's update does
-([updates from the phone](#updates-from-the-phone)), noting that it came over the mesh, and reboots into it once
-that loses nothing. From then on it drains: it takes no message
-([send queue](#send-queue)), so that its send queue empties to its
-neighbours, its delivery queue to its sleepy nodes at their beats, and
-its inbox to its application. It does so while it has the power a swap
-needs ([implementation notes](#implementation-notes)) and no phone's
-update holds the staged slot; otherwise it takes messages again, since
-no swap can come. While it drains its heartbeats carry the leaving
-flag ([packet formats](#packet-formats)), and it tells its phones the version in
-Status's `installing` ([the service](#the-service)), and clears it
-when it takes messages again. It reboots at the first moment that it
-holds none of them, its mailbox has no write under way, and no exchange
-with a phone is half done: a write the node has not yet answered, a
-notification it has not yet sent, such as that of `installing`, or a
-pairing. Once it holds none, or its drain has reached the bound below,
-it waits for its mailbox at most 72 ms, the six writes the mailbox
-queues at the external flash's longest, a 12 ms erase (ZD25WQ16B
-datasheet, tSE), and for a phone at most 30 s, after which the phone
-has given up a write or a pairing (Bluetooth Core Vol 3 Part F §3.3.3,
-Part H §3.4). A reset then cuts at most a mark of the ring, as every
-message the node held is written or kept across the reboot, so an item
-may be sent or shown once more; and a phone that writes without pause
-cannot hold the reboot back for good.
+([updates from the phone](#updates-from-the-phone)), noting that it came
+over the mesh, and reboots into it once that loses nothing. From then on
+it drains: it takes no message ([send queue](#send-queue)), so that its
+send queue empties to its neighbours, its delivery queue to its sleepy
+nodes at their beats, and its inbox to its application. It does so while
+it has the power a swap needs ([implementation notes](#implementation-notes))
+and no phone's update holds the staged slot; otherwise it takes messages
+again, since no swap can come. While it drains its heartbeats carry the
+leaving flag ([packet formats](#packet-formats)), and it tells its phones
+the version in Status's `installing` ([the service](#the-service)), and
+clears it when it takes messages again.
 
-The drain lasts at most the delivery TTL, 600 s
-([nodes](#nodes)), counted from the second it began, and the waits above
-at most 30 s more. By then every
-message in the delivery queue has waited for its node as long as the
-queue gives a node that sleeps or is dark
-([delivery queue](#delivery-queue)), and a message to send on has had
-twenty hops' budgets of 30 s ([send queue](#send-queue)). What the node
-still holds then it writes to its flash, logging each message's ID, and
-after the reboot puts each back where it was, so that it carries on as
-if it had not been away: a message to send on goes back into its send
-queue with its count and the parent it came from
-([return to parent](#return-to-parent)), and one in its delivery queue
-or its inbox back there with its age and the time away (roadmap D201).
-Only its application's own message, not yet taken by a first hop, is
-offered again as the application's, ahead of its phone's and its
-mailbox's. A message's ID is a hash of its destination and its payload
-alone ([packet formats](#packet-formats)), so it is the same message,
-and a node that has it already answers it as any copy. It keeps its
-neighbour table across the swap too, and its records of the messages
-active within the delivery TTL but that of its application's own
-message, every time in them aged by the swap's length: an entry that
-expired meanwhile is gone, and a heartbeat due meanwhile passes unheard
-as one the radio was away for ([heartbeat](#heartbeat)). Just back, it
-would otherwise know no neighbour to send what it carries to, and a
-message returned to it would find no record of where it came from
-(roadmap D180).
+It reboots at the first moment that it holds none of them, its mailbox
+has no write under way, and no exchange with a phone is half done: a
+write the node has not yet answered, a notification it has not yet sent,
+such as that of `installing`, or a pairing. A standing link does not hold
+it back: the node ends it before it resets. Once it holds none, or its
+drain has reached the bound below, it waits for its mailbox at most
+72 ms, the six writes the mailbox queues at the external flash's longest,
+a 12 ms erase (ZD25WQ16B datasheet, tSE), and for a phone at most 30 s,
+after which the phone has given up a write or a pairing (Bluetooth Core
+Vol 3 Part F §3.3.3, Part H §3.4). A reset then cuts at most a mark of
+the ring, so an item may be sent or shown once more.
 
-*Why a bound.* Taking nothing, the node's queues only shrink, but a
-message for a sleepy node that stays dark waits in the delivery queue
-until its node beats, and one whose every way on stays banned waits for
-the ban, so a drain without an end could keep the node from its update
-for good. The TTL is how long the protocol waits for a node before its
-message is stale; what is left then is carried across the reboot, not
-dropped.
-
-*Why a standing link does not hold it back.* The node ends the link
-before it resets, and the phone connects again once the node is back,
-as after an update from the phone; held back by it, a home node whose
-owner is at home would never install.
+The drain lasts at most the delivery TTL, 600 s, counted from the second
+it began, and the waits above at most 30 s more: by then every message in
+the delivery queue has waited as long as the queue gives a dark node, and
+a message to send on has had twenty hops' budgets. What the node still
+holds then it writes to its flash, logging each message's ID, and after
+the reboot puts each back where it was: a message to send on goes back
+into its send queue with its count and the parent it came from
+([return to parent](#return-to-parent)), and one in its delivery queue or
+its inbox back there with its age and the time away (roadmap D201). Only
+its application's own message, not yet taken by a first hop, is offered
+again as the application's, ahead of its phone's and its mailbox's. A
+message's ID is a hash of its destination and its payload alone
+([packet formats](#packet-formats)), so it is the same message, and a
+node that has it already answers it as any copy. It keeps its neighbour
+table across the swap too, and its records of the messages active within
+the delivery TTL but that of its application's own message, every time in
+them aged by the swap's length: an entry that expired meanwhile is gone,
+and a heartbeat due meanwhile passes unheard as one the radio was away
+for ([heartbeat](#heartbeat); roadmap D180).
 
 At the reboot its loader swaps the image in and starts a watchdog of
-600 s, which the
-image feeds only once it has confirmed itself; a reset before then swaps
-the previous image back (roadmap D79). An image a person staged, from
-the phone or over USB, confirms itself once its core is set up and its
-radio is up. An image gathered over the mesh confirms itself only once
-the node has heard another node: a frame from any node that decodes, a
-heartbeat, a DATA, an ACK, a piece or a status. If it hears none within
-three worst-case rotations of heartbeats and a heartbeat's lateness of
-its start, 3 × 195 s + 872.8 ms = 585.9 s ([heartbeat](#heartbeat)),
-it resets itself, and the loader swaps the previous image back. The
-image back gives the failed one up: it keeps the failed image's version
-in a page of flash that no copy over USB erases, and never gathers an
-image of that version again, so never serves it. A release after it has
-a higher version and is taken as usual. The page holds 1 024 versions,
-and when full is erased and starts again with the newest.
+600 s, which the image feeds only once it has confirmed itself; a reset
+before then swaps the previous image back (roadmap D79). An image a
+person staged, from the phone or over USB, confirms itself once its core
+is set up and its radio is up: it may be the only node in reach. An image
+gathered over the mesh confirms itself only once the node has heard
+another node, which proves its radio and frame format: a frame from any
+node that decodes, a heartbeat, a DATA, an ACK, a piece or a status. If
+it hears none within three worst-case rotations of heartbeats and a
+heartbeat's lateness of its start, 3 × 195 s + 872.8 ms = 585.9 s
+([heartbeat](#heartbeat)), it resets itself, and the loader swaps the
+previous image back; with one heartbeat in ten lost, three rotations miss
+a lone neighbour one time in a thousand. The image back gives the failed
+one up: it keeps the failed image's version in a page of flash that no
+copy over USB erases, and never gathers an image of that version again,
+so never serves it. A release after it has a higher version and is taken
+as usual. The page holds 1 024 versions, and when full is erased and
+starts again with the newest.
 
-*Why hear a node.* A node that gathered an image over the mesh had a
-neighbour to take it from. An image that runs but cannot hear or be
-heard, from a wrong radio setting, a broken frame format or a timing
-fault, would otherwise keep itself, and the node would stay deaf beyond
-the reach of the next image. One frame that decodes proves the image's
-radio and frame format against another node's. It proves the receiving
-side only: an image that hears but is not heard keeps itself. *Why any
-node.* Who sent the frame does not matter for that proof, and a node
-heard before the update may have moved or gone dark since. *Why not
-after the phone's update.* A node updated from the phone may be the
-only node in reach, and would swap every image back for want of
-company; the person holding the phone is told instead
-([updates from the phone](#updates-from-the-phone)). *Why three rotations.* Each
-neighbour's heartbeat reaches the node's home channel once a rotation,
-and a listening receiver loses about one in ten
-([channel at boot](#channel-at-boot)): two rotations miss a lone
-neighbour one time in a hundred, and a third, the margin, one time in
-a thousand, since a revert gives the image up for good. The time fits
-the loader's 600 s, which still ends the trial of an image that hangs
-or never checks its time. *Why give it up.* Its neighbours go on
-telling it; taken again, it would be gathered for hours and swapped
-back again, without end.
-
-**What a node keeps.** The image it holds; the one it gathers, the
-first block it lacks, the blocks that passed, a bit each, and the
-pieces handed to its firmware of every block, a bit each, 48 × 32
-bytes; per channel, the block its sweep is at, the pieces of it sent
-and the pieces to send; each block's next piece; the last two channels
-it sent pieces on and when; the times of the last 8 pieces it heard
-from others on its home channel; what its section last told, the
-channels its rotation of sections has still to reach, when that
-rotation began and when the hour's is due, whether it owes a lagging
-neighbour an answer, and its helper's ID: 1 880 bytes beside the
-tables, and 16 bytes in each neighbour's entry for its section and
-when it was heard (`core-interface.md`, Memory).
+**What a node keeps.** The image it holds; the one it gathers, the first
+block it lacks, the blocks that passed, a bit each, and the pieces handed
+to its firmware of every block, a bit each, 48 × 32 bytes; per channel,
+the block its sweep is at, the pieces of it sent and the pieces to send;
+each block's next piece; the last two channels it sent pieces on and
+when; the times of the last 8 pieces it heard from others on its home
+channel; what its section last told, the channels its rotation of
+sections has still to reach, when that rotation began and when the hour's
+is due, whether it owes a lagging neighbour an answer, and its helper's
+ID: 1 880 bytes beside the tables, and 16 bytes in each neighbour's entry
+for its section and when it was heard (`core-interface.md`, Memory).
 
 ## What the protocol omits
 
@@ -3495,20 +3134,19 @@ Common mesh and radio mechanisms left out, and why.
 
 | Omitted | Instead | Why |
 |---|---|---|
-| Neighbour lists in heartbeats and a network-wide node table | a 13-byte heartbeat; routing uses only direct neighbours | spreading tables through the network does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
-| Addressing by ID with a lookup, or registration with a home relay | position + node ID; the owner resolves the ID locally ([owner](#owner)) | registration traffic grows with users; position addressing needs none |
-| Time slots on a shared schedule | always listen, transmit as soon as listen-before-talk clears | no time sync exists, and slots add latency |
+| Neighbour lists in heartbeats and a network-wide node table | a 13-byte heartbeat; routing uses only direct neighbours | spreading tables does not scale to thousands of relays at LoRa rates; addresses are positions, so there is nothing to look up |
+| Addressing by ID with a lookup, or registration with a home relay | position + node ID; the owner resolves the ID locally ([owner](#owner)) | registration traffic grows with users |
+| Time slots on a shared schedule | always listen, transmit once listen-before-talk clears | no time sync exists, and slots add latency |
 | Cooperative position estimation | GPS or a map point ([position](#position)) | every node knows its own position |
-| A fixed channel grid, heartbeats on all channels | a measured home channel and a rotating heartbeat ([home channel selection](#home-channel-selection)) | 39% of every channel at indoor density, 270 relays × 14.4 ms every 10 s; where a rooftop relay hears ~3 km and a relay covers ~700 m, a grid only spreads load evenly, which measurement does as well while adapting to hot spots and foreign interference |
-| GFSK at 50 kbps | LoRa at SF5 ([physical layer](#physical-layer)) | 3× more per channel than SF5 at 40% of the range, and needs a modem driver and error correction written from scratch; revisit only if relays saturate at SF5, since nothing above the modem would change |
+| A fixed channel grid, heartbeats on all channels | a measured home channel and a rotating heartbeat ([home channel selection](#home-channel-selection)) | 39% of every channel at indoor density ([capacity and sizing](#capacity-and-sizing)); measurement spreads load as well and adapts to hot spots and interference |
+| GFSK at 50 kbps | LoRa at SF5 ([physical layer](#physical-layer)) | 3× more per channel than SF5 at 40% of the range, with a modem driver and error correction to write; revisit only if relays saturate at SF5 |
 | Spreading one signal over the whole band (DSSS/CDMA) | 13 separate channels | the SX1262 cannot, and in random meshes without power control separate channels carry 5–10× more (Weber et al., [sources](#sources)) |
-| Frequency hopping | measured home channels | hopping on a common schedule has the capacity of one channel; per-receiver schedules are fixed channels plus time sync; random channels per packet need ≥20 ms preambles on every packet; no regulatory benefit at 433 MHz |
-| Sleepy nodes heartbeating as relays do, every 10 s | a beat every 150–300 s ([beats](#beats)) | collisions happen at the shared relay whatever the sleepy node's range: 58% of a channel at 400 sleepy nodes per relay, 400 × 14.4 ms every 10 s |
+| Frequency hopping | measured home channels | a common schedule has the capacity of one channel; per-receiver schedules need time sync; random channels per packet need ≥20 ms preambles; no regulatory benefit at 433 MHz |
+| Sleepy nodes heartbeating as relays do, every 10 s | a beat every 150–300 s ([beats](#beats)) | 400 sleepy nodes per relay × 14.4 ms every 10 s is 58% of a channel |
 
 **No authentication.** The network is open, and nothing on the air is
-authenticated. Any node in radio range, by a bug or on purpose, can
-forge any frame and disrupt its district, within its duty cycle and
-unnoticed:
+authenticated. Any node in radio range, by a bug or on purpose, can forge
+any frame and disrupt its district, within its duty cycle and unnoticed:
 
 - refuse in a relay's name and ban it for up to 89 min ([bans](#bans));
 - take a message in a relay's name, and the message is lost;
@@ -3516,31 +3154,24 @@ unnoticed:
   elsewhere ([relay choice](#relay-choice));
 - claim the position of a destination and own it ([owner](#owner)).
 
-The design resists collisions and overload, not adversaries. Anyone in
-radio range learns every node's ID and position from its heartbeats;
-nobody farther away does. The app's end-to-end encryption keeps payloads
-private and authentic ([the payload](#the-payload)); it does nothing for
-routing, and a listener near a home node can tie it, by timing, to the
-address its mail goes on to ([mailbox](#mailbox)).
+The design resists collisions and overload, not adversaries: a real node
+with a few judicious bugs breaks large parts of the network whether or
+not frames are signed, signing would need hardware that keeps its key
+from its holder, and any radio network can be jammed. The app's
+end-to-end encryption keeps payloads private and authentic
+([the payload](#the-payload)); it does nothing for routing, and a
+listener near a home node can tie it, by timing, to the address its mail
+goes on to ([mailbox](#mailbox)).
 
-*Why no authentication.* A real node of the network with a few
-judicious bugs, by accident or intent, breaks large parts of it whether
-or not frames are signed, since it is a legitimate participant. Signing
-every frame would also need the hardware locked so that its holder
-cannot extract the key, which an open device anyone can buy and build
-cannot be. And no radio network withstands a serious adversary, who can
-jam it in any case.
-
-*Why no location privacy.* A node tells its position every rotation on
-a channel anyone can hear. A node that took a new ID would be linked to
-the old one by anyone who heard the old one fall silent and the new one
-appear in the same place.
+**No location privacy.** Anyone in radio range learns every node's ID
+and position from its heartbeats; nobody farther away does. A node that
+took a new ID would be linked to the old one by place and timing.
 
 ## Packet formats
 
 Every packet begins with two bytes that say what it is: its kind with
-that kind's one small field, then the format version. A heartbeat's
-third byte holds its flags. Each field has one place.
+that kind's one small field, then the format version. A heartbeat's third
+byte holds its flags. Each field has one place.
 
 | first byte | packet | the low bits |
 |---|---|---|
@@ -3548,8 +3179,11 @@ third byte holds its flags. Each field has one place.
 | `00aa aaaa` | DATA | `aux`: 0 to 12, a message, and the sender's home channel; 13 to 63, a frame from node to node of kind `aux` |
 | `s1aa aaaa` | ACK | `aux`, 0 if the offer is taken or seen, else the code of the wait the refuser asks for, 1 to 63 ([bans](#bans)); `s` the seen flag ([the ACK](#the-ack)), with `aux` 0 |
 
-The second byte is the **format version**. This specification is
-format 1.
+The wait sits in the first byte so that every answer is one packet of one
+airtime, 17.0 ms; a byte of its own would take a block of symbols more
+(roadmap D76).
+
+The second byte is the **format version**. This specification is format 1.
 
 | packet | the second byte |
 |---|---|
@@ -3563,16 +3197,12 @@ whatever its second byte says, ignores what follows, and keeps the
 sender's newest format in its neighbour table
 ([neighbour table](#neighbour-table)). A heartbeat shorter than 13 bytes
 is rejected. Which format a DATA and its ACK take is in
-[hand-over](#hand-over).
-
-*Why read only the first 13 bytes.* A later format can then add to what
-a heartbeat says, and an old node still sees the neighbour. 13 bytes
-fill 6 blocks of symbols exactly at SF5, so the first byte appended
+[hand-over](#hand-over). From the first node planted, any change to what
+a field of DATA or the ACK means, not only to where it is, takes a new
+format. At SF5 13 bytes fill 6 blocks of symbols, as do 11, and 18 bytes
+fill 8, as do 17, so the format byte and the flags byte cost the
+heartbeat and the ACK no airtime; the first byte appended to a heartbeat
 costs a block, 1.28 ms.
-
-From the first node planted, any change to what a field of DATA or the
-ACK means, not only to where it is, takes a new format: an old node
-would read the new meaning as the old.
 
 A heartbeat's third byte is its **flags**. Each says one thing about the
 sender and is set on its own:
@@ -3583,32 +3213,14 @@ sender and is set on its own:
 | 1 | anchorless | "I know no node that holds mail, one that is neither sleepy nor carried. If you are one, tell me." A sleepy node without an anchor sets it ([sleepy nodes alone](#sleepy-nodes-alone)), and a relay on the heartbeats of its burst, while its table is new; those are in no slot ([heartbeat](#heartbeat)) |
 | 2 | carried | "I move. I hold mail for nobody, and take each GPS fix unless I sleep with an anchor." ([nodes](#nodes)) |
 | 3 | map point | "My position is a map point a person set in the app, not a GPS fix." ([position](#position)) |
-| 4 | leaving | "I am about to leave the air; do not rely on me." A node sets it while it drains before a reboot into a new image ([updates over the mesh](#updates-over-the-mesh)) and while it flushes what it holds to turn sleepy ([sleepy nodes](#sleepy-nodes)) |
+| 4 | leaving | "I am about to leave the air; do not rely on me." A node sets it while it drains before a reboot into a new image ([updates over the mesh](#updates-over-the-mesh)) and while it flushes what it holds to turn sleepy ([sleepy nodes](#sleepy-nodes)); told, a sender goes round it while another way is left (roadmap D181) |
 | 5–7 | | zero; a later format may define them |
 
-A receiver ignores the flag bits it does not know.
-
-*Why a flags byte.* A later format can then add to what a heartbeat
-says without a new heartbeat layout, which every node, old or new, must
-read. It costs no airtime: 13 bytes fill the same 6 blocks of symbols
-at SF5 as 11.
-
-*Why leaving is told.* A node that drains refuses every message and
-then falls silent, so a sender that waits for it meets silence at the
-end and its search runs out; told, the sender goes round it while
-another way is left (roadmap D181). The bit changes nothing on air, the
-13 bytes filling the same 6 blocks.
-
-A node sets the map point while its position is the map point, keeps it
-across a reboot, and clears it when the app clears it ([position](#position)). Its
-neighbours keep it ([neighbour table](#neighbour-table)); no rule uses
-it yet.
-
-*Why a map point is told.* Every node is assumed honest, since the
-design breaks otherwise ([what the protocol omits](#what-the-protocol-omits)),
-so a map point is a position a person vouched for, where a fixed relay's
-first GPS fix could have been spoofed. Which checks may lean on that is
-for later; until then the bit is carried, kept and shown.
+A receiver ignores the flag bits it does not know. A node sets the map
+point while its position is the map point, keeps it across a reboot, and
+clears it when the app clears it ([position](#position)). Its neighbours
+keep it ([neighbour table](#neighbour-table)); no rule uses it yet, though
+it marks a position a person vouched for.
 
 **Frames from node to node.** A DATA whose `aux` is 13 to 63 is not a
 message: it is one hop, never routed, unencrypted and unanswered unless
@@ -3622,26 +3234,24 @@ its kind says otherwise, and `aux` names its kind:
 | 13, 14 and 18 to 63 | reserved for later kinds |
 
 Such a frame keeps the first two bytes and lays out the rest for its
-kind: none has a hop, a destination or a count, and the piece needs
-every byte. It has lost the sender's home channel that `aux` carries in
-a message, so a kind that expects an answer finds it in the neighbour
-table, from the sender's heartbeats ([neighbour table](#neighbour-table)),
-as a status asked does, or carries it in a byte of its own.
+kind: none has a hop, a destination or a count. It has lost the sender's
+home channel that `aux` carries in a message, so a kind that expects an
+answer finds it in the neighbour table, from the sender's heartbeats, as
+a status asked does, or carries it in a byte of its own.
 
 **The heartbeat's section.** In format 1 a heartbeat is 13 bytes, or 26
 with an update's section after the first 13
 ([updates over the mesh](#updates-over-the-mesh)); a node that does not
 know the section reads the first 13 as it reads any heartbeat. A later
-format that appends more puts it after the section, and sends the
-section with an image version of 0 when it has nothing to say.
+format that appends more puts it after the section, and sends the section
+with an image version of 0 when it has nothing to say.
 
 A node rejects a heartbeat whose first byte has bit 4 or 5 set or whose
 channel is 13 to 15, an ACK with the seen flag and a wait, a DATA whose
-`aux` is a reserved kind, and a DATA, ACK or frame from node to node in
-a format it does not speak. A
-heartbeat byte with channel 15,
-which no node sends, starts the bench frames of the firmware's
-measurement console (`bark-fw/README.md`).
+`aux` is a reserved kind, and a DATA, ACK or frame from node to node in a
+format it does not speak. A heartbeat byte with channel 15, which no node
+sends, starts the bench frames of the firmware's measurement console
+(`bark-fw/README.md`).
 
 A position is 7 bytes, the heartbeat's short position 4
 ([positions on the wire](#positions-on-the-wire)), and a node ID 6
@@ -3681,12 +3291,6 @@ STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
 Multi-byte numbers in the section and the status, the versions, are
 big-endian.
 
-*Why the wait in the first byte.* Every answer is then one packet, of
-one length and one airtime, 17.0 ms, and the reply reserve counts one
-figure. A byte of its own would make the refusal a second packet, and
-at 19 bytes it would take a block of symbols more than the 18-byte ACK
-(roadmap D76).
-
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
 message; it is the same on every hop because none of these fields
@@ -3704,64 +3308,60 @@ sender's address is inside it, encrypted.
 
 A position is WGS-84 latitude and longitude in fixed point, 25 + 26 bits
 and 5 spare in 7 bytes, ≈0.6 m, the same everywhere on Earth: one
-firmware and one app, with no per-deployment origin.
-
-*Why that size.* A 1 m grid over the Earth's 5.1 × 10¹⁴ m² needs 49
-bits, so 51 bits is within 2 bits of the minimum; decimetres would need
-56. Plain fixed point keeps the distance arithmetic trivial.
+firmware and one app, with no per-deployment origin. A 1 m grid over the
+Earth's 5.1 × 10¹⁴ m² needs 49 bits, so 51 bits is within 2 bits of the
+minimum.
 
 Routing needs distances, not coordinates: each node converts every
 position it handles into metres on a flat plane centred on itself,
-`Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with
-`cos(lat_self)` a per-node constant. The error grows with
-Δlat · tan(lat): at 50° N it is 0.1 % at 5 km and 0.4 % at 20 km, enough
-to reorder only near-ties between candidate hops.
+`Δy = Δlat · R` and `Δx = Δlon · R · cos(lat_self)`, with `cos(lat_self)`
+a per-node constant. The error grows with Δlat · tan(lat): at 50° N it is
+0.1 % at 5 km and 0.4 % at 20 km, enough to reorder only near-ties
+between candidate hops.
 
 **Short position.** The heartbeat carries a node's position in 4 bytes:
 the low 16 bits of its latitude count, then the low 16 bits of its
-longitude count, big-endian. A receiver rebuilds the full position as
-the one candidate within half a period of its own on each axis, a
-sleepy node's anchor's while it has one ([beats](#beats)). DATA
+longitude count, big-endian. A receiver rebuilds the full position as the
+one candidate within half a period of its own on each axis, a sleepy
+node's anchor's while it has one ([beats](#beats)). One count is
+180° / 2²⁵ ≈ 0.6 m, so the low 16 bits repeat every 65 536 counts: 39 km
+of latitude and 39 km × cos(latitude) of longitude (25 km at 50° N), far
+beyond the hearing radius, ≈3 km, at latitudes up to near 80°. DATA
 `dst_pos` stays 7 bytes because in a large city a node may be more than
 half a period from the destination (roadmap D14).
-
-*Why the short position is unambiguous.* One count is 180° / 2²⁵ ≈
-0.6 m, so the low 16 bits repeat every 65 536 counts: 39 km of latitude
-and 39 km × cos(latitude) of longitude (25 km at 50° N), far beyond any
-hearing radius (≈3 km, [physical layer](#physical-layer)). That holds to
-latitudes near 80°, where the east-west period shrinks toward the
-hearing radius.
 
 ## Implementation notes
 
 **Rust stack:** `embassy-nrf` (nRF52840); the SX1262 driven by
 `bark-driver`'s sequencer, its commands encoded by a vendored copy of
-`lora-phy` (roadmap D4, D88); TrouBLE with the Nordic controller for
-BLE (D5); the stock UF2 bootloader for flashing
-(D6), and a loader of our own behind it that swaps in a new image and
-back if it does not confirm itself (D79). The protocol core does no I/O of
-its own and owns its routing and tables (D1, D3; `core-interface.md`).
-Crate layout is D7.
+`lora-phy` (roadmap D4, D88); TrouBLE with the Nordic controller for BLE
+(D5); the stock UF2 bootloader for flashing (D6), and a loader of our own
+behind it that swaps in a new image and back if it does not confirm
+itself (D79). The protocol core does no I/O of its own and owns its
+routing and tables (D1, D3; `core-interface.md`). Crate layout is D7.
 
-**Updates.** A node on battery whose last reading is at or below the
-low level ([sleepy nodes](#sleepy-nodes)) starts no swap to a new image;
-on external power nothing limits it (roadmap D143). A cell that gives
-out in the middle of a swap leaves the node with no image to run until
-it is charged, where without the swap it would run on asleep for days.
-A node stages only an image above its own version and signed by a key
-it was built with, the project's and, on a bench build, the bench key
-(roadmap D144, D154).
+**Updates.** A node on battery whose last reading is at or below the low
+level ([sleepy nodes](#sleepy-nodes)) starts no swap to a new image, as a
+cell that gives out mid-swap leaves it no image to run; on external power
+nothing limits it (roadmap D143). A node stages only an image above its
+own version and signed by a key it was built with, the project's and, on
+a bench build, the bench key (roadmap D144, D154).
 
 **RAM (256 KiB):** every board holds a relay's tables, the heard table
 and the delivery queue included, since every node may turn relay
-(roadmap D71); their sizes, and how they fit beside Embassy, the
-BLE stack and the call stack in the 255 KiB the application has once 1 KiB is kept
-for the bootloader's words and the panic message (`bark-image/src/layout.rs`),
-are in `core-interface.md`, Memory.
+(roadmap D71); their sizes, and how they fit beside Embassy, the BLE
+stack and the call stack in the 255 KiB the application has once 1 KiB
+is kept for the bootloader's words and the panic message
+(`bark-image/src/layout.rs`), are in `core-interface.md`, Memory.
 
 **Stored state.** A node keeps in flash what changes slowly and saves a
 rotation after a reboot, written only when it changes, and comes back
-with it ([channel at boot](#channel-at-boot)):
+with it ([channel at boot](#channel-at-boot)). No timer is kept, since
+the board has no clock that runs while it is off: a carried node is still
+since the boot, and a relay on battery begins its grace again. Nothing of
+a carried node's place, nor a carried sleepy node's anchor, is kept, as
+they change as it goes; nor the noise floor, which the sweep finds again
+within minutes.
 
 | | |
 |---|---|
@@ -3772,41 +3372,23 @@ with it ([channel at boot](#channel-at-boot)):
 | whether it is a relay | a fixed relay that boots on battery relays on ([sleepy nodes](#sleepy-nodes)) |
 | its battery readings' scale | from its last calibration ([sleepy nodes](#sleepy-nodes)) |
 | the drains it learned on battery | a relay's and a sleepy node's, each in steps of 2.2 % of its first, up to 16 times it either way ([sleepy nodes](#sleepy-nodes)); one write a sample at most, 15 h on battery |
-| record | 32 bytes with a checksum, appended to a 4 KiB page of flash, which is erased when its 128 slots are full (`bark-fw/src/store.rs`) |
+| record | 32 bytes with a checksum, appended to a 4 KiB page of flash, which is erased when its 128 slots are full (`bark-fw/src/store.rs`): at the flash's 10 000 erase cycles, 1.28 million writes |
 
-The same page keeps the phone link's state, in entries of one record
-or four of their own: each phone's record ([pairing](#pairing)), the
-last message its phone confirmed and the last fetch it took
-([mailbox](#mailbox)), the public setting
-([public nodes](#public-nodes)) and the UTC offset
-([settings](#settings)). The page's first record names its layout. A
-page of another layout is read as holding nothing and erased at its
-first write, so a node never misreads what an image of another layout
-kept (roadmap D188).
-
-*Why not time.* The board has no clock that runs while it is off, so
-every timer starts afresh: a carried node is still since the boot, and a
-relay on battery begins its grace again.
-
-*Why not a carried node's place, nor a carried sleepy node's anchor and
-home.* They change as it goes, its anchor at each relay it passes, and
-each change would be a write; after a reboot it is somewhere else.
-
-*Why not the noise floor.* The sweep takes a reading a second, and
-their 10th percentile is at the floor within a minute or two
-([busy estimate](#busy-estimate)); kept, it would be written whenever it
-crossed a 1 dB step.
-
-*Why the page lasts.* The nRF52840's flash is rated for 10 000 erase
-cycles, and a page holds 128 records between erases: 1.28 million
-writes, 35 years at a hundred a day.
+The same page keeps the phone link's state, in entries of one record or
+four of their own: each phone's record ([pairing](#pairing)), the last
+message its phone confirmed and the last fetch it took
+([mailbox](#mailbox)), the public setting ([public nodes](#public-nodes))
+and the UTC offset ([settings](#settings)). The page's first record names
+its layout. A page of another layout is read as holding nothing and
+erased at its first write, so a node never misreads what an image of
+another layout kept (roadmap D188).
 
 The bring-up order and the test rig are in `roadmap.md`, Phase 2.
 
 ## Open items
 
-Resolved items keep their numbers and are in `roadmap.md`. The steps
-are those of the bring-up order, `roadmap.md` Phase 2.
+Resolved items keep their numbers and are in `roadmap.md`. The steps are
+those of the bring-up order, `roadmap.md` Phase 2.
 
 | # | Item | Owner/when |
 |---|---|---|
@@ -3815,8 +3397,8 @@ are those of the bring-up order, `roadmap.md` Phase 2.
 | O7 | Sending to an area (address = position + radius, node ID = broadcast) | later |
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
-| O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s ([position](#position)). Bench 2026-11-06, three boards at a window by day: up to 199 m, no two fixes more than 218 m apart, so the carried radius is 250 m (roadmap D136). The night after, 116 598 fixes, one board's fixes lay beyond 250 m for 63 s, 329 m at the farthest at HDOP 6.7, and it turned carried; counted only at HDOP 3 or under, no run beyond 200 m lasted (`docs/gps-bench-2026-11-06.md`, "The night") | step 2 bench, roadmap D70, D136 |
-| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)). Bench 2026-11-06: indoors at a window 8 to 32 dB-Hz a satellite, a fix's mean 12 to 26 (`docs/gps-bench-2026-11-06.md`); open sky and a spoofer not yet | step 2 bench, roadmap D74 |
+| O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s ([position](#position)); the bench so far is in `docs/gps-bench-2026-11-06.md` | step 2 bench, roadmap D70, D136 |
+| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)); indoors measured in `docs/gps-bench-2026-11-06.md`, open sky and a spoofer not yet | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
 
 ## Sources
