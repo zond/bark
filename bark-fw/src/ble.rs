@@ -1095,6 +1095,7 @@ pub async fn run(
         id,
         image,
         room: None,
+        oldest: Some(bark_link::OLDEST),
     };
     LINK.lock(|l| l.borrow_mut().node = Some(node));
     static ADVERTISING: StaticCell<Advertising> = StaticCell::new();
@@ -1820,9 +1821,9 @@ async fn serve(
                 } else if h == link.ask.handle {
                     Some(write_ask(from, &w).await)
                 } else if h == link.recipient.handle {
-                    let r = write_recipient(from, &w);
-                    close = r == Ok(true);
-                    Some(r.map(|_| ()))
+                    let (r, end) = write_recipient(from, &w);
+                    close = end;
+                    Some(r)
                 } else if h == link.guest.handle {
                     Some(write_guest(from, &w))
                 } else if h == link.public.handle {
@@ -2273,17 +2274,35 @@ async fn write_map_point(
 /// the node's phones see who is paired (spec "Phone link", Pairing,
 /// Public). A guest's name is not kept.
 ///
-/// One guest at a time: whether to close the link, a phone's that is not
-/// paired while another guest's link is up, as the other links are the
-/// paired phones' to take.
+/// The answer, and whether to close the link: an app whose link version
+/// and the node's do not serve each other is answered with the ATT error
+/// 0x82 and its link ended (spec "Phone link", Versions); and one guest
+/// at a time, so a phone's that is not paired is closed while another
+/// guest's link is up, as the other links are the paired phones' to take.
 fn write_recipient(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
-) -> Result<bool, AttErrorCode> {
+) -> (Result<(), AttErrorCode>, bool) {
     let r = w.with_data(|offset, data| match offset {
         0 => bark_link::Recipient::decode(data).map_err(malformed),
         _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    });
+    let r = match r {
+        Ok(r) => r,
+        Err(e) => return (Err(e), false),
+    };
+    if !r.compatible() {
+        log::warn!(
+            "ble: the app in slot {} speaks link version {} and serves nodes from version {}; \
+this node speaks {} and serves apps from {}: they do not serve each other, closed",
+            from.slot,
+            r.version,
+            r.oldest,
+            bark_link::VERSION,
+            bark_link::OLDEST
+        );
+        return (Err(AttErrorCode::new(bark_link::att::INCOMPATIBLE)), true);
+    }
     let busy = LINK.lock(|l| {
         let mut l = l.borrow_mut();
         let other = (0..LINKS).any(|i| {
@@ -2298,7 +2317,7 @@ fn write_recipient(
     });
     if busy {
         log::info!("ble: a second guest in slot {}, closed", from.slot);
-        return Ok(true);
+        return (Ok(()), true);
     }
     if let Some(i) = from.record {
         let changed = crate::phones::read(|p| {
@@ -2310,13 +2329,14 @@ fn write_recipient(
         }
     }
     log::info!(
-        "ble: recipient {:02x} slot {} record {:?} name {} bytes",
+        "ble: recipient {:02x} slot {} record {:?} app version {} name {} bytes",
         r.tag,
         from.slot,
         from.record,
+        r.version,
         r.name.as_bytes().len()
     );
-    Ok(false)
+    (Ok(()), false)
 }
 
 /// Guest, written: the number of the last item the guest took, after

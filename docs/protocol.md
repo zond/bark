@@ -3316,7 +3316,7 @@ service and its characteristics:
 | | UUID | properties | value | bytes |
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
-| Node | `28bc0002-…` | read | version(1) id(6) image(4) room(1) | 12 |
+| Node | `28bc0002-…` | read | version(1) id(6) image(4) room(1) oldest(1) | 13 |
 | Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) heard(1) | 15 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
@@ -3332,7 +3332,7 @@ service and its characteristics:
 | Update | `28bc000b-…` | read | state(1) refused(1) held(4) version(4) hash(32) | 42 |
 | | | write | 0 then header(256) to begin; 1 to commit; 2 to reboot | 257, 1 |
 | Image | `28bc000c-…` | write, write without response | offset(4) bytes(1–240) | 5–244 |
-| Recipient | `28bc000d-…` | write | tag(1) name(0–32) | 1–33 |
+| Recipient | `28bc000d-…` | write | tag(1) version(1) oldest(1) name(0–32); an app of version 12 or older: tag(1) | 3–35, 1 |
 | Public | `28bc000e-…` | read | public(1) | 1 |
 | | | write | 0 private, 1 public, 2 unpair | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
@@ -3356,7 +3356,8 @@ second half of its address ([addresses](#addresses)); the version of
 its firmware image; and from link version 13 `room`, how many more
 phones may pair with it: the records free, 0 when it would refuse a
 pairing, and 1 on a node nobody is paired with that has none free
-(Pairing, above).
+(Pairing, above), and `oldest`, the oldest link version whose apps it
+serves, 12 in this specification (Versions, below).
 
 **Status.** How the node stands now, notified at every change but the
 countdown of `boot_left`:
@@ -3640,6 +3641,23 @@ node and asks the person to update it. An app that finds a version
 above its own tells the person the node's firmware is newer (roadmap
 D117).
 
+Each side also says the oldest link version it still serves: the node
+in Node's `oldest`, the app in Recipient's `version` and `oldest`,
+which it writes as it connects; Recipient's tag alone is an app of
+version 12 or older, which serves any node. An app and a node serve
+each other when each side's version is at least the other's oldest. A
+change an older side cannot follow raises `oldest`, and a change to
+what a field means still takes a new UUID. When they do not serve each
+other the node answers Recipient's write with the ATT error 0x82,
+incompatible, and ends the link, and the app reads Node's `oldest`
+before it writes, to tell the person which side to update (roadmap
+D177).
+
+*Why the newer side decides.* The older side cannot know what a later
+version changed, so only the newer one can say whether it still serves
+the older. Each side's oldest is that statement, and the rule takes the
+newer side's.
+
 **Changes to the table.** Besides the service, the node's attribute
 table holds the GAP service, with the node's name and appearance, and
 the GATT service, with Service Changed, indicate only (Vol 3 Part G
@@ -3719,8 +3737,8 @@ On a public node:
   timeout (Vol 3 Part F §3.3.3), longer than a guest's errand; a phone
   that is not paired and writes Recipient while another guest's link is
   up is closed at once, as the other links are the paired phones' to
-  take. A guest writes its tag alone to Recipient: the node keeps
-  nothing of a guest's. Made private again, the node closes the guest's
+  take. A guest's name, if it writes one to Recipient, is not kept:
+  the node keeps nothing of a guest's. Made private again, the node closes the guest's
   link.
 - *A guest's messages* are those in the ring that no record's tag
   claims (Receiving, above): written with every bit of the mark clear,

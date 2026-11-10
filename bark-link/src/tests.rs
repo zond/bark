@@ -19,11 +19,14 @@ fn payload() -> impl Strategy<Value = std::vec::Vec<u8>> {
 
 proptest! {
     #[test]
-    fn node_round_trips(version: u8, id in id(), image: u32, room: u8) {
-        let n = Node { version, id, image, room: Some(room) };
+    fn node_round_trips(version: u8, id in id(), image: u32, room: u8, oldest: u8) {
+        let n = Node { version, id, image, room: Some(room), oldest: Some(oldest) };
         prop_assert_eq!(Node::decode(&n.encode()), Ok(n));
-        // A node of link version 12 has no room.
-        prop_assert_eq!(Node::decode(&n.encode()[..11]), Ok(Node { room: None, ..n }));
+        // A node of link version 12 has neither.
+        prop_assert_eq!(
+            Node::decode(&n.encode()[..11]),
+            Ok(Node { room: None, oldest: None, ..n })
+        );
     }
 
     #[test]
@@ -163,8 +166,9 @@ fn vectors() {
         id: to,
         image: 7,
         room: Some(3),
+        oldest: Some(OLDEST),
     };
-    assert_eq!(node.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    assert_eq!(node.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3, 12]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -362,12 +366,32 @@ fn seconds_round_up_and_saturate() {
     assert_eq!(seconds_left(t, Instant::MAX), u16::MAX);
 }
 
+/// Each side's version at least the other's oldest; the newer side's
+/// declaration decides.
+#[test]
+fn versions_serve_each_other_when_each_meets_the_other_s_oldest() {
+    assert!(compatible(VERSION, OLDEST));
+    assert!(compatible(OLDEST, 0), "an app of version 12");
+    assert!(
+        !compatible(OLDEST - 1, 0),
+        "an app older than the node serves"
+    );
+    assert!(
+        !compatible(VERSION + 1, VERSION + 1),
+        "an app that serves only newer nodes"
+    );
+    assert!(
+        compatible(VERSION + 5, VERSION),
+        "a newer app that still serves this node"
+    );
+}
+
 #[test]
 fn every_value_fits_its_pdu() {
     assert_eq!(value_room(ATT_MTU), 244);
     assert_eq!(value_room(DEFAULT_ATT_MTU), 20);
     assert_eq!(Status::LEN, 15);
-    assert_eq!(Node::LEN, 12);
+    assert_eq!(Node::LEN, 13);
     assert_eq!(home::Home::LEN, 8);
 }
 
@@ -507,24 +531,35 @@ fn a_node_is_public_unless_made_private() {
 
 #[test]
 fn recipient_and_public_are_taken_whole() {
-    // An older app's tag alone, and the tag with the person's name.
+    // An app of version 12's tag alone, and the tag with the versions and
+    // the person's name.
     let alone = Recipient {
         tag: 0xab,
+        version: 12,
+        oldest: 0,
         name: phones::Name::EMPTY,
     };
     assert_eq!(Recipient::decode(&[0xab]), Ok(alone));
+    assert!(alone.compatible());
     let named = Recipient {
         tag: 0xab,
+        version: 13,
+        oldest: 13,
         name: phones::Name::new("Åsa".as_bytes()).unwrap(),
     };
     let mut b = [0; Recipient::MAX_LEN];
     let n = named.encode(&mut b);
-    assert_eq!(&b[..n], &[0xab, 0xc3, 0x85, b's', b'a']);
+    assert_eq!(&b[..n], &[0xab, 13, 13, 0xc3, 0x85, b's', b'a']);
     assert_eq!(Recipient::decode(&b[..n]), Ok(named));
+    assert_eq!(
+        Recipient::decode(&b[..3]).map(|r| r.name),
+        Ok(phones::Name::EMPTY)
+    );
     assert_eq!(Recipient::decode(&[]), Err(Malformed::Length));
-    assert_eq!(Recipient::decode(&[1; 34]), Err(Malformed::Length));
+    assert_eq!(Recipient::decode(&[1, 13]), Err(Malformed::Length));
+    assert_eq!(Recipient::decode(&[1; 36]), Err(Malformed::Length));
     // Not UTF-8: 0xFF never is, so a name never reads as erased flash.
-    assert_eq!(Recipient::decode(&[1, 0xff]), Err(Malformed::Value));
+    assert_eq!(Recipient::decode(&[1, 13, 12, 0xff]), Err(Malformed::Value));
     assert_eq!(Public::decode(&Public(true).encode()), Ok(Public(true)));
     assert_eq!(Public::decode(&[0]), Ok(Public(false)));
     assert_eq!(Public::decode(&[2]), Err(Malformed::Value));
