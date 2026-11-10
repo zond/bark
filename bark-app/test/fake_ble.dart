@@ -445,7 +445,7 @@ extension FakeNodeOf on AppModel {
       mailbox: me.keys.mailbox,
     );
     final name = nodeName(n.nodeId);
-    if (!session.pairedWith.contains(name)) await session.setPaired(name);
+    if (!session.nodes.paired.contains(name)) await session.setPaired(name);
     await connect(FoundNode(fakeDevice, name, -60, public: n.public));
   }
 }

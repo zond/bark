@@ -1201,7 +1201,7 @@ void main() {
     await t.tap(again);
     await t.pumpAndSettle();
     expect(app.session.connected, isTrue);
-    expect(app.session.pairingLost, isEmpty);
+    expect(app.session.nodes.lost, isEmpty);
     expect(again, findsNothing);
 
     // Lost once more, and paired again from the dialog, at the node.
@@ -1213,7 +1213,7 @@ void main() {
     await t.tap(find.widgetWithText(FilledButton, 'Pair again'));
     await t.pumpAndSettle();
     expect(app.session.connected, isTrue);
-    expect(app.session.pairingLost, isEmpty);
+    expect(app.session.nodes.lost, isEmpty);
     expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
     // The node's health in words, not the link's MTU: the fake is in its
     // first rotation.
@@ -1285,7 +1285,7 @@ void main() {
     expect(find.textContaining('It stays your home.'), findsOneWidget);
     await t.tap(find.widgetWithText(FilledButton, 'Forget'));
     await t.pumpAndSettle();
-    expect(app.session.pairedWith, isEmpty);
+    expect(app.session.nodes.paired, isEmpty);
     expect(app.me.home.toString(), home.toString());
     expect(
       find.textContaining('or forget it in Bluetooth settings now'),
@@ -1473,7 +1473,7 @@ void main() {
     expect(app.fakeNode!.paired, isFalse);
     expect(app.fakeNode!.public, isTrue);
     expect(app.session.connected, isFalse);
-    expect(app.session.pairedWith, isEmpty);
+    expect(app.session.nodes.paired, isEmpty);
     expect(app.pairedNodes, isEmpty);
     expect(unpair, findsNothing);
     await t.pumpWidget(const SizedBox());
@@ -1499,7 +1499,7 @@ void main() {
         'use the node. Forget it in Bluetooth settings.';
     await t.pumpWidget(BarkApp(app));
     expect(find.text(line), findsNothing);
-    app.bondsKept['bark-0ce400000004'] = 'aa:bb:cc:dd:ee:04';
+    app.nodes.of('bark-0ce400000004').bondKept = true;
     app.notifyListeners();
     await t.pump();
     expect(find.text(line), findsOneWidget);

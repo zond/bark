@@ -15,6 +15,7 @@ import '../app_layer.dart';
 import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
+import '../nodes.dart';
 import '../releases.dart';
 import 'common.dart';
 import 'debug_screen.dart';
@@ -437,9 +438,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _paired() {
     final s = app.session;
     final home = app.homeName;
+    final paired = app.nodes.paired;
     final names = [
-      if (s.pairedWith.contains(home)) home!,
-      for (final n in s.pairedWith)
+      if (paired.contains(home)) home!,
+      for (final n in paired)
         if (n != home) n,
     ];
     if (names.isEmpty) return [];
@@ -453,7 +455,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       for (final n in names)
-        if (s.pairingLost.contains(n))
+        if (app.nodes[n]!.lost)
           _lostRow(n, home: n == home)
         else
           ListTile(
@@ -514,7 +516,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// it connects to, so one not connected while it looks is out of reach;
   /// while the phone is on another node the search stops and cannot tell.
   String _pairedState(String n, {required bool home, required bool on}) {
-    final lost = app.session.pairingLost.contains(n);
+    final lost = app.nodes[n]?.lost ?? false;
     return capital(
       [
         if (home) 'your home',
@@ -568,8 +570,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Pairs with `n`, a public node, by the code on its screen, once the
   /// person has read what pairing gives; the home is set apart.
   Future<void> _askPair(FoundNode n) async {
-    final g = app.guestHere;
-    if (g != null && g.found.name == n.name && g.room == 0) {
+    if (app.nodes[n.name]?.asGuest?.room == 0) {
       say(context, fullNode);
       return;
     }
@@ -781,7 +782,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _askUnpair() async {
     final s = app.session;
     final name = nodeName(s.node!.id);
-    final others = s.pairedWith.length > 1
+    final others = app.nodes.paired.length > 1
         ? ' It stays paired with your other nodes.'
         : '';
     // With the last phone gone a node is public, whatever its owners set.
@@ -1000,7 +1001,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // A guest can clear no key, and makes the node its home by pairing
     // first; between its errands only the last one's reading is known.
     final owned = s.connected && !s.guest;
-    final guest = app.guestHere;
+    final guest = app.guestHere?.asGuest;
     final here = owned ? s.address : guest?.address;
     final atHome = owned ? app.atHome : app.guestAtHome;
     final homeable = owned ? canBeHome(st) : guest?.homeable ?? false;

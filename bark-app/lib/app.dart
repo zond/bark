@@ -15,6 +15,7 @@ import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
 import 'node_link.dart';
+import 'nodes.dart';
 import 'phone_notifier.dart';
 import 'releases.dart';
 import 'session.dart';
@@ -158,22 +159,6 @@ int installVersion(int image, int low) {
 /// so takes no more pairings (spec "Phone link", Pairing).
 const String fullNode = 'This node is full: eight phones are paired with it.';
 
-/// Whether a node, by its status, can be a home: one that stays on power
-/// at a fixed place, so that its address stays (spec "Mailbox").
-bool canBeHome(Status? s) => s != null && !s.sleepy && !s.carried;
-
-/// A public node as the phone's last errand there read it: how to reach
-/// it, its address once it has a place, and whether it can be a home
-/// ([canBeHome]), and how many more phones may pair with it, `room`, 0 on
-/// a node that would refuse a pairing. Between errands the link is down
-/// and the session knows none of it.
-typedef GuestNode = ({
-  FoundNode found,
-  Address? address,
-  bool homeable,
-  int? room,
-});
-
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
   final Me me;
@@ -292,23 +277,22 @@ class AppModel extends ChangeNotifier {
   /// old bond and connects again, which pairs.
   Future<void> Function()? pairAgain;
 
-  /// The nodes, by name, each with its device, whose bond Android kept
-  /// when the app asked it to remove it, as the node is not the phone's.
-  /// Every link to them would be encrypted with that bond, which the node
-  /// ends, so the app passes them over until the person forgets them in
-  /// the phone's Bluetooth settings ([BondKept]).
-  final Map<String, String> bondsKept = {};
+  /// What the phone knows of each node.
+  NodeStore get nodes => session.nodes;
 
-  /// A node of [bondsKept], for the line that tells the person.
-  String? get bondKept => bondsKept.keys.firstOrNull;
+  /// A node whose bond Android kept ([NodeRecord.bondKept]), for the line
+  /// that tells the person.
+  String? get bondKept =>
+      nodes.records.where((r) => r.bondKept).firstOrNull?.name;
 
-  /// Drops from [bondsKept] each node whose bond Android no longer lists:
-  /// the person has forgotten it in the phone's settings.
+  /// Clears [NodeRecord.bondKept] of each node whose bond Android no
+  /// longer lists: the person has forgotten it in the phone's settings.
   Future<void> recheckKept() async {
-    for (final MapEntry(key: name, value: device) in [...bondsKept.entries]) {
-      if (await BleLink.bonded(device)) continue;
-      bondsKept.remove(name);
-      session.note('Pairing: the phone no longer holds a bond with $name');
+    for (final r in [...nodes.records.where((r) => r.bondKept)]) {
+      final device = r.heard?.deviceId;
+      if (device == null || await BleLink.bonded(device)) continue;
+      r.bondKept = false;
+      session.note('Pairing: the phone no longer holds a bond with ${r.name}');
       notifyListeners();
     }
   }
@@ -317,34 +301,32 @@ class AppModel extends ChangeNotifier {
   /// lists one, as the app makes no link over a bond to a node it does
   /// not count as its own: the node would take the link as its owner's,
   /// or end it (spec "Phone link", Public). True once none is left; where
-  /// Android keeps it, false, and the node joins [bondsKept].
+  /// Android keeps it, false, and the node's record says so
+  /// ([NodeRecord.bondKept]).
   Future<bool> _forgetBond(String name, String device) async {
     if (!await BleLink.bonded(device)) return true;
+    final r = nodes.of(name);
     if (await BleLink.forget(device)) {
-      // Android forgot with the bond what kind of address the node has,
-      // and connects to it only once a scan has told it again ([seen]).
-      _unseen.add(device);
+      r.unseen = true;
       session.note('Pairing: the phone forgot its bond with $name');
       return true;
     }
-    if (!bondsKept.containsKey(name)) {
+    if (!r.bondKept) {
       session.note('Pairing: the phone kept its bond with $name');
     }
-    bondsKept[name] = device;
+    r.bondKept = true;
     notifyListeners();
     return false;
   }
-
-  /// The devices whose bond Android removed since a scan last heard them.
-  final Set<String> _unseen = {};
 
   /// Removes the bond Android holds with each node of `heard` that the app
   /// does not count as its own, as it hears it, so that the node is a
   /// public node like any other.
   Future<void> _forgetBonds(Iterable<FoundNode> heard) async {
     for (final n in heard) {
-      if (n.name == n.deviceId || pairedNodes.contains(n.name)) continue;
-      if (bondsKept.containsKey(n.name)) continue;
+      if (n.name == n.deviceId) continue;
+      final r = nodes.of(n.name);
+      if (r.own || r.bondKept) continue;
       await _forgetBond(n.name, n.deviceId);
     }
   }
@@ -379,25 +361,15 @@ class AppModel extends ChangeNotifier {
     final name = nodeName(n.id);
     // Nothing learned of the node unpaired bears on the next.
     _ownMissed = 0;
-    _guestAt = null;
+    nodes.guest = null;
     return _forgetBond(name, device);
   }
 
-  /// The device of each node heard in this run, by name: Android names a
-  /// bond by the device, which the app learns only by hearing the node.
-  final Map<String, String> _devices = {};
-
-  void _heard(Iterable<FoundNode> nodes) {
-    for (final n in nodes) {
-      if (n.name == n.deviceId) continue;
-      _devices[n.name] = n.deviceId;
-      _lastHeard[n.name] = (found: n, at: now());
-      _unseen.remove(n.deviceId);
+  void _heard(Iterable<FoundNode> heard) {
+    for (final n in heard) {
+      nodes.heard(n, now());
     }
   }
-
-  /// Each node heard in this run, by name, as last heard and when.
-  final Map<String, ({FoundNode found, DateTime at})> _lastHeard = {};
 
   /// The person taps a node they are paired with in Settings: the app
   /// connects to it as its owner, as a tap on it in a scan does. A node
@@ -423,9 +395,10 @@ class AppModel extends ChangeNotifier {
   /// The node `name` as last heard, if heard within the span the search
   /// takes to call a node out of reach ([ownGone] rounds): in reach.
   FoundNode? heardLately(String name) {
-    final last = _lastHeard[name];
-    return last != null && now().difference(last.at) < lookRound * ownGone
-        ? last.found
+    final r = nodes[name];
+    final at = r?.heardAt;
+    return at != null && now().difference(at) < lookRound * ownGone
+        ? r!.heard
         : null;
   }
 
@@ -452,7 +425,7 @@ class AppModel extends ChangeNotifier {
   /// stays, as the node keeps the mailbox key.
   Future<bool?> forget(String name) async {
     await session.forget(name);
-    final device = _devices[name];
+    final device = nodes[name]?.heard?.deviceId;
     if (device == null) return null;
     return _forgetBond(name, device);
   }
@@ -690,9 +663,7 @@ class AppModel extends ChangeNotifier {
   ({bool name, bool node, bool contact}) get gettingStarted => (
     name: me.name.isNotEmpty,
     node:
-        session.connected ||
-        session.pairedWith.isNotEmpty ||
-        me.nodeAddress != null,
+        session.connected || nodes.paired.isNotEmpty || me.nodeAddress != null,
     contact: contacts.list.isNotEmpty,
   );
 
@@ -936,24 +907,24 @@ class AppModel extends ChangeNotifier {
     if (!await _forgetBond(n.name, n.deviceId)) throw BondKept(n.name);
     // A connect of the person's that came meanwhile goes first.
     if (errand && _tapHeld) return;
-    if (_unseen.contains(n.deviceId) && !await seen(n.deviceId)) {
-      throw NotSeen(shownName(n.name));
-    }
-    _unseen.remove(n.deviceId);
+    final r = nodes.of(n.name);
+    if (r.unseen && !await seen(n.deviceId)) throw NotSeen(shownName(n.name));
+    r.unseen = false;
     await _open(n.deviceId, n.name, () async {
       await _searchStopped();
       await stopScan();
       return BleLink.connect(n.deviceId, name: n.name, guest: true);
     }, guest: true);
     if (!session.connected || !session.guest) return;
-    _guestAt = n.name;
-    _guestSeen = (
-      found: n,
+    // Linked, it is in reach now.
+    nodes.heard(n, now());
+    nodes.guest = n.name;
+    r.asGuest = (
       address: session.address,
       homeable: canBeHome(session.status),
       room: session.node?.room,
     );
-    if (session.guestRead) _guestChecked[n.name] = now();
+    if (session.guestRead) r.ringReadAt = now();
     if (!errand) return;
     final link = session.link;
     await _sendQueuedFetch();
@@ -979,16 +950,9 @@ class AppModel extends ChangeNotifier {
     session.removeListener(check);
   }
 
-  /// When each public node was last read through, by name.
-  final Map<String, DateTime> _guestChecked = {};
-
   /// The search's rounds in a row that have reached none of the paired
   /// nodes.
   int _ownMissed = 0;
-
-  /// The public node of the last errand, while no round has found none
-  /// and the phone has not reached a paired node since.
-  String? _guestAt;
 
   /// The paired nodes are out of reach: [ownGone] rounds in a row have
   /// reached none, and the phone uses public nodes as a guest meanwhile.
@@ -1002,26 +966,24 @@ class AppModel extends ChangeNotifier {
   /// the node of the last, while the search runs; or the node of a guest's
   /// link the person made by a tap, while it is up.
   String? get guestNode =>
-      tappedGuest || (searchOn && !_tapped) ? _guestAt : null;
+      tappedGuest || (searchOn && !_tapped) ? nodes.guest : null;
 
   /// The link up is a guest's the person made by a tap, which the node
   /// ends after a guest's 30 s (spec "Phone link", Public).
   bool get tappedGuest => _tapped && session.connected && session.guest;
 
-  /// The last errand's node as it read it.
-  GuestNode? _guestSeen;
-
-  /// [guestNode] as its last errand read it, for making it the home or
-  /// pairing with it between errands.
-  GuestNode? get guestHere {
-    final g = _guestSeen;
-    return g != null && g.found.name == guestNode ? g : null;
+  /// The record of [guestNode], once an errand there has read it, for
+  /// making it the home or pairing with it between errands.
+  NodeRecord? get guestHere {
+    final g = guestNode;
+    final r = g == null ? null : nodes[g];
+    return r?.asGuest != null && r?.heard != null ? r : null;
   }
 
   /// The node the phone uses as a guest is the person's home, as after
   /// they unpaired from their home: the node keeps the mailbox key.
   bool get guestAtHome {
-    final a = guestHere?.address;
+    final a = guestHere?.asGuest?.address;
     return a != null && messenger.isHome(a.id);
   }
 
@@ -1050,17 +1012,15 @@ class AppModel extends ChangeNotifier {
   /// sent, or its ring has not been read for [guestCheck].
   bool _guestDue(FoundNode n) {
     if (session.toSend) return true;
-    final at = _guestChecked[n.name];
+    final at = nodes[n.name]?.ringReadAt;
     return at == null || now().difference(at) >= guestCheck;
   }
 
   Future<void> _connect(FoundNode n, {bool again = false}) async {
-    final s = session;
     await _open(n.deviceId, n.name, () async {
       await _searchStopped();
       await stopScan();
-      final ours =
-          s.pairedWith.contains(n.name) && !s.pairingLost.contains(n.name);
+      final ours = nodes[n.name]?.own ?? false;
       // A node not the phone's is paired with anew, and never over a bond
       // Android holds with it: Android pairs with its old keys while the
       // node runs a new pairing, and the key check fails whatever code is
@@ -1071,9 +1031,10 @@ class AppModel extends ChangeNotifier {
       if (!ours && !await _forgetBond(n.name, n.deviceId)) {
         throw BondKept(n.name);
       }
-      if (_unseen.contains(n.deviceId) || again) {
+      final r = nodes.of(n.name);
+      if (r.unseen || again) {
         if (!await seen(n.deviceId)) throw NotSeen(shownName(n.name));
-        _unseen.remove(n.deviceId);
+        r.unseen = false;
       }
       return BleLink.connect(
         n.deviceId,
@@ -1122,7 +1083,7 @@ class AppModel extends ChangeNotifier {
         if (!session.connected) throw LinkEnded(name);
         if (ownAway) session.note('Back on a paired node');
         _ownMissed = 0;
-        _guestAt = null;
+        nodes.guest = null;
         final on = nodeName(session.node!.id);
         // On another paired node, as the person tapped it, the wait for
         // one that installs is over.
@@ -1177,8 +1138,7 @@ class AppModel extends ChangeNotifier {
 
   /// The nodes this phone is paired with that still hold its bond; one
   /// that no longer does is the person's to decide on, with Pair again.
-  Set<String> get pairedNodes =>
-      session.pairedWith.difference(session.pairingLost);
+  Set<String> get pairedNodes => nodes.own;
 
   /// The home's node, by name, if one is set.
   String? get homeName {
@@ -1357,7 +1317,10 @@ class AppModel extends ChangeNotifier {
                 heard.values.where((h) => !waits || h.name == awaited),
                 home: homeName,
                 paired: pairedNodes,
-                kept: bondsKept.keys.toSet(),
+                kept: {
+                  for (final r in nodes.records)
+                    if (r.bondKept) r.name,
+                },
                 on: session.connected ? _nodeOn : null,
               )
             : null;
@@ -1380,7 +1343,7 @@ class AppModel extends ChangeNotifier {
             );
           }
         }
-        if (looked && n == null) _guestAt = null;
+        if (looked && n == null) nodes.guest = null;
         if (looked) ownWeak = weakOwn && !mine;
         if (n != null &&
             !mine &&
@@ -1482,7 +1445,7 @@ class AppModel extends ChangeNotifier {
   /// app's run once the person said not now.
   bool get offerHome {
     if (_homeNotNow || me.home != null) return false;
-    final g = guestHere;
+    final g = guestHere?.asGuest;
     return g != null && g.address != null && g.homeable && g.room != 0;
   }
 
@@ -1503,8 +1466,8 @@ class AppModel extends ChangeNotifier {
   /// to tell the person.
   Future<String> homeHere() async {
     final g = guestHere;
-    if (g != null && g.room == 0) return fullNode;
-    if (g != null) await connect(g.found);
+    if (g != null && g.asGuest!.room == 0) return fullNode;
+    if (g != null) await connect(g.heard!);
     final s = session;
     final a = s.address;
     if (!s.connected || s.guest || a == null) {

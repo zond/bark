@@ -411,13 +411,13 @@ void main() {
         ble.nodes[paired]!.pairElsewhere();
         ble.drop(paired);
         async.elapse(const Duration(seconds: 1));
-        expect(app.session.pairingLost, contains(nodeName(FakeNode.id)));
+        expect(app.session.nodes.lost, contains(nodeName(FakeNode.id)));
         expect(app.pairAgain, isNotNull);
         expect(app.lookingFor, isNull);
         async.elapse(const Duration(minutes: 5));
         expect(ble.bonds, isEmpty);
         expect(ble.pairings, 0);
-        expect(app.session.pairingLost, contains(nodeName(FakeNode.id)));
+        expect(app.session.nodes.lost, contains(nodeName(FakeNode.id)));
         expect(connectionLine(app), 'Connected to ID FA4E00000001 as a guest');
       });
     });
@@ -430,13 +430,13 @@ void main() {
         ble.drop(paired);
         async.elapse(const Duration(seconds: 1));
         final name = nodeName(FakeNode.id);
-        expect(app.session.pairingLost, contains(name));
+        expect(app.session.nodes.lost, contains(name));
         bool? gone;
         app.forget(name).then((v) => gone = v);
         async.elapse(const Duration(seconds: 1));
         expect(gone, isTrue);
-        expect(app.session.pairedWith, isEmpty);
-        expect(app.session.pairingLost, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
+        expect(app.session.nodes.lost, isEmpty);
         expect(ble.bonds, isEmpty);
       });
     });
@@ -453,7 +453,7 @@ void main() {
         app.forget(name).then((v) => gone = v);
         async.elapse(const Duration(seconds: 1));
         expect(gone, isNull);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         expect(ble.bonds, {paired});
         expect(app.me.home.toString(), home.toString());
         // Heard later, the app removes the bond then.
@@ -461,7 +461,7 @@ void main() {
         ble.inReach.add(paired);
         async.elapse(lookRound + seenWait);
         expect(ble.bonds, isEmpty);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
       });
     });
 
@@ -474,7 +474,7 @@ void main() {
         async.elapse(const Duration(seconds: 1));
         expect(app.session.connected, isTrue);
         expect(app.linkDevice, other);
-        expect(app.session.pairedWith, contains('bark-0ce400000002'));
+        expect(app.session.nodes.paired, contains('bark-0ce400000002'));
         ble.inReach.add(paired);
         async.elapse(const Duration(minutes: 1));
         expect(app.linkDevice, other);
@@ -727,7 +727,7 @@ void main() {
         expect(ble.connects, [strong]);
         expect(s.connected, isFalse);
         expect([for (final r in s.received) r.payload[2]], [1, 2]);
-        expect(s.guestAfter[hex(strongId)], node.ring.last.number);
+        expect(s.nodes[nodeName(strongId)]!.ringAfter, node.ring.last.number);
         // Connect, tag, read, leave; no pairing, and nothing the guest may
         // not touch.
         final log = [for (final l in s.log) l.text];
@@ -735,7 +735,7 @@ void main() {
         expect(at('Recipient: tag') < at('Guest: item'), isTrue);
         expect(at('Guest: item') < at('Disconnected'), isTrue);
         expect(ble.bonds, isEmpty);
-        expect(s.pairedWith, isEmpty);
+        expect(s.nodes.paired, isEmpty);
         expect(log.where((l) => l.contains('0x5')), isEmpty);
         // Nothing to send: not before a minute is up, four rounds.
         async.elapse(const Duration(seconds: 45));
@@ -807,7 +807,7 @@ void main() {
         expect(app.held?.title, using);
         // The card's node is the one in use.
         expect(app.me.nodeAddress!.id, strongId);
-        expect(app.session.pairedWith, contains(nodeName(FakeNode.id)));
+        expect(app.session.nodes.paired, contains(nodeName(FakeNode.id)));
         // Still a round every 15 s, for the paired node: two scans in
         // 30 s, within Android's five.
         final scans = ble.scans;
@@ -1097,7 +1097,7 @@ void main() {
         expect(ble.pairings, 0);
         expect(app.bondKept, isNull);
         expect(app.guestNode, nodeName(strongId));
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
       });
     });
 
@@ -1142,7 +1142,7 @@ void main() {
         expect(ble.bonds, isEmpty);
         expect(ble.pairings, 0);
         expect((app.session.connected, app.session.guest), (false, false));
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         expect(app.guestNode, nodeName(FakeNode.id));
         // Made the home, it is paired by the code on its screen.
         expect(app.offerHome, isTrue);
@@ -1161,7 +1161,7 @@ void main() {
         expect(forgotten, isTrue);
         expect(ble.nodes[paired]!.paired, isFalse);
         expect(ble.bonds, isEmpty);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         expect(app.bondKept, isNull);
         async.elapse(lookRound * 5);
         expect(ble.connects.last, paired);
@@ -1191,7 +1191,7 @@ void main() {
         expect(forgotten, isTrue);
         expect(ble.nodes[paired]!.paired, isFalse);
         expect(ble.bonds, isEmpty);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         async.elapse(lookRound * 3);
         expect(ble.connects.last, paired);
         expect(app.guestNode, nodeName(FakeNode.id));
@@ -1211,7 +1211,7 @@ void main() {
         expect(failed, isA<AttException>());
         expect(ble.nodes[paired]!.paired, isTrue);
         expect(ble.bonds, {paired});
-        expect(app.session.pairedWith, contains(nodeName(FakeNode.id)));
+        expect(app.session.nodes.paired, contains(nodeName(FakeNode.id)));
         expect(app.session.connected, isTrue);
       });
     });
@@ -1251,7 +1251,7 @@ void main() {
         expect(app.guestNode, nodeName(FakeNode.id));
         expect(ble.bonds, isEmpty);
         // Still listed as no longer the phone's, for the person to decide.
-        expect(app.session.pairingLost, {nodeName(FakeNode.id)});
+        expect(app.session.nodes.lost, {nodeName(FakeNode.id)});
       });
     });
 
@@ -1334,7 +1334,7 @@ void main() {
         async.elapse(round);
         expect(ble.connects, [strong]);
         expect(ble.pairings, 0);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         async.elapse(const Duration(minutes: 1));
         expect(ble.connects, [strong, strong]);
         expect(ble.pairings, 0);
@@ -1382,7 +1382,7 @@ void main() {
       run((async, app, ble) {
         async.elapse(round);
         expect(app.session.connected, isFalse);
-        expect(app.guestHere?.found.name, nodeName(strongId));
+        expect(app.guestHere?.name, nodeName(strongId));
         expect(app.offerHome, isTrue);
         String? told;
         app.homeHere().then((r) => told = r);
@@ -1439,7 +1439,7 @@ void main() {
               PhoneRecord(number: n, paired: true),
           ]);
         async.elapse(round);
-        expect(app.guestHere?.room, 0);
+        expect(app.guestHere?.asGuest?.room, 0);
         expect(app.offerHome, isFalse);
         String? told;
         app.homeHere().then((r) => told = r);
@@ -1472,7 +1472,7 @@ void main() {
           'screen says PHONES FULL). Still a guest here.',
         );
         expect(ble.bonds, isEmpty);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         expect(app.me.home, isNull);
         expect(ble.nodes[strong]!.homeKey, isNull);
         final connects = ble.connects.length;
@@ -1490,12 +1490,12 @@ void main() {
         ble.nodes[strong]!.sleepy = true;
         ble.nodes[weak]!.fixed = false;
         async.elapse(round);
-        expect(app.guestHere?.homeable, isFalse);
+        expect(app.guestHere?.asGuest?.homeable, isFalse);
         expect(app.offerHome, isFalse);
         ble.inReach.remove(strong);
         async.elapse(guestCheck + round);
-        expect(app.guestHere?.found.name, nodeName(weakId));
-        expect(app.guestHere?.address, isNull);
+        expect(app.guestHere?.name, nodeName(weakId));
+        expect(app.guestHere?.asGuest?.address, isNull);
         expect(app.offerHome, isFalse);
       });
     });
@@ -1516,7 +1516,7 @@ void main() {
         'making it the home', () {
       run((async, app, ble) {
         async.elapse(round);
-        app.connect(app.guestHere!.found);
+        app.connect(app.guestHere!.heard!);
         async.elapse(round);
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
@@ -1557,7 +1557,7 @@ void main() {
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
         expect(app.pairedNodes, contains(nodeName(strongId)));
-        expect(app.session.pairingLost, isEmpty);
+        expect(app.session.nodes.lost, isEmpty);
         expect(app.bondKept, isNull);
       });
     });
@@ -1603,7 +1603,7 @@ void main() {
         expect(ble.bonds, {strong});
         expect(app.linkDevice, strong);
         expect((app.session.connected, app.session.guest), (true, false));
-        expect(app.session.pairingLost, isEmpty);
+        expect(app.session.nodes.lost, isEmpty);
         // Out of reach for the span the search takes to call it so, the
         // row offers it no more.
         app.session.setPaired(name, lost: true);
@@ -1627,7 +1627,7 @@ void main() {
         async.elapse(round);
         expect(failed, isA<LinkEnded>());
         expect(ble.pairings, 0);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         // Ended right after the first read, once paired: said too, and not
         // taken as the node holding the bond.
         ble
@@ -1640,7 +1640,7 @@ void main() {
         async.elapse(round);
         expect(failed, isA<LinkEnded>());
         expect(app.session.connected, isFalse);
-        expect(app.session.pairedWith, isEmpty);
+        expect(app.session.nodes.paired, isEmpty);
         expect(app.connecting, isFalse);
       });
     });

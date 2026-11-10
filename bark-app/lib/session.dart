@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import 'link.dart';
 import 'node_link.dart';
+import 'nodes.dart';
 import 'store.dart';
 
 enum OutState {
@@ -366,15 +367,10 @@ class Session extends ChangeNotifier {
   final List<Outgoing> outbox = [];
   final List<Received> received = [];
 
-  /// The nodes this phone is paired with, by name, the one last
-  /// connected last. A phone may be paired with many nodes, and Android
-  /// keeps a bond for each.
-  final Set<String> pairedWith = {};
-
-  /// The nodes of [pairedWith] that no longer hold this phone's bond: a
-  /// phone paired with each removed it (spec "Phone link", The removed
-  /// phone).
-  final Set<String> pairingLost = {};
+  /// What the phone knows of each node; kept with the queue, as whether
+  /// the phone is paired with a node and where it stands in a node's
+  /// ring outlive the app's run.
+  final NodeStore nodes = NodeStore();
 
   /// The person closed the link or stopped looking for the paired node:
   /// the app does not look for it until they connect. Kept, so that the
@@ -416,7 +412,7 @@ class Session extends ChangeNotifier {
   }
 
   /// The version of `bark.json`'s format.
-  static const version = 2;
+  static const version = 3;
 
   Future<void> load() async {
     final j = await store.load(
@@ -430,13 +426,11 @@ class Session extends ChangeNotifier {
           for (final e in j['received'] as List)
             Received.fromJson(e as Map<String, dynamic>),
         ],
-        pairedWith: (j['pairedWith'] as List).cast<String>(),
-        pairingLost: (j['pairingLost'] as List).cast<String>(),
+        nodes: [
+          for (final e in j['nodes'] as List)
+            NodeRecord.fromJson(e as Map<String, dynamic>),
+        ],
         stopped: j['stopped'] as bool,
-        guestAfter: {
-          for (final e in (j['guestAfter'] as Map<String, dynamic>).entries)
-            e.key: e.value as int,
-        },
         reactionsUsed: {
           for (final e in (j['reactionsUsed'] as Map<String, dynamic>).entries)
             e.key: e.value as int,
@@ -446,10 +440,8 @@ class Session extends ChangeNotifier {
     if (j == null) return;
     outbox.addAll(j.outbox);
     received.addAll(j.received);
-    pairedWith.addAll(j.pairedWith);
-    pairingLost.addAll(j.pairingLost);
+    nodes.load(j.nodes);
     stopped = j.stopped;
-    guestAfter.addAll(j.guestAfter);
     reactionsUsed.addAll(j.reactionsUsed);
     _retryWhenDue();
     notifyListeners();
@@ -458,27 +450,15 @@ class Session extends ChangeNotifier {
   Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
-    'pairedWith': [...pairedWith],
-    'pairingLost': [...pairingLost],
+    'nodes': nodes.toJson(),
     'stopped': stopped,
-    'guestAfter': guestAfter,
     'reactionsUsed': reactionsUsed,
   });
 
   /// The node `name` holds this phone's bond, or no longer does; the
   /// other nodes paired with stay.
   Future<void> setPaired(String name, {bool lost = false}) async {
-    if (pairedWith.lastOrNull == name && pairingLost.contains(name) == lost) {
-      return;
-    }
-    pairedWith
-      ..remove(name)
-      ..add(name);
-    if (lost) {
-      pairingLost.add(name);
-    } else {
-      pairingLost.remove(name);
-    }
+    if (!nodes.setPaired(name, lost: lost)) return;
     note(lost ? 'Pairing: $name is no longer ours' : 'Pairing: $name');
     notifyListeners();
     await save();
@@ -583,11 +563,6 @@ class Session extends ChangeNotifier {
   /// its node.
   bool guestRead = false;
 
-  /// The number of the last item taken from each public node's ring, by
-  /// node ID in hex: the node keeps nothing for a guest, so the phone
-  /// keeps where it is (spec "Phone link", Public).
-  final Map<String, int> guestAfter = {};
-
   /// How many times the person has reacted with each emoji, the one used
   /// last at the end, for the picker's first row (`emojis.dart`).
   final Map<String, int> reactionsUsed = {};
@@ -604,10 +579,10 @@ class Session extends ChangeNotifier {
   /// so one lost with the link is read again, and kept once. Whether it
   /// read all.
   Future<bool> _readGuest(NodeLink link, NodeInfo n) async {
-    final key = hex(n.id);
+    final r = nodes.of(nodeName(n.id));
     try {
       while (_link == link) {
-        final after = guestAfter[key] ?? 0;
+        final after = r.ringAfter;
         await link.setGuestAfter(after);
         final item = await link.readGuest();
         if (item == null) return true;
@@ -623,7 +598,7 @@ class Session extends ChangeNotifier {
           '${item.message.payload.length} bytes',
         );
         await _keep(item.message);
-        guestAfter[key] = item.number;
+        r.ringAfter = item.number;
         await save();
       }
     } catch (e) {
@@ -717,8 +692,7 @@ class Session extends ChangeNotifier {
       if (!await _ends(link)) rethrow;
       note('Unpairing: the link ended under the write ($e), taken as done');
     }
-    pairedWith.remove(name);
-    pairingLost.remove(name);
+    nodes.unpaired(name);
     note('Pairing: unpaired from $name');
     notifyListeners();
     await save();
@@ -728,8 +702,7 @@ class Session extends ChangeNotifier {
   /// Forgets the node `name`, no longer this phone's, the others paired
   /// with staying: the person lets it go (roadmap D173).
   Future<void> forget(String name) async {
-    if (!pairedWith.remove(name)) return;
-    pairingLost.remove(name);
+    if (!nodes.unpaired(name)) return;
     note('Pairing: forgot $name');
     notifyListeners();
     await save();

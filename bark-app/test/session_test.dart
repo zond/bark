@@ -844,9 +844,15 @@ void main() {
       final again = p.again(sodium, () => start);
       async.flushMicrotasks();
       // The one connected last, last.
-      expect(again.session.pairedWith.toList(), [b, a]);
-      expect(again.session.pairingLost, {a});
-      expect((p.session.store as MemoryStore).state!['pairedWith'], [b, a]);
+      expect(again.session.nodes.paired.toList(), [b, a]);
+      expect(again.session.nodes.lost, {a});
+      expect(
+        [
+          for (final r in (p.session.store as MemoryStore).state!['nodes'])
+            r['name'],
+        ],
+        [b, a],
+      );
     });
   });
 
@@ -856,13 +862,13 @@ void main() {
       async.flushMicrotasks();
       var again = p.again(sodium, () => start);
       async.flushMicrotasks();
-      expect(again.session.pairedWith, {'bark-fa4e00000001'});
-      expect(again.session.pairingLost, isEmpty);
+      expect(again.session.nodes.paired, {'bark-fa4e00000001'});
+      expect(again.session.nodes.lost, isEmpty);
       again.session.setPaired('bark-fa4e00000001', lost: true);
       async.flushMicrotasks();
       again = again.again(sodium, () => start);
       async.flushMicrotasks();
-      expect(again.session.pairingLost, contains(nodeName(FakeNode.id)));
+      expect(again.session.nodes.lost, contains(nodeName(FakeNode.id)));
       expect(again.session.stopped, isFalse);
       again.session.setStopped(true);
       async.flushMicrotasks();

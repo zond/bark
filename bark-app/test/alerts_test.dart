@@ -306,7 +306,7 @@ void main() {
       async.flushMicrotasks();
       app.connectFake().catchError((_) {});
       async.flushMicrotasks();
-      expect(app.session.pairingLost, contains(nodeName(FakeNode.id)));
+      expect(app.session.nodes.lost, contains(nodeName(FakeNode.id)));
       expect(n.boot.last, isNull);
     });
   });

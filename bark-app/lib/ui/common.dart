@@ -529,7 +529,7 @@ String connectionLine(AppModel app) =>
 /// Which node a phone uses).
 String connectionHelp(AppModel app) {
   final s = app.session;
-  final lost = [for (final n in s.pairingLost) shownName(n)];
+  final lost = [for (final n in app.nodes.lost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
     [final n] => '\n\n$n is no longer yours: it no longer knows this phone.',

@@ -143,7 +143,7 @@ void main() {
       List<int> got(Phone p) => [
         for (final r in p.session.received) r.payload[2],
       ];
-      final key = hex(FakeNode.id);
+      final key = nodeName(FakeNode.id);
 
       guest.session.attach(node.connectGuest(), guest: true);
       async.flushMicrotasks();
@@ -151,7 +151,7 @@ void main() {
       expect(guest.session.guestRead, isTrue);
       // Items 3 and 6 by number: the fake friend's first two took 1 and
       // 2, the owner's 4, and reading took nothing from the ring.
-      expect(guest.session.guestAfter[key], node.ring.last.number);
+      expect(guest.session.nodes.of(key).ringAfter, node.ring.last.number);
       expect(node.ring, hasLength(3));
       guest.session.disconnect();
       async.flushMicrotasks();
@@ -160,7 +160,10 @@ void main() {
       node.deliver(payloadFor(tagOf(guest), 5));
       final again = guest.again(sodium, () => start.add(async.elapsed));
       async.flushMicrotasks();
-      expect(again.session.guestAfter[key], guest.session.guestAfter[key]);
+      expect(
+        again.session.nodes.of(key).ringAfter,
+        guest.session.nodes.of(key).ringAfter,
+      );
       again.session.attach(node.connectGuest(), guest: true);
       async.flushMicrotasks();
       expect(got(again), [1, 4, 5]);
@@ -172,15 +175,15 @@ void main() {
 
   test('a ring restarted: a number above its newest reads from the start', () {
     run((async, owner, guest, node) {
-      final key = hex(FakeNode.id);
-      guest.session.guestAfter[key] = 50;
+      final key = nodeName(FakeNode.id);
+      guest.session.nodes.of(key).ringAfter = 50;
       node.restartRing();
       node.deliver(payloadFor(tagOf(guest), 1));
       expect(node.ring.single.number, 1);
       guest.session.attach(node.connectGuest(), guest: true);
       async.flushMicrotasks();
       expect([for (final r in guest.session.received) r.payload[2]], [1]);
-      expect(guest.session.guestAfter[key], 1);
+      expect(guest.session.nodes.of(key).ringAfter, 1);
       expect(guest.session.guestRead, isTrue);
     });
   });
