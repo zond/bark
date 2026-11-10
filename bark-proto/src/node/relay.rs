@@ -36,6 +36,7 @@
 mod anchor;
 mod boot;
 mod delivery;
+mod drain;
 mod forward;
 mod gps;
 mod heartbeat;
@@ -46,6 +47,7 @@ mod sweep;
 mod update;
 
 use boot::random_channel;
+pub use drain::Held;
 use heartbeat::Beacon;
 use status::Asking;
 use sweep::Sweep;
@@ -1076,6 +1078,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Gather { image, from } => self.gather(image, from, now),
             AppCommand::Block { index, ok } => self.block_done(index, ok),
             AppCommand::Ask { neighbour } => self.ask(neighbour, now),
+            AppCommand::Drain(on) => self.drain(on, now),
             AppCommand::SetPosition { position } => {
                 // A sleepy node's position is no news, but a change of
                 // its carried flag is.

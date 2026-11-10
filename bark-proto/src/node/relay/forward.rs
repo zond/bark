@@ -339,6 +339,11 @@ pub(super) struct Forwarding {
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     pub(super) feed_due: bool,
+    /// The second it began to drain for a reboot, rounded up, taking no message
+    /// (`relay/drain.rs`), or [`u32::MAX`] while it does not: whole
+    /// seconds, which fit beside `feed_due`, are fine enough for a bound
+    /// of minutes.
+    pub(super) drain_from_s: u32,
     /// When the send queue was last looked at with nothing to send: the
     /// earliest end of a wait or a ban that held an entry back.
     pub(super) wake: Option<Instant>,
@@ -348,6 +353,7 @@ impl Forwarding {
     pub(super) const IDLE: Forwarding = Forwarding {
         flight: Flight::NONE,
         feed_due: false,
+        drain_from_s: u32::MAX,
         wake: None,
     };
 }
@@ -1099,6 +1105,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|(to, _)| self.gate(id, to, d.hops, now));
         let refusal = if !acts {
             None
+        } else if self.draining() && spend > Duration::ZERO {
+            // A take answered before the drain began stands: its sender
+            // is done with the message.
+            Some(DropReason::Draining)
         } else if case == Case::New && record_at.is_none() {
             Some(DropReason::NoRecord)
         } else if gate.is_some_and(|g| g.over) {
@@ -1431,6 +1441,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// banned; for a sleepy node with a live anchor, not the anchor.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.id.is_none()
+            && !self.draining()
             && now >= self.timers.retry_at
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
@@ -1441,7 +1452,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When the application may send again, if only the bucket and bans
     /// keep it waiting; anything else ends with an event.
     pub(super) fn send_ready_at(&self, now: Instant) -> Option<Instant> {
-        if self.own.id.is_some() || self.regular() >= SEND_QUEUE {
+        if self.own.id.is_some() || self.draining() || self.regular() >= SEND_QUEUE {
             return None;
         }
         let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;

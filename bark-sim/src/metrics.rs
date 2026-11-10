@@ -577,6 +577,10 @@ pub struct DropCounts {
     /// out (spec "The ACK", roadmap D93); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     pub unanswered: u64,
+    /// Refused while the node drained for a reboot into a new image (spec
+    /// "Send queue"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub draining: u64,
 }
 
 /// Whether a counter is zero: counters of what only some scenarios do are
@@ -603,12 +607,13 @@ impl DropCounts {
             DropReason::PayloadTooLong => &mut self.payload_too_long,
             DropReason::Pushback => &mut self.pushback,
             DropReason::Unanswered => &mut self.unanswered,
+            DropReason::Draining => &mut self.draining,
         };
         *c += 1;
     }
 
     /// Every counter with its name, as in the JSON output.
-    pub fn fields(&self) -> [(&'static str, u64); 14] {
+    pub fn fields(&self) -> [(&'static str, u64); 15] {
         [
             ("no_route", self.no_route),
             ("hop_cap", self.hop_cap),
@@ -624,6 +629,7 @@ impl DropCounts {
             ("payload_too_long", self.payload_too_long),
             ("pushback", self.pushback),
             ("unanswered", self.unanswered),
+            ("draining", self.draining),
         ]
     }
 
@@ -651,6 +657,7 @@ impl DropCounts {
             &mut out.payload_too_long,
             &mut out.pushback,
             &mut out.unanswered,
+            &mut out.draining,
         ]
         .into_iter()
         .zip(o)

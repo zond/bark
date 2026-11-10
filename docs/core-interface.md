@@ -121,8 +121,9 @@ Every node has the same application interface: the readiness query
 `AppEvent::Message`, `AppEvent::GivenBack`, `AppEvent::Boot` and `AppEvent::Heard`, the store,
 `Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
 the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
-`AppCommand::Holds`, `AppCommand::Gather` and `AppCommand::Block` and the actions
-`Action::Offered`, `Action::StorePiece` and `Action::Serve`, and a neighbour's status: the
+`AppCommand::Holds`, `AppCommand::Gather`, `AppCommand::Block` and `AppCommand::Drain`,
+the actions `Action::Offered`, `Action::StorePiece` and `Action::Serve`, and the queries
+`drained` and `held`, and a neighbour's status: the
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
@@ -282,9 +283,21 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   to confirm it (spec "Updates over the mesh", the install). `update::heard_within`
   is how long it waits, from its start.
 
+- `AppCommand::Drain(true)`: the driver has staged an image and will reboot into it
+  (spec "Send queue", "Updates over the mesh", the install). From then the node refuses
+  every DATA that would give it work, `DropReason::Draining`, with a place in the room's
+  line, a take it answered before standing, and `accepts_send` is false.
+  `AppCommand::Drain(false)` takes messages again. `drained(now)` is when the driver may
+  reboot: the send queue, the delivery queue and the inbox empty and no reply owed that
+  takes a DATA, or `Config::delivery_ttl` since the whole second the drain began.
+  `held()` is every message the node then holds, each once, as `Held { msg_id, dst_pos,
+  dst_id, payload }`, which the driver keeps across the reboot and offers after it as
+  `AppCommand::Send`: the same message, as its ID is `MsgId::of` the three.
+
 `bark-driver` hands these to its application, `App::offered`, `App::store_piece` and
 `App::serve`, and the application's answers come back as `Request::Holds`,
-`Request::Gather` and `Request::Block`, which the driver delivers as the commands.
+`Request::Gather`, `Request::Block` and `Request::Drain`, which the driver delivers as the
+commands.
 The firmware's application is `bark-fw/src/update/mesh.rs` (§5).
 
 **A neighbour's status** (spec "Neighbour status"). `AppCommand::Ask { neighbour }` asks
