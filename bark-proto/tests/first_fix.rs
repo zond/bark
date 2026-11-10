@@ -171,6 +171,7 @@ fn a_node_stored_as_carried_has_no_place() {
         anchor: None,
         relay: true,
         battery_scale: None,
+        drain: None,
     };
     let unplaced = Config {
         placed: false,

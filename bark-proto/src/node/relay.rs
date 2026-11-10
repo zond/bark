@@ -563,6 +563,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *stage = Stage::Off;
         *mode = Self::mode_at_boot();
         *battery = Battery::at_boot(config.stored.and_then(|s| s.battery_scale));
+        battery.drain = crate::drain::Drain::from_kept(config.stored.and_then(|s| s.drain));
         *radio = Radio::new(
             &config,
             Channel::all().next().expect("the plan has channels"),
@@ -832,6 +833,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // without battery levels writes no more than before.
             relay: !self.sleepy() && self.config.battery.is_some(),
             battery_scale: self.battery.scale,
+            drain: self.battery.drain.kept(),
         }
     }
 
@@ -1064,7 +1066,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             } => self.originate(dst_pos, dst_id, payload, now, emit),
             AppCommand::Power { external } => self.power(external, now, emit),
             AppCommand::ForceRole => self.force(now, emit),
-            AppCommand::Battery { millivolts } => self.battery_read(millivolts, now),
+            AppCommand::Battery { millivolts } => self.battery_read(millivolts, now, emit),
             AppCommand::ClearMapPoint => self.clear_map_point(),
             AppCommand::Fix { position } => {
                 self.gps_fixed();

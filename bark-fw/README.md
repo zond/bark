@@ -86,7 +86,12 @@ a sleepy node's own message given back by its first hop with the time
 left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
-its longest times and `stack_used`, the call stack's high-water mark.
+its longest times and `stack_used`, the call stack's high-water mark;
+on battery it ends in `battery_left_min=`, how long the battery lasts,
+and `drain_relay=` and `drain_sleepy=`, the drains the core has learned
+as a relay and as a sleepy node, in ten-thousandths of a percent of the
+cell an hour, as each closed sample's `Drain` trace gives them (spec
+"Sleepy nodes", How long the battery lasts).
 Its application is the phone link over BLE (`src/ble.rs`;
 spec "Phone link"), whose bench procedure in nRF Connect is in
 `docs/phone-link-2026-11-05.md`, "On the bench"; since roadmap D135 the
@@ -886,7 +891,7 @@ its value flush right. Top to bottom:
 | `GET V14 14/31` | while it gathers an image over the mesh: its version, the blocks held from the first of all its blocks; no line otherwise | the core's `Status::gathering` (spec "Neighbour status") |
 | phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then `PHONE PUBLIC` or, once its owner has made it theirs alone, `PHONE PRIVATE`; while a phone pairs, `PAIR CODE 012345` | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
-| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ` | the reading as the core calibrates it |
+| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the battery lasts, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
 | `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 
@@ -1118,8 +1123,10 @@ and a guest's read of Inbox asks the node for the oldest item after the
 number it wrote to Guest (`for_tag`). Whose turn it is at the one
 message the node holds, and so whose Ready is set, is `Turn` in
 `src/ble.rs`. The
-console's `status` ends in `public=true` or `public=false`, read from
-the bond in the stored-state page.
+console's `status` has `public=true` or `public=false`, read from
+the bond in the stored-state page, and then `drain_relay=` and
+`drain_sleepy=`, the drains the node image kept there, or the first
+ones while it has learned none.
 
 The paired phone unpairs by writing 2 to Public (link version 12): the
 node answers, removes the bond from the host, writes a forgotten bond's
@@ -1311,7 +1318,7 @@ retune times.
 | `beacon <k> <ms> [len]` | send a bench frame (default 18 bytes, an ACK's length) on k every ms; refused below a 10 % duty cycle | one line per beacon |
 | `stop` | stop the beacon | |
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
-| `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`, and whether the node is public, from the bond; `reset` zeroes the counters | |
+| `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`, whether the node is public, from the bond, and the battery drains the node image kept; `reset` zeroes the counters | |
 | `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |

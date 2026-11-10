@@ -234,6 +234,14 @@ battery builds the core with `Config::battery` `None`, and the core then turns a
 relay sleepy at its grace's end, since it would otherwise relay until it browns out. A
 carried relay has no grace with or without levels: on battery it turns sleepy at once.
 
+With the levels the core also learns from the readings how fast the cell drains, as a
+relay and as a sleepy node (spec "Sleepy nodes", How long the battery lasts;
+`bark_proto::drain`). `Node::battery_left(now)` is how long the battery lasts under the
+node's rules, `None` on external power, before a reading or without levels, for the
+driver's screen; `Node::battery_drains()` the two drains, percent of the cell an hour; and
+`Trace::Drain { sleepy, measured, rate }` each closed sample, in ten-thousandths of a
+percent an hour, for a log.
+
 A message for this node's application waits in its inbox, oldest first, until the
 application confirms it (spec "Phone link"; roadmap D122). The core announces each with
 `AppEvent::Message` and its ID; `inbox()` gives the oldest's ID and payload, `inbox_len()`
@@ -313,8 +321,8 @@ or at once when it resumes a stored anchor.
 `Action::Store(stored)` asks the driver to keep `stored` across a reboot, in place of
 what it kept before (spec "Implementation notes"). The core emits it at boot and then only
 when the state changes: the home channel, but a carried sleepy node's, the place a fixed
-node stands, the carried flag, a fixed sleepy node's anchor, whether it is a relay and its
-battery readings' scale. The driver hands the last one back in `Config::stored`
+node stands, the carried flag, a fixed sleepy node's anchor, whether it is a relay, its
+battery readings' scale and the drains it learned. The driver hands the last one back in `Config::stored`
 when it builds the core at the next boot; a fresh board has `None`. `Stored::record` lays
 it out as 32 bytes with a checksum, and `Stored::from_record` takes back only a whole
 record. The firmware appends records to a page of flash (`bark-fw/src/store.rs`); the
@@ -364,15 +372,16 @@ hold the 564 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-95 016 B (92.8 KiB): the tables and, in under 1 KiB around them, the
+95 032 B (92.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
-and its stored state as handed back and as last kept, 72 B, and beside them what it keeps
+and its stored state as handed back and as last kept, 80 B, what it learns of its
+battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
 of the update, 1 888 B, with 16 B of each neighbour's entry for its heartbeats' section and
 when it was heard, and the four images the sections name kept once in the table, 64 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 76 000 B (74.2 KiB), without the heard table and the delivery
+`SleepyNode` is 76 016 B (74.2 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM

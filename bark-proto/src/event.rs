@@ -606,6 +606,17 @@ pub enum Trace {
     /// A relay on battery reached its low battery level: it holds no more
     /// mail, and flushes what it holds before it turns sleepy.
     BatteryLow,
+    /// A sample of the battery's drain closed (`drain.rs`): what it
+    /// measured and the estimate after it, in ten-thousandths of a
+    /// percent of the cell an hour.
+    Drain {
+        /// It ran sleepy; else as a relay.
+        sleepy: bool,
+        /// The sample's drain.
+        measured: i32,
+        /// The estimate.
+        rate: u32,
+    },
     /// The node turned sleepy, or a relay, by its power
     /// (spec "Sleepy nodes"); not while it boots.
     Role {

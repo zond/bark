@@ -521,6 +521,9 @@ fn screen(core: &Role, now: Instant) -> bark_screen::State {
         anchored: s.anchored,
         carried: s.carried,
         battery,
+        battery_left: core
+            .battery_left(now)
+            .map(|d| bark_screen::Left::from_minutes((d.as_micros() / 60_000_000) as u32)),
         heard: s.neighbours.heard,
         strong: s.neighbours.strong,
         both_ways: s.neighbours.both_ways,
@@ -702,7 +705,7 @@ pub async fn run<'a>(
             let t = driver.radio().tcxo();
             log::info!(
                 "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}{}",
                 s.events,
                 s.frames,
                 s.failed,
@@ -720,7 +723,8 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} u
                 crate::stack::used(),
                 s.unserved,
                 crate::update::mesh::phase(),
-                Time(crate::utc::time())
+                Time(crate::utc::time()),
+                Drain(driver.core().0, now)
             );
         }
     }
@@ -739,6 +743,28 @@ impl core::fmt::Display for Time {
             ),
             _ => Ok(()),
         }
+    }
+}
+
+/// The battery's estimate for the 10 s line, on battery: the time left in
+/// minutes, and the drains learned, a relay's and a sleepy node's, in
+/// ten-thousandths of a percent of the cell an hour, as the core's
+/// `Drain` trace gives them at each sample (`bark_proto::drain`).
+struct Drain<'a>(&'a Role, Instant);
+
+impl core::fmt::Display for Drain<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(left) = self.0.battery_left(self.1) else {
+            return Ok(());
+        };
+        let [relay, sleepy] = self.0.battery_drains().map(|r| (r * 10_000.0) as u32);
+        write!(
+            f,
+            " battery_left_min={} drain_relay={} drain_sleepy={}",
+            left.as_micros() / 60_000_000,
+            relay,
+            sleepy
+        )
     }
 }
 

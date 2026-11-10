@@ -14,6 +14,7 @@
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod drain;
 pub mod event;
 pub mod geo;
 pub mod gps;
