@@ -141,19 +141,21 @@ class Messenger {
     }
   }
 
-  /// Sends the person's reaction, an index in [reactions], to the text
-  /// of `r`, naming it by its first part's `sent`; one replaces the one
-  /// before, and goes again even if the same, as the person asked.
-  Future<void> react(Received r, int reaction) async {
+  /// Sends the person's reaction, one emoji, to the text of `r`, naming
+  /// it by its first part's `sent`; one replaces the one before, and goes
+  /// again even if the same, as the person asked. Throws [BadPayload] if
+  /// `emoji` is not one character.
+  Future<void> react(Received r, String emoji) async {
     final c = contacts.byKey(r.from);
     final t = c?.unasked(now());
     final first = r.first;
     if (c == null || t == null || first == null) return;
     final dst = c.addressOf(t);
-    final (p, sent) = await _seal(c, dst, [ReactionRecord(first, reaction)]);
+    final (p, sent) = await _seal(c, dst, [ReactionRecord(first, emoji)]);
     for (final x in session.partsOf(r)) {
-      x?.reaction = reaction;
+      x?.reaction = emoji;
     }
+    session.usedReaction(emoji);
     await session.queue(
       Outgoing(
         dst,
@@ -162,7 +164,7 @@ class Messenger {
         kind: OutKind.reaction,
         to: c.key,
         sent: sent,
-        body: reactions[reaction],
+        body: emoji,
         toward: t,
       ),
     );
@@ -382,22 +384,15 @@ class Messenger {
               ),
             );
           }
-        case ReactionRecord(:final sent, :final reaction):
-          // Any part's `sent` names its text, as an older app named each
-          // part it acknowledged.
-          final named = session.outbox
-              .where(
-                (o) => o.to == from && o.sent == sent && o.kind == OutKind.text,
-              )
-              .firstOrNull;
-          if (named == null || h.sent <= named.reactionSent) break;
-          for (final o in session.outbox) {
-            if (o.to == from &&
-                o.kind == OutKind.text &&
-                o.first == named.first) {
-              o.reaction = reaction;
-              o.reactionSent = h.sent;
-            }
+        case ReactionRecord(:final sent, :final emoji):
+          final parts = [
+            for (final o in session.outbox)
+              if (o.to == from && o.kind == OutKind.text && o.first == sent) o,
+          ];
+          if (parts.isEmpty || h.sent <= parts.first.reactionSent) break;
+          for (final o in parts) {
+            o.reaction = emoji;
+            o.reactionSent = h.sent;
           }
           await session.save();
         case CardRecord(:final card):

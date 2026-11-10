@@ -113,8 +113,8 @@ void main() {
     expect((rs.single as TextRecord).text, m['text']);
   });
 
-  test('boxed: reactions, one an older acknowledgement, and a UTF-8 text', () {
-    for (final name in ['box_utf8_reaction', 'box_reaction', 'box_heart']) {
+  test('boxed: a UTF-8 text, and reactions up to the longest emoji', () {
+    for (final name in ['box_utf8', 'box_reaction', 'box_heart', 'box_kiss']) {
       final m = at(name);
       final ab = s.crypto.box.precalculate(
         publicKey: bob.identity,
@@ -125,22 +125,56 @@ void main() {
       expect(h(m, 'payload')[1], at('alice')['recipient_away']);
       final (hd, rs) = readPlain(plain);
       expect(hd.greater, greater(bob.identity, alice.identity));
-      final r = rs.first as ReactionRecord;
-      expect(r.sent, m['reacts_to']);
-      expect(reactions[r.reaction], m['reaction']);
-      if (m['text'] != null) expect((rs.last as TextRecord).text, m['text']);
-      final records = [
-        ReactionRecord(
-          m['reacts_to'] as int,
-          reactions.indexOf(m['reaction'] as String),
-        ),
-        if (m['text'] != null) TextRecord(m['text'] as String),
-      ];
+      final Record record;
+      if (m['text'] != null) {
+        expect((rs.single as TextRecord).text, m['text']);
+        record = TextRecord(m['text'] as String);
+      } else {
+        final r = rs.single as ReactionRecord;
+        expect(r.sent, m['reacts_to']);
+        expect(r.emoji, m['reaction']);
+        record = ReactionRecord(r.sent, r.emoji);
+      }
       expect(
-        hex(writePlain(Header(hd.greater, hd.sent), records)),
+        hex(writePlain(Header(hd.greater, hd.sent), [record])),
         m['plaintext'],
       );
     }
+    expect(utf8.encode(at('box_kiss')['reaction'] as String).length, 35);
+  });
+
+  test('a reaction is one character, and last', () {
+    const h = Header(false, 7);
+    for (final e in ['🇺🇦', '#️⃣', '👨‍👩‍👧', 'é']) {
+      final (_, rs) = readPlain(writePlain(h, [ReactionRecord(5, e)]));
+      expect((rs.single as ReactionRecord).emoji, e);
+    }
+    // None, two, or a joined one past the bound.
+    for (final e in [
+      '',
+      '👍👍',
+      'ok',
+      '${at('box_kiss')['reaction']}\u{fe0f}',
+    ]) {
+      expect(
+        () => writePlain(h, [ReactionRecord(5, e)]),
+        throwsA(isA<BadPayload>()),
+      );
+      expect(
+        () => readPlain([0, 0, 0, 0, 7, 3, 0, 0, 0, 5, ...utf8.encode(e)]),
+        throwsA(isA<BadPayload>()),
+      );
+    }
+    expect(
+      () =>
+          writePlain(h, [const ReactionRecord(5, '👍'), const TextRecord('x')]),
+      throwsA(isA<BadPayload>()),
+    );
+    // A type no longer used.
+    expect(
+      () => readPlain([0, 0, 0, 0, 7, 7, 0, 0, 0, 5]),
+      throwsA(isA<BadPayload>()),
+    );
   });
 
   test('another pair does not open a box', () {

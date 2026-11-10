@@ -148,7 +148,7 @@ void main() {
     }
 
     await hold();
-    expect(find.byTooltip('Heart'), findsOneWidget);
+    expect(find.byTooltip('red heart'), findsWidgets);
     expect(find.text('Copy text'), findsOneWidget);
     await letGo();
     await t.tap(find.byType(PopupMenuButton<void Function()>));
@@ -172,7 +172,7 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     // Read-only: a copy, and no reactions.
     await hold();
-    expect(find.byTooltip('Heart'), findsNothing);
+    expect(find.byTooltip('red heart'), findsNothing);
     expect(find.text('Copy text'), findsOneWidget);
     await letGo();
     expect(find.byType(PopupMenuButton<void Function()>), findsNothing);
@@ -180,7 +180,7 @@ void main() {
     await t.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
     await hold();
-    expect(find.byTooltip('Heart'), findsOneWidget);
+    expect(find.byTooltip('red heart'), findsWidgets);
     await letGo();
     expect(app.contacts.byKey(olena.key)!.archived, isFalse);
     await done(t, app);

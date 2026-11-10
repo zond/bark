@@ -11,6 +11,7 @@ import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/conversations.dart';
+import 'package:bark_app/emojis.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
@@ -378,60 +379,99 @@ void main() {
       async.elapse(const Duration(seconds: 6));
       final a = p.session.outbox.single;
       expect(a.reaction, isNull);
-      final heart = fromFriend(node, p, 99, [ReactionRecord(a.sent, 1)]);
+      final heart = fromFriend(node, p, 99, [ReactionRecord(a.sent, '❤️')]);
       p.messenger.receive(InboxMessage(1, heart));
       async.flushMicrotasks();
-      expect(a.reaction, 1);
+      expect(a.reaction, '❤️');
       // An older one coming late does not replace it; a newer one does.
-      final older = fromFriend(node, p, 98, [ReactionRecord(a.sent, 2)]);
+      final older = fromFriend(node, p, 98, [ReactionRecord(a.sent, '😂')]);
       p.messenger.receive(InboxMessage(2, older));
       async.flushMicrotasks();
-      expect(a.reaction, 1);
-      // An acknowledgement from an app before reactions is a thumbs up.
-      final ack = fromFriend(node, p, 100, [ReactionRecord(a.sent, 0)]);
-      p.messenger.receive(InboxMessage(3, ack));
+      expect(a.reaction, '❤️');
+      final newer = fromFriend(node, p, 100, [ReactionRecord(a.sent, '🦔')]);
+      p.messenger.receive(InboxMessage(3, newer));
       async.flushMicrotasks();
-      expect(a.reaction, 0);
+      expect(a.reaction, '🦔');
 
       final echo = p.session.received.last;
-      p.messenger.react(echo, 3);
+      p.messenger.react(echo, '😮');
       async.elapse(const Duration(seconds: 1));
-      expect(echo.reaction, 3);
+      expect(echo.reaction, '😮');
       final sent = p.session.outbox.last;
       expect(sent.kind, OutKind.reaction);
       expect(formOf(sent.payload), Form.boxed);
       // A second press replaces it, and goes again.
-      p.messenger.react(echo, 5);
+      p.messenger.react(echo, '🇺🇦');
       async.elapse(const Duration(seconds: 1));
-      expect(echo.reaction, 5);
+      expect(echo.reaction, '🇺🇦');
       expect(
         p.session.outbox.where((o) => o.kind == OutKind.reaction).length,
         2,
       );
+      // More than one character is refused, and nothing changes.
+      expect(p.messenger.react(echo, '👍👍'), throwsA(isA<BadPayload>()));
+      async.elapse(const Duration(seconds: 1));
+      expect(echo.reaction, '🇺🇦');
+      expect(p.session.reactionsUsed, {'😮': 1, '🇺🇦': 1});
     });
   });
 
-  test(
-    'a stored acknowledgement of an app before reactions is a thumbs up',
-    () {
-      final out = Outgoing(
-        Address(const Position(0, 0), Uint8List(6)),
-        Uint8List(1),
-        at: DateTime.utc(2026),
-        kind: OutKind.text,
-        sent: 1,
-        body: 'a',
-      ).toJson()..remove('reaction');
-      final old = {...out, 'acked': true};
-      expect(Outgoing.fromJson(old).reaction, 0);
-      expect(Outgoing.fromJson(old).acked, isFalse);
-      expect(Outgoing.fromJson({...old, 'kind': 'ack'}).kind, OutKind.reaction);
-      final r = Received(1, [], DateTime.utc(2026), sent: 1, body: 'b').toJson()
-        ..remove('reaction');
-      expect(Received.fromJson({...r, 'acked': true}).reaction, 0);
-      expect(Received.fromJson({...r, 'acked': false}).reaction, isNull);
-    },
-  );
+  test('a stored reaction is its emoji; an index of an earlier build is '
+      'none, and an acknowledgement is listed as a reaction', () {
+    final out = Outgoing(
+      Address(const Position(0, 0), Uint8List(6)),
+      Uint8List(1),
+      at: DateTime.utc(2026),
+      kind: OutKind.text,
+      sent: 1,
+      body: 'a',
+      reaction: '🦔',
+    ).toJson();
+    expect(Outgoing.fromJson(out).reaction, '🦔');
+    expect(Outgoing.fromJson({...out, 'reaction': 0}).reaction, isNull);
+    expect(Outgoing.fromJson({...out, 'kind': 'ack'}).kind, OutKind.reaction);
+    final r = Received(
+      1,
+      [],
+      DateTime.utc(2026),
+      sent: 1,
+      body: 'b',
+      reaction: '👍',
+    ).toJson();
+    expect(Received.fromJson(r).reaction, '👍');
+    expect(Received.fromJson({...r, 'reaction': 0}).reaction, isNull);
+  });
+
+  test('the first row of reactions: most used first, the newest of a tie '
+      'first, the quick six after; it survives a restart', () async {
+    final store = MemoryStore();
+    final s = Session(store: store, now: () => DateTime.utc(2026));
+    expect(frequentReactions(s.reactionsUsed), quickReactions);
+    for (final e in ['🦔', '🙏', '🦔', '🇺🇦']) {
+      s.usedReaction(e);
+    }
+    expect(frequentReactions(s.reactionsUsed), [
+      '🦔',
+      '🇺🇦',
+      '🙏',
+      '👍',
+      '❤️',
+      '😂',
+    ]);
+    await s.save();
+    final again = Session(store: store, now: () => DateTime.utc(2026));
+    await again.load();
+    expect(
+      frequentReactions(again.reactionsUsed),
+      frequentReactions(s.reactionsUsed),
+    );
+    again.usedReaction('🙏');
+    expect(frequentReactions(again.reactionsUsed).take(3), [
+      '🙏',
+      '🦔',
+      '🇺🇦',
+    ]);
+  });
 
   group('long texts', () {
     /// The records of a payload from the phone to the fake friend.
@@ -502,13 +542,13 @@ void main() {
 
         // One reaction, naming the text by its first part's sent, which
         // has not come.
-        p.messenger.react(last, 1);
+        p.messenger.react(last, '😂');
         async.flushMicrotasks();
         final sent = s.outbox.last;
         expect(sent.kind, OutKind.reaction);
         final r = opened(p, node, sent.payload).$2.single as ReactionRecord;
-        expect((r.sent, r.reaction), (5000, 1));
-        expect(entry().arrived.map((r) => r.reaction), [1, 1]);
+        expect((r.sent, r.emoji), (5000, '😂'));
+        expect(entry().arrived.map((r) => r.reaction), ['😂', '😂']);
 
         // The part that comes later shows in the text the reaction is on.
         part(13, 5001, 'two ', 2);
@@ -521,21 +561,27 @@ void main() {
       });
     });
 
-    test('a reaction naming any part is on the whole text', () {
+    test('a reaction naming the first part is on the whole text', () {
       run((async, p, node) {
         final f = friendOf(p, node);
         p.messenger.sendText(f, List.filled(60, 'word').join(' '));
         async.flushMicrotasks();
         final out = [...p.session.outbox];
-        // As an older app acknowledged each part that came.
-        p.messenger.receive(
-          InboxMessage(
-            21,
-            fromFriend(node, p, 9000, [ReactionRecord(out.last.sent, 0)]),
-          ),
-        );
+        expect(out.length, greaterThan(1));
+        void react(int id, int sent, int names, String e) =>
+            p.messenger.receive(
+              InboxMessage(
+                id,
+                fromFriend(node, p, sent, [ReactionRecord(names, e)]),
+              ),
+            );
+        // A later part's `sent` names no text.
+        react(21, 9000, out.last.sent, '👍');
         async.flushMicrotasks();
-        expect(out.map((o) => o.reaction), out.map((_) => 0));
+        expect(out.map((o) => o.reaction), out.map((_) => null));
+        react(22, 9001, out.first.sent, '👍');
+        async.flushMicrotasks();
+        expect(out.map((o) => o.reaction), out.map((_) => '👍'));
       });
     });
   });

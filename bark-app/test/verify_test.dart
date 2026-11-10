@@ -3,6 +3,8 @@
 // message that a box overtook, and one forged after it, both kept as
 // texts marked as first messages that change nothing else.
 
+import 'dart:typed_data';
+
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/link.dart';
@@ -237,21 +239,22 @@ void main() {
       final mine = b.session.outbox.last;
       final before = b.of(a);
       // Anyone holding both cards: a new address, and a reaction to a
-      // text A has not read.
-      final forged = sealIntro(
+      // text A has not read, each after the card.
+      Uint8List forged(int sent, Record r) => sealIntro(
         sodium,
         b.me.identity,
         0,
-        writePlain(
-          Header(greater(a.me.identity, b.me.identity), 1 << 30, at(9)),
-          [
-            CardRecord(a.me.card.encode()),
-            ReactionRecord(mine.sent, 0),
-            const TextRecord('forged'),
-          ],
-        ),
+        writePlain(Header(greater(a.me.identity, b.me.identity), sent, at(9)), [
+          CardRecord(a.me.card.encode()),
+          r,
+        ]),
       );
-      b.messenger.receive(InboxMessage(99, forged));
+      b.messenger.receive(
+        InboxMessage(98, forged(1 << 30, ReactionRecord(mine.sent, '👍'))),
+      );
+      b.messenger.receive(
+        InboxMessage(99, forged((1 << 30) + 1, const TextRecord('forged'))),
+      );
       async.flushMicrotasks();
       expect(texts(b).last, 'forged');
       expect(intro(b, 'forged'), isTrue);

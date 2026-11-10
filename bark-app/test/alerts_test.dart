@@ -206,9 +206,9 @@ void main() {
       async.elapse(const Duration(seconds: 6));
       n.log.clear();
       final a = app.session.outbox.first;
-      app.messenger.receive(fromFriend(app, 1, [ReactionRecord(a.sent, 1)]));
+      app.messenger.receive(fromFriend(app, 1, [ReactionRecord(a.sent, '❤️')]));
       async.flushMicrotasks();
-      expect(a.reaction, 1);
+      expect(a.reaction, '❤️');
       final card = app.fakeNode!.friendCard;
       app.messenger.receive(fromFriend(app, 2, [CardRecord(card.encode())]));
       app.messenger.receive(InboxMessage(3, [9, 9, 9]));
@@ -238,7 +238,7 @@ void main() {
       app.contacts.archiveConversation(f);
       async.flushMicrotasks();
       final a = app.session.outbox.first;
-      app.messenger.receive(fromFriend(app, 1, [ReactionRecord(a.sent, 0)]));
+      app.messenger.receive(fromFriend(app, 1, [ReactionRecord(a.sent, '👍')]));
       async.flushMicrotasks();
       expect(app.contacts.isArchived(f), isTrue);
       app.messenger.receive(fromFriend(app, 2, [const TextRecord('back')]));

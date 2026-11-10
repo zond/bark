@@ -405,23 +405,23 @@ class TextRecord extends Record {
   const TextRecord(this.text, [this.part = 1, this.of = 1]);
 }
 
-/// The reactions a person may answer a text with, in the order offered
-/// and by their index in a [ReactionRecord]. Six fit one row of 48 dp
-/// targets on the narrowest phones, 360 dp; they say yes, love, funny,
-/// surprised, sorry and thanks or please.
-const List<String> reactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+/// The most bytes of a reaction's emoji: the longest in Unicode 17.0's
+/// emoji list, a kiss of two people each with a skin tone, ten code
+/// points joined (`bark-app-layer` `plain.rs`).
+const int maxReaction = 35;
 
-/// Each reaction's record type, by its index. The thumbs up keeps the
-/// type of the acknowledgement it replaced, so an older app reads it as
-/// one, and this app reads an acknowledgement as a thumbs up.
-const List<int> _reactionTypes = [3, 7, 8, 9, 10, 11];
+/// Whether `emoji` may be a reaction: one character as a person sees it,
+/// of at most [maxReaction] bytes. That it is an emoji and not a letter
+/// is the picker's to offer.
+bool isReaction(String emoji) =>
+    emoji.characters.length == 1 && utf8.encode(emoji).length <= maxReaction;
 
-/// A reaction, [reactions] at [reaction], to the text whose first part,
-/// or any part, was sent at [sent].
+/// A reaction, one emoji, to the text whose first part was sent at
+/// [sent]. It runs to the end, so it comes last.
 class ReactionRecord extends Record {
   final int sent;
-  final int reaction;
-  const ReactionRecord(this.sent, this.reaction);
+  final String emoji;
+  const ReactionRecord(this.sent, this.emoji);
 }
 
 class CardRecord extends Record {
@@ -432,6 +432,7 @@ class CardRecord extends Record {
 
 const int _typeUtf8 = 1;
 const int _type1251 = 2;
+const int _typeReaction = 3;
 const int _typeCard = 4;
 const int _typeUtf8Part = 5;
 const int _type1251Part = 6;
@@ -440,7 +441,7 @@ const int _type1251Part = 6;
 /// share one byte, four bits each.
 const int maxParts = 16;
 
-/// A plaintext: the header, then the records, a text last.
+/// A plaintext: the header, then the records, a text or a reaction last.
 Uint8List writePlain(Header h, List<Record> records) {
   final b = <int>[
     (h.address != null ? 1 : 0) | (h.greater ? 2 : 0),
@@ -463,8 +464,12 @@ Uint8List writePlain(Header h, List<Record> records) {
           throw const BadPayload('no such part');
         }
         b.addAll(w ?? utf8.encode(text));
-      case ReactionRecord(:final sent, :final reaction):
-        b.addAll([_reactionTypes[reaction], ...be(sent, 4)]);
+      case ReactionRecord(:final sent, :final emoji):
+        if (i != records.length - 1) {
+          throw const BadPayload('reaction not last');
+        }
+        if (!isReaction(emoji)) throw const BadPayload('not one emoji');
+        b.addAll([_typeReaction, ...be(sent, 4), ...utf8.encode(emoji)]);
       case CardRecord(:final card):
         b.addAll([_typeCard, card.length, ...card]);
     }
@@ -509,14 +514,16 @@ Uint8List writePlain(Header h, List<Record> records) {
         }
         records.add(TextRecord(text, part, of));
         at = p.length;
-      case _ when _reactionTypes.contains(t) && at + 4 <= p.length:
-        records.add(
-          ReactionRecord(
-            fromBe(p.sublist(at, at + 4)),
-            _reactionTypes.indexOf(t),
-          ),
-        );
-        at += 4;
+      case _typeReaction when at + 4 <= p.length:
+        final String emoji;
+        try {
+          emoji = utf8.decode(p.sublist(at + 4));
+        } on FormatException {
+          throw const BadPayload('reaction not UTF-8');
+        }
+        if (!isReaction(emoji)) throw const BadPayload('not one emoji');
+        records.add(ReactionRecord(fromBe(p.sublist(at, at + 4)), emoji));
+        at = p.length;
       case _typeCard when at < p.length && at + 1 + p[at] <= p.length:
         records.add(CardRecord(p.sublist(at + 1, at + 1 + p[at])));
         at += 1 + p[at];
