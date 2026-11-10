@@ -12,7 +12,8 @@
 // received as far as it has come; and a first message marked in a
 // verified thread; and the owner's Public switch, and a guest's view;
 // and the line for a node that refuses the phone's old bond, with the
-// way to Bluetooth settings.
+// way to Bluetooth settings; and a guest offered its node as the home on
+// the first screen, which pairs, and in Settings, beside pairing alone.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -24,6 +25,8 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
+import 'package:bark_app/ble_link.dart' show FoundNode;
+import 'package:universal_ble/universal_ble.dart' show UniversalBle;
 import 'package:bark_app/ui/common.dart'
     show receivedMarks, signalWord, strongDbm, weakDbm;
 import 'package:bark_app/ui/card_screen.dart';
@@ -39,6 +42,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:sodium/sodium.dart';
 
 import 'alerts_test.dart' show FakeNotifier;
+import 'ble_link_test.dart' show FakeNodes, OtherNode;
 
 /// The one check's words: no news from the network past it.
 const sentTip = 'Sent into the network; no further news until they confirm';
@@ -1166,6 +1170,120 @@ void main() {
     await app.session.disconnect();
     await t.pump();
     app.dispose();
+  });
+
+  /// The app used as a guest at a public node nobody has paired with:
+  /// the search started, so the errand's node is the one the phone uses,
+  /// but Bluetooth not reported on, so no round runs of itself.
+  Future<(AppModel, FakeNodes)> guestOnce(WidgetTester t) async {
+    final app = await model(t);
+    const device = 'aa:bb:cc:dd:ee:04';
+    final ble = FakeNodes({
+      device: OtherNode(
+        now: DateTime.now,
+        sodium: sodium,
+        app: app.me.identity,
+        id: [0x0c, 0xe4, 0, 0, 0, 4],
+      )..owned = false,
+    }, bonds: {});
+    UniversalBle.setInstance(ble);
+    app.startSearch();
+    await t.pump();
+    app.connectGuest(FoundNode(device, 'bark-0ce400000004', -50, public: true));
+    for (var i = 0; i < 10; i++) {
+      await t.pump(const Duration(milliseconds: 100));
+    }
+    return (app, ble);
+  }
+
+  Future<void> done(WidgetTester t, AppModel app, FakeNodes ble) async {
+    await t.pumpWidget(const SizedBox());
+    await app.stopLooking();
+    app.session.disconnect();
+    await t.pump(const Duration(seconds: 1));
+    app.dispose();
+    for (final n in ble.nodes.values) {
+      n.dispose();
+    }
+    await t.pump(const Duration(minutes: 1));
+  }
+
+  testWidgets('a guest with no home: the first screen offers the node as '
+      'the home, which pairs and then makes it the home', (t) async {
+    final (app, ble) = await guestOnce(t);
+    expect(app.guestNode, 'bark-0ce400000004');
+    await t.pumpWidget(BarkApp(app));
+    await t.pump();
+    expect(
+      find.textContaining(
+        'This phone has no home node set. As your home, this node keeps '
+        'texts to you and gives your card a fixed address. The phone pairs '
+        'with it first: you type the code its screen shows.',
+      ),
+      findsOneWidget,
+    );
+    await t.tap(find.text('Make this node my home'));
+    for (var i = 0; i < 10; i++) {
+      await t.pump(const Duration(milliseconds: 100));
+    }
+    expect(ble.pairings, 1);
+    expect((app.session.connected, app.session.guest), (true, false));
+    expect(app.me.home?.id, [0x0c, 0xe4, 0, 0, 0, 4]);
+    expect(find.text('This node is your home'), findsOneWidget);
+    expect(find.textContaining('no home node set'), findsNothing);
+    await done(t, app, ble);
+  });
+
+  testWidgets('a guest\'s Not now hides the offer for the app\'s run', (
+    t,
+  ) async {
+    final (app, ble) = await guestOnce(t);
+    await t.pumpWidget(BarkApp(app));
+    await t.pump();
+    await t.tap(find.text('Not now'));
+    await t.pump();
+    expect(find.textContaining('no home node set'), findsNothing);
+    expect(app.guestNode, 'bark-0ce400000004');
+    expect(ble.pairings, 0);
+    await done(t, app, ble);
+  });
+
+  testWidgets('a guest\'s Settings: Make this node my home, saying it pairs '
+      'first, then Pair with this node', (t) async {
+    final (app, ble) = await guestOnce(t);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    const home = 'Make this node my home', pair = 'Pair with this node';
+    expect(find.text(home, skipOffstage: false), findsOneWidget);
+    expect(find.text(pair, skipOffstage: false), findsOneWidget);
+    // The home's action first, so that pairing alone is not the obvious
+    // way.
+    expect(
+      t.getTopLeft(find.text(home, skipOffstage: false)).dy,
+      lessThan(t.getTopLeft(find.text(pair, skipOffstage: false)).dy),
+    );
+    // Neither the owner's switch nor its unpairing for a guest.
+    expect(find.text('Public: serve phones without pairing'), findsNothing);
+    expect(find.text('Unpair this node'), findsNothing);
+    await t.ensureVisible(find.text(home));
+    await t.tap(find.text(home));
+    await t.pumpAndSettle();
+    Finder said(String s) => find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.textContaining(s),
+    );
+    expect(
+      said(
+        'The phone pairs with this node first: you type the six-digit code '
+        'its screen shows.',
+      ),
+      findsOneWidget,
+    );
+    expect(said('keeps texts to you and gives your card a fixed'), findsOne);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(ble.pairings, 0);
+    await done(t, app, ble);
   });
 
   testWidgets('the fetch button waits until a timeout or a give-back', (

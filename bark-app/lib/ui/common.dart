@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
-import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
 import '../session.dart';
@@ -273,8 +272,16 @@ class StaleBondLine extends StatelessWidget {
   }
 }
 
-/// While the search has found the person's node again and no home is set
-/// ([AppModel.offerHome]): makes it the home in one tap.
+/// What the person reads when pairing with a node the phone uses as a
+/// guest failed for `e`: why, and that the phone goes on as before.
+String notPairedLine(Object e) =>
+    '${e is NotPaired ? '$e' : 'Pairing failed: $e'}. The phone still uses '
+    'the node as a guest.';
+
+/// While no home is set and the phone is on a node that can be one
+/// ([AppModel.offerHome]), the node the search found still paired with the
+/// phone or a public node it uses as a guest: makes it the home in one tap,
+/// pairing first with a guest's.
 class HomeOfferLine extends StatelessWidget {
   final AppModel app;
   const HomeOfferLine(this.app, {super.key});
@@ -282,6 +289,10 @@ class HomeOfferLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!app.offerHome) return const SizedBox.shrink();
+    final guest = app.guestHere != null;
+    final card = app.contacts.list.isEmpty
+        ? ''
+        : ' Your new card then goes to your contacts.';
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
@@ -289,7 +300,12 @@ class HomeOfferLine extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              app.contacts.list.isEmpty
+              guest
+                  ? 'This phone has no home node set. As your home, this '
+                        'node keeps texts to you and gives your card a fixed '
+                        'address. The phone pairs with it first: you type '
+                        'the code its screen shows.$card'
+                  : app.contacts.list.isEmpty
                   ? 'This phone has no home node set.'
                   : 'This phone has no home node set. Making this node '
                         'your home sends your new card to your contacts.',
@@ -302,18 +318,23 @@ class HomeOfferLine extends StatelessWidget {
                   child: const Text('Not now'),
                 ),
                 TextButton(
-                  onPressed: () async {
-                    final a = app.session.address;
-                    if (a == null) return;
-                    try {
-                      final r = await app.makeHome(a);
-                      if (context.mounted) say(context, r);
-                    } catch (e) {
-                      if (context.mounted) {
-                        say(context, 'Setting the home failed: $e');
-                      }
-                    }
-                  },
+                  onPressed: app.connecting
+                      ? null
+                      : () async {
+                          try {
+                            final r = await app.homeHere();
+                            if (context.mounted) say(context, r);
+                          } catch (e) {
+                            if (context.mounted) {
+                              say(
+                                context,
+                                guest
+                                    ? notPairedLine(e)
+                                    : 'Setting the home failed: $e',
+                              );
+                            }
+                          }
+                        },
                   child: const Text('Make this node my home'),
                 ),
               ],
@@ -527,40 +548,14 @@ String connectionLine(AppModel app) {
 String pairedLine(Session s) {
   final p = s.pairedWith;
   if (p == null) {
-    return 'Not paired with a node yet: the first connection pairs, by a '
-        'code on the node\'s screen.';
+    return 'Not paired with a node yet: the phone uses a public node near '
+        'you as a guest.';
   }
   final n = shownName(p);
   return s.pairingLost
       ? '$n is no longer yours: another phone has paired with it.'
       : 'Paired with $n.';
 }
-
-/// Asks whether `n`, a public node, is the person's: true pairs with it,
-/// by the code its screen shows; false uses it as a guest; null decides
-/// nothing (spec "Phone link", Pairing, Public).
-Future<bool?> askIsYours(BuildContext context, FoundNode n) => showDialog<bool>(
-  context: context,
-  builder: (context) => SimpleDialog(
-    title: Text('Is ${shownName(n.name)} yours?'),
-    children: [
-      SimpleDialogOption(
-        onPressed: () => Navigator.pop(context, true),
-        child: const ListTile(
-          title: Text('Pair'),
-          subtitle: Text('You will type the code its screen shows.'),
-        ),
-      ),
-      SimpleDialogOption(
-        onPressed: () => Navigator.pop(context, false),
-        child: const ListTile(
-          title: Text('Just use it'),
-          subtitle: Text('It passes on your texts; it stays its owner\'s.'),
-        ),
-      ),
-    ],
-  ),
-);
 
 /// Says why bark wants Bluetooth before Android asks; whether to go on.
 Future<bool> whyBluetooth(BuildContext context) async =>

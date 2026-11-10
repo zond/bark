@@ -106,18 +106,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// does nothing, as it would close the link the first is making.
   bool _connectAsked = false;
 
-  /// Connects by `f`, at the first connection after asking to notify.
-  Future<void> _connect(Future<void> Function() f) async {
+  /// Connects by `f`, at the first connection after asking to notify;
+  /// `pairing` a node the phone uses as a guest, which it goes on doing
+  /// if `f` fails.
+  Future<void> _connect(
+    Future<void> Function() f, {
+    bool pairing = false,
+  }) async {
     if (_connectAsked) return;
     _connectAsked = true;
     try {
-      await _connectOnce(f);
+      await _connectOnce(f, pairing: pairing);
     } finally {
       _connectAsked = false;
     }
   }
 
-  Future<void> _connectOnce(Future<void> Function() f) async {
+  Future<void> _connectOnce(
+    Future<void> Function() f, {
+    bool pairing = false,
+  }) async {
     await app.askToNotify(
       () async =>
           await showDialog<bool>(
@@ -150,7 +158,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } on StaleBond catch (e) {
       if (mounted) await askToForget(context, app, staleBondLine(e.node));
     } catch (e) {
-      if (mounted) say(context, 'Connecting failed: $e');
+      if (mounted) {
+        say(context, pairing ? notPairedLine(e) : 'Connecting failed: $e');
+      }
     }
   }
 
@@ -267,6 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ..._public(),
               ..._unpair(),
               ..._home(),
+              ..._pairHere(),
               ..._updates(),
               ..._battery(),
               _heading('My name'),
@@ -397,7 +408,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         // The connected node's row does nothing; another's connects to
         // it, closing the link to this one first: a public node not the
-        // phone's as a guest, which **Pair** makes the phone's instead.
+        // phone's as a guest.
         for (final FoundNode n in app.found.values) _found(n),
         if (app.noneFound) ...[
           const SizedBox(height: 8),
@@ -437,15 +448,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       onTap: busy
           ? null
-          : () => guest ? _yours(n) : _connect(() => app.connect(n)),
+          : () => _connect(() => guest ? app.connectGuest(n) : app.connect(n)),
     );
-  }
-
-  /// A public node not paired with: the person says whether it is theirs.
-  Future<void> _yours(FoundNode n) async {
-    final mine = await askIsYours(context, n);
-    if (mine == null || !mounted) return;
-    await _connect(() => mine ? app.connect(n) : app.connectGuest(n));
   }
 
   /// The owner's switch of whether the node serves phones that have not
@@ -681,13 +685,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<Widget> _home() {
     final s = app.session;
     final home = app.me.home;
-    final here = s.address;
     final st = s.status;
-    final atHome = app.atHome;
-    // A guest can neither make the node its home nor clear its key.
-    final owned = !s.guest;
-    // A home is a fixed relay, so that its address stays (spec "Mailbox").
-    final homeable = st != null && !st.sleepy && !st.carried;
+    // A guest can clear no key, and makes the node its home by pairing
+    // first; between its errands only the last one's reading is known.
+    final owned = s.connected && !s.guest;
+    final guest = app.guestHere;
+    final here = owned ? s.address : guest?.address;
+    final atHome = owned ? app.atHome : app.guestAtHome;
+    final homeable = owned ? canBeHome(st) : guest?.homeable ?? false;
     return [
       _heading('Home node'),
       Text(
@@ -707,6 +712,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         ..._placeHereButton(),
       ],
+      if (guest != null && here == null)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('This node has no place yet, so it cannot be a home.'),
+        ),
       if (here != null && !atHome && !homeable)
         const Padding(
           padding: EdgeInsets.only(top: 8),
@@ -726,9 +736,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       Wrap(
         spacing: 8,
         children: [
-          if (owned && here != null && !atHome)
+          if ((owned || guest != null) && here != null && !atHome)
             FilledButton(
-              onPressed: homeable ? () => _setHome(here) : null,
+              onPressed: homeable && !app.connecting
+                  ? () => _setHome(here, pair: !owned)
+                  : null,
               child: const Text('Make this node my home'),
             ),
           if (home != null)
@@ -750,7 +762,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-  Future<void> _setHome(Address? a) async {
+  /// Makes the node at `a` the home, or none; `pair` for a node the phone
+  /// uses as a guest, which it pairs with first.
+  Future<void> _setHome(Address? a, {bool pair = false}) async {
     final n = app.contacts.list.length;
     // The card carries the home; the new card goes out only if it
     // changes.
@@ -760,15 +774,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: Text(a == null ? 'No home node' : 'Make this node my home'),
         content: Text(
-          !changes
-              ? 'Your card stays as it is, so no card is sent.'
-              : n == 0
-              ? 'Your card changes.'
-              : n == 1
-              ? 'Your card changes, and your new card goes to '
-                    'your contact.'
-              : 'Your card changes, and your new card goes to '
-                    'your $n contacts, one message each.',
+          (pair
+                  ? '$_pairsFirst As your home, it keeps texts to you and '
+                        'gives your card a fixed address.\n\n'
+                  : '') +
+              (!changes
+                  ? 'Your card stays as it is, so no card is sent.'
+                  : n == 0
+                  ? 'Your card changes.'
+                  : n == 1
+                  ? 'Your card changes, and your new card goes to '
+                        'your contact.'
+                  : 'Your card changes, and your new card goes to '
+                        'your $n contacts, one message each.'),
         ),
         actions: [
           TextButton(
@@ -783,10 +801,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (ok != true) return;
+    if (pair) {
+      await _connect(() async {
+        final r = await app.homeHere();
+        if (mounted) say(context, r);
+      }, pairing: true);
+      return;
+    }
     await _try(() async {
       final r = await (a == null ? app.noHome() : app.makeHome(a));
       if (mounted) say(context, r);
     }, 'Setting the home failed');
+  }
+
+  /// What pairing with a node the phone uses as a guest takes, and what it
+  /// does to the node's keeper.
+  static const _pairsFirst =
+      'The phone pairs with this node first: you type the six-digit code '
+      'its screen shows. A node keeps one paired phone, so any phone '
+      'paired with it before loses it.';
+
+  /// A public node the phone uses as a guest, for a keeper who wants its
+  /// settings without making it their home, after the home's action.
+  List<Widget> _pairHere() {
+    final g = app.guestHere;
+    if (g == null) return [];
+    return [
+      const SizedBox(height: 8),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.link),
+        title: const Text('Pair with this node'),
+        subtitle: const Text(
+          'For the person who keeps the node: its settings, its map point '
+          'and its updates on this phone, without making it your home. '
+          '$_pairsFirst',
+        ),
+        onTap: app.connecting
+            ? null
+            : () => _connect(() => app.connect(g.found), pairing: true),
+      ),
+    ];
   }
 
   List<Widget> _backup() => [
