@@ -460,7 +460,7 @@ waits while Ready comes, one message each
 time the node takes one, and leaves. The phones on a public node take
 turns at the one message it holds, and the turn is Ready: the node sets
 it for one phone at a time, so the app's queue waits for Ready as on
-any node. A phone that connects while another guest has the link is
+any node, asking for the turn as below. A phone that connects while another guest has the link is
 closed as it writes its tag; the next round tries again.
 
 A guest's link the person makes by a tap on a public node in Settings
@@ -586,8 +586,14 @@ queue, so neither a restart of the app nor of the phone undoes it: the
 person chose it, and the phone should not start looking behind their
 back. A tap on a node, or a scan, ends a search round at once.
 
-The app keeps its own queue and writes Send only while the node says
-ready; on the ATT error 0x80, not ready, it waits for ready again.
+The app keeps its own queue and writes Send while the node says ready.
+On a node of link version 13 or later it also writes Send while ready
+is not set, which asks the node for the turn among its phones (spec
+"Phone link", Sending): the node answers the ATT error 0x80, not ready,
+unless the turn passes to the phone at that write. On 0x80 the app
+waits for ready again, and asks again if ready has not come within
+12.64 s (`Session.turnWait`), a ban for each of the node's eight other
+links.
 Whenever Status counts messages in the inbox, it reads the oldest,
 stores it, writes its message ID back so the node forgets it, and
 repeats.
@@ -762,10 +768,13 @@ to Inbox. It keeps a message in the owner's inbox when it carries the
 owner's tag, or the owner has written none yet, and the rest in a ring
 of 1024 by number, which a guest reads by its tag after the number it
 writes to Guest; a test can make a node nobody has paired with
-(`owned`), whose messages all go to the ring. Its turns are Ready: set for one phone at a time, in the
-order of their links, passing on when the node takes that phone's
-message, when its link ends, or after a ban unused; a Send out of turn
-is answered 0x80, not ready. It takes an update as a node does, and its
+(`owned`), whose messages all go to the ring. Its turns are Ready, set for one phone at a time and
+given only to one that wants it: a Send out of turn asks for it and is
+answered 0x80, not ready, and a phone whose Recipient carried the tag
+alone, an app of link version 12, always wants it. The turn passes, in
+the order of the links, when the node takes the holder's message, when
+its link ends, or after a ban unused while another wants it, and stays
+otherwise. It takes an update as a node does, and its
 new image hears no relay, unless a test says so
 (`FakeNode.hearsAfterUpdate`), so that the warning of a node that hears
 no one after its update (Updating a node) can be seen.
@@ -1012,7 +1021,9 @@ removed it, and refuse a node that does not keep it; make the fake
 public, join it as a guest that writes its tag and touches nothing
 closed, read a guest's ring items by its tag after the number it keeps
 for the node, across links and restarts, close a second guest, end a
-guest's link after 30 s, and take turns as Ready;
+guest's link after 30 s, and take turns as Ready, given only to a phone
+that asks or whose app is too old to ask, two idle phones seeing no
+flips;
 choose the home among the paired nodes, else the strongest paired
 node, else the strongest public node; go on a guest's errand (connect,
 tag, read, send, leave) when something waits to be sent and otherwise

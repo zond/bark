@@ -523,10 +523,16 @@ class FakeNode implements NodeLink {
     if (value.length < Address.len || value.length > Address.len + maxPayload) {
       throw const AttException(AttError.invalidLength);
     }
-    // On a public node the turn is Ready: a phone whose turn it is not
-    // is answered not ready, as when the node takes none.
-    if (public && _turn != p) throw const AttException(AttError.notReady);
-    _turnGen++;
+    // On a public node the turn is Ready: a Send out of turn asks for it,
+    // and is answered not ready, as when the node takes none, unless the
+    // turn passes to it at once.
+    if (public) {
+      _ask(p);
+      if (_turn != p) {
+        _notify();
+        throw const AttException(AttError.notReady);
+      }
+    }
     final phone = _phoneOf(p);
     final dst = Address(
       Position.decode(value),
@@ -540,6 +546,7 @@ class FakeNode implements NodeLink {
       // its write: not ready for one ban.
       if (_ready) {
         _ready = false;
+        _since = null;
         _notify();
         _freeAfter(ban);
       }
@@ -547,6 +554,7 @@ class FakeNode implements NodeLink {
     }
     _taken++;
     _ready = false;
+    _since = null;
     if (phone.givenBack != null) {
       phone.givenBack = null;
       if (phone.connected) phone.given.add(null);
@@ -578,48 +586,102 @@ class FakeNode implements NodeLink {
   final List<Object> _links = [];
 
   /// The phone whose turn it is on a public node, for which alone Ready is
-  /// set; null with no phone connected.
+  /// set; null with no phone connected (spec "Phone link", Sending).
   Object? _turn;
 
-  /// Counts the turn's changes and its holder's writes, so that a check a
-  /// ban later sees whether the holder sat on it.
+  /// Since when the phone whose turn it is has had Ready.
+  DateTime? _since;
+
+  /// The phones whose Recipient said a link version older than
+  /// [turnVersion]: they cannot ask, and so want the turn whenever they
+  /// lack it.
+  final Set<Object> _old = {};
+
+  /// The phones that asked for the turn, by a Send out of turn, and have
+  /// not had it since.
+  final Set<Object> _asked = {};
+
+  /// Counts the turn's changes, so that a check a ban later sees whether
+  /// it still stands.
   int _turnGen = 0;
 
-  /// Gives the turn to the next phone connected after the one that has
-  /// it, in the order of their links, and starts its ban.
-  void _passTurn() {
-    final at = _turn == null ? -1 : _links.indexOf(_turn!);
-    _turn = _links.isEmpty ? null : _links[(at + 1) % _links.length];
+  bool _wants(Object p) => _asked.contains(p) || _old.contains(p);
+
+  /// The phone the turn goes to from the one that has it, or that stood at
+  /// `at` in [_links]: the next that wants it, coming round to the holder
+  /// last, else the holder, else the next connected.
+  Object? _nextTurn([int? at]) {
+    final from = at ?? (_turn == null ? -1 : _links.indexOf(_turn!));
+    final order = [
+      for (var i = 1; i <= _links.length; i++)
+        _links[(from + i) % _links.length],
+    ];
+    return order.where(_wants).firstOrNull ??
+        (_links.contains(_turn) ? _turn : order.firstOrNull);
+  }
+
+  bool get _othersWant => _links.any((p) => p != _turn && _wants(p));
+
+  /// Gives the turn to `p`, which wants it no more.
+  void _give(Object? p) {
+    if (p != null) _asked.remove(p);
+    _turn = p;
+    _since = _ready && p != null ? now() : null;
     _turnGen++;
     _idleCheck();
   }
 
-  /// A phone that has had Ready for a ban without writing passes the
-  /// turn on, so that one with nothing to send holds nobody up; alone, it
-  /// would pass it to itself.
+  void _passTurn() => _give(_nextTurn());
+
+  /// A phone that has had Ready for a ban while another wants the turn
+  /// passes it on; with nobody else wanting it, it keeps it.
   void _idleCheck() {
-    if (!public || !_ready || _turn == null || _links.length < 2) return;
+    final since = _since;
+    if (!public || !_ready || since == null || !_othersWant) return;
+    final left = since.add(ban).difference(now());
+    if (left <= Duration.zero) {
+      _passTurn();
+      return;
+    }
     final gen = _turnGen;
-    _after(ban, () {
-      if (_ready && _turnGen == gen) _passTurn();
+    _after(left, () {
+      if (_turnGen == gen) _idleCheck();
     });
   }
 
   void _joined(Object p) {
     _links.add(p);
-    _turn ??= p;
-    _turnGen++;
-    _idleCheck();
+    if (_turn == null) _give(p);
   }
 
   void _gone(Object p) {
-    final had = _turn == p;
     final at = _links.indexOf(p);
     _links.remove(p);
-    if (!had) return;
-    // The next in order now stands where the one gone stood.
-    _turn = _links.isEmpty ? null : _links[at % _links.length];
-    _turnGen++;
+    _old.remove(p);
+    _asked.remove(p);
+    if (_turn != p) {
+      _idleCheck();
+      return;
+    }
+    _turn = null;
+    _give(_nextTurn(at - 1));
+  }
+
+  /// Recipient from `p` says its app's link version.
+  void _app(Object p, int version) {
+    if (version < turnVersion) {
+      _old.add(p);
+    } else {
+      _old.remove(p);
+    }
+    _idleCheck();
+  }
+
+  /// A Send from `p`: out of turn, it asks for it, which may pass to it
+  /// now.
+  void _ask(Object p) {
+    if (_turn == p) return;
+    _asked.add(p);
     _idleCheck();
   }
 
@@ -628,6 +690,7 @@ class FakeNode implements NodeLink {
   void _freeAfter(Duration d) {
     _after(d, () {
       _ready = true;
+      _since = _turn == null ? null : now();
       _turnGen++;
       _idleCheck();
     });
@@ -901,6 +964,8 @@ class FakeNode implements NodeLink {
       scheduleMicrotask(phone.close);
       throw const AttException(AttError.incompatible);
     }
+    _app(phone, r.version);
+    _notify();
     return r;
   }
 
