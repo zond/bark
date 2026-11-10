@@ -3091,8 +3091,8 @@ windows, after the deliveries above and one at a time.
   with the long preamble on the channel its node listens on, from the
   heard table, else the neighbour table, else its own home channel.
   It is one attempt, through the bucket as any send. A message whose ACK
-  comes is done; the rest stay and go at beats as before until their
-  place is needed.
+  comes is done; the rest stay and go at beats until their place is
+  needed.
 - **A node heard as a relay.** A holder that hears a heartbeat without
   the sleepy or the leaving flag from a node it holds messages for,
   carried or not,
@@ -4275,6 +4275,8 @@ The mailbox is an application on the node, beside the phone link: it
 uses the core's application interface (`core-interface.md`, Application) and
 nothing else, and the simulator runs it the same way.
 
+---
+
 ## Screen and buttons
 
 A node has a 200 × 200 e-paper screen, a touch pad and a button
@@ -4827,7 +4829,8 @@ neighbours, its delivery queue to its sleepy nodes at their beats, and
 its inbox to its application. It does so while it has the power a swap
 needs ([implementation notes](#implementation-notes)) and no phone's
 update holds the staged slot; otherwise it takes messages again, since
-no swap can come. While it drains it tells its phones the version in
+no swap can come. While it drains its heartbeats carry the leaving
+flag ([packet formats](#packet-formats)), and it tells its phones the version in
 Status's `installing` ([the service](#the-service)), and clears it
 when it takes messages again. It reboots at the first moment that it
 holds none of them, its mailbox has no write under way, and no exchange
@@ -5038,8 +5041,7 @@ at SF5 as 11.
 then falls silent, so a sender that waits for it meets silence at the
 end and its search runs out; told, the sender goes round it while
 another way is left (roadmap D181). The bit changes nothing on air, the
-13 bytes filling the same 6 blocks, and a node that does not know it
-waits for the node as before.
+13 bytes filling the same 6 blocks.
 
 A node sets the map point while its position is the map point, keeps it
 across a reboot, and clears it when the app clears it ([position](#position)). Its
@@ -5058,11 +5060,10 @@ its kind says otherwise, and `aux` names its kind:
 
 | `aux` | kind |
 |---|---|
-| 13, 14 | free: an update's announcement and request had them, and the heartbeat's section replaced both |
 | 15 | an update's piece ([updates over the mesh](#updates-over-the-mesh)) |
 | 16 | a neighbour's status asked ([neighbour status](#neighbour-status)) |
 | 17 | a neighbour's status told, the answer to 16 |
-| 18 to 63 | reserved for later kinds |
+| 13, 14 and 18 to 63 | reserved for later kinds |
 
 Such a frame keeps the first two bytes and lays out the rest for its
 kind: none has a hop, a destination or a count, and the piece needs
