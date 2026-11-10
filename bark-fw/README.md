@@ -694,7 +694,8 @@ confirmed itself.
   allows a swap and no phone update is under way, it asks the core to
   take no message, `update: draining for the reboot: the node takes no
   message`, and takes them again, `update: taking messages again until
-  the reboot may come`, once either fails. It reboots at the first quiet
+  the reboot may come`, once either fails; while it drains, Status's
+  `installing` tells its phones the version (`node.rs`; roadmap D182). It reboots at the first quiet
   moment (`bark_image::policy::quiet`): the core drained
   (`Relay::drained`: nothing in its send queue, its delivery queue or
   its inbox, or 600 s since it began), the mailbox's writes done, and
@@ -709,8 +710,8 @@ confirmed itself.
   back: the node ends every link first, `ble: disconnected 0x16 slot N`
   for each, and waits for them to end, at most the longest supervision
   timeout, 32 s; the app looks for its node and connects again once it
-  is back (`bark-app/README.md`, "Screens"), so for the minute the swap
-  takes its person sees what a node out of reach shows. The loader's
+  is back (`bark-app/README.md`, "Screens"), and says meanwhile that the
+  node installs the version. The loader's
   trial follows as from
   the phone, but the image confirms itself only once it hears a node,
   and is swapped back and given up if it hears none within 585.9 s

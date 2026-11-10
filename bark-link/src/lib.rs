@@ -301,11 +301,17 @@ pub struct Status {
     /// Its live neighbours, sleepy or not (spec "Neighbour status",
     /// heard).
     pub heard: u8,
+    /// The low 16 bits of the image version the node drains to install
+    /// (spec "Updates over the mesh", the install); 0 when none, and from
+    /// a node of link version 12 or before.
+    pub installing: u16,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
+    pub const LEN: usize = Self::LEN_12 + 2;
+    /// Bytes in the value of link version 12 and before.
+    const LEN_12: usize = 1 + 1 + 2 + POS + 2 + 1 + 1;
 
     /// Every flag clear and every count zero: a node that has said
     /// nothing yet.
@@ -324,6 +330,7 @@ impl Status {
         battery_mv: 0,
         inbox: 0,
         heard: 0,
+        installing: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -354,12 +361,13 @@ impl Status {
         b[4 + POS..6 + POS].copy_from_slice(&self.battery_mv.to_be_bytes());
         b[6 + POS] = self.inbox;
         b[7 + POS] = self.heard;
+        b[Self::LEN_12..].copy_from_slice(&self.installing.to_be_bytes());
         b
     }
 
     /// Read a value, ignoring what a later version appends.
     pub fn decode(b: &[u8]) -> Result<Status, Malformed> {
-        if b.len() < Self::LEN {
+        if b.len() < Self::LEN_12 {
             return Err(Malformed::Length);
         }
         let flag = |bit: u8| b[0] & (1 << bit) != 0;
@@ -378,6 +386,10 @@ impl Status {
             battery_mv: u16_at(b, 4 + POS),
             inbox: b[6 + POS],
             heard: b[7 + POS],
+            installing: match b.len() < Self::LEN {
+                true => 0,
+                false => u16_at(b, Self::LEN_12),
+            },
         })
     }
 }

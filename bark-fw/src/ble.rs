@@ -711,8 +711,8 @@ const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
 /// oldest of its person's items its phone has not confirmed and their
 /// count (spec "Phone link", Receiving; "Mailbox"), after a step, and
 /// notify the phones of a change of the flags, the relays, the neighbours
-/// heard, a count or the address, or of the battery by a step (spec
-/// "Phone link", Status).
+/// heard, a count, the address or the version it drains to install, or of
+/// the battery by a step (spec "Phone link", Status).
 pub fn publish(status: Status, heads: [Option<(u32, MsgId)>; RECORDS], counts: [u8; RECORDS]) {
     let changed = LINK.lock(|l| {
         let mut l = l.borrow_mut();
