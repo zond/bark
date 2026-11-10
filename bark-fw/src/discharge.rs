@@ -1,5 +1,5 @@
 //! The battery's discharge log on the external flash
-//! (`bark_image::discharge`, roadmap D174): the node samples its cell an
+//! (`bark_image::discharge`, roadmap D178): the node samples its cell an
 //! hour apart on battery and at each boot and change of power or mode,
 //! and says at boot what the log holds; the console prints it
 //! (`discharge`) and erases it (`discharge erase`).

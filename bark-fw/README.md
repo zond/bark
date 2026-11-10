@@ -1582,7 +1582,7 @@ cell's voltage by a coarse line through three points of a typical cell's
 curve (roadmap D169). To learn the board's own curve, the node keeps a
 log of its cell's voltage on the external flash, so that a discharge
 from full to empty, days to weeks on battery where no host reads the
-USB log, can be read afterwards (roadmap D174; `src/discharge.rs`,
+USB log, can be read afterwards (roadmap D178; `src/discharge.rs`,
 `bark-image` `discharge.rs`).
 
 It takes a sample at the first reading after a boot, at once on USB; at

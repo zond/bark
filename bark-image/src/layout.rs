@@ -191,7 +191,7 @@ pub mod external {
     pub const CARRY: Region = Region::pages_from(MAILBOX.end(), CARRY_SECTORS);
     /// The battery's discharge log, a sample an hour on battery and one
     /// at each boot and change of power (`crate::discharge`, roadmap
-    /// D174). Kept across reboots and image swaps.
+    /// D178). Kept across reboots and image swaps.
     pub const DISCHARGE: Region = Region::pages_from(CARRY.end(), DISCHARGE_SECTORS);
     /// Free.
     pub const FREE: Region = Region {

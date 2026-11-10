@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read a node's discharge log and fit its cell's voltage curve (roadmap D174).
+"""Read a node's discharge log and fit its cell's voltage curve (roadmap D178).
 
     scripts/discharge.py /dev/ttyACM0 --csv run.csv     # a console image's port
     scripts/discharge.py transcript.txt --csv run.csv   # or a saved transcript

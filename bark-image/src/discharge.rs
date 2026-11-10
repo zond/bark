@@ -1,4 +1,4 @@
-//! The battery's discharge log (roadmap D174): samples of the cell's
+//! The battery's discharge log (roadmap D178): samples of the cell's
 //! voltage kept on the external flash ([`DISCHARGE`]) so that the cell's
 //! own curve can be learned from a full discharge, which takes days to
 //! weeks on battery, where no host reads the USB log.
