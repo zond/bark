@@ -661,7 +661,7 @@ pub async fn run<'a>(
         // An image gathered over the mesh and staged: the node drains, and
         // the reboot into it waits for a moment that loses nothing
         // (`bark_image::policy`), keeps what the core still holds at the
-        // bound, and ends the phones' links first.
+        // bound and its tables, and ends the phones' links first.
         if let Some(version) = crate::update::mesh::staged() {
             let core = &driver.core().0;
             let m = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
@@ -675,6 +675,8 @@ pub async fn run<'a>(
                     crate::carry::keep(core.held()).await;
                 }
                 crate::ble::close_all().await;
+                // Last, so that the time it took is known after the reset.
+                crate::tables::keep(core).await;
                 crate::update::reboot().await;
             }
         }

@@ -12,9 +12,57 @@
 //! high-frequency clock requested while the CPU sleeps (nRF52840 Product
 //! Specification, TIMER and CLOCK), so a node's clock is the embassy
 //! clock.
+//!
+//! The core's instants count from [`EPOCH`] before the boot, not from the
+//! boot: the neighbour table and records a node keeps across a swap
+//! (`tables.rs`) hold instants from before it.
 
-use bark_proto::Instant;
+use bark_proto::{Duration, Instant};
 use embassy_time::{Timer, TICK_HZ};
+
+/// How long before the boot the core's clock starts: the longest a kept
+/// entry counts for (`bark_proto::remembered_within`), the longest swap
+/// (`bark_image::boot::time`) and the longest write of the tables (each
+/// sector erased and each page programmed at the chip's maximum, ZD25WQ16B
+/// datasheet Table 4-3, and the bytes over the bus), so that every entry
+/// still alive after a swap has an instant on the new clock. 1 260.5 s.
+pub const EPOCH: Duration = Duration::from_micros(
+    bark_proto::remembered_within(&bark_proto::Config::DEFAULT).as_micros()
+        + bark_image::boot::time::swap_us(bark_image::layout::ACTIVE.len)
+        + WRITE_MAX_US,
+);
+
+/// The longest write of the tables kept across a swap, µs: each sector
+/// erased and each page programmed at the chip's maximum, and the bytes
+/// over the bus. 0.6 s.
+const WRITE_MAX_US: u64 = {
+    use bark_app_layer::tables::MAX_LEN;
+    use bark_image::ext_flash::{ERASE_MAX_US, PROGRAM_MAX_US, PROGRAM_PAGE};
+    use bark_image::layout::external::SECTOR;
+    let len = MAX_LEN as u64;
+    len.div_ceil(SECTOR as u64) * ERASE_MAX_US as u64
+        + len.div_ceil(PROGRAM_PAGE as u64) * PROGRAM_MAX_US as u64
+        + bark_image::boot::time::bus_us(len)
+};
+
+/// The core's instant at `t` on the embassy clock.
+#[cfg(not(feature = "console"))]
+pub fn core(t: embassy_time::Instant) -> Instant {
+    Instant::from_micros(t.as_micros() + EPOCH.as_micros())
+}
+
+/// The core's instant now, on the embassy clock.
+#[cfg(not(feature = "console"))]
+pub fn core_now() -> Instant {
+    core(embassy_time::Instant::now())
+}
+
+/// The core's instant `t` on the embassy clock; the boot for one before
+/// it.
+#[cfg(not(feature = "console"))]
+pub fn embassy(t: Instant) -> embassy_time::Instant {
+    embassy_time::Instant::from_micros(t.as_micros().saturating_sub(EPOCH.as_micros()))
+}
 
 /// The clock, in the core's microseconds.
 pub struct Clock {
@@ -84,7 +132,7 @@ impl Clock {
 
 impl bark_driver::Clock for &Clock {
     fn now(&self) -> Instant {
-        Instant::from_micros(self.now_us())
+        Instant::from_micros(self.now_us() + EPOCH.as_micros())
     }
 
     async fn at(&self, t: Instant) {
@@ -93,12 +141,13 @@ impl bark_driver::Clock for &Clock {
         // The stopwatch, where there is one, runs ahead of or behind the
         // embassy clock by its own drift, so the wait is checked against it
         // and taken again if it ended early.
+        let t = t.as_micros().saturating_sub(EPOCH.as_micros());
         loop {
             let now = self.now_us();
-            if now >= t.as_micros() {
+            if now >= t {
                 return;
             }
-            let wait = t.as_micros() - now;
+            let wait = t - now;
             let ticks = (u128::from(wait) * u128::from(TICK_HZ)).div_ceil(1_000_000);
             Timer::after_ticks(ticks as u64).await;
         }

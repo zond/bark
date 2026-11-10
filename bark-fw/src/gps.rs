@@ -109,11 +109,10 @@ enum State {
     Dropped,
 }
 
-/// The end of a search, on the embassy clock, which the core's instants
-/// count from (`clock.rs`).
+/// The end of a search, on the embassy clock (`clock.rs`).
 fn end(gps: Gps) -> Option<embassy_time::Instant> {
     match gps {
-        Gps::Search(t) => Some(embassy_time::Instant::from_micros(t.as_micros())),
+        Gps::Search(t) => Some(crate::clock::embassy(t)),
         Gps::Rest | Gps::Track => None,
     }
 }
