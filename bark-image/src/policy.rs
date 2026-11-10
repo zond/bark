@@ -37,9 +37,12 @@ pub fn takes(offer: Offer, keys: &[Key; SLOTS]) -> bool {
 pub struct Moment {
     /// What its phones' links are doing.
     pub links: Links,
-    /// It holds a message a reset would lose: in its send queue, its
-    /// delivery queue or its inbox, or one its mailbox is writing.
-    pub holding: bool,
+    /// It drains and may reboot: its core holds nothing a reset would
+    /// lose, or has drained for the bound, and what it holds then is
+    /// kept across the reboot (`bark_proto::Relay::drained`).
+    pub drained: bool,
+    /// Its mailbox writes to its flash.
+    pub writing: bool,
     /// The phone's update is under way.
     pub phone_update: bool,
     /// A swap may start on its power: on USB, or on a battery above the
@@ -60,16 +63,24 @@ pub enum Links {
     MidWay,
 }
 
-/// Whether the node reboots into the staged image now: no message held,
-/// which would be lost, no transfer with a phone mid-way, which would be
-/// cut, outside a phone's update, and with the power a swap needs. A
-/// phone's standing link does not hold it back (roadmap D170): the node
-/// ends it, and the app looks for its node and connects again once it is
-/// back, so the person sees it out of reach for the minute a swap takes;
-/// held back by it, a home node whose owner is at home would never
-/// install.
+/// Whether the node drains for the reboot, taking no message so that its
+/// queues empty (roadmap D170): while a swap may start on its power and
+/// no phone's update is under way. Otherwise it would refuse traffic for
+/// as long as its battery is low or the phone's update runs, for a
+/// reboot that cannot come; it takes messages again then.
+pub fn drains(m: Moment) -> bool {
+    m.swap_allowed && !m.phone_update
+}
+
+/// Whether the node reboots into the staged image now: drained, its
+/// mailbox's writes done, no transfer with a phone mid-way, which would
+/// be cut, and as long as it drains. A phone's standing link does not hold
+/// it back (roadmap D170): the node ends it, and the app looks for its
+/// node and connects again once it is back, so the person sees it out of
+/// reach for the minute a swap takes; held back by it, a home node whose
+/// owner is at home would never install.
 pub fn quiet(m: Moment) -> bool {
-    m.links != Links::MidWay && !m.holding && !m.phone_update && m.swap_allowed
+    drains(m) && m.drained && !m.writing && m.links != Links::MidWay
 }
 
 #[cfg(test)]
@@ -138,7 +149,8 @@ mod tests {
     fn moment() -> Moment {
         Moment {
             links: Links::None,
-            holding: false,
+            drained: true,
+            writing: false,
             phone_update: false,
             swap_allowed: true,
         }
@@ -146,6 +158,7 @@ mod tests {
 
     #[test]
     fn a_quiet_moment_has_nothing_under_way() {
+        assert!(drains(moment()));
         assert!(quiet(moment()));
     }
 
@@ -166,35 +179,46 @@ mod tests {
     }
 
     #[test]
-    fn a_phone_update_holds_it_back() {
+    fn a_phone_update_holds_it_back_and_opens_the_node() {
         for links in [Links::None, Links::Idle] {
-            assert!(!quiet(Moment {
+            let m = Moment {
                 links,
                 phone_update: true,
                 ..moment()
-            }));
+            };
+            assert!(!quiet(m) && !drains(m));
         }
     }
 
     #[test]
-    fn a_held_message_holds_it_back() {
+    fn a_message_held_within_the_bound_holds_it_back() {
         for links in [Links::None, Links::Idle] {
-            assert!(!quiet(Moment {
+            let m = Moment {
                 links,
-                holding: true,
+                drained: false,
                 ..moment()
-            }));
+            };
+            assert!(!quiet(m) && drains(m));
         }
     }
 
     #[test]
-    fn a_low_battery_holds_it_back() {
+    fn a_mailbox_write_holds_it_back() {
+        assert!(!quiet(Moment {
+            writing: true,
+            ..moment()
+        }));
+    }
+
+    #[test]
+    fn a_low_battery_holds_it_back_and_opens_the_node() {
         for links in [Links::None, Links::Idle] {
-            assert!(!quiet(Moment {
+            let m = Moment {
                 links,
                 swap_allowed: false,
                 ..moment()
-            }));
+            };
+            assert!(!quiet(m) && !drains(m));
         }
     }
 }
