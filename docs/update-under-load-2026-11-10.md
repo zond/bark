@@ -4,8 +4,9 @@
 reboot into an image gathered over the mesh (`bark-sim/src/install.rs`),
 `scenarios/district-x64.toml` and `scenarios/district-x64-install.toml`.
 Spec references are to `protocol.md` by section name; roadmap D170 is
-the rule tested. The addition at the end tests D180, the tables kept
-across the swap.
+the rule tested. The additions at the end test D180, the tables kept
+across the swap, D181, the leaving flag, and D186, the wait for a leaving
+node.
 
 ## Summary
 
@@ -409,5 +410,83 @@ the destination still refuses them.
 So the loss that remains is the drain's refusal of a text that can end
 only at the draining node: sent round it, the text has nowhere to go.
 Waiting for that node, at the neighbour that holds the text, until it
-is back would keep it; this needs a rule of its own and is not part of
-D181.
+is back would keep it; this needs a rule of its own, D186, the next
+addition.
+
+## Addition, 2026-11-10: the wait for a leaving node (roadmap D186)
+
+D186 has a text refused by a leaving neighbour where it may end wait in
+the delivery queue of the node that holds it, and go on once the
+neighbour's heartbeat no longer says leaving (spec "Delivery queue"). The
+runs below are the same files and seeds on main `a64f625`, which has
+D180, release builds:
+
+- *D180*: the "tables" runs of the D180 addition, main before D181;
+- *D181*: main with D181 merged, commit `9cbd9c8`;
+- *D186*: that with D186, commit `03d34d2`.
+
+"Without" is the D186 build without installs; the run of the first
+addition, "before", is given beside it as the runs without installs
+move with the build too. Lost texts are counted as above.
+
+| seed | | sent | delivered | still on its way at the end | given up at the sender | lost in the network | lost, not counting expired delivery TTL | of them at the hop cap | without a trace | latency p50 / p90, s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | without, before | 79 830 | 64 631 (81.0 %) | 10 939 | 3 959 | 301 | 137 | 52 | 0 | 222 / 956 |
+| 1 | without, D186 | 79 105 | 64 542 (81.6 %) | 10 597 | 3 746 | 220 | 127 | 38 | 0 | 203 / 902 |
+| 1 | installs, D180 | 61 686 | 44 845 (72.7 %) | 11 559 | 5 062 | 220 | 157 | 78 | 0 | 414 / 1 407 |
+| 1 | installs, D181 | 62 028 | 46 224 (74.5 %) | 10 415 | 5 151 | 237 | 198 | 105 | 1 | 361 / 1 267 |
+| 1 | installs, D186 | 66 221 | 51 987 (78.5 %) | 9 348 | 4 642 | 242 | 150 | 52 | 2 | 315 / 1 174 |
+| 2 | without, before | 77 887 | 63 967 (82.1 %) | 9 317 | 4 007 | 596 | 148 | 38 | 0 | 194 / 946 |
+| 2 | without, D186 | 74 424 | 61 261 (82.3 %) | 8 689 | 4 074 | 400 | 142 | 35 | 0 | 181 / 1 011 |
+| 2 | installs, D180 | 60 455 | 44 173 (73.1 %) | 10 979 | 4 915 | 388 | 189 | 79 | 0 | 351 / 1 480 |
+| 2 | installs, D181 | 63 827 | 47 576 (74.5 %) | 10 868 | 5 021 | 362 | 206 | 98 | 0 | 360 / 1 366 |
+| 2 | installs, D186 | 72 962 | 56 553 (77.5 %) | 11 236 | 4 567 | 606 | 199 | 65 | 0 | 317 / 1 243 |
+| 3 | without, before | 71 675 | 56 900 (79.4 %) | 9 828 | 4 555 | 392 | 143 | 35 | 0 | 263 / 1 100 |
+| 3 | without, D186 | 73 335 | 57 634 (78.6 %) | 10 870 | 4 459 | 372 | 167 | 45 | 0 | 250 / 1 082 |
+| 3 | installs, D180 | 57 333 | 39 830 (69.5 %) | 11 751 | 5 421 | 331 | 164 | 48 | 0 | 463 / 1 567 |
+| 3 | installs, D181 | 57 172 | 41 048 (71.8 %) | 10 347 | 5 432 | 344 | 175 | 93 | 1 | 428 / 1 508 |
+| 3 | installs, D186 | 64 042 | 47 347 (73.9 %) | 11 215 | 5 081 | 399 | 133 | 37 | 0 | 360 / 1 313 |
+
+**The hop cap falls back.** With D181 on D180, 105, 98 and 93 texts a
+run die at the hop cap; with D186, 52, 65 and 37, against 38, 35 and 45
+without the installs. Losses not counting the expired delivery TTL fall
+from 579 in the three runs with D181 and 510 with D180 alone to 482,
+against 436 without the installs: the installs now cost 23, 57 and −34
+texts a run. Seed 2 keeps the most, 30 more at the hop cap than its own
+run without; these were not traced.
+
+**More is delivered, sooner.** While the installs go on, 78.5, 77.5 and
+73.9 % of the texts sent arrive, against 74.5, 74.5 and 71.8 % with D181
+and 72.7, 73.1 and 69.5 % with D180, and more texts are sent, as fewer
+wait at their origins: 66 221, 72 962 and 64 042 against 57 172 to
+63 827. The median latency falls 43 to 68 s from D181. Refusals for
+draining fall from 197 944 with D180 and 169 859 with D181 to 112 634 in
+seed 2, as a text refused once by a draining node now waits instead of
+being offered to it again by each of its neighbours.
+
+**What it does not change.** The relays still wait out the bound,
+median 600.2 s from staging to reboot, held mostly by texts for sleepy
+nodes, as the first addition found. "No route" rises with D181, 27 to
+35 a run against 18 to 27 with D180, and stays there with D186, 32 to
+40. The expired delivery TTL moves by hundreds between runs of a seed,
+as above. A text that waits for a leaving node and expires does so at a
+node that did not queue it for a sleepy node of its own; such drops
+count 2, 3 and 6 a run, against 0 to 6 in the runs before D186. Two texts in seed 1 were lost without a
+trace: one a kept message, the case described above, the other not
+traced.
+
+The ring of the first trace, `ring.toml` with every node installing
+within 600 s of the settle time, all texts of the run counted:
+
+| | sent | delivered | lost in the network |
+|---|---:|---:|---:|
+| without installs, D186 | 3 670 | 3 519 (95.9 %) | 14 |
+| installs, D180 | 2 211 | 2 088 (94.4 %) | 31 |
+| installs, D181 | 1 876 | 1 543 (82.2 %) | 34 |
+| installs, D186 | 2 157 | 1 866 (86.5 %) | 26 |
+
+In the ring each relay is the only way on and no text dies at the hop
+cap, so D186 has little to act on there: the losses are "no route" and
+failed returns. That the ring delivers less with D181 than with D180
+alone, more of its texts still on their way at the end, 243 against 55,
+is one run of one seed and was not traced.
