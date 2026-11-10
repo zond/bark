@@ -307,7 +307,7 @@ impl<R: Ring> Mailbox<R> {
         if let Some(t) = self.people[i].and_then(|p| p.tag.map(|t| (t, p.read))) {
             let (tag, read) = t;
             let from = (read + 1).max(self.lowest());
-            for n in (from..=self.newest).filter(|&n| self.tag_of(n) == tag) {
+            for n in (from..=self.newest).filter(|&n| self.holds(n, tag)) {
                 if u.first.is_none() {
                     u.first = self
                         .read_item(n, &mut [0u8; MAX_PAYLOAD])
@@ -318,6 +318,16 @@ impl<R: Ring> Mailbox<R> {
         }
         self.unread[i].set(Some(u));
         u
+    }
+
+    /// Whether the ring holds item `n` whole and for `tag`: its tag byte
+    /// first, which rules most items out at the cost of a byte, then the
+    /// slot, since an erased one reads tag 0xFF.
+    fn holds(&self, n: u32, tag: u8) -> bool {
+        self.tag_of(n) == tag
+            && self
+                .slot(self.slot_of(n))
+                .is_some_and(|(got, len)| got == n && len > seal::RECIPIENT_AT)
     }
 
     /// The recipient tag item `n` carries, read from its slot alone.

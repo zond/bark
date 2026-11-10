@@ -948,6 +948,24 @@ mod mailbox {
         assert_eq!(m.for_tag(7, 0, &mut out).map(|u| u.0), Some(17));
     }
 
+    /// The erased slots of the page a wrapped ring makes room in read tag
+    /// 0xFF: a person whose tag that is has no item there.
+    #[test]
+    fn an_erased_slot_is_nobody_s_item() {
+        let mut m = Mailbox::new(RamRing::<32>::new());
+        let ff = Person {
+            number: 1,
+            tag: Some(0xFF),
+            ..Person::default()
+        };
+        m.set_person(0, Some(ff));
+        for i in 1..=33u8 {
+            m.arrive(MsgId(i.into()), &tagged(7, i));
+        }
+        assert_eq!(m.unread_count(0), 0);
+        assert_eq!(m.unread_head(0), None);
+    }
+
     fn numbers(got: &[Got]) -> Vec<u32> {
         got.iter()
             .map(|g| match g {
