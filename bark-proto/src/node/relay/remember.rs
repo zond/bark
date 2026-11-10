@@ -131,7 +131,7 @@ mod tests {
             sleepy: i % 5 == 1,
             anchorless: false,
             carried: i % 7 == 2,
-            leaving: false,
+            leaving: i % 4 == 3,
             home: Channel::new((i % 13) as u8).unwrap(),
             format: crate::wire::FORMAT,
             map_point: i.is_multiple_of(3),
