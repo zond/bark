@@ -9,7 +9,10 @@
 // person's tap on another node; and with no paired node, or while it
 // is not heard, the strongest public node, joined as a guest, but not
 // one that refuses the phone's old bond until the bond is forgotten; and
-// the owner's unpairing, after which Android forgets its bond too.
+// the owner's unpairing, after which Android forgets its bond too; and
+// Pair, which removes a bond Android holds first and tries nothing where
+// Android keeps it, Pair again on a lost node heard lately, a link the
+// node ends said so, and a Pair during the search's connect that waits.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -286,6 +289,9 @@ class FakeNodes extends UniversalBlePlatform {
   @override
   Future<void> stopScan() async {}
 
+  /// How long Android takes to make a link.
+  Duration setUp = Duration.zero;
+
   @override
   Future<void> connect(
     String deviceId, {
@@ -294,6 +300,7 @@ class FakeNodes extends UniversalBlePlatform {
     ConnectionPlatformConfig? platformConfig,
   }) async {
     connects.add(deviceId);
+    if (setUp > Duration.zero) await Future<void>.delayed(setUp);
     if (!on || !inReach.contains(deviceId)) {
       throw ConnectionException('timed out after 30 seconds');
     }
@@ -321,12 +328,22 @@ class FakeNodes extends UniversalBlePlatform {
     DiscoverServicesPlatformConfig? platformConfig,
   }) async => [];
 
+  /// The devices that end every link as it is set up, as a node did on
+  /// the bench, 2026-11-10, 0.2 s after the phone connected.
+  final Set<String> endsLinks = {};
+
+  /// The devices that end the link right after the app's first read of
+  /// Node, which needs no encryption.
+  final Set<String> endsAfterNode = {};
+
   /// A node that holds another phone's bond ends a bonded phone's link
-  /// at once, as [RefusingNode] does; otherwise the link is the fake's.
+  /// at once, as [RefusingNode] does, and so does one of [endsLinks];
+  /// otherwise the link is the fake's.
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {
     final n = nodes[deviceId]!;
-    if (bonds.contains(deviceId) && !n.paired) {
+    if ((bonds.contains(deviceId) && !n.paired) ||
+        endsLinks.contains(deviceId)) {
       _up.remove(deviceId);
       updateConnection(deviceId, false, 'status 5', null, 5);
       throw UniversalBleException(
@@ -418,6 +435,11 @@ class FakeNodes extends UniversalBlePlatform {
   }) async {
     _reach(deviceId);
     final n = _links[deviceId]!;
+    if (characteristic == Uuids.node && endsAfterNode.contains(deviceId)) {
+      final v = (await n.readNode()).encode();
+      drop(deviceId);
+      return v;
+    }
     return switch (characteristic) {
       Uuids.node => (await n.readNode()).encode(),
       Uuids.status => (await n.readStatus()).encode(),
@@ -548,11 +570,21 @@ void main() {
     );
   });
 
-  test('the same drop on a phone without a bond fails to connect', () async {
+  test('the same drop on a phone without a bond: the link ended, said '
+      'so', () async {
     UniversalBle.setInstance(RefusingNode(bonded: false));
     await expectLater(
       BleLink.connect(device, name: 'bark-7572482fc367'),
-      throwsA(isA<UniversalBleException>()),
+      throwsA(
+        isA<LinkEnded>().having(
+          (e) => '$e',
+          'words',
+          startsWith(
+            'The link to ID 7572482FC367 ended before the node was '
+            'read: the node ended it, or is out of reach.',
+          ),
+        ),
+      ),
     );
   });
 
@@ -1799,33 +1831,136 @@ void main() {
       });
     });
 
-    test(
-      'Pair pressed on a node with a live bond adopts it without a code',
-      () {
-        run(bonds: {strong}, (async, app, ble) {
-          app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
-          async.elapse(round);
-          expect(ble.pairings, 0);
-          expect((app.session.connected, app.session.guest), (true, false));
-          expect(app.pairedNodes, contains(nodeName(strongId)));
-          expect(ble.bonds, {strong});
-        });
-      },
-    );
-
-    test('Pair on a node with the phone\'s old bond for it: the bond is '
-        'forgotten and the pairing makes a new one', () {
+    test('Pair on a node that still holds the phone\'s bond: the bond goes '
+        'first, and the new pairing takes its place', () {
       run(bonds: {strong}, (async, app, ble) {
-        ble.nodes[strong]!.paired = false;
+        app.stopLooking();
+        async.flushMicrotasks();
         app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
         async.elapse(round + seenWait);
-        // Over the old bond first, refused, then paired with a code.
-        expect(ble.connects, [strong, strong]);
+        expect(ble.connects, [strong]);
+        expect(ble.pairings, 1);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(ble.bonds, {strong});
+      });
+    });
+
+    test('Pair on a node no longer this phone\'s, Android holding the old '
+        'bond, as on the bench: the bond removed, then one link that pairs '
+        'by the code', () {
+      run(bonds: {strong}, (async, app, ble) {
+        ble.nodes[strong]!.paired = false;
+        app.session.setPaired(nodeName(strongId), lost: true);
+        app.stopLooking();
+        async.flushMicrotasks();
+        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        async.elapse(round + seenWait);
+        // No link over the old bond, which the node would end.
+        expect(ble.connects, [strong]);
+        expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
         expect(app.pairedNodes, contains(nodeName(strongId)));
         expect(app.session.pairingLost, isEmpty);
         expect(app.staleBond, isNull);
+      });
+    });
+
+    test('Pair where Android keeps the old bond: said plainly, and no '
+        'pairing tried', () {
+      run(bonds: {strong}, (async, app, ble) {
+        ble
+          ..keepsBonds = true
+          ..nodes[strong]!.paired = false;
+        app.session.setPaired(nodeName(strongId), lost: true);
+        app.stopLooking();
+        async.flushMicrotasks();
+        Object? failed;
+        app
+            .connect(FoundNode(strong, nodeName(strongId), -50, public: true))
+            .then<void>((_) {}, onError: (Object e) => failed = e);
+        async.elapse(round);
+        expect(failed, isA<BondKept>());
+        expect(
+          '$failed',
+          'This phone could not forget its old pairing with ID 0CE400000004, '
+              'and a new pairing needs it gone, so none was tried. Forget the '
+              'node in the phone\'s Bluetooth settings, then try again.',
+        );
+        expect(ble.connects, isEmpty);
+        expect(ble.pairings, 0);
+        expect(app.connecting, isFalse);
+      });
+    });
+
+    test('Pair again on the row of a paired node that no longer knows this '
+        'phone, heard by the search: the bond removed, and paired anew', () {
+      run(bonds: {strong}, (async, app, ble) {
+        final name = nodeName(strongId);
+        ble.nodes[strong]!.paired = false;
+        app.session.setPaired(name, lost: true);
+        expect(app.lostInReach(name), isFalse);
+        async.elapse(round);
+        expect(app.lostInReach(name), isTrue);
+        app.pairLost(name);
+        async.elapse(round + seenWait);
         expect(ble.pairings, 1);
+        expect(ble.bonds, {strong});
+        expect(app.linkDevice, strong);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(app.session.pairingLost, isEmpty);
+        // Out of reach for the span the search takes to call it so, the
+        // row offers it no more.
+        app.session.setPaired(name, lost: true);
+        app.disconnect();
+        ble.inReach.remove(strong);
+        async.elapse(lookRound * (ownGone + 1));
+        expect(app.lostInReach(name), isFalse);
+      });
+    });
+
+    test('a pairing whose link the node ends: its reason, and nothing '
+        'counted paired', () {
+      run((async, app, ble) {
+        app.stopLooking();
+        async.flushMicrotasks();
+        ble.endsLinks.add(strong);
+        Object? failed;
+        app
+            .connect(FoundNode(strong, nodeName(strongId), -50, public: true))
+            .then<void>((_) {}, onError: (Object e) => failed = e);
+        async.elapse(round);
+        expect(failed, isA<LinkEnded>());
+        expect(ble.pairings, 0);
+        expect(app.session.pairedWith, isEmpty);
+        // Ended right after the first read, once paired: said too, and not
+        // taken as the node holding the bond.
+        ble
+          ..endsLinks.clear()
+          ..endsAfterNode.add(strong);
+        failed = null;
+        app
+            .connect(FoundNode(strong, nodeName(strongId), -50, public: true))
+            .then<void>((_) {}, onError: (Object e) => failed = e);
+        async.elapse(round);
+        expect(failed, isA<LinkEnded>());
+        expect(app.session.connected, isFalse);
+        expect(app.session.pairedWith, isEmpty);
+        expect(app.connecting, isFalse);
+      });
+    });
+
+    test('Pair while the search connects: the pairing waits for it, then '
+        'runs, rather than doing nothing', () {
+      run((async, app, ble) {
+        // The round's errand at the strongest is being set up.
+        ble.setUp = const Duration(seconds: 1);
+        async.elapse(lookScan + const Duration(milliseconds: 500));
+        expect(app.linking, isNot(Linking.none));
+        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        async.elapse(round);
+        expect(ble.pairings, 1);
+        expect((app.session.connected, app.session.guest), (true, false));
       });
     });
 

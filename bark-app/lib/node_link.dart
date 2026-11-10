@@ -50,6 +50,31 @@ String staleBondLine(String node) =>
     '${shownName(node)} no longer knows this phone\'s old pairing. Forget '
     'it in the phone\'s Bluetooth settings, then try again.';
 
+/// Android kept its bond with the node `node` when asked to remove it
+/// before a new pairing, which cannot run over it: Android would pair
+/// with its old keys while the node runs a new pairing (bench,
+/// 2026-11-10). No pairing was tried.
+class BondKept implements Exception {
+  final String node;
+  const BondKept(this.node);
+  @override
+  String toString() =>
+      'This phone could not forget its old pairing with ${shownName(node)}, '
+      'and a new pairing needs it gone, so none was tried. Forget the node '
+      'in the phone\'s Bluetooth settings, then try again.';
+}
+
+/// The link to the node `node` ended before the app had read it: the
+/// node ended it, or went out of reach.
+class LinkEnded implements Exception {
+  final String node;
+  const LinkEnded(this.node);
+  @override
+  String toString() =>
+      'The link to ${shownName(node)} ended before the node was read: the '
+      'node ended it, or is out of reach. Try again nearer to it';
+}
+
 /// The pairing did not complete: it was cancelled, the code typed was
 /// not the one on the node's screen, or the node keeps as many phones as
 /// it can and refused it (spec "Phone link", Pairing).

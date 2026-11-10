@@ -386,14 +386,11 @@ class AppModel extends ChangeNotifier {
   /// ([ownGone] rounds) is taken as heard; another is listened for first,
   /// one round's scan, and [NotSeen] goes on if it is not heard.
   Future<void> connectPaired(String name) async {
-    if (connecting) return;
+    if (_tapHeld) return;
     final f = fakeNode;
     if (fake && f != null && name == nodeName(f.nodeId)) return connectFake();
     await _byTap(() async {
-      final last = _lastHeard[name];
-      var n = last != null && now().difference(last.at) < lookRound * ownGone
-          ? last.found
-          : null;
+      var n = heardLately(name);
       if (n == null) {
         await stopScan();
         final heard = await listen(until: (f) => f.name == name);
@@ -404,6 +401,37 @@ class AppModel extends ChangeNotifier {
       if (connectedTo(n.deviceId) && !session.guest) return;
       await _connect(n);
     });
+  }
+
+  /// The node `name` as last heard, if heard within the span the search
+  /// takes to call a node out of reach ([ownGone] rounds): in reach.
+  FoundNode? heardLately(String name) {
+    final last = _lastHeard[name];
+    return last != null && now().difference(last.at) < lookRound * ownGone
+        ? last.found
+        : null;
+  }
+
+  /// Whether `name`, a paired node no longer this phone's, may be paired
+  /// with again now ([pairLost]): heard lately, or the fake node.
+  bool lostInReach(String name) {
+    final f = fakeNode;
+    if (fake && f != null && name == nodeName(f.nodeId)) return true;
+    return heardLately(name) != null;
+  }
+
+  /// The person pairs again with `name`, a paired node that no longer
+  /// knows this phone, by the code on its screen, as **Pair** on its row
+  /// in a scan does ([connect]).
+  Future<void> pairLost(String name) async {
+    final f = fakeNode;
+    if (fake && f != null && name == nodeName(f.nodeId)) {
+      f.pair();
+      return connectFake();
+    }
+    final n = heardLately(name);
+    if (n == null) throw NotSeen(shownName(name));
+    await connect(n);
   }
 
   /// Forgets `name`, a paired node no longer this phone's: the app counts
@@ -842,15 +870,22 @@ class AppModel extends ChangeNotifier {
   bool connectedTo(String device) => session.connected && linkDevice == device;
 
   /// The person connects to `n`, after closing the link to another
-  /// node, or a guest's to `n`, and pairs with it if the phone has not;
-  /// `again` after they chose to pair again, which forgets the phone's
-  /// old bond and finds the node in a scan first ([seen]). It ends the
-  /// search for the paired node. Nothing while a connection is being
-  /// made or `n` is connected already as the phone's: a second connect to
-  /// the same node would close the link the first made.
+  /// node, or a guest's to `n`, and pairs with it if the phone has not,
+  /// removing any bond Android holds with it first; `again` after they
+  /// chose to pair again, which finds the node in a scan first ([seen]),
+  /// as Android may have dropped the bond the node refused, and with it
+  /// what it knew of the address. It ends the search for the paired node.
+  /// Nothing while another connect of the person's is under way, or once
+  /// `n` is connected as the phone's: a second connect to the same node
+  /// would close the link the first made. A connect that ends with no
+  /// link says why: by what it throws, or, where app and node do not serve
+  /// each other, by the session's notice.
   Future<void> connect(FoundNode n, {bool again = false}) async {
-    if (connecting || (connectedTo(n.deviceId) && !session.guest)) return;
-    await _byTap(() => _connect(n, again: again));
+    if (_tapHeld || (connectedTo(n.deviceId) && !session.guest)) return;
+    await _byTap(() async {
+      if (connectedTo(n.deviceId) && !session.guest) return;
+      await _connect(n, again: again);
+    });
   }
 
   /// The person connects to `n`, a public node, as a guest: without
@@ -858,7 +893,7 @@ class AppModel extends ChangeNotifier {
   /// [connect] does, and the link lasts until the node ends it, after a
   /// guest's 30 s, or the person leaves, not one errand (roadmap D179).
   Future<void> connectGuest(FoundNode n) async {
-    if (connecting || connectedTo(n.deviceId)) return;
+    if (_tapHeld || connectedTo(n.deviceId)) return;
     await _byTap(() => _connectGuest(n, errand: false));
   }
 
@@ -866,17 +901,33 @@ class AppModel extends ChangeNotifier {
   /// until it ends, so that the search neither scans nor connects
   /// meanwhile: a round started when the tap closed the old link took
   /// the home before the tap's own connect was made (bench, 2026-11-10).
+  /// A connect of the search's already under way ends first: the tap
+  /// waits for it rather than doing nothing.
   Future<void> _byTap(Future<void> Function() f) async {
     _tapHeld = true;
     _tapped = true;
     notifyListeners();
     try {
       await _searchStopped();
+      await _linkingEnded();
       await f();
     } finally {
       _tapHeld = false;
       notifyListeners();
     }
+  }
+
+  /// Completes once no connection is being set up ([linking]).
+  Future<void> _linkingEnded() async {
+    if (linking == Linking.none) return;
+    final done = Completer<void>();
+    void check() {
+      if (linking == Linking.none && !done.isCompleted) done.complete();
+    }
+
+    addListener(check);
+    await done.future;
+    removeListener(check);
   }
 
   /// A connect the person asked for is under way ([_byTap]).
@@ -892,11 +943,14 @@ class AppModel extends ChangeNotifier {
   /// removed it, after a scan, as the bond went with what Android knew of
   /// the address's type.
   Future<void> _connectGuest(FoundNode n, {bool errand = true}) async {
-    if (await BleLink.bonded(n.deviceId)) {
+    final bonded = await BleLink.bonded(n.deviceId);
+    // A connect of the person's that came meanwhile goes first.
+    if (errand && _tapHeld) return;
+    if (bonded) {
       if (await _overBond(n)) return;
-      if (!await seen(n.deviceId)) throw NotSeen(n.name);
+      if (!await seen(n.deviceId)) throw NotSeen(shownName(n.name));
     }
-    await _open(n.deviceId, () async {
+    await _open(n.deviceId, n.name, () async {
       await _searchStopped();
       await stopScan();
       return BleLink.connect(n.deviceId, name: n.name, guest: true);
@@ -1013,33 +1067,30 @@ class AppModel extends ChangeNotifier {
 
   Future<void> _connect(FoundNode n, {bool again = false}) async {
     final s = session;
-    await _open(n.deviceId, () async {
+    await _open(n.deviceId, n.name, () async {
       await _searchStopped();
       await stopScan();
       final ours =
           s.pairedWith.contains(n.name) && !s.pairingLost.contains(n.name);
-      var forget = again;
-      if (!again && !ours && await BleLink.bonded(n.deviceId)) {
-        // A node Android holds a bond with is never paired anew: Android
-        // pairs with its old keys while the node runs a new pairing, and
-        // the key check fails whatever code is typed (bench, 2026-11-10).
-        // The link goes over the bond, and a node that still holds it is
-        // the person's again; one that refuses it has the bond removed,
-        // and the pairing makes a new one.
-        try {
-          return await BleLink.connect(n.deviceId, name: n.name, hadBond: true);
-        } on NotOurs {
-          forget = true;
-        }
+      // A node not the phone's is paired with anew, and never over a bond
+      // Android holds with it: Android pairs with its old keys while the
+      // node runs a new pairing, and the key check fails whatever code is
+      // typed; a link over it, to a node that no longer knows it, the node
+      // ends before a pairing can start (bench, 2026-11-10). So the bond
+      // goes first, as on Forget; a node that still held it takes the new
+      // pairing in its place (spec "Phone link", Pairing).
+      final bonded = !ours && await BleLink.bonded(n.deviceId);
+      if (bonded) {
+        if (!await BleLink.forget(n.deviceId)) throw BondKept(n.name);
+        s.note('Pairing: the phone forgot its old bond with ${n.name}');
       }
-      if (forget) {
-        if (!await BleLink.forget(n.deviceId)) throw StaleBond(n.name);
-        if (!await seen(n.deviceId)) throw NotSeen(n.name);
+      if (bonded || again) {
+        if (!await seen(n.deviceId)) throw NotSeen(shownName(n.name));
       }
       return BleLink.connect(
         n.deviceId,
         name: n.name,
-        hadBond: !again && ours,
+        hadBond: ours,
         pairing: () {
           _phase(Linking.pairing);
           session.note('Pairing with ${n.name}');
@@ -1062,6 +1113,7 @@ class AppModel extends ChangeNotifier {
     );
     await _open(
       fakeDevice,
+      nodeName(f.nodeId),
       () async => (f.connect(), attMtu),
       again: () async {
         f.pair();
@@ -1076,9 +1128,11 @@ class AppModel extends ChangeNotifier {
   /// that no longer does is kept as lost, with `again` to pair with it
   /// anew, and [NotOurs] goes on to the caller; one refused for a bond
   /// the node no longer has is kept in [staleBonds], and [StaleBond] goes
-  /// on.
+  /// on. An owner's link to `name` that ended while it was read is not
+  /// taken as the node holding the bond: [LinkEnded] goes on.
   Future<void> _open(
     String device,
+    String name,
     Future<(NodeLink, int)> Function() open, {
     Future<void> Function()? again,
     bool guest = false,
@@ -1098,11 +1152,11 @@ class AppModel extends ChangeNotifier {
         notifyListeners();
       }
       if (await session.attach(link, guest: guest) && !guest) {
-        final name = nodeName(session.node!.id);
+        if (!session.connected) throw LinkEnded(name);
         if (ownAway) session.note('Back on a paired node');
         _ownMissed = 0;
         _guestAt = null;
-        await session.setPaired(name);
+        await session.setPaired(nodeName(session.node!.id));
       }
     } on NotOurs catch (e) {
       await session.setPaired(e.node, lost: true);
@@ -1486,7 +1540,7 @@ class AppModel extends ChangeNotifier {
   /// the node may serve the phone as a guest.
   Future<bool> _overBond(FoundNode n) async {
     try {
-      await _open(n.deviceId, () async {
+      await _open(n.deviceId, n.name, () async {
         await _searchStopped();
         await stopScan();
         try {
@@ -1502,7 +1556,8 @@ class AppModel extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    // A link that ended as it was set up is tried again, over the bond.
+    // A node whose version does not serve this app's, as the session's
+    // notice says, is not used as a guest either.
     if (!session.connected || session.guest) return true;
     session.note('Pairing: ${n.name} still holds this phone\'s bond');
     adopted = n.name;

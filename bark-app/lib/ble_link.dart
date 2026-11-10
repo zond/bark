@@ -245,7 +245,8 @@ class BleLink implements NodeLink {
   /// read it refuses ([_probe]); or one whose bond the phone no longer
   /// has though it `hadBond`, as Android may drop a bond whose key the
   /// node refused. Throws [NotPaired] for a pairing that did not
-  /// complete.
+  /// complete, and [LinkEnded] for a link without a bond that ended as it
+  /// was set up.
   static Future<(BleLink, int)> connect(
     String deviceId, {
     required String name,
@@ -280,10 +281,12 @@ class BleLink implements NodeLink {
       await UniversalBle.discoverServices(deviceId);
       mtu = await UniversalBle.requestMtu(deviceId, attMtu);
     } catch (e) {
+      final ended = link._closed.isCompleted;
       await link.close();
       if (await setUpRefused(deviceId, hadBond: hadBond)) {
         throw guest ? StaleBond(name) : NotOurs(name);
       }
+      if (ended) throw LinkEnded(name);
       rethrow;
     }
     try {
