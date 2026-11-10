@@ -25,6 +25,7 @@
 //! ping <k>                   send a ping on k, wait home for the pong
 //! status [reset]             uptime, battery, settings, counters
 //! survey [n]                 the survey build's noise log, the last n minutes
+//! discharge [erase]          the node image's discharge log, oldest first, or erase it
 //! stage <header hex>         start staging a signed image (`bark_image::Header`)
 //! chunk <offset> <hex>       write up to 256 bytes of it, in order
 //! commit                     check it and ask the loader to swap it in
@@ -335,6 +336,8 @@ enum Command<'l> {
     Status(bool),
     /// The last n survey samples.
     Survey(usize),
+    /// The discharge log printed, or erased.
+    Discharge(bool),
     Help,
     /// A header, as checked hex digits.
     Stage(&'l [u8]),
@@ -363,7 +366,7 @@ const ACK_TIMEOUT_US: u32 = 100_000;
 const HELP: &str =
     "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
-survey [n] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
+survey [n] | discharge [erase] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
 const HELP_OPEN: &str = "cut <swap|back> <op|none>";
 
 fn parse(line: &str) -> Result<Command<'_>, &'static str> {
@@ -424,6 +427,11 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             Some(_) => return Err("status takes nothing or `reset`"),
         },
         "survey" => Command::Survey(optional(arg(), usize::MAX)?),
+        "discharge" => match arg() {
+            None => Command::Discharge(false),
+            Some("erase") => Command::Discharge(true),
+            Some(_) => return Err("discharge takes nothing or `erase`"),
+        },
         "help" | "?" => Command::Help,
         "stage" => Command::Stage(hex_bytes(
             arg().ok_or("stage needs the image's header in hex")?,
@@ -968,6 +976,10 @@ impl<'a> Console<'a> {
             Command::Ping(ch) => self.ping(ch).await?,
             Command::Status(reset) => self.status(reset).await,
             Command::Survey(n) => self.print_survey(n).await,
+            Command::Discharge(false) => {
+                crate::discharge::print(kept().stored.and_then(|s| s.battery_scale)).await
+            }
+            Command::Discharge(true) => crate::discharge::erase(),
             Command::Help => {
                 log::info!("{}", HELP);
                 if OPEN {
