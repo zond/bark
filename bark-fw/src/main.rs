@@ -556,10 +556,12 @@ async fn watchdog(dog: embassy_nrf::Peri<'static, peripherals::WDT>) {
 /// The radio's start, logged.
 fn radio_up(radio: &radio::Radio<'_>, clock: &clock::Clock, t0: u32) {
     log::info!(
-        "radio up in {} us, tcxo {} us after {} probes, lbt reading {:?}",
+        "radio up in {} us, tcxo {} us after {} probes, restart {} us after {}, lbt reading {:?}",
         clock.since(t0),
-        radio.tcxo().delay.as_micros(),
-        radio.tcxo().probes,
+        radio.cold().delay.as_micros(),
+        radio.cold().probes,
+        radio.restart_delay().as_micros(),
+        radio.restart().probes,
         radio.lbt_read()
     );
 }

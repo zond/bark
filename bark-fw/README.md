@@ -240,9 +240,9 @@ Unverified, in the order they will fail if wrong:
   can be read back after the error, continuous receive keeps running after
   a header or CRC error, `GetRssiInst` answers during a CAD as the bench
   saw (the boot self-check guards it, Radio driver below), the
-  configuration sent once holds across every operation but a sleep, and a
-  delay of 100 µs restarts the oscillator cleanly within a millisecond of
-  a CAD's end (roadmap D88).
+  configuration sent once holds across every operation but a sleep, and
+  the oscillator restarted within a millisecond of a CAD's end needs far
+  less than a cold start, which the board probes (roadmap D88, D193).
 - Duty-cycled receive (`Radio::sniff`, below), in the order it would fail:
   the chip accepts SetRxDutyCycle(240, 14 952) and cycles; it catches a
   frame with the long preamble wherever it starts (`sniff::detects`);
@@ -1455,9 +1455,9 @@ retune times.
 | `rx <k> [ms]` | listen on k for ms (default 10 000), reporting every frame; what is typed meanwhile runs after | per frame: `len`, `rssi_dbm`, `snr_db`, `crc=ok\|error`, `bytes`, or for a survey frame its sender's `survey_power_dbm` and `seq` in place of the bytes; for a heartbeat also its sender's `id`, the newest `format` it speaks, `map_point` and its `home`; at the end the count of `frames` and `crc_errors` |
 | `cad <k>` | one CAD on k alone (8 symbols, the driver's fixed setting), nothing read inside it: the CAD flag by itself, against `lbt` | `busy`, `prepare_us`, `cad_us` (SetCAD to its result read and cleared), `rest_us` |
 | `lbt <k>` | one listen-before-talk on k: the CAD with the RSSI read inside it, then home (roadmap D88) | `busy`, `dbm` (on the footing of a reading while listening), `inside_dbm` (as read), `prepare_us`, `read_us`, `cad_us`, `after_us` (a reading after the CAD, if the self-check chose that), `rest_us`, `total_us` |
-| `tcxo` | the oscillator's delay in use and how it got there | `delay_us`, `short_us` (what a restart within a millisecond of stopping takes: the short delay, or the probed one once a short restart failed), `step_us`, `probes`, `errors` (starts in use that set the flag), `cold_starts`, the last probe's `last_probe_us`, `last_ok`, `last_at_s`, `last_temp_qc` (die quarter degrees), `lbt_read` |
-| `probe` | probe the oscillator's start now, two steps below the delay in use, as the hourly re-probe does | `took_us`, then the `tcxo` line |
-| `recover` | reset the radio and measure again what the boot measured, as the node does after a radio error or a heartbeat skipped on every channel (roadmap D192) | `took_us`, then the `tcxo` line |
+| `tcxo` | the oscillator's two delays and how they got there (roadmap D193) | a line with `delay_us` (cold), `restart_us`, `cold_starts`, `restarts`, `last_start` and its `last_gap_us` (how long the oscillator had been off), `lbt_read`; then a `cold` and a `restart` line, each with `delay_us`, `step_us`, `probes`, `errors` (starts in use that failed), `settled_qc` (die quarter degrees when the delay settled), `due_from_s` (uptime from which a 3 °C move makes a probe due), `due_by_s` (uptime at which one is due anyway), and the last probe's `last_probe_us`, `last_ok`, `last_at_s`, `last_temp_qc`, `last_gap_us` |
+| `probe` | probe both delays now, two steps below those in use, as the schedule does | `took_us`, then the `tcxo` lines |
+| `recover` | reset the radio and measure again what the boot measured, as the node does after a radio error or a heartbeat skipped on every channel (roadmap D192) | `took_us`, then the `tcxo` lines |
 | `rssi <k> [dwell_us]` | retune to k, wait, read RSSI once, retune home | `dbm`, `retune_us`, `dwell_us`, `read_us` |
 | `sweep` | one RSSI reading on each of the 13 channels | 13 values, `total_us` |
 | `noise <k> <n> [gap_us]` | n readings (up to 1000) on k | `min`, `p10`, `median`, `max`, `total_us` |
@@ -1569,21 +1569,40 @@ frame, and a delay of zero hangs it (DS §13.3.6,
 `docs/bench-2026-10-30.md`). From STDBY_XOSC no start is needed: the chip
 reaches RX in 62 µs and TX in 105 µs (DS Table 8-2). A CAD ends in
 STDBY_RC whatever the driver asks (DS Table 13-73), so every
-listen-before-talk restarts the oscillator; restarted within a
-millisecond of stopping it is still running and needs no delay, so that
-restart is programmed at 100 µs (`bark_driver::tcxo::SHORT`). Every other
-start is cold and takes a delay the board probes for itself
-(`bark_driver::tcxo`): at boot a binary search over 0.25 to 4 ms in
-0.25 ms steps, each probe a standby with the oscillator off for 2 ms, the
-delay programmed, the errors cleared, a receive and the error word read;
-four more probes at the step found, since the flag flickers at the edge;
-and one step of margin. In use the flag is read after every cold start and
-the delay stepped up at once when it is set, which covers a board getting
-cold; and once an hour at most, when the processor's die temperature has
-moved 3 °C since the delay settled, a probe two steps below it brings it
-down a step if that passes, which recovers the margin as it warms. The
-console's `tcxo` and `probe` show it; the node's 10 s `driver` line
-carries `tcxo_us` and `tcxo_errors`.
+listen-before-talk restarts the oscillator. Restarted within a
+millisecond of stopping it is still running, or nearly, and needs far
+less than a cold start. So the board probes two delays for itself
+(`bark_driver::tcxo`, roadmap D193), the same way:
+
+- The cold delay, for a start after a millisecond or more off: at boot a
+  binary search over 0.25 to 4 ms in 0.25 ms steps, each probe a standby
+  with the oscillator off for 2 ms, the delay programmed, the errors
+  cleared, a receive and the error word read.
+- The restart's delay, for a start sooner: at boot, after the cold one,
+  a binary search from 50 µs up to the cold delay in 50 µs steps, the
+  least restart the bench saw pass, each probe the sequence in use: a CAD
+  on the next channel from listening, then home, the delay programmed and
+  a receive, and the error word read. A probe whose gap came to a
+  millisecond was a cold start and is made again.
+
+Each search ends with four more probes at the step found, since the flag
+flickers at the edge, and one step of margin; on the bench's board that
+is 500 µs and 100 µs. The time since the stop is measured: a CAD's end is
+taken as the earliest it can be, its eight symbols after the command,
+since its interrupt may reach the driver late while another task runs; a
+start found a millisecond or more after the stop takes the cold delay.
+
+In use the error word is read after every start, and a start that set
+the oscillator's or the PLL's error steps its own delay up at once, with a
+log line giving the delay and how long the oscillator had been off; a
+restart that failed is followed by a cold start rather than left in
+STDBY_RC. Each delay comes back down by a probe two steps below it, which
+lowers it a step if it passes: due an hour at the earliest after the delay
+settled, when the processor's die temperature has moved 3 °C since, or
+after a day without an error whatever the temperature did. The console's
+`tcxo` and `probe` show both; the node's 10 s `driver` line carries
+`tcxo_us`, `tcxo_errors`, `restarts`, `restart_us` and
+`restart_errors`.
 
 A listen-before-talk reads the channel's RSSI four symbol periods into the
 CAD, where the bench found the reading settled; the datasheet documents
