@@ -14,16 +14,12 @@
 //! (`ext_flash.rs`). A message the core delivered is confirmed to the
 //! core only once its slot is written, so that one taken is not lost to a
 //! reboot meanwhile (`node.rs`).
-//!
-//! The mailbox's state page inside (`bark_image::layout::MAILBOX_STATE`),
-//! where an image before the records kept its one key, is read once, for
-//! that key to become record one ([`old_home`]).
 
 use core::cell::RefCell;
 
 use bark_app_layer::flash_ring::{FlashRing, Op, Region};
 use bark_app_layer::mailbox::{Arrival, Mailbox, SLOTS_PER_PAGE};
-use bark_image::layout::{self, external, MAILBOX_STATE, PAGE};
+use bark_image::layout::{external, PAGE};
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::MsgId;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
@@ -33,25 +29,6 @@ use embassy_time::Instant;
 use embedded_storage::nor_flash::ReadNorFlash;
 
 use crate::ext_flash;
-
-/// A region of the internal flash, read where it lies in the chip's
-/// address space: the state's page.
-pub struct Mapped(layout::Region);
-
-impl Region for Mapped {
-    fn pages(&self) -> u32 {
-        self.0.len / PAGE
-    }
-
-    fn read(&self, offset: u32, out: &mut [u8]) {
-        let at = (self.0.start + offset) as *const u8;
-        // SAFETY: flash is mapped from address 0 (nRF52840 Product
-        // Specification, Memory), and the region lies in it; `Ring`'s
-        // callers keep to its pages.
-        let bytes = unsafe { core::slice::from_raw_parts(at, out.len()) };
-        out.copy_from_slice(bytes);
-    }
-}
 
 /// The ring, on the external flash.
 pub struct Ring;
@@ -88,20 +65,6 @@ static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// the change. A reply due needs no signal: the driver offers before every
 /// wait.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-/// What an image before the records kept of its one home, from the
-/// mailbox's state page, read where it lies.
-pub fn old_home() -> bark_link::phones::OldHome {
-    let state = bark_app_layer::flash_ring::last_state(&Mapped(MAILBOX_STATE));
-    match state.as_ref().and_then(bark_app_layer::mailbox::old_state) {
-        Some((key, last_fetch, read)) => bark_link::phones::OldHome {
-            key,
-            last_fetch,
-            read,
-        },
-        None => bark_link::phones::OldHome::default(),
-    }
-}
 
 /// Open the mailbox as it was before the reboot, once at boot, after
 /// `ext_flash::init`, with its people from their records: every slot of

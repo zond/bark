@@ -1248,50 +1248,6 @@ mod mailbox {
         m.confirm_read(0, 2);
         assert_eq!(m.unread(0, &mut b), None);
     }
-
-    /// A slot written before the marks held a bit a person, 0xFF unsent
-    /// and 0 sent, reads so for the first person, the one an older
-    /// image's owner becomes; the other bits there count for nothing.
-    #[test]
-    fn an_older_mark_is_the_first_person_s() {
-        let mut m = home();
-        m.arrive(MsgId(1), &item(1));
-        m.arrive(MsgId(2), &item(2));
-        // As an older image wrote them: 1 sent, 2 not.
-        let mut b = [0u8; 256];
-        let mut r = RamRing::<32>::new();
-        for s in 0..2 {
-            m.ring().read(s, &mut b);
-            b[256 - 9] = if s == 0 { 0 } else { 0xff };
-            r.write(s, &b);
-        }
-        let mut m = Mailbox::new(r);
-        m.set_person(0, Some(alice()));
-        m.set_person(
-            1,
-            Some(Person {
-                number: 2,
-                from: 2,
-                ..alice()
-            }),
-        );
-        assert_eq!(numbers(&fetch_all(&mut m, 100)), [2]);
-    }
-
-    #[test]
-    fn an_older_state_reads_as_its_key_its_last_fetch_and_its_read() {
-        let k = [5u8; 32];
-        let s = crate::mailbox::old_state_of(Some(k), 77, 0x01_0203);
-        assert_eq!(
-            crate::mailbox::old_state(&s),
-            Some((Some(k), 77, 0x01_0203))
-        );
-        let mut cut = s;
-        cut[60..].fill(0xff);
-        assert_eq!(crate::mailbox::old_state(&cut), None);
-        let none = crate::mailbox::old_state_of(None, 0, 0);
-        assert_eq!(crate::mailbox::old_state(&none), Some((None, 0, 0)));
-    }
 }
 
 /// The mailbox on its ring in flash, the board's pages in RAM: what it
@@ -1302,8 +1258,8 @@ mod flash_ring {
 
     use bark_proto::MsgId;
 
-    use crate::flash_ring::{last_state, state_record, FlashRing, Op, Region, PAGE_LEN};
-    use crate::mailbox::{old_state, old_state_of, Arrival, Mailbox, Person};
+    use crate::flash_ring::{FlashRing, Op, Region, PAGE_LEN};
+    use crate::mailbox::{Arrival, Mailbox, Person};
     use crate::seal::Fetch;
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
@@ -1616,21 +1572,5 @@ mod flash_ring {
         assert!(!m.ring().idle());
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(1, &mut b), Some(item(1).len()));
-    }
-
-    /// An older mailbox's state page: the last whole record is its state.
-    #[test]
-    fn the_last_whole_state_of_an_older_mailbox() {
-        let mut page = Ram::erased(1);
-        assert_eq!(last_state(&&page), None);
-        let k = Some([4u8; 32]);
-        for (i, read) in [1u32, 2, 3].into_iter().enumerate() {
-            let r = state_record(&old_state_of(k, 10, read));
-            page.0[i * 128..(i + 1) * 128].copy_from_slice(&r);
-        }
-        // The third cut short.
-        page.0[2 * 128 + 60..3 * 128].fill(0xff);
-        let s = last_state(&&page).unwrap();
-        assert_eq!(old_state(&s), Some((k, 10, 2)));
     }
 }

@@ -1,12 +1,11 @@
 //! The node's phones: a record for each person paired with it, at most
 //! [`RECORDS`] (spec "Phone link", Pairing, Phones; roadmap D168), as the
 //! node keeps them, decides on them and stores them in flash, and the
-//! Phones characteristic's values, `28bc0011-…` ([`crate::uuid::PHONES`]),
-//! from link version 13.
+//! Phones characteristic's values, `28bc0011-…` ([`crate::uuid::PHONES`]).
 //!
 //! The store's page (`bark-fw/src/store.rs`) is a log of 32-byte slots,
 //! the last entry of each kind the one that holds. Three kinds are the
-//! phones', each starting with its kind's byte, which names its layout:
+//! phones', each starting with its kind's byte:
 //!
 //! - a **record**, [`RECORD_TAG`], four slots: everything a record
 //!   holds, or that its place is free ([`Record::encode`]);
@@ -18,9 +17,7 @@
 //!
 //! Each ends in a check over the rest: the flash writes a word at a time in
 //! address order, so an entry cut short by a power cut leaves its last
-//! word erased and fails it. A node whose page holds no settings entry
-//! was kept by an image before these records, and its one bond
-//! (`crate::bond`) and its mailbox's key become record one ([`Load`]).
+//! word erased and fails it.
 
 use crate::home::KEY_LEN;
 use crate::Malformed;
@@ -32,11 +29,11 @@ pub const RECORDS: usize = 8;
 /// (spec "Phone link", The payload, the card's display name).
 pub const NAME_MAX: usize = 32;
 
-/// The first byte of a record entry, layout 1.
+/// The first byte of a record entry.
 pub const RECORD_TAG: u8 = 0x83;
-/// The first byte of a progress entry, layout 1.
+/// The first byte of a progress entry.
 pub const PROGRESS_TAG: u8 = 0x84;
-/// The first byte of the settings entry, layout 1.
+/// The first byte of the settings entry.
 pub const SETTINGS_TAG: u8 = 0x82;
 /// Bytes of a store slot (`bark_proto::store::RECORD_LEN`).
 pub const SLOT_LEN: usize = 32;
@@ -72,19 +69,6 @@ impl Keys {
     }
 }
 
-impl From<&crate::bond::Bond> for Keys {
-    fn from(b: &crate::bond::Bond) -> Keys {
-        Keys {
-            kind: b.kind,
-            addr: b.addr,
-            irk: b.irk,
-            ltk: b.ltk,
-            seen: b.seen,
-            service_changed: b.service_changed,
-        }
-    }
-}
-
 /// A person's name, as their phone wrote it to Recipient: UTF-8, which
 /// never holds the byte `0xFF`, so a stored record's bytes never read as
 /// erased flash.
@@ -95,7 +79,7 @@ pub struct Name {
 }
 
 impl Name {
-    /// No name: an older app's phone writes none.
+    /// No name: a guest writes none.
     pub const EMPTY: Name = Name {
         len: 0,
         bytes: [0; NAME_MAX],
@@ -376,27 +360,12 @@ impl Settings {
 }
 
 /// Bytes of an entry that starts with `tag`, as the store steps over it:
-/// a record's four slots, a bond kept by an older image two
-/// (`crate::bond`), any other one.
+/// a record's four slots, any other one.
 pub fn entry_len(tag: u8) -> usize {
     match tag {
         RECORD_TAG => RECORD_LEN,
-        crate::bond::Bond::TAG => crate::bond::Bond::LEN,
         _ => SLOT_LEN,
     }
-}
-
-/// What a mailbox kept of its one home before the records (the mailbox's
-/// state page, `bark_app_layer::mailbox`): the key, the last fetch's
-/// `sent` and the last item the phone confirmed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct OldHome {
-    /// The mailbox key, if the node was a home.
-    pub key: Option<[u8; KEY_LEN]>,
-    /// The last fetch's `sent`.
-    pub last_fetch: u32,
-    /// The last item the phone at the node confirmed.
-    pub read: u32,
 }
 
 /// The phones as the store's page holds them, read entry by entry in the
@@ -405,8 +374,6 @@ pub struct OldHome {
 pub struct Load {
     records: [Option<Record>; RECORDS],
     settings: Option<Settings>,
-    /// The last bond an older image kept: `Some(None)` once it forgot it.
-    old: Option<Option<crate::bond::Bond>>,
 }
 
 impl Load {
@@ -433,58 +400,23 @@ impl Load {
                 self.settings =
                     Settings::decode(bytes.try_into().expect("a slot")).or(self.settings);
             }
-            (Some(&crate::bond::Bond::TAG), crate::bond::Bond::LEN) => {
-                if let Some(b) = crate::bond::read(bytes.try_into().expect("a bond")) {
-                    self.old = Some(b);
-                }
-            }
             _ => {}
         }
     }
 
-    /// Whether the page holds the phones as these records keep them; else
-    /// [`Load::phones`] makes them of what an older image kept, which the
-    /// node then writes.
-    pub fn current(&self) -> bool {
-        self.settings.is_some()
-    }
-
-    /// The phones: those the page holds, or, from a page an older image
-    /// wrote, record one of its bond and its home `old` (`OldHome`),
-    /// public or private as it was.
-    pub fn phones(&self, old: OldHome) -> Phones {
-        if let Some(s) = self.settings {
-            let mut p = Phones {
-                records: self.records,
-                private: s.private,
-                next: s.next.max(1),
-                dirty: Dirty::default(),
-            };
-            p.private &= p.paired() > 0;
-            return p;
-        }
-        let bond = self.old.flatten();
-        let mut p = Phones::EMPTY;
-        p.private = bond.is_some_and(|b| b.private);
-        if bond.is_some() || old.key.is_some() {
-            p.records[0] = Some(Record {
-                number: 1,
-                bond: bond.as_ref().map(Keys::from),
-                name: Name::EMPTY,
-                tag: bond.and_then(|b| b.owner),
-                key: old.key,
-                from: 0,
-                read: old.read,
-                last_fetch: old.last_fetch,
-                day: 0,
-            });
-            p.next = 2;
-        }
-        p.dirty = Dirty {
-            records: 1,
-            progress: 0,
-            settings: true,
+    /// The phones the page holds; none from a page without settings, as
+    /// every node that keeps a record has written them.
+    pub fn phones(&self) -> Phones {
+        let Some(s) = self.settings else {
+            return Phones::EMPTY;
         };
+        let mut p = Phones {
+            records: self.records,
+            private: s.private,
+            next: s.next.max(1),
+            dirty: Dirty::default(),
+        };
+        p.private &= p.paired() > 0;
         p
     }
 }
@@ -1042,7 +974,6 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::bond::Bond;
 
     fn keys(n: u8) -> Keys {
         Keys {
@@ -1128,12 +1059,13 @@ mod tests {
         assert_eq!(Settings::decode(&cut), None);
         assert_eq!(Progress::decode(&s.encode()), None);
         assert_eq!(entry_len(RECORD_TAG), 128);
-        assert_eq!(entry_len(Bond::TAG), 64);
         assert_eq!(entry_len(1), 32);
     }
 
     #[test]
     fn the_last_entry_of_each_holds_and_progress_names_its_record() {
+        // A page without settings holds no phones.
+        assert_eq!(Load::default().phones(), Phones::EMPTY);
         let mut load = Load::default();
         load.entry(
             &Settings {
@@ -1168,8 +1100,7 @@ mod tests {
             }
             .encode(),
         );
-        assert!(load.current());
-        let p = load.phones(OldHome::default());
+        let p = load.phones();
         assert_eq!(p.get(2).map(|r| (r.read, r.last_fetch)), Some((5, 6)));
         assert_eq!(p.get(4), None);
         assert_eq!(
@@ -1180,56 +1111,6 @@ mod tests {
             }
         );
         assert!(!p.public());
-    }
-
-    /// An older image's bond and home are record one, its tag and the
-    /// node's privacy kept; a page that holds the records ignores them.
-    #[test]
-    fn an_older_image_s_bond_and_home_are_record_one() {
-        let bond = Bond {
-            kind: 0,
-            addr: [6, 5, 4, 3, 2, 1],
-            irk: Some([7; 16]),
-            ltk: [8; 16],
-            seen: 12,
-            service_changed: true,
-            private: true,
-            owner: Some(0x5a),
-        };
-        let old = OldHome {
-            key: Some([3; 32]),
-            last_fetch: 40,
-            read: 12,
-        };
-        let mut load = Load::default();
-        load.entry(&bond.record());
-        assert!(!load.current());
-        let mut p = load.phones(old);
-        let r = p.get(0).copied().unwrap();
-        assert_eq!(r.bond, Some(Keys::from(&bond)));
-        assert_eq!((r.number, r.tag, r.key), (1, Some(0x5a), old.key));
-        assert_eq!((r.from, r.read, r.last_fetch), (0, 12, 40));
-        assert!(!p.public());
-        assert_eq!(p.paired(), 1);
-        // Written once it is made.
-        let d = p.take_dirty();
-        assert_eq!((d.records, d.settings), (1, true));
-        // Forgotten by the owner, with a home left: a home-only record.
-        load.entry(&crate::bond::forgotten());
-        let p = load.phones(old);
-        assert_eq!(p.get(0).map(|r| (r.bond, r.key)), Some((None, old.key)));
-        assert!(p.public());
-        // Neither: no record.
-        assert_eq!(load.phones(OldHome::default()).get(0), None);
-        // A page of the records ignores what it kept before.
-        load.entry(
-            &Settings {
-                private: false,
-                next: 1,
-            }
-            .encode(),
-        );
-        assert_eq!(load.phones(old).get(0), None);
     }
 
     #[test]

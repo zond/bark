@@ -406,41 +406,6 @@ fn the_empty_status_is_the_default() {
     assert_eq!(Status::EMPTY, Status::default());
 }
 
-proptest! {
-    #[test]
-    fn a_bond_round_trips(
-        kind in 0u8..2,
-        addr: [u8; 6],
-        irk: Option<[u8; 16]>,
-        ltk: [u8; 16],
-        seen: u8,
-        service_changed: bool,
-        private: bool,
-        owner: Option<u8>,
-    ) {
-        let b = bond::Bond { kind, addr, irk, ltk, seen, service_changed, private, owner };
-        prop_assert_eq!(bond::Bond::from_record(&b.record()), Some(b));
-    }
-
-    #[test]
-    fn a_bond_cut_short_is_none(addr: [u8; 6], ltk: [u8; 16], words in 0usize..16) {
-        let b = bond::Bond {
-            kind: 1,
-            addr,
-            irk: None,
-            ltk,
-            seen: VERSION,
-            service_changed: true,
-            private: true,
-            owner: Some(0),
-        };
-        let mut r = b.record();
-        // Flash erased to ones past the last word written.
-        r[words * 4..].fill(0xff);
-        prop_assert_eq!(bond::Bond::from_record(&r), None);
-    }
-}
-
 #[test]
 fn public_writes() {
     assert_eq!(
@@ -457,82 +422,6 @@ fn public_writes() {
     assert_eq!(PublicWrite::decode(&[2, 0]), Err(Malformed::Length));
     // The read stays a setting.
     assert_eq!(Public::decode(&[2]), Err(Malformed::Value));
-}
-
-#[test]
-fn a_forgotten_bond_is_none_and_older_images_skip_it() {
-    let r = bond::forgotten();
-    assert_eq!(bond::read(&r), Some(None));
-    // An older image reads a bond record with `from_record` alone.
-    assert_eq!(bond::Bond::from_record(&r), None);
-    let mut cut = r;
-    cut[60..].fill(0xff);
-    assert_eq!(bond::read(&cut), None);
-    let b = bond::Bond {
-        kind: 1,
-        addr: [1; 6],
-        irk: None,
-        ltk: [2; 16],
-        seen: 12,
-        service_changed: false,
-        private: true,
-        owner: Some(3),
-    };
-    assert_eq!(bond::read(&b.record()), Some(Some(b)));
-}
-
-/// A record written before the bond kept the seen version, the
-/// subscription, the private setting and the owner's tag has zeros there:
-/// a phone that saw no version, has not subscribed and wrote no tag, on a
-/// public node.
-#[test]
-fn an_older_bond_saw_no_version() {
-    let b = bond::Bond {
-        kind: 1,
-        addr: [1; 6],
-        irk: None,
-        ltk: [2; 16],
-        seen: 0,
-        service_changed: false,
-        private: false,
-        owner: None,
-    };
-    let mut r = b.record();
-    assert_eq!(r[9..16], [0; 7]);
-    assert_eq!(bond::Bond::from_record(&r), Some(b));
-    r[10] = 2;
-    assert_eq!(bond::Bond::from_record(&r), None);
-}
-
-/// Nodes are public unless the owner says otherwise: with no bond, and
-/// with a bond written while byte 11 said public, 1, or not, 0.
-#[test]
-fn a_node_is_public_unless_made_private() {
-    let public = |b: Option<bond::Bond>| {
-        let mut load = phones::Load::default();
-        if let Some(b) = b {
-            load.entry(&b.record());
-        }
-        load.phones(phones::OldHome::default()).public()
-    };
-    assert!(public(None));
-    let b = bond::Bond {
-        kind: 1,
-        addr: [1; 6],
-        irk: None,
-        ltk: [2; 16],
-        seen: 7,
-        service_changed: false,
-        private: false,
-        owner: Some(3),
-    };
-    for said in [0, 1] {
-        let mut r = b.record();
-        r[11] = said;
-        let got = bond::Bond::from_record(&r);
-        assert!(public(got), "byte 11 = {said}");
-    }
-    assert!(!public(Some(bond::Bond { private: true, ..b })));
 }
 
 #[test]
@@ -573,15 +462,6 @@ fn recipient_and_public_are_taken_whole() {
 }
 
 #[test]
-fn other_records_are_no_bond() {
-    let mut r = [0xffu8; bond::Bond::LEN];
-    assert_eq!(bond::Bond::from_record(&r), None);
-    // The UTC offset's record (`bark-fw/src/store.rs`).
-    r[..8].copy_from_slice(&[0x80, 0, 60, 0, 0x7f, 0xff, 0xc3, 0xff]);
-    assert_eq!(bond::Bond::from_record(&r), None);
-}
-
-#[test]
 fn a_guest_item_round_trips_and_after_is_three_bytes() {
     assert_eq!(After(0x01_0203).encode(), [1, 2, 3]);
     assert_eq!(After::decode(&[1, 2, 3]), Ok(After(0x01_0203)));
@@ -597,47 +477,4 @@ fn a_guest_item_round_trips_and_after_is_three_bytes() {
     assert_eq!(GuestItem::decode(&b[..n]), Ok(Some(item)));
     assert_eq!(GuestItem::decode(&[]), Ok(None));
     assert_eq!(GuestItem::decode(&b[..6]), Err(Malformed::Length));
-}
-
-/// The node rewrites its bond as the phone saw a table, subscribed, wrote
-/// its tag or made the node private (`bark-fw/src/ble.rs`, `keep`): each
-/// record reads back with the phone's address, its kind, its identity
-/// resolving key and the long-term key as the pairing left them.
-#[test]
-fn a_rewritten_bond_keeps_the_phone_s_keys() {
-    let paired = bond::Bond {
-        kind: 0,
-        addr: [1, 2, 3, 4, 5, 6],
-        irk: Some([0x4d; 16]),
-        ltk: [0x37; 16],
-        seen: 6,
-        service_changed: false,
-        private: false,
-        owner: None,
-    };
-    let mut b = paired;
-    for step in 0..4 {
-        b = match step {
-            0 => bond::Bond {
-                seen: VERSION,
-                service_changed: true,
-                ..b
-            },
-            1 => bond::Bond {
-                owner: Some(0x5a),
-                ..b
-            },
-            2 => bond::Bond { private: true, ..b },
-            _ => bond::Bond {
-                private: false,
-                ..b
-            },
-        };
-        let back = bond::Bond::from_record(&b.record()).expect("a whole record");
-        assert_eq!(
-            (back.kind, back.addr, back.irk, back.ltk),
-            (paired.kind, paired.addr, paired.irk, paired.ltk),
-            "step {step}"
-        );
-    }
 }

@@ -10,24 +10,13 @@
 //! between the radio's events (`bark-fw/src/mailbox.rs`). The mailbox
 //! never waits on a write. A slot cut short by a power cut fails the
 //! mailbox's own check and holds no item.
-//!
-//! Before the people's records, the mailbox kept its one key in a page
-//! of its own, a log of records each with a check; [`last_state`] reads
-//! it once, so that the key becomes the first record's.
 
-use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN, STATE_LEN};
+use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN};
 
 /// Bytes of an erase page: the nRF52840's (Product Specification, NVMC)
 /// and the external flash's sector (ZD25WQ16B datasheet, "Sector Erase")
 /// alike.
 pub const PAGE_LEN: u32 = 4096;
-
-/// Bytes of a record of the state page an older mailbox kept: the state,
-/// its check, and erased bytes to a power of two, 32 to a page.
-pub const RECORD_LEN: usize = 128;
-const RECORDS: u32 = PAGE_LEN / RECORD_LEN as u32;
-const CHECK_AT: usize = STATE_LEN;
-const _: () = assert!(CHECK_AT + 4 <= RECORD_LEN);
 
 /// Ops queued at most. A step of the node queues at most four: a
 /// message's erase and write, a confirmation's mark and a reply's; the
@@ -85,45 +74,6 @@ pub struct FlashRing<R: Region> {
     ops: [Option<Op>; OPS],
     /// Ops that found the queue full and were dropped.
     lost: u32,
-}
-
-fn fnv1a(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0x811c_9dc5, |h, &b| {
-        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-    })
-}
-
-/// The last whole state an older mailbox kept in `page`, a log of
-/// [`RECORD_LEN`]-byte records each with a check after the state.
-pub fn last_state(page: &impl Region) -> Option<[u8; STATE_LEN]> {
-    let mut state = None;
-    for i in 0..RECORDS {
-        let mut r = [0u8; RECORD_LEN];
-        page.read(i * RECORD_LEN as u32, &mut r);
-        if r.iter().all(|&b| b == 0xff) {
-            break;
-        }
-        let check = u32::from_be_bytes([
-            r[CHECK_AT],
-            r[CHECK_AT + 1],
-            r[CHECK_AT + 2],
-            r[CHECK_AT + 3],
-        ]);
-        if fnv1a(&r[..CHECK_AT]) == check {
-            state = Some(r[..STATE_LEN].try_into().expect("the state"));
-        }
-    }
-    state
-}
-
-/// A record of the state page as an older mailbox wrote it, for the
-/// tests of [`last_state`].
-#[cfg(test)]
-pub(crate) fn state_record(state: &[u8; STATE_LEN]) -> [u8; RECORD_LEN] {
-    let mut r = [0xffu8; RECORD_LEN];
-    r[..STATE_LEN].copy_from_slice(state);
-    r[CHECK_AT..CHECK_AT + 4].copy_from_slice(&fnv1a(state).to_be_bytes());
-    r
 }
 
 impl<R: Region> FlashRing<R> {

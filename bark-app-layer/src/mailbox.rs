@@ -46,26 +46,16 @@ pub const SLOTS_PER_PAGE: u32 = 4096 / SLOT_LEN as u32;
 const CHECK_AT: usize = SLOT_LEN - 4;
 /// Where a slot's payload starts: after its number (3) and length (1).
 const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
-/// Where a slot's message ID sits: the four bytes before the check, so
-/// that the payload's place is the same in a slot written before it was
-/// kept, whose ID reads as `0xFFFF_FFFF`, the erased flash.
+/// Where a slot's message ID sits: the four bytes before the check.
 const ID_AT: usize = CHECK_AT - 4;
 /// The slot's mark: a bit for each person, set while the item is theirs
 /// and not yet sent to them, and erased, all set, until the slot is
-/// written. A bit is cleared without an erase, so that the item stays. A
-/// slot written before a mark held a bit for each read as unsent, one
-/// before the people took their bits read 0xFF unsent and 0 sent, which is
-/// what the first person's bit says; the others' bits there count for
-/// nothing ([`Person::from`]).
+/// written. A bit is cleared without an erase, so that the item stays.
 const MARK_AT: usize = ID_AT - 1;
 const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= MARK_AT);
 
 /// People a node keeps: a bit for each in a slot's mark, a byte.
 pub const PEOPLE: usize = 8;
-
-/// Bytes of the state a mailbox kept before its people's records held it
-/// (`flash_ring::last_state`).
-pub const STATE_LEN: usize = 64;
 
 /// The flash a mailbox keeps its items in: pages of [`SLOTS_PER_PAGE`]
 /// slots, erased to `0xFF` a page at a time. The firmware backs it with
@@ -237,9 +227,9 @@ impl<R: Ring> Mailbox<R> {
             unread: Default::default(),
         };
         // A whole slot counts only in its own place: one that is not, left
-        // by a ring laid out otherwise before, would set the newest number
-        // past slots that are not erased, and the next item written over
-        // one of them would fail its check.
+        // by a ring of another size, would set the newest number past slots
+        // that are not erased, and the next item written over one of them
+        // would fail its check.
         for s in 0..m.slots() {
             if let Some((n, _)) = m.slot(s).filter(|&(n, _)| m.slot_of(n) == s) {
                 m.newest = m.newest.max(n);
@@ -677,37 +667,6 @@ impl<R: Ring> Mailbox<R> {
         }
         self.in_flight = None;
     }
-}
-
-/// What a mailbox kept of its one home before its people's records held
-/// it: the key, the last fetch's `sent` and the last item the phone
-/// confirmed; `None` for a state that is not whole. Read once, to make
-/// the first record (`bark-link` `phones::Load`).
-pub fn old_state(s: &[u8; STATE_LEN]) -> Option<(Option<[u8; KEY_LEN]>, u32, u32)> {
-    if fnv1a(&s[..STATE_LEN - 4]) != be(&s[STATE_LEN - 4..]) {
-        return None;
-    }
-    let key = (s[0] == 1).then(|| s[1..33].try_into().expect("32 bytes"));
-    Some((key, be(&s[33..37]), be(&s[57..60])))
-}
-
-/// The state an older mailbox kept, for the tests of [`old_state`].
-#[cfg(test)]
-pub(crate) fn old_state_of(
-    key: Option<[u8; KEY_LEN]>,
-    last_fetch: u32,
-    read: u32,
-) -> [u8; STATE_LEN] {
-    let mut s = [0u8; STATE_LEN];
-    if let Some(k) = key {
-        s[0] = 1;
-        s[1..33].copy_from_slice(&k);
-    }
-    s[33..37].copy_from_slice(&last_fetch.to_be_bytes());
-    s[57..60].copy_from_slice(&read.to_be_bytes()[1..]);
-    let check = fnv1a(&s[..STATE_LEN - 4]);
-    s[STATE_LEN - 4..].copy_from_slice(&check.to_be_bytes());
-    s
 }
 
 /// A ring in RAM of `SLOTS` slots, a whole number of pages, for the

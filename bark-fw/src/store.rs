@@ -36,10 +36,13 @@
 //! And it keeps the node's phones (`phones.rs`): their records, their
 //! progress and the node's settings, entries of four slots or one each
 //! (`bark_link::phones`); the console reads them to say whether the node
-//! is public ([`scan`]). A page written by an image before them holds the
-//! one bond with the paired phone, two slots (`bark_link::bond`), which
-//! the first scan makes record one, and the next write of the phones
-//! leaves behind.
+//! is public ([`scan`]).
+//!
+//! The page's first slot says its layout, [`LAYOUT`], in a record of its
+//! own: [`HEAD`] and the layout in the first word, its complement in the
+//! second. A page of another layout is read as empty, and its first write
+//! erases it, so a node with state it would misread starts clean
+//! (roadmap D188).
 
 use bark_image::layout::STORE;
 use bark_link::phones::{self, Load};
@@ -109,19 +112,44 @@ const SLOTS: u32 = STORE.len / RECORD_LEN as u32;
 /// The first byte of an offset's record.
 const ZONE: u8 = 0x80;
 
+/// The first byte of the page's head.
+const HEAD: u8 = 0x85;
+
+/// The page's layout, which its head says: a change to what any of its
+/// entries means takes the next.
+const LAYOUT: u8 = 2;
+
+/// A record of a word and its complement, the rest erased: a cut record
+/// leaves the second word erased, which is no complement of the first.
 #[cfg(not(feature = "console"))]
-fn zone_record(offset_min: i16) -> [u8; RECORD_LEN] {
-    let [hi, lo] = offset_min.to_be_bytes();
-    let word = [ZONE, hi, lo, 0];
+fn word_record(word: [u8; 4]) -> [u8; RECORD_LEN] {
     let mut r = [0xff; RECORD_LEN];
     r[..4].copy_from_slice(&word);
     r[4..8].copy_from_slice(&word.map(|b| !b));
     r
 }
 
+/// The word of a whole record of [`word_record`]'s whose first byte is
+/// `tag`.
+fn word(r: &[u8; RECORD_LEN], tag: u8) -> Option<[u8; 4]> {
+    let whole = r[0] == tag && (0..4).all(|i| r[4 + i] == !r[i]);
+    whole.then(|| [r[0], r[1], r[2], r[3]])
+}
+
+#[cfg(not(feature = "console"))]
+fn zone_record(offset_min: i16) -> [u8; RECORD_LEN] {
+    let [hi, lo] = offset_min.to_be_bytes();
+    word_record([ZONE, hi, lo, 0])
+}
+
 fn zone(r: &[u8; RECORD_LEN]) -> Option<i16> {
-    let whole = r[0] == ZONE && (0..4).all(|i| r[4 + i] == !r[i]);
-    whole.then(|| i16::from_be_bytes([r[1], r[2]]))
+    word(r, ZONE).map(|w| i16::from_be_bytes([w[1], w[2]]))
+}
+
+/// The page's head.
+#[cfg(not(feature = "console"))]
+fn head() -> [u8; RECORD_LEN] {
+    word_record([HEAD, LAYOUT, 0, 0])
 }
 
 const _: () = assert!(phones::SLOT_LEN == RECORD_LEN);
@@ -134,13 +162,25 @@ pub struct Kept {
     pub stored: Option<Stored>,
     pub offset_min: Option<i16>,
     pub phones: Load,
+    /// The page held another layout's state, read as none.
+    pub discarded: bool,
 }
 
 /// The page as `read` reads it, the bytes at an address of the flash:
 /// its next erased slot, and the last whole record of each kind it holds.
+/// A page of another layout holds nothing and has no slot free, so that
+/// the next write erases it.
 pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (u32, Kept) {
     let mut kept = Kept::default();
-    let mut slot = 0;
+    let mut first = [0u8; RECORD_LEN];
+    if !read(STORE.start, &mut first) || first.iter().all(|&b| b == 0xff) {
+        return (0, kept);
+    }
+    if word(&first, HEAD) != Some([HEAD, LAYOUT, 0, 0]) {
+        kept.discarded = true;
+        return (SLOTS, kept);
+    }
+    let mut slot = 1;
     while slot < SLOTS {
         let mut r = [0u8; phones::RECORD_LEN];
         let at = STORE.start + slot * RECORD_LEN as u32;
@@ -198,6 +238,9 @@ impl Flash {
             .expect("nothing writes before the store opens");
         let (next, kept) = scan(|at, r| f.read(at, r).is_ok());
         drop(f);
+        if kept.discarded {
+            log::warn!("store: the page is of another layout; its state is discarded");
+        }
         let flash = Flash {
             flash,
             next,
@@ -240,13 +283,18 @@ impl Flash {
         }
     }
 
-    /// Write `entry`, of one slot or more, into the next slots. A page
-    /// without room is erased first, and every kind's latest written again,
-    /// the phones' as they stand, which hold what `entry` says, so that
-    /// each survives.
+    /// Write `entry`, of one slot or more, into the next slots, after
+    /// the head on an erased page. A page without room is erased first,
+    /// and every kind's latest written again, the phones' as they stand,
+    /// which hold what `entry` says, so that each survives.
     async fn write(&mut self, entry: &[u8]) {
         let slots = (entry.len() / RECORD_LEN) as u32;
-        if self.next + slots <= SLOTS {
+        if self.next > 0 && self.next + slots <= SLOTS {
+            self.put(entry).await;
+            return;
+        }
+        if self.next == 0 {
+            self.put(&head()).await;
             self.put(entry).await;
             return;
         }
@@ -261,6 +309,7 @@ impl Flash {
             return;
         }
         self.next = 0;
+        self.put(&head()).await;
         if let Some(s) = self.stored {
             self.put(&s.record()).await;
         }

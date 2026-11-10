@@ -979,7 +979,6 @@ const _: () = assert!(update::Progress::LEN <= value_room(ATT_MTU));
 const _: () = assert!(Recipient::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(phones::PhonesWrite::MAX_LEN <= value_room(DEFAULT_ATT_MTU));
 
-pub mod bond;
 pub mod home;
 pub mod neighbours;
 pub mod phones;
