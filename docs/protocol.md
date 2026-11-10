@@ -569,31 +569,16 @@ step. It names the node wherever a packet names one: DATA `dst_hop`,
 `src_hop` and `dst_id`, ACK `from` and `to`
 ([packet formats](#packet-formats)).
 
-*Why six bytes.* An ID must be unique only among nodes close enough
-that one relay hears them together; a pair that shares one there loses
-about a quarter of its mail to each other (roadmap D59). At the density
-of [capacity and sizing](#capacity-and-sizing), 714 nodes per km² in a
-city of N = 300 000, a node has ρπr² others within a hearing range r
-([physical layer](#physical-layer)), and the city N ρπr² / 2 such pairs:
-
-| | indoors, r = 300 m | street, r = 750 m |
-|---|---|---|
-| nodes within r of a node | 200 | 1 260 |
-| pairs within r in the city | 3.0 × 10⁷ | 1.9 × 10⁸ |
-| chance that one pair shares a 4-byte ID | 0.7 % | 4.4 % |
-| chance that one pair shares a 6-byte ID | 1.1 × 10⁻⁷ | 6.7 × 10⁻⁷ |
-
-So with four bytes a city at the design density has such a pair about
-one time in fifty, and with six one time in millions. Eight would make
-it rarer for nothing and cost as much again: each two bytes in the ID
-fields add about 6 % to a text's channel time, 86.4 → 91.5 → 96.6 ms a
-hop for four, six and eight bytes ([capacity and sizing](#capacity-and-sizing)).
-
-*The low bits are assumed random.* The chip's documentation promises a
-unique 64-bit device ID, not 48 random low bits. This section, and the
-heartbeat interval taken from the ID's last byte
-([heartbeat](#heartbeat)), assume they spread as random bits would,
-which the bench boards are to check (`roadmap.md` Phase 2).
+An ID must be unique only among nodes one relay hears together; a pair
+that shares one there loses about a quarter of its mail to each other
+(roadmap D59). At the density of
+[capacity and sizing](#capacity-and-sizing), 714 nodes per km², a city
+of 300 000 has 1.9 × 10⁸ pairs within the street range of 750 m: one
+pair shares a 4-byte ID with a chance of 4.4 %, a 6-byte ID 6.7 × 10⁻⁷
+(roadmap D75). The chip promises a unique 64-bit ID, not 48 random low
+bits; this section and the heartbeat interval ([heartbeat](#heartbeat))
+assume the low bits spread as random bits would, which the bench boards
+are to check (`roadmap.md` Phase 2).
 
 The ID, not the position, is a node's identity: a node whose position
 changes keeps its ID ([position](#position)). Its address changes with
@@ -608,19 +593,16 @@ Per node, up to 64 entries, by node ID:
 |---|---|
 | id | from its heartbeat; the entry key |
 | position | from its heartbeat, rebuilt from the short position ([positions on the wire](#positions-on-the-wire)), and its local form for distances |
-| sleepy, anchorless | from its heartbeat's flags ([packet formats](#packet-formats)): a sleepy neighbour is a last-resort next hop, sent to with the long preamble ([next hop](#next-hop)); an anchorless sleepy one is no anchor ([relay choice](#relay-choice)), and an anchorless relay is in its burst ([heartbeat](#heartbeat)) |
-| carried | from its heartbeat's flags ([nodes](#nodes)): no anchor and no nearer owner ([owner](#owner)), and a last resort once stale ([next hop](#next-hop)) |
-| leaving | from its heartbeat's flags: it is about to leave the air ([packet formats](#packet-formats)), until a heartbeat without the flag; gone round while another next hop is left ([next hop](#next-hop)) |
-| format | from its heartbeat: the newest format it speaks ([packet formats](#packet-formats)), which sets the format of a DATA to it ([hand-over](#hand-over)) |
-| map point | from its heartbeat's flags: its position is a map point a person set ([packet formats](#packet-formats)); kept and shown, used by no rule |
+| flags | sleepy, anchorless, carried, leaving and map point, from its last heartbeat ([packet formats](#packet-formats)); leaving holds until a heartbeat without it; map point is kept and shown, used by no rule |
+| format | the newest format it speaks, from its heartbeat ([packet formats](#packet-formats)) |
 | channel | where to transmit to it: from its heartbeat or from `aux` of a DATA it sent ([packet sender](#packet-sender)), whichever came last |
 | last_heard | local monotonic time |
-| rssi_ema | averaged RSSI of every reading of its link, each new one counting half: every frame heard from it, and each of its heartbeats due on this channel and not heard, as a reading at the floor weighted by the share of its window the radio listened through ([heartbeat](#heartbeat)); says whether it has margin |
-| fail_count | failed hand-overs to it in a row, with no answer from it between ([demotion](#neighbour-table)) |
+| rssi_ema | the averaged RSSI of its link, each new reading counting half: every frame heard from it, and each of its heartbeats due on this channel and not heard, as a reading at the floor weighted by the share of its window the radio listened through ([heartbeat](#heartbeat)) |
+| fail_count | failed hand-overs to it in a row, with no answer from it between (demotion, below) |
 | banned_until | when its ban ends ([bans](#bans)) |
-| service, last take, told | how long this relay takes to get one message through to it, when it last took one, and the waits its refusals have told since ([service time](#neighbour-table)) |
+| service, last take, told | how long this relay takes to get one message through to it, when it last took one, and the waits its refusals have told since (service time, below) |
 | line end | when the line of senders refused for want of it as the way on ends ([bans](#bans)) |
-| update | the section of its last heartbeat that carried one: the version it runs, the newest image it holds or gathers and how much of it it holds, and when it was heard, for a helper's lease ([updates over the mesh](#updates-over-the-mesh)) |
+| update | the section of its last heartbeat that carried one, and when it was heard ([updates over the mesh](#updates-over-the-mesh)) |
 | last_beat | when its last heartbeat heard in a slot started, or its last slot on this channel that passed unheard, and on which channel: with its interval, when its next comes to any channel ([heartbeat](#heartbeat)) |
 
 **Expiry.** An entry expires after a time without a heartbeat or an
@@ -629,103 +611,54 @@ answer from the neighbour (demotion, below):
 | | |
 |---|---|
 | a relay | 3 rotations (390 s) |
-| a sleepy node with an anchor | two beat periods, 600 s |
-| an anchorless node ([sleepy nodes alone](#sleepy-nodes-alone)) | two of its sender's worst-case rotations and a heartbeat's lag |
+| a sleepy node with an anchor | two beat periods, 600 s: it beats once a period, on its anchor's channel only ([beats](#beats)) |
+| an anchorless node ([sleepy nodes alone](#sleepy-nodes-alone)) | two of its sender's worst-case rotations and a heartbeat's lag: 26 anchorless beat periods, 1200 s, and 872.8 ms. A listening receiver loses about one beat in ten, so one rotation would drop a live neighbour every tenth rotation (roadmap D47, D51) |
 | a sleeping node's anchor | never: the node keeps its anchor's entry whatever its age, and evicts it for no newcomer ([relay choice](#relay-choice)) |
 
-*Why a sleepy entry lasts longer.* Its beats come once a period, on its
-anchor's channel only ([beats](#beats)); a node elsewhere renews it from
-the frames they exchange.
-
-*Why two rotations for an anchorless entry.* Its 13 beats, one a
-channel, take at most 13 anchorless beat periods, so two rotations take
-26, 1200 s, and a heartbeat's lag adds at most 872.8 ms
-([heartbeat](#heartbeat)). A listening receiver loses about one beat in
-ten (roadmap D47), so with one rotation a live neighbour, perhaps the
-only way on where there is no relay, would drop out every tenth
-rotation, for 13 minutes; with two, one time in a hundred, while a stale
-entry costs only a hand-over's attempts and a ban (roadmap D51).
-
 **Margin.** A neighbour has margin when `rssi_ema` is at least 4.1 dB
-above the noise floor ([busy estimate](#busy-estimate)). A neighbour
-without margin stays in the table, its heartbeats showing it alive, but
-is a next hop only when no other is left ([next hop](#next-hop)).
-
-*Why that margin.* A 255-byte frame is then lost no more than one time
-in a hundred, the datasheet's standard for sensitivity, after a fade of
-4 dB. A packet arrives only if every symbol does: a 255-byte frame has
-541 symbols, the datasheet's 64-byte reference packet 157, a heartbeat
-56, so with the modulation's symbol error rate (32 symbols, detected
-without phase) a full frame needs 0.43 dB more signal than the
-reference for the same 1 % loss, and a heartbeat 0.39 dB less; half of
-all heartbeats arrive even 3.1 dB below a full frame's level, so a
-heartbeat says little about a full frame. Sensitivity is 2.5 dB below
-the noise at SF5 (datasheet Table 6-1), so a full frame's level is
-2.5 − 0.43 = 2.07 dB below the noise floor, and after the fade it needs
-−2.07 + 4 = 1.93 dB above it. Packet RSSI is signal and noise together
-(datasheet §13.5.3): 10 log10(1 + 10^0.193) = 4.1 dB above the floor.
-
-The fade, 4 dB, is the standard deviation of fading over time and
-channel in the simulated links, until Phase 2 measures it. The average
-must cover it because a frame goes out on the neighbour's channel while
-this relay hears the neighbour on its own, where the fading differs.
+above the noise floor ([busy estimate](#busy-estimate)): a 255-byte frame
+is then lost no more than one time in a hundred, the datasheet's standard
+for sensitivity, after a fade of 4 dB. A full frame of 541 symbols needs
+0.43 dB more signal than the datasheet's 64-byte reference of 157
+symbols for the same loss (32-ary symbols detected without phase), and
+sensitivity is 2.5 dB below the noise at SF5 (datasheet Table 6-1), so a
+full frame needs −2.07 + 4 = 1.93 dB above the floor; packet RSSI is
+signal and noise together (datasheet §13.5.3): 10 log10(1 + 10^0.193) =
+4.1 dB. The fade, 4 dB, is the standard deviation of fading in the
+simulated links until Phase 2 measures it; a heartbeat of 56 symbols
+says little of a full frame (roadmap D38). A neighbour without margin
+stays in the table but is a next hop only when no other is left
+([next hop](#next-hop)).
 
 **Demotion.** A neighbour with three failed hand-overs in a row
 (`fail_count ≥ 3`) is demoted until it answers this relay or three
-rotations (390 s) pass, and then ranks behind every other neighbour
-with margin ([next hop](#next-hop)). An **answer** is an ACK that
-answers this relay's hand-over to the neighbour, taking, refusing or
-seen ([the ACK](#the-ack)), or a DATA the neighbour addresses to this
-relay; it resets `fail_count`, so failures are in a row only with no
-answer between them. Heartbeats, and frames to other nodes, do not.
-Expiry takes minutes; demotion takes seconds, and is the test that the
-neighbour no longer hears this relay ([hand-over](#hand-over) step 6).
-
-*Why three.* A failed hand-over cannot tell a receiver that never got
-the frame from one that took the message and lost its ACKs, or could
-not afford them. A receiver silent for want of reply budget, its
-reserve spent by a burst of senders ([duty cycle cap](#duty-cycle-cap)),
-answers again once its bucket has refilled what a sender's retries cost
-it. The retrying takes at most 2.41 s, the two retry waits, 311 +
-622 ms, and two more attempts of up to 500 ms of listen-before-talk, a
-138.6 ms full frame and the 100 ms ACK timeout ([hand-over](#hand-over));
-the bucket refills 9.83 % × 2.41 s = 237 ms in that time, 13 refusals.
-The message waits out the neighbour's ban between offers ([bans](#bans)),
-1.58 s and then 3.16 s, so the third offer comes 4.74 s after the first
-failure, when such a receiver can answer; the second may still find it
-short. Two would demote it before it could answer; later offers would
-mostly meet a receiver that answers nobody, each at the cost of its wait
-(roadmap D102, D106).
-
-*Why any answer clears it, and nothing else.* A refusal or a seen ACK
-shows, as a take does, that the neighbour heard the DATA and this relay
-its reply. A DATA addressed to this relay shows nearly as much: the
-neighbour chose this relay from its own table, so this relay's
-heartbeats reach it, and it sends on this relay's channel now. A
-heartbeat, or a frame to another node, shows only that the neighbour is
-alive, not that it hears this relay; a link that works one way would
-otherwise cost every message the failed attempts again.
+rotations (390 s) pass, and then ranks behind every other neighbour with
+margin ([next hop](#next-hop)). An **answer** is an ACK that answers this
+relay's hand-over to the neighbour, taking, refusing or seen
+([the ACK](#the-ack)), or a DATA the neighbour addresses to this relay;
+it resets `fail_count`. Heartbeats, and frames to other nodes, do not:
+they show the neighbour alive, not that it hears this relay. Demotion is
+the test that the neighbour no longer hears this relay
+([hand-over](#hand-over) step 6). Three lets a receiver that was silent
+for want of reply budget answer again: its bucket refills a sender's
+retries in the bans between offers, 1.58 s and then 3.16 s, so the third
+offer comes 4.74 s after the first failure (roadmap D102, D106).
 
 **Service time.** Each entry keeps how long this relay takes to get one
 message through to the neighbour, the spacing of its refusals' line
 ([bans](#bans)): a running average, each take counting one part in 39,
-of the time from when a message began to wait for the neighbour here,
-or from the neighbour's last take if later, to the ACK that takes it. A
+of the time from when a message began to wait for the neighbour here, or
+from the neighbour's last take if later, to the ACK that takes it. A
 message begins to wait when it is queued, or when routing sends it to a
-different neighbour than before ([next hop](#next-hop)). The time folds
-in what held the message, unanswered attempts and their bans, this
-relay's bucket and its turn behind other hand-overs, and leaves out time
-with nothing waiting, which says nothing of how fast the neighbour
-takes, and the waits its refusals told, the neighbour's own measure,
-passed on. Before the first take it is one ban, and it is never more
-than 89 min, the shortest and the longest told wait ([bans](#bans)).
-
-*Why 39.* The neighbour's bucket sets its state: at its cap it takes a
-full frame a ban, and its bucket refills from empty in 61 s
-([duty cycle cap](#duty-cycle-cap)), so 39 takes span one whole refill.
-Fewer would follow the luck of single takes; more would remember a
-bucket that has since refilled. It is kept in 32 bits, in 1/1024 of a
-ban, a step of 1.5 ms; 16 bits would hold only 64 bans, 101 s.
+different neighbour than before ([next hop](#next-hop)). The time
+includes unanswered attempts and their bans, this relay's bucket and its
+turn behind other hand-overs, and leaves out time with nothing waiting
+and the waits the neighbour's refusals told. Before the first take it is
+one ban, and it is never more than 89 min, the shortest and the longest
+told wait ([bans](#bans)). 39 takes span one whole refill of the
+neighbour's bucket from empty, 61 s, at a full frame a ban
+([duty cycle cap](#duty-cycle-cap)). It is kept in 32 bits, in 1/1024
+of a ban.
 
 **Eviction.** When the table is full and a relay not in it is heard, the
 newcomer replaces, in this order:
@@ -733,112 +666,61 @@ newcomer replaces, in this order:
 1. the least recently heard demoted entry;
 2. the least recently heard entry, if it has missed a worst-case
    rotation, and so certainly a heartbeat on this channel;
-3. if the newcomer is a fixed relay, one that holds mail, within 50 m,
-   the owner radius ([owner](#owner)), the least recently heard entry
-   beyond 50 m (roadmap D68, D70).
+3. if the newcomer is a fixed relay that holds mail within 50 m, the
+   owner radius ([owner](#owner)), the least recently heard entry beyond
+   50 m: the owner rule reads from the table that no relay that near is
+   closer to a destination (roadmap D68, D70).
 
-Failing all three it is not added (roadmap D12). A sleepy node with an
-anchor replaces no entry.
-
-*Why keep incumbents.* A rooftop relay hears ≈270 relays
-([capacity and sizing](#capacity-and-sizing)), about two heartbeats a
-second on its channel, most from relays not in the table: replacing the
-least recently heard outright, each entry would last about
-64 / 2 ≈ 30 s and every failure count be forgotten within a minute.
-Keeping incumbents holds an equally arbitrary 64 with their failure
-counts, and replaces exactly the entries that fail or are silent. The
-table is then a sample weighted toward the strong links, heard first and
-most often; they lie where relays, and so destinations, are, and a table
-spread by bearing routes no better (roadmap D69).
-
-*Why the relay within 50 m is kept.* The owner rule reads from the table
-that no relay that near is closer to a destination: one turned away
-would have its messages claimed by its neighbour and queued for a node
-that never beats. With every person's node a relay, 714 per km², 5.6 are
-within 50 m (714 × π × 0.05²). A carried relay needs no such place
-([nodes](#nodes)).
-
-*Why a sleepy node replaces none.* It is a last resort, and a relay
-hears every sleepy node beating on its channel, often more than 64:
-making way for them would push out the neighbours it routes through.
+Failing all three it is not added (roadmap D12). Keeping incumbents
+holds their failure counts where a rooftop relay hears hundreds of
+relays (roadmap D69). A sleepy node with an anchor replaces no entry: it
+is a last resort, and a relay may hear more than 64.
 
 A beat fills the neighbour table like any heartbeat, the entry marked
 sleepy. At a node that is not sleepy it fills the heard table too if the
-sleepy bit is alone ([heard table](#heard-table)); a node without an
-anchor has no window to deliver in.
+sleepy bit is alone ([heard table](#heard-table)).
 
 ### Neighbour status
 
 A person who looks at a map of their node's neighbours in the app sees
-what each neighbour's own screen shows, as if standing at it: the node
-asks each neighbour shown for its status, and each answers.
-
-The **ask** names the node asked and the node asking, and nothing else.
-The **answer**, the status, says ([packet formats](#packet-formats)):
+what each neighbour's own screen shows: the node asks each neighbour
+shown for its status, and each answers. The **ask** names the node asked
+and the node asking, and nothing else. The **answer**, the status, says
+([packet formats](#packet-formats)):
 
 | field | bytes | content |
 |---|---|---|
 | flags | 1 | bit 0 placed, it has a place ([position](#position)); bit 1 sleepy and bit 3 carried ([nodes](#nodes)); bit 2 anchored, sleepy with an anchor ([relay choice](#relay-choice)); bit 4 on external power, USB; bits 5 to 7 zero, ignored |
 | battery | 1 | 0 at or below the low level, about 20 % ([sleepy nodes](#sleepy-nodes)); 1 to 100 about that share of its charge left, from its last reading; 255 not read, and on USB, where the reading is the charger's |
 | heard | 1 | its live neighbours, at most 64 ([neighbour table](#neighbour-table)) |
-| strong | 1 | of them, those heard with the margin a full frame needs through a fade, likely to hear it too |
-| proven | 1 | of them, those that have taken a message from it, proven to hear it |
-| version | 4 | the version of the firmware image it runs, 0 if not known, 4 bytes as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
+| strong | 1 | of them, those with margin, likely to hear it too |
+| proven | 1 | of them, those that have taken a message from it |
+| version | 4 | the version of the firmware image it runs, 0 if not known, as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
 | gathers | 4 | the version of the image it gathers over the mesh, 0 if none |
 | blocks | 1 | that image's blocks, the table's among them; 0 if none |
 | complete | 1 | the blocks of it it holds from the first |
 | have | 1 | the pieces it holds of the block after them |
 
 Each is a frame from node to node ([packet formats](#packet-formats)):
-one hop, and neither answered nor sent again. A node:
+one hop, neither answered nor sent again. A node:
 
-- asks a live neighbour only when its app asks, as a person opens or
-  refreshes the map;
-- answers an ask addressed to it from a live neighbour, once; one from
-  a node it does not hear it leaves unanswered, since that node's home
-  channel is not known to it and its answer would likely not arrive;
-- sends each on the other node's home channel, with the long preamble
-  to a sleepy one, which receives duty-cycled
-  ([duty-cycled receive](#duty-cycled-receive-and-the-long-preamble)),
-  after a listen-before-talk as a heartbeat's, given up after its three
-  checks, and paid from the bucket with the reply reserve kept, as an
-  update's piece is ([duty cycle cap](#duty-cycle-cap)); after the
-  hand-overs, so that a text never waits behind one, an answer before
-  an ask;
+- asks a live neighbour only when its app asks
+  ([the neighbour map](#the-neighbour-map));
+- answers an ask addressed to it from a live neighbour, once; one from a
+  node it does not hear it leaves unanswered, as it does not know that
+  node's home channel;
+- sends each on the other node's home channel, with the long preamble to
+  a sleepy one, after a listen-before-talk as a heartbeat's, given up
+  after its three checks, and paid from the bucket with the reply
+  reserve kept ([duty cycle cap](#duty-cycle-cap)); after the
+  hand-overs, so that a text never waits behind one, an answer before an
+  ask;
 - hands every answer addressed to it to its app.
 
 The ask is 14 bytes, 15.68 ms on air, the answer 30, 23.36 ms; with the
-long preamble 249.92 and 257.60 ms.
-
-The app asks again a neighbour that has not answered within 2 s of its
-round of asks, one round at a time, up to three asks of it in a look; a
-refresh asks only the neighbours that have not answered within the last
-10 s. On a quiet channel an answer comes about 100 ms after its ask;
-under load each of the two frames may wait two backoffs and three
-checks ([heartbeat](#heartbeat)), 409.3 ms, and to a sleepy node they
-carry the long preamble, so the pair takes at most 1.33 s more, and 2 s
-leaves the phone link room. 10 s is a choice: the mean heartbeat
-interval, within which what a neighbour hears seldom changes.
-
-*Why only on a look.* Said in every heartbeat, the same would cost
-every node every rotation, for a map that is seldom open; asked, it
-costs the network nothing between looks.
-
-*Why the app asks again.* An ask and an answer are single frames on a
-shared channel, lost to a collision or given up on a busy channel, the
-more often the busier it is: on the bench, with two nodes streaming an
-update, 4 of 12 asks were answered. The one who looks knows which
-answer is missing, so it asks again, not the node; three asks bound
-what a look costs, and a round at a time keeps the node's asks from
-piling up behind each other.
-
-*Why the image gathered.* During an update a person at the map sees
-which neighbours still gather and how far they are, as each one's
-screen shows it, without a console at the node; the last three fields
-are its heartbeats' section's ([updates over the mesh](#updates-over-the-mesh)).
-*Why its blocks.* The status then fills 13 blocks of symbols at SF5
-exactly, so the byte costs no airtime, and the held blocks can be shown
-against all.
+long preamble 249.92 and 257.60 ms. Asked only on a look, the status
+costs the network nothing between looks. Its last fields make the answer
+fill 13 blocks of symbols exactly.
 
 ## Forwarding
 

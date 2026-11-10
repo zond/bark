@@ -218,3 +218,98 @@ interval with probability 1/256, which matters only if they are also in
 step, within 28.8 ms in a 10 s interval, 0.29 % of such pairs; their
 heartbeats then meet each time they are on one channel, as do those of a
 pair in step whose intervals stand 2:1 or 3:2.
+
+## Node identity
+
+*Why six bytes.* An ID must be unique only among nodes close enough
+that one relay hears them together; a pair that shares one there loses
+about a quarter of its mail to each other (roadmap D59). At the density
+of spec "Capacity and sizing", 714 nodes per km² in a
+city of N = 300 000, a node has ρπr² others within a hearing range r
+(spec "Physical layer"), and the city N ρπr² / 2 such pairs:
+
+| | indoors, r = 300 m | street, r = 750 m |
+|---|---|---|
+| nodes within r of a node | 200 | 1 260 |
+| pairs within r in the city | 3.0 × 10⁷ | 1.9 × 10⁸ |
+| chance that one pair shares a 4-byte ID | 0.7 % | 4.4 % |
+| chance that one pair shares a 6-byte ID | 1.1 × 10⁻⁷ | 6.7 × 10⁻⁷ |
+
+So with four bytes a city at the design density has such a pair about
+one time in fifty, and with six one time in millions. Eight would make
+it rarer for nothing and cost as much again: each two bytes in the ID
+fields add about 6 % to a text's channel time, 86.4 → 91.5 → 96.6 ms a
+hop for four, six and eight bytes (spec "Capacity and sizing").
+
+## Neighbour table
+
+*Why that margin.* A 255-byte frame is then lost no more than one time
+in a hundred, the datasheet's standard for sensitivity, after a fade of
+4 dB. A packet arrives only if every symbol does: a 255-byte frame has
+541 symbols, the datasheet's 64-byte reference packet 157, a heartbeat
+56, so with the modulation's symbol error rate (32 symbols, detected
+without phase) a full frame needs 0.43 dB more signal than the
+reference for the same 1 % loss, and a heartbeat 0.39 dB less; half of
+all heartbeats arrive even 3.1 dB below a full frame's level, so a
+heartbeat says little about a full frame. Sensitivity is 2.5 dB below
+the noise at SF5 (datasheet Table 6-1), so a full frame's level is
+2.5 − 0.43 = 2.07 dB below the noise floor, and after the fade it needs
+−2.07 + 4 = 1.93 dB above it. Packet RSSI is signal and noise together
+(datasheet §13.5.3): 10 log10(1 + 10^0.193) = 4.1 dB above the floor.
+
+The fade, 4 dB, is the standard deviation of fading over time and
+channel in the simulated links, until Phase 2 measures it. The average
+must cover it because a frame goes out on the neighbour's channel while
+this relay hears the neighbour on its own, where the fading differs.
+
+*Why any answer clears it, and nothing else.* A refusal or a seen ACK
+shows, as a take does, that the neighbour heard the DATA and this relay
+its reply. A DATA addressed to this relay shows nearly as much: the
+neighbour chose this relay from its own table, so this relay's
+heartbeats reach it, and it sends on this relay's channel now. A
+heartbeat, or a frame to another node, shows only that the neighbour is
+alive, not that it hears this relay; a link that works one way would
+otherwise cost every message the failed attempts again.
+
+*Why 39.* The neighbour's bucket sets its state: at its cap it takes a
+full frame a ban, and its bucket refills from empty in 61 s
+(spec "Duty cycle cap"), so 39 takes span one whole refill.
+Fewer would follow the luck of single takes; more would remember a
+bucket that has since refilled. It is kept in 32 bits, in 1/1024 of a
+ban, a step of 1.5 ms; 16 bits would hold only 64 bans, 101 s.
+
+*Why a sleepy node replaces none.* It is a last resort, and a relay
+hears every sleepy node beating on its channel, often more than 64:
+making way for them would push out the neighbours it routes through.
+
+## Neighbour status
+
+The app asks again a neighbour that has not answered within 2 s of its
+round of asks, one round at a time, up to three asks of it in a look; a
+refresh asks only the neighbours that have not answered within the last
+10 s. On a quiet channel an answer comes about 100 ms after its ask;
+under load each of the two frames may wait two backoffs and three
+checks (spec "Heartbeat"), 409.3 ms, and to a sleepy node they
+carry the long preamble, so the pair takes at most 1.33 s more, and 2 s
+leaves the phone link room. 10 s is a choice: the mean heartbeat
+interval, within which what a neighbour hears seldom changes.
+
+*Why only on a look.* Said in every heartbeat, the same would cost
+every node every rotation, for a map that is seldom open; asked, it
+costs the network nothing between looks.
+
+*Why the app asks again.* An ask and an answer are single frames on a
+shared channel, lost to a collision or given up on a busy channel, the
+more often the busier it is: on the bench, with two nodes streaming an
+update, 4 of 12 asks were answered. The one who looks knows which
+answer is missing, so it asks again, not the node; three asks bound
+what a look costs, and a round at a time keeps the node's asks from
+piling up behind each other.
+
+*Why the image gathered.* During an update a person at the map sees
+which neighbours still gather and how far they are, as each one's
+screen shows it, without a console at the node; the last three fields
+are its heartbeats' section's (spec "Updates over the mesh").
+*Why its blocks.* The status then fills 13 blocks of symbols at SF5
+exactly, so the byte costs no airtime, and the held blocks can be shown
+against all.
