@@ -110,7 +110,7 @@ pub struct Sample {
     /// Sleepy, else a relay.
     pub sleepy: bool,
     /// The GPS running, searching or tracking, at some 29 mA (spec
-    /// "Sleepy nodes", Why the GPS stops a sample).
+    /// "Sleepy nodes", How long the battery lasts).
     pub gps: bool,
     /// Taken by a discharge bench build (roadmap D190): a relay at any
     /// battery level, its GPS tracking, sampled every [`BENCH_EVERY_S`].
