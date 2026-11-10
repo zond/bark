@@ -4123,7 +4123,8 @@ reach, and while it hears them only weakly. A node is out of reach when
 the app's scans, 15 s apart, have reached it in neither of the last two,
 30 s; for a node that said it was installing, counted from 55 s after
 it ended the link, the time a node is away for its swap
-([updates over the mesh](#updates-over-the-mesh), the install). A node
+([updates over the mesh](#updates-over-the-mesh), the install), and
+while it waits for that node it uses no other. A node
 heard weakly is passed over for one further down the order heard well;
 when the phone hears no node well, it uses the one it hears strongest,
 of whatever kind. A scan that hears one of its own nodes well takes the
