@@ -4137,8 +4137,13 @@ impl Sim {
     /// What became of the messages kept across a reboot into a new image
     /// (`install.rs`): delivered, dropped, in flight and unaccounted.
     pub fn kept_fates(&self) -> [u64; 4] {
+        self.kept_fates_of(|_| true)
+    }
+
+    /// [`Sim::kept_fates`] of the messages kept from where `at` says.
+    pub(crate) fn kept_fates_of(&self, at: impl Fn(crate::install::KeptAt) -> bool) -> [u64; 4] {
         let mut out = [0; 4];
-        for f in self.kept_messages() {
+        for f in self.kept_messages(at) {
             out[match f {
                 Fate::Delivered => 0,
                 Fate::Dropped { .. } => 1,
@@ -4150,14 +4155,17 @@ impl Sim {
     }
 
     /// The fate of each message kept across a reboot into a new image.
-    pub(crate) fn kept_messages(&self) -> Vec<Fate> {
+    /// The fate of each message kept across a reboot into a new image from
+    /// where `at` says, by where it was last kept.
+    pub(crate) fn kept_messages(&self, at: impl Fn(crate::install::KeptAt) -> bool) -> Vec<Fate> {
         let Some(m) = &self.install else {
             return Vec::new();
         };
         let tags: std::collections::HashSet<u32> = m
             .kept
             .iter()
-            .filter_map(|id| self.msg_tags.get(id).copied())
+            .filter(|&(_, &k)| at(k))
+            .filter_map(|(id, _)| self.msg_tags.get(id).copied())
             .collect();
         self.messages()
             .enumerate()

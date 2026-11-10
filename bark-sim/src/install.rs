@@ -8,7 +8,7 @@
 //! as the firmware writes them (`bark_app_layer::tables`, roadmap D180),
 //! goes off the air for the swap, and comes back with a new core that
 //! takes its tables back, aged by the swap, and puts back each kept
-//! message where it was (roadmap D199); the application's own message,
+//! message where it was (roadmap D201); the application's own message,
 //! if it held one, it offers again first.
 //!
 //! The image becomes whole either when the update's pieces make it so
@@ -26,13 +26,34 @@ use bark_proto::update::Image;
 use bark_proto::{
     AppCommand, BatteryLevels, Config, Core, Duration, Event, HeldAt, Instant, MsgId, Relay,
 };
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 
 /// The swap's time off the air, 59.0 s: the loader's figures for an image
 /// that fills the slot (`bark_image::boot::time`), as the simulator does
 /// not model the image's length.
 pub const SWAP_US: u64 = bark_image::boot::time::swap_us(bark_image::layout::ACTIVE.len);
+
+/// Where a kept message was, for the report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeptAt {
+    Own,
+    Forward,
+    /// In the delivery queue, for a sleepy node or a leaving neighbour.
+    Delivery,
+    Inbox,
+}
+
+impl KeptAt {
+    fn of(at: HeldAt) -> KeptAt {
+        match at {
+            HeldAt::Own => KeptAt::Own,
+            HeldAt::Forward { .. } => KeptAt::Forward,
+            HeldAt::Delivery { .. } => KeptAt::Delivery,
+            HeldAt::Inbox { .. } => KeptAt::Inbox,
+        }
+    }
+}
 
 /// Where a node's install stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,8 +111,9 @@ pub(crate) struct InstallModel {
     /// Refusals for draining at the node before its staging.
     refused_before: Vec<u64>,
     pub(crate) rows: Vec<InstallRow>,
-    /// Every message kept across a reboot, by its ID.
-    pub(crate) kept: HashSet<u32>,
+    /// Every message kept across a reboot, by its ID, and where it was
+    /// the last time it was kept.
+    pub(crate) kept: HashMap<u32, KeptAt>,
     /// Kept messages offered again, and given back.
     pub(crate) offered_again: [u64; 2],
 }
@@ -108,7 +130,7 @@ impl InstallModel {
             row: vec![None; n],
             refused_before: vec![0; n],
             rows: Vec::new(),
-            kept: HashSet::new(),
+            kept: HashMap::new(),
             offered_again: [0; 2],
         }
     }
@@ -319,7 +341,7 @@ impl Sim {
         m.tables[i] = written;
         for s in &slots {
             if let Some(h) = decode(s) {
-                m.kept.insert(h.msg_id.0);
+                m.kept.insert(h.msg_id.0, KeptAt::of(h.at));
             }
         }
         m.carry[i].extend(slots);
@@ -508,8 +530,22 @@ impl Sim {
             fates[2],
             fates[3],
         );
+        for (what, at) in [
+            ("own", KeptAt::Own),
+            ("forwards", KeptAt::Forward),
+            ("in the delivery queue", KeptAt::Delivery),
+            ("in the inbox", KeptAt::Inbox),
+        ] {
+            let [d, x, f, u] = self.kept_fates_of(|k| k == at);
+            if d + x + f + u > 0 {
+                let _ = writeln!(
+                    out,
+                    "    {what}: delivered {d}, dropped {x}, in flight {f}, unaccounted {u}"
+                );
+            }
+        }
         let mut why = std::collections::BTreeMap::new();
-        for f in self.kept_messages() {
+        for f in self.kept_messages(|_| true) {
             if let crate::sim::Fate::Dropped { reason, .. } = f {
                 *why.entry(format!("{reason:?}")).or_insert(0u64) += 1;
             }
