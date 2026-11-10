@@ -882,10 +882,12 @@ mod mailbox {
         assert_eq!(order, [(1, 3), (4, 3), (1, 2), (4, 2), (1, 1), (4, 1)]);
     }
 
-    /// A record made anew claims nothing kept before it: a bit left set
-    /// by the person before it at its place counts for nothing.
+    /// A record made anew claims nothing kept before it for a fetch: a
+    /// bit left set by the person before it at its place counts for
+    /// nothing. Its phone reads every item with its tag, as a person who
+    /// pairs again wants the mail that came for them meanwhile.
     #[test]
-    fn a_new_person_claims_no_older_item() {
+    fn a_new_person_claims_no_older_item_but_reads_it() {
         let mut m = home();
         for i in 1..=3 {
             m.arrive(MsgId(i), &item(i));
@@ -901,6 +903,9 @@ mod mailbox {
         // The inbox goes by tag: the newcomer's phone reads the older ones.
         let mut out = [0u8; MAX_PAYLOAD];
         assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(1));
+        assert_eq!(m.unread_count(0), 4);
+        assert!(m.confirm_read(0, 1));
+        assert_eq!(m.unread(0, &mut out).map(|u| u.0), Some(2));
     }
 
     /// Two phones of one person: the same key and tag at two places. A

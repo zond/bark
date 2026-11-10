@@ -121,7 +121,8 @@ pub struct Record {
     pub key: Option<[u8; KEY_LEN]>,
     /// The newest item in the ring when the record was made: its bits in
     /// the marks of items up to this one were left by a record freed
-    /// before, and count for nothing (spec "Mailbox", The ring).
+    /// before, and count for nothing; its phone still reads those with
+    /// its tag (spec "Mailbox", The ring).
     pub from: u32,
     /// The number of the last of their items the phone confirmed.
     pub read: u32,

@@ -4208,9 +4208,10 @@ rest clear, so a guest's item, which no record claims, has every bit
 clear and no fetch sends it. A bit is cleared without an erase, so the
 item stays: when a reply carries the item (below), and when the
 record's phone confirms it through Inbox. So one person's reading marks
-nothing of another's. A record claims no item older than itself: its
-bit in the marks of the items up to the newest when it was made is a
-freed record's, and counts for nothing.
+nothing of another's. A record's bit in the marks of the items up to
+the newest when it was made is a freed record's and counts for
+nothing, so none of its fetches sends them; its phone still reads
+those with its tag ([receiving](#receiving)).
 
 **The fetch** is a form 2 payload to the home address whose plaintext
 is `sent` (4), the requester's current address (13) and its recipient
