@@ -26,6 +26,7 @@ class Messenger {
     session.homeKey = (n) =>
         isHome(n.id) ? me.keys.mailbox.extractBytes() : null;
     session.recipient = (n) => recipientTag(sodium, me.identity, n.id);
+    session.name = () => me.name;
   }
 
   /// Whether the node of `id` is the person's home: a home is known by its

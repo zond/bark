@@ -46,6 +46,21 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.refused => 'refused: ${o.error}',
 };
 
+/// The day a node's phone was last linked, as a record counts it
+/// ([dayOf]), in words against `now`: "today", "yesterday", "N days ago",
+/// or "never" when the node had no time at any of its links.
+String lastLinked(int day, DateTime now) {
+  final d = dayOf(day);
+  if (d == null) return 'never';
+  final t = now.toUtc();
+  final ago = DateTime.utc(t.year, t.month, t.day).difference(d).inDays;
+  return switch (ago) {
+    <= 0 => 'today',
+    1 => 'yesterday',
+    _ => '$ago days ago',
+  };
+}
+
 /// `s` with its first letter a capital.
 String capital(String s) =>
     s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
@@ -548,10 +563,10 @@ String connectionHelp(AppModel app) {
   final lost = [for (final n in s.pairingLost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
-    [final n] => ' $n is no longer yours: another phone has paired with it.',
+    [final n] => ' $n is no longer yours: it no longer knows this phone.',
     _ =>
-      ' ${lost.join(', ')} are no longer yours: other phones have paired '
-          'with them.',
+      ' ${lost.join(', ')} are no longer yours: they no longer know this '
+          'phone.',
   };
   if (s.connected && !s.guest) {
     if (app.atHome) {

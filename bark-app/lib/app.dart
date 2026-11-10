@@ -140,6 +140,13 @@ const Duration lookAround = guestCheck;
 /// roadmap D163, D166).
 const int ownGone = 2;
 
+/// What a person reads of a node that keeps as many phones as it can and
+/// so takes no more pairings (spec "Phone link", Pairing).
+const String fullNode =
+    'This node already keeps eight phones, the most it can, so it takes '
+    'no more pairings. Someone paired with it can remove a phone in '
+    'Settings, at the node.';
+
 /// Whether a node, by its status, can be a home: one that stays on power
 /// at a fixed place, so that its address stays (spec "Mailbox").
 bool canBeHome(Status? s) => s != null && !s.sleepy && !s.carried;
@@ -148,7 +155,14 @@ bool canBeHome(Status? s) => s != null && !s.sleepy && !s.carried;
 /// it, its address once it has a place, and whether it can be a home
 /// ([canBeHome]). Between errands the link is down and the session knows
 /// none of it.
-typedef GuestNode = ({FoundNode found, Address? address, bool homeable});
+/// From link version 13 it also says how many more phones may pair with
+/// it, `room`, 0 on a node that would refuse a pairing.
+typedef GuestNode = ({
+  FoundNode found,
+  Address? address,
+  bool homeable,
+  int? room,
+});
 
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
@@ -337,8 +351,37 @@ class AppModel extends ChangeNotifier {
 
   void _heard(Iterable<FoundNode> nodes) {
     for (final n in nodes) {
-      if (n.name != n.deviceId) _devices[n.name] = n.deviceId;
+      if (n.name == n.deviceId) continue;
+      _devices[n.name] = n.deviceId;
+      _lastHeard[n.name] = (found: n, at: now());
     }
+  }
+
+  /// Each node heard in this run, by name, as last heard and when.
+  final Map<String, ({FoundNode found, DateTime at})> _lastHeard = {};
+
+  /// The person taps a node they are paired with in Settings: the app
+  /// connects to it as its owner, as a tap on it in a scan does. A node
+  /// heard within the span the search takes to call a node out of reach
+  /// ([ownGone] rounds) is taken as heard; another is listened for first,
+  /// one round's scan, and [NotSeen] goes on if it is not heard.
+  Future<void> connectPaired(String name) async {
+    if (connecting) return;
+    final f = fakeNode;
+    if (fake && f != null && name == nodeName(f.nodeId)) return connectFake();
+    final last = _lastHeard[name];
+    var n = last != null && now().difference(last.at) < lookRound * ownGone
+        ? last.found
+        : null;
+    if (n == null) {
+      await _searchStopped();
+      await stopScan();
+      final heard = await listen(until: (f) => f.name == name);
+      _heard(heard.values);
+      n = heard.values.where((f) => f.name == name).firstOrNull;
+    }
+    if (n == null) throw NotSeen(shownName(name));
+    await connect(n);
   }
 
   /// Forgets `name`, a paired node no longer this phone's: the app counts
@@ -508,9 +551,26 @@ class AppModel extends ChangeNotifier {
     return n != null && messenger.isHome(n.id);
   }
 
-  /// The connected node holds a mailbox key and is not the person's home:
-  /// a former home of theirs, or someone else's.
-  bool get holdsOtherKey => !atHome && (session.nodeHome?.set ?? false);
+  /// The connected node holds a mailbox key the phone can clear and is
+  /// not the person's home: a former home of theirs, and before link
+  /// version 13, which does not say whose a key is, anyone's.
+  bool get holdsOtherKey {
+    final h = session.nodeHome;
+    return !atHome && h != null && (h.mine ?? h.set);
+  }
+
+  /// The connected node, not the person's home, is someone else's: from
+  /// link version 13, which says whose a key is. Only its keeper, or a
+  /// removal by the code on its screen, takes that key.
+  bool get othersHome {
+    final h = session.nodeHome;
+    return !atHome && h != null && h.mine == false && h.set;
+  }
+
+  /// The person's home does not hold their mailbox key now: a phone
+  /// paired with it may have removed it ([Session.homeRemoved]).
+  bool get homeKeyGone =>
+      atHome && session.nodeHome?.mine == false && session.homeRemoved;
 
   /// Fetches to the node's address; returns what to tell the person. Only
   /// the person's word fetches, as fetched mail crosses the city twice
@@ -581,7 +641,7 @@ class AppModel extends ChangeNotifier {
           'update it to make it a home. Nothing changed.';
     }
     final h = await session.writeHome(me.keys.mailbox.extractBytes());
-    if (!h.set) {
+    if (!(h.mine ?? h.set)) {
       return 'The node did not keep your mailbox key, so it cannot be your '
           'home. Nothing changed.';
     }
@@ -597,7 +657,8 @@ class AppModel extends ChangeNotifier {
   Future<String> noHome() async {
     if (me.home == null) return 'No home node';
     final at = atHome;
-    if (at && (await session.writeHome(null)).set) {
+    final h = at ? await session.writeHome(null) : null;
+    if (h != null && (h.mine ?? h.set)) {
       return 'The node still says it holds a mailbox key, so it is still '
           'your home. Nothing changed.';
     }
@@ -608,9 +669,9 @@ class AppModel extends ChangeNotifier {
   /// Takes the mailbox key from a connected node that is not the home.
   Future<String> clearKey() async {
     final h = await session.writeHome(null);
-    return h.set
-        ? 'The node still says it holds a mailbox key'
-        : 'The node no longer holds a mailbox key';
+    return h.mine ?? h.set
+        ? 'The node still says it holds your mailbox key'
+        : 'The node no longer holds your mailbox key';
   }
 
   void setFake(bool v) {
@@ -715,6 +776,7 @@ class AppModel extends ChangeNotifier {
       found: n,
       address: session.address,
       homeable: canBeHome(session.status),
+      room: session.node?.room,
     );
     if (session.guestRead) _guestChecked[n.name] = now();
     await _sendQueuedFetch();
@@ -1339,7 +1401,7 @@ class AppModel extends ChangeNotifier {
           canBeHome(s.status);
     }
     final g = guestHere;
-    return g != null && g.address != null && g.homeable;
+    return g != null && g.address != null && g.homeable && g.room != 0;
   }
 
   /// The person declined the offer of the home in this run of the app.
@@ -1360,6 +1422,7 @@ class AppModel extends ChangeNotifier {
   /// to tell the person.
   Future<String> homeHere() async {
     final g = guestHere;
+    if (g != null && g.room == 0) return fullNode;
     if (g != null) await connect(g.found);
     final s = session;
     final a = s.address;

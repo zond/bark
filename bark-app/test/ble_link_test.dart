@@ -391,7 +391,8 @@ class FakeNodes extends UniversalBlePlatform {
   @override
   Future<bool> pair(String deviceId) async {
     pairings++;
-    if (wrongCode) return false;
+    // A full node answers the pairing with Pairing Failed.
+    if (wrongCode || !nodes[deviceId]!.takesPairing) return false;
     bonds.add(deviceId);
     final n = nodes[deviceId]!..pair();
     final guest = _links[deviceId];
@@ -432,6 +433,7 @@ class FakeNodes extends UniversalBlePlatform {
       Uuids.home => (await n.readHome()).encode(),
       Uuids.update => (await n.readUpdate()).encode(),
       Uuids.public => encodePublic(await n.readPublic()),
+      Uuids.phones => (await n.readPhones()).encode(),
       _ => throw UnimplementedError(characteristic),
     };
   }
@@ -451,7 +453,19 @@ class FakeNodes extends UniversalBlePlatform {
     final n = _links[deviceId]!;
     switch (characteristic) {
       case Uuids.recipient:
-        await n.setRecipient(value.single);
+        final r = decodeRecipient(value);
+        await n.setRecipient(r.tag, value.length == 1 ? null : r.name);
+      case Uuids.phones when value.first == 0:
+        await n.setPhonesFrom(value[1]);
+      case Uuids.phones when value.first == 1:
+        await n.askRemovalCode();
+      case Uuids.phones:
+        await n.removePhone(
+          (value[1] << 8) | value[2],
+          bond: value[3] & 1 != 0,
+          home: value[3] & 2 != 0,
+          code: (value[4] << 16) | (value[5] << 8) | value[6],
+        );
       case Uuids.public when value.single == encodeUnpair().single:
         if (refusesUnpair) {
           throw UniversalBleException(
@@ -1592,6 +1606,65 @@ void main() {
       });
     });
 
+    test('a tap on a paired node in Settings, the search stopped: heard '
+        'by a scan of its own, and connected as its owner', () {
+      run(
+        (async, app, ble) {
+          async.elapse(round);
+          expect(app.session.connected && !app.session.guest, isTrue);
+          app.disconnect();
+          async.elapse(lookRound * 3);
+          expect((app.session.connected, app.session.stopped), (false, true));
+          app.connectPaired(nodeName(FakeNode.id));
+          async.elapse(round);
+          expect(app.session.connected && !app.session.guest, isTrue);
+          expect(nodeName(app.session.node!.id), nodeName(FakeNode.id));
+          expect(app.session.stopped, isFalse);
+          // Out of reach and not heard for the span the search takes to
+          // call it so, it says it was not seen.
+          app.disconnect();
+          ble.inReach.remove(paired);
+          async.elapse(lookRound * ownGone);
+          Object? failed;
+          app
+              .connectPaired(nodeName(FakeNode.id))
+              .then<void>((_) {}, onError: (Object e) => failed = e);
+          async.elapse(lookRound * 3);
+          expect(failed, isA<NotSeen>());
+        },
+        withPaired: true,
+        pairedInReach: true,
+      );
+    });
+
+    test('a full node: no home offered, and no pairing tried, as it would '
+        'refuse it', () {
+      run((async, app, ble) {
+        ble.nodes[strong]!
+          ..paired = false
+          ..others.addAll([
+            for (var n = 1; n <= maxPhones; n++)
+              PhoneRecord(number: n, paired: true),
+          ]);
+        async.elapse(round);
+        expect(app.guestHere?.room, 0);
+        expect(app.offerHome, isFalse);
+        String? told;
+        app.homeHere().then((r) => told = r);
+        async.elapse(round);
+        expect(told, fullNode);
+        expect(ble.pairings, 0);
+        // Pairing anyway, from a scan's tap, the node refuses it.
+        Object? failed;
+        app
+            .connect(FoundNode(strong, nodeName(strongId), -50))
+            .then<void>((_) {}, onError: (Object e) => failed = e);
+        async.elapse(round);
+        expect(failed, isA<NotPaired>());
+        expect(ble.bonds, isEmpty);
+      });
+    });
+
     test('a wrong code: not paired, no home, and the node still used as a '
         'guest', () {
       run((async, app, ble) {
@@ -1603,9 +1676,10 @@ void main() {
         expect(failed, isA<NotPaired>());
         expect(
           notPairedLine(failed!),
-          'Pairing did not complete: it was cancelled, or the code typed was '
-          'not the one on the node\'s screen. The phone still uses the node '
-          'as a guest.',
+          'Pairing did not complete: it was cancelled, the code typed was not '
+          'the one on the node\'s screen, or the node already keeps eight '
+          'phones, when its screen says PHONES FULL. The phone still uses the '
+          'node as a guest.',
         );
         expect(ble.bonds, isEmpty);
         expect(app.session.pairedWith, isEmpty);

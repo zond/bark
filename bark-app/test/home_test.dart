@@ -1,11 +1,14 @@
 // The home node against the fake node: the mailbox key written and read
 // back, cleared at the home, kept by a home the person is not connected
-// to, written again on every connection to the home, the home followed to
+// to, written again on connection to the home, the home followed to
 // a fixed node's new place, its card sent only when the person asks, but
 // not to a carried node's wandering fix, and a node that does not keep it
-// refused as a home.
+// refused as a home; from link version 13, written again only where the
+// node says it is not the person's and a home of their tag is left there,
+// and told, not overruled, where someone removed it.
 
 import 'package:bark_app/app.dart';
+import 'package:bark_app/app_layer.dart' show recipientTag;
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/fake_node.dart';
@@ -103,7 +106,12 @@ void main() {
     });
   });
 
-  test('a home that lost the key is given it again on connection', () {
+  /// The node of version `v`, of [FakeNode]'s own otherwise.
+  FakeNode Function(DateTime Function(), List<int>) atVersion(int v) =>
+      (now, app) => FakeNode(now: now, sodium: sodium, app: app)..version = v;
+
+  test('before link version 13, a home that lost the key is given it again '
+      'on connection', () {
     run((async, app) {
       said(async, app.makeHome(app.session.address!));
       // As a reflashed node: its key gone while the person is away.
@@ -116,10 +124,11 @@ void main() {
       expect(app.session.nodeHome!.set, isTrue);
       expect(log(app), contains(contains('the key written')));
       expect(app.session.notice, isNull);
-    });
+    }, make: atVersion(12));
   });
 
-  test('a home that holds its key is unchanged by the write on connection', () {
+  test('before link version 13, a home that holds its key is unchanged by '
+      'the write on connection', () {
     run((async, app) {
       said(async, app.makeHome(app.session.address!));
       expect(app.fakeNode!.homeKeyChanges, 1);
@@ -130,6 +139,80 @@ void main() {
       expect(log(app), contains(contains('the key written')));
       expect(app.fakeNode!.homeKeyChanges, 1);
       expect(app.session.nodeHome!.set, isTrue);
+    }, make: atVersion(12));
+  });
+
+  test('a home that says it is the person\'s is not written again', () {
+    run((async, app) {
+      said(async, app.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(log(app), isNot(contains(contains('the key written'))));
+      expect(app.fakeNode!.homeKeyChanges, 1);
+      expect(app.session.nodeHome!.mine, isTrue);
+      expect(app.homeKeyGone, isFalse);
+    });
+  });
+
+  test('a home whose key the person\'s phone left by unpairing is joined '
+      'again, silently', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      // The phone unpaired and paired again: the home is in a record of
+      // the person's tag with no bond, and the phone's own holds none.
+      f.homeKey = null;
+      f.others.add(
+        PhoneRecord(
+          number: 9,
+          home: true,
+          tag: recipientTag(sodium, app.me.identity, f.nodeId),
+        ),
+      );
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(f.homeKey, app.me.keys.mailbox.extractBytes());
+      expect(log(app), contains(contains('the key written')));
+      expect(app.session.notice, isNull);
+    });
+  });
+
+  test('a home someone removed is told, not overruled, and is made the home '
+      'again by the person', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      f.homeKey = null;
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(f.homeKey, isNull);
+      expect(app.session.notice, contains('does not hold your mailbox key'));
+      expect(app.homeKeyGone, isTrue);
+      expect(
+        said(async, app.makeHome(app.session.address!)),
+        'This node is your home',
+      );
+      expect(f.homeKey, app.me.keys.mailbox.extractBytes());
+      expect(app.homeKeyGone, isFalse);
+    });
+  });
+
+  test('another person\'s home is someone else\'s, with no key to clear', () {
+    run((async, app) {
+      app.fakeNode!.others.add(const PhoneRecord(number: 2, home: true));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      app.connectFake();
+      async.flushMicrotasks();
+      expect(app.session.nodeHome!.set, isTrue);
+      expect(app.othersHome, isTrue);
+      expect(app.holdsOtherKey, isFalse);
     });
   });
 

@@ -14,15 +14,16 @@ class AttException implements Exception {
   String toString() => 'ATT error 0x${code.toRadixString(16)}';
 }
 
-/// The phone's bond no longer opens the node `node`: another phone has
-/// paired with it since (spec "Phone link", the replaced phone).
+/// The phone's bond no longer opens the node `node`: a phone paired with
+/// it removed this one, or before link version 13 paired in its place
+/// (spec "Phone link", The removed phone).
 class NotOurs implements Exception {
   final String node;
   const NotOurs(this.node);
   @override
   String toString() =>
-      '${shownName(node)} is no longer yours: another phone has paired '
-      'with it';
+      '${shownName(node)} is no longer yours: it no longer knows this '
+      'phone\'s pairing';
 }
 
 /// The phone still holds a bond for the node `node` that the node no
@@ -43,14 +44,16 @@ String staleBondLine(String node) =>
     '${shownName(node)} no longer knows this phone\'s old pairing. Forget '
     'it in the phone\'s Bluetooth settings, then try again.';
 
-/// The pairing did not complete: it was cancelled, or the code typed was
-/// not the one on the node's screen.
+/// The pairing did not complete: it was cancelled, the code typed was
+/// not the one on the node's screen, or the node keeps as many phones as
+/// it can and refused it (spec "Phone link", Pairing).
 class NotPaired implements Exception {
   const NotPaired();
   @override
   String toString() =>
-      'Pairing did not complete: it was cancelled, or the code typed was '
-      'not the one on the node\'s screen';
+      'Pairing did not complete: it was cancelled, the code typed was not '
+      'the one on the node\'s screen, or the node already keeps eight '
+      'phones, when its screen says PHONES FULL';
 }
 
 abstract class NodeLink {
@@ -97,8 +100,12 @@ abstract class NodeLink {
   Future<void> writePiece(Uint8List value);
 
   /// Link version 7 and later: the phone's recipient tag at this node,
-  /// by which a public node hands it its messages.
-  Future<void> setRecipient(int tag);
+  /// by which a public node hands it its messages; from link version 13
+  /// with the app's versions and the person's `name`, which a paired
+  /// phone's record keeps ([encodeRecipient]). Throws [AttException] 0x82
+  /// when the node and the app do not serve each other, and the node
+  /// ends the link.
+  Future<void> setRecipient(int tag, [String? name]);
 
   /// Link version 7 and later, the paired phone's alone: whether the node
   /// serves phones that have not paired.
@@ -124,6 +131,25 @@ abstract class NodeLink {
   /// Asks the neighbour `id` for its status. The node answers the write
   /// at once; the neighbour's answer, if one comes, is notified.
   Future<void> ask(List<int> id);
+
+  /// Link version 13 and later, the paired phones' alone: the next read
+  /// of Phones lists the records from place `slot` on.
+  Future<void> setPhonesFrom(int slot);
+  Future<PhonesPage> readPhones();
+
+  /// The node draws a fresh removal code on its screen.
+  Future<void> askRemovalCode();
+
+  /// Removes the `bond`, the `home` or both of record `number`, with the
+  /// `code` the node's screen shows; throws [AttException] 0x81 for
+  /// another code or one past [removalCodeTime], which the node then
+  /// forgets, and 0x13 for a record or part the node does not hold.
+  Future<void> removePhone(
+    int number, {
+    required bool bond,
+    required bool home,
+    required int code,
+  });
 
   /// Asks for the shortest connection interval, for a transfer; where
   /// the platform chooses the interval itself, nothing.

@@ -495,8 +495,30 @@ class BleLink implements NodeLink {
       NeighbourPage.decode(await _read(Uuids.neighbours));
 
   @override
-  Future<void> setRecipient(int tag) =>
-      _write(Uuids.recipient, encodeRecipient(tag));
+  Future<void> setRecipient(int tag, [String? name]) =>
+      _write(Uuids.recipient, encodeRecipient(tag, name));
+
+  @override
+  Future<void> setPhonesFrom(int slot) =>
+      _write(Uuids.phones, encodePhonesFrom(slot));
+
+  @override
+  Future<PhonesPage> readPhones() async =>
+      PhonesPage.decode(await _read(Uuids.phones));
+
+  @override
+  Future<void> askRemovalCode() => _write(Uuids.phones, encodeRemovalCode());
+
+  @override
+  Future<void> removePhone(
+    int number, {
+    required bool bond,
+    required bool home,
+    required int code,
+  }) => _write(
+    Uuids.phones,
+    encodeRemove(number, bond: bond, home: home, code: code),
+  );
 
   @override
   Future<bool> readPublic() async => decodePublic(await _read(Uuids.public));
