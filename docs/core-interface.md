@@ -117,7 +117,8 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 Every node has the same application interface: the readiness query
 `accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
 `AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power`,
-`AppCommand::ForceRole` and `AppCommand::Battery`, the events
+`AppCommand::ForceRole` and `AppCommand::Battery`, the queries `forced`, `battery_left` and
+`battery_drains`, the events
 `AppEvent::Message`, `AppEvent::GivenBack`, `AppEvent::Boot` and `AppEvent::Heard`, the store,
 `Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
 the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
@@ -136,7 +137,8 @@ whether the message arrived is for the app to find out inside its payload. A mes
 node drops is reported only as `Trace::Dropped` (§3 rule 9).
 
 A node holds one message of its application's at a time, until its first hop takes it.
-It accepts a message from its boot on while it holds none, its send queue takes a full
+It accepts a message from its boot on while it holds none and does not drain (below), its
+send queue takes a full
 frame on top of what it holds (spec "Send queue"), and not every neighbour is banned, or
 for a sleepy node with a live anchor, the anchor (spec "Receiving DATA"). When only its
 bucket and bans keep it from accepting, its `next_wakeup()` includes the moment both allow
@@ -296,7 +298,9 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
 - `AppCommand::Drain(true)`: the driver has staged an image and will reboot into it
   (spec "Send queue", "Updates over the mesh", the install). From then the node refuses
   every DATA that would give it work, `DropReason::Draining`, with a place in the room's
-  line, a take it answered before standing, and `accepts_send` is false.
+  line, a take it answered before standing, `accepts_send` is false, and its heartbeats
+  carry the leaving flag (spec "Packet formats"), as they do while a relay flushes to
+  turn sleepy.
   `AppCommand::Drain(false)` takes messages again. `drained(now)` is when the driver may
   reboot: the send queue, the delivery queue and the inbox empty and no reply owed that
   takes a DATA, or `Config::delivery_ttl` since the whole second the drain began.
@@ -329,7 +333,7 @@ air.
 driver draws its screen from it too. Two parts of it only the driver knows: the image
 version, `Config::version`, set at build (0 in the simulator), which the heartbeats'
 section also tells as the version run, and the battery, the last
-`AppCommand::Battery` reading, which the core now keeps. `Status::gathering` is the
+`AppCommand::Battery` reading, which the core keeps. `Status::gathering` is the
 image the core gathers, its version and blocks, the blocks held from the first and the
 pieces of the next, all zero when none (roadmap D158). `bark-driver` takes the
 application's ask as `Request::Ask` and hands the answer to `App::message`.
@@ -407,9 +411,9 @@ when it was heard, and the four images the sections name kept once in the table,
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 110 752 B,
-`bark-fw/scripts/uf2.py --stack` on the open release build of main `d652435` (2026-11-09), against a
-floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 65 216 B,
+`bark-fw/scripts/uf2.py --stack` on the open release build of 2026-11-10 with roadmap D186,
+against a floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
 That holds only if the relay is not built on the stack. `Relay::new` returns a relay by
@@ -470,7 +474,7 @@ action at a time, and the core never allocates.
     DATA or ACK of another format, reads every heartbeat whatever its format, and keeps
     each neighbour's in `Neighbour::format`. A driver neither sets nor reads it.
   - A heartbeat's third byte is its flags: bit 0 sleepy, bit 1 anchorless, bit 2 carried,
-    bit 3 map point; the core sends the other bits zero and ignores them. The core sets
+    bit 3 map point, bit 4 leaving; the core sends the other bits zero and ignores them. The core sets
     the map point from its own position's source and keeps each neighbour's in
     `Neighbour::map_point`.
   - An ACK's `aux` is 0 when it takes the offer and the code of the wait the refuser
