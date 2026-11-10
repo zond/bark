@@ -1010,8 +1010,8 @@ as dead; else the level it holds is its rest, read with no pull from
 then on. A change from rest that lasts 40 ms to 10 s is a touch,
 counted once the pin has been back for 40 ms; a change that lasts
 longer becomes the rest. The log says `pad: rests low`, `pad: rests
-high, as if touched` or `pad: follows the pull, nothing drives it:
-taken as dead` at boot, then `pad: touched` and `pad: held 10 s, rests
+high` or `pad: follows the pull, nothing drives it: taken as dead` at
+boot, then `pad: touched` and `pad: held 10 s, rests
 high now`; an open build logs every edge (`pad: edge, high`).
 
 The cost on battery: a full refresh holds BUSY high for 2 s (the

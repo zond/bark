@@ -123,12 +123,10 @@ pub async fn pad(pin: Peri<'static, P0_11>) -> ! {
     let with_down = pin.is_high();
     match pad.probe(with_up, with_down, now()) {
         Event::Rest(high) => {
-            log::info!(
-                "pad: rests {}{}",
-                level(high),
-                // The wiring makes the sensor active high (README, The pad).
-                if high { ", as if touched" } else { "" }
-            );
+            // Which level is rest is the board's to say: the bench boards
+            // rest high and a touch pulls the pin low (docs, the pad note
+            // of 2026-11-10).
+            log::info!("pad: rests {}", level(high));
             pin.set_as_input(Pull::None);
         }
         _ => {
