@@ -15,7 +15,10 @@
 // verified thread; and the owner's Public switch, and a guest's view;
 // and the line for a node that refuses the phone's old bond, with the
 // way to Bluetooth settings; and a guest offered its node as the home on
-// the first screen, which pairs, and in Settings, beside pairing alone.
+// the first screen, which pairs, and in Settings, beside pairing alone;
+// Pair again on the row of a node no longer yours, with its help; a
+// pairing that ends without one, told in a dialog; and the home dialog
+// on a home that lost its key while the changed card waits.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -1053,6 +1056,60 @@ void main() {
     expect(app.me.home, isNull);
     expect(app.session.outbox.length, before + app.contacts.list.length);
     expect(find.text('Send my card'), findsNothing);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('the home dialog on a home that lost the key, the card changed '
+      'and not sent: it says the card still waits, as the line under it '
+      'does', (t) async {
+    final app = await model(t);
+    await t.runAsync(
+      () => app.contacts.add(PersonCard(List.filled(32, 5), null, 1, 'Olena')),
+    );
+    await app.connectFake();
+    final f = app.fakeNode!;
+    await t.runAsync(() => app.makeHome(app.session.address!));
+    expect(app.cardUnsent, isFalse);
+    // The node takes a new place, and forgets what it stored.
+    await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
+    await t.pump();
+    expect(app.cardUnsent, isTrue);
+    await app.session.disconnect();
+    f.homeKey = null;
+    await app.connectFake();
+    expect(app.homeKeyGone, isTrue);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    const make = 'Make this node my home';
+    await t.scrollUntilVisible(
+      find.text(make),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.ensureVisible(find.text(make));
+    await t.pumpAndSettle();
+    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    await t.tap(find.text(make));
+    await t.pumpAndSettle();
+    expect(
+      find.text(
+        'Your card stays as it is now. Its last change has not gone to your '
+        'contacts: it still waits for Send my card.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('no card is sent'), findsNothing);
+    final sent = app.session.outbox.length;
+    await t.tap(find.text('Go ahead'));
+    await t.runAsync(() => Future<void>.delayed(Duration.zero));
+    await t.pumpAndSettle();
+    expect(app.homeKeyGone, isFalse);
+    expect(app.session.outbox.length, sent);
+    expect(find.textContaining('home node has a new address'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();

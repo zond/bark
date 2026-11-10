@@ -1200,7 +1200,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? '$_pairsFirst As your home, it keeps texts to you and '
                         'gives your card a fixed address.\n\n'
                   : '') +
-              (!changes
+              (!changes && app.cardUnsent
+                  ? 'Your card stays as it is now. Its last change has not '
+                        'gone to your contacts: it still waits for Send my '
+                        'card.'
+                  : !changes
                   ? 'Your card stays as it is, so no card is sent.'
                   : n == 0
                   ? 'Your card changes.'
