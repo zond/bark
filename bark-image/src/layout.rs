@@ -104,7 +104,7 @@ pub const ACTIVE: Region = Region::pages_from(STATE.end(), ACTIVE_PAGES);
 /// no clip on the external flash reaches it: it holds the hash the
 /// running firmware checked before it staged.
 pub const RECORD: Region = Region::pages_from(ACTIVE.end(), 1);
-/// The names of the images this node swapped back (`crate::given_up`):
+/// The versions of the images this node swapped back (`crate::given_up`):
 /// above [`DRIVE_END`], so that a UF2 copied over USB leaves them.
 pub const GIVEN_UP: Region = Region::pages_from(RECORD.end(), 1);
 /// Between the given-up images and the stored state, above

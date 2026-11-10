@@ -17,7 +17,7 @@ use bark_driver::{
     App, Clock, Driver, Gps, Heard, Outgoing, Radio, Ready, Request, MAX_AIRTIME, RSSI_DWELL,
 };
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
-use bark_proto::update::{Image, ImageTag, Piece};
+use bark_proto::update::{Image, Piece};
 use bark_proto::wire::{
     Ack, Data, Heartbeat, Packet, Update, MAX_PAYLOAD, PIECE_BYTES, PIECE_HEADER_LEN,
 };
@@ -1583,7 +1583,6 @@ fn a_reply_that_becomes_due_goes_without_a_signal() {
 
 fn image() -> Image {
     Image {
-        name: ImageTag([1, 2, 3, 4]),
         version: 8,
         blocks: 3,
         last: 5,
@@ -1670,7 +1669,7 @@ fn a_piece_goes_filled_or_not_at_all() {
     let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(500), at_ms(1000)]);
     let mut buf = [0u8; MAX_FRAME];
     let piece = Packet::Update(Update::Piece {
-        tag: ImageTag([1, 2, 3, 4]),
+        version: 2,
         block: 1,
         index: 9,
         bytes: &[0; PIECE_BYTES],

@@ -274,7 +274,7 @@ pub fn start<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
             // the two gives it up at the next start all the same.
             let gave_up = match Header::decode(&bytes) {
                 Ok(h) => {
-                    crate::given_up::add(flash, &crate::pieces::name(&bytes))?;
+                    crate::given_up::add(flash, h.version)?;
                     Some(h.version)
                 }
                 Err(_) => None,

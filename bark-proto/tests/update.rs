@@ -4,7 +4,7 @@
 
 mod common;
 
-use bark_proto::update::{sweep_pieces, Image, ImageTag, FASTEST, GAP, PACE, SERVED_CHANNELS};
+use bark_proto::update::{sweep_pieces, Image, FASTEST, GAP, PACE, SERVED_CHANNELS};
 use bark_proto::wire::{Packet, Update};
 use bark_proto::{AppCommand, Config, Instant, Position, Relay};
 use common::{at, secs, Harness, Updates};
@@ -41,7 +41,6 @@ fn relay_on(east: f64, seed: u64, home: u8) -> Relay {
 
 /// An image of three blocks: the table, a whole block and a short one.
 const IMAGE: Image = Image {
-    name: ImageTag([7; 4]),
     version: 2,
     blocks: 3,
     last: 7,
@@ -181,7 +180,6 @@ fn a_node_that_holds_the_image_is_offered_nothing_and_two_holders_share_the_pace
 /// pieces, and the pieces each block is made of.
 fn todays_image() -> (Image, Vec<usize>) {
     let image = Image {
-        name: ImageTag([9; 4]),
         version: 3,
         blocks: 28,
         last: 40,

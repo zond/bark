@@ -29,8 +29,8 @@ use crate::tables::heard::beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::time::{Duration, Instant};
 use crate::update::{
-    sweep_pieces, Image, ImageTag, Piece, Section, FULL_FRAME, GAP, LEASE_ROTATIONS, MAX_BLOCKS,
-    PACE, PASS, PIECES, SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
+    sweep_pieces, Image, Piece, Section, FULL_FRAME, GAP, LEASE_ROTATIONS, MAX_BLOCKS, PACE, PASS,
+    PIECES, SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -47,7 +47,7 @@ const OTHERS: usize = 8;
 /// What a section tells that starts a rotation of it when it changes: the
 /// version the node runs, its newest image and the blocks of it held from
 /// the first.
-type Told = (u32, Option<(ImageTag, u32)>, u8);
+type Told = (u32, Option<u32>, u8);
 
 /// Every channel, as a mask of channel bits.
 const ALL_CHANNELS: u16 = (1 << CHANNELS) - 1;
@@ -110,8 +110,8 @@ impl Gather {
 pub(super) struct Spread {
     /// The image it holds whole, from its driver.
     own: Option<Image>,
-    /// The last image offered to the driver.
-    offered: Option<(ImageTag, u32)>,
+    /// The version of the last image offered to the driver.
+    offered: Option<u32>,
     gather: Option<Gather>,
     /// The last channels it sent a piece on, and when: the only ones that
     /// can still be within their pace, since a pace holds at most this
@@ -290,7 +290,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// loss margin covers.
     fn told_now(&self, now: Instant) -> Option<Told> {
         self.section(now)
-            .map(|t| (t.runs, t.image.map(|i| (i.tag(), i.version)), t.complete))
+            .map(|t| (t.runs, t.image.map(|i| i.version), t.complete))
     }
 
     /// Whether a heartbeat now starts a rotation of its section: what it
@@ -430,10 +430,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// A heartbeat of `from` carried `section`: the neighbour table keeps
     /// it, and a newer image than this node runs or gathers is offered to
-    /// the driver's policy, once. A version names one image, so another
-    /// image of a version this node holds or gathers is a bench's mistake:
-    /// it is traced once each time a neighbour's section comes to name it,
-    /// and nothing else follows. A neighbour that names nothing as new as
+    /// the driver's policy, once. A neighbour that names nothing as new as
     /// what this relay streams is answered with a rotation of its section,
     /// at most one a rotation, so that it learns of the image within one.
     pub(super) fn section_heard(
@@ -443,22 +440,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        let before = self
-            .neighbours
-            .get(from)
-            .and_then(|n| self.neighbours.section(n))
-            .and_then(|u| u.image);
-        if let Some(i) = section.image.filter(|&i| before != Some(i)) {
-            let s = &self.spread;
-            let mine = [s.own, s.gather.map(|g| g.image)];
-            if mine
-                .iter()
-                .flatten()
-                .any(|m| m.version == i.version && m.tag() != i.tag())
-            {
-                emit(Action::Trace(Trace::TwoBuilds { version: i.version }));
-            }
-        }
         self.neighbours.section_heard(from, section, now);
         let told = section.image.map_or(0, |i| i.version).max(section.runs);
         let lags = self
@@ -480,7 +461,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|g| g.image.version)
             .max(s.own.map(|o| o.version))
             .unwrap_or(0);
-        if s.offered == Some((image.tag(), image.version)) {
+        if s.offered == Some(image.version) {
             return;
         }
         if image.version <= newest {
@@ -490,7 +471,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if usize::from(image.blocks) > MAX_BLOCKS {
             return;
         }
-        s.offered = Some((image.tag(), image.version));
+        s.offered = Some(image.version);
         emit(Action::Offered(image));
     }
 
@@ -518,7 +499,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let helps = anchor
             .and_then(|n| self.neighbours.section(n))
             .and_then(|u| u.image.map(|i| (i, u.complete)))
-            .is_some_and(|(i, complete)| i.tag() == g.image.tag() && complete > g.block);
+            .is_some_and(|(i, complete)| i.version == g.image.version && complete > g.block);
         if helps {
             self.timers.awake_until = self.timers.awake_until.max(now + SLOT_LISTEN);
         }
@@ -538,7 +519,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         let Update::Piece {
-            tag,
+            version,
             block,
             index,
             bytes,
@@ -554,7 +535,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if usize::from(index) >= PIECES {
             return;
         }
-        let Some(g) = self.spread.gather.as_mut().filter(|g| g.image.tag() == tag) else {
+        let Some(g) = self
+            .spread
+            .gather
+            .as_mut()
+            .filter(|g| g.image.version == version)
+        else {
             return;
         };
         if !g.take(block, index) {
@@ -575,7 +561,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn complete_of(&self, m: &Neighbour, image: Image) -> u8 {
         self.neighbours
             .section(m)
-            .filter(|u| u.image.is_some_and(|i| i.tag() == image.tag()))
+            .filter(|u| u.image.is_some_and(|i| i.version == image.version))
             .map_or(0, |u| u.complete)
     }
 
@@ -636,7 +622,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.neighbours
             .section(n)
-            .filter(|u| u.gathers(image.tag()))
+            .filter(|u| u.gathers(image.version))
     }
 
     /// What each channel needs of what this node streams, from the
@@ -882,7 +868,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let block = self.stream_block(c, now)?;
         let image = self.streams()?;
         let packet = Update::Piece {
-            tag: image.tag(),
+            version: image.version,
             block,
             index: self.spread.index[usize::from(block)],
             bytes: &[0; PIECE_BYTES],
@@ -1101,7 +1087,7 @@ mod tests {
         );
         let frame = mac::frame(
             &Packet::Update(Update::Piece {
-                tag: ImageTag([1; 4]),
+                version: 1,
                 block: 0,
                 index: 0,
                 bytes: &[0; PIECE_BYTES],
@@ -1125,64 +1111,6 @@ mod tests {
         );
     }
 
-    /// A neighbour that names another image of the version this node
-    /// gathers is traced once, not at every section, and changes nothing
-    /// (spec "Updates over the mesh").
-    #[test]
-    fn another_build_of_a_version_is_traced_once() {
-        use crate::wire::Heartbeat;
-        let mut r = crate::Relay::new(Config::default(), 1);
-        let now = Instant::ZERO + Duration::from_secs(2);
-        let mine = Image {
-            name: ImageTag([4; 4]),
-            version: 2,
-            blocks: 3,
-            last: 7,
-            key: 0,
-        };
-        let other = Image {
-            name: ImageTag([5; 4]),
-            ..mine
-        };
-        r.gather(mine, 1, now);
-        let me = r.config.position;
-        let at = crate::position::Position {
-            lat: me.lat + 5_000,
-            ..me
-        };
-        let hb = Heartbeat {
-            sleepy: false,
-            anchorless: false,
-            carried: false,
-            home: r.home,
-            format: crate::wire::FORMAT,
-            map_point: false,
-            leaving: false,
-            id: crate::ids::NodeId::from_u64(at.short().0 as u64),
-            short: at.short(),
-        };
-        let section = Section {
-            runs: 1,
-            image: Some(other),
-            complete: 1,
-            have: 0,
-            home_holds: false,
-        };
-        let plane = r.plane;
-        r.neighbours.heard(&hb, at, -80, &plane, now);
-        let mut traced = 0;
-        let mut offered = 0;
-        for _ in 0..3 {
-            r.section_heard(hb.id, section, now, &mut |a| match a {
-                Action::Trace(Trace::TwoBuilds { version: 2 }) => traced += 1,
-                Action::Offered(_) => offered += 1,
-                _ => {}
-            });
-        }
-        assert_eq!((traced, offered), (1, 0));
-        assert_eq!(r.gathering().map(|g| g.0), Some(mine));
-    }
-
     /// A helper streams to a gatherer only while it heard the gatherer's
     /// section within two of its rotations and a heartbeat's lag: a gatherer
     /// still heard but no longer saying what it lacks is served no more, and
@@ -1199,7 +1127,6 @@ mod tests {
         let mut r = crate::Relay::new(config, 1);
         let now = Instant::ZERO + Duration::from_secs(2);
         let image = Image {
-            name: ImageTag([4; 4]),
             version: 2,
             blocks: 3,
             last: 7,

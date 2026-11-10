@@ -15,8 +15,9 @@ use std::fmt::Write;
 pub const SAMPLE_US: u64 = 600_000_000;
 
 /// The pieces each block of an image of `bytes` bytes is made of: block 0
-/// the block table, the image's hash and 8 bytes of each block's hash,
-/// one piece up to 26 blocks, two up to 57 (spec "Updates over the mesh"); then the image in blocks
+/// the block table, the image's name and 8 bytes of each block's hash, its
+/// own last, one piece up to 26 blocks, two up to 48
+/// (spec "Updates over the mesh"); then the image in blocks
 /// of [`BLOCK_PIECES`] pieces, the last one shorter.
 pub fn blocks(bytes: u32) -> Vec<usize> {
     let pieces = (bytes as usize).div_ceil(PIECE_BYTES);
@@ -26,7 +27,7 @@ pub fn blocks(bytes: u32) -> Vec<usize> {
     if !pieces.is_multiple_of(BLOCK_PIECES) {
         b.push(pieces % BLOCK_PIECES);
     }
-    b[0] = (32 + 8 * (b.len() - 1)).div_ceil(PIECE_BYTES);
+    b[0] = (32 + 8 * b.len()).div_ceil(PIECE_BYTES);
     b
 }
 
@@ -89,7 +90,6 @@ impl UpdateRun {
     pub fn new(image_bytes: u32, holder: u32, at: Instant, nodes: usize) -> UpdateRun {
         let needs = blocks(image_bytes);
         let image = Image {
-            name: bark_proto::update::ImageTag([0x5a; 4]),
             version: 2,
             blocks: needs.len() as u8,
             last: *needs.last().expect("blocks") as u8,
@@ -197,7 +197,7 @@ impl UpdateRun {
     }
 
     /// Whether a frame of `node` at `now` is the one right after its slot
-    /// heartbeat: within the heartbeat's airtime with its section, 23.36
+    /// heartbeat: within the heartbeat's airtime with its section, 22.08
     /// ms, and the piece's check and start, under 5 ms, with a margin, 40
     /// ms from the heartbeat's start.
     pub fn after_home_beat(&self, node: u32, now: Instant) -> bool {

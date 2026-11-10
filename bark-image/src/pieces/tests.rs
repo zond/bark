@@ -171,15 +171,14 @@ fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>, resigned: boo
     for b in &blocks {
         table.extend_from_slice(&sha(b.as_flattened())[..ENTRY]);
     }
+    let own = sha(&table);
+    table.extend_from_slice(&own[..ENTRY]);
     table.resize(table.len().next_multiple_of(PIECE), 0);
     blocks.insert(
         0,
         table.chunks(PIECE).map(|c| c.try_into().unwrap()).collect(),
     );
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&name[..TAG_LEN]);
     let image = Image {
-        tag,
         blocks: blocks.len() as u8,
         last: blocks.last().unwrap().len() as u8,
         version: 7,
@@ -517,7 +516,7 @@ fn a_holder_makes_the_blocks_a_gatherer_takes() {
     let firmware = 3 * DATA * PIECE + 1234;
     let built = build(firmware, 21, None, false);
     let header: &[u8; HEADER_LEN] = built.stream[..HEADER_LEN].try_into().unwrap();
-    let image = held(header, firmware as u32, 7, 1).unwrap();
+    let image = held(firmware as u32, 7, 1).unwrap();
     assert_eq!(image, built.image);
     let mut table = Table::new(image, &name(header));
     let mut tabling = Tabling::new();
@@ -542,8 +541,8 @@ fn a_holder_makes_the_blocks_a_gatherer_takes() {
     }
     // One block more than the lanes is not held.
     let largest = ((MAX_BLOCKS - 1) * DATA * PIECE - HEADER_LEN) as u32;
-    assert!(held(header, largest, 7, 1).is_some());
-    assert_eq!(held(header, largest + 1, 7, 1), None);
+    assert!(held(largest, 7, 1).is_some());
+    assert_eq!(held(largest + 1, 7, 1), None);
 }
 
 #[test]
@@ -586,7 +585,7 @@ fn a_holder_serves_every_piece_of_every_block() {
     let firmware = 181 * PIECE - HEADER_LEN - 100;
     let built = build(firmware, 23, None, false);
     let header: &[u8; HEADER_LEN] = built.stream[..HEADER_LEN].try_into().unwrap();
-    let image = held(header, firmware as u32, 7, 1).unwrap();
+    let image = held(firmware as u32, 7, 1).unwrap();
     assert_eq!(image, built.image);
     assert_eq!(
         (0..image.blocks)

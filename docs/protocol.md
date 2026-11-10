@@ -687,7 +687,7 @@ preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 | position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
 
 13 bytes, 14.4 ms on air at SF5 ([physical layer](#physical-layer)); with
-an update's section, 30 bytes, 23.36 ms
+an update's section, 26 bytes, 22.08 ms
 ([updates over the mesh](#updates-over-the-mesh)).
 
 | | |
@@ -4445,17 +4445,17 @@ a node of another implementation is never overwritten against its will.
 **The image.** An image is named by the SHA-256 of its signed header,
 the 48 bytes of its header that its signatures cover: magic, format,
 version, length and the image's own SHA-256 (`bark-image`, `sign.rs`).
-The name is 32 bytes; the mesh names an image by its first 4. What
+A version names one image, as a release takes its version from its
+tag, so the mesh names an image by its version; the 32-byte name stays
+with the node that holds the image. What
 travels is the image as packed, its 256-byte header and then its bytes,
-in **blocks**: block 0 is the block table, the whole name and the first
-8 bytes of the SHA-256 of each other block, one piece up to 27 blocks
+in **blocks**: block 0 is the block table, the whole name, the first
+8 bytes of the SHA-256 of each other block, and then 8 bytes of the
+SHA-256 of all of that, its own, one piece up to 26 blocks
 and two up to 48; then the packed image, in blocks of 64 pieces of 247
 bytes, the last block shorter and its last piece padded (`bark-image`,
 `pieces.rs`). Block 1 begins with the signed header, which hashes to
-the name. A version names one image, as a release takes its version
-from its tag; a node that hears a neighbour name another image of a
-version it holds or gathers only logs it, once each time that
-neighbour's section comes to name it. Each block is sent as up to 255 coded pieces, and any 64
+the name. Each block is sent as up to 255 coded pieces, and any 64
 distinct ones of a block, or as many as it has, give it back (a
 Reed-Solomon code over GF(2⁸), the firmware's, `code.rs`). Today's node
 image, 478 704 bytes (the open build of main `9b693a0` on 2026-11-09,
@@ -4466,12 +4466,17 @@ table's among them, one for each lane the firmware keeps pieces in
 (`pieces.rs`): 47 blocks of packed image, 743 KB, which
 `bark-fw/scripts/image.py pack` refuses to pass.
 
-*Why 4 bytes of the name.* Two images on the air at once in one place
-share their first 4 bytes with odds of 2⁻³²; nothing on the air is
-authenticated anyway ([what the protocol omits](#what-the-protocol-omits)),
-and a piece of the wrong image fails its block's hash and is gathered
-again. The firmware checks the whole name in block 0 against the signed
-header in block 1.
+*Why the version and not the name.* A version names one image, so the
+name would say nothing more on the air; nothing there is authenticated
+anyway ([what the protocol omits](#what-the-protocol-omits)). Every
+block is checked against its entry in the table and block 1's header
+against the name the table begins with, so a piece of another build
+under the same version, which only a bench makes, spoils at most the
+block it lands in, which is gathered again, and is never installed. A
+node whose blocks fail their check twice logs that two builds may
+carry one number. *Why the table has an entry of its own.* Nothing else
+checks it, and a table spoiled by such a piece would hold every other
+block to entries none matches.
 
 A node **holds** an image's blocks once each has decoded and passed its
 hash; it serves those, whether it holds the whole image or some of its
@@ -4480,7 +4485,7 @@ blocks.
 **What a node tells.** A heartbeat may carry a **section** after its
 first 13 bytes ([packet formats](#packet-formats)): the version the
 node runs, 0 if it knows none; the newest image it holds or gathers, by
-its version, the first 4 bytes of its name, the signer's key, its
+its version, the signer's key, its
 blocks and the pieces of its last, or none; how many of its blocks the
 node holds from the first; how many pieces it holds of the block after
 those; and, while it gathers, whether it hears a relay at home on its own
@@ -4515,7 +4520,7 @@ every beat.
 *Why boot is a change.* A node that boots knows nothing of its
 neighbours' images, nor they of its, and telling them at once lets a
 holder answer it within a rotation (below). It costs a rotation's 13
-sections, 8.96 ms more each, once a boot.
+sections, 7.68 ms more each, once a boot.
 
 *Why a gatherer says it every rotation.* A helper streams a block until
 the gatherer's section shows it complete (rule 4), and a rotation after
@@ -4527,13 +4532,13 @@ more than an hour (roadmap D158). Said once a rotation on the helper's own chann
 section reaches the helper within a rotation of any change. It costs one
 section a rotation for each gatherer: with a domain's 270 relays
 ([capacity and sizing](#capacity-and-sizing)) all gathering, 270 ×
-8.96 ms over 130 s and 13 channels, 0.14 % of each channel's time.
+7.68 ms over 130 s and 13 channels, 0.12 % of each channel's time.
 
 *Why answer a node that lags.* A node that runs an older image learns
 of a new one only from a holder's section, which would otherwise ride
 hourly; answered, it learns within a rotation of telling its own,
 which it does at boot. Each answer costs a rotation's 13 sections,
-116.5 ms. Once a rotation however many lag bounds a relay to a section
+99.8 ms. Once a rotation however many lag bounds a relay to a section
 in every heartbeat; a neighbour that takes the image stops lagging,
 and one whose policy refuses it is answered at most each time it tells
 its section, once an hour.
@@ -4558,8 +4563,8 @@ of its own would tell it within a pace.
 *Why the shape of the image in it.* The firmware sets up a block's lane
 and knows how many pieces give back each block before the first piece
 comes; block 0's own count follows from the blocks. The two bytes cost
-one block of symbols, 1.28 ms: a heartbeat with its section is 30
-bytes, 23.36 ms on air ([physical layer](#physical-layer)), against 13
+one block of symbols, 1.28 ms: a heartbeat with its section is 26
+bytes, 22.08 ms on air ([physical layer](#physical-layer)), against 13
 bytes and 14.4 ms.
 
 **Who sends what.**
@@ -4671,7 +4676,7 @@ gatherer that heard only a holder elsewhere, which left it to a holder
 at home on the gatherer's channel out of the gatherer's reach, took no
 piece in twelve simulated hours (roadmap D196). The gatherer knows. It
 says so in the top bit of its count of blocks, which never passes 48,
-so the section stays 17 bytes. A change of the bit starts no rotation:
+so the section stays 13 bytes. A change of the bit starts no rotation:
 it turns off when the gatherer catches up with the relay at home,
 which changes its blocks, or when that relay goes, and the gatherer's
 helper is then a relay elsewhere, on whose channel its section goes
@@ -4763,18 +4768,18 @@ own for the frame, as for a heartbeat, and a hand-over to it fails.
 Two channels at 1 % each cost it about 2 % of its hand-overs.
 
 **What it costs.** While no update runs, a relay's section rides one
-rotation of its heartbeats an hour, 8.96 ms more on each of 13: over a
+rotation of its heartbeats an hour, 7.68 ms more on each of 13: over a
 domain's 270 relays ([capacity and sizing](#capacity-and-sizing)),
-270 × 13 × 8.96 ms an hour over 13 channels, 0.07 % of each channel's
+270 × 13 × 7.68 ms an hour over 13 channels, 0.06 % of each channel's
 time. While one runs, a relay's count of blocks grows at most once in
 64 paces, 14.8 minutes, the fewest pieces of a block at the pace: at
-most 4.1 rotations an hour more, 5.1 in all, 0.34 % of each channel's
+most 4.1 rotations an hour more, 5.1 in all, 0.29 % of each channel's
 time, and each gatherer's section once a rotation on its helper's
-channel 0.14 % more ([what a node tells](#updates-over-the-mesh)), so
-the heartbeats take at most 3.5 % against 3.0 % without. Were the
+channel 0.12 % more ([what a node tells](#updates-over-the-mesh)), so
+the heartbeats take at most 3.4 % against 3.0 % without. Were the
 section in every heartbeat while an update runs, they would take
-270 × 23.36 ms / (10 s × 13) = 4.9 %. A boot, and an answer to a
-neighbour that lags, each add a rotation of sections, 116.5 ms. A busy channel that gathers adds
+270 × 22.08 ms / (10 s × 13) = 4.6 %. A boot, and an answer to a
+neighbour that lags, each add a rotation of sections, 99.8 ms. A busy channel that gathers adds
 a piece a pace, 1 % of its time, however many help; an idle one a piece
 a gap, 3.3 %. Today's image takes a sweep of 2 428 pieces from a helper
 that holds it to a neighbour that holds none, at the margin of rule 4:
@@ -4812,8 +4817,8 @@ listens of 143.6 ms, 349 s, at the 5.8 mA of listening
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)):
 0.56 mAh, 0.07 % of the 850 mAh battery
 ([hardware](#hardware)). Its beats carry the section while it gathers,
-8.96 ms more on each of its 16 beats an hour, 143 ms an hour on the
-230 ms of its beats ([beats](#beats)): 13 s over the 88 hours, 0.1 mAh
+7.68 ms more on each of its 16 beats an hour, 123 ms an hour on the
+230 ms of its beats ([beats](#beats)): 11 s over the 88 hours, 0.1 mAh
 at the 32 mA of transmitting
 ([sleepy nodes alone](#sleepy-nodes-alone)).
 The pieces it hears in its windows shorten its time. The nodes of an
@@ -4909,11 +4914,11 @@ heartbeat, a DATA, an ACK, a piece or a status. If it hears none within
 three worst-case rotations of heartbeats and a heartbeat's lateness of
 its start, 3 × 195 s + 872.8 ms = 585.9 s ([heartbeat](#heartbeat)),
 it resets itself, and the loader swaps the previous image back. The
-image back gives the failed one up: it keeps the failed image's name in
-a page of flash that no copy over USB erases, and never gathers an image
-of that name again, so never serves it. A release after it has another
-name and is taken as usual. The page holds 128 names, and when full is
-erased and starts again with the newest.
+image back gives the failed one up: it keeps the failed image's version
+in a page of flash that no copy over USB erases, and never gathers an
+image of that version again, so never serves it. A release after it has
+a higher version and is taken as usual. The page holds 1 024 versions,
+and when full is erased and starts again with the newest.
 
 *Why hear a node.* A node that gathered an image over the mesh had a
 neighbour to take it from. An image that runs but cannot hear or be
@@ -4947,7 +4952,7 @@ it sent pieces on and when; the times of the last 8 pieces it heard
 from others on its home channel; what its section last told, the
 channels its rotation of sections has still to reach, when that
 rotation began and when the hour's is due, whether it owes a lagging
-neighbour an answer, and its helper's ID: 1 888 bytes beside the
+neighbour an answer, and its helper's ID: 1 880 bytes beside the
 tables, and 16 bytes in each neighbour's entry for its section and
 when it was heard (`core-interface.md`, Memory).
 
@@ -5094,7 +5099,7 @@ a message, so a kind that expects an answer finds it in the neighbour
 table, from the sender's heartbeats ([neighbour table](#neighbour-table)),
 as a status asked does, or carries it in a byte of its own.
 
-**The heartbeat's section.** In format 1 a heartbeat is 13 bytes, or 30
+**The heartbeat's section.** In format 1 a heartbeat is 13 bytes, or 26
 with an update's section after the first 13
 ([updates over the mesh](#updates-over-the-mesh)); a node that does not
 know the section reads the first 13 as it reads any heartbeat. A later
@@ -5117,12 +5122,11 @@ everything.
 ```
 HEARTBEAT first(1) format(1) flags(1) id(6) short_pos(4)                    = 13
           optional section, after the first 13:
-          runs(4) version(4) image(4) key(1) blocks(1) last(1)
-          complete(1) have(1)                                               = 30
+          runs(4) version(4) key(1) blocks(1) last(1) complete(1)
+          have(1)                                                           = 26
           runs = the version the node runs, 0 for none told;
           version = the newest image it holds or gathers, 0 for none;
-          image = the first 4 bytes of that image's name; key = which
-          signer's key signed it; blocks = its blocks, 2 to 48; last =
+          key = which signer's key signed it; blocks = its blocks, 2 to 48; last =
           the pieces of its last block, 1 to 64; complete = the blocks
           the node holds from the first, bits 0 to 6, and in bit 7
           whether it gathers and hears a relay at home on its own
@@ -5136,8 +5140,8 @@ DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
           hops(1) payload                                                   = 28 + payload
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK
-PIECE     first(1) format(1) image(4) block(1) index(1) piece(247)          = 255
-          aux = 15; index = which coded piece of the block, 0 to 254
+PIECE     first(1) format(1) version(4) block(1) index(1) piece(247)        = 255
+          aux = 15; version = the image's; index = which coded piece of the block, 0 to 254
 ASK       first(1) format(1) to(6) from(6)                                  = 14
           aux = 16; to, from = the IDs of the node asked and the node asking
 STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)

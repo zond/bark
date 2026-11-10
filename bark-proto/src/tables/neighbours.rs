@@ -277,7 +277,7 @@ impl Neighbour {
 
 /// A neighbour's section as its entry keeps it, and when it was heard:
 /// the image it names is kept once in the table, among [`IMAGES`], by its
-/// place there, so that the entry is 16 bytes less than with the section.
+/// place there, so that each entry does not keep the image itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Told {
     /// A heartbeat with a section was heard.
@@ -1711,9 +1711,8 @@ mod tests {
     /// and an older one than all kept is kept by no entry.
     #[test]
     fn the_images_named_are_kept_once_and_at_most_four() {
-        use crate::update::{Image, ImageTag, Section};
+        use crate::update::{Image, Section};
         let image = |v: u32| Image {
-            name: ImageTag([v as u8; 4]),
             version: v,
             blocks: 26,
             last: 61,

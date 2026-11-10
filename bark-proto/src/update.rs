@@ -10,24 +10,12 @@ use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget;
 use crate::time::Duration;
 
-/// Bytes of the image name that a heartbeat and a piece carry: the first
-/// four of the image's 32-byte name (spec "Updates over the mesh").
-pub const TAG_LEN: usize = 4;
-
-/// The first [`TAG_LEN`] bytes of an image's name: what the mesh names it
-/// by.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub struct ImageTag(pub [u8; TAG_LEN]);
-
 /// An image as a heartbeat's section describes it
-/// (spec "Updates over the mesh").
+/// (spec "Updates over the mesh"). A version names one image, so the mesh
+/// names an image by its version; block 0 carries its whole name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
-    /// The first bytes of its name, the SHA-256 of the 48 bytes of its
-    /// header that its signatures cover (`bark-image`, `sign.rs`); block
-    /// 0 carries the whole name.
-    pub name: ImageTag,
-    /// The signed version number; only the policy test reads it.
+    /// The signed version number.
     pub version: u32,
     /// Blocks the image travels in, block 0 the block table: 2 to 255 on
     /// the wire, and a node takes at most [`MAX_BLOCKS`].
@@ -41,22 +29,16 @@ pub struct Image {
 
 impl Image {
     /// The distinct pieces that give back block `b`, 0 past the last: the
-    /// table's, the image's hash and 8 bytes of each other block's hash in
-    /// pieces of [`crate::wire::PIECE_BYTES`]; [`BLOCK_PIECES`]; and the
-    /// last block's (spec "Updates over the mesh").
+    /// table's, the image's name and 8 bytes of each block's hash, its own
+    /// last, in pieces of [`crate::wire::PIECE_BYTES`]; [`BLOCK_PIECES`];
+    /// and the last block's (spec "Updates over the mesh").
     pub fn pieces(&self, b: u8) -> u8 {
-        let others = usize::from(self.blocks.saturating_sub(1));
         match b {
-            0 => (32 + 8 * others).div_ceil(crate::wire::PIECE_BYTES) as u8,
+            0 => (32 + 8 * usize::from(self.blocks)).div_ceil(crate::wire::PIECE_BYTES) as u8,
             _ if b >= self.blocks => 0,
             _ if b + 1 == self.blocks => self.last,
             _ => BLOCK_PIECES as u8,
         }
-    }
-
-    /// The name the mesh carries.
-    pub fn tag(&self) -> ImageTag {
-        self.name
     }
 }
 
@@ -87,10 +69,10 @@ pub struct Section {
 }
 
 impl Section {
-    /// Whether it gathers `tag` and lacks a block.
-    pub fn gathers(&self, tag: ImageTag) -> bool {
+    /// Whether it gathers the image of `version` and lacks a block.
+    pub fn gathers(&self, version: u32) -> bool {
         self.image
-            .is_some_and(|i| i.tag() == tag && self.complete < i.blocks)
+            .is_some_and(|i| i.version == version && self.complete < i.blocks)
     }
 }
 
@@ -184,10 +166,10 @@ pub const fn heard_within(config: &crate::Config) -> Duration {
 }
 
 /// Bytes of a heartbeat's section: the version it runs (4), the newest
-/// image's version (4), name (4), key (1), blocks (1), last block's
-/// pieces (1), the blocks it holds from the first (1), and the pieces it
-/// holds of the block after them (1).
-pub const SECTION_LEN: usize = 17;
+/// image's version (4), key (1), blocks (1), last block's pieces (1), the
+/// blocks it holds from the first (1), and the pieces it holds of the
+/// block after them (1).
+pub const SECTION_LEN: usize = 13;
 
 /// The share of pieces a relay that lacked them missed, in percent: 20.5
 /// in the district at the design rate, seed 1, over the first 6 hours

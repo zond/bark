@@ -381,7 +381,7 @@ test in `tables/mod.rs`:
 
 | Table | Entries × size | Total |
 |---|---|---|
-| Neighbours (spec "Neighbour table") | 64 × 128 B, and 4 × 16 B for the images their sections name | 8.1 KiB |
+| Neighbours (spec "Neighbour table") | 64 × 128 B, and 4 × 12 B for the images their sections name | 8.1 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
 | Message records (spec "Message records") | 667 × 40 B | 26.1 KiB |
@@ -398,16 +398,16 @@ hold the 564 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-95 544 B (93.3 KiB): the tables and, in under 1 KiB around them, the
+95 520 B (93.3 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 80 B, what it learns of its
 battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
-of the update, 1 888 B, with 16 B of each neighbour's entry for its heartbeats' section and
-when it was heard, and the four images the sections name kept once in the table, 64 B (spec
+of the update, 1 880 B, with 16 B of each neighbour's entry for its heartbeats' section and
+when it was heard, and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 76 528 B (74.7 KiB), without the heard table and the delivery
+`SleepyNode` is 76 504 B (74.7 KiB), without the heard table and the delivery
 queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
@@ -462,8 +462,8 @@ action at a time, and the core never allocates.
   - A DATA's `aux` 15 is the update's piece, 16 and 17 a neighbour's status asked and
     told, and 13, 14 and 18 to 63 are rejected (spec "Packet formats"); a piece is always a
     full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 30. A
-    status's battery byte that is no percent, 101 to 254, is read as not read. A heartbeat of 30 bytes or more carries the update's section in bytes 13 to
-    29, its versions big-endian (`wire::decode_section`).
+    status's battery byte that is no percent, 101 to 254, is read as not read. A heartbeat of 26 bytes or more carries the update's section in bytes 13 to
+    25, its versions big-endian (`wire::decode_section`).
   - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit
     the seen flag (roadmap D76, D90). With bit 6 clear, the top bit marks a heartbeat,
     whose low four bits hold its channel, 0 to 12, and the two between are zero; the

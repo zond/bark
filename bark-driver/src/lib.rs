@@ -868,17 +868,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Store(s) => app.store(&s),
             Action::Locate(until) => search = Some(until).filter(|&t| t > now),
             Action::Trace(t) => {
-                match t {
-                    Trace::HeartbeatSkipped { channel } => skipped |= 1 << channel.index(),
-                    Trace::TwoBuilds { version } => log::warn!(
-                        "update: a neighbour names another image of version {}: two builds carry one version",
-                        version
-                    ),
-                    _ => {}
+                if let Trace::HeartbeatSkipped { channel } = t {
+                    skipped |= 1 << channel.index();
                 }
-                if !matches!(t, Trace::TwoBuilds { .. }) {
-                    log::info!("{:?}", t)
-                }
+                log::info!("{:?}", t)
             }
             Action::Offered(image) => app.offered(&image),
             Action::StorePiece(piece) => app.store_piece(&piece),

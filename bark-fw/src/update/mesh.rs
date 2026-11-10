@@ -22,7 +22,7 @@ use bark_image::layout::{ACTIVE, RECORD, STATE};
 use bark_image::pieces::{self, Begin, Poll, Store, Table, Tabling};
 use bark_image::policy::{self, Moment};
 use bark_image::{sign, Header, HEADER_LEN};
-use bark_proto::update::{Image, ImageTag, Piece};
+use bark_proto::update::{Image, Piece};
 use bark_proto::wire::{Packet, Update, PIECE_BYTES, PIECE_HEADER_LEN};
 use bark_proto::Frame;
 use embassy_embedded_hal::flash::partition::Partition;
@@ -74,7 +74,7 @@ static PIECE_IN: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// A piece the core serves: its image, block and index; and, for the
 /// piece named, whether its bytes were written into [`OUT`], so that a
 /// fill that came too late is never taken for the next piece's.
-type Named = (ImageTag, u8, u8);
+type Named = (u32, u8, u8);
 static SERVE: Signal<CriticalSectionRawMutex, Named> = Signal::new();
 static SERVED: Signal<CriticalSectionRawMutex, (Named, bool)> = Signal::new();
 static OUT: Mutex<ThreadModeRawMutex, RefCell<[u8; PIECE]>> = Mutex::new(RefCell::new([0; PIECE]));
@@ -161,12 +161,15 @@ const FILL_WITHIN: Duration = Duration::from_micros(bark_driver::MAX_AIRTIME.as_
 /// whether they came in time.
 pub async fn serve(frame: &mut Frame) -> bool {
     let Ok(Packet::Update(Update::Piece {
-        tag, block, index, ..
+        version,
+        block,
+        index,
+        ..
     })) = Packet::decode(frame.payload())
     else {
         return false;
     };
-    let named = (tag, block, index);
+    let named = (version, block, index);
     SERVED.reset();
     SERVE.signal(named);
     let filled = async {
@@ -295,14 +298,14 @@ pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -
 /// staging's: a piece asked for while a whole image is checked and
 /// staged, about 3 s, is not filled in time.
 async fn answer(flash: &super::Flash, named: Named) {
-    let (tag, block, index) = named;
-    let ok = fill(flash, tag, block, index).await;
+    let (version, block, index) = named;
+    let ok = fill(flash, version, block, index).await;
     SERVED.signal((named, ok));
 }
 
-/// Piece `index` of block `block` of the image named `tag` into [`OUT`]:
+/// Piece `index` of block `block` of the image of `version` into [`OUT`]:
 /// coded from the block's data pieces, read one at a time.
-async fn fill(flash: &super::Flash, tag: ImageTag, block: u8, index: u8) -> bool {
+async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool {
     let running = RUNNING.lock(|r| {
         r.borrow()
             .as_ref()
@@ -311,8 +314,8 @@ async fn fill(flash: &super::Flash, tag: ImageTag, block: u8, index: u8) -> bool
     });
     let gathered = STORE.lock(|s| s.borrow().image());
     let (n, from_store) = match (running, gathered) {
-        (Some(i), _) if i.tag == tag.0 => (i.pieces(block), false),
-        (_, Some(i)) if i.tag == tag.0 => (i.pieces(block), true),
+        (Some(i), _) if i.version == version => (i.pieces(block), false),
+        (_, Some(i)) if i.version == version => (i.pieces(block), true),
         _ => return false,
     };
     let Ok(mut encoder) = Encoder::new(n, index) else {
@@ -398,7 +401,7 @@ async fn running(flash: &super::Flash) -> Option<Image> {
         // The key the section names: one this firmware checks it with,
         // else the first slot's.
         let key = sign::verify(&header, &BARK_SIGNING_KEYS).unwrap_or(header[sign::SIGNED_LEN]);
-        let image = pieces::held(&header, h.length, h.version, key)?;
+        let image = pieces::held(h.length, h.version, key)?;
         RUNNING.lock(|r| {
             *r.borrow_mut() = Some(Running {
                 header,
@@ -461,7 +464,6 @@ async fn running(flash: &super::Flash) -> Option<Image> {
 
 fn core_image(i: &pieces::Image) -> Image {
     Image {
-        name: ImageTag(i.tag),
         version: i.version,
         blocks: i.blocks,
         last: i.last,
@@ -471,7 +473,6 @@ fn core_image(i: &pieces::Image) -> Image {
 
 fn store_image(i: &Image) -> pieces::Image {
     pieces::Image {
-        tag: i.name.0,
         blocks: i.blocks,
         last: i.last,
         version: i.version,
@@ -489,12 +490,21 @@ fn slot_taken(flash: &super::Flash) -> bool {
     super::phone::holds_slot() || bark_image::boot::swap_requested(flash) == Ok(true)
 }
 
-/// Whether this node swapped back the image named `tag` once
+/// Whether this node swapped back the image of `version` once
 /// (`bark_image::given_up`): it never gathers it again. A flash that
 /// cannot be read gives up nothing.
-fn given_up(flash: &super::Flash, tag: &[u8; pieces::TAG_LEN]) -> bool {
-    bark_image::given_up::contains(flash, tag) == Ok(true)
+fn given_up(flash: &super::Flash, version: u32) -> bool {
+    bark_image::given_up::contains(flash, version) == Ok(true)
 }
+
+/// Failed blocks of one image after which the node says its blocks keep
+/// failing. A failed block is gathered again, the store's one answer to a
+/// failure; on one build the frames' and the slots' CRCs leave a block no
+/// cause to fail, so one failure is taken for a fault and a second for
+/// that answer not helping: pieces of another build under the same
+/// version, which the mesh cannot tell apart
+/// (spec "Updates over the mesh").
+const KEEP_FAILING: u8 = 2;
 
 /// Tell the core, waiting for room.
 async fn tell(r: Request) {
@@ -505,11 +515,14 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
     let held = running(flash).await;
     match held {
         Some(image) => {
+            // The name is the build's, known here alone: the mesh names an
+            // image by its version.
+            let name = RUNNING.lock(|r| r.borrow().as_ref().map(|r| pieces::name(&r.header)));
             log::info!(
                 "update: holds version={} blocks={} name={:02x?} key={}",
                 image.version,
                 image.blocks,
-                image.name.0,
+                name.map(|n| [n[0], n[1], n[2], n[3]]),
                 image.key
             );
             set_phase(Phase::Holds(image.version));
@@ -529,7 +542,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
     // up, as after the swap into it.
     let mut gather = STORE.lock(|s| s.borrow().image());
     if let Some(i) = gather {
-        if i.version <= BARK_IMAGE_VERSION || slot_taken(flash) || given_up(flash, &i.tag) {
+        if i.version <= BARK_IMAGE_VERSION || slot_taken(flash) || given_up(flash, i.version) {
             log::info!(
                 "update: version {} gathered before is not wanted; forgotten",
                 i.version
@@ -548,7 +561,9 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
     let mut told = false;
     // An image whose header failed its checks: not taken again until a
     // reboot.
-    let mut refused: Option<[u8; pieces::TAG_LEN]> = None;
+    let mut refused: Option<u32> = None;
+    // Blocks of the image gathered that failed their check.
+    let mut failed: u8 = 0;
     loop {
         if let Some(i) = gather.filter(|_| !told) {
             if STORE.lock(|s| s.borrow().ready()) {
@@ -570,7 +585,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     STORE.lock(|s| s.borrow_mut().forget());
                 }
                 Err(()) => {
-                    refused = Some(i.tag);
+                    refused = Some(i.version);
                     STORE.lock(|s| s.borrow_mut().forget());
                     set_phase(idle());
                 }
@@ -614,6 +629,13 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             }
             Poll::Failed(b) => {
                 log::warn!("update: block {} failed its check; gathered again", b);
+                failed = failed.saturating_add(1);
+                if failed == KEEP_FAILING {
+                    log::warn!(
+                        "update: blocks of version {} keep failing their check: two builds under one number?",
+                        gather.map_or(0, |i| i.version)
+                    );
+                }
                 tell(Request::Block {
                     index: b,
                     ok: false,
@@ -637,6 +659,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                         if let Some(i) = offer(flash, &image, refused) {
                             gather = Some(i);
                             told = false;
+                            failed = 0;
                         }
                     }
                     Either4::Fourth(named) => answer(flash, named).await,
@@ -668,25 +691,20 @@ fn gathering(i: &pieces::Image) -> Phase {
 
 /// A neighbour offers `image`: the image to gather, if the policy takes
 /// it and the store can.
-fn offer(
-    flash: &super::Flash,
-    image: &Image,
-    refused: Option<[u8; pieces::TAG_LEN]>,
-) -> Option<pieces::Image> {
+fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pieces::Image> {
     let o = policy::Offer {
         version: image.version,
         key: image.key,
         running: BARK_IMAGE_VERSION,
         slot_taken: slot_taken(flash),
     };
-    let gave_up = given_up(flash, &image.name.0);
-    let takes = policy::takes(o, &BARK_SIGNING_KEYS) && refused != Some(image.name.0) && !gave_up;
+    let gave_up = given_up(flash, image.version);
+    let takes = policy::takes(o, &BARK_SIGNING_KEYS) && refused != Some(image.version) && !gave_up;
     log::info!(
-        "update: offered version={} blocks={} key={} name={:02x?}: {}",
+        "update: offered version={} blocks={} key={}: {}",
         image.version,
         image.blocks,
         image.key,
-        image.name.0,
         match (takes, gave_up) {
             (true, _) => "taken",
             (false, true) => "not taken, given up",

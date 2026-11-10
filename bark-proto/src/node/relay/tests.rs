@@ -3481,11 +3481,10 @@ fn status_frames(sent: &[(Instant, Frame)]) -> Vec<(u8, u16, crate::wire::Status
 #[test]
 fn a_status_tells_the_image_gathered() {
     use crate::status::Gathering;
-    use crate::update::{Image, ImageTag};
+    use crate::update::Image;
     let (mut r, now, _, _) = with_two_neighbours();
     assert_eq!(r.status(now).gathering, Gathering::default());
     let image = Image {
-        name: ImageTag([3; 4]),
         version: 14,
         blocks: 31,
         last: 20,

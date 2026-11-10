@@ -8,14 +8,15 @@
 //! the bytes of the firmware's slot (`bark-fw/README.md`, "Updates"), in
 //! blocks of [`DATA`] pieces of [`PIECE`] bytes, the last block shorter
 //! and its last piece padded. Block 0 is the block table: the image's name,
-//! then the first 8 bytes of the SHA-256 of each other block's pieces,
-//! padded with zeros to whole pieces. The name is the SHA-256 of the
+//! then the first 8 bytes of the SHA-256 of each other block's pieces, then
+//! the first 8 of the SHA-256 of all that, its own, padded with zeros to
+//! whole pieces. The name is the SHA-256 of the
 //! header's first [`SIGNED_LEN`] bytes, the part its signatures cover
 //! (`crate::sign`): the same image signed again with another key keeps
 //! its name, so the mesh sees one image, whichever of its signatures a
-//! holder has. The mesh names it by the name's first [`TAG_LEN`] bytes,
-//! in a heartbeat and in every piece; the store begins with those, and
-//! takes the whole name from block 0.
+//! holder has. The mesh names it by its version, as a version names one
+//! image, in a heartbeat and in every piece; the store takes the whole
+//! name from block 0.
 //!
 //! **Where it goes**, in [`PIECES`]' 193 sectors:
 //!
@@ -40,10 +41,12 @@
 //! block has, its slots are read for the pieces to use, one a step, and
 //! the block is decoded twice, two data pieces at a time, each two from
 //! one read of each piece the lane holds ([`crate::code`]).
-//! The first time it is checked: block 0 must begin with the first bytes
-//! of the image's name, any other block hash to its entry in the table,
-//! and block 1, which begins with the header, have a header whose signed
-//! bytes hash to the name block 0 gave; its signatures are checked once the image is whole. A block
+//! The first time it is checked: every block must hash to its entry in
+//! the table, the table's own at its end, and block 1, which begins with the header, have a
+//! header whose signed bytes hash to the name block 0 gave; its
+//! signatures are checked once the image is whole. So a piece of another
+//! build under the same version can spoil a block, the table among them,
+//! but is never installed. A block
 //! that fails is erased from its lane and gathered again
 //! ([`Poll::Failed`]). The second time it is written, and its byte in the
 //! head cleared ([`Poll::Decoded`]); then its lane is erased. Nothing
@@ -178,12 +181,18 @@ pub const MAX_BLOCKS: usize = {
 };
 
 /// The longest table's pieces.
-const TABLE_PIECES: usize = (HASH_LEN + ENTRY * (MAX_BLOCKS - 1)).div_ceil(PIECE);
+const TABLE_PIECES: usize = table_len(MAX_BLOCKS as u8).div_ceil(PIECE);
+
+/// Bytes of the table of an image of `blocks`: the name, an entry for
+/// each other block, and its own entry, which checks what precedes it.
+const fn table_len(blocks: u8) -> usize {
+    HASH_LEN + ENTRY * blocks as usize
+}
 
 // The head: the image's record at its start, then the done bytes, the
 // table and the header, each from a page of its own.
-// The record: the tag, blocks, last, version, key, then the check.
-const CHECKED: usize = TAG_LEN + 2 + 4 + 1;
+// The record: blocks, last, version, key, then the check.
+const CHECKED: usize = 2 + 4 + 1;
 const RECORD_LEN: usize = CHECKED + 4;
 const DONE_AT: u32 = 64;
 const TABLE_AT: u32 = SLOT;
@@ -228,24 +237,17 @@ fn crc32(bytes: &[u8]) -> u32 {
     !c
 }
 
-/// Bytes of a name the mesh carries in a heartbeat and in a piece: its
-/// first four (spec "Updates over the mesh").
-pub const TAG_LEN: usize = 4;
-
-/// An image to gather, as a neighbour's heartbeat describes it: the
-/// first bytes of its name, the whole of which block 0 carries.
+/// An image to gather, as a neighbour's heartbeat describes it: by its
+/// version, which names one image; block 0 carries its whole name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
-    /// The first [`TAG_LEN`] bytes of the SHA-256 of its header's signed
-    /// bytes, its name.
-    pub tag: [u8; TAG_LEN],
     /// Its blocks, the table among them.
     pub blocks: u8,
     /// The pieces of its last block.
     pub last: u8,
-    /// Its version and the key the section named, kept so that after a
-    /// reset the node says what it gathers before block 1 brings the
-    /// header.
+    /// Its version, which names it, and the key the section named, kept
+    /// so that after a reset the node says what it gathers before block 1
+    /// brings the header.
     pub version: u32,
     /// See `version`.
     pub key: u8,
@@ -255,7 +257,7 @@ impl Image {
     /// The data pieces of block `b`; 0 past the last.
     pub fn pieces(&self, b: u8) -> usize {
         match b {
-            0 => (HASH_LEN + ENTRY * usize::from(self.blocks.saturating_sub(1))).div_ceil(PIECE),
+            0 => table_len(self.blocks).div_ceil(PIECE),
             _ if b >= self.blocks => 0,
             _ if b + 1 == self.blocks => usize::from(self.last),
             _ => DATA,
@@ -282,11 +284,10 @@ impl Image {
 
     fn record(&self) -> [u8; RECORD_LEN] {
         let mut r = [0u8; RECORD_LEN];
-        r[..TAG_LEN].copy_from_slice(&self.tag);
-        r[TAG_LEN] = self.blocks;
-        r[TAG_LEN + 1] = self.last;
-        r[TAG_LEN + 2..TAG_LEN + 6].copy_from_slice(&self.version.to_le_bytes());
-        r[TAG_LEN + 6] = self.key;
+        r[0] = self.blocks;
+        r[1] = self.last;
+        r[2..6].copy_from_slice(&self.version.to_le_bytes());
+        r[6] = self.key;
         let check = crc32(&r[..CHECKED]);
         r[CHECKED..].copy_from_slice(&check.to_le_bytes());
         r
@@ -298,15 +299,11 @@ impl Image {
         if crc32(&r[..c]) != check {
             return None;
         }
-        let mut tag = [0u8; TAG_LEN];
-        tag.copy_from_slice(&r[..TAG_LEN]);
-        let v = TAG_LEN + 2;
         let image = Image {
-            tag,
-            blocks: r[TAG_LEN],
-            last: r[TAG_LEN + 1],
-            version: u32::from_le_bytes([r[v], r[v + 1], r[v + 2], r[v + 3]]),
-            key: r[TAG_LEN + 6],
+            blocks: r[0],
+            last: r[1],
+            version: u32::from_le_bytes([r[2], r[3], r[4], r[5]]),
+            key: r[6],
         };
         image.fits().then_some(image)
     }
@@ -318,19 +315,16 @@ pub fn name(header: &[u8; HEADER_LEN]) -> [u8; HASH_LEN] {
     Sha256::digest(&header[..SIGNED_LEN]).into()
 }
 
-/// The image of `header`, with `length` bytes of firmware behind it, as
+/// The image of a header with `length` bytes of firmware behind it, as
 /// a holder tells and sends it: `None` if it has more blocks than a lane
 /// each.
-pub fn held(header: &[u8; HEADER_LEN], length: u32, version: u32, key: u8) -> Option<Image> {
+pub fn held(length: u32, version: u32, key: u8) -> Option<Image> {
     let pieces = (HEADER_LEN as u32 + length).div_ceil(PIECE as u32);
     let blocks = 1 + pieces.div_ceil(DATA as u32);
     if blocks as usize > MAX_BLOCKS {
         return None;
     }
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&name(header)[..TAG_LEN]);
     Some(Image {
-        tag,
         blocks: blocks as u8,
         last: (pieces - (blocks - 2) * DATA as u32) as u8,
         version,
@@ -461,6 +455,9 @@ impl Tabling {
         if !self.fed.is_multiple_of(BLOCK_BYTES) {
             self.entry(table);
         }
+        let own = table_len(table.image.blocks) - ENTRY;
+        let check = Sha256::digest(&table.bytes[..own]);
+        table.bytes[own..own + ENTRY].copy_from_slice(&check[..ENTRY]);
         self.firmware.finalize().into()
     }
 
@@ -851,10 +848,10 @@ impl Store {
     }
 
     /// The block table, once block 0 is decoded: the name, then 8 bytes of
-    /// each other block's hash.
+    /// each other block's hash, then 8 of its own.
     pub fn table(&self) -> Option<&[u8]> {
         let image = self.image?;
-        let len = HASH_LEN + ENTRY * usize::from(image.blocks - 1);
+        let len = table_len(image.blocks);
         self.table_known.then(|| &self.table[..len])
     }
 
@@ -1223,7 +1220,12 @@ impl Store {
                 return Ok(Poll::Again);
             }
             let ok = match d.block {
-                0 => table[..TAG_LEN] == image.tag,
+                // The table's own entry, at its end, checks what precedes
+                // it.
+                0 => {
+                    let own = table_len(image.blocks) - ENTRY;
+                    Sha256::digest(&table[..own])[..ENTRY] == table[own..own + ENTRY]
+                }
                 b => {
                     let at = HASH_LEN + ENTRY * usize::from(b - 1);
                     let hash = core::mem::take(&mut d.sha).finalize();

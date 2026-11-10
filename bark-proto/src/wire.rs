@@ -31,9 +31,8 @@
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id hops
 //!            payload                                              = 28 + payload
-//! HEARTBEAT  + section: runs version tag key blocks last complete
-//!            have                                                 = 30
-//! PIECE      first format tag block index bytes                   = 255
+//! HEARTBEAT  + section: runs version key blocks last complete have = 26
+//! PIECE      first format version block index bytes               = 255
 //! ASK        first format to from                                 = 14
 //! STATUS     first format to from flags battery heard strong
 //!            proven version gathers blocks complete have          = 30
@@ -92,7 +91,7 @@ use crate::node::NeighbourCounts;
 use crate::position::{Position, ShortName};
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::status::{Battery, Status};
-use crate::update::{Image, ImageTag, Section, SECTION_LEN, TAG_LEN};
+use crate::update::{Image, Section, SECTION_LEN};
 
 /// The wire format this code speaks, and so sends and reads (spec
 /// "Packet formats", roadmap D77).
@@ -176,8 +175,8 @@ pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
 pub const PIECE_AUX: u8 = 15;
 const _: () = assert!(Channel::new(PIECE_AUX).is_none());
 const BODY: usize = VERSION + FORMAT_LEN;
-const PIECE_TAG: usize = BODY;
-const PIECE_BLOCK: usize = PIECE_TAG + TAG_LEN;
+const PIECE_VERSION: usize = BODY;
+const PIECE_BLOCK: usize = PIECE_VERSION + 4;
 const PIECE_INDEX: usize = PIECE_BLOCK + 1;
 /// Where a piece's bytes start in its frame: the driver writes them there
 /// (`Action::Serve`).
@@ -351,10 +350,11 @@ impl Data<'_> {
 /// An update frame (spec "Updates over the mesh").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Update<'a> {
-    /// One coded piece of block `block` of the image `tag`.
+    /// One coded piece of block `block` of the image of version
+    /// `version`: a version names one image.
     Piece {
-        /// The image.
-        tag: ImageTag,
+        /// The image's version.
+        version: u32,
         /// The block.
         block: u8,
         /// Which of the block's pieces, 0 to 254.
@@ -467,15 +467,14 @@ pub fn encode_section(s: &Section, b: &mut [u8; SECTION_LEN]) {
     match s.image {
         Some(i) => {
             b[4..8].copy_from_slice(&i.version.to_be_bytes());
-            b[8..12].copy_from_slice(&i.name.0);
-            b[12] = i.key;
-            b[13] = i.blocks;
-            b[14] = i.last;
+            b[8] = i.key;
+            b[9] = i.blocks;
+            b[10] = i.last;
         }
-        None => b[4..15].fill(0),
+        None => b[4..11].fill(0),
     }
-    b[15] = complete_byte(s);
-    b[16] = s.have;
+    b[11] = complete_byte(s);
+    b[12] = s.have;
 }
 
 /// A heartbeat's section, if `heartbeat` carries one after its first
@@ -485,18 +484,17 @@ pub fn decode_section(heartbeat: &[u8]) -> Option<Section> {
     let word = |at: usize| u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]);
     let version = word(4);
     let image = (version != 0).then(|| Image {
-        name: ImageTag([b[8], b[9], b[10], b[11]]),
         version,
-        key: b[12],
-        blocks: b[13],
-        last: b[14],
+        key: b[8],
+        blocks: b[9],
+        last: b[10],
     });
     Some(Section {
         runs: word(0),
         image,
-        complete: b[15] & COMPLETE_MASK,
-        have: b[16],
-        home_holds: b[15] >> 7 == 1,
+        complete: b[11] & COMPLETE_MASK,
+        have: b[12],
+        home_holds: b[11] >> 7 == 1,
     })
 }
 
@@ -659,7 +657,7 @@ impl Packet<'_> {
                 buf[VERSION] = FORMAT;
                 match u {
                     Update::Piece {
-                        tag,
+                        version,
                         block,
                         index,
                         bytes,
@@ -668,7 +666,7 @@ impl Packet<'_> {
                             return Err(EncodeError::PayloadTooLong);
                         }
                         buf[FIRST] = PIECE_AUX;
-                        put(buf, PIECE_TAG, &tag.0);
+                        put(buf, PIECE_VERSION, &version.to_be_bytes());
                         buf[PIECE_BLOCK] = *block;
                         buf[PIECE_INDEX] = *index;
                         put(buf, PIECE_HEADER_LEN, bytes);
@@ -806,14 +804,10 @@ impl<'a> Packet<'a> {
             return Err(DecodeError::Short);
         }
         format(b)?;
-        let tag = |at: usize| {
-            let mut t = [0; TAG_LEN];
-            t.copy_from_slice(&b[at..at + TAG_LEN]);
-            ImageTag(t)
-        };
         exact(b, MAX_FRAME)?;
+        let v = PIECE_VERSION;
         Ok(Update::Piece {
-            tag: tag(PIECE_TAG),
+            version: u32::from_be_bytes([b[v], b[v + 1], b[v + 2], b[v + 3]]),
             block: b[PIECE_BLOCK],
             index: b[PIECE_INDEX],
             bytes: &b[PIECE_HEADER_LEN..],
@@ -878,16 +872,15 @@ mod tests {
             complete in 0u8..=COMPLETE_MASK,
             have: u8,
             home_holds: bool,
-            tag: [u8; TAG_LEN],
+            piece_version: u32,
             block: u8,
             index: u8,
             bytes in proptest::collection::vec(any::<u8>(), PIECE_BYTES),
         ) {
-            let tag = ImageTag(tag);
-            let piece = Packet::Update(Update::Piece { tag, block, index, bytes: &bytes });
+            let piece = Packet::Update(Update::Piece { version: piece_version, block, index, bytes: &bytes });
             round_trip(&piece);
             prop_assert_eq!(piece.sender(), None);
-            let image = Image { name: tag, version, blocks, last, key };
+            let image = Image { version, blocks, last, key };
             for image in [Some(image), None] {
                 let section = Section { runs, image, complete, have, home_holds };
                 let mut hb = [0u8; HEARTBEAT_LEN + SECTION_LEN];

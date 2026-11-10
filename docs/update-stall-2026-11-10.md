@@ -118,5 +118,6 @@ hears a holder of its image is offered no other of its version.
 
 Resolved otherwise the same day (roadmap D198): a version names one
 image, as a release's does, so the rule above and its tests were removed,
-and a node now only logs a neighbour that names another image of its
-version, so that a bench sees two builds under one number at once.
+and a node now only logs that two builds may carry one number: since
+D199, when blocks of the image it gathers fail their check a second
+time, as the mesh names an image by its version alone.

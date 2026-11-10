@@ -150,7 +150,7 @@ pub(crate) mod sizes {
             (
                 "neighbours",
                 size_of::<neighbours::Neighbours>(),
-                neighbours::NEIGHBOURS * 128 + neighbours::IMAGES * 16,
+                neighbours::NEIGHBOURS * 128 + neighbours::IMAGES * 12,
             ),
             ("heard", size_of::<heard::Heard>(), heard::HEARD * 32),
             (
