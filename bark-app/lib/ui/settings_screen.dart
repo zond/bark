@@ -107,16 +107,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _connectAsked = false;
 
   /// Connects by `f`, at the first connection after asking to notify;
-  /// `pairing` a node the phone uses as a guest, which it goes on doing
-  /// if `f` fails.
+  /// `pairs` when `f` pairs, whose failure a dialog tells, as the person
+  /// looks at the node's screen for the code then, not at a passing line;
+  /// `asGuest` for a node the phone uses as a guest, which it goes on
+  /// doing if `f` fails.
   Future<void> _connect(
     Future<void> Function() f, {
-    bool pairing = false,
+    bool pairs = false,
+    bool asGuest = false,
   }) async {
     if (_connectAsked) return;
     _connectAsked = true;
     try {
-      await _connectOnce(f, pairing: pairing);
+      await _connectOnce(f, pairs: pairs, asGuest: asGuest);
     } finally {
       _connectAsked = false;
     }
@@ -124,7 +127,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _connectOnce(
     Future<void> Function() f, {
-    bool pairing = false,
+    bool pairs = false,
+    bool asGuest = false,
   }) async {
     await app.askToNotify(
       () async =>
@@ -157,19 +161,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) await _notOurs(e);
     } on StaleBond catch (e) {
       if (mounted) await askToForget(context, app, staleBondLine(e.node));
+    } on BondKept catch (e) {
+      if (mounted) await askToForget(context, app, '$e');
     } catch (e) {
-      if (mounted) {
-        say(
-          context,
-          pairing
-              ? notPairedLine(e)
-              : e is NotPaired
-              ? '$e.'
-              : 'Connecting failed: $e',
-        );
+      if (!mounted) return;
+      final why = asGuest
+          ? notPairedLine(e)
+          : e is NotPaired || e is LinkEnded || e is NotSeen
+          ? '$e.'
+          : '${pairs ? 'Pairing' : 'Connecting'} failed: $e';
+      if (pairs) {
+        await _notPaired(why);
+      } else {
+        say(context, why);
       }
     }
   }
+
+  /// Tells why a pairing ended without one.
+  Future<void> _notPaired(String why) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Not paired'),
+      content: Text(why),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
 
   /// The node no longer holds this phone's bond: pair again, by the code
   /// on its screen, or leave it.
@@ -199,7 +221,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     final pair = app.pairAgain;
     if (again != true || pair == null) return;
-    await _connectOnce(pair);
+    await _connectOnce(pair, pairs: true);
   }
 
   /// The phone's position, after asking for location if needed; null,
@@ -459,26 +481,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       for (final n in names)
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(n == home ? Icons.home_outlined : Icons.router),
-          title: Text(shownName(n)),
-          subtitle: switch (_pairedState(n, home: n == home, on: n == on)) {
-            '' => null,
-            final w => Text(w),
-          },
-          onTap: n == on || s.pairingLost.contains(n) || app.connecting
-              ? null
-              : () => _connect(() => app.connectPaired(n)),
-          trailing: s.pairingLost.contains(n)
-              ? TextButton(
-                  onPressed: () => _askForget(n, home: n == home),
-                  child: const Text('Forget'),
-                )
-              : null,
-        ),
+        if (s.pairingLost.contains(n))
+          _lostRow(n, home: n == home)
+        else
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(n == home ? Icons.home_outlined : Icons.router),
+            title: Text(shownName(n)),
+            subtitle: switch (_pairedState(n, home: n == home, on: n == on)) {
+              '' => null,
+              final w => Text(w),
+            },
+            onTap: n == on || app.connecting
+                ? null
+                : () => _connect(() => app.connectPaired(n)),
+          ),
     ];
   }
+
+  /// The row of `n`, a paired node that no longer knows this phone: Pair
+  /// again while it is in reach, as the person most likely wants it back,
+  /// and Forget, to give it up; a tap explains.
+  Widget _lostRow(String n, {required bool home}) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: Icon(home ? Icons.home_outlined : Icons.router),
+    title: Text(shownName(n)),
+    subtitle: Text(_pairedState(n, home: home, on: false)),
+    onTap: () => _lostHelp(n),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (app.lostInReach(n))
+          TextButton(
+            onPressed: app.connecting
+                ? null
+                : () => _connect(() => app.pairLost(n), pairs: true),
+            child: const Text('Pair again'),
+          ),
+        TextButton(
+          onPressed: () => _askForget(n, home: home),
+          child: const Text('Forget'),
+        ),
+      ],
+    ),
+  );
+
+  /// What happened to `n`, a node that no longer knows this phone, and
+  /// what each button does.
+  Future<void> _lostHelp(String n) => showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) => SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${shownName(n)} no longer knows this phone',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'The node has forgotten this phone\'s pairing: someone paired '
+              'with it removed this phone, or the node lost what it had '
+              'stored. So it is no longer yours.\n\n'
+              'Pair again makes it yours again: the phone forgets its old '
+              'pairing, then pairs anew, and you type the six-digit code the '
+              'node\'s screen shows. The button is there while the node is '
+              'in reach.\n\n'
+              'Forget gives the node up: this phone stops listing it and '
+              'forgets its old pairing.',
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 
   /// How a paired node stands, in words. A paired node the search hears
   /// it connects to, so one not connected while it looks is out of reach;
@@ -569,7 +649,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (ok == true) await _connect(() => app.connect(n));
+    if (ok == true) await _connect(() => app.connect(n), pairs: true);
   }
 
   /// The owner's switch of whether the node serves phones that have not
@@ -1120,7 +1200,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? '$_pairsFirst As your home, it keeps texts to you and '
                         'gives your card a fixed address.\n\n'
                   : '') +
-              (!changes
+              (!changes && app.cardUnsent
+                  ? 'Your card stays as it is now. Its last change has not '
+                        'gone to your contacts: it still waits for Send my '
+                        'card.'
+                  : !changes
                   ? 'Your card stays as it is, so no card is sent.'
                   : n == 0
                   ? 'Your card changes.'
@@ -1144,10 +1228,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (ok != true) return;
     if (pair) {
-      await _connect(() async {
-        final r = await app.homeHere();
-        if (mounted) say(context, r);
-      }, pairing: true);
+      await _connect(
+        () async {
+          final r = await app.homeHere();
+          if (mounted) say(context, r);
+        },
+        pairs: true,
+        asGuest: true,
+      );
       return;
     }
     await _try(() async {

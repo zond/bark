@@ -191,7 +191,9 @@ is a prototype for the bench, not the app people will carry.
   "Paired with" the nodes the phone is paired with, the home first, each
   marked as the home, connected, not in reach while the search looks,
   "Not looking. Tap to connect" once the person has stopped the search,
-  or no longer yours, with **Forget** (Unpairing, below). A tap on
+  or no longer yours, with **Pair again** while the app has heard it in
+  the last 30 s and **Forget** (Unpairing, below), and a tap on that
+  row opening a few sentences on what happened and what each does. A tap on
   another paired node's row connects to it as its owner: at once when
   the app heard it in the last 30 s, the span the search takes to call a
   node out of reach, else after a scan of one round, saying it was not
@@ -212,7 +214,10 @@ is a prototype for the bench, not the app people will carry.
   more, and then has Android remove its bond with the node (Unpairing,
   below). Then the home node: make
   the connected node your home if it is not, or none; the dialog says
-  so, and on **Go ahead** your new card goes to every contact; on a
+  so, and on **Go ahead** your new card goes to every contact; where
+  the card does not change by it, as on a home that lost the mailbox
+  key, the dialog says the card stays as it is, and, while an earlier
+  change has not gone out, that it still waits for **Send my card**; on a
   public node the phone uses as a guest the same button pairs first,
   and its dialog says so (A guest's home, below); **Send
   my card**, as on the first screen; clear the mailbox key of a node
@@ -301,7 +306,9 @@ made. Tapping another node's row closes the link and connects to that
 one. A connection the person asks for holds against the search: from
 the close of the old link until the new one is up the search neither
 scans nor connects, as a round started by the close would take the
-home before the tap's own connect was made (roadmap D179). The bond is the phone's from then on and
+home before the tap's own connect was made (roadmap D179); a connect of
+the search's already under way ends first, and the person's follows
+(roadmap D194). The bond is the phone's from then on and
 every later connection is encrypted without a code. When a phone paired
 with the node has removed this one (Phones at the node, below), the
 node holds no key for this one: it
@@ -319,10 +326,15 @@ connects to it as a public address and times out after 30 s; the
 Bluetooth plugin has no connect that takes the address's type. The
 nodes paired with, and for each whether it was lost, are kept with the
 queue and listed in Settings; pairing with one more adds it and keeps
-the others. A queue file from before kept one node, which is read as a
-list of one. A pairing cancelled or with a wrong code says
-so, and that a node that already keeps eight phones refuses one too, its
-screen then saying `PHONES FULL`. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
+the others. A pairing that ends without one always says why, in a
+dialog on the screen where it was started, as the person's eyes are on
+the node's screen then: cancelled or with a wrong code, or refused by a
+node that already keeps eight phones, its screen then saying `PHONES
+FULL`, which Android does not tell apart; the node ended the link, or
+went out of reach, before the app had read it; the node was not seen;
+or Android kept an old bond with it (A pairing found again, below). An
+owner's link that ends while the app reads it is such an ending, not a
+node that holds the bond. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
 bond), which needs no code of the app's own on the Android side.
 
 **Public nodes.** Every node is public unless its owner turns the
@@ -441,14 +453,20 @@ as every link to it would fail alike, until Android no longer lists the
 bond: it checks at each round and when the app comes to the front, and
 the line goes once the bond is gone.
 
-A node Android lists a bond with is never paired anew: Android pairs
-with its old keys while the node runs a new pairing with a new code, and
-the key check fails whatever code is typed (bench, 2026-11-10, DHKey
-check failed three times). So **Pair** on such a node connects over the
-bond first, and a node that still holds it is the person's again,
-without a code; only a node that refuses it has Android remove the bond,
-as **Pair again** does, and then pairs with the code its screen shows,
-saying the stale-bond line only where Android keeps the bond.
+A node is never paired with over a bond Android holds with it: Android
+pairs with its old keys while the node runs a new pairing with a new
+code, and the key check fails whatever code is typed (bench,
+2026-11-10, DHKey check failed three times); and a link over the bond
+to a node that no longer knows it, the node ends before any pairing
+starts (bench, 2026-11-10: the node forgot the phone, ended the link
+0.2 s after it came up and showed no code). So **Pair** and **Pair
+again** on a node Android lists a bond with have Android remove the
+bond first, as Forget does, scan until they see the node, and pair with
+the code its screen shows; a node that still held the old bond takes
+the new one in its place (spec "Phone link", Pairing). Where Android
+keeps the bond, a dialog says the phone could not forget its old
+pairing, so no pairing was tried, with **Bluetooth settings**
+(roadmap D194).
 
 **A guest's errand.** A public node takes one guest's link at a time
 beside its owner's and ends it after 30 s, so a guest does not stay. It
@@ -1379,3 +1397,16 @@ a phone (Trying it, With a node).
     **Pair**: Android asks for the code on C's screen, and Settings
     lists C under "Paired with"; the phone stays on C, as the person
     chose it, until its link drops.
+19. A node that forgot the phone while Android still holds the bond.
+    Pair the phone with a node, then have the node forget it: a second
+    phone paired with the node removes the first (Phones at the node),
+    or the node's stored state is discarded. Connect the first phone
+    once, which finds the node no longer its own, and **Not now**.
+    **Settings** lists the node under
+    "Paired with" as no longer yours, with **Pair again** and **Forget**;
+    a tap on the row says what happened. **Pair again**: the log shows
+    `Pairing: the phone forgot its old bond with …`, the node logs one
+    link, shows a code, and the pairing completes; the row says the node
+    is the phone's again. **Pair** on its row in the scan does the same.
+    A pairing that fails, a code typed wrong or cancelled, or a node
+    switched off before the code, ends in a dialog that says why.
