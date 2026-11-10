@@ -33,8 +33,8 @@ enum OutKind {
   /// A text.
   text,
 
-  /// An acknowledgement of a received text.
-  ack,
+  /// A reaction to a received text.
+  reaction,
 
   /// The person's card.
   card,
@@ -79,8 +79,14 @@ class Outgoing {
   final int part;
   final int of;
 
-  /// The other side acknowledged it; a fetch, the home node answered.
+  /// A fetch: the home node answered.
   bool acked;
+
+  /// A text: the other side's reaction, an index in `reactions` (app_layer.dart), and the
+  /// `sent` of the message that carried it, so that an older one coming
+  /// late does not replace it.
+  int? reaction;
+  int reactionSent;
   OutState state;
   DateTime? retryAt;
   String? error;
@@ -97,6 +103,8 @@ class Outgoing {
     this.part = 1,
     this.of = 1,
     this.acked = false,
+    this.reaction,
+    this.reactionSent = 0,
     this.state = OutState.queued,
   }) : id = msgId(dst, payload);
 
@@ -105,7 +113,7 @@ class Outgoing {
 
   String get text => switch (kind) {
     OutKind.text => body ?? '',
-    OutKind.ack => 'Got it',
+    OutKind.reaction => 'Reaction ${body ?? ''}',
     OutKind.card => 'Your card',
     OutKind.fetch => 'Fetch from your mailbox',
   };
@@ -122,6 +130,8 @@ class Outgoing {
     'part': part,
     'of': of,
     'acked': acked,
+    'reaction': reaction,
+    'reactionSent': reactionSent,
     // An answer the app did not hear may have been a take; offered again,
     // the same message has the same ID and is one message to every node.
     'state': (state == OutState.writing ? OutState.queued : state).name,
@@ -129,27 +139,37 @@ class Outgoing {
     'error': error,
   };
 
-  static Outgoing fromJson(Map<String, dynamic> j) =>
-      Outgoing(
-          Address.parse(j['dst'] as String)!,
-          parseHex(j['payload'] as String)!,
-          at: DateTime.parse(j['at'] as String),
-          kind: OutKind.values.byName(j['kind'] as String),
-          to: j['to'] as String?,
-          sent: j['sent'] as int,
-          body: j['body'] as String?,
-          toward: j['toward'] == null
-              ? null
-              : Toward.values.byName(j['toward'] as String),
-          part: j['part'] as int? ?? 1,
-          of: j['of'] as int? ?? 1,
-          acked: j['acked'] as bool,
-          state: OutState.values.byName(j['state'] as String),
-        )
-        ..retryAt = j['retryAt'] == null
+  /// A sent text an app before reactions stored as acknowledged shows
+  /// the thumbs up an acknowledgement now reads as.
+  static Outgoing fromJson(Map<String, dynamic> j) {
+    final kind = j['kind'] == 'ack'
+        ? OutKind.reaction
+        : OutKind.values.byName(j['kind'] as String);
+    final acked = j['acked'] as bool;
+    final older = kind == OutKind.text && acked && !j.containsKey('reaction');
+    return Outgoing(
+        Address.parse(j['dst'] as String)!,
+        parseHex(j['payload'] as String)!,
+        at: DateTime.parse(j['at'] as String),
+        kind: kind,
+        to: j['to'] as String?,
+        sent: j['sent'] as int,
+        body: j['body'] as String?,
+        toward: j['toward'] == null
             ? null
-            : DateTime.parse(j['retryAt'] as String)
-        ..error = j['error'] as String?;
+            : Toward.values.byName(j['toward'] as String),
+        part: j['part'] as int? ?? 1,
+        of: j['of'] as int? ?? 1,
+        acked: kind == OutKind.fetch && acked,
+        reaction: older ? 0 : j['reaction'] as int?,
+        reactionSent: j['reactionSent'] as int? ?? 0,
+        state: OutState.values.byName(j['state'] as String),
+      )
+      ..retryAt = j['retryAt'] == null
+          ? null
+          : DateTime.parse(j['retryAt'] as String)
+      ..error = j['error'] as String?;
+  }
 }
 
 /// A received text, or a payload that did not open: kept for the debug
@@ -162,7 +182,7 @@ class Received {
   /// The sender's identity in hex; null if the payload did not open.
   final String? from;
 
-  /// Its `sent`, by which an acknowledgement names it.
+  /// Its `sent`, by which a reaction names it.
   final int? sent;
 
   /// The text.
@@ -180,8 +200,8 @@ class Received {
   /// and its sender's could have made.
   final bool intro;
 
-  /// The person acknowledged it.
-  bool acked;
+  /// The person's reaction to it, an index in `reactions` (app_layer.dart).
+  int? reaction;
 
   Received(
     this.id,
@@ -194,7 +214,7 @@ class Received {
     this.part = 1,
     this.of = 1,
     this.intro = false,
-    this.acked = false,
+    this.reaction,
   }) : payload = Uint8List.fromList(payload);
 
   String get text => body ?? '(did not open) ${hex(payload)}';
@@ -220,7 +240,7 @@ class Received {
     'part': part,
     'of': of,
     'intro': intro,
-    'acked': acked,
+    'reaction': reaction,
   };
 
   static Received fromJson(Map<String, dynamic> j) => Received(
@@ -234,7 +254,9 @@ class Received {
     part: j['part'] as int? ?? 1,
     of: j['of'] as int? ?? 1,
     intro: j['intro'] as bool? ?? false,
-    acked: j['acked'] as bool,
+    // An app before reactions stored a pressed Got it, which an older
+    // app took as the thumbs up's record.
+    reaction: j['reaction'] as int? ?? (j['acked'] == true ? 0 : null),
   );
 }
 

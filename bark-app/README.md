@@ -89,30 +89,35 @@ is a prototype for the bench, not the app people will carry.
   text's size whose tooltips give the words: a house, to their home; a
   pin, to where they were; an hourglass, to the node on a temporary
   card; a mailbox, from your mailbox. A sent text's states: a clock,
-  waiting for a node, on this phone; two arrows, being handed to the node; one
-  check, sent into the network, whose tooltip says the network gives no
-  further news until they confirm, as it sends none (spec
-  "Addresses"); two checks in the theme's colour, confirmed by the
-  recipient. A text the network gave back shows an hourglass and "The
+  waiting for a node, on this phone; two arrows, being handed to the node; a
+  check, sent into the network, whose tooltip says the network does not
+  say when it arrives, as it sends no such news (spec "Addresses"). A
+  text the network gave back shows an hourglass and "The
   network is busy, sending again in m:ss", and the app sends it again
   by itself once the wait is over, also after a restart; until then it
   can be cancelled. A refused text says why in words. A tap
   anywhere on a sent text's bubble, its words too, opens a sheet that
-  explains the states, and a tap anywhere on a received one a sheet
-  that explains the marks a received text can show, while the Got it
-  chip keeps its own tap and a long press still selects the words: Got it and its check, a first message, from your
-  mailbox, parts not yet here, the time. Above the marks, under This
+  explains the states and their reaction, and a tap anywhere on a
+  received one a sheet that explains the marks a received text can
+  show: your reaction, a first message, from your mailbox, parts not
+  yet here, the time. Above the marks, under This
   message, each sheet gives what the app keeps that the bubble does not
   say: for a sent text the node it went to and that node's place, its
   parts, how it was sealed and its message IDs; for a received one when
   the sender wrote it, by their phone's clock, its parts here, how it
   was sealed and its message IDs. The top line says
   when the contact last wrote, and, when their card names a home,
-  whether from it. A received text has a labelled chip, **Got it**,
-  48 dp tall; nothing is confirmed by itself, and until the person
-  first taps one, a line says "Tap Got it so the sender sees you read
-  it." Once pressed, the chip turns into one plain check, and the two
-  checks appear on the sender's copy.
+  whether from it. A long press on a received text opens its
+  reactions, six emoji in a row of 48 dp buttons: thumbs up, heart,
+  laugh, surprise, sad and thanks, each named in its tooltip, under a
+  line that says the sender sees the one picked under their text and
+  that another replaces it; and **Copy text**, as the long press no
+  longer selects the words. The one picked goes at once, shows under
+  the received text, and shows under the sender's copy when it arrives;
+  a second pick replaces it there and goes again. Nothing answers by
+  itself (roadmap D126, D185). A sent text's long press still selects
+  its words. An acknowledgement from an app before reactions shows as a
+  thumbs up.
   A text longer than one message holds, 156 bytes in a box without an
   address, goes as parts of up to 155 bytes, 16 at most (roadmap D137):
   once the text in the field needs more than one, a line under it says
@@ -121,12 +126,11 @@ is a prototype for the bench, not the app people will carry.
   near the end of each part, and queues the parts in order. The sent
   text is one bubble with the parts' state on its small line: the usual
   icons while every part is in the same state, else words such as
-  "2 of 3 sent"; the two checks once every part is confirmed. A
+  "2 of 3 sent". A
   received text in parts is one bubble with the parts that have come,
   in order, and "part 2 of 3 not yet here" in place of one that has
-  not, until all are in. **Got it** confirms every part that has come;
-  a part that comes after the tap brings the chip back and is confirmed
-  with the next tap.
+  not, until all are in. A reaction is on the whole text, whichever
+  parts have come.
   A contact made from a first message that came, with no sealed reply
   yet, is marked not verified, in its thread and its row; one from a
   card the person scanned or pasted is not, as the card came from its
@@ -156,12 +160,12 @@ is a prototype for the bench, not the app people will carry.
   The archived conversations, then the archived contacts, each with an
   unarchive button. Unarchiving either brings back both: a person whose
   conversation is back is one you talk to again. A conversation opens
-  read-only, with no field, Got it chips or menu, and
+  read-only, with no field, reactions or menu, and
   **Unarchive** at the bottom. An archived contact is still known: its
   card and keys are kept, its messages open, and **Send my card** still
   goes to it. A new text from an archived conversation brings it, and
   its contact, back to the first screen, with the usual notification;
-  an acknowledgement or a card does not.
+  a reaction or a card does not.
 - **My card**, the QR button. It opens with the card as a QR code for
   another phone to scan, then **Share**, which hands the card as text
   and the code as an image to Android's share sheet, **Scan their
@@ -696,7 +700,7 @@ later than 15 s. The fake node runs inside the app and starts no service.
 Each new text notifies, with the system's sound and vibration, under the
 contact's name; a text in parts notifies once, at its first part, and
 each later part changes what the notification shows, without a sound. Texts from one contact collect in one notification until
-their thread is opened; tapping it opens the thread. Acknowledgements and
+their thread is opened; tapping it opens the thread. Reactions and
 cards do not notify, nor a text in a thread open in front of the person.
 
 At the first connection the app says why it notifies, and Android asks
@@ -917,7 +921,7 @@ its text, marked. A
 message names the node you write from while the contact may not know
 it, carries
 the time it was written as its `sent`, and holds a text or a part of
-one, acknowledgements or a card. A fetch to your home node is sealed with a
+one, a reaction or a card. A fetch to your home node is sealed with a
 key from your identity that only your phones and your home node have,
 and the node's replies are opened with it: one for each item newer than
 the last this phone has, or one that says nothing is new (spec
@@ -970,7 +974,7 @@ home until they fetch it". Without a home it goes where they were, as
 nothing else is; when that is old, the dialog says "Last seen there 2 h
 ago: it keeps their mail only while they come back" and still sends
 there. With a home and no place known yet, it goes to the home (roadmap
-D132, D162). Acknowledgements and
+D132, D162). Reactions and
 cards go without asking, to the home's mailbox when there is a choice.
 
 ## Plugins
@@ -1030,11 +1034,12 @@ The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; check keys,
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
-messages, acknowledgements, a reflected message, a forged first message,
+messages, reactions and an older app's acknowledgement, a reflected
+message, a forged first message,
 the header's written-from address kept apart from the card's, the
 recipient tag on every payload, and the
 mailbox's replies, and long texts sent as parts, put together in any
-order and acknowledged, against the fake node, which answers a fetch
+order and reacted to, against the fake node, which answers a fetch
 as a home does; pass messages between two phones by hand, in every
 order of who scans and who writes first, until both are verified,
 and with a first message read after a box, delayed or forged; the
@@ -1089,8 +1094,8 @@ before link version 4; group texts into
 conversations; split texts at boundaries as the Rust vectors do;
 choose where a text goes; decide what notifies, and when the app starts
 with the phone, against a notifier that writes down what it is asked;
-and drive the screens: a text to the fake friend, its echo, an
-acknowledgement, the backup words, a contact from a pasted or a scanned
+and drive the screens: a text to the fake friend, its echo, a
+reaction each way, the backup words, a contact from a pasted or a scanned
 card, my card, the debug screen, the fetch button, the choice of where
 a text goes, a long text's parts, the bars for a newer release against
 a fake fetch, and the map, its markers, lines,
@@ -1128,8 +1133,10 @@ a phone (Trying it, With a node).
    as sent into the network, "to where they were"; 5 s later "Echo: " and
    your text appears, and the note goes: the echo was sealed by the
    fake friend.
-5. Press **Got it** on the echo: it becomes a plain check mark, and
-   Debug lists an `ack` sent.
+5. Press and hold the echo, and pick the heart: it shows under the
+   echo, and Debug lists a `reaction` sent. Press and hold it again
+   and pick another: it takes the heart's place, and a second
+   `reaction` is listed.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
@@ -1231,8 +1238,9 @@ a phone (Trying it, With a node).
    and falls to 0 as the app reads it. Answer it: the answer is boxed,
    and the phone that wrote first shows the other as verified. Write
    again from that phone: the phone with the home shows it as verified
-   too. Press **Got it** on the answer: the other phone shows a
-   check mark on its text.
+   too. Press and hold the answer and pick a reaction: it shows under
+   the answer, and the other phone shows it under its text when it
+   arrives.
 6. Switch off the receiving phone's Bluetooth, send two texts to it,
    switch it back on and connect: both arrive, oldest first, and the
    inbox count goes back to 0.

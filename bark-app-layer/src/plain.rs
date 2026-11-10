@@ -11,7 +11,7 @@
 //! |---|---|---|
 //! | text | 1 + rest | type 1 (UTF-8) or 2 (windows-1251); last |
 //! | text part | 1 + 1 + rest | type 5 (UTF-8) or 6 (windows-1251), the part's number and the parts' count less one in the high and low four bits; last |
-//! | acknowledge | 1 + 4 | type 3, the `sent` of the text it answers |
+//! | reaction | 1 + 4 | type 3 (thumbs up) or 7 to 11 (the others of [`Reaction`]), the `sent` of the text it answers |
 //! | card | 1 + 1 + 38 to 100 | type 4, the card's length, its bytes |
 
 use crate::card::{self, Card};
@@ -23,10 +23,15 @@ const FLAG_GREATER: u8 = 2;
 
 const TYPE_UTF8: u8 = 1;
 const TYPE_1251: u8 = 2;
-const TYPE_ACK: u8 = 3;
+const TYPE_THUMBS_UP: u8 = 3;
 const TYPE_CARD: u8 = 4;
 const TYPE_UTF8_PART: u8 = 5;
 const TYPE_1251_PART: u8 = 6;
+const TYPE_HEART: u8 = 7;
+const TYPE_LAUGH: u8 = 8;
+const TYPE_SURPRISE: u8 = 9;
+const TYPE_SAD: u8 = 10;
+const TYPE_THANKS: u8 = 11;
 
 /// The most parts a text is split into: a part's number and the count
 /// share one byte, four bits each.
@@ -57,6 +62,52 @@ impl Part {
             of: (b & 0x0f) + 1,
         };
         p.encode().map(|_| p)
+    }
+}
+
+/// A person's answer to a text, one of a fixed few. The thumbs up keeps
+/// the type of the acknowledgement it replaced, so an older app reads it
+/// as one, and reads every acknowledgement it gets as a thumbs up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reaction {
+    /// 👍
+    ThumbsUp,
+    /// ❤️
+    Heart,
+    /// 😂
+    Laugh,
+    /// 😮
+    Surprise,
+    /// 😢
+    Sad,
+    /// 🙏
+    Thanks,
+}
+
+impl Reaction {
+    /// Every reaction, in the order the app offers them.
+    pub const ALL: [Reaction; 6] = [
+        Reaction::ThumbsUp,
+        Reaction::Heart,
+        Reaction::Laugh,
+        Reaction::Surprise,
+        Reaction::Sad,
+        Reaction::Thanks,
+    ];
+
+    fn kind(self) -> u8 {
+        match self {
+            Reaction::ThumbsUp => TYPE_THUMBS_UP,
+            Reaction::Heart => TYPE_HEART,
+            Reaction::Laugh => TYPE_LAUGH,
+            Reaction::Surprise => TYPE_SURPRISE,
+            Reaction::Sad => TYPE_SAD,
+            Reaction::Thanks => TYPE_THANKS,
+        }
+    }
+
+    fn of_kind(kind: u8) -> Option<Reaction> {
+        Reaction::ALL.into_iter().find(|r| r.kind() == kind)
     }
 }
 
@@ -96,10 +147,12 @@ pub enum Record<'a> {
         /// Its bytes.
         bytes: &'a [u8],
     },
-    /// The person acknowledges the text they were sent at this `sent`.
-    Acknowledge {
-        /// The text's `sent`.
+    /// The person reacts to the text they were sent at this `sent`.
+    React {
+        /// The `sent` of the text's first part, or of any of its parts.
         sent: u32,
+        /// How.
+        reaction: Reaction,
     },
     /// A card: the sender's own, or one passed on.
     Card(Card<'a>),
@@ -167,8 +220,8 @@ impl<'a> Writer<'a> {
                 self.put(bytes)?;
                 self.ended = true;
             }
-            Record::Acknowledge { sent } => {
-                self.put(&[TYPE_ACK])?;
+            Record::React { sent, reaction } => {
+                self.put(&[reaction.kind()])?;
                 self.put(&sent.to_be_bytes())?;
             }
             Record::Card(c) => {
@@ -221,8 +274,8 @@ impl<'a> Iterator for Records<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let (&kind, body) = self.rest.split_first()?;
-        let (record, rest) = match kind {
-            TYPE_UTF8 | TYPE_1251 | TYPE_UTF8_PART | TYPE_1251_PART => {
+        let (record, rest) = match (kind, Reaction::of_kind(kind)) {
+            (TYPE_UTF8 | TYPE_1251 | TYPE_UTF8_PART | TYPE_1251_PART, _) => {
                 let encoding = if kind == TYPE_UTF8 || kind == TYPE_UTF8_PART {
                     Encoding::Utf8
                 } else {
@@ -245,13 +298,14 @@ impl<'a> Iterator for Records<'a> {
                     &[][..],
                 )
             }
-            TYPE_ACK if body.len() >= 4 => (
-                Ok(Record::Acknowledge {
+            (_, Some(reaction)) if body.len() >= 4 => (
+                Ok(Record::React {
                     sent: be(&body[..4]),
+                    reaction,
                 }),
                 &body[4..],
             ),
-            TYPE_CARD if !body.is_empty() && body.len() > usize::from(body[0]) => {
+            (TYPE_CARD, _) if !body.is_empty() && body.len() > usize::from(body[0]) => {
                 let n = usize::from(body[0]);
                 (
                     Card::decode(&body[1..1 + n]).map(Record::Card),

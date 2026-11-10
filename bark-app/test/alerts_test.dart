@@ -1,6 +1,6 @@
 // What notifies: each new text, collected per contact until its thread is
 // opened, a text in parts once, and nothing for a thread in front of the
-// person, an acknowledgement or a card; the link's notification with a
+// person, a reaction or a card; the link's notification with a
 // Bluetooth link only; starting with the phone while the paired node is this
 // phone's and the person has not stopped looking; the permission asked
 // once, at the first connection; the battery exemption in Settings; a
@@ -198,7 +198,7 @@ void main() {
     });
   });
 
-  test('an acknowledgement, a card and what opens for nobody notify '
+  test('a reaction, a card and what opens for nobody notify '
       'nothing', () {
     run((async, app, n) {
       n.log.clear();
@@ -206,9 +206,9 @@ void main() {
       async.elapse(const Duration(seconds: 6));
       n.log.clear();
       final a = app.session.outbox.first;
-      app.messenger.receive(fromFriend(app, 1, [AckRecord(a.sent)]));
+      app.messenger.receive(fromFriend(app, 1, [ReactionRecord(a.sent, 1)]));
       async.flushMicrotasks();
-      expect(a.acked, isTrue);
+      expect(a.reaction, 1);
       final card = app.fakeNode!.friendCard;
       app.messenger.receive(fromFriend(app, 2, [CardRecord(card.encode())]));
       app.messenger.receive(InboxMessage(3, [9, 9, 9]));
@@ -219,7 +219,7 @@ void main() {
   });
 
   test('a new text brings an archived conversation back and notifies; an '
-      'acknowledgement does not', () {
+      'reaction does not', () {
     run((async, app, n) {
       final f = friend(app);
       app.alerts.opened(f);
@@ -238,7 +238,7 @@ void main() {
       app.contacts.archiveConversation(f);
       async.flushMicrotasks();
       final a = app.session.outbox.first;
-      app.messenger.receive(fromFriend(app, 1, [AckRecord(a.sent)]));
+      app.messenger.receive(fromFriend(app, 1, [ReactionRecord(a.sent, 0)]));
       async.flushMicrotasks();
       expect(app.contacts.isArchived(f), isTrue);
       app.messenger.receive(fromFriend(app, 2, [const TextRecord('back')]));

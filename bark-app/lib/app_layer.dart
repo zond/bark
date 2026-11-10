@@ -405,9 +405,23 @@ class TextRecord extends Record {
   const TextRecord(this.text, [this.part = 1, this.of = 1]);
 }
 
-class AckRecord extends Record {
+/// The reactions a person may answer a text with, in the order offered
+/// and by their index in a [ReactionRecord]. Six fit one row of 48 dp
+/// targets on the narrowest phones, 360 dp; they say yes, love, funny,
+/// surprised, sorry and thanks or please.
+const List<String> reactions = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+/// Each reaction's record type, by its index. The thumbs up keeps the
+/// type of the acknowledgement it replaced, so an older app reads it as
+/// one, and this app reads an acknowledgement as a thumbs up.
+const List<int> _reactionTypes = [3, 7, 8, 9, 10, 11];
+
+/// A reaction, [reactions] at [reaction], to the text whose first part,
+/// or any part, was sent at [sent].
+class ReactionRecord extends Record {
   final int sent;
-  const AckRecord(this.sent);
+  final int reaction;
+  const ReactionRecord(this.sent, this.reaction);
 }
 
 class CardRecord extends Record {
@@ -418,7 +432,6 @@ class CardRecord extends Record {
 
 const int _typeUtf8 = 1;
 const int _type1251 = 2;
-const int _typeAck = 3;
 const int _typeCard = 4;
 const int _typeUtf8Part = 5;
 const int _type1251Part = 6;
@@ -450,8 +463,8 @@ Uint8List writePlain(Header h, List<Record> records) {
           throw const BadPayload('no such part');
         }
         b.addAll(w ?? utf8.encode(text));
-      case AckRecord(:final sent):
-        b.addAll([_typeAck, ...be(sent, 4)]);
+      case ReactionRecord(:final sent, :final reaction):
+        b.addAll([_reactionTypes[reaction], ...be(sent, 4)]);
       case CardRecord(:final card):
         b.addAll([_typeCard, card.length, ...card]);
     }
@@ -496,8 +509,13 @@ Uint8List writePlain(Header h, List<Record> records) {
         }
         records.add(TextRecord(text, part, of));
         at = p.length;
-      case _typeAck when at + 4 <= p.length:
-        records.add(AckRecord(fromBe(p.sublist(at, at + 4))));
+      case _ when _reactionTypes.contains(t) && at + 4 <= p.length:
+        records.add(
+          ReactionRecord(
+            fromBe(p.sublist(at, at + 4)),
+            _reactionTypes.indexOf(t),
+          ),
+        );
         at += 4;
       case _typeCard when at < p.length && at + 1 + p[at] <= p.length:
         records.add(CardRecord(p.sublist(at + 1, at + 1 + p[at])));

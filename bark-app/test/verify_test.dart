@@ -232,12 +232,12 @@ void main() {
       'nothing else', () {
     run((async, a, b) {
       overtaken(async, a, b);
-      // B's text, not yet acknowledged.
+      // B's text, without a reaction.
       write(async, b, a, 'unanswered');
       final mine = b.session.outbox.last;
       final before = b.of(a);
-      // Anyone holding both cards: a new address, and an acknowledgement
-      // of a text A has not read.
+      // Anyone holding both cards: a new address, and a reaction to a
+      // text A has not read.
       final forged = sealIntro(
         sodium,
         b.me.identity,
@@ -246,7 +246,7 @@ void main() {
           Header(greater(a.me.identity, b.me.identity), 1 << 30, at(9)),
           [
             CardRecord(a.me.card.encode()),
-            AckRecord(mine.sent),
+            ReactionRecord(mine.sent, 0),
             const TextRecord('forged'),
           ],
         ),
@@ -259,7 +259,7 @@ void main() {
       expect(after.verified, isTrue);
       expect(after.place.toString(), before.place.toString());
       expect(after.heardSent, before.heardSent);
-      expect(mine.acked, isFalse);
+      expect(mine.reaction, isNull);
     });
   });
 }

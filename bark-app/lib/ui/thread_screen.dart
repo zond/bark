@@ -2,6 +2,7 @@
 // an archived one read-only, with a button to bring it back.
 
 import 'package:flutter/material.dart' hide Form;
+import 'package:flutter/services.dart';
 
 import '../app.dart';
 import '../app_layer.dart';
@@ -15,6 +16,17 @@ import 'common.dart';
 /// The mark on a received text that came as a first message: only a box
 /// proves its sender, so a verified thread may still hold such a text.
 const unverifiedText = 'Came as a first message, which anyone could have made';
+
+/// What each of [reactions] is called, for its tooltip and for a reader
+/// that speaks the screen.
+const reactionNames = [
+  'Thumbs up',
+  'Heart',
+  'Laugh',
+  'Surprise',
+  'Sad',
+  'Thanks',
+];
 
 /// A position to five decimals, about a metre.
 String _at(Position p) =>
@@ -248,15 +260,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
                   'Their first reply to you proves it is them.',
                 ),
               ),
-            if (!app.me.gotItHinted &&
-                !archived &&
-                c.entries.any(
-                  (e) => !e.mine && !e.arrived.every((r) => r.acked),
-                ))
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Text('Tap Got it so the sender sees you read it.'),
-              ),
             Expanded(
               child: ListView(
                 reverse: true,
@@ -268,6 +271,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
                       e,
                       !(contact?.unverified ?? false),
                       archived,
+                      archived ? null : contact,
                     ),
                 ],
               ),
@@ -369,14 +373,22 @@ class _ThreadScreenState extends State<ThreadScreen> {
 
   /// `verified`: the line above the thread does not already say that any
   /// text in it may be anyone's. `archived`: read-only, so nothing in it
-  /// sends or drops.
-  Widget _bubble(BuildContext context, Entry e, bool verified, bool archived) {
+  /// sends or drops. `to`: whom a reaction goes to; null when archived or
+  /// the contact is removed.
+  Widget _bubble(
+    BuildContext context,
+    Entry e,
+    bool verified,
+    bool archived,
+    Contact? to,
+  ) {
     final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall!;
     final mine = e.mine;
     final color = scheme.onSurfaceVariant;
-    // A tap anywhere on the bubble says what it shows; the Got it chip and
-    // the buttons take their own, and a long press still selects text.
+    // A tap anywhere on the bubble says what it shows; the buttons take
+    // their own. A long press selects a sent text's words, and on a
+    // received one opens the reactions, with a copy.
     void help() => mine
         ? explainMessage(
             context,
@@ -388,67 +400,161 @@ class _ThreadScreenState extends State<ThreadScreen> {
             details: receivedDetails(e),
             marks: receivedMarks,
           );
+    final reaction = mine
+        ? e.outs.first.reaction
+        : e.arrived.map((r) => r.reaction).nonNulls.firstOrNull;
     return Align(
       alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.8,
         ),
-        child: Card(
-          color: mine ? scheme.primaryContainer : scheme.surfaceContainerHigh,
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: help,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (mine)
-                    SelectableText(e.text, onTap: help)
-                  else
-                    SelectableText.rich(
-                      onTap: help,
-                      TextSpan(
+        child: Column(
+          crossAxisAlignment: mine
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          children: [
+            Card(
+              color: mine
+                  ? scheme.primaryContainer
+                  : scheme.surfaceContainerHigh,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: help,
+                onLongPress: mine ? null : () => _react(e, to),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (mine)
+                        SelectableText(e.text, onTap: help)
+                      else
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              for (final p in e.pieces)
+                                TextSpan(
+                                  text: p.text,
+                                  style: p.missing
+                                      ? TextStyle(
+                                          fontStyle: FontStyle.italic,
+                                          color: color,
+                                        )
+                                      : null,
+                                ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          for (final p in e.pieces)
-                            TextSpan(
-                              text: p.text,
-                              style: p.missing
-                                  ? TextStyle(
-                                      fontStyle: FontStyle.italic,
-                                      color: color,
-                                    )
-                                  : null,
-                            ),
+                          Text(when(e.at), style: small),
+                          if (mine)
+                            ..._sentMarks(e.outs, small, scheme)
+                          else
+                            ..._receivedMarks(e, verified, small, color),
                         ],
                       ),
-                    ),
-                  const SizedBox(height: 4),
-                  if (mine)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(when(e.at), style: small),
-                        ..._sentMarks(e.outs, small, scheme),
-                      ],
-                    )
-                  else
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(when(e.at), style: small),
-                        ..._receivedMarks(e, verified, small, color, archived),
-                      ],
-                    ),
-                  if (mine && !archived) _actions(e.outs),
-                ],
+                      if (mine && !archived) _actions(e.outs),
+                    ],
+                  ),
+                ),
               ),
+            ),
+            if (reaction != null) _reaction(reaction, mine, help),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A reaction under its bubble: theirs under a sent text, the person's
+  /// under a received one.
+  Widget _reaction(int r, bool mine, VoidCallback help) {
+    final words = mine
+        ? 'They reacted: ${reactionNames[r]}'
+        : 'You reacted: ${reactionNames[r]}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+      child: Tooltip(
+        message: words,
+        excludeFromSemantics: true,
+        child: Semantics(
+          label: words,
+          excludeSemantics: true,
+          child: InkWell(
+            onTap: help,
+            customBorder: const StadiumBorder(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(reactions[r], style: const TextStyle(fontSize: 20)),
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// The reactions to a received text, with a line on what one does, and
+  /// a copy of its words, which a long press no longer selects. In an
+  /// archived thread, only the copy.
+  Future<void> _react(Entry e, Contact? to) async {
+    final now = e.arrived.map((r) => r.reaction).nonNulls.firstOrNull;
+    final scheme = Theme.of(context).colorScheme;
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (to != null) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  'React: ${to.name} sees it under their text. Pick another '
+                  'to change it.',
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  for (final (i, emoji) in reactions.indexed)
+                    IconButton(
+                      tooltip: reactionNames[i],
+                      isSelected: i == now,
+                      style: IconButton.styleFrom(
+                        backgroundColor: i == now
+                            ? scheme.secondaryContainer
+                            : null,
+                      ),
+                      onPressed: () => Navigator.pop(context, i),
+                      icon: Text(emoji, style: const TextStyle(fontSize: 26)),
+                    ),
+                ],
+              ),
+            ],
+            ListTile(
+              leading: const Icon(Icons.copy),
+              title: const Text('Copy text'),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: e.text));
+                Navigator.pop(context);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || to == null) return;
+    try {
+      await app.messenger.react(e.arrived.first, picked);
+    } on BadPayload catch (e) {
+      if (mounted) say(context, 'Not sent: $e');
+    }
   }
 
   /// Where a sent text went and how far it got: one part's marks when the
@@ -465,41 +571,23 @@ class _ThreadScreenState extends State<ThreadScreen> {
       if (!partsAgree(outs)) ...[
         const SizedBox(width: 4),
         Flexible(child: Text(partsLabel(app.session, outs), style: small)),
-      ] else if (o.acked)
-        _stateMark(
-          outs,
-          Icons.done_all,
-          'Confirmed by the recipient',
-          small,
-          scheme.primary,
-        )
-      else
+      ] else
         ..._state(o, small, color),
     ];
   }
 
   /// Whether a received text came as a first message, where the thread
-  /// is verified; whether it came from the mailbox; and its
-  /// acknowledgement: a plain check once every part that has come is
-  /// acknowledged, else the button, which a part that comes later brings
-  /// back.
+  /// is verified, and whether it came from the mailbox.
   List<Widget> _receivedMarks(
     Entry e,
     bool verified,
     TextStyle small,
     Color color,
-    bool archived,
   ) => [
     if (verified && e.arrived.any((r) => r.intro))
       _mark(Icons.gpp_maybe, unverifiedText, small, color),
     if (e.arrived.any((r) => r.mailbox))
       _mark(Icons.markunread_mailbox, 'From your mailbox', small, color),
-    if (e.arrived.every((r) => r.acked))
-      // One plain check: the person knows they have it, so the two
-      // coloured ones would say nothing.
-      _mark(Icons.check, 'You tapped Got it', small, color)
-    else if (!archived)
-      _acknowledge(e.arrived.first, small),
   ];
 
   /// An icon the small text's size, with the words it stands for as its
@@ -525,7 +613,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
     Toward.home => _mark(Icons.home, 'To their home', small, color),
   };
 
-  /// A sent text's state short of confirmed, each its own icon (common.dart
+  /// A sent text's state, each its own icon (common.dart
   /// [sentStates]). Not yet with the node shows a clock rather than
   /// nothing, so a missing mark never means two things. A state that is a
   /// problem keeps its words, which say why.
@@ -544,7 +632,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
       _stateMark(
         [o],
         Icons.check,
-        'Sent into the network; no further news until they confirm',
+        'Sent into the network, which does not say when it arrives',
         small,
         color,
       ),
@@ -578,27 +666,6 @@ class _ThreadScreenState extends State<ThreadScreen> {
     onTap: () =>
         explainMessage(context, details: sentDetails(outs), marks: sentStates),
     child: _mark(icon, words, small, color),
-  );
-
-  /// A labelled chip, unlike the plain check it turns into, so "tap to
-  /// confirm" cannot be mistaken for "confirmed", with a tap target of
-  /// 48 dp, the least Material asks for.
-  Widget _acknowledge(Received r, TextStyle small) => Padding(
-    padding: const EdgeInsets.only(left: 4),
-    child: ActionChip(
-      avatar: const Icon(Icons.check),
-      label: const Text('Got it'),
-      tooltip: 'Tell the sender you read it',
-      materialTapTargetSize: MaterialTapTargetSize.padded,
-      onPressed: () async {
-        await app.me.setGotItHinted();
-        try {
-          await app.messenger.acknowledge(r);
-        } on BadPayload catch (e) {
-          if (mounted) say(context, 'Not sent: $e');
-        }
-      },
-    ),
   );
 
   /// Cancel, for the parts not yet with the node; a part given back goes
