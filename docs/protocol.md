@@ -3996,7 +3996,7 @@ has verified is dropped. Payloads are not padded.
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
-| reaction | 1 + 4 | type 3, thumbs up, or 7 to 11, heart, laugh, surprise, sad, thanks; the `sent` of the text it answers |
+| reaction | 1 + 4 + rest | type 3, the `sent` of the text it answers, then one emoji in UTF-8: one extended grapheme cluster of at most 35 bytes, the longest in Unicode 17.0's emoji list; runs to the end, so it comes last |
 | card | 1 + 1 + 38 to 100 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
@@ -4007,10 +4007,10 @@ message that carried it and whenever it changes; a message without one
 says it has not changed. The app sends nothing
 by itself: a reaction is a message the person chooses to send, and a
 text is sent again only when the person says so (roadmap D126). A
-reaction names the text by its first part's `sent`, and is read naming
-any part's; the newest by its message's `sent` stands. Type 3 was the
-acknowledgement, which older apps send and read: it is the thumbs up
-(roadmap D185).
+reaction names the text by its first part's `sent`; the newest by its
+message's `sent` stands. A reader drops a message whose reaction is no
+character, more than one, or longer than the bound; that the character
+is an emoji is the app's to offer (roadmap D185, D187).
 
 *Long texts.* A text longer than one message holds is split into
 parts, each a message of its own with its own `sent`, delivered as a
