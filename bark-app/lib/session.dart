@@ -79,8 +79,8 @@ class Outgoing {
   final int part;
   final int of;
 
-  /// A fetch: the home node answered.
-  bool acked;
+  /// A fetch: a reply of its round came from the home node.
+  bool answered;
 
   /// A text: the other side's reaction, one emoji, and the `sent` of the
   /// message that carried it, so that an older one coming late does not
@@ -102,7 +102,7 @@ class Outgoing {
     this.toward,
     this.part = 1,
     this.of = 1,
-    this.acked = false,
+    this.answered = false,
     this.reaction,
     this.reactionSent = 0,
     this.state = OutState.queued,
@@ -129,7 +129,7 @@ class Outgoing {
     'toward': toward?.name,
     'part': part,
     'of': of,
-    'acked': acked,
+    'answered': answered,
     'reaction': reaction,
     'reactionSent': reactionSent,
     // An answer the app did not hear may have been a take; offered again,
@@ -154,7 +154,7 @@ class Outgoing {
             : Toward.values.byName(j['toward'] as String),
         part: j['part'] as int,
         of: j['of'] as int,
-        acked: j['acked'] as bool,
+        answered: j['answered'] as bool,
         reaction: j['reaction'] as String?,
         reactionSent: j['reactionSent'] as int,
         state: OutState.values.byName(j['state'] as String),
@@ -294,8 +294,8 @@ class Session extends ChangeNotifier {
   int Function(NodeInfo)? recipient;
 
   /// The person's name as their card has it, which the app writes to
-  /// Recipient beside the tag, so that the node's
-  /// other phones see who is paired (spec "Phone link", Pairing).
+  /// Recipient beside the tag, so that the node's other phones see who is
+  /// paired (spec "Phone link", Pairing).
   String Function()? name;
 
   /// The last value of Given back read or notified.
@@ -416,7 +416,7 @@ class Session extends ChangeNotifier {
   }
 
   /// The version of `bark.json`'s format.
-  static const version = 1;
+  static const version = 2;
 
   Future<void> load() async {
     final j = await store.load(
@@ -573,11 +573,10 @@ class Session extends ChangeNotifier {
     return true;
   }
 
-  /// The node speaks a later link version than this app. A later version
-  /// only appends to the values the node writes and adds characteristics,
-  /// and the node takes the forms of every earlier version's writes, so
-  /// the app uses what it knows; the person may update the app for the
-  /// rest (spec "Phone link", Versions; roadmap D176).
+  /// The node speaks a later link version than this app and still serves
+  /// it, as its oldest says ([servesEachOther]): the app uses what it
+  /// knows, and the person may update the app for the rest (spec "Phone
+  /// link", Versions).
   bool get nodeNewer => (node?.version ?? 0) > linkVersion;
 
   /// Whether the guest link read every item that waits for the person at
@@ -703,9 +702,8 @@ class Session extends ChangeNotifier {
 
   /// Has the connected node forget this phone's bond, and forgets the
   /// node here, the others paired with staying: the app no longer looks
-  /// for it (spec "Phone link", Public). Throws
-  /// only when the write failed and the link stayed up: the node then
-  /// keeps the phone.
+  /// for it (spec "Phone link", Public). Throws only when the write failed
+  /// and the link stayed up: the node then keeps the phone.
   Future<void> unpair() async {
     final link = _owned('Unpairing');
     final name = nodeName(node!.id);
@@ -746,10 +744,11 @@ class Session extends ChangeNotifier {
   /// the node changes nothing when it holds that key already.
   ///
   /// The node says whether the home is this phone's person's, and the key
-  /// goes silently only where a record with the person's tag holds a home: one their phone left by unpairing, which
-  /// the write joins to this phone's, or another phone of theirs. With
-  /// none, a phone paired with the node removed the home (spec "Phone
-  /// link", Phones), and the person is told rather than overruled.
+  /// goes silently only where a record with the person's tag holds a
+  /// home: one their phone left by unpairing, which the write joins to
+  /// this phone's, or another phone of theirs. With none, a phone paired
+  /// with the node removed the home (spec "Phone link", Phones), and the
+  /// person is told rather than overruled.
   Future<void> _keepHome(NodeLink link, NodeInfo n) async {
     try {
       var key = homeKey?.call(n);
@@ -1134,7 +1133,7 @@ class Session extends ChangeNotifier {
   /// the queue, so it is still waited for after a restart.
   Outgoing? get fetchWaiting {
     final o = outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
-    if (o == null || o.acked) return null;
+    if (o == null || o.answered) return null;
     if (o.state == OutState.givenBack || o.state == OutState.refused) {
       return null;
     }
@@ -1164,15 +1163,15 @@ class Session extends ChangeNotifier {
     if (nothingNew) {
       note('Fetch $round: no new mail');
       fetchNews = 'No new mail';
-    } else if (remaining > 0 && o != null && !o.acked) {
+    } else if (remaining > 0 && o != null && !o.answered) {
       note('Fetch $round: $remaining more at home');
       fetchNews = '$remaining more at home: fetch again for them';
     }
-    if (o == null || o.acked) {
+    if (o == null || o.answered) {
       notifyListeners();
       return;
     }
-    o.acked = true;
+    o.answered = true;
     notifyListeners();
     await save();
   }

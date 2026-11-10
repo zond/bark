@@ -953,7 +953,7 @@ void main() {
     await t.pumpAndSettle();
     await t.pump(FakeNode.fetchAnswerAfter);
     await t.pumpAndSettle();
-    expect(f.single.acked, isTrue);
+    expect(f.single.answered, isTrue);
     expect(find.byTooltip('Fetch my mail'), findsOneWidget);
     expect(find.textContaining('Left at your home node'), findsOneWidget);
 
