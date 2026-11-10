@@ -1478,19 +1478,20 @@ void main() {
   });
 
   testWidgets('a guest\'s Settings: Make this node my home, saying it pairs '
-      'first, then Pair with this node', (t) async {
+      'first; Pair on the node\'s row in the scan pairs at once', (t) async {
     final (app, ble) = await guestOnce(t);
+    const device = 'aa:bb:cc:dd:ee:04';
+    app.found[device] = FoundNode(
+      device,
+      'bark-0ce400000004',
+      -50,
+      public: true,
+    );
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
-    const home = 'Make this node my home', pair = 'Pair with this node';
+    const home = 'Make this node my home';
     expect(find.text(home, skipOffstage: false), findsOneWidget);
-    expect(find.text(pair, skipOffstage: false), findsOneWidget);
-    // The home's action first, so that pairing alone is not the obvious
-    // way.
-    expect(
-      t.getTopLeft(find.text(home, skipOffstage: false)).dy,
-      lessThan(t.getTopLeft(find.text(pair, skipOffstage: false)).dy),
-    );
+    expect(find.text('Pair with this node', skipOffstage: false), findsNothing);
     // Neither the owner's switch nor its unpairing for a guest.
     expect(find.text('Public: serve phones without pairing'), findsNothing);
     expect(find.widgetWithText(TextButton, 'Unpair'), findsNothing);
@@ -1512,6 +1513,22 @@ void main() {
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(ble.pairings, 0);
+    // Pair where the node is listed: what it gives, and that the home is
+    // set apart; then the code, with no errand first.
+    final pair = find.widgetWithText(TextButton, 'Pair');
+    await t.ensureVisible(pair);
+    await t.tap(pair);
+    await t.pumpAndSettle();
+    expect(said('up to eight phones'), findsOneWidget);
+    expect(said('Pairing does not make it your home'), findsOneWidget);
+    await t.tap(find.widgetWithText(FilledButton, 'Pair'));
+    for (var i = 0; i < 10; i++) {
+      await t.pump(const Duration(milliseconds: 100));
+    }
+    expect(ble.pairings, 1);
+    expect((app.session.connected, app.session.guest), (true, false));
+    expect(app.pairedNodes, contains('bark-0ce400000004'));
+    expect(app.me.home, isNull);
     await done(t, app, ble);
   });
 

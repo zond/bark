@@ -2061,6 +2061,22 @@ void main() {
         expect((app.session.connected, app.session.guest), (true, false));
       });
     });
+    test('Pair on a public node from the home: paired by its code at once, '
+        'with no errand first and no round between', () {
+      run((async, app, ble) {
+        async.elapse(round);
+        expect(app.linkDevice, home);
+        final scans = ble.scans;
+        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.connects, [home, strong]);
+        expect(ble.scans, scans);
+        expect(ble.pairings, 1);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.me.home?.id, FakeNode.id);
+      });
+    });
   });
 
   group('a node Android holds a bond with that the app does not count as '
