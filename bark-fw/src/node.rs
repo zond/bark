@@ -14,7 +14,7 @@
 
 use core::mem::MaybeUninit;
 
-use bark_driver::{App, Driver, Outgoing, Request};
+use bark_driver::{App, Driver, Outgoing, Ready, Request};
 use bark_link::Status;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
@@ -69,10 +69,11 @@ struct Placing {
 }
 
 impl App for LinkApp<'_> {
-    /// At each signal, resolves if the driver gets something for it, and
-    /// otherwise takes it and waits on: the driver offers a message that
-    /// waits, the mailbox's reply among them, by itself.
-    async fn ready(&mut self, offer: bool) {
+    /// At each signal, resolves if the driver, or the node's loop, gets
+    /// something for it, and otherwise takes it and waits on: the driver
+    /// offers a message that waits, the mailbox's reply among them, by
+    /// itself.
+    async fn ready(&mut self, offer: bool) -> Ready {
         use embassy_futures::select::{select6, Either6};
         loop {
             let fix = crate::gps::FOR_CORE.wait();
@@ -86,20 +87,25 @@ impl App for LinkApp<'_> {
             )
             .await
             {
-                Either6::First(()) => Some(crate::power::reported()) != self.power,
-                Either6::Second(()) => {
-                    self.serving = self.serve_own(offer);
-                    self.serving
+                Either6::First(()) => {
+                    (Some(crate::power::reported()) != self.power).then_some(Ready::Driver)
                 }
-                Either6::Third(()) => crate::gps::waiting(),
+                Either6::Second(()) => {
+                    let new = self.serve_own(offer);
+                    self.serving = new.is_some();
+                    new
+                }
+                Either6::Third(()) => crate::gps::waiting().then_some(Ready::Driver),
                 Either6::Fourth(()) => {
                     self.follow_home();
-                    self.placed().is_some()
+                    self.placed().map(|_| Ready::Driver)
                 }
-                Either6::Fifth(()) | Either6::Sixth(()) => true,
+                Either6::Fifth(()) => Some(Ready::Driver),
+                // A press an earlier step took leaves its signal behind.
+                Either6::Sixth(()) => crate::button::force_waiting().then_some(Ready::Driver),
             };
-            if new {
-                return;
+            if let Some(ready) = new {
+                return ready;
             }
         }
     }
@@ -288,8 +294,10 @@ impl LinkApp<'_> {
     /// and answer it at once: the clock; a guest's confirmation; a ring's
     /// confirmation, which moves the ring's mark; a confirmation of a
     /// message the inbox does not show; and a message while the core
-    /// takes none. Whether a request for the driver waits.
-    fn serve_own(&mut self, offer: bool) -> bool {
+    /// takes none. Whether a request waits, for the driver or, a read of
+    /// what the core holds, for the node's loop after the step
+    /// (`ble::serve_read`).
+    fn serve_own(&mut self, offer: bool) -> Option<Ready> {
         use crate::ble::Request as Link;
         let (head, ring) = crate::ble::LINK.lock(|l| {
             let l = l.borrow();
@@ -325,14 +333,20 @@ impl LinkApp<'_> {
             _ => None,
         });
         let Some(ring) = own else {
-            return crate::ble::request_waiting();
+            return crate::ble::LINK.lock(|l| match l.borrow().request {
+                None => None,
+                Some((_, Link::Neighbours(_) | Link::Inbox(_) | Link::Guest { .. })) => {
+                    Some(Ready::Own)
+                }
+                Some(_) => Some(Ready::Driver),
+            });
         };
         // What the phone reads after its answer shows its write.
         if ring {
             publish_home(crate::ble::LINK.lock(|l| l.borrow().status));
         }
         crate::ble::answer(false);
-        self.placed().is_some()
+        self.placed().map(|_| Ready::Driver)
     }
 
     /// The message placed, once the ring has it written, to confirm to
@@ -719,7 +733,7 @@ pub async fn run<'a>(
             let r = driver.radio().stats();
             let t = driver.radio().tcxo();
             log::info!(
-                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} \
+                "driver events={} frames={} failed={} held={} radio_errors={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} own_readies={} \
 resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} unserved={} update={}{}{}",
                 s.events,
                 s.frames,
@@ -730,6 +744,7 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} stack_used={} u
                 s.longest_handle.as_micros(),
                 s.longest_away.as_micros(),
                 s.empty_readies,
+                s.own_readies,
                 r.resets,
                 r.configured,
                 r.cold_starts,

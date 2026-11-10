@@ -824,11 +824,6 @@ fn answer_now() -> heapless::Vec<u8, { bark_link::Answer::LEN }> {
     })
 }
 
-/// Whether a request waits for the node.
-pub fn request_waiting() -> bool {
-    LINK.lock(|l| l.borrow().request.is_some())
-}
-
 /// The node's side: take the request waiting if `f` takes it, with the
 /// answer `f` gives, which goes to the phone after the step ([`answer`]).
 pub fn take_request<R>(f: impl FnOnce(From, &Request) -> Option<(R, bool)>) -> Option<R> {

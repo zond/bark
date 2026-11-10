@@ -1529,10 +1529,13 @@ has nothing to send and a change of USB power, and the embassy executor
 sleeps in `wfe` meanwhile. The application wakes the loop only for
 something the driver takes (`docs/core-interface.md` §4): a phone's
 write it serves itself, such as the clock, it answers without waking it,
-and a power event that changed nothing it ignores. A readiness that gives
-nothing anyway is a fault: it is not waited on again until the timer or
-DIO1 wakes the loop, the 10 s line counts it in `empty_readies`, and the
-log says `app said ready but offered nothing`, at most once a minute. The
+and a power event that changed nothing it ignores. A phone's read of the
+neighbour table or the inbox wakes the loop for itself, as only it reads
+the core between the driver's steps; the 10 s line counts these in
+`own_readies`. A readiness for the driver that gives it nothing is a
+fault: it is not waited on again until the timer or DIO1 wakes the loop,
+the 10 s line counts it in `empty_readies`, and the log says `app said
+ready but offered nothing`, at most once a minute. The
 USB device waits for VBUS and the log for
 the host to open the port, both on interrupts. Three things that would
 keep the board awake stop while it is on battery, and start again on USB:
