@@ -1,10 +1,11 @@
 //! When the screen is drawn, and which picture (`bark-fw/README.md`,
 //! Display; roadmap D160). The code is the default; a touch shows the
-//! lines for [`LINES_MS`] or until the next touch, and a pairing code
-//! shows them for as long as it does. A change of picture is
-//! drawn at once, and so is a new pairing code, since a person stands at
-//! the node for each; a change of what the picture shows that a person
-//! acts on is drawn about one refresh after it; nothing else is drawn.
+//! lines for [`LINES_MS`] or until the next touch, and a pairing or a
+//! removal code shows them for as long as it does. A change of picture is
+//! drawn at once, and so is a new code or a pairing refused for want of
+//! room, since a person stands at the node for each; a change of what the
+//! picture shows that a person acts on is drawn about one refresh after
+//! it; nothing else is drawn.
 //! Times are milliseconds since boot.
 
 use crate::{role, Battery, Face, Phone, State};
@@ -33,13 +34,19 @@ pub fn urgent(shown: &State, now: &State) -> bool {
         || (shown.battery == Battery::Usb) != (now.battery == Battery::Usb)
 }
 
-/// The pairing code the code's line shows, if any (`crate::code_line`):
-/// all of the state the code's picture shows that changes.
-fn pairing(state: &State) -> Option<u32> {
+/// What the code's line shows of the phone, if anything
+/// (`crate::code_line`): all of the state the code's picture shows that
+/// changes, each a thing a person at the node acts on at once.
+fn on_code(state: &State) -> Option<Phone> {
     match state.phone {
-        Phone::Code(c) => Some(c),
+        p @ (Phone::Code(_) | Phone::Remove(_) | Phone::Full) => Some(p),
         _ => None,
     }
+}
+
+/// The code a person at the node types into a phone, if one shows.
+fn pairing(state: &State) -> Option<u32> {
+    state.phone.code()
 }
 
 /// What was last drawn, and when the lines were asked for.
@@ -83,9 +90,9 @@ impl Schedule {
     }
 
     /// The picture the screen is to show at `now`: the lines while a
-    /// pairing code shows, since the person typing it stands at the node
-    /// and may want the rest, else the code but for a while after a
-    /// touch.
+    /// pairing or a removal code shows, since the person typing it stands
+    /// at the node and may want the rest, else the code but for a while
+    /// after a touch.
     pub fn face(&self, state: &State, now: u64) -> Face {
         if pairing(state).is_some() {
             return Face::Lines;
@@ -104,16 +111,16 @@ impl Schedule {
         let Some((shown_face, shown)) = self.shown else {
             return Some(now);
         };
-        // A person touched the pad, or one is to type a new pairing code
-        // into the waiting phone: neither waits.
+        // A person touched the pad, or one is to type a new code into the
+        // waiting phone, or was just refused a pairing: none waits.
         if self.flipped
             || shown_face != face
-            || (pairing(state).is_some() && state.phone != shown.phone)
+            || (on_code(state).is_some() && state.phone != shown.phone)
         {
             return Some(now);
         }
         let differs = match face {
-            Face::Code => pairing(&shown) != pairing(state),
+            Face::Code => on_code(&shown) != on_code(state),
             Face::Lines => urgent(&shown, state),
         };
         // Counted from the first such change, so that a stream of them

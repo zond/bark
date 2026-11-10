@@ -371,6 +371,41 @@ fn the_phone_paired_or_its_code() {
     assert_eq!(phone(Phone::Public), "PHONE     PUBLIC");
     assert_eq!(phone(Phone::Code(42)), "PAIR CODE 000042");
     assert_eq!(phone(Phone::Code(999_999)), "PAIR CODE 999999");
+    // More than one paired: the count, at most eight, and the setting.
+    let three = |private| Phone::Phones { count: 3, private };
+    assert_eq!(phone(three(false)), "3 PHONES  PUBLIC");
+    assert_eq!(phone(three(true)), "3 PHONES PRIVATE");
+    assert_eq!(phone(Phone::Remove(7)), "REMOVE    000007");
+    assert_eq!(phone(Phone::Full), "PHONES      FULL");
+}
+
+/// Under the code: the ID, but for a pairing or a removal code and a
+/// pairing refused for want of room, which a person at the node acts on.
+#[test]
+fn the_code_s_line() {
+    let line = |phone| {
+        let t = code_line(
+            &FIXED,
+            &State {
+                phone,
+                ..State::default()
+            },
+        );
+        String::from_utf8(t.bytes().to_vec()).unwrap()
+    };
+    let id = line(Phone::Unpaired);
+    assert!(id.starts_with("ID"), "{id}");
+    assert_eq!(line(Phone::Public), id);
+    assert_eq!(
+        line(Phone::Phones {
+            count: 2,
+            private: true
+        }),
+        id
+    );
+    assert_eq!(line(Phone::Code(5)), "PAIR CODE 000005");
+    assert_eq!(line(Phone::Remove(5)), "REMOVE    000005");
+    assert_eq!(line(Phone::Full), "PHONES      FULL");
 }
 
 /// Beside each button that changes something, what it does: the reset
