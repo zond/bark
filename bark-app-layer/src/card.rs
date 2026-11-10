@@ -15,8 +15,6 @@
 //! | when the phone was last linked to it, as `sent` | 0 or 4 |
 //! | display name, UTF-8 | 0 to 32 |
 //!
-//! A card of version 2, before the node's address, is still read.
-//!
 //! As text, in a QR code or pasted: `BARK:` and the bytes in base32
 //! (RFC 4648 §6) without padding, all in the QR code's alphanumeric set.
 
@@ -58,8 +56,6 @@ impl Linked {
 
 /// The card layout's version.
 pub const CARD_VERSION: u8 = 3;
-/// The oldest version still read: 2, without the node's address.
-pub const OLDEST_VERSION: u8 = 2;
 /// The longest name, in UTF-8 bytes.
 pub const MAX_NAME: usize = 32;
 /// Bytes before the addresses: the shortest card.
@@ -108,12 +104,10 @@ impl<'a> Card<'a> {
 
     /// The card in `b`, all of it.
     pub fn decode(b: &'a [u8]) -> Result<Card<'a>, Error> {
-        let flags = match b.first() {
-            Some(&CARD_VERSION) => FLAG_HOME | FLAG_NOW,
-            Some(&OLDEST_VERSION) => FLAG_HOME,
-            _ => return Err(Error::Malformed),
-        };
-        if b.len() < FIXED_LEN || b[1] & !flags != 0 {
+        if b.first() != Some(&CARD_VERSION)
+            || b.len() < FIXED_LEN
+            || b[1] & !(FLAG_HOME | FLAG_NOW) != 0
+        {
             return Err(Error::Malformed);
         }
         let mut at = FIXED_LEN;

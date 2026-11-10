@@ -338,9 +338,6 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     assert_eq!(n, 51 + 7);
     assert_eq!(&b[..2], &[3, 1]);
     assert_eq!(Card::decode(&b[..n]), Ok(c));
-    // A card of version 2 reads as one without the node's address.
-    b[0] = 2;
-    assert_eq!(Card::decode(&b[..n]), Ok(c));
     let away = card::Linked {
         address: f.away,
         at: 0x0102_0304,
@@ -355,9 +352,6 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     assert_eq!(&b[51..64], &f.away.encode());
     assert_eq!(&b[64..68], &[1, 2, 3, 4]);
     assert_eq!(Card::decode(&b[..n]), Ok(both));
-    // Version 2 knew no node's address.
-    b[0] = 2;
-    assert_eq!(Card::decode(&b[..n]), Err(Error::Malformed));
     let temporary = Card {
         home: None,
         now: Some(away),
@@ -403,12 +397,11 @@ fn a_card_that_is_not_one_is_refused() {
         name: "a name of more than thirty-two bytes",
     };
     assert_eq!(long.encode(&mut [0u8; 100]), Err(Error::TooLong));
-    // A version 1 card, before the flags, and a flag this version does
-    // not know.
+    // A card of another version, and a flag this version does not know.
     let short = Card { name: "", ..long };
     let mut b = [0u8; card::MAX_LEN];
     let n = short.encode(&mut b).unwrap();
-    for (at, v) in [(0, 1), (0, 4), (1, 4)] {
+    for (at, v) in [(0, 1), (0, 2), (0, 4), (1, 4)] {
         let mut bad = b;
         bad[at] = v;
         assert_eq!(Card::decode(&bad[..n]), Err(Error::Malformed), "{at}");
