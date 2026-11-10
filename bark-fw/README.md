@@ -329,7 +329,7 @@ On the external flash, in sectors of 4 KiB:
 | firmware, staged | `0x000000` | 912 KiB, 228 sectors | one sector larger than the running slot, which embassy-boot's swap needs; after a swap it holds the previous image |
 | coded pieces | `0x0E4000` | 772 KiB, 193 sectors | a head of what has been gathered and a lane of four sectors, 64 pieces of 256 bytes, for each of an image's 48 blocks at most, for the update over the mesh (`bark-image` `pieces.rs`, roadmap D151) |
 | mailbox ring | `0x1A5000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
-| carried | `0x1E5000` | 44 KiB, 11 sectors | what the node still holds when it reboots into an image gathered over the mesh, 167 messages at most, a page each, offered again after the reboot (Updates, below) |
+| carried | `0x1E5000` | 44 KiB, 11 sectors | what the node still holds when it reboots into an image gathered over the mesh, 167 messages at most, a page each, put back where it was after the reboot (Updates, below; roadmap D201) |
 | discharge log | `0x1F0000` | 32 KiB, 8 sectors | the battery's samples, 2048 at most, a sample an hour on battery (Discharge log, below) |
 | tables | `0x1F8000` | 32 KiB, 8 sectors | the neighbour table and message records the node keeps across a reboot into an image gathered over the mesh, 25 248 bytes at most, given back to the core after it, aged by the swap's length, then erased (Updates, below; roadmap D180) |
 
@@ -726,10 +726,13 @@ confirmed itself.
   72 ms and for a phone at most 30 s (`policy::WRITE_WAIT_MS`,
   `EXCHANGE_WAIT_MS`). What the core still holds then goes into the carried region
   of the external flash, `carry: id=... kept across the reboot` for
-  each, and after the reboot back to the core as the node's own, one
-  at a time ahead of the phone's message and the mailbox's replies,
-  `carry: id=... offered again`, the region erased once all have gone
-  (`src/carry.rs`). Its neighbour table and its message records go last
+  each, and after the reboot, once the tables are back, into the core
+  where it was, with its count, its parent and its age, `carry: N
+  messages put back`; the application's own message, if the node held
+  one, is offered again ahead of the phone's message and the mailbox's
+  replies, `carry: id=... offered again`, and the region is erased once
+  all are back (`src/carry.rs`, roadmap D201). Its neighbour table and
+  its message records go last
   into the tables region, `tables: N neighbours and M records kept
   across the reboot`, and at the first boot of the new image back to the
   core, aged by the time away, `tables: N of N neighbours and M of M

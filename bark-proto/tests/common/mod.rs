@@ -717,3 +717,69 @@ pub fn heartbeat_flags(bytes: &[u8]) -> Option<u8> {
         _ => None,
     }
 }
+
+/// A message a node held at its reboot, as its driver keeps it
+/// (`bark_proto::Held`), owned.
+#[derive(Clone, Debug)]
+pub struct Kept {
+    pub msg_id: bark_proto::MsgId,
+    pub dst_pos: bark_proto::Position,
+    pub dst_id: bark_proto::NodeId,
+    pub payload: Vec<u8>,
+    pub hops: u8,
+    pub at: bark_proto::HeldAt,
+}
+
+impl Kept {
+    fn of(m: bark_proto::Held<'_>) -> Kept {
+        Kept {
+            msg_id: m.msg_id,
+            dst_pos: m.dst_pos,
+            dst_id: m.dst_id,
+            payload: m.payload.to_vec(),
+            hops: m.hops,
+            at: m.at,
+        }
+    }
+
+    pub fn held(&self) -> bark_proto::Held<'_> {
+        bark_proto::Held {
+            msg_id: self.msg_id,
+            dst_pos: self.dst_pos,
+            dst_id: self.dst_id,
+            payload: &self.payload,
+            hops: self.hops,
+            at: self.at,
+        }
+    }
+}
+
+/// Reboot node `m` into `fresh` as a driver reboots into a new image
+/// (spec "Updates over the mesh", the install): it keeps its tables and
+/// what it holds now, is off the air for `away`, and gives `fresh` the
+/// tables back and puts back what it held before its first event. Returns
+/// what was not put back, its application's own message, for the test to
+/// offer again.
+pub fn swap(
+    h: &mut Harness<bark_proto::Relay>,
+    m: usize,
+    mut fresh: bark_proto::Relay,
+    away: Duration,
+) -> Vec<Kept> {
+    let taken = h.now;
+    let core = &h.nodes[m].core;
+    let tables: Vec<bark_proto::Kept> = core.remembered(taken).collect();
+    let held: Vec<Kept> = core.held(taken).map(Kept::of).collect();
+    h.kill(m);
+    h.run_until(taken + away, |_| false);
+    let now = h.now;
+    for k in &tables {
+        fresh.remember(k, away, now);
+    }
+    let own = held
+        .into_iter()
+        .filter(|k| !fresh.put_back(&k.held(), away, now))
+        .collect();
+    h.reboot(m, fresh);
+    own
+}

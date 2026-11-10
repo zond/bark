@@ -1,9 +1,9 @@
 //! What a reset would lose and still be true after it, kept across the
 //! reboot into a new image (spec "Updates over the mesh", the install;
-//! roadmap D180): the neighbour table, without which a node just back
-//! knows no way on for what it carries, and the message records, which a
-//! return to it needs. Beside what the node holds ([`Node::held`]),
-//! which it offers again.
+//! roadmap D180, D201): the neighbour table, without which a node just
+//! back knows no way on for what it carries, and the message records,
+//! which a return to it needs and what it holds goes on with. Beside what
+//! the node holds ([`Node::held`]), which it puts back.
 //!
 //! Each instant is kept as a time before the moment the tables were
 //! taken, and put back that long before that moment on the clock after
@@ -56,17 +56,17 @@ pub const fn remembered_within(config: &Config) -> Duration {
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// What a reset at `now` would lose and still be true after it: every
     /// neighbour entry, then every message record within the delivery
-    /// TTL of its message's last activity, but those of the messages the
-    /// node holds, which it offers again as its own and new.
+    /// TTL of its message's last activity, but that of the application's
+    /// own message, which the application offers again as new.
     pub fn remembered(&self, now: Instant) -> impl Iterator<Item = Kept> + '_ {
-        let held = move |id: MsgId| {
-            self.holding()
-                .chain(self.inbox.iter().map(|q| q.msg_id))
-                .any(|h| h == id)
-        };
+        let own = self.own.id;
         self.neighbours.kept(now).map(Kept::Neighbour).chain(
             self.records
-                .kept(self.config.delivery_ttl, held, now)
+                .kept(
+                    self.config.delivery_ttl,
+                    move |id: MsgId| Some(id) == own,
+                    now,
+                )
                 .map(Kept::Record),
         )
     }

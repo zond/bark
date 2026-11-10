@@ -225,10 +225,12 @@ core to drain while `bark_image::policy::drains` says so, and reboots
 it once `policy::quiet` says so, with no phone links and no mailbox
 write under way, as the simulator has none. It keeps what the core
 holds (`Relay::held`) in the slots the firmware writes to its flash,
-is off for the swap, 46.6 s from the loader's figures
+and its tables, is off for the swap, 59.0 s from the loader's figures
 (`bark-fw/README.md`, "Updates"), and comes back as after a restart,
-with a new core and its stored state. It then offers the kept messages
-again one at a time, ahead of its application's. The summary gives,
+with a new core and its stored state. The new core takes the tables
+back and then the kept messages, each where it was (`Relay::put_back`);
+the application's own message, if it held one, is offered again ahead
+of what is new. The summary gives,
 per node, the time from staging to reboot and what it kept, and the
 fate of every kept message (`--installs FILE` writes the rows).
 

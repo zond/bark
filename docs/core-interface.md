@@ -304,13 +304,19 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   `AppCommand::Drain(false)` takes messages again. `drained(now)` is when the driver may
   reboot: the send queue, the delivery queue and the inbox empty and no reply owed that
   takes a DATA, or `Config::delivery_ttl` since the whole second the drain began.
-  `held()` is every message the node then holds, each once, as `Held { msg_id, dst_pos,
-  dst_id, payload }`, which the driver keeps across the reboot and offers after it as
-  `AppCommand::Send`: the same message, as its ID is `MsgId::of` the three.
-  `remembered(now)` is the neighbour table and the message records as `Kept` entries in the
-  core's own encoding, which the driver keeps too; after the reboot, before the first
-  event, it hands each back with `remember(&kept, ago, now)`, `ago` the time since
-  `remembered`, and the core ages them by it (roadmap D180). An instant before the clock's
+  `held(now)` is every message the node then holds, each once, as `Held { msg_id, dst_pos,
+  dst_id, payload, hops, at }`: the same message after the reboot, as its ID is `MsgId::of`
+  the three, the count it goes on from, and in `at` where it was, the application's own,
+  a forward with its parent and its place in the send queue, or a message in the delivery
+  queue or the inbox with its age. `remembered(now)` is the neighbour table and the
+  message records as `Kept` entries in the core's own encoding. The driver keeps both;
+  after the reboot, before the first event, it hands each entry back with
+  `remember(&kept, ago, now)` and then each message with `put_back(&held, ago, now)`,
+  `ago` the time since both were taken, and the core ages them by it (roadmap D180,
+  D201). `put_back` is false for the application's own message, which the driver offers
+  again as `AppCommand::Send`, ahead of what is new. A driver that does not know the time
+  away gives the delivery TTL, so that no queued message is taken as fresher than it is.
+  An instant before the clock's
   epoch cannot be put back, so a driver whose clock starts at its boot sets the epoch at
   least `remembered_within(config)`, the swap and the tables' write before the boot
   (`bark-fw/src/clock.rs`).

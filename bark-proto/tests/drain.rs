@@ -1,16 +1,17 @@
 //! The drain before a reboot into a new image (spec "Send queue",
 //! "Updates over the mesh", the install): a draining relay takes no
 //! message under load and holds nothing well within the bound; what it
-//! still holds at the bound is offered again after the reboot, the same
+//! still holds at the bound is put back after the reboot, the same
 //! message.
 
 mod common;
 
 use bark_proto::tables::delivery::DELIVERY_QUEUE;
 use bark_proto::{
-    AppCommand, AppEvent, Config, DropReason, Instant, MsgId, NodeId, Position, Relay, Trace,
+    AppCommand, AppEvent, Config, DropReason, HeldAt, Instant, MsgId, NodeId, Position, Relay,
+    Trace,
 };
-use common::{secs, Harness};
+use common::{secs, swap, Harness};
 use std::collections::HashSet;
 
 /// A position `east` metres from a point in Kyiv.
@@ -134,7 +135,7 @@ fn a_draining_relay_under_load_takes_nothing_and_empties_within_the_bound() {
     assert!(close < latest, "the load never filled M's queue");
     let at = h.now;
     assert!(h.nodes[m].core.drained(at), "not drained within the bound");
-    assert!(h.nodes[m].core.held().next().is_none(), "held at the end");
+    assert!(h.nodes[m].core.held(at).next().is_none(), "held at the end");
     let refused = |h: &Harness<Relay>, why: Option<DropReason>| {
         h.nodes[m].traces.iter().filter(|(t, _)| *t >= close).any(
             |(_, t)| matches!(t, Trace::Refused { reason, .. } if why.is_none_or(|w| w == *reason)),
@@ -181,11 +182,11 @@ fn a_draining_relay_under_load_takes_nothing_and_empties_within_the_bound() {
 }
 
 /// A message for a node that stays dark waits in its owner's delivery
-/// queue past the bound. The owner may reboot then, and what it held,
-/// offered again as its own after the reboot, is the same message, back
-/// in its delivery queue.
+/// queue past the bound. The owner may reboot then, and what it held is
+/// put back after the reboot: the same message, back in its delivery
+/// queue with the age it had and the time away.
 #[test]
-fn a_message_held_past_the_bound_is_offered_again_after_the_reboot() {
+fn a_message_held_past_the_bound_is_put_back_after_the_reboot() {
     let (s, m) = (0, 1);
     let mut h = build(vec![relay(0.0, 0.0, 1), relay(300.0, 0.0, 2)], &[(s, m)]);
     let dark = NodeId([9; 6]);
@@ -205,6 +206,7 @@ fn a_message_held_past_the_bound_is_offered_again_after_the_reboot() {
         h.run_until(h.now + secs(30), queued),
         "not queued at its owner"
     );
+    let since = h.now;
     h.command(m, AppCommand::Drain(true));
     let close = h.now;
     let ttl = Config::default().delivery_ttl;
@@ -215,25 +217,19 @@ fn a_message_held_past_the_bound_is_offered_again_after_the_reboot() {
     assert!(h.nodes[m].core.drained(h.now));
     let held: Vec<(MsgId, Position, NodeId, Vec<u8>)> = h.nodes[m]
         .core
-        .held()
+        .held(h.now)
         .map(|x| (x.msg_id, x.dst_pos, x.dst_id, x.payload.to_vec()))
         .collect();
     assert_eq!(held, vec![(id, dst_pos, dark, payload.to_vec())]);
-    // What the driver kept, offered again once the new image takes it.
-    h.reboot(m, relay(300.0, 0.0, 20));
-    assert!(h.run_until(h.now + secs(30), |h| h.accepts(m)));
-    for (msg_id, dst_pos, dst_id, payload) in &held {
-        h.command(
-            m,
-            AppCommand::Send {
-                dst_pos: *dst_pos,
-                dst_id: *dst_id,
-                payload,
-            },
-        );
-        assert_eq!(MsgId::of(*dst_pos, *dst_id, payload), *msg_id);
-    }
+    let own = swap(&mut h, m, relay(300.0, 0.0, 20), secs(59));
+    assert!(own.is_empty());
     assert!(queued(&h), "not back in the delivery queue");
+    let age = h.nodes[m].core.held(h.now).next().map(|x| x.at);
+    let HeldAt::Delivery { age, .. } = age.expect("held") else {
+        panic!("not in the delivery queue");
+    };
+    let true_age = h.now.since(since);
+    assert!(age >= true_age && age <= true_age + secs(1), "{age:?}");
 }
 
 /// While a relay drains, its neighbour hears from its heartbeats that it

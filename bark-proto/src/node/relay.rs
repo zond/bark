@@ -48,7 +48,7 @@ mod sweep;
 mod update;
 
 use boot::random_channel;
-pub use drain::Held;
+pub use drain::{Held, HeldAt};
 use heartbeat::Beacon;
 pub use remember::{remembered_within, Kept};
 use status::Asking;

@@ -4868,23 +4868,24 @@ queue gives a node that sleeps or is dark
 ([delivery queue](#delivery-queue)), and a message to send on has had
 twenty hops' budgets of 30 s ([send queue](#send-queue)). What the node
 still holds then it writes to its flash, logging each message's ID, and
-after the reboot offers each again as its own application's, one at a
-time, ahead of its phone's and its mailbox's. A message's ID is a hash
-of its destination and its payload alone
-([packet formats](#packet-formats)), so it is the same message, and a
-node that has it already answers it as any copy. It starts again at
-count 0 with no parent here, so a search from this node that runs out of
-neighbours ends here instead of going back to the parent it came from
-([return to parent](#return-to-parent)). A message for the node's own
-application comes back to its inbox, and one for a sleepy node it holds
-for to its delivery queue. It keeps its neighbour table across the swap
-too, and its records of the messages active within the delivery TTL but
-those it offers again, every time in them aged by the swap's length:
-an entry that expired meanwhile is gone, and a heartbeat due meanwhile
-passes unheard as one the radio was away for ([heartbeat](#heartbeat)).
-Just back, it would otherwise know no neighbour to send what it carries
-to, and a message returned to it would find no record of where it came
-from (roadmap D180).
+after the reboot puts each back where it was, so that it carries on as
+if it had not been away: a message to send on goes back into its send
+queue with its count and the parent it came from
+([return to parent](#return-to-parent)), and one in its delivery queue
+or its inbox back there with its age and the time away (roadmap D201).
+Only its application's own message, not yet taken by a first hop, is
+offered again as the application's, ahead of its phone's and its
+mailbox's. A message's ID is a hash of its destination and its payload
+alone ([packet formats](#packet-formats)), so it is the same message,
+and a node that has it already answers it as any copy. It keeps its
+neighbour table across the swap too, and its records of the messages
+active within the delivery TTL but that of its application's own
+message, every time in them aged by the swap's length: an entry that
+expired meanwhile is gone, and a heartbeat due meanwhile passes unheard
+as one the radio was away for ([heartbeat](#heartbeat)). Just back, it
+would otherwise know no neighbour to send what it carries to, and a
+message returned to it would find no record of where it came from
+(roadmap D180).
 
 *Why a bound.* Taking nothing, the node's queues only shrink, but a
 message for a sleepy node that stays dark waits in the delivery queue

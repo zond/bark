@@ -375,21 +375,21 @@ pub const KEPT_LEN: usize = 32;
 
 impl Records {
     /// Every record whose message was received or sent here within `ttl`
-    /// of `now`, as kept across a reset, taken at `now`; but those of the
-    /// messages `held`, which the node offers again as its own and new
+    /// of `now`, as kept across a reset, taken at `now`; but those
+    /// `left_out`, of a message offered again as new after the reset
     /// (spec "Updates over the mesh", the install). After the delivery
     /// TTL no copy of a message is left to come back
     /// (spec "Delivery queue"), so a record older than that serves nothing.
     pub fn kept<'a>(
         &'a self,
         ttl: Duration,
-        held: impl Fn(MsgId) -> bool + 'a,
+        left_out: impl Fn(MsgId) -> bool + 'a,
         now: Instant,
     ) -> impl Iterator<Item = [u8; KEPT_LEN]> + 'a {
         use super::kept::{put, Round};
         self.entries[..self.len]
             .iter()
-            .filter(move |r| now.since(r.last_active) < ttl && !held(r.id))
+            .filter(move |r| now.since(r.last_active) < ttl && !left_out(r.id))
             .map(move |r| {
                 let mut b = [0u8; KEPT_LEN];
                 b[0..4].copy_from_slice(&r.id.0.to_be_bytes());
