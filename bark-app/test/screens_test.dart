@@ -25,10 +25,9 @@ import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
-import 'package:bark_app/ble_link.dart' show FoundNode;
+import 'package:bark_app/ble_link.dart' show FoundNode, strongDbm, weakDbm;
 import 'package:universal_ble/universal_ble.dart' show UniversalBle;
-import 'package:bark_app/ui/common.dart'
-    show receivedMarks, signalWord, strongDbm, weakDbm;
+import 'package:bark_app/ui/common.dart' show receivedMarks, signalWord;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';

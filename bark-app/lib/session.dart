@@ -599,6 +599,12 @@ class Session extends ChangeNotifier {
     (o) => o.state == OutState.queued || o.state == OutState.writing,
   );
 
+  /// Something on the link would be cut were it closed now: a Send
+  /// written and not yet answered, an inbox message read and not yet
+  /// confirmed, or a fetch whose answer is awaited, which comes to the
+  /// node it was sent from.
+  bool get inFlight => _writing || _draining || fetchWaiting != null;
+
   /// Writes the person's recipient tag at the node: a public node hands a
   /// phone only the messages that carry its tag, and keeps the paired
   /// phone's to place its messages while it is away.

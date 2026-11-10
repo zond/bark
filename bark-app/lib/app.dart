@@ -39,47 +39,65 @@ enum Linking {
   attaching,
 }
 
-/// Ranks a node heard without an RSSI below every RSSI a controller
-/// reports, −127 dBm and up (Bluetooth Core Specification 5.0, Vol 4
-/// Part E §7.7.65.2).
-const int _noRssi = -128;
-
 /// The node heard strongest of `nodes`, the likeliest to hold a link.
 FoundNode? _strongest(Iterable<FoundNode> nodes) {
   FoundNode? best;
   for (final n in nodes) {
-    if ((n.rssi ?? _noRssi) > (best?.rssi ?? _noRssi) || best == null) {
+    if ((n.rssi ?? noRssi) > (best?.rssi ?? noRssi) || best == null) {
       best = n;
     }
   }
   return best;
 }
 
-/// The node a round of the search connects to, of those it `heard`: the
-/// `home` whenever it is one of the `paired` nodes and was heard, as it
+/// The node a round of the search connects to, of those it `heard`, in
+/// this order: the `home` when it is one of the `paired` nodes, as it
 /// serves the person whole and keeps their mail; else the paired node
-/// heard strongest; else, while no link is up, the public node heard
-/// strongest; never one of `lost` nor of `stale`, whose bond the phone
-/// still holds and which ends a link encrypted with it (spec "Phone
-/// link", The replaced phone, Public); else none.
+/// heard strongest; else the public node heard strongest, never one of
+/// `lost` nor of `stale`, whose bond the phone still holds and which ends
+/// a link encrypted with it (spec "Phone link", The replaced phone,
+/// Public); else none.
+///
+/// The order holds among the nodes heard at a signal a link holds at
+/// ([FoundNode.usable]): a node heard weak is passed over for one further
+/// down heard better, as a link to it would not hold, and taken only when
+/// nothing usable is heard (roadmap D171).
+///
+/// While the phone has a link to the node `on`, the choice is only a node
+/// higher in the order than it, heard usable: the home over another paired
+/// node, a paired node over a public one. Never one beside it, as two of
+/// one place in the order heard by turns at like signals would move the
+/// phone back and forth; and never a weak one over the link it has
+/// (roadmap D172).
 FoundNode? chooseNode(
   Iterable<FoundNode> heard, {
   String? home,
   Set<String> paired = const {},
   Set<String> lost = const {},
   Set<String> stale = const {},
-  bool linked = false,
+  String? on,
 }) {
-  final own = heard.where((n) => paired.contains(n.name));
-  final atHome = own.where((n) => n.name == home).firstOrNull;
-  if (atHome != null) return atHome;
-  if (own.isNotEmpty) return _strongest(own);
-  if (linked) return null;
-  return _strongest(
-    heard.where(
-      (n) => n.public && !lost.contains(n.name) && !stale.contains(n.name),
-    ),
-  );
+  int place(String name) => name == home && paired.contains(name)
+      ? 0
+      : paired.contains(name)
+      ? 1
+      : 2;
+  FoundNode? first(Iterable<FoundNode> among) {
+    final own = among.where((n) => paired.contains(n.name));
+    final atHome = own.where((n) => place(n.name) == 0).firstOrNull;
+    if (atHome != null) return atHome;
+    if (own.isNotEmpty) return _strongest(own);
+    return _strongest(
+      among.where(
+        (n) => n.public && !lost.contains(n.name) && !stale.contains(n.name),
+      ),
+    );
+  }
+
+  final n =
+      first(heard.where((n) => n.usable)) ?? (on == null ? first(heard) : null);
+  if (n == null || on == null) return n;
+  return place(n.name) < place(on) ? n : null;
 }
 
 /// How often the app reads a public node's ring for the person's mail
@@ -95,6 +113,17 @@ FoundNode? chooseNode(
 /// one that does is closed and tries next round. Mail waits in the ring
 /// meanwhile, so a longer interval delays it and loses nothing.
 const Duration guestCheck = Duration(minutes: 1);
+
+/// How often the phone, on a paired node that is not the home, scans for
+/// the home, and moves to it once heard (roadmap D172): [guestCheck]'s
+/// minute, the span the spec takes for a person on foot to stay within a
+/// relay's reach, so a home that comes into reach is taken within about
+/// as long as the person stays near it. Not every round of [lookRound]: on
+/// a standing link a scan serves only this, and a scan of [lookScan] a
+/// minute listens some 7 % of the time, against 27 % every 15 s, for a
+/// home reached at most 45 s sooner. It takes at most one of Android's
+/// five scans in 30 s.
+const Duration lookAround = guestCheck;
 
 /// The search's rounds in a row that must reach none of the paired nodes
 /// before the app calls them out of reach and goes on errands at a public
@@ -614,6 +643,7 @@ class AppModel extends ChangeNotifier {
   /// the same node would close the link the first made.
   Future<void> connect(FoundNode n, {bool again = false}) async {
     if (connecting || (connectedTo(n.deviceId) && !session.guest)) return;
+    _tapped = true;
     await _connect(n, again: again);
   }
 
@@ -622,6 +652,7 @@ class AppModel extends ChangeNotifier {
   /// [connect] does.
   Future<void> connectGuest(FoundNode n) async {
     if (connecting || connectedTo(n.deviceId)) return;
+    _tapped = true;
     await _connectGuest(n);
   }
 
@@ -915,8 +946,45 @@ class AppModel extends ChangeNotifier {
 
   /// Whether the search scans now: not before Bluetooth is allowed, nor
   /// while it is off, a connection is being made, or the person scans.
-  bool get lookingNow =>
-      searchOn && bluetoothAllowed && bluetoothOn && !connecting && !scanning;
+  bool get lookingNow => searchOn && _mayScan;
+
+  bool get _mayScan =>
+      bluetoothAllowed && bluetoothOn && !connecting && !scanning;
+
+  /// The home, while the phone is on another of its paired nodes by the
+  /// search's own connect: the one node above it in the order, which a
+  /// look-around listens for (roadmap D172). None on a link the person
+  /// made by a tap, which is theirs until it drops, nor once they stopped
+  /// the search.
+  String? get _above {
+    if (!_searchStarted || fake || session.stopped || _unpairing) return null;
+    final n = session.connected && !session.guest ? session.node : null;
+    final h = homeName;
+    if (n == null || _tapped || h == null || !pairedNodes.contains(h)) {
+      return null;
+    }
+    return nodeName(n.id) == h ? null : h;
+  }
+
+  /// The phone, on a paired node, moves to the home once it hears it
+  /// ([_above]).
+  bool get movesHome => _above != null;
+
+  /// The last round heard a paired node, too weak to take ([chooseNode]),
+  /// and the phone uses a public node meanwhile.
+  bool ownWeak = false;
+
+  /// Whether the phone looks around now, from a paired node for the home
+  /// ([_above]).
+  bool get lookingAround => _above != null && _mayScan;
+
+  /// The link in use was made by the person's tap, not by the search.
+  bool _tapped = false;
+
+  /// Whether the link in use may be closed with nothing lost: nothing in
+  /// flight on it ([Session.inFlight]) and no firmware update under way
+  /// ([Updater.underWay]).
+  bool get settled => !session.inFlight && !updater.underWay;
 
   /// Whether Android lets the app use Bluetooth, as last checked: a fresh
   /// install has not been allowed yet, and its search would only fail.
@@ -955,18 +1023,41 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Starts the search's rounds when it should run, and ends a scan or
-  /// wait when it should not.
+  /// What the search does now: its rounds, a look-around from a paired
+  /// node, or nothing.
+  _Searching? get _doing => lookingNow
+      ? _Searching.rounds
+      : lookingAround
+      ? _Searching.around
+      : null;
+  _Searching? _did;
+
+  /// Starts the search when it should run, and ends a scan or wait under
+  /// way when what it should do changes: a link that drops starts a round
+  /// at once, and one that comes up ends the round's wait.
   void _search() {
-    if (!lookingNow) {
+    final d = _doing;
+    if (d != _did) {
+      _did = d;
       if (!_wake.isCompleted) _wake.complete();
-      return;
     }
-    if (_searching) return;
+    if (d == null || _searching) return;
     _searching = true;
     _wake = Completer<void>();
     unawaited(_rounds());
   }
+
+  /// Waits `d`, or until [_wake] completes.
+  Future<void> _sleep(Duration d) async {
+    final t = Timer(d, () {
+      if (!_wake.isCompleted) _wake.complete();
+    });
+    await _wake.future;
+    t.cancel();
+  }
+
+  /// When the search last started a scan, a round's or a look-around's.
+  DateTime? _scanned;
 
   /// Each round scans, then connects to the node [chooseNode] picks from
   /// what it heard: the home, another paired node, a node Android holds a
@@ -976,7 +1067,11 @@ class AppModel extends ChangeNotifier {
   Future<void> _rounds() async {
     try {
       while (_awake()) {
-        final start = now();
+        if (!lookingNow) {
+          await _lookAround();
+          continue;
+        }
+        final start = _scanned = now();
         final paired = pairedNodes;
         final round = _listen(_stopAt(paired));
         _round = round;
@@ -993,7 +1088,7 @@ class AppModel extends ChangeNotifier {
                 paired: pairedNodes,
                 lost: await _lostBonded(heard.values),
                 stale: staleBonds.keys.toSet(),
-                linked: session.connected,
+                on: session.connected ? _nodeOn : null,
               )
             : null;
         final mine = n != null && pairedNodes.contains(n.name);
@@ -1012,22 +1107,21 @@ class AppModel extends ChangeNotifier {
           }
         }
         if (looked && n == null) _guestAt = null;
+        // A paired node heard and passed over was heard weak: the public
+        // node goes before it at once, as no later round is needed to
+        // tell that it is there.
+        final weakOwn = heard.values.any((h) => paired.contains(h.name));
+        if (looked) ownWeak = weakOwn && !mine;
         if (n != null &&
             !mine &&
             bonded == null &&
-            usesPublic &&
+            (usesPublic || weakOwn) &&
             _guestDue(n)) {
           await _connectPublic(n);
         }
-        if (!_awake()) break;
+        if (!_awake() || !lookingNow) continue;
         final left = lookRound - now().difference(start);
-        if (left > Duration.zero) {
-          final t = Timer(left, () {
-            if (!_wake.isCompleted) _wake.complete();
-          });
-          await _wake.future;
-          t.cancel();
-        }
+        if (left > Duration.zero) await _sleep(left);
       }
     } finally {
       _searching = false;
@@ -1044,32 +1138,77 @@ class AppModel extends ChangeNotifier {
         n.name,
   };
 
-  /// The node whose hearing ends a round's scan early, as no node heard
-  /// after it would go before it: the home when the phone is paired with
-  /// it, else the one node of `paired`; none for several, of which the
-  /// strongest goes first.
-  String? _stopAt(Set<String> paired) {
-    final h = homeName;
-    if (h != null && paired.contains(h)) return h;
-    return paired.length == 1 ? paired.single : null;
+  /// The name of the node the phone has a link to.
+  String? get _nodeOn {
+    final n = session.node;
+    return n == null ? null : nodeName(n.id);
   }
 
-  /// [lookingNow], with a new [_wake] when the search goes on: the last
-  /// may have ended a scan or wait for a change that has passed.
+  /// A look-around from a paired node: once [lookAround] has passed since
+  /// the search's last scan, it listens for the home, and moves to it when
+  /// it is heard usable ([chooseNode]) and the link in use is [settled];
+  /// one that is not waits for the next.
+  Future<void> _lookAround() async {
+    final last = _scanned;
+    final left = last == null
+        ? Duration.zero
+        : lookAround - now().difference(last);
+    if (left > Duration.zero) return _sleep(left);
+    final home = _above!;
+    _scanned = now();
+    final round = _listen((n) => n.name == home && n.usable);
+    _round = round;
+    final heard = await round;
+    _round = null;
+    final on = _nodeOn;
+    if (!lookingAround || on == null) return;
+    final n = chooseNode(
+      heard.values,
+      home: homeName,
+      paired: pairedNodes,
+      on: on,
+    );
+    if (n == null) return;
+    if (!settled) {
+      session.note('Heard ${n.name}; moving to it once nothing is in flight');
+      return;
+    }
+    session.note('Heard ${n.name}, ${n.rssi ?? '?'} dBm: moving to it');
+    await _connectFound(n);
+  }
+
+  /// What ends a round's scan early, as no node heard after it would go
+  /// before it: the home heard usable, when the phone is paired with it,
+  /// else the one node of `paired` heard usable; nothing for several, of
+  /// which the strongest goes first.
+  bool Function(FoundNode)? _stopAt(Set<String> paired) {
+    final h = homeName;
+    final at = h != null && paired.contains(h)
+        ? h
+        : paired.length == 1
+        ? paired.single
+        : null;
+    return at == null ? null : (n) => n.name == at && n.usable;
+  }
+
+  /// Whether the search goes on, its rounds or a look-around, with a new
+  /// [_wake] when it does: the last may have ended a scan or wait for a
+  /// change that has passed.
   bool _awake() {
-    final on = lookingNow;
+    final on = _doing != null;
     if (on && _wake.isCompleted) _wake = Completer<void>();
     return on;
   }
 
-  Future<Map<String, FoundNode>> _listen(String? until) async {
-    final what = until ?? 'nodes';
+  Future<Map<String, FoundNode>> _listen(
+    bool Function(FoundNode)? until,
+  ) async {
     try {
       final heard = await listen(until: until, stop: _wake.future);
       _searchFailed = null;
       return heard;
     } catch (e) {
-      final f = 'Looking for $what failed: $e';
+      final f = 'Looking for nodes failed: $e';
       if (f != _searchFailed) session.note(f);
       _searchFailed = f;
       return const {};
@@ -1084,7 +1223,7 @@ class AppModel extends ChangeNotifier {
   Future<FoundNode?> _bondedNode(Iterable<FoundNode> heard) async {
     if (session.connected) return null;
     final byRssi = [...heard]
-      ..sort((a, b) => (b.rssi ?? _noRssi).compareTo(a.rssi ?? _noRssi));
+      ..sort((a, b) => (b.rssi ?? noRssi).compareTo(a.rssi ?? noRssi));
     for (final n in byRssi) {
       if (session.pairedWith.contains(n.name)) continue;
       if (staleBonds.containsKey(n.name)) continue;
@@ -1133,6 +1272,7 @@ class AppModel extends ChangeNotifier {
   /// address's type ([_overBond]).
   Future<void> _adopt(FoundNode n) async {
     session.note('Found ${n.name}, bonded: connecting as its owner');
+    _tapped = false;
     try {
       if (await _overBond(n)) return;
     } on StaleBond {
@@ -1205,6 +1345,7 @@ class AppModel extends ChangeNotifier {
       'Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting '
       '${session.toSend ? 'to send' : 'for mail'}',
     );
+    _tapped = false;
     try {
       await _connectGuest(n);
     } catch (e) {
@@ -1217,6 +1358,7 @@ class AppModel extends ChangeNotifier {
   /// looks for ([pairedNodes]); another failure waits for the next round.
   Future<void> _connectFound(FoundNode n) async {
     session.note('Found ${n.name}, connecting');
+    _tapped = false;
     try {
       await _connect(n);
     } on NotOurs {
@@ -1253,3 +1395,6 @@ class AppModel extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// What the search does ([AppModel._doing]).
+enum _Searching { rounds, around }

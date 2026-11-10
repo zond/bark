@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../ble_link.dart' show strongDbm, weakDbm;
 import '../link.dart';
 import '../node_link.dart';
 import '../session.dart';
@@ -563,13 +564,18 @@ String connectionHelp(AppModel app) {
         ? 'You have no home node, so your card names this node while you '
               'use it.'
         : 'Texts to you wait at your home; "Fetch my mail" brings them '
-              'here. When your home is in reach, the phone goes to it first.';
+              'here.${app.movesHome ? ' When your home comes in reach, the '
+                        'phone moves to it within a minute.' : ''}';
     return 'This phone is paired with this node and keeps a link to it '
         'while it is in reach: your texts go out through it, and texts that '
         'come to it for you arrive here. $home';
   }
   if (app.nodeLine != null) {
-    final why = app.ownAway
+    final why = app.ownWeak
+        ? 'The nodes this phone is paired with are heard here too weakly '
+              'for a link to hold, so it uses this public node meanwhile, and '
+              'goes back to one as soon as it hears it well.'
+        : app.ownAway
         ? 'None of the nodes this phone is paired with has been in reach for '
               '30 seconds, so it uses this public node meanwhile, and goes '
               'back to one as soon as it hears it.'
@@ -695,16 +701,6 @@ String health(Session s) {
   if (n == 0) return 'Hears no other node yet: texts wait here';
   return n == 1 ? 'Hears 1 node' : 'Hears $n nodes';
 }
-
-/// Strength, in dBm, at or above which a node's advertisement reads as
-/// strong. A choice: these are the advertisement's strength as the phone
-/// hears it before any link, so the node's noise floor, by which a link's
-/// quality is judged, does not apply.
-const int strongDbm = -70;
-
-/// Strength, in dBm, below which a node's advertisement reads as weak; a
-/// choice, as [strongDbm].
-const int weakDbm = -85;
 
 /// A found node's signal in a word: strong, fair or weak.
 String signalWord(int? rssi) => rssi == null

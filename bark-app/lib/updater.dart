@@ -178,6 +178,14 @@ class Updater extends ChangeNotifier {
       'older version from the phone. A newer release, once there is one, '
       'can be sent from here.';
 
+  /// The app is in an exchange with the node that runs without the
+  /// person: sending the image, waiting for its check, or for its reboot.
+  /// Closing the link then cuts it.
+  bool get underWay =>
+      phase == Phase.sending ||
+      phase == Phase.committing ||
+      phase == Phase.rebooting;
+
   /// Whether the chosen image, its progress and its actions are shown:
   /// not once the node runs it, when they say nothing more.
   bool get showsImage => image != null && phase != Phase.done;
