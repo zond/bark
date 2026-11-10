@@ -6,7 +6,7 @@ use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
 use crate::keys::{self, Keys};
-use crate::plain::{self, Header, Part, Record, Writer};
+use crate::plain::{self, Header, Part, Reaction, Record, Writer};
 use crate::seal::{self, Fetch, Form, Opened};
 use crate::text::{self, Encoding};
 use crate::vectors::{self, fixture, hex};
@@ -465,7 +465,11 @@ fn records_read_back_in_order() {
         address: Some(f.home),
     };
     let mut w = Writer::new(&mut b, &h).unwrap();
-    w.push(&Record::Acknowledge { sent: 5 }).unwrap();
+    let heart = Record::React {
+        sent: 5,
+        reaction: Reaction::Heart,
+    };
+    w.push(&heart).unwrap();
     w.push(&Record::Card(c)).unwrap();
     let t = Record::Text {
         encoding: Encoding::Utf8,
@@ -479,18 +483,40 @@ fn records_read_back_in_order() {
     let (got, r) = plain::read(&b[..n]).unwrap();
     assert_eq!(got, h);
     let rs: Vec<_> = r.collect();
-    assert_eq!(
-        rs,
-        [
-            Ok(Record::Acknowledge { sent: 5 }),
-            Ok(Record::Card(c)),
-            Ok(t)
-        ]
-    );
+    assert_eq!(rs, [Ok(heart), Ok(Record::Card(c)), Ok(t)]);
     assert!(plain::read(&[0x80, 0, 0, 0, 0]).is_err());
-    let (_, mut r) = plain::read(&[0, 0, 0, 0, 0, 9]).unwrap();
+    let (_, mut r) = plain::read(&[0, 0, 0, 0, 0, 12]).unwrap();
     assert_eq!(r.next(), Some(Err(Error::Malformed)));
     assert_eq!(r.next(), None);
+}
+
+#[test]
+fn a_reaction_is_its_type_and_the_text_it_answers() {
+    let h = Header {
+        greater: false,
+        sent: 7,
+        address: None,
+    };
+    // The thumbs up is an older app's acknowledgement, byte for byte.
+    for (reaction, kind) in Reaction::ALL.into_iter().zip([3, 7, 8, 9, 10, 11]) {
+        let r = Record::React { sent: 5, reaction };
+        let mut b = [0u8; MAX_PAYLOAD];
+        let mut w = Writer::new(&mut b, &h).unwrap();
+        w.push(&r).unwrap();
+        let n = w.finish();
+        assert_eq!(&b[plain::HEADER_LEN..n], &[kind, 0, 0, 0, 5]);
+        let (_, mut rs) = plain::read(&b[..n]).unwrap();
+        assert_eq!(rs.next(), Some(Ok(r)));
+        assert_eq!(rs.next(), None);
+    }
+    // A reaction cut short, or of a type not in the set, does not read.
+    for bad in [
+        &[0, 0, 0, 0, 0, 7, 0, 0, 0][..],
+        &[0, 0, 0, 0, 0, 12, 0, 0, 0, 5],
+    ] {
+        let (_, mut rs) = plain::read(bad).unwrap();
+        assert_eq!(rs.next(), Some(Err(Error::Malformed)));
+    }
 }
 
 #[test]
