@@ -159,7 +159,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) await askToForget(context, app, staleBondLine(e.node));
     } catch (e) {
       if (mounted) {
-        say(context, pairing ? notPairedLine(e) : 'Connecting failed: $e');
+        say(
+          context,
+          pairing
+              ? notPairedLine(e)
+              : e is NotPaired
+              ? '$e.'
+              : 'Connecting failed: $e',
+        );
       }
     }
   }
@@ -278,7 +285,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ..._public(),
               ..._phones(),
               ..._home(),
-              ..._pairHere(),
               ..._updates(),
               ..._battery(),
               _heading('My name'),
@@ -416,7 +422,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         // The connected node's row does nothing; another's connects to
         // it, closing the link to this one first: a public node not the
-        // phone's as a guest.
+        // phone's as a guest, or paired with at once by its Pair.
         for (final FoundNode n in app.found.values) _found(n),
         if (app.noneFound) ...[
           const SizedBox(height: 8),
@@ -526,7 +532,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onTap: busy
           ? null
           : () => _connect(() => guest ? app.connectGuest(n) : app.connect(n)),
+      trailing: guest
+          ? TextButton(
+              onPressed: app.connecting ? null : () => _askPair(n),
+              child: const Text('Pair'),
+            )
+          : null,
     );
+  }
+
+  /// Pairs with `n`, a public node, by the code on its screen, once the
+  /// person has read what pairing gives; the home is set apart.
+  Future<void> _askPair(FoundNode n) async {
+    final g = app.guestHere;
+    if (g != null && g.found.name == n.name && g.room == 0) {
+      say(context, fullNode);
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Pair with ${shownName(n.name)}'),
+        content: const Text(
+          'Pairing makes this node one of yours: you can change its '
+          'settings, place it on the map and update it from this phone, and '
+          'the phone keeps a link to it while it is in reach, unless your '
+          'home is in reach too. You type the six-digit code its screen '
+          'shows. A node keeps up to eight phones, and those paired with it '
+          'before keep theirs.\n\n'
+          'Pairing does not make it your home: that is set under Home node '
+          'once you are connected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Pair'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _connect(() => app.connect(n));
   }
 
   /// The owner's switch of whether the node serves phones that have not
@@ -1033,6 +1082,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           padding: EdgeInsets.only(top: 8),
           child: Text('This node is someone else\'s home.'),
         ),
+      if (full)
+        const Padding(padding: EdgeInsets.only(top: 8), child: Text(fullNode)),
       const SizedBox(height: 8),
       Wrap(
         spacing: 8,
@@ -1123,32 +1174,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'The phone pairs with this node first: you type the six-digit code '
       'its screen shows. A node keeps up to eight phones, and the phones '
       'paired with it before keep theirs.';
-
-  /// A public node the phone uses as a guest, for a keeper who wants its
-  /// settings without making it their home, after the home's action.
-  List<Widget> _pairHere() {
-    final g = app.guestHere;
-    if (g == null) return [];
-    if (g.room == 0) {
-      return [const SizedBox(height: 8), const Text(fullNode)];
-    }
-    return [
-      const SizedBox(height: 8),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: const Icon(Icons.link),
-        title: const Text('Pair with this node'),
-        subtitle: const Text(
-          'For the person who keeps the node: its settings, its map point '
-          'and its updates on this phone, without making it your home. '
-          '$_pairsFirst',
-        ),
-        onTap: app.connecting
-            ? null
-            : () => _connect(() => app.connect(g.found), pairing: true),
-      ),
-    ];
-  }
 
   List<Widget> _backup() => [
     _heading('Backup'),

@@ -2031,6 +2031,52 @@ void main() {
         expect(app.linkDevice, home);
       });
     });
+    test('a tap on a public node from the home holds: the next link is '
+        'the public node\'s, as a guest, with no round between, and it '
+        'lasts until the node ends it', () {
+      run((async, app, ble) {
+        async.elapse(round);
+        expect(app.linkDevice, home);
+        final scans = ble.scans;
+        app.connectGuest(
+          FoundNode(strong, nodeName(strongId), -50, public: true),
+        );
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.connects, [home, strong]);
+        expect(ble.scans, scans);
+        expect((app.session.connected, app.session.guest), (true, true));
+        expect(
+          connectionLine(app),
+          'Connected to ID 0CE400000004 as a guest, until the node ends a '
+          'guest\'s link after 30 s. Home at ID FA4E00000001',
+        );
+        // No errand's end, no round, no move home while the node keeps it.
+        async.elapse(const Duration(seconds: 25));
+        expect(ble.connects, [home, strong]);
+        expect(ble.scans, scans);
+        expect(app.linkDevice, strong);
+        // The node ends it after its 30 s; the search takes the home.
+        async.elapse(const Duration(seconds: 10));
+        expect(ble.connects, [home, strong, home]);
+        expect((app.session.connected, app.session.guest), (true, false));
+      });
+    });
+    test('Pair on a public node from the home: paired by its code at once, '
+        'with no errand first and no round between', () {
+      run((async, app, ble) {
+        async.elapse(round);
+        expect(app.linkDevice, home);
+        final scans = ble.scans;
+        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.connects, [home, strong]);
+        expect(ble.scans, scans);
+        expect(ble.pairings, 1);
+        expect((app.session.connected, app.session.guest), (true, false));
+        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.me.home?.id, FakeNode.id);
+      });
+    });
   });
 
   group('a node Android holds a bond with that the app does not count as '

@@ -585,6 +585,13 @@ String connectionHelp(AppModel app) {
         'while it is in reach: your texts go out through it, and texts that '
         'come to it for you arrive here. $home';
   }
+  if (app.tappedGuest) {
+    return 'You connected to this public node, someone else\'s, as a guest. '
+        'The node serves one guest at a time and ends a guest\'s link 30 '
+        'seconds after it began, so that the others near it get their turn; '
+        'then the phone goes back to choosing a node itself. Texts you send '
+        'meanwhile go out through this node.$lostLine';
+  }
   if (app.nodeLine != null) {
     final why = app.ownWeak
         ? 'The nodes this phone is paired with are heard here too weakly '
