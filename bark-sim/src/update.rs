@@ -84,6 +84,12 @@ pub struct UpdateRun {
     pub stored_sleepy: u64,
     /// Anchors' home heartbeats, by whether the slot opened after them.
     opens: std::collections::BTreeMap<(bool, &'static str), u64>,
+    /// Pieces of the image heard by relays that gather it, those of a
+    /// block they held already, and those whose index of the block they
+    /// had heard before: what the senders spent for nothing.
+    gathered: [u64; 3],
+    /// The pieces each gathering relay heard, by block and index.
+    heard_by: std::collections::HashSet<(u32, u8, u8)>,
 }
 
 impl UpdateRun {
@@ -123,6 +129,8 @@ impl UpdateRun {
             listened: std::collections::HashSet::new(),
             stored_sleepy: 0,
             opens: std::collections::BTreeMap::new(),
+            gathered: [0; 3],
+            heard_by: std::collections::HashSet::new(),
         }
     }
 
@@ -242,6 +250,17 @@ impl UpdateRun {
             self.targeted[k] += 1;
             // A target that missed the last copy of this piece missed it.
             self.expected.insert((block, index, t), k);
+        }
+    }
+
+    /// Relay `node`, which gathers the image, heard piece `index` of
+    /// `block`: whether it needed it.
+    pub fn gatherer_heard(&mut self, node: u32, block: u8, index: u8) {
+        self.gathered[0] += 1;
+        if self.has.contains(&(node, block)) {
+            self.gathered[1] += 1;
+        } else if !self.heard_by.insert((node, block, index)) {
+            self.gathered[2] += 1;
         }
     }
 
@@ -402,6 +421,17 @@ impl UpdateRun {
             self.foreign[0],
             self.foreign[1],
             100.0 * self.foreign[1] as f64 / self.foreign[0].max(1) as f64,
+        );
+        let g = self.gathered;
+        let share = |n: u64| 100.0 * n as f64 / g[0].max(1) as f64;
+        let _ = writeln!(
+            out,
+            "# pieces heard by relays that gathered: {}, of a block held already {} ({:.1} %), a piece heard before {} ({:.1} %)",
+            g[0],
+            g[1],
+            share(g[1]),
+            g[2],
+            share(g[2]),
         );
         for (k, who) in ["relays", "sleepy nodes after their anchor's slot"]
             .iter()

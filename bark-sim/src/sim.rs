@@ -2276,7 +2276,18 @@ impl Sim {
         if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
             use bark_proto::wire::{Packet, Update};
             match Packet::decode(bytes) {
-                Ok(Packet::Update(Update::Piece { block, index, .. })) => {
+                Ok(Packet::Update(Update::Piece {
+                    version,
+                    block,
+                    index,
+                    ..
+                })) => {
+                    let r = &self.relays[node as usize];
+                    let gathers =
+                        !r.sleepy() && r.gathering().is_some_and(|(i, _)| i.version == version);
+                    if gathers {
+                        u.gatherer_heard(node, block, index);
+                    }
                     u.piece_heard(node, block, index)
                 }
                 Ok(Packet::Heartbeat(hb)) => {
