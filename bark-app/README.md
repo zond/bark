@@ -61,8 +61,7 @@ is a prototype for the bench, not the app people will carry.
   line opens Settings. Once there is a contact and
   until the backup words are written down, a card says "If you lose
   this phone, they are the only way back to your contacts"; a tap opens Settings scrolled to the backup, which
-  shows tinted for a moment and is announced. While the demo is on, a
-  card says "Demo: nothing leaves this phone".
+  shows tinted for a moment and is announced.
   A row swiped aside either way archives its conversation, with
   **Undo**; a line at the bottom then counts the archived ones, "2
   archived", and leads to Archived.
@@ -242,7 +241,6 @@ is a prototype for the bench, not the app people will carry.
   - **Battery**: whether Android may close the link with the screen
     off, with **Let bark run**, which opens Android's dialog to exempt
     the app from battery optimisation (next section).
-  - **Try without a node (demo)**, a node in the app, and **Debug**.
 - **Nearby nodes**, from the menu: a map. The connected node and every neighbour it
   knows on an OpenStreetMap street map, a line from the node to each
   coloured by the link's quality: green good, amber fair, red fragile,
@@ -705,7 +703,7 @@ notification, as Android 12 and later restrict starting a service from
 the background. It stops, and its notification goes, when the app neither
 holds a link nor looks. With the screen off and the phone still, Android
 may let the phone sleep through a round's pause, so a round can start
-later than 15 s. The fake node runs inside the app and starts no service.
+later than 15 s.
 
 Each new text notifies, with the system's sound and vibration, under the
 contact's name; a text in parts notifies once, at its first part, and
@@ -749,10 +747,11 @@ exemption (above) matters for the service to run for hours, and some
 makers' battery managers end it anyway, or keep the app from starting at
 boot, until the person allows it in the maker's own settings.
 
-## The fake node
+## The tests' node
 
-A switch in Settings replaces Bluetooth by a node written in Dart
-(`lib/fake_node.dart`) that answers as the spec says, with an invented
+The tests run the app against a node written in Dart
+(`test/fake_node.dart`), behind a phone's Bluetooth written in Dart too
+(`test/fake_ble.dart`), that answers as the spec says, with an invented
 network around it: a first rotation of 195 s in which it hears three
 relays; every third message it takes is given back with a wait of
 16 bans, 26 s; every fourth write is answered not ready for one ban,
@@ -1109,108 +1108,12 @@ a text goes, a long text's parts, the bars for a newer release against
 a fake fetch, and the map, its markers, lines,
 legend and a neighbour's details, over tiles that cannot be had. The Android side, the service and
 the boot receiver, cannot run on the host; it is kept small and tried on
-a phone (Trying it, With a node).
+a phone (Trying it).
 
 ## Trying it
 
-### With the fake node
-
-1. Open the app. It says why it needs Bluetooth, and Android asks. The
-   first screen says no conversations, with the **Get started** card.
-   Tap the line "Not connected", at the bottom turn on **Try without a
-   node (demo)**, and at the top press **Connect**. The first time, the
-   app says why it notifies: **Continue**, and allow it. It shows
-   `ID FA4E00000001`, connected, "Starting up, 3:14" counting down, then
-   "Hears 3 nodes".
-2. Go back. The first screen says "Demo: nothing leaves this phone". A
-   notification of the fake friend's two messages has come, and with
-   the fake friend a contact, the first screen asks you to write down
-   your 12 backup words: tap it, and Settings opens at **Backup**,
-   tinted for a moment. **Show my words**, write them down, **I wrote
-   them down**.
-   A conversation with **Fake friend** holds their two
-   messages.
-3. **Settings**, at the bottom, **Debug**: your identity and card address; link version 1,
-   the node ID `fa4e00000001`, the clock from the phone with the
-   phone's offset, Home "not a home", an address, and Status: ready,
-   external power, placed, first rotation running with about 3:15 to go,
-   the relays known and the neighbours heard rising from 0 to 3. The log shows the two inbox
-   messages read and confirmed.
-4. Open the conversation: it says not verified, and the top line "Last
-   wrote just now, away from home". Write a text and send it. It shows
-   as sent into the network, "to where they were"; 5 s later "Echo: " and
-   your text appears, and the note goes: the echo was sealed by the
-   fake friend.
-5. Press and hold the echo, and pick the heart: it shows on the
-   echo's lower right corner, and Debug lists a `reaction` sent. Press
-   and hold it again: the heart now leads the first row. Type
-   "hedgehog" in the search and pick it: it takes the heart's place,
-   and a second `reaction` is listed. Close and reopen the app; the
-   first row is as it was.
-6. Send three more. The third is given back with a wait counting down
-   from 0:26. When the wait is over the app sends it again by itself.
-   This is the fourth write, which the fake answers not ready: the text
-   stays queued for about two seconds, then it is taken.
-7. Wait a minute after the last echo, then send a text: the send
-   button asks "Where Fake friend was 1 min ago" or
-   "Their home mailbox". Pick the mailbox: the text says "to their
-   home". Its echo makes where they were fresh again, and the next text
-   goes there without asking.
-8. Write a text of more than 160 letters: a line under the field says
-   "2 parts". Send it: one bubble with the whole text, its parts'
-   state in words while they differ. When both are taken, 5 s later the
-   echo's last part arrives with "part 1 of 2 not yet here" in its
-   place, and 5 s after that the whole echo.
-9. The QR button, **My card**: set a name. A QR code appears, marked
-   temporary without a home; **Share** opens Android's share sheet with
-   the card's text and the code's image, and **Details** your identity
-   and the card as text, `BARK:` and capitals.
-10. Menu, **Settings**, under **This node**, **Place**: press **Use this
-    phone's location** (allow location): a line says the coordinates
-    set, Debug's address changes, and the
-    next text to the fake friend names it. **Clear** brings back the
-    fake's own fix.
-11. **Settings**, under **Home node**: **Make this node my home**. The
-    dialog says "Your new card goes to your contact." **Make it my
-    home**: "This node is your home". Debug's Home reads "a home, its
-    mailbox empty". Go back: the bar has the inbox button, **Fetch my
-    mail**. Press it: "At your home, your mail comes by itself", and
-    nothing is sent. Disconnect and press it: "The fetch waits for a
-    node".
-12. Connect again. **Settings**, **No home node**, **No home**: the
-    node forgets the key, and Home reads "not a home". Make it your home
-    again, disconnect, press **No home node**: "Your old home keeps your
-    mail until you stop it there". Connect: Settings says "This node
-    still keeps your mail from when it was your home"; **Stop keeping
-    my mail** clears it.
-13. Menu, **Nearby nodes**: the fake node in Kyiv and its five neighbours,
-    three green lines, one amber and one red; the red one and a green
-    one dashed. Tap the red
-    one: `ID FA4E00000103`, fragile, 3.0 dB over the floor, demoted.
-    Within half a second most markers show their screens' roles, such
-    as `FIXED RELAY`; the fake loses one ask in three, so one more
-    shows about 2 s later, asked again, and the one that never answers
-    is asked three times in all (Debug's log, `Ask:`). **Read again**
-    within 10 s asks only that one; later, all of them.
-    With the phone offline and the area never seen, a line says the
-    street map is missing and the nodes are drawn on blank.
-14. Disconnect, close the app, open it again: the conversations, the
-    contacts, your name and your identity are still there.
-15. **Settings**, under **Updates**: **Node firmware** says the fake runs
-    version 1. Debug, **Bench**, **Pick a firmware file**, or with a release known
-    **Send to the node**, then **Latest release** (or **Pick a file** with a signed
-    image; the fake refuses one whose header names no key):
-    the image's version and size. **Send to the node**: the bar fills at
-    once, the fake has no radio to wait for; then "The node checked
-    version N". **Reboot into version N**: the link closes, and the
-    fake takes no connection for 55 s, as a node swapping; then
-    **Connect** in Settings, and the screen says "ID … runs version
-    N, updated from version 1 just now.", without the image or the bar.
-
-### With a node
-
 1. Switch the node on and read the twelve hex digits on its display.
-2. In **Settings**, with the demo off, press **Scan** and allow
+2. In **Settings**, press **Scan** and allow
    Bluetooth. The node shows within about a second as `ID` and those
    digits, as its screen shows them. Tap it: the phone uses it as a
    guest, and Settings says so. Under the home node, **Make this node my
@@ -1260,8 +1163,9 @@ a phone (Trying it, With a node).
    send it a text: it sounds and shows the text under the sender's
    name. A second text joins the same notification. Tapping it opens
    the thread, and the notification goes.
-8. Given back and not ready happen only when the network refuses; they
-   show as in step 6 with the fake node.
+8. Given back and not ready happen only when the network refuses: a
+   text given back counts down its wait and goes again by itself, and
+   one answered not ready stays queued until the node takes it.
 9. On a node on USB that stays where it is, **Settings**, **Make this
    node my home**: Debug's Home reads a home, and the node's log shows
    `ble: home set`. Texts to your card now go to it and wait in its

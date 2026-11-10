@@ -11,7 +11,9 @@
 import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/node_link.dart';
 import 'package:fake_async/fake_async.dart';

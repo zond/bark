@@ -3,7 +3,7 @@
 // its own settings, whether it serves phones without pairing, its place
 // and the phones paired with it; updates of the app and the node; the
 // person's name and backup words; the battery exemption that keeps the
-// link with the screen off; then the demo and Debug.
+// link with the screen off; then Debug.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -331,17 +331,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               ..._battery(),
               const SizedBox(height: 24),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Try without a node (demo)'),
-                subtitle: Text(
-                  app.session.connected && !app.fake
-                      ? 'Disconnect from the node first'
-                      : 'Nothing leaves this phone',
-                ),
-                value: app.fake,
-                onChanged: app.session.connected ? null : app.setFake,
-              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.bug_report_outlined),
@@ -412,43 +401,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
         )
       else
         const SizedBox(height: 8),
-      if (app.fake && !s.connected)
-        Align(
-          alignment: Alignment.centerLeft,
-          child: FilledButton(
-            onPressed: () => _connect(app.connectFake),
-            child: const Text('Connect'),
+      Row(
+        children: [
+          FilledButton(
+            onPressed: app.scanning || app.connecting
+                ? app.stopScan
+                : () => _try(app.scan, 'Scan failed'),
+            child: Text(app.scanning ? 'Stop' : 'Scan'),
           ),
-        )
-      else if (!app.fake) ...[
-        Row(
-          children: [
-            FilledButton(
-              onPressed: app.scanning || app.connecting
-                  ? app.stopScan
-                  : () => _try(app.scan, 'Scan failed'),
-              child: Text(app.scanning ? 'Stop' : 'Scan'),
+          const SizedBox(width: 16),
+          if (app.scanning || app.connecting)
+            const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
-            const SizedBox(width: 16),
-            if (app.scanning || app.connecting)
-              const SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-          ],
-        ),
-        // The connected node's row does nothing; another's connects to
-        // it, closing the link to this one first: a public node not the
-        // phone's as a guest, or paired with at once by its Pair.
-        for (final FoundNode n in app.found.values) _found(n),
-        if (app.noneFound) ...[
-          const SizedBox(height: 8),
-          const Text('No node found nearby.'),
-          Text(
-            'Switch one on, or come closer.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
         ],
+      ),
+      // The connected node's row does nothing; another's connects to
+      // it, closing the link to this one first: a public node not the
+      // phone's as a guest, or paired with at once by its Pair.
+      for (final FoundNode n in app.found.values) _found(n),
+      if (app.noneFound) ...[
+        const SizedBox(height: 8),
+        const Text('No node found nearby.'),
+        Text(
+          'Switch one on, or come closer.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     ];
   }

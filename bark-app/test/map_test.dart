@@ -10,7 +10,10 @@
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_ble.dart';
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
@@ -50,7 +53,7 @@ void main() {
       app.connectFake();
       async.flushMicrotasks();
       body(async, app);
-      app.dispose();
+      app.disposeWithNode();
     });
   }
 
@@ -241,7 +244,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   }
 
   testWidgets('the map asks as it opens, again while one is silent, and '
@@ -579,7 +582,7 @@ void main() {
     debugPrint = print;
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 }
 

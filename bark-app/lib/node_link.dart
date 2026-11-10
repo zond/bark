@@ -1,6 +1,6 @@
 // What the app needs of a connected node: the service's reads, writes
-// and notifications (spec "Phone link"). The Bluetooth link and the fake
-// node both implement it.
+// and notifications (spec "Phone link"). The Bluetooth link implements
+// it, and so does the tests' node.
 
 import 'dart:typed_data';
 

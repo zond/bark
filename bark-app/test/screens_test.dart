@@ -24,7 +24,10 @@ import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/emojis.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_ble.dart';
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
@@ -47,7 +50,6 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:sodium/sodium.dart';
 
 import 'alerts_test.dart' show FakeNotifier;
-import 'ble_link_test.dart' show FakeNodes, OtherNode;
 
 /// The one check's words: no news from the network past it.
 const sentTip = 'Sent into the network, which does not say when it arrives';
@@ -79,29 +81,20 @@ void main() {
 
   testWidgets('conversations, a thread, settings, card and debug', (t) async {
     final app = await model(t);
+    app.fakeNode = FakeNode(now: app.now, sodium: sodium, app: app.me.identity);
+    await app.session.setPaired(nodeName(FakeNode.id));
     await t.pumpWidget(BarkApp(app));
     expect(find.textContaining('No conversations yet'), findsOneWidget);
     // No contact yet, so nobody to lose: no backup banner.
     expect(find.textContaining('these words'), findsNothing);
 
-    // Settings: the demo at the bottom, and the backup words.
+    // Settings: a tap on the paired node connects to it, and the backup
+    // words.
     await t.tap(find.textContaining('Not connected'));
     await t.pumpAndSettle();
-    await t.scrollUntilVisible(
-      find.text('Try without a node (demo)'),
-      100,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await t.tap(find.text('Try without a node (demo)'));
-    await t.pump();
-    await t.scrollUntilVisible(
-      find.text('Connect'),
-      -100,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await t.tap(find.text('Connect'));
-    await t.pump();
-    expect(find.text('ID FA4E00000001'), findsOneWidget);
+    await t.tap(find.text('ID FA4E00000001'));
+    await t.pumpAndSettle();
+    expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
     await t.scrollUntilVisible(
       find.text('Show my words'),
       100,
@@ -410,7 +403,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a contact from a pasted card', (t) async {
@@ -439,7 +432,7 @@ void main() {
     expect(app.contacts.list.single.verified, isFalse);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('without a name, My card asks for one in place of the card', (
@@ -463,7 +456,7 @@ void main() {
     expect(find.byType(QrImageView), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a scanned card without a name opens its thread, Unnamed', (
@@ -502,7 +495,7 @@ void main() {
     expect(find.text(unnamed), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('Get started: three steps ticked as they are done, then gone', (
@@ -528,7 +521,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the home: a node without a place offers the phone\'s '
@@ -572,7 +565,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the backup banner shows once there is a contact, and lands '
@@ -615,7 +608,7 @@ void main() {
     expect(at.top, greaterThanOrEqualTo(0));
     expect(at.bottom, lessThanOrEqualTo(view.height));
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('Remove contact and Restore from words ask first', (t) async {
@@ -662,7 +655,7 @@ void main() {
     expect(find.text('Your 12 words'), findsNothing);
     expect(app.me.key, key);
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a temporary contact: marked with its age until a card with a '
@@ -723,7 +716,7 @@ void main() {
     expect(find.text('Has a home node'), findsOneWidget);
     expect(find.byIcon(Icons.hourglass_empty), findsNothing);
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a stale address and a home: the send button asks where', (
@@ -775,7 +768,7 @@ void main() {
     expect(find.byTooltip('To where they were'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a first message in a verified thread is marked', (t) async {
@@ -828,7 +821,7 @@ void main() {
     expect(find.byTooltip(unverifiedText), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a long text: its parts counted, one bubble, states summed', (
@@ -920,7 +913,7 @@ void main() {
     expect(find.byTooltip('You reacted: folded hands'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the fetch button: with a home only, and why nothing is sent', (
@@ -997,7 +990,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the home dialog sends the new card; a move waits for a tap', (
@@ -1084,7 +1077,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the home dialog on a home that lost the key, the card changed '
@@ -1137,7 +1130,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a connect to the node connected, or during one, does nothing', (
@@ -1154,18 +1147,22 @@ void main() {
     );
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('another phone paired: no longer yours, then paired again', (
     t,
   ) async {
     final app = await model(t);
-    app.setFake(true);
+    app.fakeNode = FakeNode(now: app.now, sodium: sodium, app: app.me.identity);
+    await app.session.setPaired(nodeName(FakeNode.id));
     await t.pumpWidget(BarkApp(app));
     expect(find.text('Not connected. Texts wait on the phone'), findsOneWidget);
-    await app.connectFake();
-    await t.pump();
+    await t.tap(find.textContaining('Not connected'));
+    await t.pumpAndSettle();
+    final row = find.text('ID FA4E00000001');
+    await t.tap(row);
+    await t.pumpAndSettle();
     expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
     await app.session.disconnect();
     await t.pump();
@@ -1174,16 +1171,14 @@ void main() {
     // The node takes another phone's pairing; this one learns at its next
     // connection, and may leave it so.
     app.fakeNode!.pairElsewhere();
-    await t.tap(find.textContaining('Not connected'));
-    await t.pumpAndSettle();
-    await t.tap(find.text('Connect'));
+    await t.tap(row);
     await t.pumpAndSettle();
     expect(find.text('This node is no longer yours'), findsOneWidget);
     await t.tap(find.text('Not now'));
     await t.pumpAndSettle();
     expect(app.session.connected, isFalse);
     // Settings lists it among the paired nodes, lost.
-    expect(find.text('ID FA4E00000001'), findsOneWidget);
+    expect(row, findsOneWidget);
     expect(find.text('No longer yours'), findsOneWidget);
 
     // Its row offers to pair again, beside Forget, and a tap on it says
@@ -1191,7 +1186,7 @@ void main() {
     final again = find.widgetWithText(TextButton, 'Pair again');
     expect(again, findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Forget'), findsOneWidget);
-    await t.tap(find.text('ID FA4E00000001'));
+    await t.tap(row);
     await t.pumpAndSettle();
     expect(
       find.text('ID FA4E00000001 no longer knows this phone'),
@@ -1202,30 +1197,24 @@ void main() {
     await t.tapAt(const Offset(10, 10));
     await t.pumpAndSettle();
 
-    // Or pair again from the dialog, at the node.
-    await t.tap(find.text('Connect'));
-    await t.pumpAndSettle();
-    await t.tap(find.widgetWithText(FilledButton, 'Pair again'));
+    // Pair again from its row, in one press.
+    await t.tap(again);
     await t.pumpAndSettle();
     expect(app.session.connected, isTrue);
     expect(app.session.pairingLost, isEmpty);
     expect(again, findsNothing);
 
-    // Lost once more, and paired again from its row, in one press.
+    // Lost once more, and paired again from the dialog, at the node.
     app.fakeNode!.pairElsewhere();
     await app.session.disconnect();
     await t.pump();
-    await t.tap(find.text('Connect'));
+    await t.tap(row);
     await t.pumpAndSettle();
-    await t.tap(find.text('Not now'));
-    await t.pumpAndSettle();
-    expect(app.session.pairingLost, isNotEmpty);
-    await t.tap(again);
+    await t.tap(find.widgetWithText(FilledButton, 'Pair again'));
     await t.pumpAndSettle();
     expect(app.session.connected, isTrue);
     expect(app.session.pairingLost, isEmpty);
     expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
-    expect(find.text('Connected'), findsOneWidget);
     // The node's health in words, not the link's MTU: the fake is in its
     // first rotation.
     expect(find.textContaining('Starting up, '), findsOneWidget);
@@ -1234,14 +1223,13 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('Settings lists the paired nodes, the home first, each with '
       'how it stands, and Unpair on the one connected; the line\'s help '
       'says why', (t) async {
     final app = await model(t);
-    app.setFake(true);
     await app.connectFake();
     await app.me.setHome(Address(Position.fromDegrees(50, 30), FakeNode.id));
     // Paired with another since, which another phone has paired with.
@@ -1269,7 +1257,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('Forget on a node no longer yours: the dialog says what '
@@ -1312,14 +1300,13 @@ void main() {
     expect(find.text('Paired with'), findsNothing);
 
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the node\'s phones in two lists; another\'s removed by the '
       'code on the node\'s screen, a wrong code offering a new one', (t) async {
     final app = await model(t);
     await app.me.setName('Ann');
-    app.setFake(true);
     final f = app.fakeNode = FakeNode(
       now: DateTime.now,
       sodium: sodium,
@@ -1391,14 +1378,13 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a full node: Settings says it takes no more pairings', (
     t,
   ) async {
     final app = await model(t);
-    app.setFake(true);
     final f = app.fakeNode = FakeNode(
       now: DateTime.now,
       sodium: sodium,
@@ -1418,13 +1404,12 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the paired list: stopped, a row says so and a tap connects; '
       'Disconnect below it; a newer node said quietly', (t) async {
     final app = await model(t);
-    app.setFake(true);
     app.fakeNode = FakeNode(
       now: DateTime.now,
       sodium: sodium,
@@ -1455,14 +1440,13 @@ void main() {
     expect(app.session.stopped, isTrue);
     expect(find.text('Not looking. Tap to connect'), findsNWidgets(2));
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the owner unpairs, after the dialog says what follows', (
     t,
   ) async {
     final app = await model(t);
-    app.setFake(true);
     await app.connectFake();
     await app.session.setPaired(nodeName(FakeNode.id));
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
@@ -1493,7 +1477,7 @@ void main() {
     expect(app.pairedNodes, isEmpty);
     expect(unpair, findsNothing);
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('a node that refuses the phone\'s old bond: one line on the '
@@ -1526,13 +1510,12 @@ void main() {
     await t.pump();
     expect(find.text(line), findsOneWidget);
     await t.pumpWidget(const SizedBox());
-    app.dispose();
+    app.disposeWithNode();
   });
 
   testWidgets('the owner\'s Public switch; a guest\'s line, without the '
       'owner\'s settings', (t) async {
     final app = await model(t);
-    app.setFake(true);
     await app.connectFake();
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
@@ -1555,17 +1538,21 @@ void main() {
     expect(app.fakeNode!.public, isFalse);
     expect(app.session.nodePublic, isFalse);
 
-    // Another phone's view, on the node public again: connected as a guest.
+    // A phone not paired with it, on the node public again: connected as
+    // a guest, by a tap.
     app.fakeNode!.public = true;
+    app.fakeBle!.bonds.clear();
     await app.session.disconnect();
-    await app.session.attach(app.fakeNode!.connectGuest(), guest: true);
+    await app.connectGuest(
+      FoundNode(fakeDevice, nodeName(FakeNode.id), -60, public: true),
+    );
     await t.pump();
+    expect(app.session.guest, isTrue);
     expect(find.text(public), findsNothing);
-    const guestLine = 'Connected to ID FA4E00000001 as a guest';
+    const guestLine = 'Connected to ID FA4E00000001 as a guest for 30 s';
     expect(find.text(guestLine), findsOneWidget);
     expect(find.text('Send to the node'), findsNothing);
     expect(find.text('Pick a firmware file'), findsNothing);
-    expect(find.text('Make this node my home'), findsNothing);
     expect(find.text('This node'), findsNothing);
     await t.pumpWidget(BarkApp(app));
     await t.pump();
@@ -1574,7 +1561,7 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 
   /// The app used as a guest at a public node nobody has paired with:
@@ -1606,7 +1593,7 @@ void main() {
     await app.stopLooking();
     app.session.disconnect();
     await t.pump(const Duration(seconds: 1));
-    app.dispose();
+    app.disposeWithNode();
     for (final n in ble.nodes.values) {
       n.dispose();
     }
@@ -1814,6 +1801,6 @@ void main() {
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
     await t.pump();
-    app.dispose();
+    app.disposeWithNode();
   });
 }

@@ -11,7 +11,9 @@ import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/conversations.dart';
 import 'package:bark_app/emojis.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/messenger.dart';

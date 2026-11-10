@@ -1,6 +1,6 @@
 // What every screen shares: the person, their contacts, the session with
 // the node, the messages sealed and opened, and how the app reaches a
-// node, by Bluetooth or the fake.
+// node over Bluetooth.
 
 import 'dart:async';
 
@@ -11,7 +11,6 @@ import 'package:universal_ble/universal_ble.dart';
 import 'alerts.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
-import 'fake_node.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
@@ -268,9 +267,6 @@ class AppModel extends ChangeNotifier {
     }
   }
 
-  /// Whether to connect to the fake node instead of Bluetooth.
-  bool fake = false;
-  FakeNode? fakeNode;
   final Map<String, FoundNode> found = {};
   bool scanning = false;
 
@@ -291,10 +287,8 @@ class AppModel extends ChangeNotifier {
   /// another node in the moments between ([_byTap]).
   bool get connecting => linking != Linking.none || _tapHeld;
 
-  /// The device of the link connected or being connected: a found
-  /// node's ID, or [fakeDevice].
+  /// The device of the link connected or being connected.
   String? linkDevice;
-  static const fakeDevice = 'fake';
 
   /// After a connect found the node no longer this phone's: forgets the
   /// old bond and connects again, which pairs.
@@ -346,7 +340,7 @@ class AppModel extends ChangeNotifier {
     final device = linkDevice;
     final n = session.node;
     await session.unpair();
-    if (device == null || device == fakeDevice || n == null) return true;
+    if (device == null || n == null) return true;
     final name = nodeName(n.id);
     // Nothing learned of the node unpaired bears on the next.
     _ownMissed = 0;
@@ -384,8 +378,6 @@ class AppModel extends ChangeNotifier {
   /// one round's scan, and [NotSeen] goes on if it is not heard.
   Future<void> connectPaired(String name) async {
     if (_tapHeld) return;
-    final f = fakeNode;
-    if (fake && f != null && name == nodeName(f.nodeId)) return connectFake();
     await _byTap(() async {
       var n = heardLately(name);
       if (n == null) {
@@ -410,22 +402,13 @@ class AppModel extends ChangeNotifier {
   }
 
   /// Whether `name`, a paired node no longer this phone's, may be paired
-  /// with again now ([pairLost]): heard lately, or the fake node.
-  bool lostInReach(String name) {
-    final f = fakeNode;
-    if (fake && f != null && name == nodeName(f.nodeId)) return true;
-    return heardLately(name) != null;
-  }
+  /// with again now ([pairLost]): heard lately.
+  bool lostInReach(String name) => heardLately(name) != null;
 
   /// The person pairs again with `name`, a paired node that no longer
   /// knows this phone, by the code on its screen, as **Pair** on its row
   /// in a scan does ([connect]).
   Future<void> pairLost(String name) async {
-    final f = fakeNode;
-    if (fake && f != null && name == nodeName(f.nodeId)) {
-      f.pair();
-      return connectFake();
-    }
     final n = heardLately(name);
     if (n == null) throw NotSeen(shownName(name));
     await connect(n);
@@ -591,8 +574,7 @@ class AppModel extends ChangeNotifier {
   /// Keeps the app running while a node is connected by Bluetooth, so
   /// that it reads the inbox with the screen off, and while it searches
   /// for the paired node, so that the texts waiting go out as soon as it
-  /// is in reach. The fake node runs in the app and is not a connected
-  /// device.
+  /// is in reach.
   ///
   /// The app also starts with the phone and looks for its paired nodes,
   /// unless none is still this phone's or the person stopped looking: a
@@ -613,7 +595,7 @@ class AppModel extends ChangeNotifier {
   /// connecting it stays: Android 12 and later refuse to start the service
   /// again from the background.
   Held? get held {
-    final on = fake ? null : nodeLine;
+    final on = nodeLine;
     if (on != null) {
       return (
         title: on,
@@ -665,7 +647,7 @@ class AppModel extends ChangeNotifier {
   /// no node to send through. `why` shows the person why first and says
   /// whether to go on.
   Future<void> askForBluetooth(Future<bool> Function() why) async {
-    if (me.askedBluetooth || fake || !_searchStarted) return;
+    if (me.askedBluetooth || !_searchStarted) return;
     await checkBluetooth();
     if (bluetoothAllowed) return;
     await me.setAskedBluetooth();
@@ -809,15 +791,6 @@ class AppModel extends ChangeNotifier {
     return h.mine
         ? 'The node refused. It still keeps your mail.'
         : 'It no longer keeps your mail';
-  }
-
-  void setFake(bool v) {
-    fake = v;
-    if (!v) {
-      fakeNode?.dispose();
-      fakeNode = null;
-    }
-    notifyListeners();
   }
 
   /// Scans for nodes, after asking for Bluetooth if it is not allowed
@@ -1100,25 +1073,6 @@ class AppModel extends ChangeNotifier {
     }, again: () => connect(n, again: true));
   }
 
-  Future<void> connectFake() async {
-    if (connecting || connectedTo(fakeDevice)) return;
-    final f = fakeNode ??= FakeNode(
-      now: now,
-      sodium: sodium,
-      app: me.identity,
-      mailbox: me.keys.mailbox,
-    );
-    await _open(
-      fakeDevice,
-      nodeName(f.nodeId),
-      () async => (f.connect(), attMtu),
-      again: () async {
-        f.pair();
-        await connectFake();
-      },
-    );
-  }
-
   /// Connects by `open` and attaches the link, which ends a stop of the
   /// search the person made. Unless the link is a `guest`'s, the node
   /// holds this phone's bond then and is kept as the paired node; one
@@ -1231,11 +1185,11 @@ class AppModel extends ChangeNotifier {
     return h != null && p.contains(h) ? h : p.lastOrNull;
   }
 
-  /// Whether the search runs: not once the person stopped it, nor with the
-  /// fake node in use, nor on a paired node, nor on a guest's link the
+  /// Whether the search runs: not once the person stopped it, nor on a
+  /// paired node, nor on a guest's link the
   /// person made by a tap ([tappedGuest]), nor while unpairing.
   bool get searchOn {
-    if (!_searchStarted || fake || session.stopped || _unpairing) return false;
+    if (!_searchStarted || session.stopped || _unpairing) return false;
     return !session.connected || (session.guest && !_tapped);
   }
 
@@ -1257,7 +1211,7 @@ class AppModel extends ChangeNotifier {
   /// made by a tap, which is theirs until it drops, nor once they stopped
   /// the search.
   String? get _above {
-    if (!_searchStarted || fake || session.stopped || _unpairing) return null;
+    if (!_searchStarted || session.stopped || _unpairing) return null;
     final n = session.connected && !session.guest ? session.node : null;
     final h = homeName;
     if (n == null || _tapped || h == null || !pairedNodes.contains(h)) {
@@ -1707,7 +1661,6 @@ class AppModel extends ChangeNotifier {
     session.removeListener(_queuedFetch);
     session.removeListener(_link);
     session.removeListener(_search);
-    fakeNode?.dispose();
     updater.dispose();
     releases.dispose();
     session.dispose();

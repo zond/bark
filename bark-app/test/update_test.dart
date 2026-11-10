@@ -11,7 +11,10 @@ import 'dart:typed_data';
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
-import 'package:bark_app/fake_node.dart';
+
+import 'fake_ble.dart';
+import 'fake_node.dart';
+
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/releases.dart';
@@ -396,7 +399,6 @@ void main() {
       firmware: 2,
       image: 'https://x/img2',
     );
-    app.setFake(true);
     await app.connectFake();
     final u = app.updater;
     await t.pumpWidget(MaterialApp(home: UpdateScreen(app)));
@@ -449,6 +451,6 @@ void main() {
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
-    app.dispose();
+    app.disposeWithNode();
   });
 }

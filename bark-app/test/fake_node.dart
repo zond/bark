@@ -1,5 +1,6 @@
-// A node in Dart that answers as the spec's "Phone link" says, so the
-// app can be tried on a phone with no board. Its network is invented:
+// A node in Dart that answers as the spec's "Phone link" says, for the
+// app's tests, behind a fake Bluetooth (`fake_ble.dart`). Its network is
+// invented:
 // it hears relays, gives some messages back, and behind it is one
 // person, the fake friend, who writes first and echoes every text sent
 // to them, sealed as a real phone would. The fake friend has a home and
@@ -19,13 +20,12 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:bark_app/app_layer.dart';
+import 'package:bark_app/card.dart';
+import 'package:bark_app/link.dart';
+import 'package:bark_app/node_link.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:sodium/sodium.dart';
-
-import 'app_layer.dart';
-import 'card.dart';
-import 'link.dart';
-import 'node_link.dart';
 
 class FakeNode implements NodeLink {
   final DateTime Function() now;
