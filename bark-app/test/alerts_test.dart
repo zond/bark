@@ -274,7 +274,8 @@ void main() {
   test('the app starts with the phone while the paired node is its own '
       'and the person has not stopped looking', () {
     run((async, app, n) {
-      const looking = 'Looking for ID FA4E00000001';
+      const looking =
+          'Not connected. Looking for ID FA4E00000001; texts wait on the phone';
       expect(n.boot, [null, looking]);
       app.disconnect();
       async.flushMicrotasks();
@@ -312,7 +313,7 @@ void main() {
       async.flushMicrotasks();
       app.connectFake().catchError((_) {});
       async.flushMicrotasks();
-      expect(app.session.pairingLost, isTrue);
+      expect(app.session.pairingLost, contains(nodeName(FakeNode.id)));
       expect(n.boot.last, isNull);
     });
   });

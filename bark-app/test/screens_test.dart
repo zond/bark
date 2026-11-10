@@ -1000,13 +1000,13 @@ void main() {
     final app = await model(t);
     app.setFake(true);
     await t.pumpWidget(BarkApp(app));
-    expect(find.textContaining('Not paired with a node yet'), findsOneWidget);
+    expect(find.text('Not connected. Texts wait on the phone'), findsOneWidget);
     await app.connectFake();
     await t.pump();
     expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
     await app.session.disconnect();
     await t.pump();
-    expect(find.textContaining('Paired with ID FA4E00000001.'), findsOneWidget);
+    expect(find.text('Not connected. Texts wait on the phone'), findsOneWidget);
 
     // The node takes another phone's pairing; this one learns at its next
     // connection, and may leave it so.
@@ -1019,11 +1019,10 @@ void main() {
     await t.tap(find.text('Not now'));
     await t.pumpAndSettle();
     expect(app.session.connected, isFalse);
+    // Settings lists it among the paired nodes, lost.
+    expect(find.text('ID FA4E00000001'), findsOneWidget);
     expect(
-      find.text(
-        'ID FA4E00000001 is no longer yours: another phone has paired '
-        'with it.',
-      ),
+      find.text('No longer yours: another phone has paired with it'),
       findsOneWidget,
     );
 
@@ -1033,12 +1032,51 @@ void main() {
     await t.tap(find.text('Pair again'));
     await t.pumpAndSettle();
     expect(app.session.connected, isTrue);
-    expect(app.session.pairingLost, isFalse);
-    expect(find.textContaining('Connected and paired'), findsOneWidget);
+    expect(app.session.pairingLost, isEmpty);
+    expect(find.text('Connected to ID FA4E00000001, paired'), findsOneWidget);
+    expect(find.text('Connected'), findsOneWidget);
     // The node's health in words, not the link's MTU: the fake is in its
     // first rotation.
     expect(find.textContaining('Starting up, '), findsOneWidget);
     expect(find.textContaining('MTU'), findsNothing);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.dispose();
+  });
+
+  testWidgets('Settings lists the paired nodes, the home first, each with '
+      'how it stands, and Unpair on the one connected; the line\'s help '
+      'says why', (t) async {
+    final app = await model(t);
+    app.setFake(true);
+    await app.connectFake();
+    await app.me.setHome(Address(Position.fromDegrees(50, 30), FakeNode.id));
+    // Paired with another since, which another phone has paired with.
+    await app.session.setPaired('bark-0ce400000002', lost: true);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    expect(
+      find.text('Connected to your home, ID FA4E00000001'),
+      findsOneWidget,
+    );
+    expect(find.text('Paired with'), findsOneWidget);
+    final home = find.text('ID FA4E00000001');
+    final other = find.text('ID 0CE400000002');
+    expect(t.getTopLeft(home).dy, lessThan(t.getTopLeft(other).dy));
+    expect(find.text('Your home, connected'), findsOneWidget);
+    expect(
+      find.text('No longer yours: another phone has paired with it'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(TextButton, 'Unpair'), findsOneWidget);
+    await t.tap(find.byTooltip('Why this node'));
+    await t.pumpAndSettle();
+    expect(
+      find.textContaining('This phone is paired with your home node'),
+      findsOneWidget,
+    );
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
@@ -1055,10 +1093,11 @@ void main() {
     await app.session.setPaired(nodeName(FakeNode.id));
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
-    final unpair = find.text('Unpair this node');
+    final unpair = find.widgetWithText(TextButton, 'Unpair');
     await t.ensureVisible(unpair);
     await t.tap(unpair);
     await t.pumpAndSettle();
+    expect(find.text('Unpair ID FA4E00000001?'), findsOneWidget);
     expect(find.textContaining('forgets this phone'), findsOneWidget);
     expect(find.textContaining('UNPAIRED'), findsOneWidget);
     expect(find.textContaining('public again'), findsOneWidget);
@@ -1078,9 +1117,9 @@ void main() {
     expect(app.fakeNode!.paired, isFalse);
     expect(app.fakeNode!.public, isTrue);
     expect(app.session.connected, isFalse);
-    expect(app.session.pairedWith, isNull);
-    expect(app.pairedNode, isNull);
-    expect(find.text('Unpair this node'), findsNothing);
+    expect(app.session.pairedWith, isEmpty);
+    expect(app.pairedNodes, isEmpty);
+    expect(unpair, findsNothing);
     await t.pumpWidget(const SizedBox());
     app.dispose();
   });
@@ -1148,23 +1187,15 @@ void main() {
     await app.session.attach(app.fakeNode!.connectGuest(), guest: true);
     await t.pump();
     expect(find.text(public), findsNothing);
-    expect(
-      find.textContaining(
-        'Using ID FA4E00000001 as a guest: a public node, not yours. It is '
-        'someone else\'s',
-      ),
-      findsOneWidget,
-    );
+    const guestLine = 'Connected to ID FA4E00000001 as a guest';
+    expect(find.text(guestLine), findsOneWidget);
     expect(find.text('Send to the node'), findsNothing);
     expect(find.text('Pick a firmware file'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
     expect(find.text('Node\'s place'), findsNothing);
     await t.pumpWidget(BarkApp(app));
     await t.pump();
-    expect(
-      find.text('Using ID FA4E00000001 as a guest: a public node, not yours'),
-      findsOneWidget,
-    );
+    expect(find.text(guestLine), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
@@ -1264,7 +1295,7 @@ void main() {
     );
     // Neither the owner's switch nor its unpairing for a guest.
     expect(find.text('Public: serve phones without pairing'), findsNothing);
-    expect(find.text('Unpair this node'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Unpair'), findsNothing);
     await t.ensureVisible(find.text(home));
     await t.tap(find.text(home));
     await t.pumpAndSettle();

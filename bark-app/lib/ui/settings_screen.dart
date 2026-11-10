@@ -275,7 +275,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               StaleBondLine(app),
               ..._connection(),
               ..._public(),
-              ..._unpair(),
               ..._home(),
               ..._pairHere(),
               ..._updates(),
@@ -356,31 +355,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = app.session;
     return [
       _heading('Node'),
+      if (app.connecting)
+        Text(_linking(app.linking))
+      else
+        Row(
+          children: [
+            Expanded(child: Text(connectionLine(app))),
+            ConnectionHelpButton(app),
+          ],
+        ),
       if (s.connected)
         ListTile(
           contentPadding: EdgeInsets.zero,
-          title: Text(nodeLabel(s.node!.id)),
-          subtitle: Text(
-            s.guest
-                ? '${guestLine(app)}. It is someone else\'s and passes on '
-                      'your texts without pairing. ${health(s)}'
-                : app.backOnOwn
-                ? 'Back on your node: connected and paired. ${health(s)}'
-                : 'Connected and paired. ${health(s)}',
-          ),
+          title: Text(health(s)),
           trailing: OutlinedButton(
             onPressed: app.disconnect,
             child: const Text('Disconnect'),
           ),
         )
-      else ...[
-        Text(
-          app.connecting
-              ? _linking(app.linking)
-              : [?guestLine(app), pairedLine(s)].join('. '),
-        ),
+      else if (lookingLine(app) != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: app.stopLooking,
+            child: const Text('Stop looking'),
+          ),
+        )
+      else
         const SizedBox(height: 8),
-      ],
+      ..._paired(),
       if (app.fake && !s.connected)
         Align(
           alignment: Alignment.centerLeft,
@@ -418,13 +421,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
-        ..._looking(),
       ],
     ];
   }
 
+  /// The nodes this phone is paired with, the home first, each with how
+  /// it stands, and Unpair on the one connected (spec "Phone link",
+  /// Pairing).
+  List<Widget> _paired() {
+    final s = app.session;
+    final home = app.homeName;
+    final names = [
+      if (s.pairedWith.contains(home)) home!,
+      for (final n in s.pairedWith)
+        if (n != home) n,
+    ];
+    if (names.isEmpty) return [];
+    final on = s.connected && !s.guest ? nodeName(s.node!.id) : null;
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          'Paired with',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+      ),
+      for (final n in names)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(n == home ? Icons.home_outlined : Icons.router),
+          title: Text(shownName(n)),
+          subtitle: switch (_pairedState(n, home: n == home, on: n == on)) {
+            '' => null,
+            final w => Text(w),
+          },
+          trailing: n == on && s.node!.version >= unpairVersion
+              ? TextButton(onPressed: _askUnpair, child: const Text('Unpair'))
+              : null,
+        ),
+    ];
+  }
+
+  /// How a paired node stands, in words. A paired node the search hears
+  /// it connects to, so one not connected while it looks is out of reach;
+  /// while the phone is on another node the search stops and cannot tell.
+  String _pairedState(String n, {required bool home, required bool on}) {
+    final lost = app.session.pairingLost.contains(n);
+    return capital(
+      [
+        if (home) 'your home',
+        if (on)
+          'connected'
+        else if (lost)
+          'no longer yours: another phone has paired with it'
+        else if (app.searchOn)
+          'not in reach',
+      ].join(', '),
+    );
+  }
+
   Widget _found(FoundNode n) {
-    final guest = n.public && n.name != app.pairedNode;
+    final guest = n.public && !app.pairedNodes.contains(n.name);
     final busy = app.connecting || app.connectedTo(n.deviceId);
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -475,34 +532,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-  /// The owner's way to give the node up, from link version 12.
-  List<Widget> _unpair() {
-    final s = app.session;
-    final n = s.node;
-    if (n == null || s.guest || n.version < unpairVersion) return [];
-    return [
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          icon: const Icon(Icons.link_off),
-          label: const Text('Unpair this node'),
-          onPressed: _askUnpair,
-        ),
-      ),
-    ];
-  }
-
   Future<void> _askUnpair() async {
+    final s = app.session;
+    final name = nodeName(s.node!.id);
+    final others = s.pairedWith.length > 1
+        ? ' It stays paired with your other nodes.'
+        : '';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Unpair this node?'),
-        content: const Text(
+        title: Text('Unpair ${shownName(name)}?'),
+        content: Text(
           'The node forgets this phone. Its screen then says UNPAIRED, '
           'and it is public again, serving any phone nearby. Anyone at '
           'the node can pair with it by the code on its screen.\n\n'
           'Your texts and contacts stay on this phone, and the phone '
-          'forgets its own pairing with the node too.',
+          'forgets its own pairing with the node too.$others',
         ),
         actions: [
           TextButton(
@@ -536,25 +581,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'Bluetooth settings, or the phone cannot use it as a guest.',
       );
     }, 'Unpairing failed');
-  }
-
-  /// The search for the paired node, which the person can stop until
-  /// they connect.
-  List<Widget> _looking() {
-    final l = lookingLine(app);
-    if (l == null) return [];
-    return [
-      const SizedBox(height: 8),
-      Row(
-        children: [
-          Expanded(child: Text(l)),
-          TextButton(
-            onPressed: app.stopLooking,
-            child: const Text('Stop looking'),
-          ),
-        ],
-      ),
-    ];
   }
 
   /// The outcome of the last check the person asked for: null before
