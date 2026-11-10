@@ -329,9 +329,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.textContaining('Temporary card:'), findsOneWidget);
-    final mine = app.me.card;
-    expect(mine.home, isNull);
-    expect(find.text(mine.toText()), findsNothing);
+    expect(find.textContaining(PersonCard.prefix), findsNothing);
     await t.scrollUntilVisible(
       find.text('Details'),
       100,
@@ -339,14 +337,24 @@ void main() {
     );
     await t.tap(find.text('Details'));
     await t.pumpAndSettle();
+    // The card's text as the screen shows it: while linked the card
+    // carries the minute by the wall clock, so it is read, not remade.
+    final shown = find.descendant(
+      of: find.widgetWithText(ListTile, 'Card'),
+      matching: find.byType(SelectableText),
+    );
     await t.scrollUntilVisible(
-      find.text(mine.toText()),
+      shown,
       100,
       scrollable: find.byType(Scrollable).first,
     );
+    final text = t.widget<SelectableText>(shown).data!;
+    final mine = PersonCard.parse(text);
+    expect(mine.key, app.me.key);
+    expect(mine.home, isNull);
     expect(find.text(app.me.key), findsOneWidget);
     // What Share hands the share sheet: a PNG of the code.
-    final png = (await t.runAsync(() => qrPng(mine.toText())))!;
+    final png = (await t.runAsync(() => qrPng(text)))!;
     expect(png.sublist(0, 4), [0x89, 0x50, 0x4e, 0x47]);
     await t.pageBack();
     await t.pumpAndSettle();
