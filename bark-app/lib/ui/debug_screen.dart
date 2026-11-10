@@ -53,7 +53,9 @@ class DebugScreen extends StatelessWidget {
               _raw(
                 '${msgIdHex(o.id)} to ${o.dst}',
                 '${o.kind.name} ${o.sent} to ${_who(o.to)}, '
-                    '${o.state.name}${_wait(s, o)}, queued ${o.at.toLocal()}\n'
+                    '${o.state.name}${_wait(s, o)}'
+                    '${o.error == null ? '' : ', ${o.error}'}, '
+                    'queued ${o.at.toLocal()}\n'
                     '${hex(o.payload)}',
               ),
             heading('Received'),
