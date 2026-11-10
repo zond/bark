@@ -212,3 +212,100 @@ files differ only by `[install]` and that `district-x64.toml` is
 within 601 s of its staging and come back after the swap, no kept
 message may be dropped or lost without a trace, and every text to a
 reachable destination must be accounted for.
+
+## Addition, 2026-11-10: the leaving flag (roadmap D181)
+
+D181 has a node's heartbeats say that it is about to leave the air while
+it drains, and its neighbours send round it while they have another way
+(spec "Next hop"). It is aimed at the second mechanism above: a sender
+whose way on drains and then falls silent for the swap. The runs below
+are the same files and seeds, release build of the D181 branch on main
+`c9d2a58`, without D180, which had not merged. They include the
+exception that a leaving node is not gone round for a message that may
+end there, addressed to it or to a place within 50 m of it; seed 1 run
+without that exception is given where it differs.
+
+| seed | | build | sent | delivered | still on its way at the end | given up at the sender | lost in the network | lost, not counting expired delivery TTL | without a trace | latency p50 / p90, s |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | without | before | 79 830 | 64 631 (81.0 %) | 10 939 | 3 959 | 301 | 137 | 0 | 222 / 956 |
+| 1 | without | D181 | 79 798 | 65 150 (81.6 %) | 10 500 | 3 846 | 302 | 153 | 0 | 223 / 941 |
+| 1 | installs | before | 60 821 | 42 381 (69.7 %) | 12 871 | 5 189 | 379 | 214 | 1 | 376 / 1 409 |
+| 1 | installs | D181 | 64 372 | 45 075 (70.0 %) | 13 534 | 5 312 | 451 | 254 | 0 | 360 / 1 268 |
+| 2 | without | before | 77 887 | 63 967 (82.1 %) | 9 317 | 4 007 | 596 | 148 | 0 | 194 / 946 |
+| 2 | without | D181 | 75 670 | 61 997 (81.9 %) | 9 214 | 4 015 | 444 | 142 | 0 | 180 / 1 003 |
+| 2 | installs | before | 61 994 | 42 896 (69.2 %) | 13 115 | 5 244 | 739 | 241 | 0 | 349 / 1 490 |
+| 2 | installs | D181 | 63 449 | 45 273 (71.4 %) | 12 351 | 5 098 | 727 | 246 | 0 | 312 / 1 342 |
+| 3 | without | before | 71 675 | 56 900 (79.4 %) | 9 828 | 4 555 | 392 | 143 | 0 | 263 / 1 100 |
+| 3 | without | D181 | 73 568 | 58 487 (79.5 %) | 10 375 | 4 266 | 440 | 164 | 0 | 257 / 1 071 |
+| 3 | installs | before | 57 167 | 37 031 (64.8 %) | 13 832 | 5 786 | 517 | 231 | 1 | 459 / 1 611 |
+| 3 | installs | D181 | 57 634 | 38 927 (67.5 %) | 12 338 | 5 688 | 681 | 193 | 0 | 397 / 1 441 |
+
+The runs without installs change too, since a relay that flushes to turn
+sleepy sets the flag, but within what one seed differs from another.
+
+**Losses do not fall.** Not counting the expired delivery TTL, the
+installs lose 101, 104 and 29 more texts in the network than their own
+runs without, against 77, 93 and 88 before: 693 in the three runs
+against 686. The expired delivery TTL moves by tens to hundreds between
+runs of one seed, with or without installs, and is left out here as
+above. What does improve is delivery while the installs go on: 0.3 to
+2.7 points more of the texts sent, more texts sent, and a median latency 16 to 62 s shorter. In the ring of the
+first trace (`ring.toml` with installs), where each relay is the only way
+on, the network loses 50 texts against 127, and delivers 1 865 of 2 110
+sent against 1 278 of 1 730.
+
+Network losses by cause, seed 1:
+
+| | expired delivery TTL | no route | return failed | hop cap | banned | budget | other |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| before | 165 | 75 | 34 | 61 | 36 | 8 | 0 |
+| D181 | 197 | 60 | 40 | 109 | 39 | 6 | 0 |
+| D181 without the exception | 188 | 68 | 41 | 114 | 28 | 9 | 4 |
+
+"No route" falls by 15 and the hop cap rises by 48; in seeds 2 and 3 the
+failed returns fall, 65 to 16 and 60 to 22, and the hop cap rises, 74 to
+114 and 37 to 55.
+
+**The losses traced.** Seed 1 was run again with the trace, before and
+with D181, and each text lost in the network, not counting the expired
+delivery TTL, put in the first class that fits it, from the installs'
+log and the frames sent of it:
+
+| | before | D181 |
+|---|---:|---:|
+| kept by a node across its swap, lost after | 65 | 68 |
+| the dropping node had sent it to a node draining or off | 29 | 26 |
+| an earlier hop had sent it to a node draining or off | 60 | 80 |
+| of these, at the hop cap | 31 | 65 |
+| dropped at a node back from its swap within 600 s | 18 | 21 |
+| passed through such a node | 29 | 40 |
+| none of these | 13 | 19 |
+| all | 214 | 254 |
+
+The class D181 aims at, the sender whose way on drains and then falls
+silent, is the second row: 29 before and 26 with it, so the flag
+removes few of these. Where the way on drains, the drain's refusal
+already sent the text round it (spec "Bans"), so going round before the
+offer saves frames, not texts.
+
+**Why the hop cap rises.** Every text lost at the hop cap, before and
+with D181, met refusals for draining on its way: 3 915 refusals for 61
+texts before, 3 022 for 109 with D181. With D181, 1 966 of them came
+from the node where the text would end, the destination or the relay
+that holds mail for it, against 1 152 before. Most of these texts were
+sent before or during that node's drain and dropped after it came back.
+The text can end only there, the node refuses it for draining, and its
+neighbours send it round the refuser as for any refusal, to another of
+them, which offers it again, until the count reaches 255
+(spec "Hop count"). Before D181 fewer texts got that far while it drained: the
+draining relays on the way refused them first, and they waited behind.
+With D181 they go round those relays and reach the neighbourhood of the
+draining destination, where they wander. The exception for a node a
+message may end at changes little, 114 to 109 texts at the hop cap, as
+the destination still refuses them.
+
+So the loss that remains is the drain's refusal of a text that can end
+only at the draining node: sent round it, the text has nowhere to go.
+Waiting for that node, at the neighbour that holds the text, until it
+is back would keep it; this needs a rule of its own and is not part of
+D181.
