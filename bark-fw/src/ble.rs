@@ -494,6 +494,8 @@ pub struct State {
     /// For each record, its phone's message last given back and the end of
     /// its wait, until the node takes another; kept across its links.
     given_back: [Option<(MsgId, Instant)>; RECORDS],
+    /// The records' numbers as last followed ([`records_changed`]).
+    numbers: [Option<u16>; RECORDS],
     /// The node's Node value but for `room`, which [`refresh`] reads from
     /// the records.
     node: Option<Node>,
@@ -629,6 +631,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     heads: [None; RECORDS],
     counts: [0; RECORDS],
     given_back: [None; RECORDS],
+    numbers: [None; RECORDS],
     node: None,
     told_status: None,
     phones: [Peer::NONE; LINKS],
@@ -1082,7 +1085,7 @@ pub async fn run(
             Err(e) => log::error!("ble: record {}'s bond {}", i, HostError(&e)),
         }
     }
-    LINK.lock(|l| l.borrow_mut().public = crate::phones::read(|p| p.public()));
+    records_changed();
     static NAME: StaticCell<[u8; bark_link::NAME_LEN]> = StaticCell::new();
     let name = core::str::from_utf8(NAME.init(bark_link::name(id))).expect("the name is ASCII");
     static SERVER: StaticCell<(Server<'static>, Gatt)> = StaticCell::new();
@@ -1237,8 +1240,20 @@ pub async fn close_all() {
 /// the phones follow what they say now (the mailbox and the screen follow
 /// in `phones.rs`).
 fn records_changed() {
-    let public = crate::phones::read(|p| p.public());
-    let was = LINK.lock(|l| core::mem::replace(&mut l.borrow_mut().public, public));
+    let (public, numbers) =
+        crate::phones::read(|p| (p.public(), p.records.map(|r| r.map(|r| r.number))));
+    let was = LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        // A message given back to a record's phone is not a new record's.
+        let l = &mut *l;
+        for ((given, was), now) in l.given_back.iter_mut().zip(&l.numbers).zip(numbers) {
+            if *was != now {
+                *given = None;
+            }
+        }
+        l.numbers = numbers;
+        core::mem::replace(&mut l.public, public)
+    });
     ADVERTISE.signal(());
     crate::mailbox::FOR_CORE.signal(());
     notify(Notify {
