@@ -11,6 +11,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'alerts.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
+import 'decision.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
@@ -39,114 +40,22 @@ enum Linking {
   attaching,
 }
 
-/// The node heard strongest of `nodes`, the likeliest to hold a link.
-FoundNode? _strongest(Iterable<FoundNode> nodes) {
-  FoundNode? best;
-  for (final n in nodes) {
-    if ((n.rssi ?? noRssi) > (best?.rssi ?? noRssi) || best == null) {
-      best = n;
-    }
-  }
-  return best;
-}
-
-/// The node a round of the search connects to, of those it `heard`, in
-/// this order: the `home` when it is one of the `paired` nodes, as it
-/// serves the person whole and keeps their mail; else the paired node
-/// heard strongest; else the public node heard strongest, never one of
-/// `kept`, whose bond Android keeps though the node is not the phone's,
-/// as a link encrypted with it the node ends (spec "Phone link",
-/// Public); else none.
-///
-/// The order holds among the nodes heard at a signal a link holds at
-/// ([FoundNode.usable]): a node heard weak is passed over for one further
-/// down heard better, as a link to it would not hold. With none usable,
-/// the node heard strongest, of whatever kind, as signal alone then says
-/// which link is likeliest to hold (roadmap D171).
-///
-/// While the phone has a link to the node `on`, the choice is only a node
-/// higher in the order than it, heard usable: the home over another paired
-/// node, a paired node over a public one. Never one beside it, as two of
-/// one place in the order heard by turns at like signals would move the
-/// phone back and forth; and never a weak one over the link it has
-/// (roadmap D172).
-FoundNode? chooseNode(
-  Iterable<FoundNode> heard, {
-  String? home,
-  Set<String> paired = const {},
-  Set<String> kept = const {},
-  String? on,
-}) {
-  int place(String name) => name == home && paired.contains(name)
-      ? 0
-      : paired.contains(name)
-      ? 1
-      : 2;
-  // A node the phone may use at all, whatever its signal.
-  bool may(FoundNode n) =>
-      paired.contains(n.name) || (n.public && !kept.contains(n.name));
-  final good = heard.where((n) => n.usable && may(n));
-  final own = good.where((n) => paired.contains(n.name));
-  final FoundNode? n;
-  if (good.isEmpty) {
-    n = on == null ? _strongest(heard.where(may)) : null;
-  } else if (own.isEmpty) {
-    n = _strongest(good);
-  } else {
-    n = own.where((n) => place(n.name) == 0).firstOrNull ?? _strongest(own);
-  }
-  if (n == null || on == null) return n;
-  return place(n.name) < place(on) ? n : null;
-}
-
-/// How often the app reads a public node's ring for the person's mail
-/// while it has nothing to send, short of the paired node: a minute, the
-/// span the spec takes for a person on foot to stay within a relay's reach
-/// ("Where a text goes", Why a minute), which a sender's app takes as how
-/// long a reply should go to where the person wrote from; a reply that
-/// came there is thus read within about as long as it was aimed there.
-/// Four of the search's rounds of 15 s, so it costs the phone no scan
-/// more within Android's five in 30 s. The node pays for it in its one
-/// guest link: an errand of a few seconds, say 5, a minute takes a
-/// twelfth of the link, so a few phones in reach seldom meet there, and
-/// one that does is closed and tries next round. Mail waits in the ring
-/// meanwhile, so a longer interval delays it and loses nothing.
-const Duration guestCheck = Duration(minutes: 1);
-
-/// How often the phone, on a paired node that is not the home, scans for
-/// the home, and moves to it once heard (roadmap D172): [guestCheck]'s
-/// minute, the span the spec takes for a person on foot to stay within a
-/// relay's reach, so a home that comes into reach is taken within about
-/// as long as the person stays near it. Not every round of [lookRound]: on
-/// a standing link a scan serves only this, and a scan of [lookScan] a
-/// minute listens some 7 % of the time, against 27 % every 15 s, for a
-/// home reached at most 45 s sooner. It takes at most one of Android's
-/// five scans in 30 s.
-const Duration lookAround = guestCheck;
-
-/// The search's rounds in a row that must reach none of the paired nodes
-/// before the app calls them out of reach and goes on errands at a public
-/// node: two, 30 s at a round every [lookRound]. A round's scan of four
-/// advertising intervals hears a node in reach with the screen on, but
-/// with the screen off Android listens less and one round may miss it
-/// ([lookScan]), so one miss is no proof. A round that hears one moves the
-/// phone back at once, as a paired node serves the person whole. The two
-/// differ on purpose: at the edge of a paired node's reach, heard in some
-/// rounds and not others, the phone stays with it rather than going back
-/// and forth, and its texts and the replies to them do not go by a public
-/// node it then leaves (spec "Phone link", Which node a phone uses;
-/// roadmap D163, D166).
-const int ownGone = 2;
-
 /// How long the line says a node is updated, once it is back on the new
 /// version: a minute, long enough to be seen when the person looks.
 const Duration updatedShown = Duration(minutes: 1);
 
 /// A node's install of an image it gathered over the mesh, as the app
 /// follows it (spec "Updates over the mesh", the install; roadmap D182):
-/// the node's name, the version, when the link ended for the reboot and
-/// when the node came back on that version.
-typedef Install = ({String node, int version, DateTime? gone, DateTime? back});
+/// the node's name, the version, when the link ended for the reboot,
+/// whether the search gave up waiting for it, and when the node came back
+/// on that version.
+typedef Install = ({
+  String node,
+  int version,
+  DateTime? gone,
+  bool givenUp,
+  DateTime? back,
+});
 
 /// The firmware version whose low 16 bits are `low`, as Status tells it,
 /// of a node that runs `image`: the first above it.
@@ -360,7 +269,7 @@ class AppModel extends ChangeNotifier {
     if (device == null || n == null) return true;
     final name = nodeName(n.id);
     // Nothing learned of the node unpaired bears on the next.
-    _ownMissed = 0;
+    _missed = 0;
     nodes.guest = null;
     return _forgetBond(name, device);
   }
@@ -461,25 +370,49 @@ class AppModel extends ChangeNotifier {
     final i = install;
     if (n == null) {
       if (i != null && i.gone == null && i.back == null) {
-        install = (node: i.node, version: i.version, gone: now(), back: null);
+        install = (
+          node: i.node,
+          version: i.version,
+          gone: now(),
+          givenUp: false,
+          back: null,
+        );
         session.note('${i.node} reboots to install version ${i.version}');
       }
       return;
     }
+    final name = nodeName(n.id);
+    // An owner's link to another node, as the person tapped it, ends the
+    // wait for one that installs (roadmap D202).
+    if (i != null && i.node != name && !session.guest) {
+      install = null;
+      return;
+    }
     final status = session.status;
     if (status == null) return;
-    final name = nodeName(n.id);
     final low = status.installing;
     if (low != 0) {
       final version = installVersion(n.image, low);
       if (i?.node != name || i?.version != version || i?.gone != null) {
-        install = (node: name, version: version, gone: null, back: null);
+        install = (
+          node: name,
+          version: version,
+          gone: null,
+          givenUp: false,
+          back: null,
+        );
         session.note('$name drains to install version $version');
       }
     } else if (i?.node == name && i!.back == null) {
       final on = n.image == i.version && i.gone != null;
       install = on
-          ? (node: name, version: i.version, gone: i.gone, back: now())
+          ? (
+              node: name,
+              version: i.version,
+              gone: i.gone,
+              givenUp: i.givenUp,
+              back: now(),
+            )
           : null;
       session.note(
         on
@@ -497,30 +430,33 @@ class AppModel extends ChangeNotifier {
     return i != null && i.gone == null && n != null && nodeName(n.id) == i.node;
   }
 
-  /// A paired node rebooted to install a version and is not yet back.
-  bool get _swapping {
+  /// A paired node rebooted to install a version and is not yet back,
+  /// while the search has not given up waiting for it.
+  Awaited? get _awaited {
     final i = install;
-    return i != null &&
-        i.gone != null &&
-        i.back == null &&
-        pairedNodes.contains(i.node);
+    final gone = i?.gone;
+    if (i == null || gone == null || i.givenUp || i.back != null) return null;
+    return nodes.own.contains(i.node) ? (node: i.node, gone: gone) : null;
   }
 
-  /// [_swapping], within [swapAway] of the link's end: the search's rounds
-  /// do not count the node out of reach.
-  bool get _inSwap => _swapping && now().difference(install!.gone!) < swapAway;
-
-  /// The search waits for the node [_swapping]: through [swapAway] and the
-  /// first round after it. The second of the [ownGone] rounds that call it
-  /// out of reach is an ordinary round, which uses a public node if it
-  /// misses the node too (roadmap D182, D202). Meanwhile the rounds look
-  /// for that node alone.
-  bool get _installWaits => _inSwap || (_swapping && _ownMissed < ownGone - 1);
+  /// The search gives up waiting for the node that installs: it is out of
+  /// reach as any node ([waitsForInstall]).
+  void _giveUp(String node) {
+    final i = install!;
+    install = (
+      node: i.node,
+      version: i.version,
+      gone: i.gone,
+      givenUp: true,
+      back: null,
+    );
+    session.note('$node not back from its install: out of reach');
+  }
 
   /// The line while a paired node is away to install a version; null
   /// otherwise.
   String? get installingLine {
-    if (!_installWaits || session.connected) return null;
+    if (session.connected || !waitsForInstall(situation())) return null;
     final i = install!;
     return '${shownName(i.node)} is installing version ${i.version}, back in '
         'about a minute';
@@ -868,7 +804,6 @@ class AppModel extends ChangeNotifier {
   /// waits for it rather than doing nothing.
   Future<void> _byTap(Future<void> Function() f) async {
     _tapHeld = true;
-    _tapped = true;
     notifyListeners();
     try {
       await _searchStopped();
@@ -918,7 +853,9 @@ class AppModel extends ChangeNotifier {
     if (!session.connected || !session.guest) return;
     // Linked, it is in reach now.
     nodes.heard(n, now());
-    nodes.guest = n.name;
+    // The search's errand node is the one the phone uses as a guest
+    // between errands; a link the person made by a tap is theirs alone.
+    nodes.guest = errand ? n.name : null;
     r.asGuest = (
       address: session.address,
       homeable: canBeHome(session.status),
@@ -952,25 +889,37 @@ class AppModel extends ChangeNotifier {
 
   /// The search's rounds in a row that have reached none of the paired
   /// nodes.
-  int _ownMissed = 0;
+  int _missed = 0;
 
   /// The paired nodes are out of reach: [ownGone] rounds in a row have
   /// reached none, and the phone uses public nodes as a guest meanwhile.
-  bool get ownAway => pairedNodes.isNotEmpty && _ownMissed >= ownGone;
-
-  /// Whether the search goes on errands at public nodes: without a paired
-  /// node, or while they are out of reach.
-  bool get usesPublic => pairedNodes.isEmpty || ownAway;
+  bool get ownAway => pairedNodes.isNotEmpty && _missed >= ownGone;
 
   /// The public node the phone uses as a guest, between its errands too:
   /// the node of the last, while the search runs; or the node of a guest's
   /// link the person made by a tap, while it is up.
-  String? get guestNode =>
-      tappedGuest || (searchOn && !_tapped) ? nodes.guest : null;
+  String? get guestNode {
+    final l = _linkNow;
+    if (l != null && l.guest && l.byTap) return l.node;
+    return searchOn ? nodes.guest : null;
+  }
 
   /// The link up is a guest's the person made by a tap, which the node
   /// ends after a guest's 30 s (spec "Phone link", Public).
-  bool get tappedGuest => _tapped && session.connected && session.guest;
+  bool get tappedGuest {
+    final l = _linkNow;
+    return l != null && l.guest && l.byTap;
+  }
+
+  /// The link the phone has, if any.
+  LinkNow? get _linkNow {
+    final n = session.connected ? session.node : null;
+    if (n == null) return null;
+    return (node: nodeName(n.id), guest: session.guest, byTap: _linkByTap);
+  }
+
+  /// The link up was made by the person's tap, not by the search.
+  bool _linkByTap = false;
 
   /// The record of [guestNode], once an errand there has read it, for
   /// making it the home or pairing with it between errands.
@@ -1006,14 +955,6 @@ class AppModel extends ChangeNotifier {
     if (n == null) return null;
     if (atHome) return 'Connected to your home, ${nodeLabel(n.id)}$installs';
     return 'Connected to ${nodeLabel(n.id)}, paired$installs$home';
-  }
-
-  /// Whether a public node is due a guest's errand: something waits to be
-  /// sent, or its ring has not been read for [guestCheck].
-  bool _guestDue(FoundNode n) {
-    if (session.toSend) return true;
-    final at = nodes[n.name]?.ringReadAt;
-    return at == null || now().difference(at) >= guestCheck;
   }
 
   Future<void> _connect(FoundNode n, {bool again = false}) async {
@@ -1079,16 +1020,13 @@ class AppModel extends ChangeNotifier {
       _phase(Linking.attaching);
       mtu = m;
       session.note('Connected, MTU $m');
+      _linkByTap = _tapHeld;
       if (await session.attach(link, guest: guest) && !guest) {
         if (!session.connected) throw LinkEnded(name);
         if (ownAway) session.note('Back on a paired node');
-        _ownMissed = 0;
+        _missed = 0;
         nodes.guest = null;
-        final on = nodeName(session.node!.id);
-        // On another paired node, as the person tapped it, the wait for
-        // one that installs is over.
-        if (install?.node != on) install = null;
-        await session.setPaired(on);
+        await session.setPaired(nodeName(session.node!.id));
       }
     } on NotOurs catch (e) {
       await session.setPaired(e.node, lost: true);
@@ -1123,14 +1061,28 @@ class AppModel extends ChangeNotifier {
   bool bluetoothOn = false;
   StreamSubscription<AvailabilityState>? _availability;
 
-  /// The search runs: a round scans, or waits for the next.
+  /// The search's loop runs.
   bool _searching = false;
 
-  /// The round under way, which ends once its scan has stopped.
+  /// The scan under way, which ends once it has stopped.
   Future<void>? _round;
 
   /// Completed to end the search's scan or wait at once.
   Completer<void> _wake = Completer<void>();
+
+  /// What the search did when last asked ([modeOf]); a change wakes it.
+  Mode _mode = Mode.idle;
+
+  /// When the search last started a scan, a round's or a look-around's.
+  DateTime? _scanned;
+
+  /// The link the search last saw, and when the phone last lost one it
+  /// held between rounds ([Situation.droppedAt]).
+  LinkNow? _had;
+  DateTime? _dropped;
+
+  /// What the last whole round heard.
+  List<FoundNode> _lastRound = const [];
 
   /// The last failure the search noted, so that a failure every round
   /// is told once.
@@ -1154,12 +1106,32 @@ class AppModel extends ChangeNotifier {
     return h != null && p.contains(h) ? h : p.lastOrNull;
   }
 
-  /// Whether the search runs: not once the person stopped it, nor on a
-  /// paired node, nor on a guest's link the
-  /// person made by a tap ([tappedGuest]), nor while unpairing.
+  /// The phone's situation, on which the search decides ([decide]), with
+  /// what a scan just `heard`.
+  Situation situation({List<FoundNode>? heard}) => Situation(
+    now: now(),
+    home: homeName,
+    nodes: nodes.records,
+    link: _linkNow,
+    linking: connecting || _unpairing,
+    radio: bluetoothAllowed && bluetoothOn && !scanning,
+    stopped: session.stopped,
+    awaited: _awaited,
+    missed: _missed,
+    busy: !settled,
+    toSend: session.toSend,
+    scannedAt: _scanned,
+    droppedAt: _dropped,
+    heard: heard,
+  );
+
+  /// Whether the search runs, as the person reads it: not once they
+  /// stopped it, nor on a node of theirs, nor on a guest's link they made
+  /// by a tap ([tappedGuest]), nor while unpairing.
   bool get searchOn {
     if (!_searchStarted || session.stopped || _unpairing) return false;
-    return !session.connected || (session.guest && !_tapped);
+    final l = _linkNow;
+    return l == null || (l.guest && !l.byTap);
   }
 
   /// The paired node the search looks for first, while it runs
@@ -1169,40 +1141,18 @@ class AppModel extends ChangeNotifier {
 
   /// Whether the search scans now: not before Bluetooth is allowed, nor
   /// while it is off, a connection is being made, or the person scans.
-  bool get lookingNow => searchOn && _mayScan;
-
-  bool get _mayScan =>
-      bluetoothAllowed && bluetoothOn && !connecting && !scanning;
-
-  /// The home, while the phone is on another of its paired nodes by the
-  /// search's own connect: the one node above it in the order, which a
-  /// look-around listens for (roadmap D172). None on a link the person
-  /// made by a tap, which is theirs until it drops, nor once they stopped
-  /// the search.
-  String? get _above {
-    if (!_searchStarted || session.stopped || _unpairing) return null;
-    final n = session.connected && !session.guest ? session.node : null;
-    final h = homeName;
-    if (n == null || _tapped || h == null || !pairedNodes.contains(h)) {
-      return null;
-    }
-    return nodeName(n.id) == h ? null : h;
-  }
+  bool get lookingNow =>
+      searchOn && bluetoothAllowed && bluetoothOn && !connecting && !scanning;
 
   /// The phone, on a paired node, moves to the home once it hears it
-  /// ([_above]).
-  bool get movesHome => _above != null;
+  /// ([homeAbove]).
+  bool get movesHome => _searchStarted && homeAbove(situation()) != null;
 
-  /// The last round heard a paired node, too weak to take ([chooseNode]),
-  /// and the phone uses a public node meanwhile.
-  bool ownWeak = false;
-
-  /// Whether the phone looks around now, from a paired node for the home
-  /// ([_above]).
-  bool get lookingAround => _above != null && _mayScan;
-
-  /// The link in use was made by the person's tap, not by the search.
-  bool _tapped = false;
+  /// The last round heard a node of the phone's own, too weak to take
+  /// ([ownPassedOver]), and the phone uses a public node meanwhile.
+  bool get ownWeak =>
+      !(session.connected && !session.guest) &&
+      ownPassedOver(situation(heard: _lastRound));
 
   /// Whether the link in use may be closed with nothing lost: nothing in
   /// flight on it ([Session.inFlight]) and no firmware update under way
@@ -1246,28 +1196,71 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// What the search does now: its rounds, a look-around from a paired
-  /// node, or nothing.
-  _Searching? get _doing => lookingNow
-      ? _Searching.rounds
-      : lookingAround
-      ? _Searching.around
-      : null;
-  _Searching? _did;
-
-  /// Starts the search when it should run, and ends a scan or wait under
-  /// way when what it should do changes: a link that drops starts a round
-  /// at once, and one that comes up ends the round's wait.
+  /// Runs the search when it should, and ends a scan or wait under way
+  /// when what it does changes: a link that drops starts a round, and one
+  /// that comes up ends the round's wait.
   void _search() {
-    final d = _doing;
-    if (d != _did) {
-      _did = d;
+    if (!_searchStarted) return;
+    final l = _linkNow;
+    final had = _had;
+    // An errand's link is the round's own, and its end no news.
+    if (l == null && had != null && (!had.guest || had.byTap)) {
+      _dropped = now();
+    }
+    _had = l;
+    final m = modeOf(situation());
+    if (m != _mode) {
+      _mode = m;
       if (!_wake.isCompleted) _wake.complete();
     }
-    if (d == null || _searching) return;
+    if (m == Mode.idle || _searching) return;
     _searching = true;
-    _wake = Completer<void>();
-    unawaited(_rounds());
+    unawaited(_run());
+  }
+
+  /// The search: decides, carries the decision out, and decides again on
+  /// what came of it, until there is nothing to do.
+  Future<void> _run() async {
+    try {
+      List<FoundNode>? heard;
+      while (_searchStarted) {
+        if (_wake.isCompleted) _wake = Completer<void>();
+        var s = situation(heard: heard);
+        var d = decide(s);
+        if (d case GiveUp(:final node)) {
+          _giveUp(node);
+          s = situation(heard: heard);
+          d = decide(s);
+        }
+        heard = null;
+        switch (d) {
+          case Idle():
+            // A scan cut short by a change heard too little to judge: the
+            // next round comes as soon as the search runs again.
+            if (s.heard != null) _scanned = null;
+            return;
+          case Wait(:final wait):
+            await _sleep(wait);
+          case Listen(:final until):
+            heard = await _listenRound(until);
+          case Connect(:final node):
+            await _connectFound(node);
+          case Errand(:final node):
+            await _connectPublic(node);
+          case MoveHome(:final node):
+            session.note(
+              'Heard ${node.name}, ${node.rssi ?? '?'} dBm: moving to it',
+            );
+            await _connectFound(node);
+          case GiveUp():
+            throw StateError('decided to give up twice');
+        }
+        if (!_searchStarted) return;
+        if (s.heard case final round?) _roundDone(round, s);
+      }
+    } finally {
+      _searching = false;
+    }
   }
 
   /// Waits `d`, or until [_wake] completes.
@@ -1279,148 +1272,39 @@ class AppModel extends ChangeNotifier {
     t.cancel();
   }
 
-  /// When the search last started a scan, a round's or a look-around's.
-  DateTime? _scanned;
-
-  /// Each round scans, has Android remove its bond with each node heard
-  /// that the app does not count as its own ([_forgetBonds]), then
-  /// connects to the node [chooseNode] picks from what it heard: the
-  /// home, another paired node, or the strongest public node while the
-  /// phone has no paired node or they are out of reach ([ownGone]); while
-  /// a paired node is away for its install, that node alone
-  /// ([_installWaits]).
-  Future<void> _rounds() async {
-    try {
-      while (_awake()) {
-        if (!lookingNow) {
-          await _lookAround();
-          continue;
-        }
-        final start = _scanned = now();
-        final paired = pairedNodes;
-        final round = _listen(_stopAt(paired));
-        _round = round;
-        final heard = await round;
-        _round = null;
-        await recheckKept();
-        await _forgetBonds(heard.values);
-        // A round cut short by the person's scan or tap heard too little
-        // to call anything out of reach.
-        final looked = lookingNow;
-        // A node away for its install is all the round looks for: what
-        // else it did would take the phone elsewhere just before the node
-        // is back (roadmap D202).
-        final waits = _installWaits;
-        final awaited = waits ? install!.node : null;
-        final n = looked
-            ? chooseNode(
-                heard.values.where((h) => !waits || h.name == awaited),
-                home: homeName,
-                paired: pairedNodes,
-                kept: {
-                  for (final r in nodes.records)
-                    if (r.bondKept) r.name,
-                },
-                on: session.connected ? _nodeOn : null,
-              )
-            : null;
-        final mine = n != null && pairedNodes.contains(n.name);
-        if (mine) await _connectFound(n);
-        // A paired node heard and passed over was heard weak: the public
-        // node goes before it at once, as no later round is needed to
-        // tell that it is there.
-        final weakOwn =
-            !waits && heard.values.any((h) => paired.contains(h.name));
-        if (looked &&
-            paired.isNotEmpty &&
-            !(session.connected && !session.guest) &&
-            !_inSwap) {
-          _ownMissed++;
-          if (_ownMissed == ownGone) {
-            session.note(
-              'Not reached ${paired.join(', ')} in $ownGone rounds: out of '
-              'reach, using public nodes as a guest',
-            );
-          }
-        }
-        if (looked && n == null) nodes.guest = null;
-        if (looked) ownWeak = weakOwn && !mine;
-        if (n != null &&
-            !mine &&
-            !waits &&
-            (usesPublic || weakOwn) &&
-            _guestDue(n)) {
-          await _connectPublic(n);
-        }
-        if (!_awake() || !lookingNow) continue;
-        final left = lookRound - now().difference(start);
-        if (left > Duration.zero) await _sleep(left);
-      }
-    } finally {
-      _searching = false;
-    }
-  }
-
-  /// The name of the node the phone has a link to.
-  String? get _nodeOn {
-    final n = session.node;
-    return n == null ? null : nodeName(n.id);
-  }
-
-  /// A look-around from a paired node: once [lookAround] has passed since
-  /// the search's last scan, it listens for the home, and moves to it when
-  /// it is heard usable ([chooseNode]) and the link in use is [settled];
-  /// one that is not waits for the next.
-  Future<void> _lookAround() async {
-    final last = _scanned;
-    final left = last == null
-        ? Duration.zero
-        : lookAround - now().difference(last);
-    if (left > Duration.zero) return _sleep(left);
-    final home = _above!;
+  /// A scan of one round, ended early once `until` is heard well; then
+  /// Android's bond with each node heard that the app does not count as
+  /// its own goes ([_forgetBonds]), before anything is done with them.
+  Future<List<FoundNode>> _listenRound(String? until) async {
     _scanned = now();
-    final round = _listen((n) => n.name == home && n.usable);
+    final round = _listen(
+      until == null ? null : (n) => n.name == until && n.usable,
+    );
     _round = round;
     final heard = await round;
     _round = null;
-    final on = _nodeOn;
-    if (!lookingAround || on == null) return;
-    final n = chooseNode(
-      heard.values,
-      home: homeName,
-      paired: pairedNodes,
-      on: on,
-    );
-    if (n == null) return;
-    if (!settled) {
-      session.note('Heard ${n.name}; moving to it once nothing is in flight');
-      return;
+    await recheckKept();
+    await _forgetBonds(heard.values);
+    return heard.values.toList();
+  }
+
+  /// What the round that heard `heard`, decided on in `s`, leaves behind:
+  /// a miss of the paired nodes where it left the phone on none of them
+  /// ([countsMiss]), and the public node in use no longer, once a round
+  /// does not hear it.
+  void _roundDone(List<FoundNode> heard, Situation s) {
+    _lastRound = heard;
+    final g = nodes.guest;
+    if (g != null && !heard.any((h) => h.name == g)) nodes.guest = null;
+    if (!countsMiss(s) || (session.connected && !session.guest)) return;
+    _missed++;
+    if (_missed == ownGone) {
+      session.note(
+        'Not reached ${s.own.join(', ')} in $ownGone rounds: out of reach, '
+        'using public nodes as a guest',
+      );
     }
-    session.note('Heard ${n.name}, ${n.rssi ?? '?'} dBm: moving to it');
-    await _connectFound(n);
-  }
-
-  /// What ends a round's scan early, as no node heard after it would go
-  /// before it: the home heard usable, when the phone is paired with it,
-  /// else the one node of `paired` heard usable; nothing for several, of
-  /// which the strongest goes first.
-  bool Function(FoundNode)? _stopAt(Set<String> paired) {
-    final h = homeName;
-    final at = h != null && paired.contains(h)
-        ? h
-        : paired.length == 1
-        ? paired.single
-        : null;
-    return at == null ? null : (n) => n.name == at && n.usable;
-  }
-
-  /// Whether the search goes on, its rounds or a look-around, with a new
-  /// [_wake] when it does: the last may have ended a scan or wait for a
-  /// change that has passed.
-  bool _awake() {
-    final on = _doing != null;
-    if (on && _wake.isCompleted) _wake = Completer<void>();
-    return on;
+    notifyListeners();
   }
 
   Future<Map<String, FoundNode>> _listen(
@@ -1488,7 +1372,6 @@ class AppModel extends ChangeNotifier {
       'Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting '
       '${session.toSend ? 'to send' : 'for mail'}',
     );
-    _tapped = false;
     try {
       await _connectGuest(n);
     } catch (e) {
@@ -1503,7 +1386,6 @@ class AppModel extends ChangeNotifier {
   Future<void> _connectFound(FoundNode n) async {
     if (connecting) return;
     session.note('Found ${n.name}, connecting');
-    _tapped = false;
     try {
       await _connect(n);
     } on NotOurs {
@@ -1540,6 +1422,3 @@ class AppModel extends ChangeNotifier {
     super.dispose();
   }
 }
-
-/// What the search does ([AppModel._doing]).
-enum _Searching { rounds, around }

@@ -516,8 +516,12 @@ works while the home is in reach; a pairing that fails says why, and the
 search then chooses again. A node whose `room` was 0 at the last errand
 says it is full instead (roadmap D179).
 
-While it is not connected, the app looks for the nodes it is paired
-with and connects to the first of them it hears, in this order: the
+One function decides, from what the phone knows of its nodes, its link
+and its last scan, whether the search scans and which node it takes as
+whose (`decide`, `lib/decision.dart`); the search carries that out and
+decides again on what came of it. While it is not connected, the app
+looks for the nodes it is paired with and connects to the first of them
+it hears, in this order: the
 home, when the phone is paired with it; else the paired node heard
 strongest, by the best RSSI each node had over the round. When it is
 paired with none that is still its own, or they are out of reach, it
@@ -838,7 +842,7 @@ node, so texts written
 meanwhile wait on the phone. The second round is an ordinary one,
 which uses a public node if it misses the node too, about 85 s after
 the link ended. A node the person taps connects at once, and their
-link to another paired node ends the wait (`_installWaits`). A link
+link to another paired node ends the wait (`waitsForInstall`). A link
 the phone itself closes while the node drains, as when it moves to the
 home, is no reboot, and nothing is waited for. Back on version N, the
 line adds ", updated to version N" for a minute (`updatedShown`). A
