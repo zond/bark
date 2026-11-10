@@ -803,3 +803,45 @@ fn two_gatherers_with_no_holder_take_another_build_together() {
         );
     }
 }
+
+/// A gatherer at home on channel 5 that hears only a holder at home on 3,
+/// which hears another holder at home on 5 out of the gatherer's reach:
+/// the holder on 3 streams to it, since the gatherer's section says no
+/// relay at home on its channel holds the block it lacks. On 2026-11-10 it
+/// left the gatherer to the holder on 5 and the gatherer took no piece in
+/// twelve hours (roadmap D196). Where the gatherer hears the holder on 5
+/// too, the holder on 3 leaves it to that one and sends nothing on 5.
+#[test]
+fn a_gatherer_that_hears_only_a_holder_elsewhere_is_served() {
+    for hears_home in [false, true] {
+        let mut h = Harness::new(vec![
+            relay_on(0.0, 61, 5),
+            relay_on(300.0, 62, 3),
+            relay_on(600.0, 63, 5),
+        ]);
+        h.link(0, 1);
+        h.link(1, 2);
+        if hears_home {
+            h.link(0, 2);
+        }
+        for n in &mut h.nodes {
+            n.updates = Some(Updates {
+                needs: NEEDS.to_vec(),
+                ..Updates::default()
+            });
+        }
+        h.run_until(at(400), |_| false);
+        h.deliver_app(1, AppCommand::Holds(IMAGE));
+        h.deliver_app(2, AppCommand::Holds(IMAGE));
+        let start = h.now;
+        let done = h.run_until(start + secs(2 * 3600), |h| {
+            h.nodes[0].updates.as_ref().unwrap().holds_at.is_some()
+        });
+        assert!(done, "hears the holder at home {hears_home}: not served");
+        let on_5 = update_frames(&h, 1)
+            .iter()
+            .filter(|f| f.1 == common::ch(5))
+            .count();
+        assert_eq!(on_5 == 0, hears_home, "{on_5} pieces on 5");
+    }
+}

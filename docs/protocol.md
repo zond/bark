@@ -4472,8 +4472,9 @@ first 13 bytes ([packet formats](#packet-formats)): the version the
 node runs, 0 if it knows none; the newest image it holds or gathers, by
 its version, the first 4 bytes of its name, the signer's key, its
 blocks and the pieces of its last, or none; how many of its blocks the
-node holds from the first; and how many pieces it holds of the block
-after those. A node that knows neither the version it runs nor an image
+node holds from the first; how many pieces it holds of the block after
+those; and, while it gathers, whether it hears a relay at home on its own
+channel that holds that block. A node that knows neither the version it runs nor an image
 tells no section. The count of pieces goes as it stands when sent.
 
 A relay's heartbeats carry the section in a **rotation of sections**:
@@ -4574,9 +4575,12 @@ bytes and 14.4 ms.
    gathers the image the relay gathers or holds and lacks a block the
    relay holds: it **streams** there, at the gap or the pace (below),
    from the blocks it holds. On its home channel it streams to every gatherer
-   at home there. On another channel it streams only the blocks past
-   those a relay at home there holds, by that relay's section, and to a
-   gatherer only if it is the best holder it hears for it: no relay it
+   at home there. On another channel it leaves a gatherer whose section
+   says it hears a relay at home there that holds the block it lacks the
+   blocks such a relay holds, by that relay's section, and streams it
+   only those past them; to any other gatherer there it streams from the
+   first block it lacks. It streams to a gatherer on another channel
+   only if it is the best holder it hears for it: no relay it
    hears that is not at home there, holds more than the gatherer and is
    no farther from it has more blocks from the first, or as many and a
    lower ID. It streams on at most two channels: its home, then those
@@ -4680,7 +4684,18 @@ sweep on a channel belongs to the relays at home there.* A relay hears
 only its home channel, so only the relays at home on a channel can
 share its pace; pieces from elsewhere would add up unheard. A stream
 from another channel seeds a channel until a relay at home there has
-caught up, and the chain then runs within each channel. Of the relays
+caught up, and the chain then runs within each channel. *Why the
+gatherer says it hears one.* A relay elsewhere knows that it hears a
+relay at home on the gatherer's channel, not that the gatherer does: a
+gatherer that heard only a holder elsewhere, which left it to a holder
+at home on the gatherer's channel out of the gatherer's reach, took no
+piece in twelve simulated hours (roadmap D196). The gatherer knows. It
+says so in the top bit of its count of blocks, which never passes 48,
+so the section stays 17 bytes. A change of the bit starts no rotation:
+it turns off when the gatherer catches up with the relay at home,
+which changes its blocks, or when that relay goes, and the gatherer's
+helper is then a relay elsewhere, on whose channel its section goes
+every rotation. Of the relays
 elsewhere only the best holder near a gatherer streams to it, since
 they cannot hear each other's pieces there; a relay stands back only
 for one that is no farther from the gatherer, which reaches it as well.
@@ -5122,8 +5137,10 @@ HEARTBEAT first(1) format(1) flags(1) id(6) short_pos(4)                    = 13
           image = the first 4 bytes of that image's name; key = which
           signer's key signed it; blocks = its blocks, 2 to 48; last =
           the pieces of its last block, 1 to 64; complete = the blocks
-          the node holds from the first; have = the pieces it holds of
-          block `complete`
+          the node holds from the first, bits 0 to 6, and in bit 7
+          whether it gathers and hears a relay at home on its own
+          channel that holds block `complete`; have = the pieces it
+          holds of block `complete`
 ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           the answer to a DATA, taken, refused or seen; sent on the channel
           in the answered packet's aux

@@ -447,6 +447,19 @@ pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
     }
 }
 
+/// The bits of a section's `complete` byte that count blocks: at most
+/// [`crate::update::MAX_BLOCKS`], 48, so the top bit is free and says
+/// [`Section::home_holds`].
+pub(crate) const COMPLETE_MASK: u8 = 0x7f;
+
+const _: () = assert!(crate::update::MAX_BLOCKS <= COMPLETE_MASK as usize);
+
+/// A section's `complete` byte: the blocks, and [`Section::home_holds`]
+/// in the top bit.
+pub(crate) fn complete_byte(s: &Section) -> u8 {
+    s.complete & COMPLETE_MASK | u8::from(s.home_holds) << 7
+}
+
 /// Encode `s` as a heartbeat's section, into the [`SECTION_LEN`] bytes
 /// after its first [`HEARTBEAT_LEN`]: multi-byte numbers big-endian.
 pub fn encode_section(s: &Section, b: &mut [u8; SECTION_LEN]) {
@@ -461,7 +474,7 @@ pub fn encode_section(s: &Section, b: &mut [u8; SECTION_LEN]) {
         }
         None => b[4..15].fill(0),
     }
-    b[15] = s.complete;
+    b[15] = complete_byte(s);
     b[16] = s.have;
 }
 
@@ -481,8 +494,9 @@ pub fn decode_section(heartbeat: &[u8]) -> Option<Section> {
     Some(Section {
         runs: word(0),
         image,
-        complete: b[15],
+        complete: b[15] & COMPLETE_MASK,
         have: b[16],
+        home_holds: b[15] >> 7 == 1,
     })
 }
 
@@ -861,8 +875,9 @@ mod tests {
             blocks: u8,
             last: u8,
             key: u8,
-            complete: u8,
+            complete in 0u8..=COMPLETE_MASK,
             have: u8,
+            home_holds: bool,
             tag: [u8; TAG_LEN],
             block: u8,
             index: u8,
@@ -874,7 +889,7 @@ mod tests {
             prop_assert_eq!(piece.sender(), None);
             let image = Image { name: tag, version, blocks, last, key };
             for image in [Some(image), None] {
-                let section = Section { runs, image, complete, have };
+                let section = Section { runs, image, complete, have, home_holds };
                 let mut hb = [0u8; HEARTBEAT_LEN + SECTION_LEN];
                 encode_section(&section, (&mut hb[HEARTBEAT_LEN..]).try_into().unwrap());
                 prop_assert_eq!(decode_section(&hb), Some(section));

@@ -81,6 +81,9 @@ pub struct Section {
     pub complete: u8,
     /// The pieces it holds of block `complete`, the first it lacks.
     pub have: u8,
+    /// It gathers, and a relay at home on its channel that it hears holds
+    /// the block it lacks: relays elsewhere leave it that relay's blocks.
+    pub home_holds: bool,
 }
 
 impl Section {

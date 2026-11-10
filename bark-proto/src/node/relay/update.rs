@@ -228,9 +228,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// What its section says: the version it runs, from its build, else
     /// the image it holds, and the newest image it holds or gathers with
-    /// the blocks of it it holds from the first. A node that knows neither
-    /// tells none.
-    fn section(&self) -> Option<Section> {
+    /// the blocks of it it holds from the first, and whether a relay at
+    /// home on its channel holds the block it lacks. A node that knows
+    /// neither tells none.
+    fn section(&self, now: Instant) -> Option<Section> {
         let s = &self.spread;
         let runs = match self.config.version {
             0 => s.own.map_or(0, |o| o.version),
@@ -242,11 +243,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             (None, None) if runs == 0 => return None,
             (None, None) => (None, 0, 0),
         };
+        let home_holds = s.gather.is_some_and(|g| {
+            self.holder_of(g.block, now)
+                .is_some_and(|m| m.home == self.home)
+        });
         Some(Section {
             runs,
             image,
             complete,
             have,
+            home_holds,
         })
     }
 
@@ -291,8 +297,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// What its section tells that starts a rotation of it when it
     /// changes; the pieces of the next block may be stale, which the
     /// loss margin covers.
-    fn told_now(&self) -> Option<Told> {
-        self.section()
+    fn told_now(&self, now: Instant) -> Option<Told> {
+        self.section(now)
             .map(|t| (t.runs, t.image.map(|i| (i.tag(), i.version)), t.complete))
     }
 
@@ -301,7 +307,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// neighbour that lags is answered.
     fn rotation_due(&self, now: Instant) -> bool {
         let s = &self.spread;
-        self.told_now() != s.told || now >= s.section_at || s.answer
+        self.told_now(now) != s.told || now >= s.section_at || s.answer
     }
 
     /// The section a heartbeat sent on `channel` at `now` carries, if any:
@@ -313,7 +319,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let due = self.rotation_due(now)
             || self.spread.section_to & bit(channel) != 0
             || self.restates_on(now) == Some(channel);
-        self.section().filter(|_| due)
+        self.section(now).filter(|_| due)
     }
 
     /// A heartbeat with the section went on `channel`: a rotation of them
@@ -321,7 +327,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// which its anchor hears.
     pub(super) fn section_sent(&mut self, now: Instant, channel: Channel) {
         if self.rotation_due(now) {
-            let told = self.told_now();
+            let told = self.told_now(now);
             let s = &mut self.spread;
             s.told = told;
             s.section_at = now + SECTION_EVERY;
@@ -629,8 +635,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// On each channel, the blocks from the first that a relay at home
     /// there holds, as far as this node hears: that relay streams them
-    /// there, and this node only the blocks past them, or on its own home
-    /// channel (spec "Updates over the mesh").
+    /// there, and this node, to a gatherer there that hears such a relay,
+    /// only the blocks past them ([`Node::left`]); on its own home channel
+    /// none (spec "Updates over the mesh").
     fn held_at_home(&self, image: Image, now: Instant) -> [u8; CHANNELS as usize] {
         let mut held = [0; CHANNELS as usize];
         for (_, m) in self.neighbours.live(now).filter(|(_, m)| !m.sleepy) {
@@ -653,7 +660,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(u) = self.neighbours.section(n) else {
             return false;
         };
-        let mine = self.section().map_or(0, |s| s.complete);
+        let mine = self.section(now).map_or(0, |s| s.complete);
         let far = n.local.distance2(Point::default());
         !self.neighbours.live(now).any(|(_, m)| {
             let k = self.complete_of(m, image);
@@ -702,7 +709,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 continue;
             }
             let lacks = |b: u8| b > u.complete || u.have < image.pieces(b);
-            let there = held[usize::from(n.home.index())];
+            let there = Self::left(&u, n, &held);
             let Some(from) =
                 (u.complete.max(there)..image.blocks).find(|&b| self.holds_block(b) && lacks(b))
             else {
@@ -746,10 +753,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         out
     }
 
+    /// The blocks this node leaves the gatherer `n`, whose section is `u`,
+    /// to a relay at home on its channel, by `held`
+    /// ([`Node::held_at_home`]): none unless the gatherer says it hears one
+    /// that holds the block it lacks, since the relay this node hears there
+    /// may be out of the gatherer's reach.
+    fn left(u: &Section, n: &Neighbour, held: &[u8; CHANNELS as usize]) -> u8 {
+        match u.home_holds {
+            true => held[usize::from(n.home.index())],
+            false => 0,
+        }
+    }
+
     /// The pieces of block `b` the neighbour on channel `c` furthest
     /// behind on it lacks, by their sections: all of the block for one
-    /// that lacks an earlier block, what it lacks of it for one at it.
-    fn deficit(&self, c: Channel, b: u8, now: Instant) -> u8 {
+    /// that lacks an earlier block, what it lacks of it for one at it,
+    /// counting only the gatherers it does not leave the block to.
+    fn deficit(&self, c: Channel, b: u8, held: &[u8; CHANNELS as usize], now: Instant) -> u8 {
         let Some(image) = self.streams() else {
             return 0;
         };
@@ -757,8 +777,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours
             .live(now)
             .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
-            .filter_map(|(_, n)| self.gatherer(n, image, now))
-            .map(|u| match u.complete.cmp(&b) {
+            .filter_map(|(_, n)| self.gatherer(n, image, now).map(|u| (n, u)))
+            .filter(|(n, u)| b >= Self::left(u, n, held))
+            .map(|(_, u)| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
                 core::cmp::Ordering::Equal => k.saturating_sub(u.have),
                 core::cmp::Ordering::Less => k,
@@ -777,8 +798,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let s = &self.spread;
         let i = usize::from(c.index());
         let cur = s.cur[i];
-        let there = self.held_at_home(image, now)[usize::from(c.index())];
-        let wanted = |b: u8| b >= there && self.holds_block(b) && self.deficit(c, b, now) > 0;
+        let held = self.held_at_home(image, now);
+        let wanted = |b: u8| self.holds_block(b) && self.deficit(c, b, &held, now) > 0;
         if s.sent_cur[i] < s.target[i] && wanted(cur) {
             return Some(cur);
         }
@@ -803,9 +824,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if cur == u8::MAX || s.sent_cur[i] < s.target[i] {
             return None;
         }
-        let there = self.held_at_home(image, now)[i];
-        let lowest =
-            (there..image.blocks).find(|&b| self.holds_block(b) && self.deficit(c, b, now) > 0)?;
+        let held = self.held_at_home(image, now);
+        let lowest = (0..image.blocks)
+            .find(|&b| self.holds_block(b) && self.deficit(c, b, &held, now) > 0)?;
         (lowest == cur).then_some(cur)
     }
 
@@ -1067,7 +1088,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Ok(Packet::Update(Update::Piece { block, .. })) => Some(block),
             _ => None,
         };
-        let deficit = block.map_or(0, |b| self.deficit(c, b, now));
+        let held = self.streams().map(|i| self.held_at_home(i, now));
+        let deficit = block
+            .zip(held)
+            .map_or(0, |(b, held)| self.deficit(c, b, &held, now));
         self.radio.budget.record(airtime, now);
         let slot = self.spread.slot_open.is_some();
         self.slot_end(SlotPiece::Sent, emit);
@@ -1186,6 +1210,7 @@ mod tests {
             image: Some(other),
             complete: 1,
             have: 0,
+            home_holds: false,
         };
         let plane = r.plane;
         let lease = r.config.heartbeat_max.mul(2 * u64::from(CHANNELS)) + heartbeat_lag(&r.config);
@@ -1266,6 +1291,7 @@ mod tests {
             image: Some(image),
             complete: 1,
             have: 0,
+            home_holds: false,
         };
         let plane = r.plane;
         let beat = |r: &mut crate::Relay, t: Instant| {
