@@ -82,10 +82,10 @@ class Outgoing {
   /// A fetch: the home node answered.
   bool acked;
 
-  /// A text: the other side's reaction, an index in `reactions` (app_layer.dart), and the
-  /// `sent` of the message that carried it, so that an older one coming
-  /// late does not replace it.
-  int? reaction;
+  /// A text: the other side's reaction, one emoji, and the `sent` of the
+  /// message that carried it, so that an older one coming late does not
+  /// replace it.
+  String? reaction;
   int reactionSent;
   OutState state;
   DateTime? retryAt;
@@ -155,7 +155,7 @@ class Outgoing {
         part: j['part'] as int,
         of: j['of'] as int,
         acked: j['acked'] as bool,
-        reaction: j['reaction'] as int?,
+        reaction: j['reaction'] as String?,
         reactionSent: j['reactionSent'] as int,
         state: OutState.values.byName(j['state'] as String),
       )
@@ -194,8 +194,8 @@ class Received {
   /// and its sender's could have made.
   final bool intro;
 
-  /// The person's reaction to it, an index in `reactions` (app_layer.dart).
-  int? reaction;
+  /// The person's reaction to it, one emoji.
+  String? reaction;
 
   Received(
     this.id,
@@ -248,7 +248,7 @@ class Received {
     part: j['part'] as int,
     of: j['of'] as int,
     intro: j['intro'] as bool,
-    reaction: j['reaction'] as int?,
+    reaction: j['reaction'] as String?,
   );
 }
 
@@ -437,6 +437,10 @@ class Session extends ChangeNotifier {
           for (final e in (j['guestAfter'] as Map<String, dynamic>).entries)
             e.key: e.value as int,
         },
+        reactionsUsed: {
+          for (final e in (j['reactionsUsed'] as Map<String, dynamic>).entries)
+            e.key: e.value as int,
+        },
       ),
     );
     if (j == null) return;
@@ -446,6 +450,7 @@ class Session extends ChangeNotifier {
     pairingLost.addAll(j.pairingLost);
     stopped = j.stopped;
     guestAfter.addAll(j.guestAfter);
+    reactionsUsed.addAll(j.reactionsUsed);
     _retryWhenDue();
     notifyListeners();
   }
@@ -457,6 +462,7 @@ class Session extends ChangeNotifier {
     'pairingLost': [...pairingLost],
     'stopped': stopped,
     'guestAfter': guestAfter,
+    'reactionsUsed': reactionsUsed,
   });
 
   /// The node `name` holds this phone's bond, or no longer does; the
@@ -582,6 +588,17 @@ class Session extends ChangeNotifier {
   /// node ID in hex: the node keeps nothing for a guest, so the phone
   /// keeps where it is (spec "Phone link", Public).
   final Map<String, int> guestAfter = {};
+
+  /// How many times the person has reacted with each emoji, the one used
+  /// last at the end, for the picker's first row (`emojis.dart`).
+  final Map<String, int> reactionsUsed = {};
+
+  /// Counts a reaction the person sent; the file is saved with the
+  /// message that carries it.
+  void usedReaction(String emoji) {
+    final n = reactionsUsed.remove(emoji) ?? 0;
+    reactionsUsed[emoji] = n + 1;
+  }
 
   /// Reads the items that wait for the person in the node's ring, oldest
   /// first, each after the last taken; the number goes on after each kept,

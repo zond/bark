@@ -107,17 +107,20 @@ is a prototype for the bench, not the app people will carry.
   the sender wrote it, by their phone's clock, its parts here, how it
   was sealed and its message IDs. The top line says
   when the contact last wrote, and, when their card names a home,
-  whether from it. A long press on a received text opens its
-  reactions, six emoji in a row of 48 dp buttons: thumbs up, heart,
-  laugh, surprise, sad and thanks, each named in its tooltip, under a
-  line that says the sender sees the one picked under their text and
-  that another replaces it; and **Copy text**, as the long press no
-  longer selects the words. The one picked goes at once, shows under
-  the received text, and shows under the sender's copy when it arrives;
-  a second pick replaces it there and goes again. Nothing answers by
-  itself (roadmap D126, D185). A sent text's long press still selects
-  its words. An acknowledgement from an app before reactions shows as a
-  thumbs up.
+  whether from it. A long press on a received text opens the emoji
+  picker, under a line that says the sender sees the one picked on
+  their text and that another replaces it: first a row of the six you
+  react with most, in 48 dp buttons, the one used last first on a tie,
+  and thumbs up, heart, laugh, surprise, sad and thanks until you have
+  used six; then **Copy text**, as the long press no longer selects the
+  words; then a search by name, and every emoji in Unicode's groups,
+  scrolled. Each emoji is named in its tooltip. The one picked goes at
+  once and shows as a small chip half over the lower edge of the
+  received text, on its right corner, and on the sender's copy, on its
+  left corner, when it arrives; a second pick replaces it there and
+  goes again. The chip's tooltip names it, and a tap on it explains it
+  with the bubble's other marks. Nothing answers by itself (roadmap
+  D126, D185, D187). A sent text's long press still selects its words.
   A text longer than one message holds, 156 bytes in a box without an
   address, goes as parts of up to 155 bytes, 16 at most (roadmap D137):
   once the text in the field needs more than one, a line under it says
@@ -957,7 +960,8 @@ cards go without asking, to the home's mailbox when there is a choice.
 ## Plugins
 
 Besides those for Bluetooth, location and storage, pinned packages
-handle the QR code, the cryptography and the notifications, all under
+handle the QR code, the cryptography, the notifications, the map and
+the emoji list, all under
 licences compatible with the repository's GPL-3:
 
 | package | does | licence |
@@ -968,6 +972,7 @@ licences compatible with the repository's GPL-3:
 | `qr_flutter` 4.1.0, with `qr` | draws the code | BSD-3-Clause |
 | `qr_code_scanner_plus` 2.3.2 | scans it with the camera | BSD-2-Clause; on Android it uses the ZXing libraries, Apache-2.0 |
 | `flutter_local_notifications` 22.3.3 | the texts' notifications and the permission to notify | BSD-3-Clause |
+| `emojis` 3.2.0 | every emoji of Unicode 17.0 with its name, keywords and group, for the reaction picker | BSD-3-Clause |
 | `flutter_map` 8.3.2, with `latlong2` 0.10.1 | the map, its OpenStreetMap tiles and their cache on the phone | BSD-3-Clause; `latlong2` Apache-2.0; the packages they bring MIT or BSD; the tiles' data © OpenStreetMap contributors, ODbL, which the map names on screen |
 
 The common `mobile_scanner` is not used: on Android it decodes with
@@ -1011,7 +1016,8 @@ The tests check every value's bytes against the vectors of
 `bark-link/src/tests.rs`, the message ID among them; check keys,
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
-messages, reactions and an older app's acknowledgement, a reflected
+messages, reactions of one character and no more, the picker's first
+row after picks and a restart, a reflected
 message, a forged first message,
 the header's written-from address kept apart from the card's, the
 recipient tag on every payload, and the
@@ -1069,7 +1075,8 @@ conversations; split texts at boundaries as the Rust vectors do;
 choose where a text goes; decide what notifies, and when the app starts
 with the phone, against a notifier that writes down what it is asked;
 and drive the screens: a text to the fake friend, its echo, a
-reaction each way, the backup words, a contact from a pasted or a scanned
+reaction each way, from the first row, the full list and a search,
+on the bubble's lower edge, the backup words, a contact from a pasted or a scanned
 card, my card, the debug screen, the fetch button, the choice of where
 a text goes, a long text's parts, the bars for a newer release against
 a fake fetch, and the map, its markers, lines,
@@ -1107,10 +1114,12 @@ a phone (Trying it, With a node).
    as sent into the network, "to where they were"; 5 s later "Echo: " and
    your text appears, and the note goes: the echo was sealed by the
    fake friend.
-5. Press and hold the echo, and pick the heart: it shows under the
-   echo, and Debug lists a `reaction` sent. Press and hold it again
-   and pick another: it takes the heart's place, and a second
-   `reaction` is listed.
+5. Press and hold the echo, and pick the heart: it shows on the
+   echo's lower right corner, and Debug lists a `reaction` sent. Press
+   and hold it again: the heart now leads the first row. Type
+   "hedgehog" in the search and pick it: it takes the heart's place,
+   and a second `reaction` is listed. Close and reopen the app; the
+   first row is as it was.
 6. Send three more. The third is given back with a wait counting down
    from 0:26. When the wait is over, press **Send again**. This is the
    fourth write, which the fake answers not ready: the text stays
@@ -1212,9 +1221,9 @@ a phone (Trying it, With a node).
    and falls to 0 as the app reads it. Answer it: the answer is boxed,
    and the phone that wrote first shows the other as verified. Write
    again from that phone: the phone with the home shows it as verified
-   too. Press and hold the answer and pick a reaction: it shows under
-   the answer, and the other phone shows it under its text when it
-   arrives.
+   too. Press and hold the answer and pick a reaction, one from the
+   list below the first row: it shows on the answer's lower edge, and
+   the other phone shows it on its text when it arrives.
 6. Switch off the receiving phone's Bluetooth, send two texts to it,
    switch it back on and connect: both arrive, oldest first, and the
    inbox count goes back to 0.

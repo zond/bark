@@ -1,7 +1,8 @@
 // The screens against the fake node: they build; a text goes to the fake
 // friend and its echo comes back into the same thread, sealed both ways;
-// the person reacts to the echo by a long press, and the friend's
-// reaction shows under the sent text;
+// the person reacts to the echo by a long press, from the first row, the
+// full list or a search, the first row following their picks, and the
+// friend's reaction shows on the sent text's corner;
 // the card, and without a name a prompt in its place, the backup words,
 // adding a contact from a pasted card or from a scanned one without a
 // name, its thread opened at once, and the debug screen; the fetch button, on the first screen and
@@ -19,6 +20,7 @@
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
+import 'package:bark_app/emojis.dart';
 import 'package:bark_app/fake_node.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
@@ -139,50 +141,115 @@ void main() {
     expect(find.textContaining('Not verified yet'), findsNothing);
 
     // React to the echo: a long press opens the reactions, with a line on
-    // what one does; the heart goes, and shows under the echo. The
-    // friend's heart for "hello" shows under it when it comes. Nothing is
-    // pressed for the person, and no mark waits for one.
+    // what one does; the heart goes, and shows on the echo's corner. The
+    // friend's heart for "hello" shows on its corner when it comes.
+    // Nothing is pressed for the person, and no mark waits for one.
     Finder inBubble(String text, Finder f) => find.descendant(
       of: find.ancestor(of: find.text(text), matching: find.byType(Card)),
       matching: f,
     );
+    List<String> firstRow() => [
+      for (final b in t.widgetList<IconButton>(
+        find.descendant(
+          of: find.byKey(const ValueKey('frequent')),
+          matching: find.byType(IconButton),
+        ),
+      ))
+        (b.icon as Text).data!,
+    ];
+    Future<void> hold() async {
+      await t.longPress(find.text('Echo: hello'));
+      await t.pumpAndSettle();
+    }
+
     final taken = find.byTooltip(sentTip);
     expect(inBubble('hello', taken), findsOneWidget);
     expect(find.textContaining('Got it'), findsNothing);
     expect(find.byType(ActionChip), findsNothing);
-    await t.longPress(find.text('Echo: hello'));
-    await t.pumpAndSettle();
-    expect(find.textContaining('sees it under their text'), findsOneWidget);
+    await hold();
+    expect(find.textContaining('sees it on their text'), findsOneWidget);
     expect(find.text('Copy text'), findsOneWidget);
-    for (final name in reactionNames) {
-      expect(find.byTooltip(name), findsOneWidget);
-    }
+    expect(firstRow(), quickReactions);
     expect(
-      t.getSize(find.widgetWithText(IconButton, '❤️')).height,
+      t.getSize(find.widgetWithText(IconButton, '❤️').first).height,
       greaterThanOrEqualTo(48),
     );
-    await t.tap(find.byTooltip('Heart'));
+    await t.tap(find.byTooltip('red heart').first);
     await t.pumpAndSettle();
-    expect(find.byTooltip('You reacted: Heart'), findsOneWidget);
+    expect(find.byTooltip('You reacted: red heart'), findsOneWidget);
     final reacted = app.session.outbox.last;
     expect(reacted.kind, OutKind.reaction);
     expect(reacted.body, '❤️');
-    // A second press replaces it, and goes again.
-    await t.longPress(find.text('Echo: hello'));
+    // The chip sits half over the bubble's lower edge, on the corner
+    // toward the middle: the right of a received text, with room below.
+    Rect chipOf(String text) => t.getRect(
+      find.descendant(
+        of: find.ancestor(of: find.text(text), matching: find.byType(Stack)),
+        matching: find.byKey(const ValueKey('reaction')),
+      ),
+    );
+    Rect cardOf(String text) => t.getRect(
+      find.ancestor(of: find.text(text), matching: find.byType(Card)),
+    );
+    Rect stackOf(String text) => t.getRect(
+      find.ancestor(of: find.text(text), matching: find.byType(Stack)).first,
+    );
+    void onEdge(String text, {required bool right}) {
+      final chip = chipOf(text);
+      // Material's card margin: the visible edge is 4 inside the box.
+      final edge = cardOf(text).deflate(4);
+      expect(chip.top, lessThan(edge.bottom));
+      expect(chip.bottom, greaterThan(edge.bottom));
+      expect((chip.center.dy - edge.bottom).abs(), lessThan(1));
+      expect(chip.center.dx > edge.center.dx, right);
+      expect(chip.left, greaterThanOrEqualTo(edge.left));
+      expect(chip.right, lessThanOrEqualTo(edge.right));
+      // The bubble's box holds the chip, so the next bubble starts below.
+      expect(chip.bottom, lessThanOrEqualTo(stackOf(text).bottom));
+    }
+
+    onEdge('Echo: hello', right: true);
+
+    // A second press replaces it, and goes again; the heart now leads the
+    // first row. A pick from the full list, and one found by its name.
+    await hold();
+    expect(firstRow().first, '❤️');
+    expect(find.text('Smileys & emotion'), findsOneWidget);
+    await t.tap(find.byTooltip('grinning face').last);
     await t.pumpAndSettle();
-    await t.tap(find.byTooltip('Laugh'));
+    expect(find.byTooltip('You reacted: red heart'), findsNothing);
+    expect(find.byTooltip('You reacted: grinning face'), findsOneWidget);
+    expect(app.session.outbox.last.body, '😀');
+    await hold();
+    final search = find.byKey(const ValueKey('emoji search'));
+    await t.enterText(search, 'hedge');
     await t.pumpAndSettle();
-    expect(find.byTooltip('You reacted: Heart'), findsNothing);
-    expect(find.byTooltip('You reacted: Laugh'), findsOneWidget);
+    expect(find.byTooltip('hedgehog'), findsOneWidget);
+    // Found, not in the groups.
+    expect(find.text('Smileys & emotion'), findsNothing);
+    await t.enterText(search, 'zzzq');
+    await t.pumpAndSettle();
+    expect(find.text('No emoji by that name.'), findsOneWidget);
+    await t.enterText(search, 'hedgehog');
+    await t.pumpAndSettle();
+    await t.tap(find.byTooltip('hedgehog'));
+    await t.pumpAndSettle();
+    expect(find.byTooltip('You reacted: hedgehog'), findsOneWidget);
+    expect(app.session.outbox.last.body, '🦔');
     expect(
       app.session.outbox.where((o) => o.kind == OutKind.reaction).length,
-      2,
+      3,
     );
+    await hold();
+    expect(firstRow().take(3), ['🦔', '😀', '❤️']);
+    Navigator.pop(t.element(find.byType(BottomSheet)));
+    await t.pumpAndSettle();
+
     final hello = app.session.outbox.firstWhere((o) => o.body == 'hello');
     final f = app.fakeNode!.friend;
     final heart = writePlain(
       Header(greater(f.identity, app.me.identity), hello.sent + 60),
-      [ReactionRecord(hello.sent, 1)],
+      [ReactionRecord(hello.sent, '❤️')],
     );
     final pair = sodium.crypto.box.precalculate(
       publicKey: app.me.identity,
@@ -197,12 +264,9 @@ void main() {
       ),
     );
     await t.pump();
-    expect(find.byTooltip('They reacted: Heart'), findsOneWidget);
-    // An acknowledgement from an app before reactions is a thumbs up.
-    hello.reaction = 0;
-    app.session.dismissNotice();
-    await t.pump();
-    expect(find.byTooltip('They reacted: Thumbs up'), findsOneWidget);
+    expect(find.byTooltip('They reacted: red heart'), findsOneWidget);
+    // On a sent text, the left corner.
+    onEdge('hello', right: false);
     expect(inBubble('hello', taken), findsOneWidget);
     // A tap on a state explains them all, the reaction too.
     await t.tap(inBubble('hello', taken));
@@ -823,15 +887,15 @@ void main() {
     await t.pump();
     expect(find.textContaining('part 2 of 3 not yet here'), findsOneWidget);
     for (final r in app.session.received) {
-      r.reaction = 5;
+      r.reaction = '🙏';
     }
     await redraw();
-    expect(find.byTooltip('You reacted: Thanks'), findsOneWidget);
+    expect(find.byTooltip('You reacted: folded hands'), findsOneWidget);
     await t.runAsync(() => receive(7001, 2, 'two '));
     await t.pump();
     expect(find.textContaining('not yet here'), findsNothing);
     expect(find.text('one two three'), findsOneWidget);
-    expect(find.byTooltip('You reacted: Thanks'), findsOneWidget);
+    expect(find.byTooltip('You reacted: folded hands'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     app.dispose();

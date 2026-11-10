@@ -565,8 +565,17 @@ pub fn config(stored: Option<Stored>) -> Config {
         // The board reads its battery (`battery.rs`). On the bench's USB,
         // built to report battery (`power.rs`), the reading is the
         // charger's and never low, so a fixed node would relay for ever:
-        // without levels it is sleepy, as the bench wants.
-        battery: (option_env!("BARK_ON_BATTERY") != Some("1")).then_some(BatteryLevels::DESIGN),
+        // without levels it is sleepy, as the bench wants. A discharge
+        // bench build's levels no reading reaches, so that it relays
+        // until the cell is flat (roadmap D190).
+        battery: match (option_env!("BARK_ON_BATTERY"), crate::discharge::BENCH) {
+            (_, true) => Some(BatteryLevels {
+                low_mv: 0,
+                high_mv: 0,
+            }),
+            (Some("1"), false) => None,
+            _ => Some(BatteryLevels::DESIGN),
+        },
         version: crate::update::BARK_IMAGE_VERSION,
         ..Config::default()
     }
@@ -623,6 +632,12 @@ pub async fn run<'a>(
         dbm,
         crate::power::reported()
     );
+    if crate::discharge::BENCH {
+        log::warn!(
+            "bench build: DISCHARGE BENCH (BARK_DISCHARGE_BENCH): relays at any battery level, GPS tracking, a discharge sample every {} s",
+            bark_image::discharge::BENCH_EVERY_S
+        );
+    }
     if let Some(id) = bark_driver::BENCH_DEAF_TO {
         log::warn!("bench build: deaf to {:02x?} (BARK_IGNORE)", id.0);
     }
@@ -753,8 +768,8 @@ impl core::fmt::Display for Time {
     }
 }
 
-/// The battery's estimate for the 10 s line, on battery: the time left in
-/// minutes, and the drains learned, a relay's and a sleepy node's, in
+/// The battery's estimate for the 10 s line, on battery: the time left as
+/// the node runs now in minutes, and the drains learned, a relay's and a sleepy node's, in
 /// ten-thousandths of a percent of the cell an hour, as the core's
 /// `Drain` trace gives them at each sample (`bark_proto::drain`).
 struct Drain<'a>(&'a Role, Instant);

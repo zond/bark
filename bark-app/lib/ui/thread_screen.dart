@@ -8,6 +8,7 @@ import '../app.dart';
 import '../app_layer.dart';
 import '../contacts.dart';
 import '../conversations.dart';
+import '../emojis.dart';
 import '../link.dart';
 import '../session.dart';
 import 'archived_screen.dart';
@@ -17,16 +18,13 @@ import 'common.dart';
 /// proves its sender, so a verified thread may still hold such a text.
 const unverifiedText = 'Came as a first message, which anyone could have made';
 
-/// What each of [reactions] is called, for its tooltip and for a reader
-/// that speaks the screen.
-const reactionNames = [
-  'Thumbs up',
-  'Heart',
-  'Laugh',
-  'Surprise',
-  'Sad',
-  'Thanks',
-];
+/// The height of the reaction chip, which sits half over the bubble's
+/// lower edge; its other half is room below the bubble.
+const double _chipHeight = 28;
+
+/// A card's margin, Material's default, kept here as the chip is placed
+/// against the card's edge.
+const double _cardMargin = 4;
 
 /// A position to five decimals, about a metre.
 String _at(Position p) =>
@@ -409,87 +407,107 @@ class _ThreadScreenState extends State<ThreadScreen> {
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.8,
         ),
-        child: Column(
-          crossAxisAlignment: mine
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Card(
-              color: mine
-                  ? scheme.primaryContainer
-                  : scheme.surfaceContainerHigh,
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: help,
-                onLongPress: mine ? null : () => _react(e, to),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (mine)
-                        SelectableText(e.text, onTap: help)
-                      else
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              for (final p in e.pieces)
-                                TextSpan(
-                                  text: p.text,
-                                  style: p.missing
-                                      ? TextStyle(
-                                          fontStyle: FontStyle.italic,
-                                          color: color,
-                                        )
-                                      : null,
-                                ),
-                            ],
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: reaction == null ? 0 : _chipHeight / 2 - _cardMargin,
+              ),
+              child: Card(
+                margin: const EdgeInsets.all(_cardMargin),
+                color: mine
+                    ? scheme.primaryContainer
+                    : scheme.surfaceContainerHigh,
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: help,
+                  onLongPress: mine ? null : () => _react(e, to),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (mine)
+                          SelectableText(e.text, onTap: help)
+                        else
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                for (final p in e.pieces)
+                                  TextSpan(
+                                    text: p.text,
+                                    style: p.missing
+                                        ? TextStyle(
+                                            fontStyle: FontStyle.italic,
+                                            color: color,
+                                          )
+                                        : null,
+                                  ),
+                              ],
+                            ),
                           ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(when(e.at), style: small),
+                            if (mine)
+                              ..._sentMarks(e.outs, small, scheme)
+                            else
+                              ..._receivedMarks(e, verified, small, color),
+                          ],
                         ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(when(e.at), style: small),
-                          if (mine)
-                            ..._sentMarks(e.outs, small, scheme)
-                          else
-                            ..._receivedMarks(e, verified, small, color),
-                        ],
-                      ),
-                      if (mine && !archived) _actions(e.outs),
-                    ],
+                        if (mine && !archived) _actions(e.outs),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-            if (reaction != null) _reaction(reaction, mine, help),
+            if (reaction != null)
+              // On the corner toward the screen's middle.
+              PositionedDirectional(
+                bottom: 0,
+                start: mine ? 12 : null,
+                end: mine ? null : 12,
+                child: _reaction(reaction, mine, help),
+              ),
           ],
         ),
       ),
     );
   }
 
-  /// A reaction under its bubble: theirs under a sent text, the person's
-  /// under a received one.
-  Widget _reaction(int r, bool mine, VoidCallback help) {
+  /// A reaction on its bubble's lower edge: theirs on a sent text, the
+  /// person's on a received one.
+  Widget _reaction(String r, bool mine, VoidCallback help) {
+    final scheme = Theme.of(context).colorScheme;
     final words = mine
-        ? 'They reacted: ${reactionNames[r]}'
-        : 'You reacted: ${reactionNames[r]}';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
-      child: Tooltip(
-        message: words,
-        excludeFromSemantics: true,
-        child: Semantics(
-          label: words,
-          excludeSemantics: true,
+        ? 'They reacted: ${emojiName(r)}'
+        : 'You reacted: ${emojiName(r)}';
+    return Tooltip(
+      message: words,
+      excludeFromSemantics: true,
+      child: Semantics(
+        label: words,
+        excludeSemantics: true,
+        child: Material(
+          key: const ValueKey('reaction'),
+          color: scheme.surfaceContainerLowest,
+          elevation: 1,
+          shape: StadiumBorder(side: BorderSide(color: scheme.outlineVariant)),
           child: InkWell(
             onTap: help,
             customBorder: const StadiumBorder(),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Text(reactions[r], style: const TextStyle(fontSize: 20)),
+            child: SizedBox(
+              height: _chipHeight,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(r, style: const TextStyle(fontSize: 16)),
+                ),
+              ),
             ),
           ),
         ),
@@ -497,56 +515,31 @@ class _ThreadScreenState extends State<ThreadScreen> {
     );
   }
 
-  /// The reactions to a received text, with a line on what one does, and
-  /// a copy of its words, which a long press no longer selects. In an
-  /// archived thread, only the copy.
+  /// The reactions to a received text and a copy of its words, which a
+  /// long press no longer selects. In an archived thread, only the copy.
   Future<void> _react(Entry e, Contact? to) async {
     final now = e.arrived.map((r) => r.reaction).nonNulls.firstOrNull;
-    final scheme = Theme.of(context).colorScheme;
-    final picked = await showModalBottomSheet<int>(
+    final copy = ListTile(
+      leading: const Icon(Icons.copy),
+      title: const Text('Copy text'),
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: e.text));
+        Navigator.pop(context);
+      },
+    );
+    final picked = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: to != null,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (to != null) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  'React: ${to.name} sees it under their text. Pick another '
-                  'to change it.',
-                ),
+        child: to == null
+            ? Column(mainAxisSize: MainAxisSize.min, children: [copy])
+            : _ReactionSheet(
+                to: to,
+                now: now,
+                frequent: frequentReactions(app.session.reactionsUsed),
+                copy: copy,
               ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  for (final (i, emoji) in reactions.indexed)
-                    IconButton(
-                      tooltip: reactionNames[i],
-                      isSelected: i == now,
-                      style: IconButton.styleFrom(
-                        backgroundColor: i == now
-                            ? scheme.secondaryContainer
-                            : null,
-                      ),
-                      onPressed: () => Navigator.pop(context, i),
-                      icon: Text(emoji, style: const TextStyle(fontSize: 26)),
-                    ),
-                ],
-              ),
-            ],
-            ListTile(
-              leading: const Icon(Icons.copy),
-              title: const Text('Copy text'),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: e.text));
-                Navigator.pop(context);
-              },
-            ),
-          ],
-        ),
       ),
     );
     if (picked == null || to == null) return;
@@ -684,6 +677,123 @@ class _ThreadScreenState extends State<ThreadScreen> {
         }
       },
       child: const Text('Cancel'),
+    );
+  }
+}
+
+/// The reaction picker: the emoji the person uses most in one row, a copy
+/// of the text, then every emoji by Unicode's groups, with a search by
+/// name. Pops with the emoji picked.
+class _ReactionSheet extends StatefulWidget {
+  final Contact to;
+
+  /// The person's reaction to the text so far.
+  final String? now;
+  final List<String> frequent;
+  final Widget copy;
+  const _ReactionSheet({
+    required this.to,
+    required this.now,
+    required this.frequent,
+    required this.copy,
+  });
+
+  @override
+  State<_ReactionSheet> createState() => _ReactionSheetState();
+}
+
+class _ReactionSheetState extends State<_ReactionSheet> {
+  final search = TextEditingController();
+
+  @override
+  void dispose() {
+    search.dispose();
+    super.dispose();
+  }
+
+  Widget _button(String emoji, {double size = 24}) {
+    final scheme = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: emojiName(emoji),
+      isSelected: emoji == widget.now,
+      style: IconButton.styleFrom(
+        backgroundColor: emoji == widget.now ? scheme.secondaryContainer : null,
+      ),
+      onPressed: () => Navigator.pop(context, emoji),
+      icon: Text(emoji, style: TextStyle(fontSize: size)),
+    );
+  }
+
+  SliverGrid _grid(List<String> emoji) => SliverGrid.builder(
+    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: 48,
+    ),
+    itemCount: emoji.length,
+    itemBuilder: (_, i) => _button(emoji[i]),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.titleSmall;
+    final query = search.text.trim();
+    final found = query.isEmpty ? null : searchEmoji(query);
+    return SizedBox(
+      height: MediaQuery.of(context).size.height * 0.75,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              'React: ${widget.to.name} sees it on their text. Pick another '
+              'to change it.',
+            ),
+          ),
+          Row(
+            key: const ValueKey('frequent'),
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [for (final e in widget.frequent) _button(e, size: 26)],
+          ),
+          widget.copy,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              key: const ValueKey('emoji search'),
+              controller: search,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Search emoji by name',
+              ),
+            ),
+          ),
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                if (found == null)
+                  for (final (title, group) in emojiGroups) ...[
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      sliver: SliverToBoxAdapter(
+                        child: Text(title, style: style),
+                      ),
+                    ),
+                    _grid([for (final e in group) e.emoji]),
+                  ]
+                else if (found.isEmpty)
+                  const SliverPadding(
+                    padding: EdgeInsets.all(16),
+                    sliver: SliverToBoxAdapter(
+                      child: Text('No emoji by that name.'),
+                    ),
+                  )
+                else
+                  _grid([for (final e in found) e.emoji]),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

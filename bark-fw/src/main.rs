@@ -478,6 +478,7 @@ async fn main(spawner: Spawner) {
             id: hex,
             image: IMAGE,
             version: update::BARK_IMAGE_VERSION,
+            discharge_bench: discharge::BENCH,
         };
         spawner.spawn(screen(board.eink, p.TWISPI1, fixed).expect("spawned once"));
         spawner.spawn(user_button(board.buttons.user).expect("spawned once"));

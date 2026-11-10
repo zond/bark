@@ -2584,7 +2584,8 @@ Its address is still where the network can find the message's node: the
 relay that owns it now, or the node itself as a neighbour, takes it on.
 
 **How long the battery lasts.** A node on battery with the levels above
-shows how long its battery lasts ([screen and buttons](#screen-and-buttons)).
+shows how long it can go on as it runs now
+([screen and buttons](#screen-and-buttons)).
 It keeps two drains, in percent of the cell an hour, one as a relay with
 its GPS at rest and one as a sleepy node, each first what its current
 says and then moved by what its readings show. A sample runs from a
@@ -2592,11 +2593,13 @@ reading to the first one at least 15 h later while the node runs one of
 the two ways; it starts an hour after any change of that, of the power
 or of the calibration, and a change ends it unused. Its drop in percent
 over its hours moves that way's drain as a moving average over 92.8 h.
-The time left is until the cell is flat under the rules above: a relay
-relays to the low level at its drain and is sleepy from there; a sleepy
-node is sleepy to the end. At or below the low level, where the percent
-shows none, it is the sleepy part less the time since the first low
-reading. The drains are kept across a reboot
+The time left is a relay's until the low level at its drain, where it
+turns sleepy by the rules above, and a sleepy node's until the cell is
+flat: above the low level the whole of what is left at its drain, and
+at or below it, where the percent shows none, the low level's share
+less the time since the first low reading. A person reads the figure as
+time in the way the node runs now, so it does not add the sleepy time
+that follows a relay's. The drains are kept across a reboot
 ([implementation notes](#implementation-notes)).
 
 | | |
@@ -2606,8 +2609,8 @@ reading. The drains are kept across a reboot
 | a sample | at least 15 h: 1 %, the smallest drop the percent shows, at a sleepy node's drain takes 14.4 h, rounded up to the hour |
 | the average | over 92.8 h: the time a relay takes from full to 30 % at its first drain |
 
-So a full relay on battery shows 16 days, 106 h relaying and 287 h asleep,
-and a full sleepy node 59 days.
+So a full relay on battery shows 4 days, 106 h, and then sleeps about
+12 more; a full sleepy node shows 59 days.
 
 *Why so slow.* The board has no fuel gauge: the percent is read off the
 cell's voltage, which is flat over most of its charge. One percent is
@@ -3994,7 +3997,7 @@ has verified is dropped. Payloads are not padded.
 |---|---|---|
 | text | 1 + rest | type 1, UTF-8, or 2, windows-1251 when that page holds the whole text; runs to the end, so it comes last |
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
-| reaction | 1 + 4 | type 3, thumbs up, or 7 to 11, heart, laugh, surprise, sad, thanks; the `sent` of the text it answers |
+| reaction | 1 + 4 + rest | type 3, the `sent` of the text it answers, then one emoji in UTF-8: one extended grapheme cluster of at most 35 bytes, the longest in Unicode 17.0's emoji list; runs to the end, so it comes last |
 | card | 1 + 1 + 38 to 100 | type 4, the card's length, then the card |
 
 A receiver drops a message whose bit 1 is not what the two identities
@@ -4005,10 +4008,10 @@ message that carried it and whenever it changes; a message without one
 says it has not changed. The app sends nothing
 by itself: a reaction is a message the person chooses to send, and a
 text is sent again only when the person says so (roadmap D126). A
-reaction names the text by its first part's `sent`, and is read naming
-any part's; the newest by its message's `sent` stands. Type 3 was the
-acknowledgement, which older apps send and read: it is the thumbs up
-(roadmap D185).
+reaction names the text by its first part's `sent`; the newest by its
+message's `sent` stands. A reader drops a message whose reaction is no
+character, more than one, or longer than the bound; that the character
+is an emoji is the app's to offer (roadmap D185, D187).
 
 *Long texts.* A text longer than one message holds is split into
 parts, each a message of its own with its own `sent`, delivered as a

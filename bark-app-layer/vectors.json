@@ -46,31 +46,37 @@
     "nonce": "404142434445464748494a4b4c4d4e4f5051525354555657",
     "payload": "2088404142434445464748494a4b4c4d4e4f5051525354555657150ac9362aec9ecf4dee5ee5f96577f152cea132ed128e8f3b6025482da31c29582f9ab00934253f0da66de499cf8018a98a1c7e521c474e6cc9248fcff3ea4c8ce9"
   },
-  "box_utf8_reaction": {
+  "box_utf8": {
     "text": "ok 👍",
     "sent": 1000060,
     "greater": true,
-    "reacts_to": 1000000,
-    "reaction": "👍",
-    "plaintext": "02000f427c03000f4240016f6b20f09f918d",
+    "plaintext": "02000f427c016f6b20f09f918d",
     "nonce": "808182838485868788898a8b8c8d8e8f9091929394959697",
-    "payload": "20cf808182838485868788898a8b8c8d8e8f9091929394959697c12735aad3967cb87f6bb816a97180995bcb88fa670557d62da20069f7ba5ca91aa4"
+    "payload": "20cf808182838485868788898a8b8c8d8e8f9091929394959697f1007e879d0d3bd0787d46ad6bfa3c185bcb88fa670738b24f129e9711"
   },
   "box_reaction": {
     "sent": 1000120,
     "reacts_to": 1000000,
     "reaction": "👍",
-    "plaintext": "02000f42b803000f4240",
+    "plaintext": "02000f42b803000f4240f09f918d",
     "nonce": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
-    "payload": "20cfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d79a3f8da8f3e6208d4b674895e09496f418533a636ea47f95710f"
+    "payload": "20cfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7b84069c3edb6ffd0c0c77d33df6f501018533a636ea47f95710f02317f06"
   },
   "box_heart": {
     "sent": 1000180,
     "reacts_to": 1000000,
     "reaction": "❤️",
-    "plaintext": "02000f42f407000f4240",
+    "plaintext": "02000f42f403000f4240e29da4efb88f",
     "nonce": "e0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7",
-    "payload": "20cfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f79a05eaed257d20c65b0a8f0f7995d759fc08efc4842aa46bf253"
+    "payload": "20cfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f73f635db29dd8d7d6ba9696248b1956a9fc08efc4842ea46bf253ae23f8cf2d00"
+  },
+  "box_kiss": {
+    "sent": 1000190,
+    "reacts_to": 1000000,
+    "reaction": "🧑🏻‍❤️‍💋‍🧑🏿",
+    "plaintext": "02000f42fe03000f4240f09fa791f09f8fbbe2808de29da4efb88fe2808df09f928be2808df09fa791f09f8fbf",
+    "nonce": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7",
+    "payload": "20cfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e70ba0a207a79b1a6f94cea026fc1a581d88babfe4ff2e31a6a1f448b629582f728c1b105393fc7ec5110531ea9e949bbda490e1c25c565810c440e8b3ff"
   },
   "box_parts": {
     "text": "Привіт! Ми на місці біля старої школи, вода є, світла немає з ранку. Генератор працює дві години ввечері, тож заряджаємо телефони по черзі. Приходьте до сьомої, візьміть ковдри й ліхтарик. Дорогою обходьте міст — там ями 🙏",

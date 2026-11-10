@@ -6,7 +6,7 @@ use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
 use crate::keys::{self, Keys};
-use crate::plain::{self, Header, Part, Reaction, Record, Writer};
+use crate::plain::{self, Header, Part, Record, Writer};
 use crate::seal::{self, Fetch, Form, Opened};
 use crate::text::{self, Encoding};
 use crate::vectors::{self, fixture, hex};
@@ -465,11 +465,6 @@ fn records_read_back_in_order() {
         address: Some(f.home),
     };
     let mut w = Writer::new(&mut b, &h).unwrap();
-    let heart = Record::React {
-        sent: 5,
-        reaction: Reaction::Heart,
-    };
-    w.push(&heart).unwrap();
     w.push(&Record::Card(c)).unwrap();
     let t = Record::Text {
         encoding: Encoding::Utf8,
@@ -479,11 +474,11 @@ fn records_read_back_in_order() {
     w.push(&t).unwrap();
     assert_eq!(w.push(&t), Err(Error::Malformed));
     let n = w.finish();
-    assert_eq!(n, 5 + 13 + 5 + 2 + 38 + 17 + 4);
+    assert_eq!(n, 5 + 13 + 2 + 38 + 17 + 4);
     let (got, r) = plain::read(&b[..n]).unwrap();
     assert_eq!(got, h);
     let rs: Vec<_> = r.collect();
-    assert_eq!(rs, [Ok(heart), Ok(Record::Card(c)), Ok(t)]);
+    assert_eq!(rs, [Ok(Record::Card(c)), Ok(t)]);
     assert!(plain::read(&[0x80, 0, 0, 0, 0]).is_err());
     let (_, mut r) = plain::read(&[0, 0, 0, 0, 0, 12]).unwrap();
     assert_eq!(r.next(), Some(Err(Error::Malformed)));
@@ -491,28 +486,54 @@ fn records_read_back_in_order() {
 }
 
 #[test]
-fn a_reaction_is_its_type_and_the_text_it_answers() {
+fn a_reaction_is_the_text_it_answers_and_one_emoji() {
     let h = Header {
         greater: false,
         sent: 7,
         address: None,
     };
-    // The thumbs up is an older app's acknowledgement, byte for byte.
-    for (reaction, kind) in Reaction::ALL.into_iter().zip([3, 7, 8, 9, 10, 11]) {
-        let r = Record::React { sent: 5, reaction };
+    let kiss = "🧑🏻\u{200d}❤️\u{200d}💋\u{200d}🧑🏿";
+    assert_eq!(kiss.len(), plain::MAX_REACTION);
+    // A flag, a keycap, a family and a letter are each one character.
+    for emoji in ["👍", "❤️", "🇺🇦", "#️⃣", "👨\u{200d}👩\u{200d}👧", "é", kiss]
+    {
+        let r = Record::React { sent: 5, emoji };
         let mut b = [0u8; MAX_PAYLOAD];
         let mut w = Writer::new(&mut b, &h).unwrap();
         w.push(&r).unwrap();
+        // It runs to the end, so nothing follows it.
+        assert_eq!(w.push(&r), Err(Error::Malformed));
         let n = w.finish();
-        assert_eq!(&b[plain::HEADER_LEN..n], &[kind, 0, 0, 0, 5]);
+        assert_eq!(
+            &b[plain::HEADER_LEN..plain::HEADER_LEN + 5],
+            &[3, 0, 0, 0, 5]
+        );
+        assert_eq!(&b[plain::HEADER_LEN + 5..n], emoji.as_bytes());
         let (_, mut rs) = plain::read(&b[..n]).unwrap();
         assert_eq!(rs.next(), Some(Ok(r)));
         assert_eq!(rs.next(), None);
     }
-    // A reaction cut short, or of a type not in the set, does not read.
+    // None, two, or one too long is not written and does not read.
+    let mut kiss_more = String::from(kiss);
+    kiss_more.push('\u{fe0f}');
+    assert_eq!(kiss_more.len(), plain::MAX_REACTION + 3);
+    for emoji in ["", "👍👍", "ok", kiss_more.as_str()] {
+        let mut b = [0u8; MAX_PAYLOAD];
+        let mut w = Writer::new(&mut b, &h).unwrap();
+        assert_eq!(
+            w.push(&Record::React { sent: 5, emoji }),
+            Err(Error::Malformed)
+        );
+        let mut bad = std::vec![0, 0, 0, 0, 0, 3, 0, 0, 0, 5];
+        bad.extend_from_slice(emoji.as_bytes());
+        let (_, mut rs) = plain::read(&bad).unwrap();
+        assert_eq!(rs.next(), Some(Err(Error::Malformed)));
+    }
+    // Cut short, not UTF-8, or of a type no longer used.
     for bad in [
-        &[0, 0, 0, 0, 0, 7, 0, 0, 0][..],
-        &[0, 0, 0, 0, 0, 12, 0, 0, 0, 5],
+        &[0, 0, 0, 0, 0, 3, 0, 0, 0][..],
+        &[0, 0, 0, 0, 0, 3, 0, 0, 0, 5, 0xff],
+        &[0, 0, 0, 0, 0, 7, 0, 0, 0, 5],
     ] {
         let (_, mut rs) = plain::read(bad).unwrap();
         assert_eq!(rs.next(), Some(Err(Error::Malformed)));

@@ -43,7 +43,8 @@ fn sample(uptime_s: u32, mv: u16) -> Sample {
         external: false,
         sleepy: true,
         gps: false,
-        why: Why::Hour,
+        bench: false,
+        why: Why::Interval,
     }
 }
 
@@ -57,6 +58,7 @@ fn a_record_round_trips_and_a_torn_or_erased_one_is_none() {
         external: true,
         sleepy: false,
         gps: true,
+        bench: true,
         why: Why::Unplugged,
     };
     let r = s.encode();
@@ -181,10 +183,16 @@ fn a_boot_on_battery_is_sampled_at_its_first_reading_then_hourly() {
         assert_eq!(s.note(now(t, Some(4099), false)), None);
     }
     let hour = s.note(now(3601, Some(4090), false)).unwrap();
-    assert_eq!((hour.why, hour.mv, hour.uptime_s), (Why::Hour, 4090, 3601));
+    assert_eq!(
+        (hour.why, hour.mv, hour.uptime_s),
+        (Why::Interval, 4090, 3601)
+    );
     // Only the readings sample; a step between them does not.
     assert_eq!(s.note(now(7300, None, false)), None);
-    assert_eq!(s.note(now(7301, Some(4080), false)).unwrap().why, Why::Hour);
+    assert_eq!(
+        s.note(now(7301, Some(4080), false)).unwrap().why,
+        Why::Interval
+    );
 }
 
 #[test]
@@ -226,4 +234,23 @@ fn the_time_is_kept_where_known() {
     let mut n = now(0, Some(4000), false);
     n.utc_s = Some(1_794_300_000);
     assert_eq!(s.note(n).unwrap().utc_s, 1_794_300_000);
+}
+
+#[test]
+fn a_bench_build_samples_every_ten_minutes_and_marks_its_samples() {
+    let mut s = Sampler::bench();
+    let boot = s.note(now(1, Some(4100), false)).unwrap();
+    assert!(boot.bench);
+    for t in (61..BENCH_EVERY_S).step_by(60) {
+        assert_eq!(s.note(now(t, Some(4099), false)), None);
+    }
+    let next = s.note(now(BENCH_EVERY_S + 1, Some(4095), false)).unwrap();
+    assert_eq!((next.why, next.bench), (Why::Interval, true));
+    assert_eq!(Sample::decode(&next.encode()), Some(next));
+    assert!(
+        !Sampler::new()
+            .note(now(1, Some(4100), false))
+            .unwrap()
+            .bench
+    );
 }

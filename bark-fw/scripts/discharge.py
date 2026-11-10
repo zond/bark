@@ -6,7 +6,10 @@
 
 The node image keeps a sample of its cell an hour apart on battery, and
 one at each boot and change of power or mode, on the external flash
-(bark-fw/README.md, "Discharge log"). A console image prints them with
+(bark-fw/README.md, "Discharge log"). A discharge bench build (roadmap
+D190) samples every ten minutes and marks its samples `bench=1`: a relay
+at any battery level with its GPS tracking, one mode from full to flat
+in about a day. A console image prints them with
 its `discharge` command, a line each, oldest first; given a port, this
 script sends the command and reads the answer, given a file, it reads
 the lines from it. It writes every sample to the CSV, if asked, and
@@ -18,24 +21,30 @@ What it assumes:
 
 - The current is constant in each mode, as roadmap D169 seeds the
   battery estimate: a relay 6.41 mA, a sleepy node 0.59 mA, and 29 mA
-  more while the GPS runs (`bark_proto::drain`; spec "Sleepy nodes").
+  more while the GPS runs (`bark_proto::drain`; spec "Sleepy nodes"); a
+  bench sample 35.4 mA, a relay's and the GPS's (`--bench-ma`).
   The microcontroller and the display are not in them. A run in one mode
   does not depend on its current at all, as the fraction of the charge
   left is a ratio of times; across modes, a relay that turns sleepy at
   its low level, the ratio of the currents places the turn. `--relay-ma`,
   `--sleepy-ma` and `--gps-ma` take better ones, such as the drains the
   node learned (`status`, `drain_relay` and `drain_sleepy`, in
-  ten-thousandths of a percent of 850 mAh an hour).
+  ten-thousandths of a percent of 850 mAh an hour). A bench run is one
+  mode, so its fit is independent of the current estimates.
 - The run starts full and ends empty: the fraction left at a sample is
   one less the charge used up to it over the charge used in the whole
   run. The summary says whether the run looks it: a first reading near
   a full cell's and a last near the end of the curve, the node stopping
   rather than being plugged in. The charge drawn after the last sample,
-  up to an hour's, is not counted.
+  up to an interval's, is not counted.
 - Readings are calibrated by the scale the node kept (`scale=` in the
   header), as the core reads them; without one they are as read, up to
-  3 % off. The load's drop across the cell's resistance, a few mV, and
-  the cell's temperature are in them.
+  3 % off. The load's drop across the cell's resistance and the cell's
+  temperature are in them: a few mV at a relay's current, and on a bench
+  run about 11 mV below the open-circuit voltage, 35.4 mA through the
+  0.3 Ω assumed for a small pouch cell (docs/battery-role-2026-10-25.md;
+  roadmap D190), so its curve is the shape under that load, about 9 mV
+  below a relay's and 10 mV below a sleepy node's.
 
 It prints the voltage at 21 points, every 5 % of the charge from 0 to
 100, beside the voltage the typical cell of Maxim AN4189, Table 1, has
@@ -68,6 +77,8 @@ import tty
 RELAY_MA = 6.412
 SLEEPY_MA = 0.592
 GPS_MA = 29.0
+# A discharge bench build's one mode: a relay with its GPS tracking.
+BENCH_MA = RELAY_MA + GPS_MA
 # The cell, mAh (LILYGO T-Echo README).
 CELL_MAH = 850.0
 # One, in the units of the node's calibration (bark_proto::BATTERY_SCALE_ONE).
@@ -90,8 +101,8 @@ READ_S = 30
 
 LINE = re.compile(
     r"discharge seq=(\d+) utc_s=(\d+) uptime_s=(\d+) mv=(\d+) external=([01]) "
-    r"sleepy=([01]) gps=([01]) why=(\w+)")
-HEADER = re.compile(r"discharge slots=(\d+) every_s=(\d+) scale=(\w+)")
+    r"sleepy=([01]) gps=([01]) bench=([01]) why=(\w+)")
+HEADER = re.compile(r"discharge slots=(\d+) every_s=(\d+) bench_every_s=(\d+) scale=(\w+)")
 END = re.compile(r"discharge end samples=(\d+)")
 
 
@@ -119,21 +130,23 @@ def from_port(port: str) -> list[str]:
                 return lines
 
 
-def parse(lines: list[str]) -> tuple[int | None, list[dict]]:
-    """The calibration scale, if the header gave one, and the samples."""
-    scale, samples = None, []
+def parse(lines: list[str]) -> tuple[int | None, dict, list[dict]]:
+    """The calibration scale, if the header gave one, the intervals
+    between samples, a node image's and a bench build's, and the samples."""
+    scale, every, samples = None, {False: 3600, True: 600}, []
     for text in lines:
         if text.startswith(">"):
             continue
         if m := HEADER.search(text):
-            scale = None if m.group(3) == "none" else int(m.group(3))
+            scale = None if m.group(4) == "none" else int(m.group(4))
+            every = {False: int(m.group(2)), True: int(m.group(3))}
             samples = []  # a later printing replaces an earlier one
         elif m := LINE.search(text):
-            seq, utc, up, mv, ext, sleepy, gps, why = m.groups()
+            seq, utc, up, mv, ext, sleepy, gps, bench, why = m.groups()
             samples.append({"seq": int(seq), "utc_s": int(utc), "uptime_s": int(up), "mv": int(mv),
                             "external": ext == "1", "sleepy": sleepy == "1", "gps": gps == "1",
-                            "why": why})
-    return scale, samples
+                            "bench": bench == "1", "why": why})
+    return scale, every, samples
 
 
 def between(a: dict, b: dict) -> float | None:
@@ -165,6 +178,8 @@ def runs(samples: list[dict]) -> list[list[dict]]:
 
 
 def current_ma(s: dict, a: argparse.Namespace) -> float:
+    if s["bench"]:
+        return a.bench_ma
     return (a.sleepy_ma if s["sleepy"] else a.relay_ma) + (a.gps_ma if s["gps"] else 0.0)
 
 
@@ -191,7 +206,8 @@ def median(xs: list[float]) -> float:
     return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
-def fit(run: list[dict], following: dict | None, scale: int | None, a: argparse.Namespace) -> None:
+def fit(run: list[dict], following: dict | None, scale: int | None, every: dict,
+        a: argparse.Namespace) -> None:
     """Print the curve over one run, and how far it can be trusted."""
     k = (scale or SCALE_ONE) / SCALE_ONE
     used, gaps, by_mode, seconds = [0.0], 0, {}, 0.0
@@ -203,7 +219,7 @@ def fit(run: list[dict], following: dict | None, scale: int | None, a: argparse.
             dt, gaps = t["uptime_s"], gaps + 1
         seconds += dt
         q = current_ma(s, a) * dt / 3600
-        mode = ("sleepy" if s["sleepy"] else "relay") + (" + gps" if s["gps"] else "")
+        mode = "bench" if s["bench"] else ("sleepy" if s["sleepy"] else "relay") + (" + gps" if s["gps"] else "")
         by_mode[mode] = by_mode.get(mode, 0.0) + q
         used.append(used[-1] + q)
     total = used[-1]
@@ -226,8 +242,11 @@ def fit(run: list[dict], following: dict | None, scale: int | None, a: argparse.
         ended = "the log ends on battery"
     full = first >= FULL_MV - FULL_WITHIN_MV
     empty = last <= EMPTY_MV
+    bench = all(s["bench"] for s in run)
     print(f"run: {len(run)} samples, seq {run[0]['seq']} to {run[-1]['seq']}, {hours:.1f} h "
-          f"({hours / 24:.1f} days)")
+          f"({hours / 24:.1f} days), a sample every {every[bench]} s"
+          + (f"; a discharge bench run, one mode at {a.bench_ma:.1f} mA, so the fit does not "
+             "depend on the current" if bench else ""))
     print(f"readings: {first:.0f} mV to {last:.0f} mV, "
           + (f"calibrated by {scale}/{SCALE_ONE}" if scale else "uncalibrated: no scale kept"))
     print("charge used: " + ", ".join(f"{m} {q:.0f} mAh" for m, q in by_mode.items())
@@ -238,6 +257,11 @@ def fit(run: list[dict], following: dict | None, scale: int | None, a: argparse.
         print(f"warning: {gaps} reset(s) on battery with no time known; the time before each is lost")
     if not (full and empty):
         print("warning: not a whole discharge; the fractions below are of this run's charge, not the cell's")
+    if bench:
+        print("note: readings under the bench's load, about 11 mV below the cell at rest (roadmap D190); "
+              "the last readings, before the board stopped, mark its true end")
+    elif any(s["bench"] for s in run):
+        print("warning: bench and node samples in one run; the fit mixes their currents")
     print()
     print("percent  fitted_mv  an4189_mv  mapping_now")
     table = []
@@ -258,6 +282,7 @@ def main() -> int:
     ap.add_argument("--relay-ma", type=float, default=RELAY_MA)
     ap.add_argument("--sleepy-ma", type=float, default=SLEEPY_MA)
     ap.add_argument("--gps-ma", type=float, default=GPS_MA)
+    ap.add_argument("--bench-ma", type=float, default=BENCH_MA, help="a discharge bench sample's current")
     a = ap.parse_args()
 
     if stat.S_ISCHR(os.stat(a.source).st_mode):
@@ -265,17 +290,18 @@ def main() -> int:
     else:
         with open(a.source, errors="replace") as f:
             lines = f.read().splitlines()
-    scale, samples = parse(lines)
+    scale, every, samples = parse(lines)
     if not samples:
         sys.exit("no samples: the log is empty, or this is not a `discharge` printing")
     k = (scale or SCALE_ONE) / SCALE_ONE
     if a.csv:
         with open(a.csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["seq", "utc_s", "uptime_s", "mv", "mv_calibrated", "external", "sleepy", "gps", "why"])
+            w.writerow(["seq", "utc_s", "uptime_s", "mv", "mv_calibrated", "external", "sleepy", "gps",
+                        "bench", "why"])
             for s in samples:
                 w.writerow([s["seq"], s["utc_s"], s["uptime_s"], s["mv"], round(s["mv"] * k),
-                            int(s["external"]), int(s["sleepy"]), int(s["gps"]), s["why"]])
+                            int(s["external"]), int(s["sleepy"]), int(s["gps"]), int(s["bench"]), s["why"]])
         print(f"{len(samples)} samples written to {a.csv}")
     found = runs(samples)
     print(f"{len(samples)} samples, {len(found)} run(s) on battery")
@@ -284,7 +310,7 @@ def main() -> int:
     run = found[a.run]
     end = samples.index(run[-1])
     following = samples[end + 1] if end + 1 < len(samples) else None
-    fit(run, following, scale, a)
+    fit(run, following, scale, every, a)
     return 0
 
 
