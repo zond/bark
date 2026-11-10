@@ -27,8 +27,7 @@ const oldBark =
     '"at":"2026-11-05T16:39:51.106508"}]}';
 
 /// `contacts.json` and `me.json` as that build wrote them, the seed made
-/// up: without a version, and read as version 1. Contacts are at version
-/// 2 since their cards are of card version 2.
+/// up, without a version.
 const oldContacts =
     '{"contacts":[],"myName":"Martin","myAddress":"47c0520ada4ec0bae6e6cbf4f5"}';
 const oldMe =
@@ -52,28 +51,19 @@ void main() {
     expect(store.fault, startsWith('Stored bark.json did not read'));
   });
 
-  test('the old me.json is read, the old contacts.json set aside', () async {
-    final contacts = MemoryStore('contacts.json')..text = oldContacts;
-    final c = Contacts(contacts);
-    await c.load();
-    expect(c.list, isEmpty);
-    expect(contacts.aside, {'contacts.json.old-1': oldContacts});
-    final me = MemoryStore('me.json')..text = oldMe;
-    final m = Me(me, sodium, () => at);
-    await m.load();
-    expect(hex(m.keys.seed), '000102030405060708090a0b0c0d0e0f');
-    expect(me.fault, isNull);
-  });
-
   test(
-    'a me.json from before the card was sent by hand reads as sent',
+    'an old me.json and contacts.json, of no version, are set aside',
     () async {
-      final me = MemoryStore('me.json')
-        ..text = oldMe.replaceFirst('"cardTime":0', '"cardTime":5');
+      final contacts = MemoryStore('contacts.json')..text = oldContacts;
+      final c = Contacts(contacts);
+      await c.load();
+      expect(c.list, isEmpty);
+      expect(contacts.aside, {'contacts.json.old-bad': oldContacts});
+      final me = MemoryStore('me.json')..text = oldMe;
       final m = Me(me, sodium, () => at);
       await m.load();
-      expect(m.cardSentTime, 5);
-      expect(m.cardUnsent, isFalse);
+      expect(hex(m.keys.seed), isNot('000102030405060708090a0b0c0d0e0f'));
+      expect(me.aside, {'me.json.old-bad': oldMe});
     },
   );
 
@@ -121,7 +111,7 @@ void main() {
   });
 
   test('a me.json set aside gives a new identity and keeps the old', () async {
-    final bad = oldMe.replaceFirst('"lastSent":0', '"lastSent":"0"');
+    final bad = oldMe.replaceFirst('{', '{"version":${Me.version},');
     final store = MemoryStore('me.json')..text = bad;
     final m = Me(store, sodium, () => at);
     await m.load();
@@ -153,8 +143,9 @@ void main() {
     await app.load();
     final lines = app.session.log.map((l) => l.text).toList();
     expect(lines, [
+      startsWith('Stored me.json did not read'),
       startsWith('Stored bark.json did not read'),
-      startsWith('Stored contacts.json is of version 1'),
+      startsWith('Stored contacts.json did not read'),
     ]);
     app.dispose();
   });

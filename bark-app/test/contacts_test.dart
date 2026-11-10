@@ -44,7 +44,7 @@ void main() {
     expect(temporary.towards(now), [Toward.there]);
     expect(temporary.addressOf(Toward.there).toString(), node.toString());
     expect(temporary.stale(now), const Duration(hours: 1));
-    // Only a card from before D162 names no node.
+    // A card made before its phone used a node names none.
     expect(contact(null).towards(now), isEmpty);
     expect(contact(null).unasked(now), isNull);
   });

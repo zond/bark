@@ -17,7 +17,7 @@ class Contact {
   final String chosen;
 
   /// The name the person gave, or else the card's; empty when neither
-  /// has one, as a card from an older app may not.
+  /// has one.
   String get given => chosen.isNotEmpty ? chosen : card.name;
 
   /// What the contact is listed as: a nameless one by the start of its
@@ -87,8 +87,8 @@ class Contact {
   /// last known at (roadmap D132, D162): there while that is fresh; past
   /// it, with a home, there or the home's mailbox, for the person to
   /// choose; without one, there, as nothing else is. With a home and no
-  /// place, or the place the home, the home. None only for a card from
-  /// before D162 without a home, from one who has not written.
+  /// place, or the place the home, the home. None for a card without a
+  /// home or a node, from one who has not written.
   List<Toward> towards(DateTime now) {
     final at = place, when = placeAt, home = card.home;
     if (at == null || when == null) return [if (home != null) Toward.home];
@@ -193,22 +193,15 @@ class Contact {
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
     PersonCard.parse(j['card'] as String),
-    // Before a contact's name could be empty, a nameless card's contact
-    // was saved as this.
-    switch (j['name'] as String) {
-      'Unnamed' => '',
-      final n => n,
-    },
+    j['name'] as String,
     verified: j['verified'] as bool,
     knowsMine: j['knowsMine'] as String?,
     sentMine: j['sentMine'] as String?,
-    // Before D162 the place was where their messages came from, as of
-    // the newest.
-    place: switch (j['place'] ?? j['wroteFrom']) {
+    place: switch (j['place']) {
       null => null,
       final a => Address.parse(a as String),
     },
-    placeAt: switch (j['placeAt'] ?? j['heardAt']) {
+    placeAt: switch (j['placeAt']) {
       null => null,
       final t => DateTime.parse(t as String),
     },
@@ -216,11 +209,8 @@ class Contact {
     heardAt: j['heardAt'] == null
         ? null
         : DateTime.parse(j['heardAt'] as String),
-    // Absent in a file from before archiving: nothing was archived.
-    archived: j['archived'] as bool? ?? false,
-    // Absent in a file from before the flag: taken as scanned, so no
-    // contact gains a warning it did not have reason for.
-    cameByMessage: j['cameByMessage'] as bool? ?? false,
+    archived: j['archived'] as bool,
+    cameByMessage: j['cameByMessage'] as bool,
   );
 }
 
@@ -269,8 +259,7 @@ class Contacts extends ChangeNotifier {
     }
   }
 
-  /// The version of `contacts.json`'s format: 2 since the cards it holds
-  /// are of card version 2.
+  /// The version of `contacts.json`'s format.
   static const version = 2;
 
   Future<void> load() async {
@@ -281,8 +270,7 @@ class Contacts extends ChangeNotifier {
           for (final e in j['contacts'] as List)
             Contact.fromJson(e as Map<String, dynamic>),
         ],
-        // Absent in a file from before archiving: nothing was archived.
-        [for (final k in j['archived'] as List? ?? []) k as String],
+        [for (final k in j['archived'] as List) k as String],
       ),
     );
     if (l == null) return;

@@ -106,22 +106,15 @@ class Me extends ChangeNotifier {
       final name = j['name'] as String;
       final home = _address(j['home']);
       final nodeAddress = _address(j['nodeAddress']);
-      // Added with D162: absent, the link's time is not known.
-      final nodeAt = j['nodeAt'] as int? ?? 0;
+      final nodeAt = j['nodeAt'] as int;
       final cardTime = j['cardTime'] as int;
-      // Added after the format's first version: before it, every changed
-      // card was sent at once, so absent means sent.
-      final cardSentTime = j['cardSentTime'] as int? ?? cardTime;
+      final cardSentTime = j['cardSentTime'] as int;
       final lastSent = j['lastSent'] as int;
       final backedUp = j['backedUp'] as bool;
-      // Added after the format's first version: absent means not asked.
-      final askedToNotify = j['askedToNotify'] as bool? ?? false;
-      // Added after the format's first version: absent means not asked,
-      // none queued.
-      final askedBluetooth = j['askedBluetooth'] as bool? ?? false;
-      final fetchQueued = j['fetchQueued'] as bool? ?? false;
-      // Added after the format's first version: absent means none told.
-      final remaining = j['remaining'] as int? ?? 0;
+      final askedToNotify = j['askedToNotify'] as bool;
+      final askedBluetooth = j['askedBluetooth'] as bool;
+      final fetchQueued = j['fetchQueued'] as bool;
+      final remaining = j['remaining'] as int;
       final rounds = (j['rounds'] as List).cast<int>().toList();
       return () {
         this.keys = keys;

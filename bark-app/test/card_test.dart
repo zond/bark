@@ -1,11 +1,9 @@
 // The card is shown only once the person has a name; a scanned card
-// without one, as an older app may send, still makes a contact, listed
-// by the start of its identity until a name comes; and an archived
-// contact's card scanned again brings it back. A card carries a home and
-// the node it was made at, reads a card of version 2, and without a home
-// is temporary until a later card brings one.
-
-import 'dart:convert';
+// without one still makes a contact, listed by the start of its identity
+// until a name comes; and an archived contact's card scanned again brings
+// it back. A card carries a home and the node it was made at, refuses a
+// card of another version, and without a home is temporary until a later
+// card brings one.
 
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/card.dart';
@@ -59,30 +57,6 @@ void main() {
     expect(back.archived, isFalse);
     expect(cs.active.single.key, card.key);
     expect(cs.isArchived(card.key), isFalse);
-  });
-
-  test('a contact saved as "Unnamed" before reads as nameless', () async {
-    final store = MemoryStore();
-    final card = PersonCard(List.filled(32, 0xab), null, 1, '');
-    store.text = jsonEncode({
-      'version': Contacts.version,
-      'contacts': [
-        {
-          'card': card.toText(),
-          'name': 'Unnamed',
-          'verified': false,
-          'knowsMine': null,
-          'sentMine': null,
-          'wroteFrom': null,
-          'heardSent': null,
-          'heardAt': null,
-        },
-      ],
-    });
-    final cs = Contacts(store);
-    await cs.load();
-    expect(cs.list.single.chosen, '');
-    expect(cs.list.single.name, 'Unnamed (abababab…)');
   });
 
   final home = Address(Position.fromDegrees(50.45, 30.52), List.filled(6, 1));
@@ -139,19 +113,14 @@ void main() {
     expect(me.card.now, isNull);
   });
 
-  test('a card of version 2 is still read', () {
-    final id = List.filled(32, 0xab);
-    final v3 = PersonCard(id, home, 7, 'Olena').encode();
-    final v2 = [2, ...v3.sublist(1)];
-    final c = PersonCard.decode(v2);
-    expect(c.home.toString(), home.toString());
-    expect(c.now, isNull);
-    expect(c.name, 'Olena');
-    // Version 2 knew no node flag.
-    expect(
-      () => PersonCard.decode([2, 2, ...v3.sublist(2)]),
-      throwsA(isA<BadCard>()),
-    );
+  test('a card of another version is refused', () {
+    final b = PersonCard(List.filled(32, 0xab), home, 7, 'Olena').encode();
+    for (final v in [PersonCard.version - 1, PersonCard.version + 1]) {
+      expect(
+        () => PersonCard.decode([v, ...b.sublist(1)]),
+        throwsA(isA<BadCard>()),
+      );
+    }
   });
 
   test(

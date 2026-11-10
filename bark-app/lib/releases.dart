@@ -1,8 +1,9 @@
 // The latest release on GitHub, checked at start and once a day after:
 // whether it carries a newer app than this one, or a newer image than the
 // connected node runs. A release names the two versions apart, as one may
-// carry on the other's files unchanged (roadmap D164). The answer and what the person dismissed are kept
-// on disk, so that the home screen shows them at once at the next start.
+// carry on the other's files unchanged (roadmap D164). The answer and what
+// the person dismissed are kept on disk, so that the home screen shows
+// them at once at the next start.
 
 import 'dart:async';
 import 'dart:convert';
@@ -75,44 +76,41 @@ class Release {
   final int firmware;
   final String? apk;
   final String? image;
-  const Release(this.n, {int? app, int? firmware, this.apk, this.image})
-    : app = app ?? n,
-      firmware = firmware ?? n;
+  const Release(
+    this.n, {
+    required this.app,
+    required this.firmware,
+    this.apk,
+    this.image,
+  });
 
   /// The image's file name.
   String get imageName => 'bark-fw-$firmware.img';
 
   /// The release in the API's answer `j`, with `manifest`, the release's
-  /// [manifestName], when it carries one; null if its tag is not `v<N>`.
-  /// A release without a manifest, v21 and older, carried one version,
-  /// N. The files are those named for the versions, as the workflow
-  /// names them. A manifest that does not fit the tag throws.
-  static Release? parse(
-    Map<String, dynamic> j, [
-    Map<String, dynamic>? manifest,
-  ]) {
+  /// [manifestName]; null if its tag is not `v<N>`. The files are those
+  /// named for the versions, as the workflow names them. A manifest that
+  /// does not fit the tag throws.
+  static Release? parse(Map<String, dynamic> j, Map<String, dynamic> manifest) {
     final m = RegExp(r'^v([1-9][0-9]*)$').firstMatch('${j['tag_name']}');
     if (m == null) return null;
     final n = int.parse(m[1]!);
-    var app = n, firmware = n;
-    if (manifest != null) {
-      // A version carried on is an earlier release's, never a later one.
-      int version(String key) {
-        final v = manifest[key];
-        if (v is! int || v < 1 || v > n) {
-          throw FormatException('release $n: $manifestName $key $v');
-        }
-        return v;
+    // A version carried on is an earlier release's, never a later one.
+    int version(String key) {
+      final v = manifest[key];
+      if (v is! int || v < 1 || v > n) {
+        throw FormatException('release $n: $manifestName $key $v');
       }
-
-      if (manifest['release'] != n) {
-        throw FormatException(
-          'release $n: $manifestName names ${manifest['release']}',
-        );
-      }
-      app = version('app');
-      firmware = version('firmware');
+      return v;
     }
+
+    if (manifest['release'] != n) {
+      throw FormatException(
+        'release $n: $manifestName names ${manifest['release']}',
+      );
+    }
+    final app = version('app');
+    final firmware = version('firmware');
     return Release(
       n,
       app: app,
@@ -130,12 +128,10 @@ class Release {
     'image': image,
   };
 
-  /// A release kept before the manifest has no `app` or `firmware`: both
-  /// were its N.
   static Release fromJson(Map<String, dynamic> j) => Release(
     j['n'] as int,
-    app: j['app'] as int?,
-    firmware: j['firmware'] as int?,
+    app: j['app'] as int,
+    firmware: j['firmware'] as int,
     apk: j['apk'] as String?,
     image: j['image'] as String?,
   );
@@ -190,12 +186,12 @@ class Releases extends ChangeNotifier {
     await store.load(_format, (j) {
       final r = j['release'];
       final c = j['checked'];
-      final nodes = (j['dismissedNodes'] as Map? ?? const {}).map(
+      final nodes = (j['dismissedNodes'] as Map).map(
         (k, v) => MapEntry(k as String, v as int),
       );
       latest = r == null ? null : Release.fromJson(r as Map<String, dynamic>);
       checked = c == null ? null : DateTime.parse(c as String);
-      dismissedApp = j['dismissedApp'] as int? ?? 0;
+      dismissedApp = j['dismissedApp'] as int;
       dismissedNodes
         ..clear()
         ..addAll(nodes);
@@ -229,9 +225,9 @@ class Releases extends ChangeNotifier {
     try {
       final j = await fetch!();
       final m = assetUrl(j, manifestName);
-      final manifest = m == null
-          ? null
-          : jsonDecode(utf8.decode(await download(m))) as Map<String, dynamic>;
+      if (m == null) throw const FormatException('no $manifestName');
+      final manifest =
+          jsonDecode(utf8.decode(await download(m))) as Map<String, dynamic>;
       final r = Release.parse(j, manifest);
       if (r == null) throw FormatException('tag ${j['tag_name']}');
       latest = r;

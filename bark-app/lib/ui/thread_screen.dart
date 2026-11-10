@@ -296,12 +296,13 @@ class _ThreadScreenState extends State<ThreadScreen> {
                 child: Text('This contact was removed.'),
               )
             else if (contact.towards(app.now()).isEmpty)
-              // Only a card from an app before D162 names no node at all.
+              // A card made before its phone used any node names none.
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  '${contact.name}\'s card is from an older app and names '
-                  'no node: ask them for a new card.',
+                  '${contact.name}\'s card names no node, as their phone had '
+                  'not used one when they shared it: ask them for a new card '
+                  'once it has.',
                 ),
               )
             else
