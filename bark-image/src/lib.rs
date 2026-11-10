@@ -8,7 +8,8 @@
 //! code an update's blocks travel in over the mesh ([`code`]), the
 //! store of the pieces a node gathers on its external flash (`pieces`),
 //! what the firmware decides of such an image ([`policy`]), and the
-//! images it gave up (`given_up`).
+//! images it gave up (`given_up`); and the battery's discharge log
+//! ([`discharge`]).
 //! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
 //! "Updates", how it is used.
 
@@ -22,6 +23,7 @@ extern crate std;
 #[cfg(feature = "boot")]
 pub mod boot;
 pub mod code;
+pub mod discharge;
 #[cfg(feature = "boot")]
 pub mod ext_flash;
 #[cfg(feature = "boot")]
