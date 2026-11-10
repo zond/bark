@@ -458,7 +458,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if s.offered == Some((image.tag(), image.version)) {
             return;
         }
-        if image.version <= newest && !self.stranded_for(image, section.complete, now) {
+        if image.version <= newest && !self.stranded_for(from, image, section.complete, now) {
             return;
         }
         let s = &mut self.spread;
@@ -471,17 +471,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Whether this node gathers an image no neighbour it hears holds the
     /// next block of, and `image`, of the same version under another name,
-    /// is held from the first by `complete` blocks: then it is offered
-    /// `image`. Two builds can carry one version; one whose holders all
+    /// is held from the first by `complete` blocks of relay `from`, which
+    /// can serve it, as a sleepy node cannot: then it is offered `image`. Two builds can carry one version; one whose holders all
     /// went over to the other would leave its gatherers waiting for good,
     /// since only a higher version is offered otherwise
     /// (`docs/update-stall-2026-11-10.md`).
-    fn stranded_for(&self, image: Image, complete: u8, now: Instant) -> bool {
+    fn stranded_for(&self, from: NodeId, image: Image, complete: u8, now: Instant) -> bool {
         let Some(g) = self.spread.gather else {
             return false;
         };
         g.block < g.image.blocks
             && complete > 0
+            && self.neighbours.get(from).is_some_and(|n| !n.sleepy)
             && image.version == g.image.version
             && image.tag() != g.image.tag()
             && self.holder_of(g.block, now).is_none()
@@ -1098,6 +1099,61 @@ mod tests {
             x + PACE.mul(2),
             "another heard: shared"
         );
+    }
+
+    /// A gatherer with no holder of its image takes another of its version
+    /// from a relay, which can serve it, and not from a sleepy node, which
+    /// never streams (roadmap D191).
+    #[test]
+    fn a_stranded_gatherer_takes_another_build_only_from_a_relay() {
+        use crate::wire::Heartbeat;
+        let mut r = crate::Relay::new(Config::default(), 1);
+        let now = Instant::ZERO + Duration::from_secs(2);
+        let mine = Image {
+            name: ImageTag([4; 4]),
+            version: 2,
+            blocks: 3,
+            last: 7,
+            key: 0,
+        };
+        let other = Image {
+            name: ImageTag([5; 4]),
+            ..mine
+        };
+        r.gather(mine, 1, now);
+        let me = r.config.position;
+        let at = crate::position::Position {
+            lat: me.lat + 5_000,
+            ..me
+        };
+        let section = Section {
+            runs: 1,
+            image: Some(other),
+            complete: 1,
+            have: 0,
+        };
+        let plane = r.plane;
+        for sleepy in [true, false] {
+            let hb = Heartbeat {
+                sleepy,
+                anchorless: false,
+                carried: false,
+                home: r.home,
+                format: crate::wire::FORMAT,
+                map_point: false,
+                leaving: false,
+                id: crate::ids::NodeId::from_u64(at.short().0 as u64),
+                short: at.short(),
+            };
+            r.neighbours.heard(&hb, at, -80, &plane, now);
+            let mut offered = None;
+            r.section_heard(hb.id, section, now, &mut |a| {
+                if let Action::Offered(i) = a {
+                    offered = Some(i);
+                }
+            });
+            assert_eq!(offered, (!sleepy).then_some(other), "sleepy {sleepy}");
+        }
     }
 
     /// A helper streams to a gatherer only while it heard the gatherer's
