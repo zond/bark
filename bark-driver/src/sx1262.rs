@@ -7,7 +7,10 @@
 //! frequency and receive, and a listen-before-talk is the CAD's
 //! preparation and sampling with the RSSI read inside it. After a reset,
 //! a sleep, an error or a cold start the chip may not hold what was sent,
-//! so the whole configuration goes again. The oscillator's delay is
+//! so the whole configuration goes again. After a reset the chip is
+//! brought back as at boot: calibrated at the longest oscillator delay,
+//! its delay searched again and the reading inside a CAD checked again
+//! (`docs/radio-recovery-2026-11-10.md`). The oscillator's delay is
 //! probed and kept by [`crate::tcxo`]. The tests at the end run the
 //! sequences against a chip that records them.
 //!
@@ -59,6 +62,10 @@ pub mod irq {
 /// `GetDeviceErrors` bit 5 (DS §13.3.6, Table 13-84): the oscillator was
 /// not running at the end of its programmed delay.
 pub const XOSC_START_ERR: u16 = 1 << 5;
+
+/// `GetDeviceErrors` bit 6 (DS Table 13-84): the PLL did not lock, so the
+/// chip could not enter the mode it was sent to.
+pub const PLL_LOCK_ERR: u16 = 1 << 6;
 
 /// Symbols a CAD samples (DS Table 13-72, `CADSymbols::_8`).
 pub const CAD_SYMBOLS: u16 = 8;
@@ -263,6 +270,9 @@ pub struct Held {
     /// When the oscillator last stopped: at a CAD's end or at a standby
     /// with it off. `None` while it runs.
     pub osc_stopped: Option<Instant>,
+    /// Whether the error word was read clear, or cleared, since the
+    /// oscillator last started.
+    pub errors_clear: bool,
 }
 
 impl Held {
@@ -275,6 +285,7 @@ impl Held {
         tcxo: None,
         power: None,
         osc_stopped: None,
+        errors_clear: false,
     };
 }
 
@@ -324,7 +335,7 @@ pub struct TxTiming {
 /// Counters for the log.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
-    /// Resets after an error, the one at boot not counted.
+    /// Resets after an error or asked for, the one at boot not counted.
     pub resets: u32,
     /// Times the whole configuration was sent.
     pub configured: u32,
@@ -340,6 +351,10 @@ pub struct Sx1262<C, K> {
     tcxo: tcxo::Delay,
     lbt: LbtRead,
     stats: Stats,
+    /// The chip was reset since the boot's measurements were taken: the
+    /// oscillator's delay and the reading inside a CAD are measured again
+    /// before it next listens.
+    remeasure: bool,
 }
 
 impl<C: Chip, K: Clock> Sx1262<C, K> {
@@ -355,14 +370,29 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             tcxo: tcxo::Delay::new(now),
             lbt: LbtRead::After,
             stats: Stats::default(),
+            remeasure: false,
         };
         radio.ready().await?;
         radio.stats.resets = 0;
-        radio.set_frequency(channel).await?;
-        radio.search(Search::at_boot()).await?;
-        radio.self_check(channel).await?;
         radio.listen(channel).await?;
         Ok(radio)
+    }
+
+    /// Reset the chip before its next operation and measure again what
+    /// the boot measured, as after an error: for a chip that answers
+    /// without errors but no longer works as it did after boot.
+    pub fn recover(&mut self) {
+        self.held = Held::UNKNOWN;
+    }
+
+    /// The boot's measurements, on `channel`: the oscillator's delay,
+    /// searched from scratch, and the reading inside a CAD against one
+    /// while listening.
+    async fn measure(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
+        self.remeasure = false;
+        self.set_frequency(channel).await?;
+        self.search(Search::at_boot()).await?;
+        self.self_check(channel).await
     }
 
     /// The chip.
@@ -417,6 +447,13 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         match self.held.mode {
             Mode::Unknown => {
                 reset = true;
+                if self.stats.configured > 0 {
+                    // What failed, for the log: the reset clears it. A
+                    // chip that does not answer has nothing to say.
+                    if let Ok(errors) = self.chip.errors().await {
+                        log::warn!("radio: device errors {:#x} before the reset", errors);
+                    }
+                }
                 let r = self.chip.reset().await;
                 self.note(r)?;
                 self.stats.resets += 1;
@@ -426,11 +463,16 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                     osc_stopped: None,
                     ..Held::UNKNOWN
                 };
+                self.remeasure = true;
                 // With a TCXO the flag is set at power-up, before the
                 // chip knows its clock (DS §13.3.6).
                 let r = self.chip.clear_errors().await;
                 self.note(r)?;
-                self.set_tcxo(self.tcxo.delay).await?;
+                // The calibrations run on the oscillator, so they get the
+                // longest delay, as at boot, and not the delay probed for
+                // the oscillator's start: a TCXO's frequency settles after
+                // it starts.
+                self.set_tcxo(tcxo::MAX).await?;
                 let r = self.chip.calibrate().await;
                 self.note(r)?;
                 let r = self.chip.errors().await;
@@ -440,6 +482,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                     let r = self.chip.clear_errors().await;
                     self.note(r)?;
                 }
+                self.held.errors_clear = true;
             }
             Mode::Sniff => {
                 // Asleep in the cycle the chip takes no command until a
@@ -498,6 +541,18 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         Ok(())
     }
 
+    /// Clear what the receiver flagged before it stopped, so that the
+    /// operation that follows ends on its own flag: a preamble seen as the
+    /// receive was left raises DIO1, and the CAD or the transmission that
+    /// waits on it would read no done flag and count as failed (the
+    /// bench's `NotDone(4)` and `NotDone(20)`). From a standby, where no
+    /// new packet can be flagged; after a CAD or a transmission the flags
+    /// were cleared already.
+    async fn clear_stale_irq(&mut self) -> Result<(), Error<C::Error>> {
+        let r = self.chip.clear_irq().await;
+        self.note(r)
+    }
+
     /// Into STDBY_RC, the oscillator stopped.
     async fn standby_rc(&mut self) -> Result<(), Error<C::Error>> {
         if matches!(self.held.mode, Mode::Rx | Mode::StandbyXosc) {
@@ -550,21 +605,54 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     /// Before a command that starts the oscillator from STDBY_RC: program
     /// the delay for it, short if it stopped within [`tcxo::STILL_RUNNING`]
-    /// and the probed one for a cold start. Returns whether the start is
-    /// cold. From any other standby the oscillator runs on.
+    /// and the board's restarts take the short delay, else the probed one
+    /// for a cold start. Returns whether the start is cold. From any other
+    /// standby the oscillator runs on.
     async fn before_start(&mut self) -> Result<bool, Error<C::Error>> {
         if self.held.mode != Mode::StandbyRc {
             return Ok(false);
         }
         let now = self.clock.now();
-        let cold = self
-            .held
-            .osc_stopped
-            .is_none_or(|t| now.since(t) >= tcxo::STILL_RUNNING);
+        let cold = !self.tcxo.short
+            || self
+                .held
+                .osc_stopped
+                .is_none_or(|t| now.since(t) >= tcxo::STILL_RUNNING);
+        if cold {
+            self.restart_errors().await?;
+        }
         let delay = if cold { self.tcxo.delay } else { tcxo::SHORT };
         self.set_tcxo(delay).await?;
         self.held.osc_stopped = None;
+        self.held.errors_clear = false;
         Ok(cold)
+    }
+
+    /// Before a cold start, the error flag the short restarts since the
+    /// last read left, so that the read after the start blames the start
+    /// alone. A board whose oscillator failed a short restart takes the
+    /// probed delay at every start from then on.
+    async fn restart_errors(&mut self) -> Result<(), Error<C::Error>> {
+        if !self.tcxo.short || self.held.errors_clear {
+            return Ok(());
+        }
+        let r = self.chip.errors().await;
+        let errors = self.note(r)?;
+        if errors & XOSC_START_ERR != 0 {
+            self.tcxo.short = false;
+            log::warn!(
+                "tcxo: a restart within {} us of stopping failed at {} us; every start now takes {} us",
+                tcxo::STILL_RUNNING.as_micros(),
+                tcxo::SHORT.as_micros(),
+                self.tcxo.delay.as_micros()
+            );
+        }
+        if errors != 0 {
+            let r = self.chip.clear_errors().await;
+            self.note(r)?;
+        }
+        self.held.errors_clear = true;
+        Ok(())
     }
 
     /// After a cold start: the error flag, and a step up if it is set.
@@ -592,12 +680,23 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             let r = self.chip.clear_errors().await;
             self.note(r)?;
         }
+        self.held.errors_clear = true;
         Ok(())
     }
 
     /// Listen on `channel` from any state, sending only what differs
-    /// from what the chip holds.
+    /// from what the chip holds; after a reset, the boot's measurements
+    /// first.
     pub async fn listen(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
+        self.ready().await?;
+        if self.remeasure {
+            self.measure(channel).await?;
+        }
+        self.receive(channel).await
+    }
+
+    /// Listen on `channel` from any state, with what was measured.
+    async fn receive(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
         self.ready().await?;
         if self.held.mode == Mode::Rx && self.held.freq == Some(channel) {
             return Ok(());
@@ -619,9 +718,14 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// the long preamble is still caught (`bark_proto::sniff`).
     pub async fn sniff(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
         self.ready().await?;
+        if self.remeasure {
+            self.measure(channel).await?;
+        }
         self.standby_rc().await?;
         self.set_frequency(channel).await?;
         self.set_packet_params(RX_PACKET).await?;
+        // The cycle's wakes are read together after it.
+        self.restart_errors().await?;
         self.set_tcxo(self.tcxo.delay).await?;
         let (rx, sleep) = periods(self.tcxo.delay);
         let r = self.chip.rx_duty_cycle(rx, sleep).await;
@@ -629,6 +733,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.held.mode = Mode::Sniff;
         self.held.slept = true;
         self.held.osc_stopped = None;
+        self.held.errors_clear = false;
         Ok(())
     }
 
@@ -694,8 +799,12 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         read: bool,
     ) -> Result<(bool, Option<i16>, [Duration; 3]), Error<C::Error>> {
         let t0 = self.clock.now();
+        let receiving = matches!(self.held.mode, Mode::Rx | Mode::Sniff);
         self.ready().await?;
         self.standby_xosc().await?;
+        if receiving {
+            self.clear_stale_irq().await?;
+        }
         self.set_frequency(channel).await?;
         let cold = self.before_start().await?;
         let r = self.chip.cad_params().await;
@@ -781,8 +890,12 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// Send `frame` at `dbm` conducted. Leaves the chip in STDBY_XOSC.
     pub async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<TxTiming, Error<C::Error>> {
         let t0 = self.clock.now();
+        let receiving = matches!(self.held.mode, Mode::Rx | Mode::Sniff);
         self.ready().await?;
         self.standby_xosc().await?;
+        if receiving {
+            self.clear_stale_irq().await?;
+        }
         self.set_frequency(frame.channel).await?;
         self.set_packet_params((frame.preamble_symbols, frame.len))
             .await?;
@@ -834,6 +947,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let ok = errors & XOSC_START_ERR == 0;
         let r = self.chip.clear_errors().await;
         self.note(r)?;
+        self.held.errors_clear = true;
         self.standby_rc().await?;
         let temp = self.chip.die_temperature().await;
         self.tcxo.probed(Probe {
@@ -893,7 +1007,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let mut diffs = [0i16; SELF_CHECK_PAIRS];
         let mut pairs = 0;
         for diff in diffs.iter_mut() {
-            self.listen(channel).await?;
+            self.receive(channel).await?;
             self.clock.at(self.clock.now() + RSSI_SETTLE).await;
             let listening = self.rssi().await?;
             let (_, inside, _) = self.cad(channel, true).await?;
@@ -953,6 +1067,10 @@ impl<C: Chip, K: Clock> crate::Radio for Sx1262<C, K> {
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error> {
         Sx1262::transmit(self, frame, dbm).await.map(|_| ())
     }
+
+    fn recover(&mut self) {
+        Sx1262::recover(self)
+    }
 }
 
 #[cfg(test)]
@@ -1009,6 +1127,9 @@ mod tests {
         /// Fail the next command.
         fail_next: bool,
         temp: Option<i16>,
+        /// How long its oscillator takes to restart within
+        /// [`tcxo::STILL_RUNNING`] of stopping.
+        warm_start: Duration,
     }
 
     #[derive(Clone)]
@@ -1022,6 +1143,10 @@ mod tests {
         mode: Mode,
         errors: u16,
         osc_stopped_at: Option<Instant>,
+        /// Flags raised and not cleared, which hold DIO1 high, and whether
+        /// the operation under way has ended.
+        latched: u16,
+        done: bool,
     }
 
     #[derive(Clone)]
@@ -1052,6 +1177,8 @@ mod tests {
                 mode: Mode::Unknown,
                 errors: 0,
                 osc_stopped_at: None,
+                latched: 0,
+                done: false,
             };
             (fake, cmds, clock)
         }
@@ -1077,9 +1204,12 @@ mod tests {
             let running = self
                 .osc_stopped_at
                 .is_some_and(|t| now.since(t) < tcxo::STILL_RUNNING);
-            if !running && self.delay < self.board.borrow().osc_start {
+            let b = self.board.borrow();
+            let needs = if running { b.warm_start } else { b.osc_start };
+            if self.delay < needs {
                 self.errors |= XOSC_START_ERR;
             }
+            drop(b);
             *self.clock.0.borrow_mut() = now + self.delay;
         }
     }
@@ -1171,12 +1301,14 @@ mod tests {
         }
         async fn cad(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::Cad)?;
+            self.done = false;
             self.start_osc();
             self.mode = Mode::Cad;
             Ok(())
         }
         async fn tx(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::Tx)?;
+            self.done = false;
             self.start_osc();
             self.mode = Mode::Tx;
             Ok(())
@@ -1200,8 +1332,8 @@ mod tests {
                 }
                 return Ok(f);
             }
-            Ok(match self.mode {
-                Mode::Cad => {
+            let own = match self.mode {
+                Mode::Cad if self.done => {
                     irq::CAD_DONE
                         | if self.board.borrow().detected {
                             irq::CAD_DETECTED
@@ -1209,12 +1341,14 @@ mod tests {
                             0
                         }
                 }
-                Mode::Tx => irq::TX_DONE,
+                Mode::Tx if self.done => irq::TX_DONE,
                 _ => 0,
-            })
+            };
+            Ok(own | self.latched)
         }
         async fn clear_irq(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::ClearIrq)?;
+            self.latched = 0;
             match self.mode {
                 Mode::Cad => {
                     self.mode = Mode::StandbyRc;
@@ -1227,6 +1361,11 @@ mod tests {
         }
         async fn await_irq(&mut self, timeout: Option<Duration>) -> Result<(), &'static str> {
             self.cmd(Cmd::AwaitIrq)?;
+            // A flag left raised holds DIO1 high: the wait ends at once.
+            if self.latched != 0 {
+                return Ok(());
+            }
+            self.done = true;
             let took = match self.mode {
                 Mode::Cad => CAD_TIME,
                 Mode::Tx => Duration::from_millis(15),
@@ -1263,6 +1402,7 @@ mod tests {
             flags: None,
             fail_next: false,
             temp: Some(100),
+            warm_start: Duration::ZERO,
         }
     }
 
@@ -1347,6 +1487,7 @@ mod tests {
             take(&cmds),
             [
                 Cmd::Standby(true),
+                Cmd::ClearIrq,
                 Cmd::Freq(5),
                 Cmd::CadParams,
                 Cmd::Cad,
@@ -1413,7 +1554,13 @@ mod tests {
         run(radio.listen(ch(3))).unwrap();
         assert_eq!(
             take(&cmds),
-            [Cmd::Freq(3), Cmd::Tcxo(500), Cmd::Rx, Cmd::Errors]
+            [
+                Cmd::Freq(3),
+                Cmd::Errors,
+                Cmd::Tcxo(500),
+                Cmd::Rx,
+                Cmd::Errors
+            ]
         );
         assert_eq!(radio.stats().cold_starts, 1);
     }
@@ -1452,6 +1599,7 @@ mod tests {
             take(&cmds),
             [
                 Cmd::Standby(true),
+                Cmd::ClearIrq,
                 Cmd::Packet(MIN_PREAMBLE_SYMBOLS, 13),
                 Cmd::Power(10),
                 Cmd::Payload(13),
@@ -1471,9 +1619,10 @@ mod tests {
         frame.channel = ch(4);
         run(radio.transmit(&frame, 10)).unwrap();
         assert_eq!(
-            take(&cmds)[..4],
+            take(&cmds)[..5],
             [
                 Cmd::Standby(true),
+                Cmd::ClearIrq,
                 Cmd::Freq(4),
                 Cmd::Packet(MIN_PREAMBLE_SYMBOLS, 13),
                 Cmd::Payload(13),
@@ -1509,6 +1658,7 @@ mod tests {
             take(&cmds),
             [
                 Cmd::Standby(false),
+                Cmd::Errors,
                 Cmd::Tcxo(500),
                 Cmd::RxDutyCycle(3_750, 233_625)
             ]
@@ -1547,33 +1697,142 @@ mod tests {
     }
 
     #[test]
-    fn an_error_resets_the_chip_before_its_next_operation() {
+    fn an_error_resets_the_chip_and_measures_again_as_at_boot() {
         let (mut radio, cmds, _) = booted(board());
+        let probes = radio.tcxo().probes;
         take(&cmds);
         radio.chip().board.borrow_mut().fail_next = true;
         assert!(run(radio.lbt(ch(5))).is_err());
         assert_eq!(radio.held().mode, Mode::Unknown);
         take(&cmds);
+        // The reading inside a CAD now sits 2 dB over one while listening.
+        radio.chip().board.borrow_mut().inside_dbm = -77;
         run(radio.listen(ch(3))).unwrap();
         let cmds = take(&cmds);
+        // What failed read first, then the boot's sequence: the
+        // calibrations at the longest delay, as at boot.
         assert_eq!(
-            &cmds[..7],
+            &cmds[..8],
             &[
+                Cmd::Errors,
                 Cmd::Reset,
                 Cmd::ClearErrors,
-                Cmd::Tcxo(500),
+                Cmd::Tcxo(tcxo::MAX.as_micros()),
                 Cmd::Calibrate,
                 Cmd::Errors,
                 Cmd::Configure,
                 Cmd::CalibrateImage,
             ]
         );
-        assert!(cmds.ends_with(&[Cmd::Rx, Cmd::Errors]));
+        // Then the boot's measurements: the delay searched from scratch
+        // and the reading inside the CAD checked again.
+        assert_eq!(radio.tcxo().probes, 2 * probes);
+        assert_eq!(radio.tcxo().delay, Duration::from_micros(500));
+        assert_eq!(radio.lbt_read(), LbtRead::Inside { offset_db: 2 });
+        assert!(cmds.ends_with(&[Cmd::Rx]));
+        assert_eq!(radio.held().mode, Mode::Rx);
         assert_eq!(radio.stats().resets, 1);
+        // Once: the next listen sends nothing.
+        run(radio.listen(ch(3))).unwrap();
+        assert_eq!(take_cmds(&radio), []);
         // An interrupt without its done flag is an error too.
         radio.chip().board.borrow_mut().flags = Some(0);
         assert_eq!(run(radio.lbt(ch(5))), Err(Error::NotDone(0)));
         assert_eq!(radio.held().mode, Mode::Unknown);
+    }
+
+    fn take_cmds(radio: &Radio) -> Vec<Cmd> {
+        std::mem::take(&mut *radio.chip.cmds.borrow_mut())
+    }
+
+    /// Asked to, the chip is reset and measured again as after an error.
+    #[test]
+    fn a_recovery_asked_for_is_the_boot_again() {
+        let (mut radio, cmds, _) = booted(board());
+        let probes = radio.tcxo().probes;
+        take(&cmds);
+        radio.recover();
+        run(radio.lbt(ch(5))).unwrap();
+        run(radio.listen(ch(3))).unwrap();
+        let cmds = take(&cmds);
+        assert_eq!(cmds.iter().filter(|c| **c == Cmd::Reset).count(), 1);
+        assert_eq!(radio.tcxo().probes, 2 * probes);
+        assert_eq!(radio.stats().resets, 1);
+        assert_eq!(radio.held().mode, Mode::Rx);
+    }
+
+    /// A preamble seen as the receive was left holds DIO1 high; cleared
+    /// first, the CAD and the transmission end on their own flags.
+    #[test]
+    fn a_flag_left_by_the_receiver_does_not_end_a_cad_or_a_transmission() {
+        let (mut radio, cmds, _) = booted(board());
+        for flags in [
+            irq::PREAMBLE_DETECTED,
+            irq::PREAMBLE_DETECTED | irq::HEADER_VALID,
+        ] {
+            radio.chip().latched = flags;
+            let t = run(radio.lbt(ch(5))).expect("the CAD ends on its own flag");
+            assert!(!t.busy);
+            run(radio.listen(ch(3))).unwrap();
+            radio.chip().latched = flags;
+            let frame = Frame {
+                channel: ch(3),
+                preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+                len: 13,
+                bytes: [0; MAX_FRAME],
+            };
+            run(radio.transmit(&frame, 10)).expect("the transmission ends on its own flag");
+            run(radio.listen(ch(3))).unwrap();
+        }
+        assert_eq!(radio.stats().resets, 0);
+        // From the standby a CAD ends in, nothing is left to clear.
+        run(radio.lbt(ch(5))).unwrap();
+        take(&cmds);
+        run(radio.lbt(ch(6))).unwrap();
+        assert_eq!(
+            take(&cmds).iter().filter(|c| **c == Cmd::ClearIrq).count(),
+            1
+        );
+    }
+
+    /// A board whose oscillator does not restart within the short delay:
+    /// the flag the restart leaves is read before the next cold start,
+    /// not blamed on the cold delay, and from then on every start takes
+    /// the probed delay.
+    #[test]
+    fn a_failed_short_restart_is_not_blamed_on_the_cold_delay() {
+        let (mut radio, cmds, clock) = booted(board());
+        radio.chip().board.borrow_mut().warm_start = Duration::from_micros(300);
+        // A check and the restart after it, short: the flag is raised
+        // and nobody reads it.
+        run(radio.lbt(ch(5))).unwrap();
+        run(radio.listen(ch(3))).unwrap();
+        // Later a cold start.
+        run(radio.lbt(ch(5))).unwrap();
+        let now = clock.now();
+        run(clock.at(now + Duration::from_millis(3)));
+        take(&cmds);
+        run(radio.listen(ch(3))).unwrap();
+        assert_eq!(
+            take(&cmds),
+            [
+                Cmd::Freq(3),
+                Cmd::Errors,
+                Cmd::ClearErrors,
+                Cmd::Tcxo(500),
+                Cmd::Rx,
+                Cmd::Errors,
+            ]
+        );
+        assert_eq!(radio.tcxo().delay, Duration::from_micros(500));
+        assert_eq!(radio.tcxo().errors, 0);
+        assert!(!radio.tcxo().short);
+        // Every start is now cold, at the probed delay, and passes.
+        run(radio.lbt(ch(5))).unwrap();
+        take(&cmds);
+        run(radio.listen(ch(3))).unwrap();
+        assert_eq!(take(&cmds), [Cmd::Freq(3), Cmd::Rx, Cmd::Errors]);
+        assert_eq!(radio.tcxo().errors, 0);
     }
 
     #[test]
@@ -1616,6 +1875,7 @@ mod tests {
             take(&cmds),
             [
                 Cmd::Standby(false),
+                Cmd::Errors,
                 Cmd::Tcxo(750),
                 Cmd::RxDutyCycle(3_875, 233_375)
             ]

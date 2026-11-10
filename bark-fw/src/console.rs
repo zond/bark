@@ -325,6 +325,7 @@ enum Command<'l> {
     Lbt(Channel),
     Tcxo,
     Probe,
+    Recover,
     Rssi(Channel, u32),
     Sweep,
     Noise(Channel, usize, u32),
@@ -388,6 +389,7 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
         "lbt" => Command::Lbt(channel(arg())?),
         "tcxo" => Command::Tcxo,
         "probe" => Command::Probe,
+        "recover" => Command::Recover,
         "rssi" => Command::Rssi(channel(arg())?, optional(arg(), 0)?),
         "sweep" => Command::Sweep,
         "noise" => {
@@ -861,6 +863,15 @@ impl<'a> Console<'a> {
                 let probe_us = self.clock.since(t0);
                 self.rest().await?;
                 log::info!("probe took_us={}", probe_us);
+                self.report_tcxo();
+            }
+            Command::Recover => {
+                self.listening = false;
+                let t0 = self.clock.now();
+                self.radio.recover();
+                self.rest().await?;
+                let took_us = self.clock.since(t0);
+                log::info!("recover took_us={}", took_us);
                 self.report_tcxo();
             }
             Command::Rssi(ch, dwell_us) => {
@@ -1414,11 +1425,13 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={} drai
     fn report_tcxo(&self) {
         let t = self.radio.tcxo();
         let r = self.radio.stats();
+        // What a restart within a millisecond of stopping takes.
+        let restart = if t.short { tcxo::SHORT } else { t.delay };
         match t.last {
             Some(p) => log::info!(
                 "tcxo delay_us={} short_us={} step_us={} probes={} errors={} cold_starts={} last_probe_us={} last_ok={} last_at_s={} last_temp_qc={:?} lbt_read={:?}",
                 t.delay.as_micros(),
-                tcxo::SHORT.as_micros(),
+                restart.as_micros(),
                 tcxo::STEP.as_micros(),
                 t.probes,
                 t.errors,
@@ -1432,7 +1445,7 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={} drai
             None => log::info!(
                 "tcxo delay_us={} short_us={} probes=0 errors={} cold_starts={} lbt_read={:?}",
                 t.delay.as_micros(),
-                tcxo::SHORT.as_micros(),
+                restart.as_micros(),
                 t.errors,
                 r.cold_starts,
                 self.radio.lbt_read()
