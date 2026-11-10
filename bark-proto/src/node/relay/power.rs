@@ -47,6 +47,10 @@
 //! reboots. Before the first calibration it compares the driver's
 //! readings as they are.
 //!
+//! From its readings on battery the node learns how fast its cell drains
+//! as a relay and as a sleepy node, and tells how long it lasts under
+//! the rules above (`drain.rs`).
+//!
 //! A person at the node may flip its role with the board's button
 //! (`AppCommand::ForceRole`): a relay, one that leaves among them, turns
 //! sleepy, leaving as at its battery's low level, flushing first; a
@@ -76,6 +80,7 @@ pub enum Forced {
     /// Sleepy, whatever its power, until the power changes.
     Sleepy,
 }
+use crate::drain::{Drain, Running};
 use crate::event::{Action, AppEvent, Trace};
 use crate::node::{
     heartbeat_interval, BATTERY_CHARGED_AFTER, BATTERY_FULL_MV, BATTERY_GAIN_BOUND_PERMILLE,
@@ -128,6 +133,8 @@ pub(super) struct Battery {
     /// The role a person forced, which the power's next change ends;
     /// here, in the padding, as it lives and dies with the power.
     pub(super) forced: Option<Forced>,
+    /// How fast the cell drains (`drain.rs`).
+    pub(super) drain: Drain,
 }
 
 impl Battery {
@@ -140,6 +147,7 @@ impl Battery {
             charge: Charge::Battery,
             last_mv: 0,
             forced: None,
+            drain: Drain::NEW,
         }
     }
 }
@@ -189,10 +197,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver reports whether external power is present.
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
+        let s = Charge::secs(now);
         if external != matches!(self.battery.charge, Charge::Usb(_)) {
             self.battery.forced = None;
+            // The charger holds the cell up, and it settles after.
+            self.battery.drain.charged(s);
         }
-        let s = Charge::secs(now);
         self.battery.charge = match (external, self.battery.charge) {
             (true, Charge::Usb(since)) => Charge::Usb(since),
             (true, _) => {
@@ -293,7 +303,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The driver reads the battery: the first reading a rest after a full
     /// charge calibrates the readings, and the levels apply to the
     /// calibrated one (module documentation).
-    pub(super) fn battery_read(&mut self, raw_mv: u16, now: Instant) {
+    pub(super) fn battery_read(&mut self, raw_mv: u16, now: Instant, emit: &mut dyn FnMut(Action)) {
         if matches!(self.battery.charge, Charge::Usb(_)) || raw_mv == 0 {
             // On external power the reading is the charger's.
             return;
@@ -302,12 +312,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(levels) = self.config.battery else {
             return;
         };
-        if matches!(self.battery.charge, Charge::Rested(t) if Charge::secs(now) >= t) {
+        let s = Charge::secs(now);
+        if matches!(self.battery.charge, Charge::Rested(t) if s >= t) {
             self.battery.charge = Charge::Battery;
             let scale = u32::from(BATTERY_FULL_MV) * BATTERY_SCALE_ONE / u32::from(raw_mv);
             let bound = BATTERY_SCALE_ONE * BATTERY_GAIN_BOUND_PERMILLE / 1000;
             if scale.abs_diff(BATTERY_SCALE_ONE) <= bound {
                 self.battery.scale = Some(scale as u16);
+                // The levels before and after it are not comparable.
+                self.battery.drain.interrupt(s);
             }
         }
         let millivolts = self.battery_millivolts(raw_mv);
@@ -316,6 +329,49 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else if millivolts >= levels.high_mv {
             self.battery.low = false;
         }
+        let level = crate::node::battery_percent(millivolts);
+        if let Some(step) = self.battery.drain.read(level, self.running(), s) {
+            let e4 = |pph: f32| (pph * 10_000.0) as i32;
+            emit(Action::Trace(Trace::Drain {
+                sleepy: step.running == Running::Sleepy,
+                measured: e4(step.measured),
+                rate: e4(step.rate) as u32,
+            }));
+        }
+    }
+
+    /// How the node runs now, as its drain is learned (`drain.rs`); `None`
+    /// while it leaves, which lasts a TTL at most, and while a relay's GPS
+    /// tracks, whose 29 mA would be taken for the relay's own drain.
+    fn running(&self) -> Option<Running> {
+        match self.mode {
+            Mode::Sleepy(_) => Some(Running::Sleepy),
+            Mode::Relay(Power::Battery(_)) if !self.gps_tracks() => Some(Running::Relay),
+            Mode::Relay(_) => None,
+        }
+    }
+
+    /// How long the battery lasts, from its last reading, under the rules
+    /// of the module documentation: a relay on battery relays until its
+    /// battery is low and is sleepy from there (`drain.rs`). `None` on
+    /// external power, before a reading, past the time, and without
+    /// battery levels, whose rules it follows.
+    pub fn battery_left(&self, now: Instant) -> Option<Duration> {
+        if self.config.battery.is_none()
+            || matches!(self.battery.charge, Charge::Usb(_))
+            || self.battery.last_mv == 0
+        {
+            return None;
+        }
+        let level = crate::node::battery_percent(self.battery_millivolts(self.battery.last_mv));
+        let relay = matches!(self.mode, Mode::Relay(Power::Battery(_)));
+        self.battery.drain.left(level, relay, Charge::secs(now))
+    }
+
+    /// The drains the node has learned, a relay's and a sleepy node's on
+    /// battery, percent of the cell an hour (`drain.rs`).
+    pub fn battery_drains(&self) -> [f32; 2] {
+        [Running::Relay, Running::Sleepy].map(|r| self.battery.drain.rate(r))
     }
 
     /// The battery as the node's screen says it: on USB, else its last

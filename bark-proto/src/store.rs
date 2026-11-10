@@ -6,8 +6,8 @@
 //! [`crate::Config::stored`]. Only slow-changing state is kept, so that
 //! writes are rare: the home channel, the place a fixed node stands and
 //! whether it is a map point, the carried flag, a sleepy node's anchor,
-//! whether it was a relay, and its battery reading's scale. Time is not
-//! kept, since the board has no clock that runs while it is off.
+//! whether it was a relay, its battery reading's scale and the drains it
+//! learned (`drain.rs`). Time is not kept, since the board has no clock that runs while it is off.
 //!
 //! [`Stored::record`] lays it out as a fixed 32-byte record with a
 //! checksum, for a driver that keeps it in flash: eight words, the unit
@@ -40,13 +40,18 @@ pub struct Stored {
     /// The scale of its battery readings from its last calibration, in
     /// 2^-15 (`relay/power.rs`); `None` before the first.
     pub battery_scale: Option<u16>,
+    /// The drains it learned on battery, a relay's and a sleepy node's,
+    /// each as steps from its seed (`drain.rs`); `None` before the first.
+    pub drain: Option<[i8; 2]>,
 }
 
 /// Bytes in a [`Stored::record`].
 pub const RECORD_LEN: usize = 32;
 
 /// The layout's version, the record's first byte: a record of another
-/// layout is not taken.
+/// layout is not taken. A field added behind a flag of its own, in bytes
+/// a record without it leaves zero, keeps the version: such a record
+/// reads as before, without the field.
 const VERSION: u8 = 1;
 
 const FLAG_CARRIED: u8 = 0x1;
@@ -54,6 +59,7 @@ const FLAG_ANCHOR: u8 = 0x2;
 const FLAG_MAP_POINT: u8 = 0x4;
 const FLAG_RELAY: u8 = 0x8;
 const FLAG_SCALE: u8 = 0x10;
+const FLAG_DRAIN: u8 = 0x20;
 
 // Offsets in the record.
 const AT_VERSION: usize = 0;
@@ -63,8 +69,9 @@ const AT_PLACE: usize = 3;
 const AT_ANCHOR_ID: usize = AT_PLACE + Position::WIRE_LEN;
 const AT_ANCHOR_POS: usize = AT_ANCHOR_ID + NodeId::LEN;
 const AT_SCALE: usize = AT_ANCHOR_POS + Position::WIRE_LEN;
+const AT_DRAIN: usize = AT_SCALE + 2;
 const AT_CHECK: usize = RECORD_LEN - 4;
-const _: () = assert!(AT_SCALE + 2 <= AT_CHECK);
+const _: () = assert!(AT_DRAIN + 2 <= AT_CHECK);
 
 /// 32-bit FNV-1a, as the message ID uses (`ids.rs`).
 fn fnv1a(bytes: &[u8]) -> u32 {
@@ -85,9 +92,13 @@ impl Stored {
             | flag(self.carried, FLAG_CARRIED)
             | flag(self.map_point, FLAG_MAP_POINT)
             | flag(self.relay, FLAG_RELAY)
-            | flag(self.battery_scale.is_some(), FLAG_SCALE);
+            | flag(self.battery_scale.is_some(), FLAG_SCALE)
+            | flag(self.drain.is_some(), FLAG_DRAIN);
         if let Some(scale) = self.battery_scale {
             r[AT_SCALE..AT_SCALE + 2].copy_from_slice(&scale.to_be_bytes());
+        }
+        if let Some(drain) = self.drain {
+            r[AT_DRAIN..AT_DRAIN + 2].copy_from_slice(&drain.map(|k| k as u8));
         }
         r[AT_PLACE..AT_ANCHOR_ID].copy_from_slice(&self.place.encode());
         if let Some(a) = self.anchor {
@@ -134,6 +145,7 @@ impl Stored {
             relay: flags & FLAG_RELAY != 0,
             battery_scale: (flags & FLAG_SCALE != 0)
                 .then(|| u16::from_be_bytes([r[AT_SCALE], r[AT_SCALE + 1]])),
+            drain: (flags & FLAG_DRAIN != 0).then(|| [r[AT_DRAIN] as i8, r[AT_DRAIN + 1] as i8]),
         })
     }
 }
@@ -154,6 +166,7 @@ mod tests {
             }),
             relay: false,
             battery_scale: None,
+            drain: None,
         }
     }
 
@@ -172,6 +185,7 @@ mod tests {
             carried: false,
             relay: true,
             battery_scale: Some(32_100),
+            drain: Some([-3, 127]),
             ..s
         };
         assert_eq!(Stored::from_record(&bare.record()), Some(bare));
