@@ -3,10 +3,11 @@
 // node IDs and message IDs (spec "Packet formats"). Every integer is
 // big-endian.
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 12;
+const int linkVersion = 13;
 
 /// The ATT MTU the node offers and the app asks for (spec "Phone link",
 /// "MTU").
@@ -53,6 +54,9 @@ class Uuids {
 
   /// From link version 9, the paired phone's alone.
   static const ask = '28bc0010-a1b8-4893-9537-2ee3559d7644';
+
+  /// From link version 13.
+  static const phones = '28bc0011-a1b8-4893-9537-2ee3559d7644';
 
   /// What a public node advertises in place of [service], which no
   /// attribute has (spec "Phone link", Public).
@@ -228,14 +232,24 @@ class NodeInfo {
   final int version;
   final Uint8List id;
   final int image;
-  NodeInfo(this.version, List<int> id, this.image)
+
+  /// From link version 13: how many more phones may pair with the node, 0
+  /// when it would refuse a pairing (spec "Phone link", Node).
+  final int? room;
+  NodeInfo(this.version, List<int> id, this.image, {this.room})
     : id = Uint8List.fromList(id);
 
-  Uint8List encode() => Uint8List.fromList([version, ...id, ..._be32(image)]);
+  Uint8List encode() =>
+      Uint8List.fromList([version, ...id, ..._be32(image), ?room]);
 
   static NodeInfo decode(List<int> b) {
     if (b.length < len) throw const Malformed('Node');
-    return NodeInfo(b[0], b.sublist(1, 1 + nodeIdLen), _u32(b, 1 + nodeIdLen));
+    return NodeInfo(
+      b[0],
+      b.sublist(1, 1 + nodeIdLen),
+      _u32(b, 1 + nodeIdLen),
+      room: b.length > len ? b[len] : null,
+    );
   }
 }
 
@@ -465,33 +479,52 @@ Uint8List encodeHome(List<int>? key) {
   return Uint8List.fromList([1, ...key]);
 }
 
-/// Home, read: whether the node holds a mailbox key, and the numbers of
-/// the oldest and newest items its ring holds, 0 when none.
+/// Home, read: whether the node holds a mailbox key, anyone's, the
+/// numbers of the oldest and newest items its ring holds, 0 when none,
+/// and from link version 13 whether the key is this phone's person's.
 class NodeHome {
   static const len = 1 + 3 + 3;
   final bool set;
   final int oldest;
   final int newest;
-  const NodeHome(this.set, this.oldest, this.newest);
+
+  /// The node is the reading phone's person's home; null before link
+  /// version 13, when [set] is all a node says.
+  final bool? mine;
+  const NodeHome(this.set, this.oldest, this.newest, {this.mine});
 
   Uint8List encode() => Uint8List.fromList([
     set ? 1 : 0,
     ..._be32(oldest).sublist(1),
     ..._be32(newest).sublist(1),
+    if (mine != null) mine! ? 1 : 0,
   ]);
 
   static NodeHome decode(List<int> b) {
     if (b.length < len || b[0] > 1) throw const Malformed('Home');
+    if (b.length > len && b[len] > 1) throw const Malformed('Home');
     int n(int at) => (b[at] << 16) | (b[at + 1] << 8) | b[at + 2];
-    return NodeHome(b[0] == 1, n(1), n(4));
+    return NodeHome(
+      b[0] == 1,
+      n(1),
+      n(4),
+      mine: b.length > len ? b[len] == 1 : null,
+    );
   }
 
   @override
-  String toString() => !set
-      ? 'not a home'
-      : oldest == 0
-      ? 'a home, its mailbox empty'
-      : 'a home, items $oldest to $newest';
+  String toString() {
+    final whose = switch (mine) {
+      null => '',
+      true => ', yours',
+      false => ', not yours',
+    };
+    return !set
+        ? 'not a home'
+        : oldest == 0
+        ? 'a home$whose, its mailbox empty'
+        : 'a home$whose, items $oldest to $newest';
+  }
 }
 
 /// The link version that has Neighbours.
@@ -822,10 +855,35 @@ class UpdateProgress {
 /// The link version that has Recipient and Public.
 const int publicVersion = 7;
 
-/// Recipient, write: the phone's recipient tag at this node.
-Uint8List encodeRecipient(int tag) {
+/// Bytes of the person's name a node keeps (spec "Phone link", Pairing).
+const int nameMax = 32;
+
+/// Recipient, write: the phone's recipient tag at this node, and from link
+/// version 13 the person's name as their card has it, cut to [nameMax]
+/// bytes of UTF-8 at a character's end; an empty name writes the tag
+/// alone, the form of every version before.
+Uint8List encodeRecipient(int tag, [String name = '']) {
   if (tag < 0 || tag > 0xff) throw const Malformed('recipient tag');
-  return Uint8List.fromList([tag]);
+  return Uint8List.fromList([tag, ...nameBytes(name)]);
+}
+
+/// `name` in UTF-8, cut to [nameMax] bytes without splitting a character.
+List<int> nameBytes(String name) {
+  final out = <int>[];
+  for (final r in name.runes) {
+    final b = utf8.encode(String.fromCharCode(r));
+    if (out.length + b.length > nameMax) break;
+    out.addAll(b);
+  }
+  return out;
+}
+
+/// Recipient, written: the tag and the name, for the fake node.
+({int tag, String name}) decodeRecipient(List<int> b) {
+  if (b.isEmpty || b.length > 1 + nameMax) {
+    throw const Malformed('Recipient');
+  }
+  return (tag: b[0], name: utf8.decode(b.sublist(1)));
 }
 
 /// Public, write: whether the node serves phones that have not paired.
@@ -1066,4 +1124,157 @@ class Answer {
       NeighbourStatus.decode(b.sublist(nodeIdLen)),
     );
   }
+}
+
+/// The link version that has Phones, the person's name in Recipient,
+/// Node's room and Home's mine (spec "Phone link"; roadmap D168).
+const int phonesVersion = 13;
+
+/// The phones a node keeps at most (spec "Phone link", Pairing).
+const int maxPhones = 8;
+
+/// The day a node counts its phones' last links from: day 1 is
+/// 2026-01-01 UTC, the first day of `sent`; 0 is a link when the node had
+/// no time.
+DateTime? dayOf(int day) =>
+    day == 0 ? null : DateTime.utc(2026).add(Duration(days: day - 1));
+
+/// A record of Phones, read: a phone paired with the node, or a home a
+/// phone left there, or both (spec "Phone link", Phones).
+class PhoneRecord {
+  /// Bytes before the name.
+  static const header = 2 + 1 + 2 + 1 + 1;
+  final int number;
+
+  /// It holds a bond: its phone is paired.
+  final bool paired;
+
+  /// It holds a mailbox key: the node is its person's home.
+  final bool home;
+
+  /// Its phone is linked now.
+  final bool linked;
+
+  /// It is the reading phone's own.
+  final bool mine;
+
+  /// Its person's recipient tag at the node, once its phone wrote one.
+  final int? tag;
+
+  /// The day its phone was last linked ([dayOf]).
+  final int day;
+
+  /// Its person's name, empty when their phone wrote none.
+  final String name;
+
+  const PhoneRecord({
+    required this.number,
+    this.paired = false,
+    this.home = false,
+    this.linked = false,
+    this.mine = false,
+    this.tag,
+    this.day = 0,
+    this.name = '',
+  });
+
+  Uint8List encode() {
+    final n = nameBytes(name);
+    int flag(bool set, int bit) => set ? bit : 0;
+    return Uint8List.fromList([
+      ..._be16(number),
+      flag(paired, 0x01) |
+          flag(home, 0x02) |
+          flag(linked, 0x04) |
+          flag(mine, 0x08) |
+          flag(tag != null, 0x10),
+      ..._be16(day),
+      tag ?? 0,
+      n.length,
+      ...n,
+    ]);
+  }
+}
+
+/// Phones, read: the records from the place written, and the place to
+/// write next, 0 once the read reached the last.
+class PhonesPage {
+  final int next;
+  final List<PhoneRecord> records;
+  const PhonesPage(this.next, this.records);
+
+  Uint8List encode() =>
+      Uint8List.fromList([next, for (final r in records) ...r.encode()]);
+
+  static PhonesPage decode(List<int> b) {
+    if (b.isEmpty) throw const Malformed('Phones');
+    final records = <PhoneRecord>[];
+    var at = 1;
+    while (at < b.length) {
+      if (at + PhoneRecord.header > b.length) {
+        throw const Malformed('Phones');
+      }
+      final nameLen = b[at + 6];
+      final end = at + PhoneRecord.header + nameLen;
+      if (nameLen > nameMax || end > b.length || records.length == maxPhones) {
+        throw const Malformed('Phones');
+      }
+      final flags = b[at + 2];
+      final String name;
+      try {
+        name = utf8.decode(b.sublist(at + PhoneRecord.header, end));
+      } on FormatException {
+        throw const Malformed('Phones');
+      }
+      records.add(
+        PhoneRecord(
+          number: _u16(b, at),
+          paired: flags & 0x01 != 0,
+          home: flags & 0x02 != 0,
+          linked: flags & 0x04 != 0,
+          mine: flags & 0x08 != 0,
+          tag: flags & 0x10 != 0 ? b[at + 5] : null,
+          day: _u16(b, at + 3),
+          name: name,
+        ),
+      );
+      at = end;
+    }
+    return PhonesPage(b[0], records);
+  }
+}
+
+/// Phones, write: the next read lists the records from place `slot` on.
+Uint8List encodePhonesFrom(int slot) {
+  if (slot < 0 || slot >= maxPhones) throw const Malformed('Phones slot');
+  return Uint8List.fromList([0, slot]);
+}
+
+/// Phones, write: the node draws a removal code on its screen.
+Uint8List encodeRemovalCode() => Uint8List.fromList([1]);
+
+/// The numbers a removal code takes: six digits.
+const int removalCodes = 1000000;
+
+/// How long a node takes a removal code after drawing it: the time a
+/// pairing gives its person to type a code, the Security Manager's
+/// timeout (Bluetooth Core Specification 5.0, Vol 3 Part H §3.4).
+const Duration removalCodeTime = Duration(seconds: 30);
+
+/// Phones, write: remove the bond, the home or both of record `number`,
+/// with the code the node's screen shows.
+Uint8List encodeRemove(
+  int number, {
+  required bool bond,
+  required bool home,
+  required int code,
+}) {
+  if (!bond && !home) throw const Malformed('removal');
+  if (code < 0 || code >= removalCodes) throw const Malformed('code');
+  return Uint8List.fromList([
+    2,
+    ..._be16(number),
+    (bond ? 1 : 0) | (home ? 2 : 0),
+    ..._be32(code).sublist(1),
+  ]);
 }

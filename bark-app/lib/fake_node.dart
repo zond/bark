@@ -491,8 +491,7 @@ class FakeNode implements NodeLink {
   }
 
   @override
-  Future<NodeInfo> readNode() =>
-      _answer(() => NodeInfo(version, nodeId, image));
+  Future<NodeInfo> readNode() => _answer(() => _info);
 
   @override
   Future<void> subscribe() => _answer(() {});
@@ -673,7 +672,14 @@ class FakeNode implements NodeLink {
   });
 
   @override
-  Future<NodeHome> readHome() => _answer(() => NodeHome(homeKey != null, 0, 0));
+  Future<NodeHome> readHome() => _answer(
+    () => NodeHome(
+      homeKey != null || others.any((r) => r.home),
+      0,
+      0,
+      mine: version >= phonesVersion ? homeKey != null : null,
+    ),
+  );
 
   @override
   Future<void> setNeighboursFrom(int slot) => _answer(() {
@@ -872,9 +878,155 @@ class FakeNode implements NodeLink {
   }
 
   @override
-  Future<void> setRecipient(int tag) => _answer(() {
-    encodeRecipient(tag);
-    ownerTag = tag;
+  Future<void> setRecipient(int tag, [String name = '']) => _answer(() {
+    final r = decodeRecipient(encodeRecipient(tag, name));
+    if (r.name.isNotEmpty && version < phonesVersion) {
+      throw const AttException(AttError.invalidLength);
+    }
+    ownerTag = r.tag;
+    ownerName = r.name;
+  });
+
+  /// Node as a phone reads it: `room` from link version 13.
+  NodeInfo get _info => NodeInfo(
+    version,
+    nodeId,
+    image,
+    room: version >= phonesVersion ? room : null,
+  );
+
+  /// The records of the node's other phones, each another person's phone,
+  /// a home one left behind, or both, which a test sets (spec "Phone
+  /// link", Pairing, Phones). This phone's own is made of [paired],
+  /// [homeKey], [ownerTag] and [ownerName], numbered [ownNumber].
+  final List<PhoneRecord> others = [];
+
+  /// The number of this phone's record.
+  int ownNumber = 1;
+
+  /// The name this phone's person wrote to Recipient.
+  String ownerName = '';
+
+  /// Today as a record counts it ([dayOf]).
+  int get _today => now().toUtc().difference(DateTime.utc(2026)).inDays + 1;
+
+  /// The records as Phones lists them, this phone's first while it holds
+  /// a bond or a home.
+  List<PhoneRecord> get records => [
+    if (paired || homeKey != null)
+      PhoneRecord(
+        number: ownNumber,
+        paired: paired,
+        home: homeKey != null,
+        linked: _owner.connected,
+        mine: true,
+        tag: ownerTag,
+        day: _today,
+        name: ownerName,
+      ),
+    ...others,
+  ];
+
+  /// How many more phones may pair: the records free, and 1 on a node
+  /// nobody is paired with whose every record holds a home left behind.
+  int get room {
+    final rs = records;
+    final free = maxPhones - rs.length;
+    return free == 0 && !rs.any((r) => r.paired) ? 1 : free;
+  }
+
+  /// Whether a pairing from this phone is taken: its record holds its
+  /// bond, or there is room.
+  bool get takesPairing => paired || room > 0;
+
+  int _phonesFrom = 0;
+
+  /// The removal code on the screen, and when it was drawn.
+  int? shownCode;
+  DateTime? _codeAt;
+  final Random _codes = Random(168);
+
+  /// The bytes one value holds at the MTU the node offers.
+  static const _valueRoom = attMtu - 3;
+
+  @override
+  Future<void> setPhonesFrom(int slot) => _answer(() {
+    encodePhonesFrom(slot);
+    _phonesFrom = slot;
+  });
+
+  /// As many whole records from the place written as fit one value, as
+  /// the node reads them.
+  @override
+  Future<PhonesPage> readPhones() => _answer(() {
+    final rs = records;
+    final out = <PhoneRecord>[];
+    var len = 1;
+    var next = 0;
+    for (var i = _phonesFrom; i < rs.length; i++) {
+      final need = rs[i].encode().length;
+      if (len + need > _valueRoom) {
+        next = i;
+        break;
+      }
+      out.add(rs[i]);
+      len += need;
+    }
+    return PhonesPage(next, out);
+  });
+
+  @override
+  Future<void> askRemovalCode() => _answer(() {
+    shownCode = _codes.nextInt(removalCodes);
+    _codeAt = now();
+  });
+
+  /// Takes a removal as the node does: a record or a part it does not
+  /// hold is 0x13 and leaves the code untried; another code, or one past
+  /// its 30 s, is 0x81; either way a code is tried once.
+  @override
+  Future<void> removePhone(
+    int number, {
+    required bool bond,
+    required bool home,
+    required int code,
+  }) => _answer(() {
+    encodeRemove(number, bond: bond, home: home, code: code);
+    final r = records.where((r) => r.number == number).firstOrNull;
+    if (r == null || (bond && !r.paired) || (home && !r.home)) {
+      throw const AttException(AttError.valueNotAllowed);
+    }
+    final at = _codeAt;
+    final taken =
+        shownCode == code &&
+        at != null &&
+        now().difference(at) <= removalCodeTime;
+    shownCode = null;
+    _codeAt = null;
+    if (!taken) throw const AttException(AttError.refused);
+    if (r.mine) {
+      if (home) homeKey = null;
+      if (bond) {
+        paired = false;
+        ownerTag = null;
+        scheduleMicrotask(close);
+      }
+      return;
+    }
+    final i = others.indexOf(r);
+    final left = PhoneRecord(
+      number: r.number,
+      paired: r.paired && !bond,
+      home: r.home && !home,
+      tag: r.tag,
+      day: r.day,
+      name: r.name,
+    );
+    if (left.paired || left.home) {
+      others[i] = left;
+    } else {
+      others.removeAt(i);
+    }
   });
 
   @override
@@ -1037,8 +1189,9 @@ class FakeNode implements NodeLink {
   /// [pairElsewhere] has it pair with another (spec "Phone link").
   bool paired = true;
 
-  /// Another phone pairs with the fake, which then refuses this one; the
-  /// tag kept with the old bond goes with it.
+  /// Another phone removes this one's bond, or before link version 13
+  /// pairs in its place, and the fake then refuses this one; the tag kept
+  /// with the old bond goes with it.
   void pairElsewhere() {
     paired = false;
     ownerTag = null;
@@ -1125,8 +1278,7 @@ class FakeGuest implements NodeLink {
   }
 
   @override
-  Future<NodeInfo> readNode() =>
-      _open(() => NodeInfo(node.version, node.nodeId, node.image));
+  Future<NodeInfo> readNode() => _open(() => node._info);
 
   @override
   Future<void> subscribe() => _open(() {});
@@ -1153,8 +1305,8 @@ class FakeGuest implements NodeLink {
   /// A second guest that writes Recipient while another's link is up is
   /// closed at once: the other link is the owner's to take.
   @override
-  Future<void> setRecipient(int tag) => _open(() {
-    encodeRecipient(tag);
+  Future<void> setRecipient(int tag, [String name = '']) => _open(() {
+    encodeRecipient(tag, name);
     if (node.guests.length > FakeNode.maxGuests) {
       close();
       throw StateError('closed: another guest has the link');
@@ -1201,6 +1353,19 @@ class FakeGuest implements NodeLink {
   Future<void> subscribeAsk() => _bonded();
   @override
   Future<void> ask(List<int> id) => _bonded();
+  @override
+  Future<void> setPhonesFrom(int slot) => _bonded();
+  @override
+  Future<PhonesPage> readPhones() => _bonded();
+  @override
+  Future<void> askRemovalCode() => _bonded();
+  @override
+  Future<void> removePhone(
+    int number, {
+    required bool bond,
+    required bool home,
+    required int code,
+  }) => _bonded();
 
   @override
   Future<void> hurry() => _open(() {});

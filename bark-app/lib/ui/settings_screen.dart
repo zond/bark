@@ -172,8 +172,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('This node is no longer yours'),
         content: Text(
-          'Another phone has paired with ${shownName(e.node)} since, and the node '
-          'keeps one phone. To make it yours again, pair again at the '
+          '${shownName(e.node)} no longer knows this phone: someone paired '
+          'with it removed this phone, or, on older firmware, another phone '
+          'paired in its place. To make it yours again, pair again at the '
           'node: it shows a six-digit code on its screen, and the phone '
           'asks for it.',
         ),
@@ -478,7 +479,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (on)
           'connected'
         else if (lost)
-          'no longer yours: another phone has paired with it'
+          'no longer yours: it no longer knows this phone'
         else if (app.searchOn)
           'not in reach',
       ].join(', '),
@@ -600,7 +601,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: Text('Forget ${shownName(name)}?'),
         content: Text(
-          'Another phone has paired with it, so it is no longer yours. '
+          'It no longer knows this phone, so it is no longer yours. '
           'This phone stops listing it, and forgets its own pairing with '
           'it. To make it yours again, pair at the node by the code on '
           'its screen.$stays',

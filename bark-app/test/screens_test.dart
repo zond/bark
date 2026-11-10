@@ -1021,7 +1021,7 @@ void main() {
     // Settings lists it among the paired nodes, lost.
     expect(find.text('ID FA4E00000001'), findsOneWidget);
     expect(
-      find.text('No longer yours: another phone has paired with it'),
+      find.text('No longer yours: it no longer knows this phone'),
       findsOneWidget,
     );
 
@@ -1066,7 +1066,7 @@ void main() {
     expect(t.getTopLeft(home).dy, lessThan(t.getTopLeft(other).dy));
     expect(find.text('Your home, connected'), findsOneWidget);
     expect(
-      find.text('No longer yours: another phone has paired with it'),
+      find.text('No longer yours: it no longer knows this phone'),
       findsOneWidget,
     );
     expect(find.widgetWithText(TextButton, 'Unpair'), findsOneWidget);

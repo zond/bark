@@ -548,10 +548,10 @@ String connectionHelp(AppModel app) {
   final lost = [for (final n in s.pairingLost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
-    [final n] => ' $n is no longer yours: another phone has paired with it.',
+    [final n] => ' $n is no longer yours: it no longer knows this phone.',
     _ =>
-      ' ${lost.join(', ')} are no longer yours: other phones have paired '
-          'with them.',
+      ' ${lost.join(', ')} are no longer yours: they no longer know this '
+          'phone.',
   };
   if (s.connected && !s.guest) {
     if (app.atHome) {

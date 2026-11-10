@@ -119,10 +119,14 @@ void main() {
   });
 
   test('node', () {
-    final n = NodeInfo(linkVersion, to, 7);
-    expect(n.encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
-    final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0xaa]);
-    expect([d.version, d.image], [1, 7]);
+    final n = NodeInfo(linkVersion, to, 7, room: 3);
+    expect(n.encode(), [13, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    expect(NodeInfo(12, to, 7).encode(), [12, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    final d = NodeInfo.decode([1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7]);
+    expect([d.version, d.image, d.room], [1, 7, null]);
+    // What a later version appends after room is ignored.
+    final e = NodeInfo.decode([14, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 0xaa]);
+    expect([e.version, e.room], [14, 0]);
     expect(d.id, to);
     expect(nodeName(to), 'bark-010203040506');
     expect(shownName(nodeName(to)), 'ID 010203040506');
@@ -186,14 +190,79 @@ void main() {
     final k = List.generate(mailboxKeyLen, (i) => i);
     expect(encodeHome(k), [1, ...k]);
     expect(() => encodeHome([1, 2]), throwsA(isA<Malformed>()));
-    final h = NodeHome.decode([1, 0, 0, 17, 1, 2, 3, 9]);
-    expect((h.set, h.oldest, h.newest), (true, 17, 0x010203));
+    final h = NodeHome.decode([1, 0, 0, 17, 1, 2, 3]);
+    expect((h.set, h.oldest, h.newest, h.mine), (true, 17, 0x010203, null));
     expect(h.encode(), [1, 0, 0, 17, 1, 2, 3]);
+    final m = NodeHome.decode([1, 0, 0, 17, 1, 2, 3, 0, 9]);
+    expect((m.set, m.mine), (true, false));
+    expect(m.encode(), [1, 0, 0, 17, 1, 2, 3, 0]);
+    expect(
+      () => NodeHome.decode([1, 0, 0, 0, 0, 0, 0, 2]),
+      throwsA(isA<Malformed>()),
+    );
     expect(
       () => NodeHome.decode([2, 0, 0, 0, 0, 0, 0]),
       throwsA(isA<Malformed>()),
     );
     expect(() => NodeHome.decode([1]), throwsA(isA<Malformed>()));
+  });
+
+  test('recipient', () {
+    expect(encodeRecipient(0x2a), [0x2a]);
+    expect(encodeRecipient(0x2a, 'Ann'), [0x2a, 0x41, 0x6e, 0x6e]);
+    // Cut to 32 bytes at a character's end: an ö is two.
+    final cut = encodeRecipient(1, 'ö' * 20);
+    expect(cut.length, 1 + 32);
+    expect(decodeRecipient(cut).name, 'ö' * 16);
+    expect(nameBytes('a${'ö' * 16}').length, 31);
+    expect(() => encodeRecipient(256), throwsA(isA<Malformed>()));
+  });
+
+  // bark-link/src/phones.rs, `PhonesWrite::encode`, `Phones::page`,
+  // `decode_page`.
+  test('phones', () {
+    expect(encodePhonesFrom(4), [0, 4]);
+    expect(() => encodePhonesFrom(8), throwsA(isA<Malformed>()));
+    expect(encodeRemovalCode(), [1]);
+    expect(encodeRemove(0x0102, bond: true, home: false, code: 123456), [
+      2, 1, 2, 1, 0x01, 0xe2, 0x40, //
+    ]);
+    expect(encodeRemove(3, bond: true, home: true, code: 0), [
+      2, 0, 3, 3, 0, 0, 0, //
+    ]);
+    expect(
+      () => encodeRemove(3, bond: false, home: false, code: 1),
+      throwsA(isA<Malformed>()),
+    );
+    expect(
+      () => encodeRemove(3, bond: true, home: false, code: removalCodes),
+      throwsA(isA<Malformed>()),
+    );
+    final page = PhonesPage.decode([
+      5,
+      0, 7, 0x1b, 0x01, 0x3a, 0x2a, 3, 0x41, 0x6e, 0x6e, //
+      0, 9, 0x02, 0, 0, 0, 0, //
+    ]);
+    expect(page.next, 5);
+    final [a, b] = page.records;
+    expect(
+      (a.number, a.paired, a.home, a.linked, a.mine, a.tag, a.day, a.name),
+      (7, true, true, false, true, 0x2a, 0x013a, 'Ann'),
+    );
+    expect(
+      (b.number, b.paired, b.home, b.tag, b.name),
+      (9, false, true, null, ''),
+    );
+    expect(PhonesPage.decode(page.encode()).encode(), page.encode());
+    expect(PhonesPage.decode([0]).records, isEmpty);
+    expect(() => PhonesPage.decode([]), throwsA(isA<Malformed>()));
+    expect(
+      () => PhonesPage.decode([0, 0, 1, 1, 0, 0, 0, 4, 0x41]),
+      throwsA(isA<Malformed>()),
+    );
+    expect(dayOf(0), isNull);
+    expect(dayOf(1), DateTime.utc(2026));
+    expect(dayOf(314), DateTime.utc(2026, 11, 10));
   });
 
   // bark-link/src/neighbours.rs, tests `vectors`, `a_page_fills_one_pdu`,

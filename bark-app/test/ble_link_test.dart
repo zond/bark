@@ -391,7 +391,8 @@ class FakeNodes extends UniversalBlePlatform {
   @override
   Future<bool> pair(String deviceId) async {
     pairings++;
-    if (wrongCode) return false;
+    // A full node answers the pairing with Pairing Failed.
+    if (wrongCode || !nodes[deviceId]!.takesPairing) return false;
     bonds.add(deviceId);
     final n = nodes[deviceId]!..pair();
     final guest = _links[deviceId];
@@ -432,6 +433,7 @@ class FakeNodes extends UniversalBlePlatform {
       Uuids.home => (await n.readHome()).encode(),
       Uuids.update => (await n.readUpdate()).encode(),
       Uuids.public => encodePublic(await n.readPublic()),
+      Uuids.phones => (await n.readPhones()).encode(),
       _ => throw UnimplementedError(characteristic),
     };
   }
@@ -451,7 +453,19 @@ class FakeNodes extends UniversalBlePlatform {
     final n = _links[deviceId]!;
     switch (characteristic) {
       case Uuids.recipient:
-        await n.setRecipient(value.single);
+        final r = decodeRecipient(value);
+        await n.setRecipient(r.tag, r.name);
+      case Uuids.phones when value.first == 0:
+        await n.setPhonesFrom(value[1]);
+      case Uuids.phones when value.first == 1:
+        await n.askRemovalCode();
+      case Uuids.phones:
+        await n.removePhone(
+          (value[1] << 8) | value[2],
+          bond: value[3] & 1 != 0,
+          home: value[3] & 2 != 0,
+          code: (value[4] << 16) | (value[5] << 8) | value[6],
+        );
       case Uuids.public when value.single == encodeUnpair().single:
         if (refusesUnpair) {
           throw UniversalBleException(
@@ -1603,9 +1617,10 @@ void main() {
         expect(failed, isA<NotPaired>());
         expect(
           notPairedLine(failed!),
-          'Pairing did not complete: it was cancelled, or the code typed was '
-          'not the one on the node\'s screen. The phone still uses the node '
-          'as a guest.',
+          'Pairing did not complete: it was cancelled, the code typed was not '
+          'the one on the node\'s screen, or the node already keeps eight '
+          'phones, when its screen says PHONES FULL. The phone still uses the '
+          'node as a guest.',
         );
         expect(ble.bonds, isEmpty);
         expect(app.session.pairedWith, isEmpty);
