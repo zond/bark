@@ -349,6 +349,13 @@ class FakeNodes extends UniversalBlePlatform {
         ? n.connect()
         : n.connectGuest();
     _links[deviceId] = link;
+    // What the node notifies of its status reaches the app as Android
+    // gives it, in bytes.
+    link.statusNotified.listen((st) {
+      if (_links[deviceId] == link) {
+        updateCharacteristicValue(deviceId, Uuids.status, st.encode(), null);
+      }
+    });
     // A guest's link the node ends, at its 30 s or for another guest,
     // ends for Android too.
     if (link is FakeGuest) {
@@ -1237,6 +1244,89 @@ void main() {
         async.elapse(lookRound * 2);
         expect(app.ownAway, isTrue);
         expect(ble.connects.last, strong);
+      });
+    });
+
+    test('a paired node that said it installs: the line says so, the app '
+        'waits through its swap, and it comes back updated', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        expect(app.linkDevice, paired);
+        final node = ble.nodes[paired]!;
+        node.gathered(24);
+        async.flushMicrotasks();
+        expect(
+          connectionLine(app),
+          'Connected to ID FA4E00000001, paired, installing version 24',
+        );
+        expect(connectionHelp(app), contains('at most ten minutes'));
+        expect(connectionHelp(app), contains('back about a minute later'));
+        // The drain is over: it reboots, and ends the link.
+        ble.inReach.remove(paired);
+        node.install();
+        ble.drop(paired);
+        async.flushMicrotasks();
+        const away =
+            'ID FA4E00000001 is installing version 24, back in about '
+            'a minute';
+        expect(connectionLine(app), away);
+        expect(connectionHelp(app), contains('connects again by itself'));
+        // Past the two rounds that call a node out of reach, it waits on.
+        async.elapse(lookRound * 3);
+        expect(app.ownAway, isFalse);
+        expect(ble.connects, [paired]);
+        expect(connectionLine(app), away);
+        // Back after its swap, on the new version.
+        async.elapse(swapAway - lookRound * 3);
+        ble.inReach.add(paired);
+        async.elapse(lookRound);
+        expect(app.linkDevice, paired);
+        expect(app.session.connected, isTrue);
+        expect(node.image, 24);
+        expect(
+          connectionLine(app),
+          'Connected to ID FA4E00000001, paired, updated to version 24',
+        );
+        async.elapse(updatedShown);
+        expect(connectionLine(app), 'Connected to ID FA4E00000001, paired');
+      });
+    });
+
+    test('a paired node that does not come back from its install is out of '
+        'reach two rounds after its swap\'s time', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        final node = ble.nodes[paired]!;
+        node.gathered(24);
+        async.flushMicrotasks();
+        ble.inReach.remove(paired);
+        node.install();
+        ble.drop(paired);
+        async.elapse(swapAway);
+        expect(app.ownAway, isFalse);
+        async.elapse(lookRound * 2);
+        expect(app.ownAway, isTrue);
+        expect(ble.connects.last, strong);
+        expect(connectionLine(app), 'Connected to ID 0CE400000004 as a guest');
+      });
+    });
+
+    test('a node whose drain reopened is not waited for: out of reach after '
+        'the ordinary two rounds', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        final node = ble.nodes[paired]!;
+        node.gathered(24);
+        async.flushMicrotasks();
+        // A phone's update, or a low battery, opens the drain again.
+        node.installing = null;
+        node.changed();
+        async.flushMicrotasks();
+        expect(connectionLine(app), 'Connected to ID FA4E00000001, paired');
+        ble.inReach.remove(paired);
+        ble.drop(paired);
+        async.elapse(lookRound * 2);
+        expect(app.ownAway, isTrue);
       });
     });
 

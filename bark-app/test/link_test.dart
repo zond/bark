@@ -70,22 +70,24 @@ void main() {
       address: kyiv,
       inbox: 2,
       heard: 5,
+      installing: 0x0118,
     );
     final bytes = [
       0x63, 3, 0, 100, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 2, 5, //
+      0x01, 0x18,
     ];
     expect(s.encode(), bytes);
     final d = Status.decode(bytes);
     expect(d.ready && d.externalPower && d.placed && d.booting, isTrue);
     expect(d.sleepy || d.carried || d.mapPoint || d.anchorless, isFalse);
     expect(
-      [d.relays, d.bootLeftS, d.batteryMv, d.inbox, d.heard],
-      [3, 100, 0, 2, 5],
+      [d.relays, d.bootLeftS, d.batteryMv, d.inbox, d.heard, d.installing],
+      [3, 100, 0, 2, 5, 0x0118],
     );
     expect(d.address, kyiv);
     // Each flag is its own bit.
     for (var bit = 0; bit < 8; bit++) {
-      final one = Status.decode([1 << bit, ...List.filled(14, 0)]);
+      final one = Status.decode([1 << bit, ...List.filled(16, 0)]);
       expect(one.encode()[0], 1 << bit);
     }
   });
@@ -94,6 +96,12 @@ void main() {
     final s = Status(relays: 9, heard: 11).encode();
     expect(Status.decode([...s, 0xaa, 0xaa, 0xaa]).heard, 11);
     expect(() => Status.decode(s.sublist(0, 13)), throwsA(isA<Malformed>()));
+  });
+
+  test('a node of link version 12 tells of no install', () {
+    final s = Status(heard: 11, installing: 24).encode();
+    final old = Status.decode(s.sublist(0, Status.len12));
+    expect([old.heard, old.installing], [11, 0]);
   });
 
   test('a node before link version 11 has its relays stand for heard', () {

@@ -24,8 +24,8 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
 /// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
 /// the neighbours heard in Status, 12 Public's write that unpairs, 13
-/// Phones, with the person's name in Recipient, `room` in Node and `mine`
-/// in Home (roadmap D168).
+/// Phones, with the person's name in Recipient, `room` in Node, `mine`
+/// in Home (roadmap D168) and `installing` in Status (D182).
 pub const VERSION: u8 = 13;
 
 /// The oldest link version whose apps this node still serves, in

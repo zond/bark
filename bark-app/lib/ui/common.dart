@@ -550,10 +550,14 @@ String? guestLine(AppModel app) {
 }
 
 /// The line on the phone's node, one of four: on its home, on another
-/// node it is paired with, on a public node as a guest, or on none.
-/// Why is [connectionHelp]'s to say.
+/// node it is paired with, on a public node as a guest, or on none, as
+/// when a paired node is away to install a new version. Why is
+/// [connectionHelp]'s to say.
 String connectionLine(AppModel app) =>
-    app.nodeLine ?? lookingLine(app) ?? AppModel.notLookingLine;
+    app.nodeLine ??
+    app.installingLine ??
+    lookingLine(app) ??
+    AppModel.notLookingLine;
 
 /// Why the phone is on the node [connectionLine] names, or on none, in
 /// a few plain sentences for the person who asks (spec "Phone link",
@@ -568,6 +572,8 @@ String connectionHelp(AppModel app) {
       ' ${lost.join(', ')} are no longer yours: they no longer know this '
           'phone.',
   };
+  final install = app.installHelp;
+  if (install != null) return install;
   if (s.connected && !s.guest) {
     if (app.atHome) {
       return 'This phone is paired with your home node and keeps a link to '

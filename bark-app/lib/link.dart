@@ -286,7 +286,11 @@ class NodeInfo {
 
 /// Status, read and notify.
 class Status {
-  static const len = len10 + 1;
+  static const len = len12 + 2;
+
+  /// Its bytes before the version it installs, as link version 12 had
+  /// them.
+  static const len12 = len10 + 1;
 
   /// Its bytes before the neighbours heard, as link version 10 had them.
   static const len10 = 1 + 1 + 2 + Position.wireLen + 2 + 1;
@@ -308,6 +312,11 @@ class Status {
   /// node says only [relays], which stand in for it.
   final int heard;
 
+  /// The low 16 bits of the firmware version the node is about to install,
+  /// 0 when none and before link version 13 (spec "Updates over the
+  /// mesh", the install).
+  final int installing;
+
   const Status({
     this.ready = false,
     this.externalPower = false,
@@ -323,6 +332,7 @@ class Status {
     this.batteryMv = 0,
     this.inbox = 0,
     this.heard = 0,
+    this.installing = 0,
   });
 
   Status copyWith({
@@ -340,6 +350,7 @@ class Status {
     int? batteryMv,
     int? inbox,
     int? heard,
+    int? installing,
   }) => Status(
     ready: ready ?? this.ready,
     externalPower: externalPower ?? this.externalPower,
@@ -355,6 +366,7 @@ class Status {
     batteryMv: batteryMv ?? this.batteryMv,
     inbox: inbox ?? this.inbox,
     heard: heard ?? this.heard,
+    installing: installing ?? this.installing,
   );
 
   int get _flags => [
@@ -376,6 +388,7 @@ class Status {
     ..._be16(batteryMv),
     inbox,
     heard,
+    ..._be16(installing),
   ]);
 
   static Status decode(List<int> b) {
@@ -395,7 +408,8 @@ class Status {
       address: Position.decode(b.sublist(4, 4 + Position.wireLen)),
       batteryMv: _u16(b, 4 + Position.wireLen),
       inbox: b[6 + Position.wireLen],
-      heard: b.length < len ? b[1] : b[len10],
+      heard: b.length < len12 ? b[1] : b[len10],
+      installing: b.length < len ? 0 : _u16(b, len12),
     );
   }
 }

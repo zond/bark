@@ -471,6 +471,7 @@ class FakeNode implements NodeLink {
       bootLeftS: _ceilS(left),
       address: _mapPoint ?? _fix,
       inbox: g == null ? _inbox.length : 0,
+      installing: (installing ?? 0) & 0xffff,
     );
   }
 
@@ -729,9 +730,8 @@ class FakeNode implements NodeLink {
   /// Pieces the app has written, those lost among them.
   int get piecesWritten => _pieces;
 
-  /// How long its loader takes to swap at a reboot, as a node's does,
-  /// 55 s on the bench (`bark-fw/README.md`, "Updates").
-  static const swapTime = Duration(seconds: 55);
+  /// How long it is away at a reboot into a new image, as a node is.
+  static const swapTime = swapAway;
 
   /// Whether the image an update brings hears the relays around it. Not
   /// in the demo, so that the person sees what the app says of a node
@@ -851,18 +851,39 @@ class FakeNode implements NodeLink {
   @override
   Future<void> hurry() => _answer(() {});
 
-  /// Ends the link and resets; a committed image runs once the swap is
-  /// over, until then the fake takes no connection.
-  void _reboot() {
-    final committed = _committed;
-    final version = committed ? _le32(_staging!, 8) : image;
+  /// The version of an image it gathered over the mesh and is about to
+  /// install, as a node says while it drains for the reboot (spec "Updates
+  /// over the mesh", the install).
+  int? installing;
+
+  /// For a test: it has gathered `version` over the mesh and drains to
+  /// install it, and tells its phones.
+  void gathered(int version) {
+    installing = version;
+    _notify();
+  }
+
+  /// For a test: the drain is over and it reboots into the image it
+  /// gathered, ending its links as a node does.
+  void install() {
+    final version = installing!;
+    installing = null;
+    _reboot(gathered: version);
+  }
+
+  /// Ends the link and resets; a committed image, or one `gathered` over
+  /// the mesh, runs once the swap is over, until then the fake takes no
+  /// connection.
+  void _reboot({int? gathered}) {
+    final swaps = _committed || gathered != null;
+    final version = gathered ?? (_committed ? _le32(_staging!, 8) : image);
     _staging = null;
     _held.clear();
     _committed = false;
     _refused = null;
-    _backAt = now().add(committed ? swapTime : Duration.zero);
+    _backAt = now().add(swaps ? swapTime : Duration.zero);
     image = version;
-    if (committed) {
+    if (swaps) {
       // A boot: its first rotation again, and the relays learnt anew.
       _boot = _backAt!;
       _relays = 0;

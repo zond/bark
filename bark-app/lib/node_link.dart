@@ -6,6 +6,13 @@ import 'dart:typed_data';
 
 import 'link.dart';
 
+/// How long a node is away at its reboot into a new image: 55 s from the
+/// reboot to the node back, measured on the bench on 2026-11-06 for an
+/// image of 227 pages (roadmap, verification, "A swap"), which the loader
+/// hashes and swaps in, about 47 s by the datasheets (`bark-fw/README.md`,
+/// "Updates"), before the firmware boots.
+const Duration swapAway = Duration(seconds: 55);
+
 /// The node answered a write with this ATT error.
 class AttException implements Exception {
   final int code;
