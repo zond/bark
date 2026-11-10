@@ -1359,12 +1359,13 @@ impl<'a> Console<'a> {
 
     async fn status(&mut self, reset: bool) {
         let battery_mv = self.battery.read().await;
+        let drains = drains();
         let c = &self.counters;
         let r = self.radio.stats();
         log::info!(
             "status id={} uptime_s={} battery_mv={} ch={} hz={} power_dbm={} beacon={} rx_ok={} rx_crc_error={} \
 rx_header_error={} rx_started={} tx={} tx_airtime_us={} cad={} cad_busy={} pongs_sent={} pongs_received={} \
-radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={}",
+radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={} drain_relay={} drain_sleepy={}",
             Id,
             Instant::now().as_secs(),
             battery_mv,
@@ -1387,7 +1388,9 @@ radio_errors={} resets={} configured={} cold_starts={} tcxo_us={} public={}",
             r.configured,
             r.cold_starts,
             self.radio.tcxo().delay.as_micros(),
-            public()
+            public(),
+            drains[0],
+            drains[1]
         );
         if reset {
             self.counters = Counters::default();
@@ -1533,6 +1536,20 @@ impl fmt::Display for CutOp {
 /// "Phone link", Public; `store.rs`): its page read where it lies in the
 /// chip's address space, as the console writes no flash of the node's.
 fn public() -> bool {
+    bark_link::bond::public(kept().bond.as_ref())
+}
+
+/// The battery drains the node image learned and kept, a relay's and a
+/// sleepy node's, in ten-thousandths of a percent of the cell an hour, as
+/// its log gives them (`bark_proto::drain`); the seeds before it learned.
+fn drains() -> [u32; 2] {
+    use bark_proto::drain::{Drain, Running};
+    let d = Drain::from_kept(kept().stored.and_then(|s| s.drain));
+    [Running::Relay, Running::Sleepy].map(|r| (d.rate(r) * 10_000.0) as u32)
+}
+
+/// What the store's page holds (`store.rs`).
+fn kept() -> crate::store::Kept {
     let (_, kept) = crate::store::scan(|at, out| {
         // SAFETY: flash is mapped from address 0 (nRF52840 Product
         // Specification, Memory), and the store's page lies in it.
@@ -1540,5 +1557,5 @@ fn public() -> bool {
         out.copy_from_slice(bytes);
         true
     });
-    bark_link::bond::public(kept.bond.as_ref())
+    kept
 }
