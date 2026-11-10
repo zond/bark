@@ -1096,19 +1096,13 @@ void main() {
     });
 
     test('a node Android holds a bond with, unknown to the app, that still '
-        'holds the phone\'s: taken back as the paired node without asking', () {
+        'holds the phone\'s: taken back as the paired node', () {
       run(withPaired: true, pairedInReach: true, stored: false, (
         async,
         app,
         ble,
       ) {
-        var asked = 0;
-        app.askOwner = (n) async {
-          asked++;
-          return false;
-        };
         async.elapse(round);
-        expect(asked, 0);
         expect((app.session.connected, app.session.guest), (true, false));
         expect(app.linkDevice, paired);
         expect(app.pairedNode, nodeName(FakeNode.id));
@@ -1119,7 +1113,7 @@ void main() {
     });
 
     test('a node Android holds a bond with that refuses it: the bond is '
-        'removed and the node used as a guest, without asking', () {
+        'removed and the node used as a guest', () {
       run(withPaired: true, pairedInReach: true, stored: false, (
         async,
         app,
@@ -1127,13 +1121,7 @@ void main() {
       ) {
         ble.nodes[paired]!.paired = false;
         ble.inReach.removeAll({weak, strong});
-        var asked = 0;
-        app.askOwner = (n) async {
-          asked++;
-          return true;
-        };
         async.elapse(round + seenWait);
-        expect(asked, 0);
         expect(ble.bonds, isEmpty);
         expect(app.session.pairedWith, isNull);
         expect(app.session.pairingLost, isFalse);
@@ -1230,25 +1218,6 @@ void main() {
         expect(app.staleBond, isNull);
         expect(ble.connects.last, paired);
         expect(app.guestNode, nodeName(FakeNode.id));
-      });
-    });
-
-    test('after unpairing, the node is used as a guest without asking '
-        'whether it is the person\'s', () {
-      run(withPaired: true, pairedInReach: true, (async, app, ble) {
-        var asked = 0;
-        app.askOwner = (n) async {
-          asked++;
-          return true;
-        };
-        async.elapse(round);
-        ble.inReach.removeAll({weak, strong});
-        app.unpair();
-        async.elapse(lookRound * 3);
-        expect(asked, 0);
-        expect(ble.connects.last, paired);
-        expect(app.guestNode, nodeName(FakeNode.id));
-        expect(app.session.pairedWith, isNull);
       });
     });
 
@@ -1353,38 +1322,16 @@ void main() {
       });
     });
 
-    test('a public node the search would join: asked whether it is yours; '
-        'just use it joins as a guest, asked once', () {
+    test('a public node the search would join: joined as a guest, without '
+        'a pairing', () {
       run((async, app, ble) {
-        final asked = <String>[];
-        app.askOwner = (n) async {
-          asked.add(n.name);
-          return false;
-        };
         async.elapse(round);
-        expect(asked, [nodeName(strongId)]);
         expect(ble.connects, [strong]);
+        expect(ble.pairings, 0);
         expect(app.session.pairedWith, isNull);
         async.elapse(const Duration(minutes: 1));
-        expect(asked, [nodeName(strongId)]);
         expect(ble.connects, [strong, strong]);
-      });
-    });
-
-    test('no answer to whether it is yours: not joined', () {
-      run((async, app, ble) {
-        app.askOwner = (n) async => null;
-        async.elapse(const Duration(minutes: 1));
-        expect(ble.connects, isEmpty);
-      });
-    });
-
-    test('yours: the search pairs with it', () {
-      run((async, app, ble) {
-        app.askOwner = (n) async => true;
-        async.elapse(round);
-        expect(ble.connects, [strong]);
-        expect(ble.bonds, {strong});
+        expect(ble.pairings, 0);
       });
     });
 

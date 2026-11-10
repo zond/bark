@@ -166,9 +166,8 @@ is a prototype for the bench, not the app people will carry.
   weak, below −85 dBm, a choice, with the number in small print; a
   scan that has found nothing after about 10 s, or was stopped, says
   "No node found nearby" and to switch a node on or come closer; a
-  public node says so, and a tap asks "Is it
-  yours?": **Pair**, typing the code its screen shows, or **Just use
-  it**, as a guest), the node the phone is paired with, and how the
+  public node says so, and a tap on one the phone is not paired with
+  uses it as a guest), the node the phone is paired with, and how the
   connected node fares; on the paired node of link version 7 or later
   the switch **Public: serve phones without pairing**, on unless the
   owner turns it off (Public nodes, below), and from link version 12
@@ -259,8 +258,9 @@ is a prototype for the bench, not the app people will carry.
   `11-06 14:03:27.513  8812  8840 I flutter : bark 14:03:27.512 Disconnected`.
 
 A node is the paired phone's alone (spec "Phone link", Pairing; roadmap
-D135). The first time the phone connects to a node it pairs: Settings
-says to type the six-digit code the node's screen shows, and Android
+D135). The phone pairs with a node when the person makes it their
+home or pairs with it in Settings (A guest's home, below), or taps a
+private node: Settings says to type the six-digit code the node's screen shows, and Android
 asks for it in its own dialog; Android then takes about five seconds
 before it reports the bond, and Settings says "Paired, connecting…"
 until the node is read. While a connection is being made no other
@@ -328,24 +328,23 @@ settings**, which opens the phone's Bluetooth settings (the intent
 person forgets the node. Either way, if the node was the person's home,
 the line adds that it stays their home, so texts to them still go to
 it: the node keeps the mailbox key. The search then uses the node as a
-guest without asking whether it is the person's, as a **Pair** there
-would only pair again; the texts, the contacts, the home and the card
-stay as they were.
+guest; the texts, the contacts, the home and the card stay as they
+were.
 
 **A pairing found again.** With no pairing stored, as after the app's
 data was cleared, on a new install or after restoring the 12 words, the
 phone may still hold a bond with the person's node, and the node the
 phone's. Each round, while the app knows of no pairing, the search
 looks for a node heard that Android lists a bond with, the strongest
-first, and connects to it as its owner, before any public node and
-without asking "Is it yours?". A first read that succeeds on the
+first, and connects to it as its owner, before any public node. A
+first read that succeeds on the
 encrypted link shows the node still holds the bond: it is kept as the
 paired node, and the first screen says "Back on your node, ID …". With
 no home set and the node placed and able to be a home, the first screen
 offers **Make this node my home** in one line, which says when the new
 card would go to the contacts, and **Not now**, which hides it until
 the app is started again. A node that refuses the bond goes the
-way of a stale bond, below, without the question either.
+way of a stale bond, below.
 
 A phone can hold such a stale bond in other ways too: unpaired by an
 older app, or with a node another phone has paired with since. A
@@ -848,8 +847,10 @@ another guest, and move to the paired node once it is heard; with a
 paired node, go to a public node only after two rounds without it,
 send through it as a guest, name it on the card and on the first
 screen's line, come back to the paired node in the round that hears it
-and say so, and stay with a paired node heard every other round; take back
-as the paired node, without asking, a node Android holds a bond with
+and say so, and stay with a paired node heard every other round; make
+a guest's node the home by pairing first, offered on the first screen
+and in Settings, and stay a guest after a wrong code; take back
+as the paired node a node Android holds a bond with
 that still holds the phone's; have
 Android remove an old bond a public node refuses and connect again,
 and where Android keeps it, pass the node over, saying so once, until
@@ -965,10 +966,13 @@ a phone (Trying it, With a node).
 1. Switch the node on and read the twelve hex digits on its display.
 2. In **Settings**, with the demo off, press **Scan** and allow
    Bluetooth. The node shows within about a second as `ID` and those
-   digits, as its screen shows them. Tap it: a public node asks whether
-   it is yours; **Pair**. The first time, Android asks for a code and the
-   node's screen shows `PAIR CODE` and six digits within a few seconds:
-   type them. Settings then says "Connected and paired." and how the node
+   digits, as its screen shows them. Tap it: the phone uses it as a
+   guest, and Settings says so. Under the home node, **Make this node my
+   home**, whose dialog says the phone pairs first, or **Pair with this
+   node** below it. Android asks for a code and the node's screen shows
+   `PAIR CODE` and six digits within a few seconds: type them. A wrong
+   code says the pairing did not complete, and the phone goes on as a
+   guest. Settings then says "Connected and paired." and how the node
    fares: "Starting up, m:ss" in its first rotation, "Hears N nodes",
    sleepy ones counted, or "Hears no other node yet: texts wait here";
    and
@@ -1091,11 +1095,13 @@ a phone (Trying it, With a node).
     pairing** is on from the start, and the node's screen says `PHONE
     PUBLIC`; turned off, it says `PHONE PRIVATE`, and on again `PHONE
     PUBLIC`. On a second phone that has never paired with it, **Scan**
-    lists the node as public with its signal; or, with no paired node of
-    its own in reach, the second phone asks whether the node is its own,
-    and after **Just use it** goes on an errand there within a round, its first screen saying "Using ID … as a guest: a
-    public node, not yours", with an errand once a minute. No pairing dialog shows,
-    at the connect or later. Its log shows `Recipient: tag …`, a
+    lists the node as public with its signal; with no paired node of
+    its own in reach, the second phone goes on an errand there within a
+    round, without asking anything, its first screen saying "Using ID …
+    as a guest: a public node, not yours", with an errand once a minute,
+    and, with no home set, offering **Make this node my home**; **Not
+    now** hides it until the app is started again. No pairing dialog
+    shows, at the connect or later. Its log shows `Recipient: tag …`, a
     `Guest: item …` line for each item read, and `Disconnected`.
     A text between the two phones' contacts reaches each, and neither
     sees the other's; a text sent to the second phone while it is away

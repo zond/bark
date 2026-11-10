@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
-import '../ble_link.dart';
 import '../link.dart';
 import '../node_link.dart';
 import '../session.dart';
@@ -549,40 +548,14 @@ String connectionLine(AppModel app) {
 String pairedLine(Session s) {
   final p = s.pairedWith;
   if (p == null) {
-    return 'Not paired with a node yet: the first connection pairs, by a '
-        'code on the node\'s screen.';
+    return 'Not paired with a node yet: the phone uses a public node near '
+        'you as a guest.';
   }
   final n = shownName(p);
   return s.pairingLost
       ? '$n is no longer yours: another phone has paired with it.'
       : 'Paired with $n.';
 }
-
-/// Asks whether `n`, a public node, is the person's: true pairs with it,
-/// by the code its screen shows; false uses it as a guest; null decides
-/// nothing (spec "Phone link", Pairing, Public).
-Future<bool?> askIsYours(BuildContext context, FoundNode n) => showDialog<bool>(
-  context: context,
-  builder: (context) => SimpleDialog(
-    title: Text('Is ${shownName(n.name)} yours?'),
-    children: [
-      SimpleDialogOption(
-        onPressed: () => Navigator.pop(context, true),
-        child: const ListTile(
-          title: Text('Pair'),
-          subtitle: Text('You will type the code its screen shows.'),
-        ),
-      ),
-      SimpleDialogOption(
-        onPressed: () => Navigator.pop(context, false),
-        child: const ListTile(
-          title: Text('Just use it'),
-          subtitle: Text('It passes on your texts; it stays its owner\'s.'),
-        ),
-      ),
-    ],
-  ),
-);
 
 /// Says why bark wants Bluetooth before Android asks; whether to go on.
 Future<bool> whyBluetooth(BuildContext context) async =>

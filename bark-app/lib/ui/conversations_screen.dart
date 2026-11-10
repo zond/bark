@@ -30,18 +30,10 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   @override
   void initState() {
     super.initState();
-    // The first screen is under every other, so it asks over them.
-    app.askOwner = (n) => askIsYours(context, n);
     // Without Bluetooth there is no node, so the app asks at once.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) app.askForBluetooth(() => whyBluetooth(context));
     });
-  }
-
-  @override
-  void dispose() {
-    app.askOwner = null;
-    super.dispose();
   }
 
   void _open(BuildContext context, Widget screen) =>

@@ -408,7 +408,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         // The connected node's row does nothing; another's connects to
         // it, closing the link to this one first: a public node not the
-        // phone's as a guest, which **Pair** makes the phone's instead.
+        // phone's as a guest.
         for (final FoundNode n in app.found.values) _found(n),
         if (app.noneFound) ...[
           const SizedBox(height: 8),
@@ -448,15 +448,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       onTap: busy
           ? null
-          : () => guest ? _yours(n) : _connect(() => app.connect(n)),
+          : () => _connect(() => guest ? app.connectGuest(n) : app.connect(n)),
     );
-  }
-
-  /// A public node not paired with: the person says whether it is theirs.
-  Future<void> _yours(FoundNode n) async {
-    final mine = await askIsYours(context, n);
-    if (mine == null || !mounted) return;
-    await _connect(() => mine ? app.connect(n) : app.connectGuest(n));
   }
 
   /// The owner's switch of whether the node serves phones that have not

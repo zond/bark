@@ -279,11 +279,7 @@ class AppModel extends ChangeNotifier {
     await session.unpair();
     if (device == null || device == fakeDevice || n == null) return true;
     final name = nodeName(n.id);
-    // The node is public now and the person has said it is not theirs to
-    // keep: the search uses it as a guest without asking whether it is
-    // theirs, an answer of Pair to which would only pair again. Nothing
-    // learned of the paired node bears on the next.
-    _justUse.add(name);
+    // Nothing learned of the paired node bears on the next.
     _ownMissed = 0;
     _guestAt = null;
     _backAt = null;
@@ -996,13 +992,7 @@ class AppModel extends ChangeNotifier {
         }
         if (looked && n == null) _guestAt = null;
         if (n != null && n.name != paired && usesPublic && _guestDue(n)) {
-          switch (await _isYours(n)) {
-            case true:
-              await _connectFound(n);
-            case false:
-              await _connectPublic(n);
-            case null:
-          }
+          await _connectPublic(n);
         }
         if (!_awake()) break;
         final left = lookRound - now().difference(start);
@@ -1028,28 +1018,6 @@ class AppModel extends ChangeNotifier {
     if (lost == null || !await BleLink.bonded(lost.deviceId)) return null;
     return lost.name;
   }
-
-  /// Asks the person, by [askOwner], whether a public node the search is
-  /// about to join is theirs, while the phone has paired with none: the
-  /// advertisement cannot tell a node nobody has paired with from
-  /// another's (spec "Phone link", Public). True pairs, false joins as a
-  /// guest, and null leaves it for this round. Asked once a node; with no
-  /// screen to ask on, it joins as a guest, as before.
-  Future<bool?> _isYours(FoundNode n) async {
-    final ask = askOwner;
-    if (pairedNode != null || ask == null || _justUse.contains(n.name)) {
-      return false;
-    }
-    final a = await ask(n);
-    if (a == false) _justUse.add(n.name);
-    return a;
-  }
-
-  /// Asks the person whether a node is theirs; set by the first screen.
-  Future<bool?> Function(FoundNode n)? askOwner;
-
-  /// The public nodes the person said to just use.
-  final Set<String> _justUse = {};
 
   /// [lookingNow], with a new [_wake] when the search goes on: the last
   /// may have ended a scan or wait for a change that has passed.
@@ -1092,7 +1060,7 @@ class AppModel extends ChangeNotifier {
   /// as the paired node if the node still holds the bond too: its first
   /// read on the encrypted link succeeds. A node that refuses the bond is
   /// a stale bond's ([StaleBond]): Android is asked to remove it and the
-  /// node is used as a guest, without asking whether it is the person's.
+  /// node is used as a guest.
   Future<void> _adopt(FoundNode n) async {
     session.note('Found ${n.name}, bonded: connecting as its owner');
     try {
@@ -1106,7 +1074,6 @@ class AppModel extends ChangeNotifier {
         }
       });
     } on StaleBond {
-      _justUse.add(n.name);
       // Where Android keeps the bond, [staleBonds] keeps the node and the
       // person is told.
       if (!await BleLink.forget(n.deviceId)) return;
