@@ -411,13 +411,21 @@ pub struct Clock {
     pub offset_min: Option<i16>,
 }
 
-/// What never changes: the node's ID as hex, its image's name and version.
+/// What never changes: the node's ID as hex, its image's name and version,
+/// and whether it is a discharge bench build (roadmap D190), which runs by
+/// other rules than a node's and says so in place of the image's line and
+/// of the ID under the code ([`BENCH`]).
 #[derive(Clone, Copy, Debug)]
 pub struct Fixed<'a> {
     pub id: &'a [u8],
     pub image: &'a str,
     pub version: u32,
+    pub discharge_bench: bool,
 }
+
+/// What a discharge bench build shows ([`Fixed::discharge_bench`]).
+pub const BENCH: &str = "DISCHARGE BENCH";
+const _: () = assert!(BENCH.len() <= LINE);
 
 /// The top of the first line, and the gap below the header.
 const TOP: usize = 10;
@@ -488,7 +496,13 @@ pub fn lines(
         put(plain(format_args!("STARTING")), GAP);
     }
     put(row("ID", format_args!("{}", Hex(fixed.id))), 0);
-    put(row(fixed.image, format_args!("V{}", fixed.version)), 0);
+    put(
+        match fixed.discharge_bench {
+            true => plain(format_args!("{BENCH}")),
+            false => row(fixed.image, format_args!("V{}", fixed.version)),
+        },
+        0,
+    );
     if let Some(g) = state.getting {
         let mut label = Text::new();
         let _ = write!(label, "GET V{}", g.version);
@@ -559,6 +573,7 @@ pub enum Face {
 pub fn code_line(fixed: &Fixed<'_>, state: &State) -> Text {
     match state.phone {
         p @ (Phone::Code(_) | Phone::Remove(_) | Phone::Full) => phone_line(p),
+        _ if fixed.discharge_bench => plain(format_args!("{BENCH}")),
         _ => row("ID", format_args!("{}", Hex(fixed.id))),
     }
 }

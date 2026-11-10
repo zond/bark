@@ -9,6 +9,7 @@ const FIXED: Fixed<'static> = Fixed {
     id: b"bae6e6cbf4f5",
     image: "node",
     version: 12,
+    discharge_bench: false,
 };
 
 fn texts(state: &State, up_min: u32) -> Vec<String> {
@@ -494,4 +495,27 @@ fn the_buttons_labelled() {
 fn a_lowercase_s() {
     assert_ne!(glyph(b's'), glyph(b'S'));
     assert_eq!(glyph(b'a'), glyph(b'A'));
+}
+
+/// A discharge bench build says so on the lines and under the code, so
+/// that it is not taken for a node.
+#[test]
+fn a_discharge_bench_build_says_so() {
+    let bench = Fixed {
+        discharge_bench: true,
+        ..FIXED
+    };
+    let shown: Vec<String> = lines(&bench, &State::default(), 0, None)
+        .iter()
+        .flatten()
+        .map(|(t, _)| String::from_utf8(t.bytes().to_vec()).unwrap())
+        .collect();
+    assert!(shown.iter().any(|l| l.trim_end() == BENCH));
+    let under = code_line(&bench, &State::default());
+    assert_eq!(
+        String::from_utf8(under.bytes().to_vec())
+            .unwrap()
+            .trim_end(),
+        BENCH
+    );
 }

@@ -9,6 +9,7 @@ const FIXED: Fixed<'static> = Fixed {
     id: b"bae6e6cbf4f5",
     image: "node",
     version: 12,
+    discharge_bench: false,
 };
 
 /// The screen's code drawn as the node draws it, on the board's axes.

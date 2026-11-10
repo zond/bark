@@ -3,7 +3,8 @@
 //! own curve can be learned from a full discharge, which takes days to
 //! weeks on battery, where no host reads the USB log.
 //!
-//! A sample is taken an hour after the last on battery ([`EVERY_S`]), at
+//! A sample is taken an hour after the last on battery ([`EVERY_S`]), or
+//! ten minutes after in a discharge bench build ([`BENCH_EVERY_S`]), at
 //! each boot, and at each change of power and of the way the node runs
 //! ([`Sampler`]). Each is a record of [`LEN`] bytes, written into the
 //! next slot of a ring ([`Ring`]): a sequence number, the time, the
@@ -35,6 +36,16 @@ pub const PER_SECTOR: u32 = SECTOR / LEN as u32;
 /// [`DISCHARGE`]: crate::layout::external::DISCHARGE
 pub const EVERY_S: u32 = 3600;
 
+/// Seconds between samples on battery in a discharge bench build (roadmap
+/// D190), whose relay with its GPS tracking draws about 35.4 mA and empties
+/// the cell in about 24 h: ten minutes, so that a sample spans about as
+/// much of the charge as a relay's hour, 0.69 % against 0.75 %, 3600 s ×
+/// 6.41 / 35.4 = 652 s, rounded. A day is then about 144 samples, against
+/// the hour's 24, and [`DISCHARGE`] holds 14 days of them.
+///
+/// [`DISCHARGE`]: crate::layout::external::DISCHARGE
+pub const BENCH_EVERY_S: u32 = 600;
+
 /// The erased value of the flash (ZD25WQ16B datasheet, "Sector Erase").
 const ERASED: u8 = 0xff;
 
@@ -42,8 +53,8 @@ const ERASED: u8 = 0xff;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Why {
-    /// An hour after the last on battery.
-    Hour = 0,
+    /// [`Sampler::every_s`] after the last on battery.
+    Interval = 0,
     /// The first reading after a boot, or the boot itself on USB.
     Boot = 1,
     /// USB came: the last reading on battery, the end of a discharge.
@@ -57,7 +68,7 @@ pub enum Why {
 impl Why {
     fn from_bits(b: u8) -> Option<Why> {
         Some(match b {
-            0 => Why::Hour,
+            0 => Why::Interval,
             1 => Why::Boot,
             2 => Why::Plugged,
             3 => Why::Unplugged,
@@ -69,7 +80,7 @@ impl Why {
     /// The word the console prints.
     pub fn name(self) -> &'static str {
         match self {
-            Why::Hour => "hour",
+            Why::Interval => "interval",
             Why::Boot => "boot",
             Why::Plugged => "plugged",
             Why::Unplugged => "unplugged",
@@ -101,6 +112,9 @@ pub struct Sample {
     /// The GPS running, searching or tracking, at some 29 mA (spec
     /// "Sleepy nodes", Why the GPS stops a sample).
     pub gps: bool,
+    /// Taken by a discharge bench build (roadmap D190): a relay at any
+    /// battery level, its GPS tracking, sampled every [`BENCH_EVERY_S`].
+    pub bench: bool,
     /// Why it was taken.
     pub why: Why,
 }
@@ -131,7 +145,7 @@ const CHECK: usize = LEN - 2;
 impl Sample {
     /// The record, little-endian: `seq` in 3 bytes, `utc_s` and
     /// `uptime_s` in 4, `mv` in 2, a byte of flags (bit 0 external, 1
-    /// sleepy, 2 GPS, 4 to 6 why), and the check in 2.
+    /// sleepy, 2 GPS, 3 bench, 4 to 6 why), and the check in 2.
     pub fn encode(&self) -> [u8; LEN] {
         let mut r = [0u8; LEN];
         r[0..3].copy_from_slice(&(self.seq & SEQ_MASK).to_le_bytes()[..3]);
@@ -141,6 +155,7 @@ impl Sample {
         r[13] = u8::from(self.external)
             | u8::from(self.sleepy) << 1
             | u8::from(self.gps) << 2
+            | u8::from(self.bench) << 3
             | (self.why as u8) << 4;
         let check = crc16(&r[..CHECK]);
         r[CHECK..].copy_from_slice(&check.to_le_bytes());
@@ -162,6 +177,7 @@ impl Sample {
             external: flags & 1 != 0,
             sleepy: flags & 2 != 0,
             gps: flags & 4 != 0,
+            bench: flags & 8 != 0,
             why: Why::from_bits(flags >> 4 & 7)?,
         })
     }
@@ -380,6 +396,8 @@ pub struct Now {
 /// When to take a sample (module documentation).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Sampler {
+    /// A discharge bench build's: a sample every [`BENCH_EVERY_S`].
+    bench: bool,
     /// The boot's sample was taken.
     booted: bool,
     /// The power at the last step.
@@ -393,9 +411,19 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    /// Nothing sampled since the boot.
+    /// Nothing sampled since the boot, in a node image.
     pub const fn new() -> Sampler {
+        Sampler::with(false)
+    }
+
+    /// Nothing sampled since the boot, in a discharge bench build.
+    pub const fn bench() -> Sampler {
+        Sampler::with(true)
+    }
+
+    const fn with(bench: bool) -> Sampler {
         Sampler {
+            bench,
             booted: false,
             external: None,
             unplugged: false,
@@ -428,8 +456,8 @@ impl Sampler {
                 Some(Why::Unplugged)
             } else if (sleepy, gps) != (now.sleepy, now.gps) {
                 Some(Why::Mode)
-            } else if now.uptime_s.saturating_sub(at) >= EVERY_S {
-                Some(Why::Hour)
+            } else if now.uptime_s.saturating_sub(at) >= self.every_s() {
+                Some(Why::Interval)
             } else {
                 None
             }
@@ -449,8 +477,18 @@ impl Sampler {
             external: now.external,
             sleepy: now.sleepy,
             gps: now.gps,
+            bench: self.bench,
             why,
         })
+    }
+
+    /// Seconds between samples on battery.
+    pub const fn every_s(&self) -> u32 {
+        if self.bench {
+            BENCH_EVERY_S
+        } else {
+            EVERY_S
+        }
     }
 }
 

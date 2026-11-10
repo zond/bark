@@ -55,6 +55,15 @@ bench. Without it the image closes the port at its first boot, for good
 (Read-out protection, below), so that no image leaves the bench open by
 mistake; any other value fails the build. `scripts/bench.py` sets it.
 
+`BARK_DISCHARGE_BENCH=1` at build time, in an open node image only,
+makes a board that empties its cell in about a day, to learn the
+curve's shape (Discharge log, below; roadmap D190). The build fails
+without `BARK_OPEN=1`, with the console, beside `BARK_ON_BATTERY`, or
+for any other value. The node logs `bench build: DISCHARGE BENCH ..`
+after its `node id=` line, and its screen says `DISCHARGE BENCH` in
+place of the image's line and of the ID under the code, so that the
+board is not taken for a node.
+
 The core runs in the loop of `bark-driver` (`src/node.rs`), the same loop
 its host tests run against a fake radio; `docs/firmware-adapter-2026-10-15.md`
 describes it. A node's place can be set when it is built, from `BARK_LAT`
@@ -1733,6 +1742,43 @@ command, writes the samples to a CSV and fits the curve over the last
 run on battery, printing the voltage at every 5 % of the charge
 (its docstring says what it assumes). `discharge erase` empties the
 log before a run.
+
+A full discharge under the node's own rules takes about 16 days, 4.4
+of them relaying to the low level and 12 sleepy at a tenth of the
+current. The curve's shape needs neither, so a discharge bench build
+(`BARK_DISCHARGE_BENCH=1`, above) runs one mode from full to flat:
+
+- It relays whatever the battery reads: its levels are 0 mV, which no
+  reading reaches, so it never turns sleepy at the low level and never
+  refuses an image's swap for a low battery.
+- Its GPS tracks from boot on, whatever the core asks, as a steady
+  load, and hands the core no fix, so that a still board's fixes
+  wandering never make it carried, which on battery is sleepy. The
+  time from the GPS is still kept.
+- A relay's 6.41 mA (roadmap D169) and the receiver's 29 mA while it
+  tracks (L76K Hardware Design, Table 2; `docs/gps-schedule-2026-10-25.md`)
+  are 35.4 mA, and 850 mAh last 24.0 h.
+- It samples every 10 minutes (`BENCH_EVERY_S`), so that a sample
+  spans about as much of the charge as a relay's hour: 3600 s × 6.41 /
+  35.4 = 652 s, rounded. A day is about 144 samples against the hour's
+  24; the log holds 14 days of them. Each is marked `bench=1`, flag bit
+  3, and `scripts/discharge.py` takes a run of them as one mode at
+  35.4 mA, so the fit does not depend on the current.
+
+What the faster discharge changes: the cell's voltage under load sits
+below its voltage at rest by its resistance times the current. At the
+0.3 Ω assumed for a small pouch cell (`docs/battery-role-2026-10-25.md`;
+an estimate, not measured on this cell) that is about 11 mV at 35.4 mA,
+9 mV more than a relay's load and 10 mV more than a sleepy node's, and
+the cell rests back up when the load ends. So the curve is the shape
+under 35.4 mA, to be read with that offset in mind: it moves a point
+between the 20 % and 30 % levels, 34 mV apart, by about 3 % of the
+charge, and elsewhere by less than 1 %. The last readings before the
+board's 3.3 V regulator drops out and the node stops mark where this
+board's charge truly ends. The drain the core learns meanwhile, a
+relay's at 35.4 mA, is kept in the stored record (roadmap D169), so a
+node image after the bench shows too little time left until its
+average has moved back, over days.
 
 ## Risks
 

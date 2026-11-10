@@ -64,9 +64,17 @@ static AWAKE: AtomicBool = AtomicBool::new(false);
 /// Raised when a fix, or its loss, waits for the node.
 pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// A discharge bench build's receiver tracks from boot on, whatever the
+/// node asks, as the steady load that empties the cell in a day, and
+/// hands the node no fix, so that the board's role does not follow its
+/// fixes' wander: a carried node on battery is sleepy (roadmap D190, D152).
+const LOAD_ONLY: bool = crate::discharge::BENCH;
+
 /// The node's side: run the GPS as `gps` says.
 pub fn want(gps: Gps) {
-    WANT.signal(gps);
+    if !LOAD_ONLY {
+        WANT.signal(gps);
+    }
 }
 
 /// The node's side: the fix waiting, if any.
@@ -130,7 +138,7 @@ pub async fn run(mut p: Parts) -> ! {
     let mut wake = Output::new(p.pins.standby, Level::Low, OutputDrive::Standard);
     let mut config = uarte::Config::default();
     config.baudrate = BAUD;
-    let mut want = Gps::Rest;
+    let mut want = if LOAD_ONLY { Gps::Track } else { Gps::Rest };
     let mut nmea = Nmea::<SENTENCES_KEPT>::default();
     let mut buf = [0u8; READ];
     loop {
@@ -214,7 +222,7 @@ pub async fn run(mut p: Parts) -> ! {
 /// A fix is lost: the core counts no time without one towards a run of
 /// far fixes (spec "Position").
 fn lose(state: State) {
-    if state == State::Fixed {
+    if state == State::Fixed && !LOAD_ONLY {
         LOST.lock(|l| l.set(true));
         FOR_CORE.signal(());
     }
@@ -304,7 +312,9 @@ fn fixed(f: Fix, state: State) -> State {
     if state != State::Fixed {
         note("fix");
     }
-    FIX.lock(|x| x.set(Some(position)));
-    FOR_CORE.signal(());
+    if !LOAD_ONLY {
+        FIX.lock(|x| x.set(Some(position)));
+        FOR_CORE.signal(());
+    }
     State::Fixed
 }
