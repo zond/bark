@@ -4,6 +4,7 @@
 // the mailbox's replies; and the node paired with, and whether the person
 // stopped looking for it, kept across a restart.
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart';
@@ -716,19 +717,72 @@ void main() {
     });
   });
 
+  test('pairing with a node keeps the others, each lost apart; all '
+      'survive a restart', () {
+    run((async, p, node) {
+      const a = 'bark-fa4e00000001', b = 'bark-0ce400000002';
+      p.session.setPaired(a);
+      p.session.setPaired(b);
+      p.session.setPaired(a, lost: true);
+      async.flushMicrotasks();
+      final again = p.again(sodium, () => start);
+      async.flushMicrotasks();
+      // The one connected last, last.
+      expect(again.session.pairedWith.toList(), [b, a]);
+      expect(again.session.pairingLost, {a});
+      expect((p.session.store as MemoryStore).state!['pairedWith'], [b, a]);
+    });
+  });
+
+  test('a file of one paired node, from before a phone kept several, is '
+      'read as a set of one, lost or not', () {
+    fakeAsync((async) {
+      for (final lost in [false, true]) {
+        final store = MemoryStore()
+          ..text = jsonEncode({
+            'version': Session.version,
+            'outbox': [],
+            'received': [],
+            'pairedWith': 'bark-fa4e00000001',
+            'pairingLost': lost,
+          });
+        final s = Session(store: store, now: () => start)..load();
+        async.flushMicrotasks();
+        expect(s.pairedWith, {'bark-fa4e00000001'});
+        expect(s.pairingLost, lost ? {'bark-fa4e00000001'} : isEmpty);
+        s.dispose();
+      }
+      // A file with none.
+      final store = MemoryStore()
+        ..text = jsonEncode({
+          'version': Session.version,
+          'outbox': [],
+          'received': [],
+          'pairedWith': null,
+          'pairingLost': false,
+        });
+      final s = Session(store: store, now: () => start)..load();
+      async.flushMicrotasks();
+      expect(s.pairedWith, isEmpty);
+      expect(s.pairingLost, isEmpty);
+      expect(store.fault, isNull);
+      s.dispose();
+    });
+  });
+
   test('the node paired with, its loss and a stop survive a restart', () {
     run((async, p, node) {
       p.session.setPaired('bark-fa4e00000001');
       async.flushMicrotasks();
       var again = p.again(sodium, () => start);
       async.flushMicrotasks();
-      expect(again.session.pairedWith, 'bark-fa4e00000001');
-      expect(again.session.pairingLost, isFalse);
+      expect(again.session.pairedWith, {'bark-fa4e00000001'});
+      expect(again.session.pairingLost, isEmpty);
       again.session.setPaired('bark-fa4e00000001', lost: true);
       async.flushMicrotasks();
       again = again.again(sodium, () => start);
       async.flushMicrotasks();
-      expect(again.session.pairingLost, isTrue);
+      expect(again.session.pairingLost, contains(nodeName(FakeNode.id)));
       expect(again.session.stopped, isFalse);
       again.session.setStopped(true);
       async.flushMicrotasks();

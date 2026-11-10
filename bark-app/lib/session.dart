@@ -344,12 +344,15 @@ class Session extends ChangeNotifier {
   final List<Outgoing> outbox = [];
   final List<Received> received = [];
 
-  /// The node this phone is paired with, by name; null before the first.
-  String? pairedWith;
+  /// The nodes this phone is paired with, by name, the one last
+  /// connected last. A node keeps one phone, but a phone may be paired
+  /// with many, and Android keeps a bond for each.
+  final Set<String> pairedWith = {};
 
-  /// That node no longer holds this phone's bond: another phone has
-  /// paired with it since (spec "Phone link", the replaced phone).
-  bool pairingLost = false;
+  /// The nodes of [pairedWith] that no longer hold this phone's bond:
+  /// another phone has paired with each since (spec "Phone link", the
+  /// replaced phone).
+  final Set<String> pairingLost = {};
 
   /// The person closed the link or stopped looking for the paired node:
   /// the app does not look for it until they connect. Kept, so that the
@@ -406,8 +409,18 @@ class Session extends ChangeNotifier {
             Received.fromJson(e as Map<String, dynamic>),
         ],
         // Added after the format's first version: absent means none.
-        pairedWith: j['pairedWith'] as String?,
-        pairingLost: j['pairingLost'] as bool? ?? false,
+        // A file from before a phone kept several held one name and
+        // whether it was lost.
+        pairedWith: switch (j['pairedWith']) {
+          final String one => [one],
+          final List<dynamic> many => many.cast<String>(),
+          _ => const <String>[],
+        },
+        pairingLost: switch (j['pairingLost']) {
+          true when j['pairedWith'] is String => [j['pairedWith'] as String],
+          final List<dynamic> many => many.cast<String>(),
+          _ => const <String>[],
+        },
         stopped: j['stopped'] as bool? ?? false,
         guestAfter: {
           for (final e
@@ -419,8 +432,8 @@ class Session extends ChangeNotifier {
     if (j == null) return;
     outbox.addAll(j.outbox);
     received.addAll(j.received);
-    pairedWith = j.pairedWith;
-    pairingLost = j.pairingLost;
+    pairedWith.addAll(j.pairedWith);
+    pairingLost.addAll(j.pairingLost);
     stopped = j.stopped;
     guestAfter.addAll(j.guestAfter);
     _retryWhenDue();
@@ -430,17 +443,26 @@ class Session extends ChangeNotifier {
   Future<void> save() => store.save(version, {
     'outbox': [for (final o in outbox) o.toJson()],
     'received': [for (final r in received) r.toJson()],
-    'pairedWith': pairedWith,
-    'pairingLost': pairingLost,
+    'pairedWith': [...pairedWith],
+    'pairingLost': [...pairingLost],
     'stopped': stopped,
     'guestAfter': guestAfter,
   });
 
-  /// The node `name` holds this phone's bond, or no longer does.
+  /// The node `name` holds this phone's bond, or no longer does; the
+  /// other nodes paired with stay.
   Future<void> setPaired(String name, {bool lost = false}) async {
-    if (pairedWith == name && pairingLost == lost) return;
-    pairedWith = name;
-    pairingLost = lost;
+    if (pairedWith.lastOrNull == name && pairingLost.contains(name) == lost) {
+      return;
+    }
+    pairedWith
+      ..remove(name)
+      ..add(name);
+    if (lost) {
+      pairingLost.add(name);
+    } else {
+      pairingLost.remove(name);
+    }
     note(lost ? 'Pairing: $name is no longer ours' : 'Pairing: $name');
     notifyListeners();
     await save();
@@ -623,13 +645,14 @@ class Session extends ChangeNotifier {
     return nodePublic!;
   }
 
-  /// Has the node forget this phone's bond, and forgets the node here:
-  /// the app no longer looks for it (spec "Phone link", Public). Throws
+  /// Has the connected node forget this phone's bond, and forgets the
+  /// node here, the others paired with staying: the app no longer looks
+  /// for it (spec "Phone link", Public). Throws
   /// only when the write failed and the link stayed up: the node then
   /// keeps the phone.
   Future<void> unpair() async {
     final link = _owned(unpairVersion, 'Unpairing');
-    final name = pairedWith;
+    final name = nodeName(node!.id);
     try {
       await link.unpair();
     } catch (e) {
@@ -640,9 +663,9 @@ class Session extends ChangeNotifier {
       if (!await _ends(link)) rethrow;
       note('Unpairing: the link ended under the write ($e), taken as done');
     }
-    pairedWith = null;
-    pairingLost = false;
-    note('Pairing: unpaired${name == null ? '' : ' from $name'}');
+    pairedWith.remove(name);
+    pairingLost.remove(name);
+    note('Pairing: unpaired from $name');
     notifyListeners();
     await save();
     await link.close();

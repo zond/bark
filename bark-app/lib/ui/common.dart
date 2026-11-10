@@ -514,47 +514,125 @@ Future<String?> askText(BuildContext context, String label, String initial) {
   );
 }
 
-/// The search for the paired node, or a public node, while it scans or
-/// waits for Bluetooth; null when there is none.
+/// The search's line while the phone is on no node and looks for its
+/// home, a paired node or a public node, or waits for Bluetooth; null
+/// when it does not look, while a connection is being made and while the
+/// person scans.
 String? lookingLine(AppModel app) {
   if (!app.searchOn || !app.bluetoothAllowed || app.connecting) return null;
-  final p = app.searchFor;
-  final n = p == null ? 'a public node' : shownName(p);
-  if (!app.bluetoothOn) return 'Bluetooth is off: turn it on to reach $n.';
-  return app.scanning ? null : 'Looking for $n…';
+  if (!app.bluetoothOn) {
+    return AppModel.searchLine(app.sought, bluetooth: false);
+  }
+  return app.scanning ? null : AppModel.searchLine(app.sought, bluetooth: true);
 }
 
-/// Which public node the phone uses as a guest, and why, during an errand
-/// there and between them; null while it uses none. A paired phone does
-/// so while its node is out of reach (spec "Phone link", Which node a
-/// phone uses).
+/// Which public node the phone uses as a guest, during an errand there
+/// and between them; null while it uses none.
 String? guestLine(AppModel app) {
   final s = app.session;
   return s.connected && !s.guest ? null : app.nodeLine;
 }
 
-/// The first screen's line on the phone's node: which it is on, and why.
-String connectionLine(AppModel app) {
-  final looking = lookingLine(app);
-  return app.nodeLine ??
-      (looking != null
-          ? '$looking Texts wait on the phone until it is in reach.'
-          : 'Not connected to a node: texts wait on the phone. '
-                '${pairedLine(app.session)}');
+/// The line on the phone's node, one of four: on its home, on another
+/// node it is paired with, on a public node as a guest, or on none.
+/// Why is [connectionHelp]'s to say.
+String connectionLine(AppModel app) =>
+    app.nodeLine ?? lookingLine(app) ?? AppModel.notLookingLine;
+
+/// Why the phone is on the node [connectionLine] names, or on none, in
+/// a few plain sentences for the person who asks (spec "Phone link",
+/// Which node a phone uses).
+String connectionHelp(AppModel app) {
+  final s = app.session;
+  final lost = [for (final n in s.pairingLost) shownName(n)];
+  final lostLine = switch (lost) {
+    [] => '',
+    [final n] => ' $n is no longer yours: another phone has paired with it.',
+    _ =>
+      ' ${lost.join(', ')} are no longer yours: other phones have paired '
+          'with them.',
+  };
+  if (s.connected && !s.guest) {
+    if (app.atHome) {
+      return 'This phone is paired with your home node and keeps a link to '
+          'it while it is in reach: your texts go out through it, and texts '
+          'to you arrive as the node gets them, also with the screen off. '
+          'The phone always goes to your home first.';
+    }
+    final home = app.homeName == null
+        ? 'You have no home node, so your card names this node while you '
+              'use it.'
+        : 'Texts to you wait at your home; "Fetch my mail" brings them '
+              'here. When your home is in reach, the phone goes to it first.';
+    return 'This phone is paired with this node and keeps a link to it '
+        'while it is in reach: your texts go out through it, and texts that '
+        'come to it for you arrive here. $home';
+  }
+  if (app.nodeLine != null) {
+    final why = app.ownAway
+        ? 'None of the nodes this phone is paired with has been in reach for '
+              '30 seconds, so it uses this public node meanwhile, and goes '
+              'back to one as soon as it hears it.'
+        : 'This phone is paired with no node near you, so it uses this '
+              'public node, someone else\'s.';
+    return '$why As a guest it visits the node about once a minute, and at '
+        'once when you send, to send your texts and to read those that came '
+        'there for you. Replies to texts you send from here come here.'
+        '$lostLine';
+  }
+  if (lookingLine(app) != null) {
+    if (!app.bluetoothOn) {
+      return 'Bluetooth is off, so the phone cannot reach a node. Texts you '
+          'write wait on the phone and go out once Bluetooth is on and a '
+          'node is in reach.$lostLine';
+    }
+    if (app.searchFor == null) {
+      return 'This phone is paired with no node it can use, so it looks '
+          'every 15 seconds for a public node, someone else\'s, to use as a '
+          'guest. Texts you write wait on the phone until one is in reach.'
+          '$lostLine';
+    }
+    return 'The phone looks every 15 seconds for the nodes it is paired '
+        'with, your home first. If none has been in reach for 30 seconds, it '
+        'uses a public node as a guest meanwhile. Texts you write wait on '
+        'the phone until a node is in reach.$lostLine';
+  }
+  return 'The phone is not looking for a node: you stopped it, or it may '
+      'not use Bluetooth yet. Tap a node in Settings to connect. Texts you '
+      'write wait on the phone.$lostLine';
 }
 
-/// The phone's pairing as a person reads it while not connected (spec
-/// "Phone link", Pairing).
-String pairedLine(Session s) {
-  final p = s.pairedWith;
-  if (p == null) {
-    return 'Not paired with a node yet: the phone uses a public node near '
-        'you as a guest.';
-  }
-  final n = shownName(p);
-  return s.pairingLost
-      ? '$n is no longer yours: another phone has paired with it.'
-      : 'Paired with $n.';
+/// The button by [connectionLine] that opens [connectionHelp].
+class ConnectionHelpButton extends StatelessWidget {
+  final AppModel app;
+  const ConnectionHelpButton(this.app, {super.key});
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: 'Why this node',
+    icon: const Icon(Icons.info_outline),
+    onPressed: () => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                connectionLine(app),
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(connectionHelp(app)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 /// Says why bark wants Bluetooth before Android asks; whether to go on.

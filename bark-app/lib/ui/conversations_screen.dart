@@ -269,6 +269,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             : Icons.bluetooth_disabled,
       ),
       title: Text(text),
+      trailing: ConnectionHelpButton(app),
       onTap: () => _open(context, SettingsScreen(app)),
     );
   }

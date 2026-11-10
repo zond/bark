@@ -3651,29 +3651,38 @@ again only when they say so; an app waits for Ready by itself. A phone
 with nothing to send passes the turn on after a ban, as nothing in the
 protocol acts sooner.
 
-**Which node a phone uses.** A phone uses the node it is paired with
-whenever it reaches it. It uses the public node it hears strongest, as
-a guest, while it is paired with none, while its node is no longer its
-own (The replaced phone, above), and while its node is out of reach:
-not reached in two of the app's scans in a row, 15 s apart, so 30 s.
-A scan that hears its own node again takes the phone back to it at
-once. On a public node the phone is a guest like any other: its texts
-go from that node, so replies come to it, and it reads them there by
-its recipient tag; a fetch it sends there carries its tag at that
-node, so the home's answer comes there too ([mailbox](#mailbox), The
-fetch) (roadmap D163).
+**Which node a phone uses.** A node keeps one phone (Pairing, above),
+but a phone may be paired with many nodes, each holding its bond. It
+uses, of the nodes it reaches, its home when it is paired with it, else
+the node it is paired with that it hears strongest; on either it is the
+owner. It uses the public node it hears strongest, as a guest, while
+it is paired with none that is still its own (The replaced phone,
+above), and while those are out of reach: none reached in two of the
+app's scans in a row, 15 s apart, so 30 s. A scan that hears one of
+its nodes again takes the phone back to it at once. A phone that holds
+a bond with a node joins it only as its owner, never as a guest, as
+the node takes a link encrypted with its bond as the owner's or ends
+it. On a public node the phone is a guest like any other: its texts go
+from that node, so replies come to it, and it reads them there by its
+recipient tag; a fetch it sends there carries its tag at that node, so
+the home's answer comes there too ([mailbox](#mailbox), The fetch)
+(roadmap D163, D166).
+
+*Why the home first.* The home keeps the person's mail and its address
+is on their card, so on it nothing waits elsewhere for them; on another
+of their nodes, texts sent to the home wait there to be fetched.
 
 *Why two scans, and back at once.* A scan lasts four of the node's
 advertising intervals, 4.1 s, and hears a node in reach while the
 phone's screen is on; with the screen off the phone listens less and
 may miss it in one scan, so one miss does not prove the node gone. A
 scan every 15 s is two in 30 s, within the five Android lets an app
-start in 30 s. The own node serves the person whole, its inbox and its
-settings, so the phone goes back to it at once. The two differ on
-purpose: at the edge of the own node's reach, heard in some scans and
-not others, the phone stays with it rather than going back and forth,
-and a text and the replies to it do not go by a public node the phone
-then leaves.
+start in 30 s. A node the phone is paired with serves the person whole,
+its inbox and its settings, so the phone goes back to one at once. The
+two differ on purpose: at the edge of such a node's reach, heard in
+some scans and not others, the phone stays with it rather than going
+back and forth, and a text and the replies to it do not go by a public
+node the phone then leaves.
 
 **The payload.** The app owns it; this is its layout (roadmap D123 to
 D127, D150). The reasons, and the alternatives a reader would ask about, are

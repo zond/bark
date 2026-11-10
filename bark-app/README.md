@@ -39,13 +39,19 @@ is a prototype for the bench, not the app people will carry.
   it is done; the card goes once all are. One row a conversation,
   newest first, with the last text and, for a sent one, its state. A
   line at
-  the top says which node the phone is on and why: "Connected to ID …,
-  paired"; "Using ID … as a guest: a public node, not yours" during
-  errands at a public node and between them; "Using ID … as a guest:
-  your node is out of reach" while the paired node is, and "Back on
-  your node, ID …" for a minute after it is back (next section); and,
-  when it is on none, which node the phone is paired with or that it is
-  no longer yours. Settings' Node section says the same. Tapping the
+  the top says which node the phone is on, in one of four ways:
+  "Connected to your home, ID …"; "Connected to ID …, paired. Home at
+  ID …" on another node the phone is paired with; "Connected to ID … as
+  a guest. Home at ID …" during errands at a public node and between
+  them; and "Not connected. Looking for ID …; texts wait on the phone",
+  naming the home, another paired node or "a public node", or "Not
+  connected. Bluetooth is off: turn it on to reach …". Without a home
+  the home part is left out. With the search stopped it says "Not
+  connected. Texts wait on the phone". Why the phone is on that node,
+  or on none, is not in the line: its info button opens a few sentences
+  that say, such as that none of the paired nodes has been in reach for
+  30 s, or that the phone is paired with no node near the person.
+  Settings' Node section shows the same line and button. Tapping the
   line opens Settings. Once there is a contact and
   until the backup words are written down, a card says "If you lose
   this phone, these words are the only way to keep your contacts able
@@ -167,17 +173,21 @@ is a prototype for the bench, not the app people will carry.
   scan that has found nothing after about 10 s, or was stopped, says
   "No node found nearby" and to switch a node on or come closer; a
   public node says so, and a tap on one the phone is not paired with
-  uses it as a guest), the node the phone is paired with, and how the
-  connected node fares; on the paired node of link version 7 or later
-  the switch **Public: serve phones without pairing**, on unless the
-  owner turns it off (Public nodes, below), and from link version 12
-  **Unpair this node**: a dialog says that the node forgets this phone,
-  shows `UNPAIRED` and is public again, that anyone at the node can pair
-  with it by the code on its screen, and that texts and contacts stay on
-  the phone, which forgets its own pairing with the node too; on
-  **Unpair** the node forgets its bond and ends the link, the app
-  forgets the node and looks for it no more, and then has Android remove
-  its bond with the node (Unpairing, below). Then the home node: make
+  uses it as a guest), how the connected node fares, and under
+  "Paired with" the nodes the phone is paired with, the home first, each
+  marked as the home, connected, not in reach while the search looks,
+  or no longer yours; on a paired node of link version 7 or later the
+  switch **Public: serve phones without pairing**, on unless the owner
+  turns it off (Public nodes, below), and from link version 12
+  **Unpair** on the connected node's row: a dialog names the node and
+  says that it forgets this phone, shows `UNPAIRED` and is public again,
+  that anyone at the node can pair with it by the code on its screen,
+  that texts and contacts stay on the phone, which forgets its own
+  pairing with the node too, and, with other paired nodes, that the
+  phone stays paired with them; on **Unpair** the node forgets its bond
+  and ends the link, the app forgets that node and looks for it no
+  more, and then has Android remove its bond with the node (Unpairing,
+  below). Then the home node: make
   the connected node your home if it is not, or none; the dialog says
   so, and on **Go ahead** your new card goes to every contact; on a
   public node the phone uses as a guest the same button pairs first,
@@ -258,7 +268,8 @@ is a prototype for the bench, not the app people will carry.
   `11-06 14:03:27.513  8812  8840 I flutter : bark 14:03:27.512 Disconnected`.
 
 A node is the paired phone's alone (spec "Phone link", Pairing; roadmap
-D135). The phone pairs with a node when the person makes it their
+D135), but a phone may be paired with many nodes, and Android keeps a
+bond for each (roadmap D166). The phone pairs with a node when the person makes it their
 home or pairs with it in Settings (A guest's home, below), or taps a
 private node: Settings says to type the six-digit code the node's screen shows, and Android
 asks for it in its own dialog; Android then takes about five seconds
@@ -281,9 +292,11 @@ at most, else it says the node was not seen), and pairs anew, at the
 node. The scan is needed because the node's address is random static,
 and Android, with neither a bond nor a scan result to tell it so,
 connects to it as a public address and times out after 30 s; the
-Bluetooth plugin has no connect that takes the address's type. The node paired with, and
-whether it was lost, are kept with the queue and shown on the first
-screen and in Settings. A pairing cancelled or with a wrong code says
+Bluetooth plugin has no connect that takes the address's type. The
+nodes paired with, and for each whether it was lost, are kept with the
+queue and listed in Settings; pairing with one more adds it and keeps
+the others. A queue file from before kept one node, which is read as a
+list of one. A pairing cancelled or with a wrong code says
 so. Pairing is the Bluetooth plugin's (`UniversalBle.pair`, Android's
 bond), which needs no code of the app's own on the Android side.
 
@@ -331,15 +344,17 @@ it: the node keeps the mailbox key. The search then uses the node as a
 guest; the texts, the contacts, the home and the card stay as they
 were.
 
-**A pairing found again.** With no pairing stored, as after the app's
-data was cleared, on a new install or after restoring the 12 words, the
-phone may still hold a bond with the person's node, and the node the
-phone's. Each round, while the app knows of no pairing, the search
-looks for a node heard that Android lists a bond with, the strongest
-first, and connects to it as its owner, before any public node. A
-first read that succeeds on the
-encrypted link shows the node still holds the bond: it is kept as the
-paired node, and the first screen says "Back on your node, ID …". With
+**A pairing found again.** Android may list a bond with a node the
+app does not count as paired, as after the app's data was cleared, on
+a new install, after restoring the 12 words, or from an older app that
+kept only the node paired with last; the node may still hold the
+phone's. Each round in which no paired node is heard and no link is
+up, the search looks for a node heard that Android lists such a bond
+with, the strongest first, and connects to it as its owner, at once and
+before any public node. A link over a bond is never a guest's: a tap
+on such a node as a public one, or the search's errand there, takes
+the same way. A first read that succeeds on the encrypted link shows
+the node still holds the bond: it is kept among the paired nodes. With
 no home set and the node placed and able to be a home, the first screen
 offers **Make this node my home** in one line, which says when the new
 card would go to the contacts, and **Not now**, which hides it until
@@ -417,17 +432,22 @@ it can be a home from the last errand there. A pairing that fails, a
 wrong code or one cancelled, says why, and the phone goes on using the
 node as a guest.
 
-While it is not connected, the app looks for the node it is paired with
-and connects to it when it sees it, and, when it is not paired with a
-node, it is no longer its own, or the paired node is out of reach, goes
-on its errands at the public node heard strongest, by the best RSSI
-each node had over the round (spec "Phone link", Which node a phone
-uses). The paired node is out of reach once two rounds in a row, 30 s,
-have not reached it, heard or connected (`ownGone`): one round with the
-screen off may miss a node in reach. The paired node always comes
-first, and the app moves to it in the first round that hears it, so at
-the edge of its reach, heard every other round, the phone stays with
-it. A fetch sent from a public node brings the mail back there, read
+While it is not connected, the app looks for the nodes it is paired
+with and connects to the first of them it hears, in this order: the
+home, when the phone is paired with it; else the paired node heard
+strongest, by the best RSSI each node had over the round. When it is
+paired with none that is still its own, or they are out of reach, it
+goes on its errands at the public node heard strongest (spec "Phone
+link", Which node a phone uses). The paired nodes are out of reach
+once two rounds in a row, 30 s, have reached none of them, heard or
+connected (`ownGone`): one round with the screen off may miss a node in
+reach. A paired node always comes first, and the app moves to it in the
+first round that hears it, so at the edge of its reach, heard every
+other round, the phone stays with it. On a paired node that is not the
+home the phone is its owner, with the standing link and the owner's
+inbox, as on the home. A connected paired node keeps the phone until
+the link drops: the search does not run meanwhile, so a home that
+comes into reach is taken at the next drop. A fetch sent from a public node brings the mail back there, read
 as a guest's. Each errand takes the
 strongest public node of its round, so the phone moves to a nearer one
 as it walks. The
@@ -437,7 +457,7 @@ the old bond: it would encrypt the link with it, which the node ends.
 Once Android holds none, the node serves the phone as a guest like any
 public node.
 
-The paired node is connected by the same path as a tap and without
+A paired node is connected by the same path as a tap and without
 a code; the search runs from the app's start, and after a link drops,
 so that texts waiting go out as soon as a node is in reach. It runs
 only once Android allows the app Bluetooth: a fresh install scans
@@ -445,19 +465,23 @@ nothing and shows no notification until the person presses **Scan** in
 Settings, which asks for it. The app checks again when it comes to the
 front and when Bluetooth is switched on or off, in case the person
 allowed it in Android's settings. Bluetooth switched off ends the link
-as a drop does: Android does not report that end itself. The first screen, and Settings under
-the scan rows, say "Looking for ID …" or "Looking for a public node…",
-or that Bluetooth is off. A
-search round scans for four of a node's advertising intervals, 4.1 s,
-without a break, less once it hears the paired node, and a round
+as a drop does: Android does not report that end itself. The first screen, and Settings in
+the Node section, say "Not connected. Looking for ID …; texts wait on
+the phone", naming the home when the phone is paired with it, else the
+paired node connected last, or "a public node", or that Bluetooth is
+off. A search round scans for four of a node's advertising intervals,
+4.1 s, without a break, less once it hears the node no other would go
+before, the home or a single paired node, and a round
 starts every 15 s: Android refuses an app's
 sixth scan started within 30 s, and two leave room for the person's own
 Scan and Pair again. A phone's Bluetooth scanning without a break draws
 in the order of 10 mA (an estimate, not measured here), so the search
 costs about 3 mAh an hour, under a tenth of a percent of a phone's
-battery. The app stops looking while it is connected to its paired
-node or Bluetooth is off; after "This node is no longer yours" it looks for public nodes
-alone (the person decides with **Pair again**); and it stops after the
+battery. The app stops looking while it is connected to a paired
+node or Bluetooth is off; a node of which it said "This node is no
+longer yours" it looks for no more (the person decides with **Pair
+again**), and with no other paired node it looks for public nodes
+alone; and it stops after the
 person presses **Disconnect** or **Stop looking** in Settings, until
 they tap a node. That stop is kept with the
 queue, so neither a restart of the app nor of the phone undoes it: the
@@ -504,19 +528,19 @@ before archiving names nothing archived and reads as such.
 
 While a node is connected over Bluetooth, the app keeps running with the
 screen off or its window closed, under a notification that says
-which node it is on, in the first screen's words: "Connected to ID …,
-paired", "Back on your node, ID …", or "Using ID … as a guest", during
-errands at a public node and between them; tapping it opens the app. The link is the
+which node it is on, in the first screen's words (Screens, above),
+also during errands at a public node and between them; tapping it
+opens the app. The link is the
 same one as in the foreground: the app's Dart engine outlives its window
 (`Engine.kt`), and an Android foreground service of the connected device
 type (`LinkService.kt`) keeps the process running, so there is one
 implementation of the link, in Dart. While the app looks for its paired
-node (previous section) the service runs too, and its notification says
-"Looking for ID …": without one Android suspends or ends an app in the
-background, and the search with it, and queued texts are to go out as
-soon as the node is in reach, not when the person next opens the app.
-While it looks for a public node alone, the notification says
-"Looking for a public node". Before Bluetooth is allowed there is no search, and no
+nodes (previous section) the service runs too, and its notification says
+"Not connected. Looking for ID …; texts wait on the phone": without one
+Android suspends or ends an app in the background, and the search with
+it, and queued texts are to go out as soon as a node is in reach, not
+when the person next opens the app. While it looks for a public node
+alone, the notification names "a public node". Before Bluetooth is allowed there is no search, and no
 notification.
 The service goes on from connected to looking and back, changing only its
 notification, as Android 12 and later restrict starting a service from
@@ -840,18 +864,23 @@ public, join it as a guest that writes its tag and touches nothing
 closed, read a guest's ring items by its tag after the number it keeps
 for the node, across links and restarts, close a second guest, end a
 guest's link after 30 s, and take turns as Ready;
-choose the paired node, else the strongest public node; go on a
-guest's errand (connect, tag, read, send, leave) when something waits
-to be sent and otherwise once a minute, try again after being closed for
-another guest, and move to the paired node once it is heard; with a
-paired node, go to a public node only after two rounds without it,
-send through it as a guest, name it on the card and on the first
-screen's line, come back to the paired node in the round that hears it
-and say so, and stay with a paired node heard every other round; make
-a guest's node the home by pairing first, offered on the first screen
-and in Settings, and stay a guest after a wrong code; take back
-as the paired node a node Android holds a bond with
-that still holds the phone's; have
+choose the home among the paired nodes, else the strongest paired
+node, else the strongest public node; go on a guest's errand (connect,
+tag, read, send, leave) when something waits to be sent and otherwise
+once a minute, try again after being closed for another guest, and move
+to a paired node once it is heard; with paired nodes, go to a public
+node only after two rounds without any, send through it as a guest,
+name it on the card and on the first screen's line, come back to a
+paired node in the round that hears it, and stay with a paired node
+heard every other round; say each of the four lines, with the home and
+without, and why in the line's help; keep every node paired with, each
+lost apart, across restarts, and read a queue file of one; list them in
+Settings, the home first, with Unpair on the one connected; make a
+guest's node the home by pairing first, offered on the first screen
+and in Settings, and stay a guest after a wrong code; take back among
+the paired nodes a node Android holds a bond with that the app does not
+count as paired and that still holds the phone's, at once, by the
+search or a guest's tap, and never as a guest; have
 Android remove an old bond a public node refuses and connect again,
 and where Android keeps it, pass the node over, saying so once, until
 the bond is forgotten; on unpairing, have Android forget its bond too,
@@ -1033,7 +1062,8 @@ a phone (Trying it, With a node).
     exempt it from battery optimisation in Settings, and connect to the
     node. Restart the phone and unlock it, without opening the app.
     Within about half a minute of the unlock the notification says
-    "Looking for ID …", then "Connected to ID …", and texts arrive.
+    "Not connected. Looking for ID …; texts wait on the phone", then
+    "Connected to …", and texts arrive.
     `adb logcat -s flutter` shows the session's log from the start,
     `Found bark-…, connecting` and `Connected, MTU 247` among it.
     Opening the app shows the link as it stands. After **Disconnect**, a
@@ -1097,8 +1127,8 @@ a phone (Trying it, With a node).
     PUBLIC`. On a second phone that has never paired with it, **Scan**
     lists the node as public with its signal; with no paired node of
     its own in reach, the second phone goes on an errand there within a
-    round, without asking anything, its first screen saying "Using ID …
-    as a guest: a public node, not yours", with an errand once a minute,
+    round, without asking anything, its first screen saying "Connected
+    to ID … as a guest", with an errand once a minute,
     and, with no home set, offering **Make this node my home**; **Not
     now** hides it until the app is started again. No pairing dialog
     shows, at the connect or later. Its log shows `Recipient: tag …`, a
@@ -1107,13 +1137,14 @@ a phone (Trying it, With a node).
     sees the other's; a text sent to the second phone while it is away
     from the node is read at its next errand there. Taken near its own
     paired node, the guest phone moves to it within a round. The owner's
-    phone, its node switched off or carried away, says "Using ID … as a
-    guest: your node is out of reach" within about 30 s if another
-    public node is in reach, sends a text through it, and says "Back on
-    your node" within a round of the node's return.
+    phone, its node switched off or carried away, says "Connected to ID …
+    as a guest. Home at ID …" within about 30 s if another public node is
+    in reach, its info button saying that none of its paired nodes has
+    been in reach for 30 s; it sends a text through it, and says
+    "Connected to your home, ID …" within a round of the node's return.
 16. Unpairing, on link version 12 or later. On the owner's phone,
-    connected, **Settings**, **Unpair this node**, **Unpair**: the node's
-    screen says `PHONE UNPAIRED`, Settings says "Unpaired: the node is
+    connected, **Settings**, **Unpair** on the node's row, **Unpair**:
+    the node's screen says `PHONE UNPAIRED`, Settings says "Unpaired: the node is
     public again", and the phone's Bluetooth settings no longer list the
     node; the log shows `Pairing: the phone forgot its bond with … too`.
     Within a round or two the phone goes on an errand at the node as a
@@ -1122,3 +1153,13 @@ a phone (Trying it, With a node).
     opens them; the first screen says "ID … no longer knows this phone's
     old pairing", and the line goes within a round of forgetting it
     there, after which the phone uses the node as a guest.
+17. Two paired nodes, A and B. Make A the home, then pair with B in
+    Settings (**Pair with this node** while the phone uses it as a
+    guest, or a tap on it if private). Settings lists both under "Paired
+    with", A first as "Your home". Switch B off and take the phone to A:
+    within a round the first screen says "Connected to your home, ID …",
+    A's ID, never "as a guest". With A switched off and B on, it says
+    "Connected to ID …, paired. Home at ID …", B's ID then A's, within a
+    round, without the 30 s wait. A phone updated from an app that kept one
+    paired node, B, and still holding A's bond, connects to A as its
+    owner in its first round there and lists it as paired again.
