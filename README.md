@@ -18,7 +18,7 @@ spider that builds the largest orb webs known, anchored on bridge lines up to
 25 m long across rivers, out of the toughest biological silk measured. A big
 web from small, cheap threads.
 
-## Status (2026-11-09)
+## Status (2026-11-10)
 
 The protocol core, the simulator, the firmware and the Android app are
 written. The simulator runs a city's collision domain, 28 km² with 270
@@ -28,19 +28,25 @@ firmware runs on four T-Echo boards on the bench: a relay on USB, and on
 battery a relay until its battery is low if it stands still, sleepy if
 carried, behind a loader that swaps in new images, which reach a node
 signed from the phone, from its neighbours over the mesh, or over USB.
-Releases carry the firmware and the app, v8 the latest (Releases,
-below). The bench has measured the radio's timings, capture and a still
-link's fading (`docs/bench-*.md`), the swap under resets, and updates
-from the phone and over the mesh, one to a node nobody attended
-(`bark-fw/README.md`, "Verified and unverified"); it now tries the
-node's screen and buttons, the neighbour status, the whole log lines
-and an image that hears no one (`docs/roadmap.md`, Phase 2). Next is the protocol's routing and sleepy nodes on the boards together
+A node serves up to eight paired phones and, unless they make it
+private, any other phone as a guest. Releases carry the firmware and
+the app, v22 the latest (Releases, below).
+
+The bench has measured the radio's timings, capture and a still link's
+fading (`docs/bench-*.md`), the swap under resets, pairing, and updates
+from the phone and over the mesh (`bark-fw/README.md`, "Verified and
+unverified"). What was built on 2026-11-10, eight phones at a node, the
+install's drain and the tables kept across it, and the phone link begun
+again at version 1, is still to be shown on a board. Next is the
+protocol's routing and sleepy nodes on the boards together
 (`docs/roadmap.md`, Phases 2 and 3).
 
 Read, in order:
 
 1. `docs/protocol.md`: the specification. Radio, channels, neighbour
-   discovery, routing, sleepy nodes, packet formats, capacity, open items.
+   discovery, routing, sleepy nodes, the phone link and the app's
+   payload, the mailbox, updates over the mesh, packet formats, open
+   items.
 2. `docs/roadmap.md`: phases, decisions taken, open questions.
 3. `docs/core-interface.md`: the contract between the protocol core and
    its drivers (simulator, firmware).
@@ -129,7 +135,7 @@ push to main and every pull request.
 
 The project's page, `https://zond.github.io/bark`, built from `site/`
 by `.github/workflows/pages.yml`, links the latest release's app; each
-node's screen shows its address as a QR code.
+node's screen shows the page's address as a QR code.
 
 A tag `v<N>`, N a positive integer, makes release N:
 `.github/workflows/release.yml` builds the firmware, the loader, the
