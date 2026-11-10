@@ -279,24 +279,21 @@ impl Drain {
         self.rate(running)
     }
 
-    /// How long the cell lasts from a reading of `level` percent, `None`
-    /// at or below the low level, under the node's rules: a relay relays
-    /// to the low level and is sleepy from there, a sleepy node is sleepy
-    /// to the end (spec "Sleepy nodes"). `None` once that time is past.
+    /// How long the node can go on as it runs now, from a reading of
+    /// `level` percent, `None` at or below the low level: a relay until
+    /// the low level, where it turns sleepy (spec "Sleepy nodes"), a
+    /// sleepy node until the cell is flat. `None` once that time is past.
     pub fn left(&self, level: Option<u8>, relay: bool, now_s: u32) -> Option<Duration> {
         let low = f32::from(BATTERY_LOW_PERCENT);
-        let sleepy = self.rate(Running::Sleepy);
         let hours = match level {
-            Some(l) if relay => {
-                (f32::from(l) - low).max(0.0) / self.rate(Running::Relay) + low / sleepy
-            }
-            Some(l) => f32::from(l) / sleepy,
+            Some(l) if relay => (f32::from(l) - low) / self.rate(Running::Relay),
+            Some(l) => f32::from(l) / self.rate(Running::Sleepy),
             None => {
                 let since = match self.low_since_s {
                     0 => 0,
                     t => now_s.saturating_sub(t),
                 };
-                low / sleepy - since as f32 / 3600.0
+                low / self.rate(Running::Sleepy) - since as f32 / 3600.0
             }
         };
         (hours > 0.0).then(|| Duration::from_secs((hours * 3600.0) as u64))
@@ -395,22 +392,30 @@ mod tests {
         assert_eq!(d.rate(Running::Relay), Running::Relay.seed());
     }
 
-    /// The time left adds the relay's segment to the low level and the
-    /// sleepy node's from there; below it, what is left of that.
+    /// A relay's time left ends at the low level, where it turns sleepy.
     #[test]
-    fn the_time_left_sums_the_segments() {
+    fn a_relays_time_ends_at_the_low_level() {
         let d = Drain::NEW;
-        let (relay, sleepy) = (Running::Relay.seed(), Running::Sleepy.seed());
+        let relay = Running::Relay.seed();
         let hours = |t: Option<Duration>| t.unwrap().as_micros() as f32 / 3.6e9;
         let full = hours(d.left(Some(100), true, 0));
-        assert!(
-            (full - (80.0 / relay + 20.0 / sleepy)).abs() < 0.01,
-            "{full}"
-        );
-        // 106 h relaying and 287 h asleep: 16 days.
-        assert!((full / 24.0 - 16.4).abs() < 0.1, "{full}");
-        let asleep = hours(d.left(Some(100), false, 0));
-        assert!((asleep - 100.0 / sleepy).abs() < 0.01);
+        assert!((full - 80.0 / relay).abs() < 0.01, "{full}");
+        // 106 h: 4 days.
+        assert!((full / 24.0 - 4.42).abs() < 0.01, "{full}");
+        assert_eq!(d.left(Some(BATTERY_LOW_PERCENT), true, 0), None);
+    }
+
+    /// A sleepy node's time left ends when the cell is flat; below the
+    /// low level, what is left of that.
+    #[test]
+    fn a_sleepy_nodes_time_ends_at_empty() {
+        let sleepy = Running::Sleepy.seed();
+        let hours = |t: Option<Duration>| t.unwrap().as_micros() as f32 / 3.6e9;
+        let d = Drain::NEW;
+        let full = hours(d.left(Some(100), false, 0));
+        assert!((full - 100.0 / sleepy).abs() < 0.01, "{full}");
+        // 1436 h: 59 days.
+        assert!((full / 24.0 - 59.8).abs() < 0.1, "{full}");
         let mut d = Drain::NEW;
         d.read(None, Some(Running::Sleepy), 3600);
         let low = hours(d.left(None, false, 3600 + 10 * 3600));

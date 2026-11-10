@@ -87,7 +87,9 @@ left to wait (`given back ... retry_in_ms=`) is a log line, and at
 the first event 10 s or more after the last a `driver` line gives the
 loop's counters (`sniffs` counts the starts of duty-cycled receive) and
 its longest times and `stack_used`, the call stack's high-water mark;
-on battery it ends in `battery_left_min=`, how long the battery lasts,
+on battery it ends in `battery_left_min=`, how long the node can go on
+as it runs now, a relay until its low level and a sleepy node until the
+cell is flat,
 and `drain_relay=` and `drain_sleepy=`, the drains the core has learned
 as a relay and as a sleepy node, in ten-thousandths of a percent of the
 cell an hour, as each closed sample's `Drain` trace gives them (spec
@@ -950,7 +952,7 @@ its value flush right. Top to bottom:
 | `GET V14 14/31` | while it gathers an image over the mesh: its version, the blocks held from the first of all its blocks; no line otherwise | the core's `Status::gathering` (spec "Neighbour status") |
 | phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then with one phone paired `PHONE PUBLIC` or, once its owners have made it theirs alone, `PHONE PRIVATE`, with more `3 PHONES  PUBLIC` or `3 PHONES PRIVATE`; while a phone pairs, `PAIR CODE 012345`; while a removal waits, `REMOVE    012345`; for 30 s after a pairing refused for want of room, `PHONES      FULL`, which the code's line shows too | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
-| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the battery lasts, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
+| battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the node can go on as it runs now, a relay until it turns sleepy at its low level, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
 | `TIME` `14:35 +02` | the time of day when it was drawn: local with the phone's offset (`+0530` for one with minutes), or `12:35 UTC` without one; no line while the time is not known | `src/utc.rs` (`docs/gps-time-2026-11-05.md`) |
 

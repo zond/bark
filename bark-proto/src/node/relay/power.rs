@@ -351,9 +351,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// How long the battery lasts, from its last reading, under the rules
-    /// of the module documentation: a relay on battery relays until its
-    /// battery is low and is sleepy from there (`drain.rs`). `None` on
+    /// How long the node can go on as it runs now, from its last reading:
+    /// a relay on battery until its battery is low, where it turns sleepy,
+    /// a sleepy node until the cell is flat (`drain.rs`). `None` on
     /// external power, before a reading, past the time, and without
     /// battery levels, whose rules it follows.
     pub fn battery_left(&self, now: Instant) -> Option<Duration> {
