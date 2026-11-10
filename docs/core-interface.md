@@ -122,8 +122,8 @@ Every node has the same application interface: the readiness query
 `Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
 the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
 `AppCommand::Holds`, `AppCommand::Gather`, `AppCommand::Block` and `AppCommand::Drain`,
-the actions `Action::Offered`, `Action::StorePiece` and `Action::Serve`, and the queries
-`drained` and `held`, and a neighbour's status: the
+the actions `Action::Offered`, `Action::StorePiece` and `Action::Serve`, the queries
+`drained`, `held` and `remembered` and the call `remember`, and a neighbour's status: the
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
@@ -303,6 +303,13 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   `held()` is every message the node then holds, each once, as `Held { msg_id, dst_pos,
   dst_id, payload }`, which the driver keeps across the reboot and offers after it as
   `AppCommand::Send`: the same message, as its ID is `MsgId::of` the three.
+  `remembered(now)` is the neighbour table and the message records as `Kept` entries in the
+  core's own encoding, which the driver keeps too; after the reboot, before the first
+  event, it hands each back with `remember(&kept, ago, now)`, `ago` the time since
+  `remembered`, and the core ages them by it (roadmap D180). An instant before the clock's
+  epoch cannot be put back, so a driver whose clock starts at its boot sets the epoch at
+  least `remembered_within(config)`, the swap and the tables' write before the boot
+  (`bark-fw/src/clock.rs`).
 
 `bark-driver` hands these to its application, `App::offered`, `App::store_piece` and
 `App::serve`, and the application's answers come back as `Request::Holds`,
