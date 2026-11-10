@@ -384,8 +384,8 @@ void main() {
       return (a, n);
     }
 
-    const appBar = 'A newer app, version 5, is available';
-    const nodeBar = 'Your node runs version 1; version 5 is available';
+    const appBar = 'App version 5 is out';
+    const nodeBar = 'Node firmware 5 is out';
 
     testWidgets('a newer app: opened in the browser, or dismissed', (t) async {
       final (app, n) = await model(t, 3);
@@ -500,26 +500,17 @@ void main() {
     testWidgets('a newer app, and no node linked', (t) async {
       final a = await settings(t, app: 3);
       expect(
-        find.text(
-          'A newer app, version 5, is available: get it under App below; '
-          'no node linked',
-        ),
+        find.text('App 5 is out: tap App below; no node linked'),
         findsOneWidget,
       );
-      expect(
-        find.textContaining('version 5 is available: tap'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('5 is out. Tap to download'), findsOneWidget);
       await shut(t, a);
     });
 
     testWidgets('a newer node firmware, sent from Node firmware', (t) async {
       final a = await settings(t, app: 5, image: 1);
       expect(
-        find.text(
-          'App up to date (5); node firmware 1; version 5 is newer: send '
-          'it under Node firmware below',
-        ),
+        find.text('App up to date (5); node firmware 5 is out: send it below'),
         findsOneWidget,
       );
       expect(find.text('Send to the node'), findsOneWidget);
@@ -546,16 +537,10 @@ void main() {
     testWidgets('an app fix: a newer app, the firmware up to date', (t) async {
       final a = await settings(t, app: 21, image: 21, release: appFix);
       expect(
-        find.text(
-          'A newer app, version 22, is available: get it under App below; '
-          'node firmware 21, up to date',
-        ),
+        find.text('App 22 is out: tap App below; node firmware 21, up to date'),
         findsOneWidget,
       );
-      expect(
-        find.textContaining('version 22 is available: tap'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('22 is out. Tap to download'), findsOneWidget);
       expect(find.text('Send to the node'), findsNothing);
       await shut(t, a);
     });
@@ -566,12 +551,11 @@ void main() {
       final a = await settings(t, app: 22, image: 21, release: fwFix);
       expect(
         find.text(
-          'App up to date (22); node firmware 21; version 23 is newer: send '
-          'it under Node firmware below',
+          'App up to date (22); node firmware 23 is out: send it below',
         ),
         findsOneWidget,
       );
-      expect(find.text('Version 21; version 23 is available'), findsOneWidget);
+      expect(find.text('Version 21; 23 is out'), findsOneWidget);
       expect(find.text('Send to the node'), findsOneWidget);
       await shut(t, a);
     });

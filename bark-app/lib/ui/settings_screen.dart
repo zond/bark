@@ -138,9 +138,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             builder: (context) => AlertDialog(
               title: const Text('Notifications'),
               content: const Text(
-                'bark tells you when a text comes, and shows that it keeps '
-                'the link to the node while the screen is off. Android asks '
-                'you next.',
+                'bark tells you when a text comes. Android asks next.',
               ),
               actions: [
                 TextButton(
@@ -202,10 +200,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context) => AlertDialog(
         title: const Text('This node is no longer yours'),
         content: Text(
-          '${shownName(e.node)} no longer knows this phone: someone paired '
-          'with it removed this phone, or the node lost what it had stored. '
-          'To make it yours again, pair again at the node: it shows a '
-          'six-digit code on its screen, and the phone asks for it.',
+          '${shownName(e.node)} no longer knows this phone. Pair again with '
+          'the code on its screen.',
         ),
         actions: [
           TextButton(
@@ -339,8 +335,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Try without a node (demo)'),
                 subtitle: Text(
-                  'A node in the app with an invented network; nothing leaves '
-                  'this phone${app.session.connected && !app.fake ? '. Disconnect from the node first' : ''}',
+                  app.session.connected && !app.fake
+                      ? 'Disconnect from the node first'
+                      : 'Nothing leaves this phone',
                 ),
                 value: app.fake,
                 onChanged: app.session.connected ? null : app.setFake,
@@ -349,9 +346,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.bug_report_outlined),
                 title: const Text('Debug'),
-                subtitle: const Text(
-                  'Everything the link says, for a bug report',
-                ),
+                subtitle: const Text('What the link says, for a bug report'),
                 onTap: () => Navigator.of(context)
                     .push(MaterialPageRoute(builder: (_) => DebugScreen(app))),
               ),
@@ -362,9 +357,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ),
   );
 
-  Widget _heading(String s) => Padding(
-    padding: const EdgeInsets.only(top: 24, bottom: 8),
-    child: Text(s, style: Theme.of(context).textTheme.titleLarge),
+  Widget _heading(String s, {String? help}) => Padding(
+    padding: EdgeInsets.only(top: 24, bottom: help == null ? 8 : 0),
+    child: Row(
+      children: [
+        Text(s, style: Theme.of(context).textTheme.titleLarge),
+        if (help != null) HelpButton(s, help),
+      ],
+    ),
   );
 
   /// What a connection being made is doing, for the line under the
@@ -372,10 +372,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static String _linking(Linking l) => switch (l) {
     Linking.none => '',
     Linking.connecting => 'Connecting…',
-    Linking.pairing =>
-      'Pairing: type the six-digit code the node\'s screen shows into the '
-          'phone\'s dialog. After it, the phone takes some seconds to '
-          'finish.',
+    Linking.pairing => 'Type the code on the node\'s screen',
     Linking.paired || Linking.attaching => 'Paired, connecting…',
   };
 
@@ -448,7 +445,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 8),
           const Text('No node found nearby.'),
           Text(
-            'Switch a node on, or come closer to it.',
+            'Switch one on, or come closer.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
@@ -526,36 +523,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   /// What happened to `n`, a node that no longer knows this phone, and
   /// what each button does.
-  Future<void> _lostHelp(String n) => showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (context) => SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${shownName(n)} no longer knows this phone',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'The node has forgotten this phone\'s pairing: someone paired '
-              'with it removed this phone, or the node lost what it had '
-              'stored. So it is no longer yours.\n\n'
-              'Pair again makes it yours again: the phone forgets its old '
-              'pairing, then pairs anew, and you type the six-digit code the '
-              'node\'s screen shows. The button is there while the node is '
-              'in reach.\n\n'
-              'Forget gives the node up: this phone stops listing it and '
-              'forgets its old pairing.',
-            ),
-          ],
-        ),
-      ),
-    ),
+  Future<void> _lostHelp(String n) => showHelp(
+    context,
+    '${shownName(n)} no longer knows this phone',
+    'Someone paired with it removed this phone, or the node lost its '
+        'memory.\n\n'
+        'Pair again: pair anew with the code on its screen. Shown while the '
+        'node is in reach.\n\n'
+        'Forget: stop listing the node here.',
   );
 
   /// How a paired node stands, in words. A paired node the search hears
@@ -569,7 +544,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (on)
           'connected'
         else if (lost)
-          'no longer yours: it no longer knows this phone'
+          'no longer yours'
         else if (app.searchOn)
           'not in reach'
         else if (app.session.stopped)
@@ -589,7 +564,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         TextSpan(
           text: [
             if (app.connectedTo(n.deviceId)) 'Connected',
-            if (n.public) 'public: serves phones without pairing',
+            if (n.public) 'public',
             signalWord(n.rssi),
           ].join(', '),
           children: [
@@ -624,16 +599,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Pair with ${shownName(n.name)}'),
+        title: Text('Pair with ${shownName(n.name)}?'),
         content: const Text(
-          'Pairing makes this node one of yours: you can change its '
-          'settings, place it on the map and update it from this phone, and '
-          'the phone keeps a link to it while it is in reach, unless your '
-          'home is in reach too. You type the six-digit code its screen '
-          'shows. A node keeps up to eight phones, and those paired with it '
-          'before keep theirs.\n\n'
-          'Pairing does not make it your home: that is set under Home node '
-          'once you are connected.',
+          'You can then change its settings and update it. Type the code on '
+          'its screen.',
         ),
         actions: [
           TextButton(
@@ -666,14 +635,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return [
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('Public: serve phones without pairing'),
-        subtitle: const Text(
-          'On unless you turn it off: phones near the node that have not '
-          'paired with it can send and receive their texts through it, as '
-          'at a shop\'s or a café\'s node. They cannot change its '
-          'settings, and your texts stay yours. Off, the node is yours '
-          'alone.',
-        ),
+        title: const Text('Public'),
+        subtitle: const Text('Any phone near it can text through it'),
         value: p,
         onChanged: (v) =>
             _try(() => app.session.writePublic(v), 'Setting Public failed'),
@@ -692,19 +655,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final paired = rs.where((r) => r.paired).toList();
     final homes = rs.where((r) => r.home).toList();
     return [
-      _subheading('Phones paired with this node'),
-      Text(
-        'A node keeps up to eight phones: anyone at it can pair by the '
-        'six-digit code it shows, and every phone paired with it may change '
-        'its settings. Remove a phone you do not know, or one that is gone.',
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
+      _subheading('Phones paired with this node', help: _phonesHelp),
       if ((s.node?.room ?? 1) == 0)
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
-            'It keeps eight now and takes no more pairings until one is '
-            'removed.',
+            'Full: remove one before another can pair.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
@@ -716,9 +672,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ];
   }
 
-  Widget _subheading(String t) => Padding(
-    padding: const EdgeInsets.only(top: 16, bottom: 4),
-    child: Text(t, style: Theme.of(context).textTheme.titleSmall),
+  Widget _subheading(String t, {String? help}) => Padding(
+    padding: EdgeInsets.only(top: 16, bottom: help == null ? 4 : 0),
+    child: Row(
+      children: [
+        Flexible(child: Text(t, style: Theme.of(context).textTheme.titleSmall)),
+        if (help != null) HelpButton(t, help),
+      ],
+    ),
   );
 
   /// A record's row in the paired list, or with `home` in the homes list.
@@ -761,15 +722,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : '${r.name}\'s phone';
     final whoCap = capital(who);
     final parts = [
-      if (r.paired)
-        '$whoCap is no longer paired with the node. At its next link the '
-            'node ends it, and its app says the node is no longer theirs; '
-            'pairing again takes the code on the node\'s screen.',
-      if (r.home)
-        'The node is no longer ${r.name.isEmpty ? 'its person' : r.name}\'s '
-            'home: it forgets their mailbox key, and their app says so at '
-            'their next link here. Their fetches from elsewhere go '
-            'unanswered.',
+      if (r.paired) '$whoCap can no longer use the node unless paired again.',
+      if (r.home) 'The node stops keeping their mail.',
     ];
     final ok = await showDialog<bool>(
       context: context,
@@ -782,9 +736,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               : 'Remove this home?',
         ),
         content: Text(
-          '${parts.join('\n\n')}\n\nTo show that you are at the node, it '
-          'draws a six-digit code on its screen, which you type here '
-          'within 30 s.',
+          '${parts.join(' ')} You type the code the node then shows.',
         ),
         actions: [
           TextButton(
@@ -832,17 +784,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       } on AttException catch (e) {
         if (!mounted) return;
         if (e.code != AttError.refused) {
-          say(
-            context,
-            'The node no longer holds that; the list is read again.',
-          );
+          say(context, 'Already gone.');
           return;
         }
         final again = await confirm(
           context,
           'Not removed',
-          'That was not the code on the node\'s screen, or it came after '
-              '30 s. Each code takes one try.',
+          'Wrong code, or too late. Each code works once.',
           'New code',
         );
         if (!again) return;
@@ -861,21 +809,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         : '';
     // With the last phone gone a node is public, whatever its owners set.
     final last = !(s.phones ?? const []).any((r) => r.paired && !r.mine);
-    final after = last
-        ? 'Its screen then says PHONE UNPAIRED, and it is public, serving '
-              'any phone nearby. Anyone at the node can pair with it by the '
-              'code on its screen.'
-        : 'The other phones paired with it keep theirs, and its settings '
-              'stay as they are.';
-    final done = last ? 'Unpaired: the node is public again.' : 'Unpaired.';
+    final after = last ? ' With no phone left, it turns public.' : '';
+    final done = last ? 'Unpaired. The node is public.' : 'Unpaired.';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Unpair ${shownName(name)}?'),
         content: Text(
-          'The node forgets this phone. $after\n\n'
-          'Your texts and contacts stay on this phone, and the phone '
-          'forgets its own pairing with the node too.$others',
+          'The node and this phone forget each other; texts and contacts '
+          'stay.$after$others',
         ),
         actions: [
           TextButton(
@@ -892,9 +834,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok != true) return;
     await _try(() async {
       // The home is the node's mailbox key, which it keeps.
-      final home = app.atHome
-          ? ' It stays your home node, so texts to you still go to it.'
-          : '';
+      final home = app.atHome ? ' It stays your home.' : '';
       final forgotten = await app.unpair();
       if (!mounted) return;
       if (forgotten) {
@@ -904,9 +844,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await askToForget(
         context,
         app,
-        '$done$home This phone could not '
-        'forget its own pairing with it: forget the node in the phone\'s '
-        'Bluetooth settings, or the phone cannot use it as a guest.',
+        '$done$home Forget the node in Bluetooth settings too: the phone '
+        'kept its pairing.',
       );
     }, 'Unpairing failed');
   }
@@ -915,19 +854,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// says what follows; where the phone's own pairing with it may stay,
   /// says how to forget that too.
   Future<void> _askForget(String name, {required bool home}) async {
-    final stays = home
-        ? ' It stays your home node, so texts to you still go to it.'
-        : '';
+    final stays = home ? ' It stays your home.' : '';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Forget ${shownName(name)}?'),
-        content: Text(
-          'It no longer knows this phone, so it is no longer yours. '
-          'This phone stops listing it, and forgets its own pairing with '
-          'it. To make it yours again, pair at the node by the code on '
-          'its screen.$stays',
-        ),
+        content: Text('This phone stops listing it.$stays'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -951,17 +883,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           await askToForget(
             context,
             app,
-            'Forgotten.$stays This phone could not forget its own pairing '
-            'with it: forget the node in the phone\'s Bluetooth settings.',
+            'Forgotten.$stays Forget the node in Bluetooth settings too: the '
+            'phone kept its pairing.',
           );
         case null:
           await askToForget(
             context,
             app,
-            'Forgotten.$stays The phone has not heard the node since the app '
-            'started, so it forgets its own pairing with it once it does. '
-            'To do it now, forget the node in the phone\'s Bluetooth '
-            'settings.',
+            'Forgotten.$stays The phone drops its pairing when it next hears '
+            'the node, or forget it in Bluetooth settings now.',
           );
       }
     }, 'Forgetting failed');
@@ -1030,15 +960,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           (r.app == 0
                   ? 'A development build'
                   : newerApp
-                  ? 'Version ${r.app}; version ${latest.app} is available: '
-                        'tap to download it in the browser, and Android asks '
-                        'before it installs it over this one'
+                  ? 'Version ${r.app}; ${latest.app} is out. Tap to download'
                   : 'Version ${r.app}') +
-              (s.nodeNewer
-                  ? '. The node\'s firmware is newer than this app: it '
-                        'works, and an update of the app brings the node\'s '
-                        'new features.'
-                  : ''),
+              (s.nodeNewer ? '. Update it for the node\'s new features' : ''),
         ),
         onTap: newerApp ? () => app.notifier.openLink(latest.apk!) : null,
       ),
@@ -1047,11 +971,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text('Node firmware'),
         subtitle: Text(
           n == null
-              ? 'No node linked'
+              ? 'Not connected'
               : s.guest
-              ? 'Only a phone paired with the node updates it'
+              ? 'Only its paired phones update it'
               : newerImage
-              ? 'Version ${n.image}; version ${latest.firmware} is available'
+              ? 'Version ${n.image}; ${latest.firmware} is out'
               : 'Version ${n.image}',
         ),
         trailing: newerImage
@@ -1075,10 +999,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _heading('Battery'),
       Text(
         e
-            ? 'bark is exempt from battery optimisation: Android lets it '
-                  'keep the link to the node while the screen is off.'
-            : 'bark is not exempt from battery optimisation: with the '
-                  'screen off, some phones close its link to the node after '
+            ? 'bark may run with the screen off.'
+            : 'With the screen off, Android may close bark\'s link after '
                   'some hours.',
       ),
       if (!e) ...[
@@ -1087,7 +1009,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           alignment: Alignment.centerLeft,
           child: FilledButton(
             onPressed: app.notifier.askBatteryExempt,
-            child: const Text('Exempt bark'),
+            child: const Text('Let bark run'),
           ),
         ),
       ],
@@ -1107,47 +1029,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final homeable = owned ? canBeHome(st) : guest?.homeable ?? false;
     final full = guest?.room == 0;
     return [
-      _heading('Home node'),
-      Text(
-        home == null
-            ? 'No home node: your card is temporary, naming the node you '
-                  'use now, which keeps your mail only while you come back '
-                  'to it.'
-            : 'Your home node is at $home. Your card carries its address, '
-                  'and it holds your mailbox key. "Fetch my mail", the '
-                  'inbox button on the first screen, brings your mail from '
-                  'it to the node you are connected to.',
-      ),
+      _heading('Home node', help: _homeHelp),
+      Text(home == null ? 'None: your card is temporary.' : 'At $home.'),
       if (here == null && (owned ? st != null : guest != null))
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
             'This node has no place yet, so it cannot be a home.'
-            '${owned ? ' Set its place under This node, below.' : ''}',
+            '${owned ? ' Set it under This node.' : ''}',
           ),
         ),
       if (here != null && !atHome && !homeable)
         const Padding(
           padding: EdgeInsets.only(top: 8),
-          child: Text(
-            'A home must be a node that stays on power at a fixed place.',
-          ),
+          child: Text('A home must stay on power in one place.'),
         ),
       if (app.homeKeyGone)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text(
-            'Your home node does not hold your mailbox key: someone paired '
-            'with it may have removed it. Make it your home again, or '
-            'choose another.',
+            'Your home no longer keeps your mail. Make it your home again, '
+            'or choose another.',
           ),
         ),
       if (app.holdsOtherKey)
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: const Text(
-            'This node still holds your mailbox key, from when it was your '
-            'home.',
+            'This node still keeps your mail from when it was your home.',
           ),
         ),
       if (app.othersHome)
@@ -1180,8 +1089,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: () => _try(() async {
                 final r = await app.clearKey();
                 if (mounted) say(context, r);
-              }, 'Clearing the key failed'),
-              child: const Text('Clear its mailbox key'),
+              }, 'Failed'),
+              child: const Text('Stop keeping my mail'),
             ),
         ],
       ),
@@ -1199,25 +1108,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(a == null ? 'No home node' : 'Make this node my home'),
+        title: Text(a == null ? 'No home node?' : 'Make this node my home?'),
         content: Text(
-          (pair
-                  ? '$_pairsFirst As your home, it keeps texts to you and '
-                        'gives your card a fixed address.\n\n'
-                  : '') +
+          (pair ? 'First you pair: type the code on its screen. ' : '') +
               (!changes && app.cardUnsent
-                  ? 'Your card stays as it is now. Its last change has not '
-                        'gone to your contacts: it still waits for Send my '
-                        'card.'
+                  ? 'Your card stays; its last change still waits for Send '
+                        'my card.'
                   : !changes
-                  ? 'Your card stays as it is, so no card is sent.'
+                  ? 'Your card stays the same.'
                   : n == 0
                   ? 'Your card changes.'
                   : n == 1
-                  ? 'Your card changes, and your new card goes to '
-                        'your contact.'
-                  : 'Your card changes, and your new card goes to '
-                        'your $n contacts, one message each.'),
+                  ? 'Your new card goes to your contact.'
+                  : 'Your new card goes to your $n contacts.'),
         ),
         actions: [
           TextButton(
@@ -1226,7 +1129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Go ahead'),
+            child: Text(a == null ? 'No home' : 'Make it my home'),
           ),
         ],
       ),
@@ -1249,21 +1152,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }, 'Setting the home failed');
   }
 
-  /// What pairing with a node the phone uses as a guest takes, and what it
-  /// does to the node's keeper.
-  static const _pairsFirst =
-      'The phone pairs with this node first: you type the six-digit code '
-      'its screen shows. A node keeps up to eight phones, and the phones '
-      'paired with it before keep theirs.';
+  /// What a home is, for whoever asks.
+  static const _homeHelp =
+      'Your home is a node that stays on power in one place. It keeps texts '
+      'to you while your phone is away, and your card carries its address, '
+      'so the card stays good wherever you go. The inbox button on the '
+      'first screen, Fetch my mail, brings them to the node you are on.\n\n'
+      'Without a home your card is temporary: it names the node you use '
+      'now, which keeps your mail only while you come back to it.\n\n'
+      'To make a node your home, the phone pairs with it.';
+
+  /// What the node's phones are, for whoever asks.
+  static const _phonesHelp =
+      'A node keeps up to eight phones. Anyone at it can pair, by the code '
+      'on its screen, and every paired phone can change its settings, so '
+      'remove a phone you do not know or one that is gone. A removal also '
+      'takes the code on the node\'s screen, to show you are there.\n\n'
+      'A phone with a home here has its mail kept at this node.';
 
   List<Widget> _backup() => [
     _heading('Backup'),
     Text(
       app.me.backedUp
-          ? 'Your identity comes from 12 words. With them it can be '
-                'restored on another phone.'
-          : 'Write down these 12 words: they are your identity. Without '
-                'them, a lost phone loses it.',
+          ? 'Your 12 words bring your identity back on another phone.'
+          : 'Write down your 12 words: a lost phone without them loses your '
+                'identity.',
     ),
     const SizedBox(height: 8),
     Wrap(
@@ -1305,9 +1218,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final go = await confirm(
       context,
       'Restore from words?',
-      'This phone takes the identity of the words in place of its own. '
-          'Contacts who hold the card of the identity it has now cannot '
-          'reach the new one until they get its card.',
+      'This phone takes the identity of the words. Contacts reach it only '
+          'once they have its card.',
       'Restore',
     );
     if (!go || !mounted) return;
@@ -1332,14 +1244,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         st == null || !st.placed
             ? 'The node has no place yet.'
             : st.mapPoint
-            ? 'The node\'s place, set by a person: ${st.address}.'
-            : 'The node\'s place, from its GPS: ${st.address}.',
+            ? 'Set by a person: ${st.address}.'
+            : 'From its GPS: ${st.address}.',
       ),
       const SizedBox(height: 4),
       Text(
-        'A node finds its place by GPS. Set it here for a node that cannot '
-        'see the sky, such as one indoors: what is set here wins over GPS '
-        'until it is cleared.',
+        'For a node indoors, out of GPS reach. It wins over GPS until '
+        'cleared.',
         style: Theme.of(context).textTheme.bodySmall,
       ),
       Row(
@@ -1402,8 +1313,8 @@ class _CodeDialogState extends State<_CodeDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'The node\'s screen shows REMOVE and six digits. Type them '
-          'within 30 s.',
+          'Type the six digits under REMOVE on the node\'s screen, within '
+          '30 s.',
         ),
         TextField(
           key: const Key('removal code'),

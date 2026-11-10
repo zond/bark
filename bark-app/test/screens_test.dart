@@ -179,7 +179,10 @@ void main() {
     expect(find.textContaining('Got it'), findsNothing);
     expect(find.byType(ActionChip), findsNothing);
     await hold();
-    expect(find.textContaining('sees it on their text'), findsOneWidget);
+    expect(
+      find.textContaining('sees your reaction on their text'),
+      findsOneWidget,
+    );
     expect(find.text('Copy text'), findsOneWidget);
     expect(firstRow(), quickReactions);
     expect(
@@ -544,7 +547,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     // The home points to the one place to set it, under This node.
-    expect(find.textContaining('Set its place under This node'), findsOne);
+    expect(find.textContaining('Set it under This node'), findsOne);
     expect(find.text('Use this phone\'s location'), findsOneWidget);
     expect(find.text('Phone location'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
@@ -558,7 +561,7 @@ void main() {
     final make = find.widgetWithText(FilledButton, 'Make this node my home');
     expect(t.widget<FilledButton>(make).enabled, isFalse);
     expect(
-      find.text('A home must be a node that stays on power at a fixed place.'),
+      find.text('A home must stay on power in one place.'),
       findsOneWidget,
     );
     fake
@@ -584,7 +587,7 @@ void main() {
     await t.pump();
     expect(find.text(banner), findsOneWidget);
     expect(
-      find.textContaining('the only way to keep your contacts'),
+      find.textContaining('the only way back to your contacts'),
       findsOneWidget,
     );
     await t.tap(find.text(banner));
@@ -650,7 +653,10 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Restore from words'));
     await t.pumpAndSettle();
-    expect(find.textContaining('cannot reach the new one'), findsOneWidget);
+    expect(
+      find.textContaining('Contacts reach it only once they have its card'),
+      findsOneWidget,
+    );
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(find.text('Your 12 words'), findsNothing);
@@ -690,13 +696,7 @@ void main() {
     await t.enterText(find.byType(TextField), 'hi');
     await t.tap(find.byTooltip('Send'));
     await t.pumpAndSettle();
-    expect(
-      find.text(
-        'Last seen there 20 min ago: it keeps their mail only while they '
-        'come back',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Last seen there 20 min ago'), findsOneWidget);
     expect(find.text('Their home node'), findsNothing);
     await t.tap(find.text('Where Olena was 20 min ago'));
     await t.pumpAndSettle();
@@ -991,7 +991,7 @@ void main() {
     await app.makeHome(app.session.address!);
     await t.pump();
     final before = app.session.outbox.length;
-    await fetch('Connected to your home node');
+    await fetch('At your home, your mail comes by itself');
     expect(app.session.outbox.length, before);
 
     await t.pumpWidget(const SizedBox());
@@ -1022,7 +1022,12 @@ void main() {
       await t.tap(find.text(button));
       await t.pumpAndSettle();
       expect(find.textContaining(told), findsOneWidget);
-      await t.tap(find.text('Go ahead'));
+      await t.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(FilledButton),
+        ),
+      );
       await t.pumpAndSettle();
     }
 
@@ -1037,10 +1042,10 @@ void main() {
     expect(find.text('Make this node my home'), findsNothing);
     // The changed card waits for the person.
     final sent = app.session.outbox.length;
-    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    expect(find.textContaining('new home address'), findsOneWidget);
     await t.pageBack();
     await t.pumpAndSettle();
-    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    expect(find.textContaining('new home address'), findsOneWidget);
     expect(app.session.outbox.length, sent);
     await t.tap(find.text('Send my card'));
     await t.pumpAndSettle();
@@ -1111,24 +1116,23 @@ void main() {
     );
     await t.ensureVisible(find.text(make));
     await t.pumpAndSettle();
-    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    expect(find.textContaining('new home address'), findsOneWidget);
     await t.tap(find.text(make));
     await t.pumpAndSettle();
     expect(
       find.text(
-        'Your card stays as it is now. Its last change has not gone to your '
-        'contacts: it still waits for Send my card.',
+        'Your card stays; its last change still waits for Send my card.',
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('no card is sent'), findsNothing);
+    expect(find.text('Your card stays the same.'), findsNothing);
     final sent = app.session.outbox.length;
-    await t.tap(find.text('Go ahead'));
+    await t.tap(find.text('Make it my home'));
     await t.runAsync(() => Future<void>.delayed(Duration.zero));
     await t.pumpAndSettle();
     expect(app.homeKeyGone, isFalse);
     expect(app.session.outbox.length, sent);
-    expect(find.textContaining('home node has a new address'), findsOneWidget);
+    expect(find.textContaining('new home address'), findsOneWidget);
 
     await t.pumpWidget(const SizedBox());
     await app.session.disconnect();
@@ -1180,10 +1184,7 @@ void main() {
     expect(app.session.connected, isFalse);
     // Settings lists it among the paired nodes, lost.
     expect(find.text('ID FA4E00000001'), findsOneWidget);
-    expect(
-      find.text('No longer yours: it no longer knows this phone'),
-      findsOneWidget,
-    );
+    expect(find.text('No longer yours'), findsOneWidget);
 
     // Its row offers to pair again, beside Forget, and a tap on it says
     // what happened and what each does.
@@ -1196,8 +1197,8 @@ void main() {
       find.text('ID FA4E00000001 no longer knows this phone'),
       findsOneWidget,
     );
-    expect(find.textContaining('Pair again makes it yours again'), findsOne);
-    expect(find.textContaining('Forget gives the node up'), findsOne);
+    expect(find.textContaining('Pair again: pair anew'), findsOne);
+    expect(find.textContaining('Forget: stop listing'), findsOne);
     await t.tapAt(const Offset(10, 10));
     await t.pumpAndSettle();
 
@@ -1256,15 +1257,12 @@ void main() {
     final other = find.text('ID 0CE400000002');
     expect(t.getTopLeft(home).dy, lessThan(t.getTopLeft(other).dy));
     expect(find.text('Your home, connected'), findsOneWidget);
-    expect(
-      find.text('No longer yours: it no longer knows this phone'),
-      findsOneWidget,
-    );
+    expect(find.text('No longer yours'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Unpair'), findsOneWidget);
     await t.tap(find.byTooltip('Why this node'));
     await t.pumpAndSettle();
     expect(
-      find.textContaining('This phone is paired with your home node'),
+      find.textContaining('Your home. The phone stays linked'),
       findsOneWidget,
     );
 
@@ -1296,19 +1294,13 @@ void main() {
     await t.tap(forget);
     await t.pumpAndSettle();
     expect(find.text('Forget ID 0CE400000002?'), findsOneWidget);
-    expect(
-      find.textContaining('It stays your home node, so texts to you still'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('It stays your home.'), findsOneWidget);
     await t.tap(find.widgetWithText(FilledButton, 'Forget'));
     await t.pumpAndSettle();
     expect(app.session.pairedWith, isEmpty);
     expect(app.me.home.toString(), home.toString());
     expect(
-      find.textContaining(
-        'To do it now, forget the node in the phone\'s '
-        'Bluetooth settings.',
-      ),
+      find.textContaining('or forget it in Bluetooth settings now'),
       findsOneWidget,
     );
     expect(
@@ -1367,11 +1359,8 @@ void main() {
     await t.tap(remove);
     await t.pumpAndSettle();
     expect(find.text('Remove the phone with no name?'), findsOneWidget);
-    expect(
-      find.textContaining('no longer paired with the node'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('within 30 s'), findsOneWidget);
+    expect(find.textContaining('can no longer use the node'), findsOneWidget);
+    expect(find.textContaining('code the node then shows'), findsOneWidget);
     await t.tap(find.text('Show the code'));
     await t.pumpAndSettle();
     final first = f.shownCode!;
@@ -1423,7 +1412,7 @@ void main() {
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
     expect(
-      find.textContaining('takes no more pairings until one is removed'),
+      find.textContaining('Full: remove one before another can pair'),
       findsOneWidget,
     );
     await t.pumpWidget(const SizedBox());
@@ -1452,13 +1441,9 @@ void main() {
       greaterThan(t.getTopLeft(find.text('ID 0CE400000002')).dy),
     );
     await t.scrollUntilVisible(
-      find.textContaining('newer than this app'),
+      find.textContaining('Update it for the node\'s new features'),
       100,
       scrollable: find.byType(Scrollable).first,
-    );
-    expect(
-      find.textContaining('brings the node\'s new features'),
-      findsOneWidget,
     );
     await t.scrollUntilVisible(
       disconnect,
@@ -1487,13 +1472,10 @@ void main() {
     await t.tap(unpair);
     await t.pumpAndSettle();
     expect(find.text('Unpair ID FA4E00000001?'), findsOneWidget);
-    expect(find.textContaining('forgets this phone'), findsOneWidget);
-    // The last phone paired: the node is public once it has gone.
-    expect(find.textContaining('PHONE UNPAIRED'), findsOneWidget);
-    expect(find.textContaining('it is public'), findsOneWidget);
-    expect(find.textContaining('code on its screen'), findsOneWidget);
+    expect(find.textContaining('forget each other'), findsOneWidget);
     expect(find.textContaining('texts and contacts stay'), findsOneWidget);
-    expect(find.textContaining('forgets its own pairing'), findsOneWidget);
+    // The last phone paired: the node turns public once it has gone.
+    expect(find.textContaining('it turns public'), findsOneWidget);
     // Cancel changes nothing.
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
@@ -1529,8 +1511,8 @@ void main() {
     );
     await t.runAsync(app.load);
     const line =
-        'ID 0CE400000004 no longer knows this phone\'s old pairing. Forget '
-        'it in the phone\'s Bluetooth settings, then try again.';
+        'ID 0CE400000004 rejects this phone\'s old pairing. Forget it in '
+        'Bluetooth settings.';
     await t.pumpWidget(BarkApp(app));
     expect(find.text(line), findsNothing);
     app.staleBonds['bark-0ce400000004'] = 'aa:bb:cc:dd:ee:04';
@@ -1554,7 +1536,7 @@ void main() {
     await app.connectFake();
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
-    const public = 'Public: serve phones without pairing';
+    const public = 'Public';
     expect(find.text(public), findsOneWidget);
     // The home node second, right under the node.
     final ys = [
@@ -1639,9 +1621,8 @@ void main() {
     await t.pump();
     expect(
       find.textContaining(
-        'This phone has no home node set. As your home, this node keeps '
-        'texts to you and gives your card a fixed address. The phone pairs '
-        'with it first: you type the code its screen shows.',
+        'No home node yet. Make this one your home? It keeps texts to you '
+        'while you are away. You pair first, with the code on its screen.',
       ),
       findsOneWidget,
     );
@@ -1687,7 +1668,7 @@ void main() {
     expect(find.text(home, skipOffstage: false), findsOneWidget);
     expect(find.text('Pair with this node', skipOffstage: false), findsNothing);
     // Neither the owner's switch nor its unpairing for a guest.
-    expect(find.text('Public: serve phones without pairing'), findsNothing);
+    expect(find.text('Public'), findsNothing);
     expect(find.widgetWithText(TextButton, 'Unpair'), findsNothing);
     await t.ensureVisible(find.text(home));
     await t.tap(find.text(home));
@@ -1697,13 +1678,9 @@ void main() {
       matching: find.textContaining(s),
     );
     expect(
-      said(
-        'The phone pairs with this node first: you type the six-digit code '
-        'its screen shows.',
-      ),
+      said('First you pair: type the code on its screen.'),
       findsOneWidget,
     );
-    expect(said('keeps texts to you and gives your card a fixed'), findsOne);
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(ble.pairings, 0);
@@ -1713,8 +1690,7 @@ void main() {
     await t.ensureVisible(pair);
     await t.tap(pair);
     await t.pumpAndSettle();
-    expect(said('up to eight phones'), findsOneWidget);
-    expect(said('Pairing does not make it your home'), findsOneWidget);
+    expect(said('change its settings and update it'), findsOneWidget);
     await t.tap(find.widgetWithText(FilledButton, 'Pair'));
     for (var i = 0; i < 10; i++) {
       await t.pump(const Duration(milliseconds: 100));
@@ -1754,10 +1730,7 @@ void main() {
     await pair();
     expect(find.text('Not paired'), findsOneWidget);
     expect(
-      find.textContaining(
-        'The link to ID 0CE400000004 ended before the node '
-        'was read: the node ended it, or is out of reach.',
-      ),
+      find.textContaining('The link to ID 0CE400000004 ended.'),
       findsOneWidget,
     );
     expect(ble.pairings, 0);
@@ -1775,8 +1748,7 @@ void main() {
     await pair();
     expect(
       find.textContaining(
-        'could not forget its old pairing with ID '
-        '0CE400000004',
+        'The phone kept its old pairing with ID 0CE400000004',
       ),
       findsOneWidget,
     );

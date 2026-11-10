@@ -159,10 +159,7 @@ int installVersion(int image, int low) {
 
 /// What a person reads of a node that keeps as many phones as it can and
 /// so takes no more pairings (spec "Phone link", Pairing).
-const String fullNode =
-    'This node already keeps eight phones, the most it can, so it takes '
-    'no more pairings. Someone paired with it can remove a phone in '
-    'Settings, at the node.';
+const String fullNode = 'This node is full: eight phones are paired with it.';
 
 /// Whether a node, by its status, can be a home: one that stays on power
 /// at a fixed place, so that its address stays (spec "Mailbox").
@@ -549,12 +546,10 @@ class AppModel extends ChangeNotifier {
   String? get installHelp {
     if (!_installsNow && installingLine == null) return null;
     final i = install!;
-    return '${shownName(i.node)} got version ${i.version} of its firmware '
-        'from the nodes around it and is installing it. It first passes on '
-        'the texts it holds, which takes at most ten minutes, then restarts '
-        'and is back about a minute later. The phone waits for it and '
-        'connects again by itself; nothing is lost. Texts you write '
-        'meanwhile wait on the phone.';
+    return '${shownName(i.node)} got version ${i.version} from the nodes '
+        'around it. It passes on the texts it holds, at most ten minutes, '
+        'then restarts for about a minute. The phone reconnects by itself; '
+        'nothing is lost.';
   }
 
   /// What the line adds of the connected node's install: that it is
@@ -581,8 +576,8 @@ class AppModel extends ChangeNotifier {
 
   /// Why the card changed, for the line that offers to send it.
   String get cardChange => me.home == null
-      ? 'Your card changed: you have no home now'
-      : 'Your card changed: your home node has a new address';
+      ? 'Your card changed: no home'
+      : 'Your card changed: new home address';
 
   /// Keeps the app running while a node is connected by Bluetooth, so
   /// that it reads the inbox with the screen off, and while it searches
@@ -615,7 +610,7 @@ class AppModel extends ChangeNotifier {
         title: on,
         body: session.connected
             ? 'Texts arrive while the screen is off'
-            : 'Texts go and come on a visit about once a minute',
+            : 'Checks for texts about once a minute',
       );
     }
     if (!searchOn || !bluetoothAllowed) return null;
@@ -722,20 +717,17 @@ class AppModel extends ChangeNotifier {
     if (me.home == null) return 'No home node to fetch from';
     if (!session.connected) {
       await me.setFetchQueued(true);
-      return 'The fetch waits for a node: it goes from the next node this '
-          'phone links to, and the mail comes back there';
+      return 'The fetch waits for a node';
     }
     if (atHome) {
-      return 'Connected to your home node: your mail comes from its inbox '
-          'here; a fetch is sent from another node';
+      return 'At your home, your mail comes by itself';
     }
     if (session.fetchWaiting != null) {
-      return 'Still waiting for your home node to answer the last fetch';
+      return 'Still waiting for the last fetch';
     }
     final here = session.address;
     if (here == null) {
-      return 'This node has no address yet, so your mail could not come '
-          'back to it';
+      return 'This node has no place yet, so mail cannot come back to it';
     }
     session.fetchNews = null;
     await messenger.fetch(here);
@@ -769,8 +761,7 @@ class AppModel extends ChangeNotifier {
   void _queuedFetch() => unawaited(_sendQueuedFetch());
 
   static const _oldHomeKeeps =
-      'Your old home node still holds your mailbox key until you connect '
-      'to it and press "Clear its mailbox key" there.';
+      'Your old home keeps your mail until you stop it there.';
 
   /// Makes the connected node, at `a`, the person's home: it is given the
   /// mailbox key and is the home only if it then says it holds one. The
@@ -781,8 +772,7 @@ class AppModel extends ChangeNotifier {
     if (n == null) return 'Not connected to a node';
     final h = await session.writeHome(me.keys.mailbox.extractBytes());
     if (!h.mine) {
-      return 'The node did not keep your mailbox key, so it cannot be your '
-          'home. Nothing changed.';
+      return 'The node refused. Nothing changed.';
     }
     final away = me.home != null && !atHome;
     if (await me.setHome(a)) await messenger.sendCardToAll();
@@ -798,8 +788,7 @@ class AppModel extends ChangeNotifier {
     final at = atHome;
     final h = at ? await session.writeHome(null) : null;
     if (h != null && h.mine) {
-      return 'The node still says it holds a mailbox key, so it is still '
-          'your home. Nothing changed.';
+      return 'The node refused. It is still your home.';
     }
     if (await me.setHome(null)) await messenger.sendCardToAll();
     return at ? 'No home node' : 'No home node. $_oldHomeKeeps';
@@ -809,8 +798,8 @@ class AppModel extends ChangeNotifier {
   Future<String> clearKey() async {
     final h = await session.writeHome(null);
     return h.mine
-        ? 'The node still says it holds your mailbox key'
-        : 'The node no longer holds your mailbox key';
+        ? 'The node refused. It still keeps your mail.'
+        : 'It no longer keeps your mail';
   }
 
   void setFake(bool v) {
@@ -1046,8 +1035,7 @@ class AppModel extends ChangeNotifier {
     final home = h == null ? '' : '. Home at ${shownName(h)}';
     final installs = _installNote;
     if (g != null && tappedGuest) {
-      return 'Connected to ${shownName(g)} as a guest$installs, until the '
-          'node ends a guest\'s link after 30 s$home';
+      return 'Connected to ${shownName(g)} as a guest for 30 s$installs$home';
     }
     if (g != null && (n == null || session.guest)) {
       return 'Connected to ${shownName(g)} as a guest$installs$home';
@@ -1629,12 +1617,10 @@ class AppModel extends ChangeNotifier {
     final s = session;
     final a = s.address;
     if (!s.connected || s.guest || a == null) {
-      return 'Not paired with the node, so it is not your home. Nothing '
-          'changed.';
+      return 'Not paired, so not your home';
     }
     if (!canBeHome(s.status)) {
-      return 'Paired, but a home must be a node that stays on power at a '
-          'fixed place, so it is not your home.';
+      return 'Paired, but a home must stay on power in one place';
     }
     return makeHome(a);
   }

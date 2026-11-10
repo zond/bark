@@ -762,10 +762,7 @@ class Session extends ChangeNotifier {
         if (!h.mine && !kept) {
           homeRemoved = true;
           _tell(
-            'Your home node, ${nodeLabel(n.id)}, does not hold your '
-            'mailbox key: someone paired with it may have removed it. Until '
-            'it holds it again it answers no fetch of yours. In Settings '
-            'you can make it your home again, or choose another.',
+            'Your home no longer keeps your mail. Set it again in Settings.',
           );
         }
       }

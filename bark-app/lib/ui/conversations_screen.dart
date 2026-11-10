@@ -106,8 +106,8 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
                 leading: const Icon(Icons.key),
                 title: const Text('Write down your 12 backup words'),
                 subtitle: const Text(
-                  'If you lose this phone, these words are the only way to '
-                  'keep your contacts able to reach you.',
+                  'If you lose this phone, they are the only way back to your '
+                  'contacts.',
                 ),
                 onTap: () =>
                     _open(context, SettingsScreen(app, toBackup: true)),
@@ -119,8 +119,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'No conversations yet. Add a contact, or show your card '
-                'to someone who has the app.',
+                'No conversations yet. Add a contact, or show your card.',
               ),
             ),
           for (final c in list) _row(context, c),
@@ -163,14 +162,13 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
             step(
               g.name,
               'Your name',
-              'On your card, so that people know who you are.',
+              'So people know who you are.',
               () => askMyName(context, app),
             ),
             step(
               g.node,
               'A node',
-              'Found by itself when one is near, or pair your own in '
-                  'Settings.',
+              'Found by itself when one is near.',
               () => _open(context, SettingsScreen(app)),
             ),
             step(
@@ -200,7 +198,9 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         _bar(
           context,
           title: '${nodeName(node.id)} hears no one since its update',
-          subtitle: app.updater.hearsNoOneWarning(updated),
+          subtitle:
+              'Its new firmware may have broken its radio. Tap for the '
+              'way back.',
           onTap: () => _open(context, UpdateScreen(app)),
           dismiss: app.updater.dismissHearsNoOne,
           warning: true,
@@ -208,20 +208,16 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
       if (a != null)
         _bar(
           context,
-          title: 'A newer app, version ${a.app}, is available',
-          subtitle:
-              'Tap to download it in the browser; Android asks before it '
-              'installs it over this one.',
+          title: 'App version ${a.app} is out',
+          subtitle: 'Tap to download.',
           onTap: () => app.notifier.openLink(a.apk!),
           dismiss: () => r.dismissApp(a.app),
         ),
       if (i != null && node != null)
         _bar(
           context,
-          title:
-              'Your node runs version ${node.image}; version ${i.firmware} is '
-              'available',
-          subtitle: 'Tap to update it from this phone.',
+          title: 'Node firmware ${i.firmware} is out',
+          subtitle: 'Tap to update the node.',
           onTap: () => _open(context, UpdateScreen(app, release: i)),
           dismiss: () => r.dismissImage(node, i.firmware),
         ),

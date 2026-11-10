@@ -192,9 +192,7 @@ class NotSeen implements Exception {
   final String node;
   const NotSeen(this.node);
   @override
-  String toString() =>
-      '$node was not seen: move nearer to it and connect again from the '
-      'scan';
+  String toString() => '$node not found: come nearer and try again';
 }
 
 Future<void> stopBleScan() async {

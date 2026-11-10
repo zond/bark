@@ -85,12 +85,7 @@ class DebugScreen extends StatelessWidget {
     final s = app.session;
     final n = s.node;
     if (n == null || s.guest) {
-      return [
-        const Text(
-          'Connect a node this phone is paired with to pick a firmware '
-          'file for it.',
-        ),
-      ];
+      return [const Text('Connect a paired node to pick a firmware file.')];
     }
     return [
       Align(

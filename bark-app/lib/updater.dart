@@ -171,12 +171,10 @@ class Updater extends ChangeNotifier {
   /// stages no image below its own version, so the one it ran before goes
   /// on by USB.
   String hearsNoOneWarning(Updated u) =>
-      'Since its update to version ${u.to} it has heard no other node: the '
-      'new firmware may have broken its radio. To bring it back, copy the '
-      'version it ran before, bark-fw-${u.from}.uf2 from that release, to '
-      'it over USB after a double tap of its reset button; it takes no '
-      'older version from the phone. A newer release, once there is one, '
-      'can be sent from here.';
+      'Since version ${u.to} it hears no other node: the new firmware may '
+      'have broken its radio. To go back, double-tap its reset button and '
+      'copy bark-fw-${u.from}.uf2 from that release to it over USB; the '
+      'phone cannot send an older version.';
 
   /// The app is in an exchange with the node that runs without the
   /// person: sending the image, waiting for its check, or for its reboot.
@@ -263,11 +261,7 @@ class Updater extends ChangeNotifier {
       _set(Phase.failed, '$e');
     } catch (e) {
       session.note('Update: paused at $held B, $e');
-      _set(
-        Phase.paused,
-        'The link was lost at $held of ${image!.length} bytes; it goes on '
-        'when the node is back',
-      );
+      _set(Phase.paused, 'The link dropped; it goes on when the node is back');
     } finally {
       _running = false;
     }
@@ -316,11 +310,7 @@ class Updater extends ChangeNotifier {
     _set(Phase.committing);
     await link.writeUpdate(encodeCommit());
     session.note('Update: version ${img.version} committed');
-    _set(
-      Phase.committed,
-      'The node checked version ${img.version} and keeps it for its next '
-      'boot',
-    );
+    _set(Phase.committed, 'The node checked version ${img.version}');
   }
 
   /// Commits the image the node holds, again after a refusal for its
@@ -376,11 +366,7 @@ class Updater extends ChangeNotifier {
         session.note('Update: the reboot\'s answer was lost to its end, $e');
       }
       session.note('Update: reboot asked');
-      _set(
-        Phase.rebooting,
-        'The node swaps the new firmware in, about a minute; the app '
-        'connects again when it is back',
-      );
+      _set(Phase.rebooting, 'The node restarts, about a minute');
     } on AttException catch (e) {
       await _refused(e, Phase.committed);
     } catch (e) {
@@ -425,9 +411,7 @@ class Updater extends ChangeNotifier {
       }
       _set(
         Phase.failed,
-        'The node came back on version ${n.image}, not $want: the '
-        'new firmware did not start, and the node swapped '
-        'version ${_before ?? n.image} back',
+        'Version $want did not start; the node is back on ${n.image}',
       );
     }
   }

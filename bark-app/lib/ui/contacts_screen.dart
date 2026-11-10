@@ -27,8 +27,7 @@ class ContactsScreen extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
-                'No contacts yet. Ask them to open bark and show My card, '
-                'the QR code button, then tap Add contact and scan it.',
+                'No contacts yet. Tap Add contact and scan their card.',
               ),
             ),
           for (final c in cs.active) _row(context, c),
@@ -217,10 +216,8 @@ class _AddContactScreenState extends State<AddContactScreen> {
               subtitle: Text(
                 card!.home?.toString() ??
                     (card!.now == null
-                        ? 'none, and no node: ask them for a card from a '
-                              'newer app'
-                        : 'none: a temporary card, naming the node they '
-                              'use now'),
+                        ? 'none, and no node yet: ask them for a new card'
+                        : 'none: a temporary card'),
                 style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),

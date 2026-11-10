@@ -289,7 +289,7 @@ String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
   final app = r.app == 0
       ? 'app is a development build'
       : l != null && l.apk != null && l.app > r.app
-      ? 'a newer app, version ${l.app}, is available: get it under App below'
+      ? 'app ${l.app} is out: tap App below'
       : 'app up to date (${r.app})';
   final String image;
   if (node == null) {
@@ -301,9 +301,7 @@ String updatesLine(Releases r, NodeInfo? node, {bool guest = false}) {
   } else if (l == null || l.image == null) {
     image = 'node firmware ${node.image}; the release carries none';
   } else if (l.firmware > node.image) {
-    image =
-        'node firmware ${node.image}; version ${l.firmware} is newer: send '
-        'it under Node firmware below';
+    image = 'node firmware ${l.firmware} is out: send it below';
   } else {
     image = 'node firmware ${node.image}, up to date';
   }
