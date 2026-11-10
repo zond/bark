@@ -33,12 +33,16 @@
 //! start with their layout's version, counted from 1, and a cut record
 //! leaves the second word erased, which is no complement of the first.
 //!
-//! And it keeps the bond with the paired phone (`ble.rs`), a record of
-//! two slots (`bark_link::bond`), with the public setting; the console
-//! reads it to say whether the node is public ([`scan`]).
+//! And it keeps the node's phones (`phones.rs`): their records, their
+//! progress and the node's settings, entries of four slots or one each
+//! (`bark_link::phones`); the console reads them to say whether the node
+//! is public ([`scan`]). A page written by an image before them holds the
+//! one bond with the paired phone, two slots (`bark_link::bond`), which
+//! the first scan makes record one, and the next write of the phones
+//! leaves behind.
 
 use bark_image::layout::STORE;
-use bark_link::bond::Bond;
+use bark_link::phones::{self, Load};
 use bark_proto::store::{Stored, RECORD_LEN};
 #[cfg(not(feature = "console"))]
 use embassy_futures::select::{select3, Either3};
@@ -47,13 +51,14 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(not(feature = "console"))]
 use embassy_sync::signal::Signal;
 
-/// The state, the offset and the bond to keep next, the latest of each.
+/// The state and the offset to keep next, the latest of each, and that
+/// the phones changed.
 #[cfg(not(feature = "console"))]
 static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
 #[cfg(not(feature = "console"))]
 static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
 #[cfg(not(feature = "console"))]
-static BOND: Signal<CriticalSectionRawMutex, Option<Bond>> = Signal::new();
+static PHONES: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[cfg(not(feature = "console"))]
 /// The node's side: keep `stored`, in place of the state kept before.
@@ -68,10 +73,9 @@ pub fn keep_offset(offset_min: i16) {
 }
 
 #[cfg(not(feature = "console"))]
-/// The phone link's side: keep `bond`, in place of the bond kept before;
-/// none once the owner unpairs.
-pub fn keep_bond(bond: Option<Bond>) {
-    BOND.signal(bond);
+/// The phones' side (`phones.rs`): keep what changed in their records.
+pub fn keep_phones() {
+    PHONES.signal(());
 }
 
 #[cfg(not(feature = "console"))]
@@ -79,10 +83,10 @@ pub fn keep_bond(bond: Option<Bond>) {
 #[embassy_executor::task]
 pub async fn run(mut flash: Flash) -> ! {
     loop {
-        match select3(STORED.wait(), OFFSET.wait(), BOND.wait()).await {
+        match select3(STORED.wait(), OFFSET.wait(), PHONES.wait()).await {
             Either3::First(stored) => flash.keep(&stored).await,
             Either3::Second(offset_min) => flash.keep_offset(offset_min).await,
-            Either3::Third(bond) => flash.keep_bond(&bond).await,
+            Either3::Third(()) => flash.keep_phones().await,
         }
     }
 }
@@ -120,18 +124,16 @@ fn zone(r: &[u8; RECORD_LEN]) -> Option<i16> {
     whole.then(|| i16::from_be_bytes([r[1], r[2]]))
 }
 
-/// Slots a bond's record takes.
-const BOND_SLOTS: u32 = (Bond::LEN / RECORD_LEN) as u32;
-const _: () = assert!(Bond::LEN == 2 * RECORD_LEN);
+const _: () = assert!(phones::SLOT_LEN == RECORD_LEN);
 
-/// What the page holds last of each kind. The console reads the bond
+/// What the page holds last of each kind. The console reads the phones
 /// alone.
 #[derive(Clone, Copy, Default)]
 #[cfg_attr(feature = "console", allow(dead_code))]
 pub struct Kept {
     pub stored: Option<Stored>,
     pub offset_min: Option<i16>,
-    pub bond: Option<Bond>,
+    pub phones: Load,
 }
 
 /// The page as `read` reads it, the bytes at an address of the flash:
@@ -140,32 +142,37 @@ pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (u32, Kept) {
     let mut kept = Kept::default();
     let mut slot = 0;
     while slot < SLOTS {
-        let mut r = [0u8; Bond::LEN];
+        let mut r = [0u8; phones::RECORD_LEN];
         let at = STORE.start + slot * RECORD_LEN as u32;
-        let both = slot + BOND_SLOTS <= SLOTS;
-        let len = if both { Bond::LEN } else { RECORD_LEN };
-        if !read(at, &mut r[..len]) {
+        if !read(at, &mut r[..RECORD_LEN]) {
             break;
         }
-        let (first, second) = r.split_at(RECORD_LEN);
-        if first.iter().all(|&b| b == 0xff) {
+        if r[..RECORD_LEN].iter().all(|&b| b == 0xff) {
             return (slot, kept);
         }
-        let first: &[u8; RECORD_LEN] = first.try_into().expect("a slot");
-        if first[0] == Bond::TAG {
-            if let Some(bond) = bark_link::bond::read(&r) {
-                kept.bond = bond;
-            }
-            // A bond cut short in its second slot leaves it erased: the
-            // next record goes there.
-            if !both || second.iter().all(|&b| b == 0xff) {
+        // An entry of several slots: one cut short leaves its later slots
+        // erased, and the next entry goes into the first of them.
+        let slots = (phones::entry_len(r[0]) / RECORD_LEN) as u32;
+        if slots > 1 {
+            let len = phones::entry_len(r[0]);
+            if slot + slots > SLOTS || !read(at + RECORD_LEN as u32, &mut r[RECORD_LEN..len]) {
                 return (slot + 1, kept);
             }
-            slot += BOND_SLOTS;
+            kept.phones.entry(&r[..len]);
+            let erased = (1..slots).find(|&k| {
+                let k = (k as usize) * RECORD_LEN;
+                r[k..k + RECORD_LEN].iter().all(|&b| b == 0xff)
+            });
+            if let Some(k) = erased {
+                return (slot + k, kept);
+            }
+            slot += slots;
             continue;
         }
+        let first: &[u8; RECORD_LEN] = (&r[..RECORD_LEN]).try_into().expect("a slot");
         kept.stored = Stored::from_record(first).or(kept.stored);
         kept.offset_min = zone(first).or(kept.offset_min);
+        kept.phones.entry(first);
         slot += 1;
     }
     (SLOTS, kept)
@@ -176,8 +183,10 @@ pub fn scan(mut read: impl FnMut(u32, &mut [u8]) -> bool) -> (u32, Kept) {
 pub struct Flash {
     flash: &'static SharedFlash,
     next: u32,
-    /// What the page holds last, written again after an erase.
-    kept: Kept,
+    /// The core's state and the offset the page holds last, written again
+    /// after an erase, with the phones as `phones.rs` holds them then.
+    stored: Option<Stored>,
+    offset_min: Option<i16>,
 }
 
 #[cfg(not(feature = "console"))]
@@ -189,65 +198,83 @@ impl Flash {
             .expect("nothing writes before the store opens");
         let (next, kept) = scan(|at, r| f.read(at, r).is_ok());
         drop(f);
-        (Flash { flash, next, kept }, kept)
+        let flash = Flash {
+            flash,
+            next,
+            stored: kept.stored,
+            offset_min: kept.offset_min,
+        };
+        (flash, kept)
     }
 
     /// Keep `stored`, in place of the state kept before.
     async fn keep(&mut self, stored: &Stored) {
-        self.kept.stored = Some(*stored);
+        self.stored = Some(*stored);
         self.write(&stored.record()).await;
     }
 
     /// Keep the UTC offset, in place of the one kept before.
     async fn keep_offset(&mut self, offset_min: i16) {
-        self.kept.offset_min = Some(offset_min);
+        self.offset_min = Some(offset_min);
         self.write(&zone_record(offset_min)).await;
     }
 
-    /// Keep the bond, in place of the one kept before, or a forgotten
-    /// one's record for none.
-    async fn keep_bond(&mut self, bond: &Option<Bond>) {
-        self.kept.bond = *bond;
-        let record = bond.map_or_else(bark_link::bond::forgotten, |b| b.record());
-        self.write(&record).await;
-    }
-
-    /// Write `record`, of one slot or more, into the next slots. A page
-    /// without room is erased first, and the other kinds' records
-    /// written again, so that each survives.
-    async fn write(&mut self, record: &[u8]) {
-        let slots = (record.len() / RECORD_LEN) as u32;
-        if self.next + slots > SLOTS {
-            let erased = self
-                .flash
-                .lock()
-                .await
-                .erase(STORE.start, STORE.end())
-                .await;
-            if let Err(e) = erased {
-                log::error!("store erase failed: {:?}", e);
-                return;
-            }
-            self.next = 0;
-            let kind = record[0];
-            let core = kind != ZONE && kind != Bond::TAG;
-            if !core {
-                if let Some(s) = self.kept.stored {
-                    self.put(&s.record()).await;
-                }
-            }
-            if kind != ZONE {
-                if let Some(o) = self.kept.offset_min {
-                    self.put(&zone_record(o)).await;
-                }
-            }
-            if kind != Bond::TAG {
-                if let Some(b) = self.kept.bond {
-                    self.put(&b.record()).await;
+    /// Keep what changed in the phones' records: a record whole, or its
+    /// progress alone, and the settings.
+    async fn keep_phones(&mut self) {
+        let dirty = crate::phones::take_dirty();
+        if dirty.settings {
+            let s = crate::phones::read(|p| p.settings().encode());
+            self.write(&s).await;
+        }
+        for i in 0..phones::RECORDS {
+            let bit = 1 << i;
+            if dirty.records & bit != 0 {
+                let r = crate::phones::read(|p| phones::Record::encode(i, p.get(i)));
+                self.write(&r).await;
+            } else if dirty.progress & bit != 0 {
+                if let Some(e) = crate::phones::read(|p| p.progress_of(i)) {
+                    self.write(&e.encode()).await;
                 }
             }
         }
-        self.put(record).await;
+    }
+
+    /// Write `entry`, of one slot or more, into the next slots. A page
+    /// without room is erased first, and every kind's latest written again,
+    /// the phones' as they stand, which hold what `entry` says, so that
+    /// each survives.
+    async fn write(&mut self, entry: &[u8]) {
+        let slots = (entry.len() / RECORD_LEN) as u32;
+        if self.next + slots <= SLOTS {
+            self.put(entry).await;
+            return;
+        }
+        let erased = self
+            .flash
+            .lock()
+            .await
+            .erase(STORE.start, STORE.end())
+            .await;
+        if let Err(e) = erased {
+            log::error!("store erase failed: {:?}", e);
+            return;
+        }
+        self.next = 0;
+        if let Some(s) = self.stored {
+            self.put(&s.record()).await;
+        }
+        if let Some(o) = self.offset_min {
+            self.put(&zone_record(o)).await;
+        }
+        let settings = crate::phones::read(|p| p.settings().encode());
+        self.put(&settings).await;
+        for i in 0..phones::RECORDS {
+            let r = crate::phones::read(|p| p.get(i).map(|r| phones::Record::encode(i, Some(r))));
+            if let Some(r) = r {
+                self.put(&r).await;
+            }
+        }
     }
 
     async fn put(&mut self, record: &[u8]) {

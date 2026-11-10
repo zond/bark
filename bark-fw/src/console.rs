@@ -1529,7 +1529,7 @@ impl fmt::Display for CutOp {
     }
 }
 
-/// Whether the node is public, as the bond the node keeps says (spec
+/// Whether the node is public, as the phones the node keeps say (spec
 /// "Phone link", Public; `store.rs`): its page read where it lies in the
 /// chip's address space, as the console writes no flash of the node's.
 fn public() -> bool {
@@ -1540,5 +1540,7 @@ fn public() -> bool {
         out.copy_from_slice(bytes);
         true
     });
-    bark_link::bond::public(kept.bond.as_ref())
+    kept.phones
+        .phones(bark_link::phones::OldHome::default())
+        .public()
 }

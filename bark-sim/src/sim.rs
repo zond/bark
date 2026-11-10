@@ -27,7 +27,7 @@ use crate::scenario::{
 };
 use crate::trace::{Names, Tracer};
 use crate::walk::{MovingLink, Walks};
-use bark_app_layer::mailbox::{Arrival as Kept, Mailbox, RamRing};
+use bark_app_layer::mailbox::{Arrival as Kept, Mailbox, Person, RamRing};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
@@ -1246,7 +1246,15 @@ impl Sim {
         for m in &sc.mailboxes {
             let i = resolve(&placed, m)?;
             let mut mb = Box::new(Mailbox::new(RamRing::new()));
-            mb.set_key(Some(Sim::mailbox_key(sc.seed, i)));
+            mb.set_person(
+                0,
+                Some(Person {
+                    number: 1,
+                    tag: Some(Sim::mailbox_tag(sc.seed, i)),
+                    key: Some(Sim::mailbox_key(sc.seed, i)),
+                    ..Person::default()
+                }),
+            );
             mailboxes[i as usize] = Some(mb);
         }
         let mut homes = vec![None; n];
@@ -4611,6 +4619,13 @@ impl Sim {
         k
     }
 
+    /// The recipient tag at `node` of the person whose home it is, in a run
+    /// of `seed`: drawn from them, so that a test can address an item to
+    /// them (spec "Phone link", The payload).
+    pub fn mailbox_tag(seed: u64, node: u32) -> u8 {
+        Sim::mailbox_key(seed, node)[31]
+    }
+
     /// A payload for `node`'s application that its mailbox takes, or that
     /// is a mailbox's reply: kept, and not counted as a text.
     fn mailbox_takes(&mut self, node: u32, msg_id: MsgId, payload: &[u8]) -> bool {
@@ -5607,7 +5622,16 @@ mod tests {
                 sim.run_until(t);
             }
         };
-        let items: Vec<Vec<u8>> = (1..=3).map(|i| format!("item {i}").into_bytes()).collect();
+        // Items for the home's person: their tag in the payload's second
+        // byte.
+        let tag = Sim::mailbox_tag(1, 0);
+        let items: Vec<Vec<u8>> = (1..=3)
+            .map(|i| {
+                let mut b = format!("item {i}").into_bytes();
+                b[1] = tag;
+                b
+            })
+            .collect();
         for item in &items {
             send(&mut sim, 1, item);
         }

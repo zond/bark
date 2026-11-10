@@ -23,8 +23,10 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// (spec "Phone link", Changes to the table); 5 added Service Changed
 /// and the database hash, 6 Update and Image, 7 Recipient and Public, 8
 /// Guest, 9 Ask, 10 the image a neighbour gathers in Ask's answer, 11
-/// the neighbours heard in Status, 12 Public's write that unpairs.
-pub const VERSION: u8 = 12;
+/// the neighbours heard in Status, 12 Public's write that unpairs, 13
+/// Phones, with the person's name in Recipient, `room` in Node and `mine`
+/// in Home (roadmap D168).
+pub const VERSION: u8 = 13;
 
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
@@ -90,6 +92,9 @@ pub mod uuid {
     /// notify the last answer ([`crate::Ask`], [`crate::Answer`]); from
     /// link version 9.
     pub const ASK: u128 = 0x28bc0010_a1b8_4893_9537_2ee3559d7644;
+    /// Phones: list the node's records, and remove one with a code drawn
+    /// on the screen ([`crate::phones`]); from link version 13.
+    pub const PHONES: u128 = 0x28bc0011_a1b8_4893_9537_2ee3559d7644;
     /// What a public node advertises in place of [`SERVICE`]: the class
     /// of nodes that serve any phone. No attribute has it.
     pub const PUBLIC_NODE: u128 = 0x28bc1001_a1b8_4893_9537_2ee3559d7644;
@@ -195,30 +200,37 @@ pub struct Node {
     pub id: NodeId,
     /// The firmware image's version (`bark-fw/README.md`, "Updates").
     pub image: u32,
+    /// How many more phones may pair with it (spec "Phone link", Node);
+    /// `None` from a node of link version 12 or before, which kept one.
+    pub room: Option<u8>,
 }
 
 impl Node {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + ID + 4;
+    pub const LEN: usize = Self::LEN_12 + 1;
+    /// Bytes in the value of link version 12 and before.
+    const LEN_12: usize = 1 + ID + 4;
 
     /// The value.
     pub fn encode(&self) -> [u8; Self::LEN] {
         let mut b = [0u8; Self::LEN];
         b[0] = self.version;
         b[1..1 + ID].copy_from_slice(&self.id.0);
-        b[1 + ID..].copy_from_slice(&self.image.to_be_bytes());
+        b[1 + ID..Self::LEN_12].copy_from_slice(&self.image.to_be_bytes());
+        b[Self::LEN_12] = self.room.unwrap_or(0);
         b
     }
 
     /// Read a value, ignoring what a later version appends.
     pub fn decode(b: &[u8]) -> Result<Node, Malformed> {
-        if b.len() < Self::LEN {
+        if b.len() < Self::LEN_12 {
             return Err(Malformed::Length);
         }
         Ok(Node {
             version: b[0],
             id: node_id(&b[1..]),
-            image: u32::from_be_bytes(b[1 + ID..Self::LEN].try_into().expect("four bytes")),
+            image: u32::from_be_bytes(b[1 + ID..Self::LEN_12].try_into().expect("four bytes")),
+            room: b.get(Self::LEN_12).copied(),
         })
     }
 }
@@ -643,25 +655,37 @@ impl NodeTime {
 
 /// Recipient, write: the phone's recipient tag at this node, by which the
 /// node hands it the payloads that are its own (spec "Phone link",
-/// Recipient tag; `bark_app_layer::seal::recipient`).
+/// Recipient tag; `bark_app_layer::seal::recipient`), and from link
+/// version 13 its person's name as their card has it, which a paired
+/// phone's record keeps (spec "Phone link", Pairing). An older app writes
+/// the tag alone, and its person's name stays empty.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Recipient(pub u8);
+pub struct Recipient {
+    /// The tag.
+    pub tag: u8,
+    /// The name: UTF-8, at most [`phones::NAME_MAX`] bytes.
+    pub name: phones::Name,
+}
 
 impl Recipient {
-    /// Bytes in the value.
-    pub const LEN: usize = 1;
+    /// Bytes in the longest value.
+    pub const MAX_LEN: usize = 1 + phones::NAME_MAX;
 
-    /// The value.
-    pub fn encode(&self) -> [u8; Self::LEN] {
-        [self.0]
+    /// The value, into `b`; its length.
+    pub fn encode(&self, b: &mut [u8; Self::MAX_LEN]) -> usize {
+        let name = self.name.as_bytes();
+        b[0] = self.tag;
+        b[1..1 + name.len()].copy_from_slice(name);
+        1 + name.len()
     }
 
-    /// Take a written value whole.
+    /// Take a written value whole: a name that is not UTF-8 is not taken.
     pub fn decode(b: &[u8]) -> Result<Recipient, Malformed> {
-        match b {
-            [t] => Ok(Recipient(*t)),
-            _ => Err(Malformed::Length),
-        }
+        let (&tag, name) = b.split_first().ok_or(Malformed::Length)?;
+        Ok(Recipient {
+            tag,
+            name: phones::Name::new(name)?,
+        })
     }
 }
 
@@ -885,10 +909,13 @@ const _: () = assert!(Send::MAX_LEN == 240);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));
 const _: () = assert!(update::Progress::LEN <= value_room(ATT_MTU));
+const _: () = assert!(Recipient::MAX_LEN <= value_room(ATT_MTU));
+const _: () = assert!(phones::PhonesWrite::MAX_LEN <= value_room(DEFAULT_ATT_MTU));
 
 pub mod bond;
 pub mod home;
 pub mod neighbours;
+pub mod phones;
 pub mod update;
 
 #[cfg(test)]

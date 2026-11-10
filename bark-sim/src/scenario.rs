@@ -798,8 +798,8 @@ pub struct Scenario {
     /// Nodes held on one home channel.
     pub homes: Vec<HomeSpec>,
     /// Nodes that are a person's home and keep a mailbox (spec
-    /// "Mailbox"), as node references; each mailbox's key is
-    /// `Sim::mailbox_key`.
+    /// "Mailbox"), as node references; each person's key is
+    /// `Sim::mailbox_key` and their tag at their home `Sim::mailbox_tag`.
     pub mailboxes: Vec<String>,
 }
 

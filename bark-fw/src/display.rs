@@ -330,19 +330,92 @@ pub fn lines() {
     PERSON.signal(true);
 }
 
+/// What the phone link shows over its line for a while
+/// (spec "Screen and buttons"): a pairing's code until the pairing ends, a removal's code
+/// and a pairing refused for want of room each for [`SHOWN`] at most.
+#[cfg(not(feature = "console"))]
+#[derive(Clone, Copy)]
+struct Over {
+    pairing: Option<u32>,
+    removal: Option<(u32, Instant)>,
+    full: Option<Instant>,
+}
+
+#[cfg(not(feature = "console"))]
+static OVER: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<Over>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Over {
+    pairing: None,
+    removal: None,
+    full: None,
+}));
+
+/// How long a removal's code and `PHONES FULL` show: the time a pairing
+/// gives its person to type a code (`bark_link::phones::CODE_MS`).
+#[cfg(not(feature = "console"))]
+const SHOWN: Duration = Duration::from_millis(bark_link::phones::CODE_MS);
+
+#[cfg(not(feature = "console"))]
+fn over(f: impl FnOnce(&mut Over)) {
+    OVER.lock(|o| {
+        let mut v = o.get();
+        f(&mut v);
+        o.set(v);
+    });
+    CHANGED.signal(());
+}
+
+/// The phone line as shown at `now`, and when what shows over it ends.
+#[cfg(not(feature = "console"))]
+fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
+    use bark_screen::Phone;
+    let o = OVER.lock(core::cell::Cell::get);
+    let removal = o.removal.filter(|&(_, until)| now < until);
+    let full = o.full.filter(|&until| now < until);
+    let ends = removal.map(|(_, u)| u).into_iter().chain(full).min();
+    let phone = match (o.pairing, removal, full) {
+        (Some(c), ..) => Phone::Code(c),
+        (None, Some((c, _)), _) => Phone::Remove(c),
+        (None, None, Some(_)) => Phone::Full,
+        (None, None, None) => PHONE.lock(core::cell::Cell::get),
+    };
+    (phone, ends)
+}
+
 /// The phone link's line at boot, drawn with the first picture.
 #[cfg(not(feature = "console"))]
 pub fn phone_at_boot(phone: bark_screen::Phone) {
     PHONE.lock(|p| p.set(phone));
 }
 
-/// The phone link's side: its line, a new pairing code drawn at once and
-/// any other change about one refresh after it (`bark_screen::schedule`).
+/// The phone link's side: its line, as the records say it; any change
+/// is drawn about one refresh after it (`bark_screen::schedule`).
 #[cfg(not(feature = "console"))]
 pub fn phone(phone: bark_screen::Phone) {
     if PHONE.lock(|p| p.replace(phone)) != phone {
         CHANGED.signal(());
     }
+}
+
+/// The phone link's side: a pairing's code, drawn at once, or its end.
+#[cfg(not(feature = "console"))]
+pub fn pairing(code: Option<u32>) {
+    over(|o| o.pairing = code);
+}
+
+/// The phone link's side: a removal's code, drawn at once and shown for
+/// [`SHOWN`] at most, or its end.
+#[cfg(not(feature = "console"))]
+pub fn removal(code: Option<u32>) {
+    over(|o| o.removal = code.map(|c| (c, Instant::now() + SHOWN)));
+}
+
+/// The phone link's side: a pairing refused for want of room, `PHONES
+/// FULL` for [`SHOWN`].
+#[cfg(not(feature = "console"))]
+pub fn full() {
+    over(|o| o.full = Some(Instant::now() + SHOWN));
 }
 
 /// The node's side, after a step: its state as the screen says it, but
@@ -385,15 +458,18 @@ pub async fn run(
     // which is within a second of the radio coming up.
     let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
     loop {
+        let now = Instant::now();
+        let (phone, ends) = phone_shown(now);
         let state = State {
-            phone: PHONE.lock(core::cell::Cell::get),
+            phone,
             ..STATE.lock(core::cell::Cell::get)
         };
-        let now = Instant::now();
         let ms = now.as_millis();
         let due = schedule.due(&state, ms);
         if due.is_none_or(|d| d > ms) {
+            // A code or `PHONES FULL` ending is a change of the line too.
             let at = due.map_or(Instant::MAX, Instant::from_millis);
+            let at = ends.map_or(at, |e| e.min(at));
             if let Either3::Second(lines) =
                 select3(CHANGED.wait(), PERSON.wait(), Timer::at(at)).await
             {
