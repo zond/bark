@@ -4,7 +4,9 @@
 
 mod common;
 
-use bark_proto::update::{sweep_pieces, Image, ImageTag, FASTEST, GAP, PACE, SERVED_CHANNELS};
+use bark_proto::update::{
+    sweep_pieces, Image, ImageTag, FASTEST, GAP, PACE, SERVED_CHANNELS, UNSERVED,
+};
 use bark_proto::wire::{Packet, Update};
 use bark_proto::{AppCommand, Config, Instant, Position, Relay};
 use common::{at, secs, Harness, Updates};
@@ -679,9 +681,16 @@ fn a_gatherer_whose_image_nobody_holds_takes_another_of_its_version() {
     );
     assert!(done, "node 2 does not come to hold the other image");
     assert_eq!(h.nodes[2].core.image(), Some(other));
-    // It was offered within a rotation of heartbeats of the switch.
-    let offered = u.offered[1].0;
-    assert!(offered.since(switched) <= secs(13 * 15), "{offered:?}");
+    // Offered once the holders' sections named the other image, within a
+    // rotation, and a lease more in which no relay named its own, two
+    // rotations and a lag, at the next heartbeat it heard.
+    let c = Config::default();
+    let lease = longest_rotation() + c.heartbeat_max.mul(13);
+    let offered = u.offered[1].0.since(switched);
+    assert!(
+        offered <= longest_rotation() + lease + c.heartbeat_max,
+        "{offered:?}"
+    );
 }
 
 /// A gatherer that hears a holder of its image is not offered another
@@ -703,4 +712,136 @@ fn a_gatherer_with_a_holder_keeps_its_image() {
     let u = h.nodes[2].updates.as_ref().unwrap();
     assert_eq!(u.offered.len(), 1, "{:?}", u.offered);
     assert_eq!(h.nodes[2].core.image(), Some(u.offered[0].1));
+}
+
+/// Five relays in a line, each at home on its own channel, the first
+/// holding one build of a version and the last another. A node that has
+/// caught up with a neighbour still gathering the same image waits for it
+/// rather than taking the other build: on 2026-11-10 the middle node was
+/// offered the two in turn four to seven times on each of these seeds,
+/// and each swap threw its blocks away (roadmap D195).
+#[test]
+fn a_gatherer_between_two_builds_keeps_the_one_it_took() {
+    let (image, needs) = todays_image();
+    let other = Image {
+        name: ImageTag([8; 4]),
+        ..image
+    };
+    for seed in 1..=6u64 {
+        let mut h = Harness::new(
+            (0..5)
+                .map(|i| relay_on(300.0 * i as f64, seed * 10 + i as u64, 3 + i as u8))
+                .collect(),
+        );
+        for i in 0..4 {
+            h.link(i, i + 1);
+        }
+        for n in &mut h.nodes {
+            n.updates = Some(Updates {
+                needs: needs.clone(),
+                ..Updates::default()
+            });
+        }
+        h.run_until(at(400), |_| false);
+        h.deliver_app(0, AppCommand::Holds(image));
+        h.deliver_app(4, AppCommand::Holds(other));
+        let start = h.now;
+        let done = h.run_until(start + secs(24 * 3600), |h| {
+            (1..4).all(|i| h.nodes[i].updates.as_ref().unwrap().holds_at.is_some())
+        });
+        assert!(done, "seed {seed}: not every relay holds an image in a day");
+        for i in 1..4 {
+            let u = h.nodes[i].updates.as_ref().unwrap();
+            assert_eq!(u.offered.len(), 1, "seed {seed}, node {i}: {:?}", u.offered);
+        }
+    }
+}
+
+/// Two gatherers of an image whose holders all went over to another
+/// build, as on the bench on 2026-11-10, where a second board held the
+/// table of the first build too: each still names the image to the other,
+/// but neither is served, so after [`UNSERVED`] both take the other build
+/// (roadmap D195).
+#[test]
+fn two_gatherers_with_no_holder_take_another_build_together() {
+    let mut h = mesh(4);
+    let other = Image {
+        name: ImageTag([8; 4]),
+        ..IMAGE
+    };
+    let start = h.now;
+    let decoded = h.run_until(start + secs(3600), |h| {
+        (1..3).all(|i| {
+            let u = h.nodes[i].updates.as_ref().unwrap();
+            u.passed.first().is_some_and(|p| p.is_some())
+        })
+    });
+    assert!(decoded, "the gatherers do not decode the table");
+    h.deliver_app(0, AppCommand::Holds(other));
+    h.deliver_app(3, AppCommand::Holds(other));
+    let switched = h.now;
+    let done = h.run_until(switched + UNSERVED.mul(3), |h| {
+        (1..3).all(|i| h.nodes[i].updates.as_ref().unwrap().holds_at.is_some())
+    });
+    assert!(
+        done,
+        "the two gatherers do not come to hold the other build"
+    );
+    for i in 1..3 {
+        let u = h.nodes[i].updates.as_ref().unwrap();
+        assert_eq!(
+            u.offered.iter().map(|o| o.1).collect::<Vec<_>>(),
+            [IMAGE, other],
+            "node {i}"
+        );
+        // Not before it went unserved for the wait, nor long after.
+        let offered = u.offered[1].0.since(switched);
+        assert!(offered >= UNSERVED - longest_rotation(), "{offered:?}");
+        assert!(
+            offered <= UNSERVED + longest_rotation().mul(2),
+            "{offered:?}"
+        );
+    }
+}
+
+/// A gatherer at home on channel 5 that hears only a holder at home on 3,
+/// which hears another holder at home on 5 out of the gatherer's reach:
+/// the holder on 3 streams to it, since the gatherer's section says no
+/// relay at home on its channel holds the block it lacks. On 2026-11-10 it
+/// left the gatherer to the holder on 5 and the gatherer took no piece in
+/// twelve hours (roadmap D196). Where the gatherer hears the holder on 5
+/// too, the holder on 3 leaves it to that one and sends nothing on 5.
+#[test]
+fn a_gatherer_that_hears_only_a_holder_elsewhere_is_served() {
+    for hears_home in [false, true] {
+        let mut h = Harness::new(vec![
+            relay_on(0.0, 61, 5),
+            relay_on(300.0, 62, 3),
+            relay_on(600.0, 63, 5),
+        ]);
+        h.link(0, 1);
+        h.link(1, 2);
+        if hears_home {
+            h.link(0, 2);
+        }
+        for n in &mut h.nodes {
+            n.updates = Some(Updates {
+                needs: NEEDS.to_vec(),
+                ..Updates::default()
+            });
+        }
+        h.run_until(at(400), |_| false);
+        h.deliver_app(1, AppCommand::Holds(IMAGE));
+        h.deliver_app(2, AppCommand::Holds(IMAGE));
+        let start = h.now;
+        let done = h.run_until(start + secs(2 * 3600), |h| {
+            h.nodes[0].updates.as_ref().unwrap().holds_at.is_some()
+        });
+        assert!(done, "hears the holder at home {hears_home}: not served");
+        let on_5 = update_frames(&h, 1)
+            .iter()
+            .filter(|f| f.1 == common::ch(5))
+            .count();
+        assert_eq!(on_5 == 0, hears_home, "{on_5} pieces on 5");
+    }
 }
