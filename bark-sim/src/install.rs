@@ -415,6 +415,15 @@ impl Sim {
             fates[2],
             fates[3],
         );
+        let mut why = std::collections::BTreeMap::new();
+        for f in self.kept_messages() {
+            if let crate::sim::Fate::Dropped { reason, .. } = f {
+                *why.entry(format!("{reason:?}")).or_insert(0u64) += 1;
+            }
+        }
+        if !why.is_empty() {
+            let _ = writeln!(out, "  kept and dropped, by cause: {why:?}");
+        }
         Some(out)
     }
 

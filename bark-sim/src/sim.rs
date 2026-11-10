@@ -4130,23 +4130,32 @@ impl Sim {
     /// (`install.rs`): delivered, dropped, in flight and unaccounted.
     pub fn kept_fates(&self) -> [u64; 4] {
         let mut out = [0; 4];
-        let Some(m) = &self.install else { return out };
+        for f in self.kept_messages() {
+            out[match f {
+                Fate::Delivered => 0,
+                Fate::Dropped { .. } => 1,
+                Fate::InFlight => 2,
+                Fate::Unaccounted => 3,
+            }] += 1;
+        }
+        out
+    }
+
+    /// The fate of each message kept across a reboot into a new image.
+    pub(crate) fn kept_messages(&self) -> Vec<Fate> {
+        let Some(m) = &self.install else {
+            return Vec::new();
+        };
         let tags: std::collections::HashSet<u32> = m
             .kept
             .iter()
             .filter_map(|id| self.msg_tags.get(id).copied())
             .collect();
-        for (tag, (_, fate, _)) in self.messages().enumerate() {
-            if tags.contains(&(tag as u32)) {
-                out[match fate {
-                    Fate::Delivered => 0,
-                    Fate::Dropped { .. } => 1,
-                    Fate::InFlight => 2,
-                    Fate::Unaccounted => 3,
-                }] += 1;
-            }
-        }
-        out
+        self.messages()
+            .enumerate()
+            .filter(|(tag, _)| tags.contains(&(*tag as u32)))
+            .map(|(_, (_, fate, _))| fate)
+            .collect()
     }
 
     /// Fate of every originated message, in origination order.
