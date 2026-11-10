@@ -1,5 +1,5 @@
 // The app's side of the link against the fake node: the queue, the
-// inbox, given back and the version check; and what is sealed and
+// inbox, given back and a node of a newer link version used; and what is sealed and
 // opened on top of them: texts, acknowledgements, first messages and
 // the mailbox's replies; and the node paired with, and whether the person
 // stopped looking for it, kept across a restart.
@@ -22,13 +22,6 @@ import 'package:bark_app/store.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
-
-class NewerNode extends FakeNode {
-  NewerNode({required super.now, required super.sodium, required super.app});
-  @override
-  Future<NodeInfo> readNode() async =>
-      NodeInfo(linkVersion + 1, FakeNode.id, 1);
-}
 
 /// A node at link version 2, before Home: still attached, and given the
 /// clock.
@@ -683,21 +676,37 @@ void main() {
     });
   });
 
-  test('a node with a newer link is refused', () {
+  test('a node of a newer link version is used, as its owner and as a '
+      'guest, with no notice', () {
     fakeAsync((async) {
       final s = Session(store: MemoryStore(), now: () => start);
-      final node = NewerNode(
+      final node = FakeNode(
         now: () => start,
         sodium: sodium,
         app: List.filled(32, 1),
-      );
+      )..version = linkVersion + 1;
       bool? ok;
       s.attach(node.connect()).then((v) => ok = v);
       async.flushMicrotasks();
-      expect(ok, isFalse);
-      expect(s.connected, isFalse);
-      expect(s.notice, contains('newer'));
+      expect(ok, isTrue);
+      expect(s.connected && !s.guest, isTrue);
+      expect(s.nodeNewer, isTrue);
+      expect(s.notice, isNull);
+      // The owner's values of this app's version are read as on any node.
+      expect(s.nodePublic, isTrue);
+      expect(s.nodeHome, isNotNull);
+      s.disconnect();
+      async.flushMicrotasks();
+      ok = null;
+      s.attach(node.connectGuest(), guest: true).then((v) => ok = v);
+      async.flushMicrotasks();
+      expect(ok, isTrue);
+      expect(s.connected && s.guest, isTrue);
+      expect(s.nodeNewer, isTrue);
+      expect(s.notice, isNull);
+      expect(s.guestRead, isTrue);
       node.dispose();
+      s.dispose();
     });
   });
 

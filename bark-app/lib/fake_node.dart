@@ -492,7 +492,7 @@ class FakeNode implements NodeLink {
 
   @override
   Future<NodeInfo> readNode() =>
-      _answer(() => NodeInfo(linkVersion, nodeId, image));
+      _answer(() => NodeInfo(version, nodeId, image));
 
   @override
   Future<void> subscribe() => _answer(() {});
@@ -698,6 +698,10 @@ class FakeNode implements NodeLink {
 
   /// The firmware image's version it runs.
   int image = 1;
+
+  /// The link version it speaks: this app's, unless a test gives it a
+  /// later one, which only adds to what this app reads.
+  int version = linkVersion;
 
   /// On battery at or below the low level: a commit, and a reboot into a
   /// swap, are refused (spec "Phone link", Updates).
@@ -1122,7 +1126,7 @@ class FakeGuest implements NodeLink {
 
   @override
   Future<NodeInfo> readNode() =>
-      _open(() => NodeInfo(linkVersion, node.nodeId, node.image));
+      _open(() => NodeInfo(node.version, node.nodeId, node.image));
 
   @override
   Future<void> subscribe() => _open(() {});

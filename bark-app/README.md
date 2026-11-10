@@ -522,8 +522,12 @@ The app keeps its own queue and writes Send only while the node says
 ready; on the ATT error 0x80, not ready, it waits for ready again.
 Whenever Status counts messages in the inbox, it reads the oldest,
 stores it, writes its message ID back so the node forgets it, and
-repeats. A node whose link version is above the app's is refused, with
-a message to update the app. The first rotation's countdown runs on the phone,
+repeats. A node whose link version is above the app's is used all the
+same, as a later version only adds to what the app reads and takes the
+app's writes as before (spec "Phone link", Versions; roadmap D176); the
+**App** row in Settings' Updates says, without a notice, that the node's
+firmware is newer and that an update of the app brings its new features.
+The first rotation's countdown runs on the phone,
 since the node does not notify it. On every connection to a node of link
 version 2 or later the app writes the phone's UTC time and offset to Clock,
 silently, and the debug screen shows what the node then has.

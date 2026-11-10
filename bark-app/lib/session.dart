@@ -500,9 +500,11 @@ class Session extends ChangeNotifier {
   }
 
   /// Takes a connected link through the checklist of the phone link's
-  /// note: Node first, refused if newer than the app; the recipient tag,
-  /// so that the node hands the inbox over; then the subscriptions, Status
-  /// and Given back, the inbox, the queue. A `guest` link stops there.
+  /// note: Node first; the recipient tag, so that the node hands the inbox
+  /// over; then the subscriptions, Status and Given back, the inbox, the
+  /// queue. A `guest` link stops there. A node of a later link version is
+  /// used as one of this app's ([nodeNewer]). Whether the link is
+  /// attached.
   Future<bool> attach(NodeLink link, {bool guest = false}) async {
     final NodeInfo n;
     try {
@@ -511,14 +513,6 @@ class Session extends ChangeNotifier {
       await link.close();
       rethrow;
     }
-    if (n.version > linkVersion) {
-      await link.close();
-      _tell(
-        'This node\'s firmware is newer than this app understands: update '
-        'the app.',
-      );
-      return false;
-    }
     node = n;
     _link = link;
     this.guest = guest;
@@ -526,6 +520,7 @@ class Session extends ChangeNotifier {
     notice = null;
     note(
       'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}'
+      '${nodeNewer ? ', newer than this app\'s $linkVersion' : ''}'
       '${guest ? ', as a guest' : ''}',
     );
     _subs
@@ -551,6 +546,13 @@ class Session extends ChangeNotifier {
     if (n.version >= askVersion) await _subscribeAsk(link);
     return true;
   }
+
+  /// The node speaks a later link version than this app. A later version
+  /// only appends to the values the node writes and adds characteristics,
+  /// and the node takes the forms of every earlier version's writes, so
+  /// the app uses what it knows; the person may update the app for the
+  /// rest (spec "Phone link", Versions; roadmap D176).
+  bool get nodeNewer => (node?.version ?? 0) > linkVersion;
 
   /// Whether the guest link read every item that waits for the person at
   /// its node.

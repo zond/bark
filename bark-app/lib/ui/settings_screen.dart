@@ -704,13 +704,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         contentPadding: EdgeInsets.zero,
         title: const Text('App'),
         subtitle: Text(
-          r.app == 0
-              ? 'A development build'
-              : newerApp
-              ? 'Version ${r.app}; version ${latest.app} is available: tap to '
-                    'download it in the browser, and Android asks before it '
-                    'installs it over this one'
-              : 'Version ${r.app}',
+          (r.app == 0
+                  ? 'A development build'
+                  : newerApp
+                  ? 'Version ${r.app}; version ${latest.app} is available: '
+                        'tap to download it in the browser, and Android asks '
+                        'before it installs it over this one'
+                  : 'Version ${r.app}') +
+              // A newer node works with this app, which uses what it knows
+              // (roadmap D176).
+              (s.nodeNewer
+                  ? '. The node\'s firmware is newer than this app: it '
+                        'works, and an update of the app brings the node\'s '
+                        'new features.'
+                  : ''),
         ),
         onTap: newerApp ? () => app.notifier.openLink(latest.apk!) : null,
       ),
