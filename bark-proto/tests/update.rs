@@ -642,3 +642,65 @@ fn a_holder_answers_a_lagging_neighbour_once_a_rotation() {
     assert_eq!(between(1000, 2000), 13, "one answer to the three");
     assert_eq!(between(2000, 3000), 13, "one answer to the fourth");
 }
+
+/// Two builds can carry one version. A gatherer whose holders all go
+/// over to another image of the version it gathers, as two nodes flashed
+/// anew on the bench did on 2026-11-10, is offered that image and gathers
+/// it, instead of waiting for an image nobody holds while its neighbours
+/// stream nothing to it (`docs/update-stall-2026-11-10.md`).
+#[test]
+fn a_gatherer_whose_image_nobody_holds_takes_another_of_its_version() {
+    let mut h = mesh(3);
+    let other = Image {
+        name: ImageTag([8; 4]),
+        ..IMAGE
+    };
+    // Node 2, like node 1, gathers the image and decodes its table.
+    let start = h.now;
+    let decoded = h.run_until(start + secs(3600), |h| {
+        (1..3).all(|i| {
+            let u = h.nodes[i].updates.as_ref().unwrap();
+            u.passed.first().is_some_and(|p| p.is_some())
+        })
+    });
+    assert!(decoded, "the gatherers do not decode the table");
+    // Then both other nodes hold the other image of the same version.
+    h.deliver_app(0, AppCommand::Holds(other));
+    h.deliver_app(1, AppCommand::Holds(other));
+    let switched = h.now;
+    let done = h.run_until(switched + secs(2 * 3600), |h| {
+        h.nodes[2].updates.as_ref().unwrap().holds_at.is_some()
+    });
+    let u = h.nodes[2].updates.as_ref().unwrap();
+    assert_eq!(
+        u.offered.iter().map(|o| o.1).collect::<Vec<_>>(),
+        [IMAGE, other],
+        "offered the other image once"
+    );
+    assert!(done, "node 2 does not come to hold the other image");
+    assert_eq!(h.nodes[2].core.image(), Some(other));
+    // It was offered within a rotation of heartbeats of the switch.
+    let offered = u.offered[1].0;
+    assert!(offered.since(switched) <= secs(13 * 15), "{offered:?}");
+}
+
+/// A gatherer that hears a holder of its image is not offered another
+/// image of the same version, so two such images side by side never make
+/// a gatherer swap one for the other.
+#[test]
+fn a_gatherer_with_a_holder_keeps_its_image() {
+    let mut h = mesh(3);
+    let other = Image {
+        name: ImageTag([8; 4]),
+        ..IMAGE
+    };
+    h.deliver_app(1, AppCommand::Holds(other));
+    let start = h.now;
+    let done = h.run_until(start + secs(2 * 3600), |h| {
+        h.nodes[2].updates.as_ref().unwrap().holds_at.is_some()
+    });
+    assert!(done, "node 2 does not come to hold an image");
+    let u = h.nodes[2].updates.as_ref().unwrap();
+    assert_eq!(u.offered.len(), 1, "{:?}", u.offered);
+    assert_eq!(h.nodes[2].core.image(), Some(u.offered[0].1));
+}

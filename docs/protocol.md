@@ -4498,7 +4498,10 @@ bytes and 14.4 ms.
 1. A node that hears a section naming an image of a version above the
    one it runs and the one it gathers asks its firmware, once, whether
    its policy takes the image. If it does, the node gathers it; an image
-   of a higher version heard later replaces it.
+   of a higher version heard later replaces it. So may an image of the
+   version it gathers under another name: the node asks for it, once,
+   when the neighbour that names it holds its first block and no relay
+   the node hears holds the block the node lacks of its own.
 2. A node that gathers hands its firmware every piece it has not handed
    before of every block it lacks, and no other: at most 48 blocks of
    64, the lanes the firmware keeps them in (`bark-image`, `pieces.rs`).
@@ -4541,6 +4544,15 @@ bytes and 14.4 ms.
    channel, at the gap or the pace (pace and priority, below). The
    piece after a slot heartbeat is apart from this (sleepy nodes,
    below).
+
+*Why another image of the same version.* Two builds can carry one
+version number, and on the bench they do, several a day. Two relays
+flashed with a second build of the version a neighbour gathered from
+the first stopped serving it, since its section named an image they no
+longer held, and it was offered theirs only once a higher version came:
+an hour with nothing sent (`update-stall-2026-11-10.md`). A gatherer
+that still hears a holder of its own image keeps it, so two such
+images side by side never make it swap back and forth.
 
 *Why a stream.* Every piece on a channel serves every node there that
 lacks its block, whenever that node began, so the nodes of a channel
