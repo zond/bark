@@ -355,6 +355,13 @@ pairing of roadmap D135 took 55.8 KB of it
 `docs/pairing-2026-11-06.md` the pairing's). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
 
+The same line counts what the radio heard since boot: `frames` passed
+their CRC, and `failed` began and gave no frame, split into
+`failed_header` (the header's CRC failed), `failed_crc` (the header
+passed, the payload's CRC failed) and `failed_timeout`. On a desk, most
+failures are neighbours' packets on the channels next to the one
+listened to (`docs/crc-failures-2026-11-10.md`).
+
 The image is the same wherever the repository is checked out. Source
 paths end up in it, a panic's location among them, and absolute ones
 would make its size depend on the checkout's path: a build from a path
