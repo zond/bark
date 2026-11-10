@@ -180,7 +180,10 @@ is a prototype for the bench, not the app people will carry.
   forgets the node and looks for it no more, and then has Android remove
   its bond with the node (Unpairing, below). Then the home node: make
   the connected node your home if it is not, or none; the dialog says
-  so, and on **Go ahead** your new card goes to every contact; **Send
+  so, and on **Go ahead** your new card goes to every contact; on a
+  public node the phone uses as a guest the same button pairs first,
+  and its dialog says so (A guest's home, below), with **Pair with this
+  node** after the home node for whoever keeps the node; **Send
   my card**, as on the first screen; clear the mailbox key of a node
   that holds one and is not your home. A node without a place says
   "This node has no place yet", with **Use this phone's location**,
@@ -338,9 +341,10 @@ first, and connects to it as its owner, before any public node and
 without asking "Is it yours?". A first read that succeeds on the
 encrypted link shows the node still holds the bond: it is kept as the
 paired node, and the first screen says "Back on your node, ID …". With
-no home set and the node placed, the first screen offers **Make this
-node my home** in one line, which says when the new card would go to
-the contacts, and **Not now**. A node that refuses the bond goes the
+no home set and the node placed and able to be a home, the first screen
+offers **Make this node my home** in one line, which says when the new
+card would go to the contacts, and **Not now**, which hides it until
+the app is started again. A node that refuses the bond goes the
 way of a stale bond, below, without the question either.
 
 A phone can hold such a stale bond in other ways too: unpaired by an
@@ -396,6 +400,23 @@ rounds, so it costs no scan more within Android's five in 30 s; and an
 errand of a few seconds a minute takes about a twelfth of the node's
 one guest link, so a few phones in reach seldom meet there. Mail waits
 in the ring meanwhile, so the interval delays it and loses none.
+
+**A guest's home.** Only the paired phone gives a node the mailbox key
+(spec "Phone link", Pairing), so a home is a node the phone has paired
+with. While the phone uses a public node as a guest and has no home,
+and the node has a place and can be a home, the first screen offers
+**Make this node my home** as it does for a pairing found again
+(above), its line saying what a home gives, that texts to the person
+wait there and their card gets a fixed address, and that the phone
+pairs with the node first, by the code its screen shows. Settings has
+the same button under the home node, its dialog saying the same and
+that a node keeps one paired phone, so a phone paired with it before
+loses it; after it comes **Pair with this node**, for whoever keeps the
+node and wants its settings without making it their home. The link is
+down between errands, so the app keeps the node's address and whether
+it can be a home from the last errand there. A pairing that fails, a
+wrong code or one cancelled, says why, and the phone goes on using the
+node as a guest.
 
 While it is not connected, the app looks for the node it is paired with
 and connects to it when it sees it, and, when it is not paired with a

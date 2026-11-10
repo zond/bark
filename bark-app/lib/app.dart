@@ -102,6 +102,16 @@ const int ownGone = 2;
 /// enough to be read by someone who looks at the phone after walking in.
 const Duration backShown = Duration(minutes: 1);
 
+/// Whether a node, by its status, can be a home: one that stays on power
+/// at a fixed place, so that its address stays (spec "Mailbox").
+bool canBeHome(Status? s) => s != null && !s.sleepy && !s.carried;
+
+/// A public node as the phone's last errand there read it: how to reach
+/// it, its address once it has a place, and whether it can be a home
+/// ([canBeHome]). Between errands the link is down and the session knows
+/// none of it.
+typedef GuestNode = ({FoundNode found, Address? address, bool homeable});
+
 class AppModel extends ChangeNotifier {
   final Sodium sodium;
   final Me me;
@@ -580,13 +590,14 @@ class AppModel extends ChangeNotifier {
   bool connectedTo(String device) => session.connected && linkDevice == device;
 
   /// The person connects to `n`, after closing the link to another
-  /// node; `again` after they chose to pair again, which forgets the
-  /// phone's old bond and finds the node in a scan first ([seen]). It
-  /// ends the search for the paired node. Nothing while a connection is
-  /// being made or `n` is connected already: a second connect to the
-  /// same node would close the link the first made.
+  /// node, or a guest's to `n`, and pairs with it if the phone has not;
+  /// `again` after they chose to pair again, which forgets the phone's
+  /// old bond and finds the node in a scan first ([seen]). It ends the
+  /// search for the paired node. Nothing while a connection is being
+  /// made or `n` is connected already as the phone's: a second connect to
+  /// the same node would close the link the first made.
   Future<void> connect(FoundNode n, {bool again = false}) async {
-    if (connecting || connectedTo(n.deviceId)) return;
+    if (connecting || (connectedTo(n.deviceId) && !session.guest)) return;
     await _connect(n, again: again);
   }
 
@@ -622,6 +633,11 @@ class AppModel extends ChangeNotifier {
     }, guest: true);
     if (!session.connected || !session.guest) return;
     _guestAt = n.name;
+    _guestSeen = (
+      found: n,
+      address: session.address,
+      homeable: canBeHome(session.status),
+    );
     if (session.guestRead) _guestChecked[n.name] = now();
     await _sendQueuedFetch();
     await _sent();
@@ -669,6 +685,23 @@ class AppModel extends ChangeNotifier {
   /// The public node the phone uses as a guest, between its errands too:
   /// the node of the last, while the search runs.
   String? get guestNode => searchOn ? _guestAt : null;
+
+  /// The last errand's node as it read it.
+  GuestNode? _guestSeen;
+
+  /// [guestNode] as its last errand read it, for making it the home or
+  /// pairing with it between errands.
+  GuestNode? get guestHere {
+    final g = _guestSeen;
+    return g != null && g.found.name == guestNode ? g : null;
+  }
+
+  /// The node the phone uses as a guest is the person's home, as after
+  /// they unpaired from their home: the node keeps the mailbox key.
+  bool get guestAtHome {
+    final a = guestHere?.address;
+    return a != null && messenger.isHome(a.id);
+  }
 
   /// Which node the phone is on, and why, as the first screen, Settings
   /// and the link's notification say it; null while it is on none. A
@@ -1100,19 +1133,53 @@ class AppModel extends ChangeNotifier {
   /// declines: the first screen offers it as the home while none is set.
   String? adopted;
 
-  /// Whether to offer the connected node, [adopted], as the home.
+  /// Whether the first screen offers the node the phone is on as the
+  /// home, while none is set: the connected node, [adopted], or the one it
+  /// uses as a guest ([guestHere]), once it has a place and if it can be a
+  /// home. Not again in the app's run once the person said not now.
   bool get offerHome {
-    final n = session.connected && !session.guest ? session.node : null;
-    return n != null &&
-        nodeName(n.id) == adopted &&
-        me.home == null &&
-        session.address != null;
+    if (_homeNotNow || me.home != null) return false;
+    final s = session;
+    final n = s.connected && !s.guest ? s.node : null;
+    if (n != null) {
+      return nodeName(n.id) == adopted &&
+          s.address != null &&
+          canBeHome(s.status);
+    }
+    final g = guestHere;
+    return g != null && g.address != null && g.homeable;
   }
+
+  /// The person declined the offer of the home in this run of the app.
+  bool _homeNotNow = false;
 
   /// The person declines the offer of the home.
   void notHome() {
+    _homeNotNow = true;
     adopted = null;
     notifyListeners();
+  }
+
+  /// Makes the node the phone is on the person's home ([makeHome]). A
+  /// public node it uses as a guest is paired with first, by the code its
+  /// screen shows ([connect]), as only the paired phone may give a node
+  /// the mailbox key (spec "Phone link", Pairing); a pairing that fails
+  /// throws, and the phone goes on using the node as a guest. Returns what
+  /// to tell the person.
+  Future<String> homeHere() async {
+    final g = guestHere;
+    if (g != null) await connect(g.found);
+    final s = session;
+    final a = s.address;
+    if (!s.connected || s.guest || a == null) {
+      return 'Not paired with the node, so it is not your home. Nothing '
+          'changed.';
+    }
+    if (!canBeHome(s.status)) {
+      return 'Paired, but a home must be a node that stays on power at a '
+          'fixed place, so it is not your home.';
+    }
+    return makeHome(a);
   }
 
   /// Connects to the public node the search found, as a guest; a failure
