@@ -441,17 +441,11 @@ Every node heartbeats. This section describes a relay's; a sleepy node's
 are rarer ([beats](#beats)), and an anchorless node's carry the long
 preamble ([sleepy nodes alone](#sleepy-nodes-alone)).
 
-| Field | Bits | Content |
-|---|---|---|
-| heartbeat | 4 | `1000`: the packet is a heartbeat ([packet formats](#packet-formats)) |
-| channel | 4 | home channel index 0–12 |
-| format | 8 | the newest format the node speaks ([packet formats](#packet-formats)) |
-| flags | 8 | sleepy, anchorless, carried, map point, leaving ([packet formats](#packet-formats)) |
-| id | 48 | the node's ID ([node identity](#node-identity)) |
-| position | 32 | the node's short position ([positions on the wire](#positions-on-the-wire)) |
-
-13 bytes, 14.4 ms on air ([physical layer](#physical-layer)); with an
-update's section, 26 bytes, 22.08 ms
+A heartbeat ([packet formats](#packet-formats)) says the packet's kind
+and the node's home channel, the newest format it speaks, its flags, its
+ID ([node identity](#node-identity)) and its short position
+([positions on the wire](#positions-on-the-wire)): 13 bytes, 14.4 ms on
+air; with an update's section, 26 bytes, 22.08 ms
 ([updates over the mesh](#updates-over-the-mesh)).
 
 | | |
@@ -1602,14 +1596,12 @@ after ([delivery](#delivery)), and between its windows receives
 duty-cycled
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 
-A sleepy node holds mail for nobody. The mailbox is a relay's, kept so
-that it can deliver to a sleepy node in its window without the long
-preamble ([heard table](#heard-table), [delivery queue](#delivery-queue)).
-A sleepy node keeps the neighbour table and the send queue, and forwards
-what it is given at once, with the long preamble to a sleepy neighbour
-and the short one to any other. Everything else it does as any node. A
-carried relay keeps its mailbox but takes no new mail into it. A node
-that turns sleepy hands on what its mailbox still holds (below).
+A sleepy node holds mail for nobody: the mailbox is a relay's
+([heard table](#heard-table), [delivery queue](#delivery-queue)). It
+keeps the neighbour table and the send queue, and forwards what it is
+given at once, with the long preamble to a sleepy neighbour and the short
+one to any other; everything else it does as any node. A carried relay
+keeps its mailbox but takes no new mail into it.
 
 For a node that has gone dark the network keeps, for the delivery TTL,
 the node in its holder's table and the messages waiting for it, which
@@ -1649,15 +1641,10 @@ that reboots on battery is a relay, its grace counted from the boot
 
 The three voltages are a typical Li-ion cell's open-circuit voltage at
 20, 30 and 100 % of its charge, read after an hour's rest (Maxim
-Integrated, Application Note 4189, Table 1). At 20 % a relay keeps a
-fifth of its cell for its owner, and the 34 mV to 30 % keeps the role
-from flapping. Calibration answers the SAADC's gain error at gain 1/6, up
-to ±3 % (nRF52840 Product Specification, SAADC), which at 3.74 V spans 4
-to 57 % of a cell's charge; a charged and rested cell reads the curve's
-100 %, leaving the charger's tolerance, about 1 %. On battery a fixed
-relay draws about 6.4 mA (5.8 mA listening, 32 mA for its airtime), so
-80 % of the 850 mAh cell lasts it four days, and the fifth left keeps it
-asleep twelve and a half more.
+Integrated, Application Note 4189, Table 1); ±3 % is the SAADC's gain
+error at gain 1/6 (nRF52840 Product Specification, SAADC). On battery a
+fixed relay draws about 6.4 mA (5.8 mA listening, 32 mA for its
+airtime), so 80 % of the 850 mAh cell lasts it four days.
 
 **Turning sleepy.** When it is to turn sleepy the node takes no more
 mail, owning nothing by position, and flushes its delivery queue
@@ -1995,10 +1982,8 @@ for its next beat.
 holder hears, outside the node's window, goes at once as DATA with the
 long preamble
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)),
-the node's oldest first and one at a time, if the holder's bucket holds
-that frame beyond everything else it has to send: its send queue, every
-other message in its delivery queue at the ordinary preamble, and the
-reply reserve ([duty cycle cap](#duty-cycle-cap)). Once the node has
+the node's oldest first and one at a time, while the holder spares the
+long frame ([next hop](#next-hop)). Once the node has
 taken one, it listens a hand-over more, as after any delivery, and what
 follows goes with the ordinary preamble. A delivery outside the window
 that goes unanswered marks the node out of reach, and its messages wait
@@ -2884,8 +2869,8 @@ GF(2⁸), the firmware's, `code.rs`). Blocks decode as they complete and
 fail alone. An image has at most 48 blocks, the table's among them, one
 for each lane the firmware keeps pieces in: 47 blocks of packed image,
 743 KB, which `bark-fw/scripts/image.py pack` refuses to pass. Today's
-node image, 478 704 bytes (main `9b693a0`, 2026-11-09), packs to 1 940
-pieces in 31 blocks; with its two-piece table, 32 blocks.
+node image, 478 704 bytes (main `9b693a0`, 2026-11-09), packs to
+478 960 bytes, 1 940 pieces in 31 blocks; with its two-piece table, 32 blocks.
 
 Every block is checked against its entry in the table and block 1's
 header against the name the table begins with, so a piece of another
@@ -3016,17 +3001,11 @@ do not send together. Each pace ends a random time within two frames,
 277 ms, after the piece.
 
 **What it costs.** While no update runs, a relay's section rides one
-rotation of its heartbeats an hour: over a domain's 270 relays
-([capacity and sizing](#capacity-and-sizing)), 0.06 % of each channel's
-time. While one runs, a relay's count of blocks grows at most once in 64
-paces, 14.8 minutes, so its sections take at most 0.29 % of each
-channel's time, and each gatherer's section to its helper 0.12 % more:
-the heartbeats take at most 3.4 % against 3.0 % without. A boot, and an
-answer to a neighbour that lags, each add a rotation of sections,
-99.8 ms. A busy channel that gathers adds a piece a pace, 1 % of its
-time, however many help; an idle one a piece a gap, 3.3 %. Today's image
-takes a sweep of 2 428 pieces to a neighbour that holds none: 2.8 hours a
-gap apart, 9.3 hours at the pace.
+rotation of its heartbeats an hour, 0.06 % of each channel's time over a
+domain's 270 relays ([capacity and sizing](#capacity-and-sizing)). While
+one runs, the heartbeats take at most 3.4 % against 3.0 % without, and
+the pieces a piece a pace, 1 % of a busy channel's time, or a piece a
+gap, 3.3 % of an idle one's, however many help.
 
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes the
@@ -3116,17 +3095,9 @@ so never serves it. A release after it has a higher version and is taken
 as usual. The page holds 1 024 versions, and when full is erased and
 starts again with the newest.
 
-**What a node keeps.** The image it holds; the one it gathers, the first
-block it lacks, the blocks that passed, a bit each, and the pieces handed
-to its firmware of every block, a bit each, 48 × 32 bytes; per channel,
-the block its sweep is at, the pieces of it sent and the pieces to send;
-each block's next piece; the last two channels it sent pieces on and
-when; the times of the last 8 pieces it heard from others on its home
-channel; what its section last told, the channels its rotation of
-sections has still to reach, when that rotation began and when the hour's
-is due, whether it owes a lagging neighbour an answer, and its helper's
-ID: 1 880 bytes beside the tables, and 16 bytes in each neighbour's entry
-for its section and when it was heard (`core-interface.md`, Memory).
+**What a node keeps** for an update is 1 880 bytes beside the tables,
+and 16 bytes in each neighbour's entry for its section and when it was
+heard (`core-interface.md`, Memory).
 
 ## What the protocol omits
 

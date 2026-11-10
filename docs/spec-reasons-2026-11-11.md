@@ -1360,6 +1360,19 @@ or never checks its time. *Why give it up.* Its neighbours go on
 telling it; taken again, it would be gathered for hours and swapped
 back again, without end.
 
+**What a node keeps.** The image it holds; the one it gathers, the
+first block it lacks, the blocks that passed, a bit each, and the
+pieces handed to its firmware of every block, a bit each, 48 × 32
+bytes; per channel, the block its sweep is at, the pieces of it sent
+and the pieces to send; each block's next piece; the last two channels
+it sent pieces on and when; the times of the last 8 pieces it heard
+from others on its home channel; what its section last told, the
+channels its rotation of sections has still to reach, when that
+rotation began and when the hour's is due, whether it owes a lagging
+neighbour an answer, and its helper's ID: 1 880 bytes beside the
+tables, and 16 bytes in each neighbour's entry for its section and
+when it was heard (`core-interface.md`, Memory).
+
 ## What the protocol omits
 
 *Why no authentication.* A real node of the network with a few
