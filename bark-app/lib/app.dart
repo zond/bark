@@ -521,16 +521,25 @@ class AppModel extends ChangeNotifier {
     return i != null && i.gone == null && n != null && nodeName(n.id) == i.node;
   }
 
-  /// A paired node rebooted to install a version and is not yet back
-  /// within [swapAway]: the search's rounds do not count it out of reach.
-  bool get _installWaits {
+  /// A paired node rebooted to install a version and is not yet back.
+  bool get _swapping {
     final i = install;
-    final gone = i?.gone;
-    return gone != null &&
-        i!.back == null &&
-        pairedNodes.contains(i.node) &&
-        now().difference(gone) < swapAway;
+    return i != null &&
+        i.gone != null &&
+        i.back == null &&
+        pairedNodes.contains(i.node);
   }
+
+  /// [_swapping], within [swapAway] of the link's end: the search's rounds
+  /// do not count the node out of reach.
+  bool get _inSwap => _swapping && now().difference(install!.gone!) < swapAway;
+
+  /// The search waits for the node [_swapping]: through [swapAway] and the
+  /// first round after it. The second of the [ownGone] rounds that call it
+  /// out of reach is an ordinary round, which uses a public node if it
+  /// misses the node too (roadmap D182, D202). Meanwhile the rounds look
+  /// for that node alone.
+  bool get _installWaits => _inSwap || (_swapping && _ownMissed < ownGone - 1);
 
   /// The line while a paired node is away to install a version; null
   /// otherwise.
@@ -1129,6 +1138,9 @@ class AppModel extends ChangeNotifier {
     pairAgain = null;
     try {
       await session.setStopped(false);
+      // The phone leaves a node that drains by its own choice: the link's
+      // end is no reboot, and nothing is waited for.
+      if (_installsNow) install = null;
       if (session.connected) await session.disconnect();
       linkDevice = device;
       final (link, m) = await open();
@@ -1144,7 +1156,11 @@ class AppModel extends ChangeNotifier {
         if (ownAway) session.note('Back on a paired node');
         _ownMissed = 0;
         _guestAt = null;
-        await session.setPaired(nodeName(session.node!.id));
+        final on = nodeName(session.node!.id);
+        // On another paired node, as the person tapped it, the wait for
+        // one that installs is over.
+        if (install?.node != on) install = null;
+        await session.setPaired(on);
       }
     } on NotOurs catch (e) {
       await session.setPaired(e.node, lost: true);
@@ -1347,7 +1363,8 @@ class AppModel extends ChangeNotifier {
   /// what it heard: the home, another paired node, a node Android holds a
   /// bond with that the app does not count as paired ([_bondedNode]), or
   /// the strongest public node while the phone has no paired node or they
-  /// are out of reach ([ownGone]).
+  /// are out of reach ([ownGone]); while a paired node is away for its
+  /// install, that node alone ([_installWaits]).
   Future<void> _rounds() async {
     try {
       while (_awake()) {
@@ -1365,9 +1382,14 @@ class AppModel extends ChangeNotifier {
         // A round cut short by the person's scan or tap heard too little
         // to call anything out of reach.
         final looked = lookingNow;
+        // A node away for its install is all the round looks for: what
+        // else it did would take the phone elsewhere just before the node
+        // is back (roadmap D202).
+        final waits = _installWaits;
+        final awaited = waits ? install!.node : null;
         final n = looked
             ? chooseNode(
-                heard.values,
+                heard.values.where((h) => !waits || h.name == awaited),
                 home: homeName,
                 paired: pairedNodes,
                 lost: await _lostBonded(heard.values),
@@ -1377,12 +1399,20 @@ class AppModel extends ChangeNotifier {
             : null;
         final mine = n != null && pairedNodes.contains(n.name);
         if (mine) await _connectFound(n);
-        final bonded = looked && !mine ? await _bondedNode(heard.values) : null;
-        if (bonded != null) await _adopt(bonded);
+        // A paired node heard and passed over was heard weak: the public
+        // node goes before it at once, as no later round is needed to
+        // tell that it is there.
+        final weakOwn =
+            !waits && heard.values.any((h) => paired.contains(h.name));
+        final errands = !waits && (usesPublic || weakOwn);
+        final bonded = looked && !mine && !waits
+            ? await _bondedNode(heard.values)
+            : null;
+        if (bonded != null) await _adopt(bonded, errand: errands);
         if (looked &&
             paired.isNotEmpty &&
             !(session.connected && !session.guest) &&
-            !_installWaits) {
+            !_inSwap) {
           _ownMissed++;
           if (_ownMissed == ownGone) {
             session.note(
@@ -1392,14 +1422,11 @@ class AppModel extends ChangeNotifier {
           }
         }
         if (looked && n == null) _guestAt = null;
-        // A paired node heard and passed over was heard weak: the public
-        // node goes before it at once, as no later round is needed to
-        // tell that it is there.
-        final weakOwn = heard.values.any((h) => paired.contains(h.name));
         if (looked) ownWeak = weakOwn && !mine;
         if (n != null &&
             !mine &&
             bonded == null &&
+            !waits &&
             (usesPublic || weakOwn) &&
             _guestDue(n)) {
           await _connectPublic(n);
@@ -1554,10 +1581,12 @@ class AppModel extends ChangeNotifier {
 
   /// The search found `n`, whose bond Android holds: taken back as a
   /// paired node, or, refused and its bond removed, used as a guest when
-  /// public, after a scan, as the bond went with what Android knew of the
-  /// address's type ([_overBond]). Nothing while a connect of the
-  /// person's is under way, which holds ([_byTap]).
-  Future<void> _adopt(FoundNode n) async {
+  /// public and the round goes on an `errand` at all, after a scan, as the
+  /// bond went with what Android knew of the address's type
+  /// ([_overBond]); without one the paired nodes are not yet out of reach
+  /// ([ownGone]). Nothing while a connect of the person's is under way,
+  /// which holds ([_byTap]).
+  Future<void> _adopt(FoundNode n, {required bool errand}) async {
     if (connecting) return;
     session.note('Found ${n.name}, bonded: connecting as its owner');
     _tapped = false;
@@ -1569,7 +1598,7 @@ class AppModel extends ChangeNotifier {
       session.note('Connecting to ${n.name} failed: $e');
       return;
     }
-    if (n.public && await seen(n.deviceId)) await _connectPublic(n);
+    if (errand && n.public && await seen(n.deviceId)) await _connectPublic(n);
   }
 
   /// The node the search found still paired with this phone though the
