@@ -105,6 +105,7 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                     home: nhome,
                     format: bark_proto::wire::FORMAT,
                     map_point: false,
+                    leaving: false,
                     id: NodeId::from_u64(pos.short().0 as u64),
                     short: pos.short(),
                 }),

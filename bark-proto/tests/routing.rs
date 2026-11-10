@@ -1442,6 +1442,7 @@ fn a_carried_neighbour_is_a_next_hop_only_while_fresh() {
         home: h.resting(w).unwrap(),
         format: bark_proto::wire::FORMAT,
         map_point: false,
+        leaving: false,
         id: w_id,
         short: position(&h, w).short(),
     };

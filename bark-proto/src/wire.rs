@@ -77,7 +77,8 @@
 //! - DATA `aux` is the sender's home channel, 0 to 12; its two high bits
 //!   are zero, and a DATA with either set is rejected.
 //! - The heartbeat's flags are bit 0 sleepy, bit 1 anchorless, bit 2
-//!   carried and bit 3 map point, each with or without the others.
+//!   carried, bit 3 map point and bit 4 leaving, each with or without the
+//!   others.
 //! - A heartbeat byte whose channel is 15, which no node sends, starts the
 //!   firmware's bench frames ([`BENCH_FIRST`]); nodes reject it as a
 //!   channel outside the plan.
@@ -145,6 +146,7 @@ const SLEEPY: u8 = 0x01;
 const ANCHORLESS: u8 = 0x02;
 const CARRIED: u8 = 0x04;
 const MAP_POINT: u8 = 0x08;
+const LEAVING: u8 = 0x10;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
 /// HEARTBEAT length.
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
@@ -272,6 +274,9 @@ pub struct Heartbeat {
     /// The sender's position is a map point a person set in the app, not
     /// a GPS fix (spec "Position").
     pub map_point: bool,
+    /// Leaving (0x10): the sender is about to leave the air, so do not
+    /// rely on it (spec "Packet formats").
+    pub leaving: bool,
     /// The sender.
     pub id: NodeId,
     /// The sender's position in short form; [`Heartbeat::position`]
@@ -597,7 +602,8 @@ impl Packet<'_> {
                 buf[HEARTBEAT_FLAGS] = flag(h.sleepy, SLEEPY)
                     | flag(h.anchorless, ANCHORLESS)
                     | flag(h.carried, CARRIED)
-                    | flag(h.map_point, MAP_POINT);
+                    | flag(h.map_point, MAP_POINT)
+                    | flag(h.leaving, LEAVING);
                 put(buf, HEARTBEAT_ID, &h.id.0);
                 put(buf, HEARTBEAT_POS, &h.short.0.to_be_bytes());
                 Ok(HEARTBEAT_LEN)
@@ -733,6 +739,7 @@ impl<'a> Packet<'a> {
                 home: channel(first & CHANNEL_MASK)?,
                 format: b[VERSION],
                 map_point: flags & MAP_POINT != 0,
+                leaving: flags & LEAVING != 0,
                 id: get_id(b, HEARTBEAT_ID),
                 short: get_short(b, HEARTBEAT_POS),
             }));
@@ -928,11 +935,12 @@ mod tests {
             home in chan(),
             format: u8,
             map_point: bool,
+            leaving: bool,
             id in id(),
             position in position(),
         ) {
             // Every heartbeat is read, whatever format its sender speaks.
-            let hb = Heartbeat { sleepy, anchorless, carried, home, format, map_point, id, short: position.short() };
+            let hb = Heartbeat { sleepy, anchorless, carried, home, format, map_point, leaving, id, short: position.short() };
             round_trip(&Packet::Heartbeat(hb));
             prop_assert_eq!(Packet::Heartbeat(hb).sender(), Some(id));
             prop_assert_eq!(hb.position(position), position);
@@ -1152,12 +1160,13 @@ mod tests {
         let mut hb = [0u8; HEARTBEAT_LEN];
         hb[FIRST] = HEARTBEAT_BIT;
         hb[VERSION] = FORMAT;
-        for flags in [0x00, 0x08, 0xf0, 0xf8] {
+        for flags in [0x00, 0x08, 0x10, 0xe0, 0xf8] {
             hb[HEARTBEAT_FLAGS] = flags;
             let Ok(Packet::Heartbeat(h)) = Packet::decode(&hb) else {
                 panic!("{flags:#x}")
             };
             assert_eq!(h.map_point, flags & MAP_POINT != 0, "{flags:#x}");
+            assert_eq!(h.leaving, flags & LEAVING != 0, "{flags:#x}");
             assert!(!h.sleepy && !h.anchorless && !h.carried, "{flags:#x}");
         }
     }
@@ -1210,6 +1219,7 @@ mod tests {
             home: Channel::new(12).unwrap(),
             format: FORMAT,
             map_point: false,
+            leaving: false,
             id: NodeId([1, 2, 3, 4, 5, 6]),
             short: ShortName(0x0708_090a),
         };
@@ -1235,6 +1245,13 @@ mod tests {
                 0x08,
                 Heartbeat {
                     map_point: true,
+                    ..hb
+                },
+            ),
+            (
+                0x10,
+                Heartbeat {
+                    leaving: true,
                     ..hb
                 },
             ),

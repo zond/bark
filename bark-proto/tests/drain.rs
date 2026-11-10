@@ -234,3 +234,30 @@ fn a_message_held_past_the_bound_is_offered_again_after_the_reboot() {
     }
     assert!(queued(&h), "not back in the delivery queue");
 }
+
+/// While a relay drains, its neighbour hears from its heartbeats that it
+/// is leaving the air; once the drain opens again, its next heartbeat
+/// says it no longer is (spec "Packet formats", "Neighbour table",
+/// roadmap D181).
+#[test]
+fn a_neighbour_hears_a_draining_relay_leaving() {
+    let (s, m) = (0, 1);
+    let mut h = build(vec![relay(0.0, 0.0, 1), relay(300.0, 0.0, 2)], &[(s, m)]);
+    let id = h.nodes[m].core.id();
+    let leaving = |h: &Harness<Relay>| {
+        h.nodes[s]
+            .core
+            .neighbours()
+            .any(|n| n.id == id && n.leaving)
+    };
+    assert!(!leaving(&h));
+    h.command(m, AppCommand::Drain(true));
+    // Within a worst-case rotation its heartbeat reaches every channel.
+    let rotation = Config::default().boot_listen;
+    assert!(h.run_until(h.now + rotation, leaving), "not heard leaving");
+    h.command(m, AppCommand::Drain(false));
+    assert!(
+        h.run_until(h.now + rotation, |h| !leaving(h)),
+        "still leaving"
+    );
+}

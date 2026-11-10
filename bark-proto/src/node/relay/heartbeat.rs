@@ -200,6 +200,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: self.home,
             format: crate::wire::FORMAT,
             map_point: self.motion.map_point,
+            leaving: self.leaving_air(),
             id: self.id,
             short: self.address().short(),
         };

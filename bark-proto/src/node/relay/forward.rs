@@ -844,7 +844,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// no other at all (roadmap D25, D29, D38). A banned next hop is waited
     /// for, not gone round (roadmap D106), unless it refused this message:
     /// the slots of `avoid` are gone round while banned where another is
-    /// left that is no worse a last resort (roadmap D110).
+    /// left that is no worse a last resort (roadmap D110). A neighbour
+    /// about to leave the air is gone round the same way, unless the
+    /// message is addressed to it (roadmap D181).
     fn next_hop(
         &self,
         record: &Record,
@@ -854,17 +856,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let hop = self.choose(record, passed, dst, now);
-        if avoid == 0 {
+        let (slot, n) = hop?;
+        let refused = avoid & (1u64 << slot) != 0 && self.neighbours.is_banned(&n, now);
+        if !refused && !(n.leaving && n.id != dst.0) {
             return hop;
         }
-        let round = avoid & self.banned_slots(now);
-        match hop {
-            Some((slot, n)) if round & (1u64 << slot) != 0 => self
-                .choose(record, passed | round, dst, now)
-                .filter(|(_, m)| !self.last_resort(m, now) || self.last_resort(&n, now))
-                .or(hop),
-            _ => hop,
-        }
+        let round = (avoid & self.banned_slots(now)) | self.leaving_slots(dst.0, now);
+        self.choose(record, passed | round, dst, now)
+            .filter(|(_, m)| !self.last_resort(m, now) || self.last_resort(&n, now))
+            .or(hop)
     }
 
     /// [`Self::next_hop`] with every slot of `passed` taken out.
@@ -909,6 +909,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .then(a.id.0.cmp(&b.id.0))
             })
             .map(|(slot, n)| (slot, *n))
+    }
+
+    /// The neighbour-table slots of the live neighbours about to leave the
+    /// air at `now`, but for `dst_id`: a message for a node ends there, and
+    /// gone round it would only wander.
+    fn leaving_slots(&self, dst_id: NodeId, now: Instant) -> u64 {
+        self.neighbours
+            .live(now)
+            .filter(|(_, n)| n.leaving && n.id != dst_id)
+            .fold(0, |m, (slot, _)| m | 1u64 << slot)
     }
 
     /// The neighbour-table slots of the live neighbours banned at `now`.

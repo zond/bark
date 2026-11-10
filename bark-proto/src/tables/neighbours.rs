@@ -161,6 +161,9 @@ pub struct Neighbour {
     /// Whether its position is a map point a person set, by its last
     /// heartbeat (spec "Neighbour table"); shown, used by no rule yet.
     pub map_point: bool,
+    /// Whether its last heartbeat said it is about to leave the air: a
+    /// next hop only where no other is (spec "Next hop").
+    pub leaving: bool,
     /// What the last heartbeat that carried a section said of its images
     /// (spec "Updates over the mesh"), its image kept once in the table
     /// ([`Neighbours::section`]).
@@ -647,6 +650,7 @@ impl Neighbours {
                 n.home = hb.home;
                 n.format = hb.format;
                 n.map_point = hb.map_point;
+                n.leaving = hb.leaving;
                 n.sleepy = hb.sleepy;
                 n.carried = hb.carried;
                 let anchorless = hb.anchorless && hb.sleepy;
@@ -678,6 +682,7 @@ impl Neighbours {
             home: hb.home,
             format: hb.format,
             map_point: hb.map_point,
+            leaving: hb.leaving,
             update: Told::NONE,
             last_heard: now,
             demoted_at: Instant::ZERO,
@@ -1092,6 +1097,7 @@ mod tests {
             home: Channel::new(home).unwrap(),
             format: crate::wire::FORMAT,
             map_point: false,
+            leaving: false,
             id: id(i),
             short: pos(i).short(),
         };
@@ -1108,6 +1114,23 @@ mod tests {
             ..hb
         };
         t.heard(&hb, p, rssi, &plane(), now)
+    }
+
+    /// A neighbour's entry says it is leaving the air while its last
+    /// heartbeat did: a heartbeat without the bit, from a node come back or
+    /// one that never sets it, clears it (spec "Neighbour table").
+    #[test]
+    fn the_last_heartbeat_says_whether_it_is_leaving() {
+        let mut t = Neighbours::new(params());
+        let (hb, p) = hb(1, 0);
+        let mut at = Instant::ZERO;
+        for leaving in [true, true, false, true] {
+            at += Duration::from_secs(10);
+            t.heard(&Heartbeat { leaving, ..hb }, p, -90, &plane(), at);
+            let n = t.get(id(1)).unwrap();
+            assert_eq!(n.leaving, leaving);
+            assert!(!t.is_banned(n, at) && !t.is_demoted(n, at));
+        }
     }
 
     /// A neighbour heard on channel 3 is next on channel 5 two intervals
