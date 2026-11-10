@@ -669,8 +669,10 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        // At the bound it keeps what the core still holds, and it ends the
-        // phones' links first.
+        // An image gathered over the mesh and staged: the node drains, and
+        // the reboot into it waits for a moment that loses nothing
+        // (`bark_image::policy`), keeps what the core still holds at the
+        // bound and its tables, and ends the phones' links first.
         if let Some(version) = staged {
             let core = &driver.core().0;
             let m = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
@@ -684,6 +686,8 @@ pub async fn run<'a>(
                     crate::carry::keep(core.held()).await;
                 }
                 crate::ble::close_all().await;
+                // Last, so that the time it took is known after the reset.
+                crate::tables::keep(core).await;
                 crate::update::reboot().await;
             }
         }

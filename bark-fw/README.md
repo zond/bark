@@ -316,7 +316,7 @@ On the external flash, in sectors of 4 KiB:
 | mailbox ring | `0x1A5000` | 256 KiB, 64 sectors | 1024 items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`, section 5; Mailbox, below); sealed to the phone, so not secret |
 | carried | `0x1E5000` | 44 KiB, 11 sectors | what the node still holds when it reboots into an image gathered over the mesh, 167 messages at most, a page each, offered again after the reboot (Updates, below) |
 | discharge log | `0x1F0000` | 32 KiB, 8 sectors | the battery's samples, 2048 at most, a sample an hour on battery (Discharge log, below) |
-| free | `0x1F8000` | 32 KiB, 8 sectors | |
+| tables | `0x1F8000` | 32 KiB, 8 sectors | the neighbour table and message records the node keeps across a reboot into an image gathered over the mesh, 25 248 bytes at most, given back to the core after it, aged by the swap's length, then erased (Updates, below; roadmap D180) |
 
 RAM, 256 KiB: `0x20000000..0x20000008` is left to the MBR;
 `0x20000008..0x20000400` holds a panic message for the next boot
@@ -522,11 +522,12 @@ A bench build, version 0, takes any signed version.
    back. Each of the 227 pages costs an internal erase of 85 ms and 1024
    word writes of 41 µs (nRF52840 Product Specification, NVMC), an
    external erase of 10 ms and 16 page programs of 1.3 ms (ZD25WQ16B
-   datasheet, Table 4-3), and 8 KiB over the external flash's bus, about
-   30 ms at the 2 to 3 Mbit/s its software clock makes by its
-   instructions: about 190 ms a page, 44 s, and 3 s more for the hash; a
-   swap back as long without the hash. Unmeasured; the mailbox's open
-   logs the bus's speed (Mailbox, below). Then the rail falls again.
+   datasheet, Table 4-3), and 8 KiB over the external flash's bus,
+   65 ms at the 1 Mbit/s measured (roadmap, Phase 2, "The external
+   flash's bus"): 223 ms a page, 50.6 s, and the hash reads the image
+   over the bus, 7.4 s for one that fills the slot; a swap back as long
+   without the hash (`bark_image::boot::time`). The bench measured 55 s
+   from the reboot to the port back. Then the rail falls again.
 5. On those boots it first starts the 32.768 kHz clock as the firmware
    does, on the crystal if it starts within 1 s (`bark_image::lfclk`),
    since the watchdog holds the clock on its source until a reset
@@ -706,7 +707,17 @@ confirmed itself.
   each, and after the reboot back to the core as the node's own, one
   at a time ahead of the phone's message and the mailbox's replies,
   `carry: id=... offered again`, the region erased once all have gone
-  (`src/carry.rs`). A phone that stays linked does not hold the reboot
+  (`src/carry.rs`). Its neighbour table and its message records go last
+  into the tables region, `tables: N neighbours and M records kept
+  across the reboot`, and at the first boot of the new image back to the
+  core, aged by the time away, `tables: N of N neighbours and M of M
+  records back, T ms away assumed`, then the region is erased
+  (`src/tables.rs`, roadmap D180). The board has no driver for its
+  real-time clock, so the time away is the swap's from the loader's
+  figures for the image's length (step 4 above), with the write and the
+  boot, which the clock measures; and the core's clock counts from
+  1 260.5 s before the boot, so that every entry still alive has an
+  instant on it (`src/clock.rs`). A phone that stays linked does not hold the reboot
   back: the node ends every link first, `ble: disconnected 0x16 slot N`
   for each, and waits for them to end, at most the longest supervision
   timeout, 32 s; the app looks for its node and connects again once it

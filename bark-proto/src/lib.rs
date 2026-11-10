@@ -35,8 +35,8 @@ pub use event::{
 };
 pub use ids::{MsgId, NodeId};
 pub use node::{
-    Anchor, BatteryLevels, Config, Core, Forced, Held, Load, NeighbourCounts, Node, Relay,
-    SleepyNode,
+    remembered_within, Anchor, BatteryLevels, Config, Core, Forced, Held, Kept, Load,
+    NeighbourCounts, Node, Relay, SleepyNode,
 };
 pub use position::{Position, ShortName};
 pub use radio::{Channel, CHANNELS};

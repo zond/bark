@@ -930,7 +930,7 @@ async fn ask(from: From, request: Request) -> bool {
 }
 
 fn now() -> Instant {
-    Instant::from_micros(embassy_time::Instant::now().as_micros())
+    crate::clock::core_now()
 }
 
 /// The status as the phone in `slot` reads it now: ready in its turn
@@ -1560,8 +1560,8 @@ async fn serve(
         }
         let next = LINK.lock(|l| l.borrow().turn_ends());
         let next = match (next, guest) {
-            (Some(t), true) => Some(embassy_time::Instant::from_micros(t.as_micros()).min(ends)),
-            (Some(t), false) => Some(embassy_time::Instant::from_micros(t.as_micros())),
+            (Some(t), true) => Some(crate::clock::embassy(t).min(ends)),
+            (Some(t), false) => Some(crate::clock::embassy(t)),
             (None, true) => Some(ends),
             (None, false) => None,
         };

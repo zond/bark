@@ -41,6 +41,8 @@ mod radio;
 #[cfg(not(feature = "console"))]
 mod stack;
 mod store;
+#[cfg(not(feature = "console"))]
+mod tables;
 mod touch;
 mod update;
 mod usb_log;
@@ -663,7 +665,8 @@ async fn node_radio(n: NodeRadio) {
             mailbox::open();
             carry::open();
             discharge::open();
-            update::started(n.shared);
+            let swapped = update::started(n.shared);
+            tables::restore(n.core, swapped).await;
             ble::START.signal(());
             node::run(n.core, radio, n.battery, &n.config, &clock).await;
         }
