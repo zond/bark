@@ -2584,7 +2584,8 @@ Its address is still where the network can find the message's node: the
 relay that owns it now, or the node itself as a neighbour, takes it on.
 
 **How long the battery lasts.** A node on battery with the levels above
-shows how long its battery lasts ([screen and buttons](#screen-and-buttons)).
+shows how long it can go on as it runs now
+([screen and buttons](#screen-and-buttons)).
 It keeps two drains, in percent of the cell an hour, one as a relay with
 its GPS at rest and one as a sleepy node, each first what its current
 says and then moved by what its readings show. A sample runs from a
@@ -2592,11 +2593,13 @@ reading to the first one at least 15 h later while the node runs one of
 the two ways; it starts an hour after any change of that, of the power
 or of the calibration, and a change ends it unused. Its drop in percent
 over its hours moves that way's drain as a moving average over 92.8 h.
-The time left is until the cell is flat under the rules above: a relay
-relays to the low level at its drain and is sleepy from there; a sleepy
-node is sleepy to the end. At or below the low level, where the percent
-shows none, it is the sleepy part less the time since the first low
-reading. The drains are kept across a reboot
+The time left is a relay's until the low level at its drain, where it
+turns sleepy by the rules above, and a sleepy node's until the cell is
+flat: above the low level the whole of what is left at its drain, and
+at or below it, where the percent shows none, the low level's share
+less the time since the first low reading. A person reads the figure as
+time in the way the node runs now, so it does not add the sleepy time
+that follows a relay's. The drains are kept across a reboot
 ([implementation notes](#implementation-notes)).
 
 | | |
@@ -2606,8 +2609,8 @@ reading. The drains are kept across a reboot
 | a sample | at least 15 h: 1 %, the smallest drop the percent shows, at a sleepy node's drain takes 14.4 h, rounded up to the hour |
 | the average | over 92.8 h: the time a relay takes from full to 30 % at its first drain |
 
-So a full relay on battery shows 16 days, 106 h relaying and 287 h asleep,
-and a full sleepy node 59 days.
+So a full relay on battery shows 4 days, 106 h, and then sleeps about
+12 more; a full sleepy node shows 59 days.
 
 *Why so slow.* The board has no fuel gauge: the percent is read off the
 cell's voltage, which is flat over most of its charge. One percent is

@@ -277,8 +277,8 @@ fn reading(percent: f32) -> u16 {
 /// A fixed relay on battery whose cell drains faster than its seed says
 /// learns from its readings: after the quiet hour and a sample of 15 h,
 /// its estimate moves toward the drain by the weight of a sample, it
-/// says so and keeps it, and its time left is the relay's segment to the
-/// low level and a sleepy node's from there. A reboot keeps what it
+/// says so and keeps it, and its time left is the time to the low level,
+/// where it turns sleepy. A reboot keeps what it
 /// learned.
 #[test]
 fn a_relay_on_battery_learns_its_drain() {
@@ -315,9 +315,9 @@ fn a_relay_on_battery_learns_its_drain() {
     let now_level =
         bark_proto::node::battery_percent(h.nodes[r].core.battery_millivolts(reading(level)));
     let left = h.nodes[r].core.battery_left(h.now).unwrap();
-    let sum = (f32::from(now_level.unwrap()) - 20.0) / relay + 20.0 / sleepy;
+    let to_low = (f32::from(now_level.unwrap()) - 20.0) / relay;
     let left_h = left.as_micros() as f32 / 3.6e9;
-    assert!((left_h - sum).abs() < 0.02, "{left_h} h for {sum} h");
+    assert!((left_h - to_low).abs() < 0.02, "{left_h} h for {to_low} h");
     // Kept across a reboot.
     let stored = h.nodes[r].stored.expect("kept");
     reboot_on_battery(&mut h, r, stored, 92);

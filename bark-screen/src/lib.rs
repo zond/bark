@@ -276,9 +276,9 @@ pub enum Battery {
     Percent(u8),
 }
 
-/// How long the battery lasts, as the BATTERY line says it beside the
-/// level: in the largest unit that keeps the figure to one or two digits,
-/// but hours up to two days, as the uptime has them, since a day is a
+/// How long the node can go on as it runs now, as the BATTERY line says
+/// it beside the level: in the largest unit that keeps the figure to one
+/// or two digits, but hours up to two days, as the uptime has them, since a day is a
 /// coarse step there. Whole units, rounded down; days at most 99.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Left {
@@ -322,8 +322,8 @@ pub struct State {
     pub anchored: bool,
     pub carried: bool,
     pub battery: Battery,
-    /// How long the battery lasts at the drain the node has measured, if
-    /// it has an estimate (`bark_proto::drain`).
+    /// How long the node can go on as it runs now, at the drain it has
+    /// measured, if it has an estimate (`bark_proto::drain`).
     pub battery_left: Option<Left>,
     /// Neighbours whose heartbeats it hears now.
     pub heard: u8,

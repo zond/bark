@@ -239,8 +239,8 @@ carried relay has no grace with or without levels: on battery it turns sleepy at
 
 With the levels the core also learns from the readings how fast the cell drains, as a
 relay and as a sleepy node (spec "Sleepy nodes", How long the battery lasts;
-`bark_proto::drain`). `Node::battery_left(now)` is how long the battery lasts under the
-node's rules, `None` on external power, before a reading or without levels, for the
+`bark_proto::drain`). `Node::battery_left(now)` is how long the node can go on as it runs
+now, a relay to the low level and a sleepy node to empty, `None` on external power, before a reading or without levels, for the
 driver's screen; `Node::battery_drains()` the two drains, percent of the cell an hour; and
 `Trace::Drain { sleepy, measured, rate }` each closed sample, in ten-thousandths of a
 percent an hour, for a log.

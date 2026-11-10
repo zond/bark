@@ -753,8 +753,8 @@ impl core::fmt::Display for Time {
     }
 }
 
-/// The battery's estimate for the 10 s line, on battery: the time left in
-/// minutes, and the drains learned, a relay's and a sleepy node's, in
+/// The battery's estimate for the 10 s line, on battery: the time left as
+/// the node runs now in minutes, and the drains learned, a relay's and a sleepy node's, in
 /// ten-thousandths of a percent of the cell an hour, as the core's
 /// `Drain` trace gives them at each sample (`bark_proto::drain`).
 struct Drain<'a>(&'a Role, Instant);
