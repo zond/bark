@@ -140,6 +140,23 @@ const Duration lookAround = guestCheck;
 /// roadmap D163, D166).
 const int ownGone = 2;
 
+/// How long the line says a node is updated, once it is back on the new
+/// version: a minute, long enough to be seen when the person looks.
+const Duration updatedShown = Duration(minutes: 1);
+
+/// A node's install of an image it gathered over the mesh, as the app
+/// follows it (spec "Updates over the mesh", the install; roadmap D182):
+/// the node's name, the version, when the link ended for the reboot and
+/// when the node came back on that version.
+typedef Install = ({String node, int version, DateTime? gone, DateTime? back});
+
+/// The firmware version whose low 16 bits are `low`, as Status tells it,
+/// of a node that runs `image`: the first above it.
+int installVersion(int image, int low) {
+  final v = image - (image & 0xffff) + low;
+  return v > image ? v : v + 0x10000;
+}
+
 /// What a person reads of a node that keeps as many phones as it can and
 /// so takes no more pairings (spec "Phone link", Pairing).
 const String fullNode =
@@ -196,6 +213,7 @@ class AppModel extends ChangeNotifier {
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     session.addListener(_nodeAddress);
+    session.addListener(_installs);
     session.addListener(_queuedFetch);
     session.addListener(_link);
     session.addListener(_search);
@@ -433,6 +451,101 @@ class AppModel extends ChangeNotifier {
     final s = session.status;
     if (s == null || s.carried || s.sleepy) return;
     if (atHome && a.toString() != me.home.toString()) unawaited(me.setHome(a));
+  }
+
+  /// The install the app follows, the last a node told of.
+  Install? install;
+
+  void _installs() {
+    final n = session.connected ? session.node : null;
+    final i = install;
+    if (n == null) {
+      if (i != null && i.gone == null && i.back == null) {
+        install = (node: i.node, version: i.version, gone: now(), back: null);
+        session.note('${i.node} reboots to install version ${i.version}');
+      }
+      return;
+    }
+    final status = session.status;
+    if (status == null) return;
+    final name = nodeName(n.id);
+    final low = status.installing;
+    if (low != 0) {
+      final version = installVersion(n.image, low);
+      if (i?.node != name || i?.version != version || i?.gone != null) {
+        install = (node: name, version: version, gone: null, back: null);
+        session.note('$name drains to install version $version');
+      }
+    } else if (i?.node == name && i!.back == null) {
+      final on = n.image == i.version && i.gone != null;
+      install = on
+          ? (node: name, version: i.version, gone: i.gone, back: now())
+          : null;
+      session.note(
+        on
+            ? '$name runs version ${i.version}, installed over the mesh'
+            : '$name does not install version ${i.version} now',
+      );
+    }
+  }
+
+  /// The node in use tells it drains to install the version [install]
+  /// names.
+  bool get _installsNow {
+    final i = install;
+    final n = session.connected ? session.node : null;
+    return i != null && i.gone == null && n != null && nodeName(n.id) == i.node;
+  }
+
+  /// A paired node rebooted to install a version and is not yet back
+  /// within [swapAway]: the search's rounds do not count it out of reach.
+  bool get _installWaits {
+    final i = install;
+    final gone = i?.gone;
+    return gone != null &&
+        i!.back == null &&
+        pairedNodes.contains(i.node) &&
+        now().difference(gone) < swapAway;
+  }
+
+  /// The line while a paired node is away to install a version; null
+  /// otherwise.
+  String? get installingLine {
+    if (!_installWaits || session.connected) return null;
+    final i = install!;
+    return '${shownName(i.node)} is installing version ${i.version}, back in '
+        'about a minute';
+  }
+
+  /// Why the node is or was away for an install, for the help; null when
+  /// none is under way.
+  String? get installHelp {
+    if (!_installsNow && installingLine == null) return null;
+    final i = install!;
+    return '${shownName(i.node)} got version ${i.version} of its firmware '
+        'from the nodes around it and is installing it. It first passes on '
+        'the texts it holds, which takes at most ten minutes, then restarts '
+        'and is back about a minute later. The phone waits for it and '
+        'connects again by itself; nothing is lost. Texts you write '
+        'meanwhile wait on the phone.';
+  }
+
+  /// What the line adds of the connected node's install: that it is
+  /// installing a version, or that it came back on it within
+  /// [updatedShown].
+  String get _installNote {
+    final i = install;
+    if (i == null || !session.connected) return '';
+    if (_installsNow) return ', installing version ${i.version}';
+    final back = i.back;
+    final n = session.node;
+    if (back != null &&
+        n != null &&
+        nodeName(n.id) == i.node &&
+        now().difference(back) < updatedShown) {
+      return ', updated to version ${i.version}';
+    }
+    return '';
   }
 
   /// The card changed and has not gone to the contacts. Without contacts
@@ -884,16 +997,17 @@ class AppModel extends ChangeNotifier {
     final g = n != null && session.guest ? nodeName(n.id) : guestNode;
     final h = homeName;
     final home = h == null ? '' : '. Home at ${shownName(h)}';
+    final installs = _installNote;
     if (g != null && tappedGuest) {
-      return 'Connected to ${shownName(g)} as a guest, until the node ends '
-          'a guest\'s link after 30 s$home';
+      return 'Connected to ${shownName(g)} as a guest$installs, until the '
+          'node ends a guest\'s link after 30 s$home';
     }
     if (g != null && (n == null || session.guest)) {
-      return 'Connected to ${shownName(g)} as a guest$home';
+      return 'Connected to ${shownName(g)} as a guest$installs$home';
     }
     if (n == null) return null;
-    if (atHome) return 'Connected to your home, ${nodeLabel(n.id)}';
-    return 'Connected to ${nodeLabel(n.id)}, paired$home';
+    if (atHome) return 'Connected to your home, ${nodeLabel(n.id)}$installs';
+    return 'Connected to ${nodeLabel(n.id)}, paired$installs$home';
   }
 
   /// Whether a public node is due a guest's errand: something waits to be
@@ -1233,7 +1347,8 @@ class AppModel extends ChangeNotifier {
         if (bonded != null) await _adopt(bonded);
         if (looked &&
             paired.isNotEmpty &&
-            !(session.connected && !session.guest)) {
+            !(session.connected && !session.guest) &&
+            !_installWaits) {
           _ownMissed++;
           if (_ownMissed == ownGone) {
             session.note(

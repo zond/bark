@@ -47,7 +47,12 @@ is a prototype for the bench, not the app people will carry.
   naming the home, another paired node or "a public node", or "Not
   connected. Bluetooth is off: turn it on to reach …". Without a home
   the home part is left out. With the search stopped it says "Not
-  connected. Texts wait on the phone". Why the phone is on that node,
+  connected. Texts wait on the phone". While the node says it is about
+  to install a new version of its firmware it got over the mesh, the
+  line adds ", installing version N", and after the node's reboot says
+  "ID … is installing version N, back in about a minute" in place of
+  looking for it; back on that version, it adds ", updated to version
+  N" for a minute (Updating a node, below). Why the phone is on that node,
   or on none, is not in the line: its info button opens a few sentences
   that say, such as that none of the paired nodes has been in reach for
   30 s or that they are heard too weakly, or that the phone is paired
@@ -529,7 +534,9 @@ once; with none heard above it, the app takes the node heard strongest,
 whatever its kind (`chooseNode`). The paired nodes are out of reach
 once two rounds in a row, 30 s, have reached none of them, heard or
 connected (`ownGone`): one round with the screen off may miss a node in
-reach. A paired node heard well always comes first, and the app moves
+reach. After a paired node that said it was installing ends the link,
+the rounds count only from 55 s on, the time a node is away for its
+swap (`swapAway`; Updating a node, below). A paired node heard well always comes first, and the app moves
 to it in the first round that hears it, so at the edge of its reach,
 heard every other round, the phone stays with it. On a paired node that
 is not the home the phone is its owner, with the standing link and the
@@ -821,6 +828,25 @@ link version 11 says only the relays it knows, which the app counts
 instead, so it may warn of one that hears only sleepy nodes. A node from
 before link version 6 cannot be updated this way: Settings says to
 update it by USB once (`bark-fw/README.md`, "Flash").
+
+A node also installs an image it gathered over the mesh by itself
+(spec "Updates over the mesh", the install). From the moment it drains
+for the reboot its Status says the version, `installing`, which a node
+before link version 13 does not send. The connection line then says
+"Connected to ID …, installing version N", and its help that the node
+passes on the texts it holds within at most ten minutes, then restarts
+and is back about a minute later, and that the phone connects again by
+itself. When the node ends the link to reboot, the line says "ID … is
+installing version N, back in about a minute", and the search does not
+count the node out of reach until 55 s have passed (`swapAway`): from a
+reboot into an image of 227 pages to the node back on the bench,
+2026-11-06, the loader's hash and swap of about 47 s by the datasheets
+(`bark-fw/README.md`, "Updates") and the boot. Only then do the two
+rounds, 30 s, count, as for any node, as a round with the screen off
+may miss it. Back on version N, the line adds ", updated to version N"
+for a minute (`updatedShown`). A node whose drain opens again, for a
+low battery or a phone's update, clears `installing`, and the line goes
+back to what it was (roadmap D182).
 
 ## Newer releases
 

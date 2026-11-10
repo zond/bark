@@ -3317,7 +3317,7 @@ service and its characteristics:
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) id(6) image(4) room(1) oldest(1) | 13 |
-| Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) heard(1) | 15 |
+| Status | `28bc0003-…` | read, notify | flags(1) relays(1) boot_left(2) address(7) battery(2) inbox(1) heard(1) installing(2) | 17 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
 | | | write | msg_id(4) | 4 |
@@ -3376,6 +3376,7 @@ countdown of `boot_left`:
 | battery | millivolts as last read, uncalibrated; 0 on external power and before the first reading |
 | inbox | messages in the inbox |
 | heard | its live neighbours, sleepy or not, as its screen counts them ([neighbour status](#neighbour-status)); from link version 11 |
+| installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none; from link version 13 |
 
 So the app can show "listening, 3 relays heard, 1:40 to go", and the
 address the person gives others to reach them. Sleepy and carried are
@@ -3385,6 +3386,12 @@ measured, not set ([nodes](#nodes)).
 says whether the node hears anyone at all. A node whose only neighbours
 are sleepy hears them but knows no relay, and its radio works (roadmap
 D159).
+
+*Why installing.* A node that installs ends its phones' links and is
+away for the minute a swap takes; told beforehand, the app says so and
+waits for it rather than calling it out of reach (roadmap D182). The
+flags have no bit left, so it takes bytes of its own; two, as with one
+every 256th release would read as none.
 
 **Sending.** The app writes Send while ready is set. The node answers
 once it has taken the message, or with the ATT error 0x80, not ready,
@@ -3842,8 +3849,10 @@ paired with it, else the node it is paired with that it hears strongest; on
 either it is the owner. It uses the public node it hears strongest, as a
 guest, while it is paired with none that is still its own (The removed
 phone, above), while those are out of reach: none reached in two of the
-app's scans in a row, 15 s apart, so 30 s; and while it hears them only
-weakly. A node heard weakly is passed over for one further down the order
+app's scans in a row, 15 s apart, so 30 s, counted from 55 s after a node
+that said it was installing ended the link, the time a node is away for
+its swap ([updates over the mesh](#updates-over-the-mesh), the install);
+and while it hears them only weakly. A node heard weakly is passed over for one further down the order
 heard well; when the phone hears no node well, it uses the one it hears
 strongest, of whatever kind. A scan that
 hears one of its nodes well takes the phone back to it at once. On a node
@@ -4696,10 +4705,13 @@ neighbours, its delivery queue to its sleepy nodes at their beats, and
 its inbox to its application. It does so while it has the power a swap
 needs ([implementation notes](#implementation-notes)) and no phone's
 update holds the staged slot; otherwise it takes messages again, since
-no swap can come. It reboots at the first moment that it holds none of
-them, its mailbox has no write under way, and no exchange with a phone
-is half done: a write the node has not yet answered, a notification it
-has not yet sent, or a pairing.
+no swap can come. While it drains it tells its phones the version in
+Status's `installing` ([phone link](#phone-link), Status), and clears it
+when it takes messages again. It reboots at the first moment that it
+holds none of them, its mailbox has no write under way, and no exchange
+with a phone is half done: a write the node has not yet answered, a
+notification it has not yet sent, such as that of `installing`, or a
+pairing.
 
 The drain lasts at most the delivery TTL, 600 s
 ([nodes](#nodes)), counted from the second it began. By then every

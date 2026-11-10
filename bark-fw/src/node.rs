@@ -368,8 +368,9 @@ impl LinkApp<'_> {
     }
 }
 
-/// What the phone reads of `core` now (spec "Phone link", Status).
-fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
+/// What the phone reads of `core` now, `installing` the version it drains
+/// to install (spec "Phone link", Status).
+fn status(core: &Role, now: Instant, battery_mv: u16, installing: Option<u32>) -> Status {
     let external_power = crate::power::reported();
     Status {
         ready: core.accepts_send(now),
@@ -386,6 +387,8 @@ fn status(core: &Role, now: Instant, battery_mv: u16) -> Status {
         battery_mv: if external_power { 0 } else { battery_mv },
         inbox: core.inbox_len().min(u8::MAX as usize) as u8,
         heard: core.neighbour_counts(now).heard,
+        // Its low 16 bits, which wrap after 65 535 releases.
+        installing: installing.map_or(0, |v| v as u16),
     }
 }
 
@@ -631,7 +634,15 @@ pub async fn run<'a>(
         }
         let now = bark_driver::Clock::now(&clock);
         let core = &driver.core().0;
-        let status = status(core, now, driver.app().battery_mv);
+        // An image gathered over the mesh and staged: the node drains, and
+        // the reboot into it waits for a moment that loses nothing
+        // (`bark_image::policy`). The phones are told while it drains, and
+        // since the told status is a notification not yet sent, the reboot
+        // waits for it.
+        let moment = || crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
+        let staged = crate::update::mesh::staged();
+        let installing = staged.filter(|_| bark_image::policy::drains(moment()));
+        let status = status(core, now, driver.app().battery_mv, installing);
         crate::update::note_power(crate::update::Power {
             external: status.external_power,
             battery_mv: core.battery_millivolts(driver.app().battery_mv),
@@ -658,11 +669,9 @@ pub async fn run<'a>(
         // A request the step was woken for and did not take is answered
         // no: a message the core does not take now.
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        // An image gathered over the mesh and staged: the node drains, and
-        // the reboot into it waits for a moment that loses nothing
-        // (`bark_image::policy`), keeps what the core still holds at the
-        // bound, and ends the phones' links first.
-        if let Some(version) = crate::update::mesh::staged() {
+        // At the bound it keeps what the core still holds, and it ends the
+        // phones' links first.
+        if let Some(version) = staged {
             let core = &driver.core().0;
             let m = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
             crate::update::mesh::drain(bark_image::policy::drains(m), core.draining());
