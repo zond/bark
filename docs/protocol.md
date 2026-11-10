@@ -1768,10 +1768,13 @@ failed hand-over sets no bit ([hand-over](#hand-over) step 6).
 
 A neighbour whose last heartbeat had the leaving flag
 ([packet formats](#packet-formats)) is passed over the same way, for
-every message but one addressed to it, which ends there and sent round
-would only wander: it is no candidate while another is left that is no
+every message but one that may end there, addressed to it or, if it
+holds mail, to a position within the owner radius of it
+([owner](#owner)): it is no candidate while another is left that is no
 worse a last resort, and the next hop where none is. Nothing is counted
-against it, no ban and no demotion.
+against it, no ban and no demotion. Sent round a node where it ends, a
+message would only wander among that node's neighbours, each passing it
+over in turn, to the hop cap.
 
 *Why a ban is a wait.* A neighbour that does not answer stays the first
 candidate until it is demoted or gone, for the reasons of

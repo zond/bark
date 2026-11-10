@@ -3654,9 +3654,14 @@ fn the_status_tells_the_battery() {
 
 /// A relay that hears neighbours at `lats` north of it, nearer a far
 /// destination the farther north, each heartbeat leaving or not, and
-/// queues a forward to `dst_id` there; the relay, and the neighbour its
-/// first DATA goes to.
-fn first_hop_among(lats: &[(i32, bool)], dst_id: Option<usize>) -> (Relay, Instant, NodeId) {
+/// queues a forward there, to the neighbour `dst_id` if any, and to the
+/// position of the neighbour `dst_pos` if any; the relay, and the
+/// neighbour its first DATA goes to.
+fn first_hop_among(
+    lats: &[(i32, bool)],
+    dst_id: Option<usize>,
+    dst_pos: Option<usize>,
+) -> (Relay, Instant, NodeId) {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
     use crate::wire::Data;
@@ -3695,7 +3700,7 @@ fn first_hop_among(lats: &[(i32, bool)], dst_id: Option<usize>) -> (Relay, Insta
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
-        dst_pos: at(100_000),
+        dst_pos: at(dst_pos.map_or(100_000, |i| lats[i].0)),
         dst_id: dst_id.map_or(NOBODY, |i| id_of(at(lats[i].0))),
         hops: 2,
         payload: b"leaving",
@@ -3712,8 +3717,9 @@ fn first_hop_among(lats: &[(i32, bool)], dst_id: Option<usize>) -> (Relay, Insta
 }
 
 /// A neighbour about to leave the air is gone round where another is
-/// left, and still taken where it is the only one, or the message's
-/// destination; it is neither banned nor demoted for it
+/// left, and still taken where it is the only one, the message's
+/// destination or the owner of its position; it is neither banned nor
+/// demoted for it
 /// (spec "Next hop", roadmap D181).
 #[test]
 fn a_leaving_neighbour_is_gone_round_while_another_is_left() {
@@ -3725,20 +3731,31 @@ fn a_leaving_neighbour_is_gone_round_while_another_is_left() {
         })
     };
     let (d, e) = (10_000, 5_000);
-    assert_eq!(first_hop_among(&[(d, false), (e, false)], None).2, id(d));
-    assert_eq!(first_hop_among(&[(d, true), (e, false)], None).2, id(e));
-    assert_eq!(first_hop_among(&[(d, true)], None).2, id(d), "alone");
     assert_eq!(
-        first_hop_among(&[(d, true), (e, true)], None).2,
+        first_hop_among(&[(d, false), (e, false)], None, None).2,
+        id(d)
+    );
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, false)], None, None).2,
+        id(e)
+    );
+    assert_eq!(first_hop_among(&[(d, true)], None, None).2, id(d), "alone");
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, true)], None, None).2,
         id(d),
         "all leaving"
     );
     assert_eq!(
-        first_hop_among(&[(d, true), (e, false)], Some(0)).2,
+        first_hop_among(&[(d, true), (e, false)], Some(0), None).2,
         id(d),
         "addressed"
     );
-    let (r, now, _) = first_hop_among(&[(d, true), (e, false)], None);
+    assert_eq!(
+        first_hop_among(&[(d, true), (e, false)], None, Some(0)).2,
+        id(d),
+        "the owner of the position"
+    );
+    let (r, now, _) = first_hop_among(&[(d, true), (e, false)], None, None);
     let n = r.neighbours.get(id(d)).unwrap();
     assert!(n.leaving);
     assert!(!r.neighbours.is_banned(n, now) && !r.neighbours.is_demoted(n, now));

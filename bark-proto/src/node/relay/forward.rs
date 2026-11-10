@@ -846,7 +846,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the slots of `avoid` are gone round while banned where another is
     /// left that is no worse a last resort (roadmap D110). A neighbour
     /// about to leave the air is gone round the same way, unless the
-    /// message is addressed to it (roadmap D181).
+    /// message may end there ([`Self::ends_at`], roadmap D181).
     fn next_hop(
         &self,
         record: &Record,
@@ -858,10 +858,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let hop = self.choose(record, passed, dst, now);
         let (slot, n) = hop?;
         let refused = avoid & (1u64 << slot) != 0 && self.neighbours.is_banned(&n, now);
-        if !refused && !(n.leaving && n.id != dst.0) {
+        if !refused && !(n.leaving && !self.ends_at(&n, dst)) {
             return hop;
         }
-        let round = (avoid & self.banned_slots(now)) | self.leaving_slots(dst.0, now);
+        let round = (avoid & self.banned_slots(now)) | self.leaving_slots(dst, now);
         self.choose(record, passed | round, dst, now)
             .filter(|(_, m)| !self.last_resort(m, now) || self.last_resort(&n, now))
             .or(hop)
@@ -912,13 +912,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The neighbour-table slots of the live neighbours about to leave the
-    /// air at `now`, but for `dst_id`: a message for a node ends there, and
-    /// gone round it would only wander.
-    fn leaving_slots(&self, dst_id: NodeId, now: Instant) -> u64 {
+    /// air at `now`, but for those where a message to `dst` may end.
+    fn leaving_slots(&self, dst: (NodeId, Position), now: Instant) -> u64 {
         self.neighbours
             .live(now)
-            .filter(|(_, n)| n.leaving && n.id != dst_id)
+            .filter(|(_, n)| n.leaving && !self.ends_at(n, dst))
             .fold(0, |m, (slot, _)| m | 1u64 << slot)
+    }
+
+    /// Whether a message to `dst` may end at `n`: it is the destination, or
+    /// it holds mail within the owner radius of the position, so may own it
+    /// (spec "Owner"). Gone round such a node, a message would only wander
+    /// among its neighbours, each passing it over in turn, to the hop cap.
+    fn ends_at(&self, n: &Neighbour, (dst_id, dst): (NodeId, Position)) -> bool {
+        n.id == dst_id
+            || (n.holds_mail()
+                && n.local.distance2(self.plane.point(dst)) <= OWNER_RADIUS_M * OWNER_RADIUS_M)
     }
 
     /// The neighbour-table slots of the live neighbours banned at `now`.
