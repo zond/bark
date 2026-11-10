@@ -1,6 +1,9 @@
 // What every screen shares: the person, their contacts, the session with
 // the node, the messages sealed and opened, and how the app reaches a
-// node over Bluetooth.
+// node over Bluetooth. The model is made of parts, each with one job, in
+// `app/`: the links it makes, the search that chooses them, pairing and
+// Android's bonds, the home and the card, the person's scan, and a node's
+// install.
 
 import 'dart:async';
 
@@ -23,57 +26,83 @@ import 'session.dart';
 import 'store.dart';
 import 'updater.dart';
 
-/// The steps of a connection before its link is attached.
-enum Linking {
-  none,
+part 'app/connect.dart';
+part 'app/home.dart';
+part 'app/installs.dart';
+part 'app/pairing.dart';
+part 'app/scan.dart';
+part 'app/search.dart';
 
-  /// Connecting, and asking for the MTU.
-  connecting,
+/// What the parts of [AppModel] use of each other, each declared in the
+/// part that keeps it.
+abstract class _AppCore extends ChangeNotifier {
+  Session get session;
+  Me get me;
+  Contacts get contacts;
+  Messenger get messenger;
+  Updater get updater;
+  DateTime Function() get now;
 
-  /// Android asks the person for the code on the node's screen.
-  pairing,
+  /// What the phone knows of each node.
+  NodeStore get nodes => session.nodes;
 
-  /// The bond is made; the app goes on to connect.
-  paired,
+  // Bluetooth, as Android allows it ([AppModel]).
+  bool get bluetoothAllowed;
+  Future<void> checkBluetooth();
+  Future<void> Function() get _requestBluetooth;
 
-  /// Connected; the app reads the node.
-  attaching,
+  // The person's scan ([_Scan]).
+  bool get scanning;
+  Future<void> stopScan();
+
+  // Installs ([_Installs]).
+  Install? get install;
+  set install(Install? i);
+  bool get _installsNow;
+  Awaited? get _awaited;
+  void _giveUp(String node);
+
+  // Pairing ([_Pairing]).
+  Future<void> Function()? get pairAgain;
+  set pairAgain(Future<void> Function()? f);
+  bool get _unpairing;
+  Future<void> recheckKept();
+  Future<bool> _forgetBond(String name, String device);
+  Future<void> _forgetBonds(Iterable<FoundNode> heard);
+  FoundNode? heardLately(String name);
+
+  // Links ([_Connect]).
+  bool get connecting;
+  String? get linkDevice;
+  LinkNow? get _linkNow;
+  Future<void> connect(FoundNode n, {bool again = false});
+  Future<void> _connectFound(FoundNode n);
+  Future<void> _connectPublic(FoundNode n);
+
+  // The search ([_Search]).
+  void _roundsAfresh();
+  void _heard(Iterable<FoundNode> heard);
+  Future<void> _searchStopped();
+  Future<void> stopLooking();
+  Situation situation({List<FoundNode>? heard});
+  NodeRecord? get guestHere;
+
+  // The home ([_Home]).
+  Future<void> _sendQueuedFetch();
 }
 
-/// How long the line says a node is updated, once it is back on the new
-/// version: a minute, long enough to be seen when the person looks.
-const Duration updatedShown = Duration(minutes: 1);
-
-/// A node's install of an image it gathered over the mesh, as the app
-/// follows it (spec "Updates over the mesh", the install; roadmap D182):
-/// the node's name, the version, when the link ended for the reboot,
-/// whether the search gave up waiting for it, and when the node came back
-/// on that version.
-typedef Install = ({
-  String node,
-  int version,
-  DateTime? gone,
-  bool givenUp,
-  DateTime? back,
-});
-
-/// The firmware version whose low 16 bits are `low`, as Status tells it,
-/// of a node that runs `image`: the first above it.
-int installVersion(int image, int low) {
-  final v = image - (image & 0xffff) + low;
-  return v > image ? v : v + 0x10000;
-}
-
-/// What a person reads of a node that keeps as many phones as it can and
-/// so takes no more pairings (spec "Phone link", Pairing).
-const String fullNode = 'This node is full: eight phones are paired with it.';
-
-class AppModel extends ChangeNotifier {
+class AppModel extends _AppCore
+    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home {
   final Sodium sodium;
+  @override
   final Me me;
+  @override
   final Session session;
+  @override
   final Contacts contacts;
+  @override
   late final Messenger messenger;
+  @override
   final DateTime Function() now;
   final Notifier notifier;
   late final Alerts alerts;
@@ -137,6 +166,7 @@ class AppModel extends ChangeNotifier {
   late final Timer _ticker;
 
   /// The firmware update of the connected node.
+  @override
   late final Updater updater = Updater(
     session,
     () => mtu ?? defaultAttMtu,
@@ -158,347 +188,6 @@ class AppModel extends ChangeNotifier {
       if (s.fault != null) session.note(s.fault!);
     }
   }
-
-  final Map<String, FoundNode> found = {};
-  bool scanning = false;
-
-  /// The last scan found nothing: it was stopped with none found, or has
-  /// run [seenWait], ten of a node's advertising intervals, without one.
-  bool get noneFound => found.isEmpty && (_scanEnded || _scanLong);
-  bool _scanEnded = false;
-  bool _scanLong = false;
-  Timer? _scanTimer;
-  int? mtu;
-
-  /// Where a connection stands until the link is attached.
-  Linking linking = Linking.none;
-
-  /// A connection is being made: no other may start, and the search
-  /// does not scan. A tap's covers the whole of its connect, from the
-  /// close of the old link to the new link up, as the search would take
-  /// another node in the moments between ([_byTap]).
-  bool get connecting => linking != Linking.none || _tapHeld;
-
-  /// The device of the link connected or being connected.
-  String? linkDevice;
-
-  /// After a connect found the node no longer this phone's: forgets the
-  /// old bond and connects again, which pairs.
-  Future<void> Function()? pairAgain;
-
-  /// What the phone knows of each node.
-  NodeStore get nodes => session.nodes;
-
-  /// A node whose bond Android kept ([NodeRecord.bondKept]), for the line
-  /// that tells the person.
-  String? get bondKept =>
-      nodes.records.where((r) => r.bondKept).firstOrNull?.name;
-
-  /// Clears [NodeRecord.bondKept] of each node whose bond Android no
-  /// longer lists: the person has forgotten it in the phone's settings.
-  Future<void> recheckKept() async {
-    for (final r in [...nodes.records.where((r) => r.bondKept)]) {
-      final device = r.heard?.deviceId;
-      if (device == null || await BleLink.bonded(device)) continue;
-      r.bondKept = false;
-      session.note('Pairing: the phone no longer holds a bond with ${r.name}');
-      notifyListeners();
-    }
-  }
-
-  /// Has Android remove its bond with the node `name` at `device`, if it
-  /// lists one, as the app makes no link over a bond to a node it does
-  /// not count as its own: the node would take the link as its owner's,
-  /// or end it (spec "Phone link", Public). True once none is left; where
-  /// Android keeps it, false, and the node's record says so
-  /// ([NodeRecord.bondKept]).
-  Future<bool> _forgetBond(String name, String device) async {
-    if (!await BleLink.bonded(device)) return true;
-    final r = nodes.of(name);
-    if (await BleLink.forget(device)) {
-      r.unseen = true;
-      session.note('Pairing: the phone forgot its bond with $name');
-      return true;
-    }
-    if (!r.bondKept) {
-      session.note('Pairing: the phone kept its bond with $name');
-    }
-    r.bondKept = true;
-    notifyListeners();
-    return false;
-  }
-
-  /// Removes the bond Android holds with each node of `heard` that the app
-  /// does not count as its own, as it hears it, so that the node is a
-  /// public node like any other.
-  Future<void> _forgetBonds(Iterable<FoundNode> heard) async {
-    for (final n in heard) {
-      if (n.name == n.deviceId) continue;
-      final r = nodes.of(n.name);
-      if (r.own || r.bondKept) continue;
-      await _forgetBond(n.name, n.deviceId);
-    }
-  }
-
-  /// The owner gives the connected node up: the node forgets this phone's
-  /// bond, then the phone forgets its own, as Android would encrypt every
-  /// later link to the node with it, a guest's too, and the node refuses
-  /// it (spec "Phone link", Public). Returns whether the phone's bond is
-  /// gone; where Android keeps it, the person forgets the node in the
-  /// phone's Bluetooth settings, and [bondKept] says so meanwhile.
-  Future<bool> unpair() async {
-    _unpairing = true;
-    notifyListeners();
-    try {
-      return await _unpair();
-    } finally {
-      _unpairing = false;
-      notifyListeners();
-    }
-  }
-
-  /// An unpairing is under way: the search waits, as the node ends the
-  /// link while the phone still holds the bond, and a connect with it
-  /// then would find the node no longer this phone's.
-  bool _unpairing = false;
-
-  Future<bool> _unpair() async {
-    final device = linkDevice;
-    final n = session.node;
-    await session.unpair();
-    if (device == null || n == null) return true;
-    final name = nodeName(n.id);
-    // Nothing learned of the node unpaired bears on the next.
-    _missed = 0;
-    nodes.guest = null;
-    return _forgetBond(name, device);
-  }
-
-  void _heard(Iterable<FoundNode> heard) {
-    for (final n in heard) {
-      nodes.heard(n, now());
-    }
-  }
-
-  /// The person taps a node they are paired with in Settings: the app
-  /// connects to it as its owner, as a tap on it in a scan does. A node
-  /// heard within the span the search takes to call a node out of reach
-  /// ([ownGone] rounds) is taken as heard; another is listened for first,
-  /// one round's scan, and [NotSeen] goes on if it is not heard.
-  Future<void> connectPaired(String name) async {
-    if (_tapHeld) return;
-    await _byTap(() async {
-      var n = heardLately(name);
-      if (n == null) {
-        await stopScan();
-        final heard = await listen(until: (f) => f.name == name);
-        _heard(heard.values);
-        n = heard.values.where((f) => f.name == name).firstOrNull;
-      }
-      if (n == null) throw NotSeen(shownName(name));
-      if (connectedTo(n.deviceId) && !session.guest) return;
-      await _connect(n);
-    });
-  }
-
-  /// The node `name` as last heard, if heard within the span the search
-  /// takes to call a node out of reach ([ownGone] rounds): in reach.
-  FoundNode? heardLately(String name) {
-    final r = nodes[name];
-    final at = r?.heardAt;
-    return at != null && now().difference(at) < lookRound * ownGone
-        ? r!.heard
-        : null;
-  }
-
-  /// Whether `name`, a paired node no longer this phone's, may be paired
-  /// with again now ([pairLost]): heard lately.
-  bool lostInReach(String name) => heardLately(name) != null;
-
-  /// The person pairs again with `name`, a paired node that no longer
-  /// knows this phone, by the code on its screen, as **Pair** on its row
-  /// in a scan does ([connect]).
-  Future<void> pairLost(String name) async {
-    final n = heardLately(name);
-    if (n == null) throw NotSeen(shownName(name));
-    await connect(n);
-  }
-
-  /// Forgets `name`, a paired node no longer this phone's: the app counts
-  /// it paired no more, and has Android remove its bond with the node, as
-  /// [unpair] does, where it has heard the node in this run (roadmap
-  /// D173). Returns true once no bond is left, false where Android kept
-  /// it ([bondKept] then says so), and null where the app has not heard
-  /// the node: it removes the bond once it does ([_forgetBonds]), or the
-  /// person forgets the node in the phone's Bluetooth settings. The home
-  /// stays, as the node keeps the mailbox key.
-  Future<bool?> forget(String name) async {
-    await session.forget(name);
-    final device = nodes[name]?.heard?.deviceId;
-    if (device == null) return null;
-    return _forgetBond(name, device);
-  }
-
-  /// Keeps the node's address for the card, and the home's.
-  void _nodeAddress() {
-    final a = session.address;
-    if (a == null || !session.connected) {
-      // The link ended: the card says when it was last up.
-      if (!session.connected && me.linked) unawaited(me.unlinked());
-      return;
-    }
-    if (!me.linked || a.toString() != me.nodeAddress?.toString()) {
-      unawaited(me.setNodeAddress(a));
-    }
-    // The home is the node, not the spot: a fixed, awake node's address is
-    // its stored place, which moves only at boot or when it turns fixed,
-    // and the card and texts to the old one would miss it. A carried
-    // node's address is its live fix, which moves every second, and would
-    // change the card as often; a sleepy node's is its anchor's, which
-    // changes as it picks anchors. The changed card waits for the person to
-    // send it.
-    final s = session.status;
-    if (s == null || s.carried || s.sleepy) return;
-    if (atHome && a.toString() != me.home.toString()) unawaited(me.setHome(a));
-  }
-
-  /// The install the app follows, the last a node told of.
-  Install? install;
-
-  void _installs() {
-    final n = session.connected ? session.node : null;
-    final i = install;
-    if (n == null) {
-      if (i != null && i.gone == null && i.back == null) {
-        install = (
-          node: i.node,
-          version: i.version,
-          gone: now(),
-          givenUp: false,
-          back: null,
-        );
-        session.note('${i.node} reboots to install version ${i.version}');
-      }
-      return;
-    }
-    final name = nodeName(n.id);
-    // An owner's link to another node, as the person tapped it, ends the
-    // wait for one that installs (roadmap D202).
-    if (i != null && i.node != name && !session.guest) {
-      install = null;
-      return;
-    }
-    final status = session.status;
-    if (status == null) return;
-    final low = status.installing;
-    if (low != 0) {
-      final version = installVersion(n.image, low);
-      if (i?.node != name || i?.version != version || i?.gone != null) {
-        install = (
-          node: name,
-          version: version,
-          gone: null,
-          givenUp: false,
-          back: null,
-        );
-        session.note('$name drains to install version $version');
-      }
-    } else if (i?.node == name && i!.back == null) {
-      final on = n.image == i.version && i.gone != null;
-      install = on
-          ? (
-              node: name,
-              version: i.version,
-              gone: i.gone,
-              givenUp: i.givenUp,
-              back: now(),
-            )
-          : null;
-      session.note(
-        on
-            ? '$name runs version ${i.version}, installed over the mesh'
-            : '$name does not install version ${i.version} now',
-      );
-    }
-  }
-
-  /// The node in use tells it drains to install the version [install]
-  /// names.
-  bool get _installsNow {
-    final i = install;
-    final n = session.connected ? session.node : null;
-    return i != null && i.gone == null && n != null && nodeName(n.id) == i.node;
-  }
-
-  /// A paired node rebooted to install a version and is not yet back,
-  /// while the search has not given up waiting for it.
-  Awaited? get _awaited {
-    final i = install;
-    final gone = i?.gone;
-    if (i == null || gone == null || i.givenUp || i.back != null) return null;
-    return nodes.own.contains(i.node) ? (node: i.node, gone: gone) : null;
-  }
-
-  /// The search gives up waiting for the node that installs: it is out of
-  /// reach as any node ([waitsForInstall]).
-  void _giveUp(String node) {
-    final i = install!;
-    install = (
-      node: i.node,
-      version: i.version,
-      gone: i.gone,
-      givenUp: true,
-      back: null,
-    );
-    session.note('$node not back from its install: out of reach');
-  }
-
-  /// The line while a paired node is away to install a version; null
-  /// otherwise.
-  String? get installingLine {
-    if (session.connected || !waitsForInstall(situation())) return null;
-    final i = install!;
-    return '${shownName(i.node)} is installing version ${i.version}, back in '
-        'about a minute';
-  }
-
-  /// Why the node is or was away for an install, for the help; null when
-  /// none is under way.
-  String? get installHelp {
-    if (!_installsNow && installingLine == null) return null;
-    final i = install!;
-    return '${shownName(i.node)} got version ${i.version} from the nodes '
-        'around it. It passes on the texts it holds, at most ten minutes, '
-        'then restarts for about a minute. The phone reconnects by itself; '
-        'nothing is lost.';
-  }
-
-  /// What the line adds of the connected node's install: that it is
-  /// installing a version, or that it came back on it within
-  /// [updatedShown].
-  String get _installNote {
-    final i = install;
-    if (i == null || !session.connected) return '';
-    if (_installsNow) return ', installing version ${i.version}';
-    final back = i.back;
-    final n = session.node;
-    if (back != null &&
-        n != null &&
-        nodeName(n.id) == i.node &&
-        now().difference(back) < updatedShown) {
-      return ', updated to version ${i.version}';
-    }
-    return '';
-  }
-
-  /// The card changed and has not gone to the contacts. Without contacts
-  /// there is no one to send it to.
-  bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;
-
-  /// Why the card changed, for the line that offers to send it.
-  String get cardChange => me.home == null
-      ? 'Your card changed: no home'
-      : 'Your card changed: new home address';
 
   /// Keeps the app running while a node is connected by Bluetooth, so
   /// that it reads the inbox with the screen off, and while it searches
@@ -588,9 +277,32 @@ class AppModel extends ChangeNotifier {
     }
   }
 
+  @override
   final Future<void> Function() _requestBluetooth;
   static Future<void> _askAndroid() async {
     await UniversalBle.requestPermissions();
+  }
+
+  /// Whether Android lets the app use Bluetooth, as last checked: a fresh
+  /// install has not been allowed yet, and its search would only fail.
+  @override
+  bool bluetoothAllowed = false;
+  final Future<bool> Function() _bluetoothAllowed;
+
+  /// Checks whether Bluetooth is allowed: at start, when the app comes to
+  /// the front and when Bluetooth's state changes, as the person may have
+  /// allowed it in Android's settings meanwhile.
+  @override
+  Future<void> checkBluetooth() async {
+    bool a;
+    try {
+      a = await _bluetoothAllowed();
+    } catch (_) {
+      a = false;
+    }
+    if (a == bluetoothAllowed) return;
+    bluetoothAllowed = a;
+    notifyListeners();
   }
 
   /// The steps to a first text, each done or not, for the first screen's
@@ -602,339 +314,6 @@ class AppModel extends ChangeNotifier {
         session.connected || nodes.paired.isNotEmpty || me.nodeAddress != null,
     contact: contacts.list.isNotEmpty,
   );
-
-  /// The connected node is the person's home.
-  bool get atHome {
-    final n = session.node;
-    return n != null && messenger.isHome(n.id);
-  }
-
-  /// The connected node holds a mailbox key the phone can clear and is
-  /// not the person's home: a former home of theirs.
-  bool get holdsOtherKey {
-    final h = session.nodeHome;
-    return !atHome && h != null && h.mine;
-  }
-
-  /// The connected node, not the person's home, is someone else's. Only
-  /// its keeper, or a removal by the code on its screen, takes that key.
-  bool get othersHome {
-    final h = session.nodeHome;
-    return !atHome && h != null && !h.mine && h.set;
-  }
-
-  /// The person's home does not hold their mailbox key now: a phone
-  /// paired with it may have removed it ([Session.homeRemoved]).
-  bool get homeKeyGone =>
-      atHome && session.nodeHome?.mine == false && session.homeRemoved;
-
-  /// Fetches to the node's address; returns what to tell the person. Only
-  /// the person's word fetches, as fetched mail crosses the city twice
-  /// (roadmap D128).
-  Future<String> fetchNow() async {
-    if (me.home == null) return 'No home node to fetch from';
-    if (!session.connected) {
-      await me.setFetchQueued(true);
-      return 'The fetch waits for a node';
-    }
-    if (atHome) {
-      return 'At your home, your mail comes by itself';
-    }
-    if (session.fetchWaiting != null) {
-      return 'Still waiting for the last fetch';
-    }
-    final here = session.address;
-    if (here == null) {
-      return 'This node has no place yet, so mail cannot come back to it';
-    }
-    session.fetchNews = null;
-    await messenger.fetch(here);
-    return 'Fetching your mail';
-  }
-
-  /// Sends the queued fetch once a node is linked and has an address,
-  /// from it; at the home there is nothing to fetch, as the mail is in
-  /// its inbox here.
-  Future<void> _sendQueuedFetch() =>
-      _fetchSend ??= _sendFetch().whenComplete(() => _fetchSend = null);
-
-  Future<void> _sendFetch() async {
-    if (!me.fetchQueued || !session.connected) return;
-    if (atHome) {
-      await me.setFetchQueued(false);
-      return;
-    }
-    final here = session.address;
-    if (here == null || session.fetchWaiting != null || me.home == null) {
-      return;
-    }
-    await me.setFetchQueued(false);
-    session.fetchNews = null;
-    await messenger.fetch(here);
-    session.note('Fetch: sent, queued while no node was linked');
-  }
-
-  /// The queued fetch being sent, which a guest's errand waits for.
-  Future<void>? _fetchSend;
-  void _queuedFetch() => unawaited(_sendQueuedFetch());
-
-  static const _oldHomeKeeps =
-      'Your old home keeps your mail until you stop it there.';
-
-  /// Makes the connected node, at `a`, the person's home: it is given the
-  /// mailbox key and is the home only if it then says it holds one. The
-  /// new card goes to every contact if its address changed. Returns what
-  /// to tell the person.
-  Future<String> makeHome(Address a) async {
-    final n = session.node;
-    if (n == null) return 'Not connected to a node';
-    final h = await session.writeHome(me.keys.mailbox.extractBytes());
-    if (!h.mine) {
-      return 'The node refused. Nothing changed.';
-    }
-    final away = me.home != null && !atHome;
-    if (await me.setHome(a)) await messenger.sendCardToAll();
-    return away
-        ? 'This node is your home. $_oldHomeKeeps'
-        : 'This node is your home';
-  }
-
-  /// No home node. Connected to the home, it forgets the mailbox key;
-  /// elsewhere the home keeps it, and the person is told.
-  Future<String> noHome() async {
-    if (me.home == null) return 'No home node';
-    final at = atHome;
-    final h = at ? await session.writeHome(null) : null;
-    if (h != null && h.mine) {
-      return 'The node refused. It is still your home.';
-    }
-    if (await me.setHome(null)) await messenger.sendCardToAll();
-    return at ? 'No home node' : 'No home node. $_oldHomeKeeps';
-  }
-
-  /// Takes the mailbox key from a connected node that is not the home.
-  Future<String> clearKey() async {
-    final h = await session.writeHome(null);
-    return h.mine
-        ? 'The node refused. It still keeps your mail.'
-        : 'It no longer keeps your mail';
-  }
-
-  /// Scans for nodes, after asking for Bluetooth if it is not allowed
-  /// yet: the person's tap is where the app asks, and the search runs
-  /// from then on.
-  Future<void> scan() async {
-    if (!bluetoothAllowed) {
-      try {
-        await _requestBluetooth();
-      } finally {
-        await checkBluetooth();
-      }
-    }
-    found.clear();
-    scanning = true;
-    _scanEnded = false;
-    _scanLong = false;
-    _scanTimer?.cancel();
-    _scanTimer = Timer(seenWait, () {
-      _scanLong = scanning;
-      notifyListeners();
-    });
-    notifyListeners();
-    await _searchStopped();
-    try {
-      await startScan((n) {
-        found[n.deviceId] = n;
-        _heard([n]);
-        unawaited(_forgetBonds([n]));
-        notifyListeners();
-      });
-    } catch (e) {
-      scanning = false;
-      _scanTimer?.cancel();
-      notifyListeners();
-      rethrow;
-    }
-  }
-
-  Future<void> stopScan() async {
-    await stopBleScan();
-    _scanTimer?.cancel();
-    _scanEnded = scanning || _scanEnded;
-    scanning = false;
-    notifyListeners();
-  }
-
-  /// Whether `device` is the one connected.
-  bool connectedTo(String device) => session.connected && linkDevice == device;
-
-  /// The person connects to `n`, after closing the link to another
-  /// node, or a guest's to `n`, and pairs with it if the phone has not,
-  /// removing any bond Android holds with it first; `again` after they
-  /// chose to pair again, which finds the node in a scan first ([seen]),
-  /// as Android may have dropped the bond the node refused, and with it
-  /// what it knew of the address. It ends the search for the paired node.
-  /// Nothing while another connect of the person's is under way, or once
-  /// `n` is connected as the phone's: a second connect to the same node
-  /// would close the link the first made. A connect that ends with no
-  /// link says why: by what it throws, or, where app and node do not serve
-  /// each other, by the session's notice.
-  Future<void> connect(FoundNode n, {bool again = false}) async {
-    if (_tapHeld || (connectedTo(n.deviceId) && !session.guest)) return;
-    await _byTap(() async {
-      if (connectedTo(n.deviceId) && !session.guest) return;
-      await _connect(n, again: again);
-    });
-  }
-
-  /// The person connects to `n`, a public node, as a guest: without
-  /// pairing, so that it stays its owner's. It ends a search round, as
-  /// [connect] does, and the link lasts until the node ends it, after a
-  /// guest's 30 s, or the person leaves, not one errand (roadmap D179).
-  Future<void> connectGuest(FoundNode n) async {
-    if (_tapHeld || connectedTo(n.deviceId)) return;
-    await _byTap(() => _connectGuest(n, errand: false));
-  }
-
-  /// Runs the connect `f` the person asked for, holding [connecting]
-  /// until it ends, so that the search neither scans nor connects
-  /// meanwhile: a round started when the tap closed the old link took
-  /// the home before the tap's own connect was made (bench, 2026-11-10).
-  /// A connect of the search's already under way ends first: the tap
-  /// waits for it rather than doing nothing.
-  Future<void> _byTap(Future<void> Function() f) async {
-    _tapHeld = true;
-    notifyListeners();
-    try {
-      await _searchStopped();
-      await _linkingEnded();
-      await f();
-    } finally {
-      _tapHeld = false;
-      notifyListeners();
-    }
-  }
-
-  /// Completes once no connection is being set up ([linking]).
-  Future<void> _linkingEnded() async {
-    if (linking == Linking.none) return;
-    final done = Completer<void>();
-    void check() {
-      if (linking == Linking.none && !done.isCompleted) done.complete();
-    }
-
-    addListener(check);
-    await done.future;
-    removeListener(check);
-  }
-
-  /// A connect the person asked for is under way ([_byTap]).
-  bool _tapHeld = false;
-
-  /// A guest's errand at `n`: connect without pairing, write the tag and
-  /// read the ring's items for the person ([Session.attach]), send what
-  /// waits while Ready comes, and leave, as the node shares its one guest
-  /// link among every guest in reach (spec "Phone link", Public); not an
-  /// `errand` but the person's tap, the link stays until it ends. A bond
-  /// Android holds with the node goes first ([_forgetBond]): a guest's
-  /// link is never made over one; where Android keeps it, [BondKept].
-  Future<void> _connectGuest(FoundNode n, {bool errand = true}) async {
-    if (!await _forgetBond(n.name, n.deviceId)) throw BondKept(n.name);
-    // A connect of the person's that came meanwhile goes first.
-    if (errand && _tapHeld) return;
-    final r = nodes.of(n.name);
-    if (r.unseen && !await seen(n.deviceId)) throw NotSeen(shownName(n.name));
-    r.unseen = false;
-    await _open(n.deviceId, n.name, () async {
-      await _searchStopped();
-      await stopScan();
-      return BleLink.connect(n.deviceId, name: n.name, guest: true);
-    }, guest: true);
-    if (!session.connected || !session.guest) return;
-    // Linked, it is in reach now.
-    nodes.heard(n, now());
-    // The search's errand node is the one the phone uses as a guest
-    // between errands; a link the person made by a tap is theirs alone.
-    nodes.guest = errand ? n.name : null;
-    r.asGuest = (
-      address: session.address,
-      homeable: canBeHome(session.status),
-      room: session.node?.room,
-    );
-    if (session.guestRead) r.ringReadAt = now();
-    if (!errand) return;
-    final link = session.link;
-    await _sendQueuedFetch();
-    await _sent();
-    // Only the errand's own link: a tap may have replaced it meanwhile.
-    if (session.connected && session.link == link) await session.disconnect();
-  }
-
-  /// Completes once nothing waits to be offered to the node, or the link
-  /// has ended: the node ends a guest's after 30 s, or at once when
-  /// another guest has it, and the next round tries again.
-  Future<void> _sent() async {
-    final done = Completer<void>();
-    void check() {
-      if (!done.isCompleted && (!session.connected || !session.toSend)) {
-        done.complete();
-      }
-    }
-
-    session.addListener(check);
-    check();
-    await done.future;
-    session.removeListener(check);
-  }
-
-  /// The search's rounds in a row that have reached none of the paired
-  /// nodes.
-  int _missed = 0;
-
-  /// The paired nodes are out of reach: [ownGone] rounds in a row have
-  /// reached none, and the phone uses public nodes as a guest meanwhile.
-  bool get ownAway => pairedNodes.isNotEmpty && _missed >= ownGone;
-
-  /// The public node the phone uses as a guest, between its errands too:
-  /// the node of the last, while the search runs; or the node of a guest's
-  /// link the person made by a tap, while it is up.
-  String? get guestNode {
-    final l = _linkNow;
-    if (l != null && l.guest && l.byTap) return l.node;
-    return searchOn ? nodes.guest : null;
-  }
-
-  /// The link up is a guest's the person made by a tap, which the node
-  /// ends after a guest's 30 s (spec "Phone link", Public).
-  bool get tappedGuest {
-    final l = _linkNow;
-    return l != null && l.guest && l.byTap;
-  }
-
-  /// The link the phone has, if any.
-  LinkNow? get _linkNow {
-    final n = session.connected ? session.node : null;
-    if (n == null) return null;
-    return (node: nodeName(n.id), guest: session.guest, byTap: _linkByTap);
-  }
-
-  /// The link up was made by the person's tap, not by the search.
-  bool _linkByTap = false;
-
-  /// The record of [guestNode], once an errand there has read it, for
-  /// making it the home or pairing with it between errands.
-  NodeRecord? get guestHere {
-    final g = guestNode;
-    final r = g == null ? null : nodes[g];
-    return r?.asGuest != null && r?.heard != null ? r : null;
-  }
-
-  /// The node the phone uses as a guest is the person's home, as after
-  /// they unpaired from their home: the node keeps the mailbox key.
-  bool get guestAtHome {
-    final a = guestHere?.asGuest?.address;
-    return a != null && messenger.isHome(a.id);
-  }
 
   /// Which node the phone is on, as the first screen, Settings and the
   /// link's notification say it; null while it is on none. A public node
@@ -955,451 +334,6 @@ class AppModel extends ChangeNotifier {
     if (n == null) return null;
     if (atHome) return 'Connected to your home, ${nodeLabel(n.id)}$installs';
     return 'Connected to ${nodeLabel(n.id)}, paired$installs$home';
-  }
-
-  Future<void> _connect(FoundNode n, {bool again = false}) async {
-    await _open(n.deviceId, n.name, () async {
-      await _searchStopped();
-      await stopScan();
-      final ours = nodes[n.name]?.own ?? false;
-      // A node not the phone's is paired with anew, and never over a bond
-      // Android holds with it: Android pairs with its old keys while the
-      // node runs a new pairing, and the key check fails whatever code is
-      // typed; a link over it, to a node that no longer knows it, the node
-      // ends before a pairing can start (bench, 2026-11-10). So the bond
-      // goes first, as on Forget; a node that still held it takes the new
-      // pairing in its place (spec "Phone link", Pairing).
-      if (!ours && !await _forgetBond(n.name, n.deviceId)) {
-        throw BondKept(n.name);
-      }
-      final r = nodes.of(n.name);
-      if (r.unseen || again) {
-        if (!await seen(n.deviceId)) throw NotSeen(shownName(n.name));
-        r.unseen = false;
-      }
-      return BleLink.connect(
-        n.deviceId,
-        name: n.name,
-        hadBond: ours,
-        pairing: () {
-          _phase(Linking.pairing);
-          session.note('Pairing with ${n.name}');
-        },
-        paired: () {
-          _phase(Linking.paired);
-          session.note('Paired with ${n.name}');
-        },
-      );
-    }, again: () => connect(n, again: true));
-  }
-
-  /// Connects by `open` and attaches the link, which ends a stop of the
-  /// search the person made. Unless the link is a `guest`'s, the node
-  /// holds this phone's bond then and is kept as the paired node; one
-  /// that no longer does is kept as lost, with `again` to pair with it
-  /// anew, and [NotOurs] goes on to the caller. An owner's link to `name`
-  /// that ended while it was read is not taken as the node holding the
-  /// bond: [LinkEnded] goes on.
-  Future<void> _open(
-    String device,
-    String name,
-    Future<(NodeLink, int)> Function() open, {
-    Future<void> Function()? again,
-    bool guest = false,
-  }) async {
-    _phase(Linking.connecting);
-    pairAgain = null;
-    try {
-      await session.setStopped(false);
-      // The phone leaves a node that drains by its own choice: the link's
-      // end is no reboot, and nothing is waited for.
-      if (_installsNow) install = null;
-      if (session.connected) await session.disconnect();
-      linkDevice = device;
-      final (link, m) = await open();
-      _phase(Linking.attaching);
-      mtu = m;
-      session.note('Connected, MTU $m');
-      _linkByTap = _tapHeld;
-      if (await session.attach(link, guest: guest) && !guest) {
-        if (!session.connected) throw LinkEnded(name);
-        if (ownAway) session.note('Back on a paired node');
-        _missed = 0;
-        nodes.guest = null;
-        await session.setPaired(nodeName(session.node!.id));
-      }
-    } on NotOurs catch (e) {
-      await session.setPaired(e.node, lost: true);
-      pairAgain = again;
-      rethrow;
-    } finally {
-      _phase(Linking.none);
-    }
-  }
-
-  void _phase(Linking l) {
-    linking = l;
-    notifyListeners();
-  }
-
-  /// The person closes the link: the app does not look for the node
-  /// again until they connect.
-  Future<void> disconnect() async {
-    final stop = stopLooking();
-    await session.disconnect();
-    await stop;
-  }
-
-  /// The person stops the search for the paired node, until they connect.
-  Future<void> stopLooking() => session.setStopped(true);
-
-  /// Whether the search has started, which only the app on a phone does:
-  /// a test starts it to drive it.
-  bool _searchStarted = false;
-
-  /// Bluetooth is on, by Android's word.
-  bool bluetoothOn = false;
-  StreamSubscription<AvailabilityState>? _availability;
-
-  /// The search's loop runs.
-  bool _searching = false;
-
-  /// The scan under way, which ends once it has stopped.
-  Future<void>? _round;
-
-  /// Completed to end the search's scan or wait at once.
-  Completer<void> _wake = Completer<void>();
-
-  /// What the search did when last asked ([modeOf]); a change wakes it.
-  Mode _mode = Mode.idle;
-
-  /// When the search last started a scan, a round's or a look-around's.
-  DateTime? _scanned;
-
-  /// The link the search last saw, and when the phone last lost one it
-  /// held between rounds ([Situation.droppedAt]).
-  LinkNow? _had;
-  DateTime? _dropped;
-
-  /// What the last whole round heard.
-  List<FoundNode> _lastRound = const [];
-
-  /// The last failure the search noted, so that a failure every round
-  /// is told once.
-  String? _searchFailed;
-
-  /// The nodes this phone is paired with that still hold its bond; one
-  /// that no longer does is the person's to decide on, with Pair again.
-  Set<String> get pairedNodes => nodes.own;
-
-  /// The home's node, by name, if one is set.
-  String? get homeName {
-    final h = me.home;
-    return h == null ? null : nodeName(h.id);
-  }
-
-  /// The paired node the search looks for first: the home when the phone
-  /// is paired with it, else the one connected last.
-  String? get firstPaired {
-    final p = pairedNodes;
-    final h = homeName;
-    return h != null && p.contains(h) ? h : p.lastOrNull;
-  }
-
-  /// The phone's situation, on which the search decides ([decide]), with
-  /// what a scan just `heard`.
-  Situation situation({List<FoundNode>? heard}) => Situation(
-    now: now(),
-    home: homeName,
-    nodes: nodes.records,
-    link: _linkNow,
-    linking: connecting || _unpairing,
-    radio: bluetoothAllowed && bluetoothOn && !scanning,
-    stopped: session.stopped,
-    awaited: _awaited,
-    missed: _missed,
-    busy: !settled,
-    toSend: session.toSend,
-    scannedAt: _scanned,
-    droppedAt: _dropped,
-    heard: heard,
-  );
-
-  /// Whether the search runs, as the person reads it: not once they
-  /// stopped it, nor on a node of theirs, nor on a guest's link they made
-  /// by a tap ([tappedGuest]), nor while unpairing.
-  bool get searchOn {
-    if (!_searchStarted || session.stopped || _unpairing) return false;
-    final l = _linkNow;
-    return l == null || (l.guest && !l.byTap);
-  }
-
-  /// The paired node the search looks for first, while it runs
-  /// ([firstPaired]); null without one, when it looks for public nodes
-  /// alone.
-  String? get searchFor => searchOn ? firstPaired : null;
-
-  /// Whether the search scans now: not before Bluetooth is allowed, nor
-  /// while it is off, a connection is being made, or the person scans.
-  bool get lookingNow =>
-      searchOn && bluetoothAllowed && bluetoothOn && !connecting && !scanning;
-
-  /// The phone, on a paired node, moves to the home once it hears it
-  /// ([homeAbove]).
-  bool get movesHome => _searchStarted && homeAbove(situation()) != null;
-
-  /// The last round heard a node of the phone's own, too weak to take
-  /// ([ownPassedOver]), and the phone uses a public node meanwhile.
-  bool get ownWeak =>
-      !(session.connected && !session.guest) &&
-      ownPassedOver(situation(heard: _lastRound));
-
-  /// Whether the link in use may be closed with nothing lost: nothing in
-  /// flight on it ([Session.inFlight]) and no firmware update under way
-  /// ([Updater.underWay]).
-  bool get settled => !session.inFlight && !updater.underWay;
-
-  /// Whether Android lets the app use Bluetooth, as last checked: a fresh
-  /// install has not been allowed yet, and its search would only fail.
-  bool bluetoothAllowed = false;
-  final Future<bool> Function() _bluetoothAllowed;
-
-  /// Checks whether Bluetooth is allowed: at start, when the app comes to
-  /// the front and when Bluetooth's state changes, as the person may have
-  /// allowed it in Android's settings meanwhile.
-  Future<void> checkBluetooth() async {
-    bool a;
-    try {
-      a = await _bluetoothAllowed();
-    } catch (_) {
-      a = false;
-    }
-    if (a == bluetoothAllowed) return;
-    bluetoothAllowed = a;
-    notifyListeners();
-  }
-
-  /// The paired node the search is scanning for first now.
-  String? get lookingFor => lookingNow ? firstPaired : null;
-
-  /// Starts the search, which then runs whenever it should: at start, and
-  /// after a link drops.
-  void startSearch() {
-    if (_searchStarted) return;
-    _searchStarted = true;
-    _availability = UniversalBle.availabilityStream.listen((a) {
-      bluetoothOn = a == AvailabilityState.poweredOn;
-      notifyListeners();
-      unawaited(checkBluetooth());
-    });
-    unawaited(checkBluetooth());
-    notifyListeners();
-  }
-
-  /// Runs the search when it should, and ends a scan or wait under way
-  /// when what it does changes: a link that drops starts a round, and one
-  /// that comes up ends the round's wait.
-  void _search() {
-    if (!_searchStarted) return;
-    final l = _linkNow;
-    final had = _had;
-    // An errand's link is the round's own, and its end no news.
-    if (l == null && had != null && (!had.guest || had.byTap)) {
-      _dropped = now();
-    }
-    _had = l;
-    final m = modeOf(situation());
-    if (m != _mode) {
-      _mode = m;
-      if (!_wake.isCompleted) _wake.complete();
-    }
-    if (m == Mode.idle || _searching) return;
-    _searching = true;
-    unawaited(_run());
-  }
-
-  /// The search: decides, carries the decision out, and decides again on
-  /// what came of it, until there is nothing to do.
-  Future<void> _run() async {
-    try {
-      List<FoundNode>? heard;
-      while (_searchStarted) {
-        if (_wake.isCompleted) _wake = Completer<void>();
-        var s = situation(heard: heard);
-        var d = decide(s);
-        if (d case GiveUp(:final node)) {
-          _giveUp(node);
-          s = situation(heard: heard);
-          d = decide(s);
-        }
-        heard = null;
-        switch (d) {
-          case Idle():
-            // A scan cut short by a change heard too little to judge: the
-            // next round comes as soon as the search runs again.
-            if (s.heard != null) _scanned = null;
-            return;
-          case Wait(:final wait):
-            await _sleep(wait);
-          case Listen(:final until):
-            heard = await _listenRound(until);
-          case Connect(:final node):
-            await _connectFound(node);
-          case Errand(:final node):
-            await _connectPublic(node);
-          case MoveHome(:final node):
-            session.note(
-              'Heard ${node.name}, ${node.rssi ?? '?'} dBm: moving to it',
-            );
-            await _connectFound(node);
-          case GiveUp():
-            throw StateError('decided to give up twice');
-        }
-        if (!_searchStarted) return;
-        if (s.heard case final round?) _roundDone(round, s);
-      }
-    } finally {
-      _searching = false;
-    }
-  }
-
-  /// Waits `d`, or until [_wake] completes.
-  Future<void> _sleep(Duration d) async {
-    final t = Timer(d, () {
-      if (!_wake.isCompleted) _wake.complete();
-    });
-    await _wake.future;
-    t.cancel();
-  }
-
-  /// A scan of one round, ended early once `until` is heard well; then
-  /// Android's bond with each node heard that the app does not count as
-  /// its own goes ([_forgetBonds]), before anything is done with them.
-  Future<List<FoundNode>> _listenRound(String? until) async {
-    _scanned = now();
-    final round = _listen(
-      until == null ? null : (n) => n.name == until && n.usable,
-    );
-    _round = round;
-    final heard = await round;
-    _round = null;
-    await recheckKept();
-    await _forgetBonds(heard.values);
-    return heard.values.toList();
-  }
-
-  /// What the round that heard `heard`, decided on in `s`, leaves behind:
-  /// a miss of the paired nodes where it left the phone on none of them
-  /// ([countsMiss]), and the public node in use no longer, once a round
-  /// does not hear it.
-  void _roundDone(List<FoundNode> heard, Situation s) {
-    _lastRound = heard;
-    final g = nodes.guest;
-    if (g != null && !heard.any((h) => h.name == g)) nodes.guest = null;
-    if (!countsMiss(s) || (session.connected && !session.guest)) return;
-    _missed++;
-    if (_missed == ownGone) {
-      session.note(
-        'Not reached ${s.own.join(', ')} in $ownGone rounds: out of reach, '
-        'using public nodes as a guest',
-      );
-    }
-    notifyListeners();
-  }
-
-  Future<Map<String, FoundNode>> _listen(
-    bool Function(FoundNode)? until,
-  ) async {
-    try {
-      final heard = await listen(until: until, stop: _wake.future);
-      _heard(heard.values);
-      _searchFailed = null;
-      return heard;
-    } catch (e) {
-      final f = 'Looking for nodes failed: $e';
-      if (f != _searchFailed) session.note(f);
-      _searchFailed = f;
-      return const {};
-    }
-  }
-
-  /// Whether the first screen offers the public node the phone uses as a
-  /// guest ([guestHere]) as the home, while none is set, once it has a
-  /// place and if it can be a home and takes a pairing. Not again in the
-  /// app's run once the person said not now.
-  bool get offerHome {
-    if (_homeNotNow || me.home != null) return false;
-    final g = guestHere?.asGuest;
-    return g != null && g.address != null && g.homeable && g.room != 0;
-  }
-
-  /// The person declined the offer of the home in this run of the app.
-  bool _homeNotNow = false;
-
-  /// The person declines the offer of the home.
-  void notHome() {
-    _homeNotNow = true;
-    notifyListeners();
-  }
-
-  /// Makes the node the phone is on the person's home ([makeHome]). A
-  /// public node it uses as a guest is paired with first, by the code its
-  /// screen shows ([connect]), as only the paired phone may give a node
-  /// the mailbox key (spec "Phone link", Pairing); a pairing that fails
-  /// throws, and the phone goes on using the node as a guest. Returns what
-  /// to tell the person.
-  Future<String> homeHere() async {
-    final g = guestHere;
-    if (g != null && g.asGuest!.room == 0) return fullNode;
-    if (g != null) await connect(g.heard!);
-    final s = session;
-    final a = s.address;
-    if (!s.connected || s.guest || a == null) {
-      return 'Not paired, so not your home';
-    }
-    if (!canBeHome(s.status)) {
-      return 'Paired, but a home must stay on power in one place';
-    }
-    return makeHome(a);
-  }
-
-  /// Connects to the public node the search found, as a guest; a failure
-  /// waits for the next round, which takes the strongest again. Nothing
-  /// while a connect of the person's is under way ([_byTap]).
-  Future<void> _connectPublic(FoundNode n) async {
-    if (connecting) return;
-    session.note(
-      'Found public ${n.name}, ${n.rssi ?? '?'} dBm, connecting '
-      '${session.toSend ? 'to send' : 'for mail'}',
-    );
-    try {
-      await _connectGuest(n);
-    } catch (e) {
-      session.note('Connecting to ${n.name} failed: $e');
-    }
-  }
-
-  /// Connects to the paired node the search found, by the person's path.
-  /// A node no longer this phone's leaves the paired nodes the search
-  /// looks for ([pairedNodes]); another failure waits for the next round.
-  /// Nothing while a connect of the person's is under way ([_byTap]).
-  Future<void> _connectFound(FoundNode n) async {
-    if (connecting) return;
-    session.note('Found ${n.name}, connecting');
-    try {
-      await _connect(n);
-    } on NotOurs {
-      return;
-    } catch (e) {
-      session.note('Connecting to ${n.name} failed: $e');
-    }
-  }
-
-  /// Ends the search's scan and waits until it has stopped, so that a
-  /// scan or connect of the person's does not meet it.
-  Future<void> _searchStopped() async {
-    if (!_wake.isCompleted) _wake.complete();
-    await _round;
   }
 
   @override
