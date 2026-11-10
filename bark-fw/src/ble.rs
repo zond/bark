@@ -2436,6 +2436,9 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
             now
         );
         LINK.lock(|l| l.borrow_mut().phones[from.slot].record = Some(now));
+        // A record freed and the phone's mail now another's: the phones
+        // are told, this one of its person's count.
+        records_changed();
     }
     crate::mailbox::FOR_CORE.signal(());
     log::info!(
