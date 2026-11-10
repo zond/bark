@@ -971,7 +971,7 @@ fn the_install_run_is_its_baseline_with_installs() {
 /// hour (spec "Updates over the mesh", the install; roadmap D170, D180):
 /// each drains, reboots within the bound of its staging, comes back after
 /// the swap with its relays and records, and what it kept, if anything,
-/// is offered again, none of it lost. With its tables back a node at this
+/// is put back, none of it lost. With its tables back a node at this
 /// traffic seldom holds anything at the bound; the 64-fold district keeps
 /// thousands (`docs/update-under-load-2026-11-10.md`).
 #[test]

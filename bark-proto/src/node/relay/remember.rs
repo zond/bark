@@ -1,6 +1,6 @@
 //! What a reset would lose and still be true after it, kept across the
 //! reboot into a new image (spec "Updates over the mesh", the install;
-//! roadmap D180, D199): the neighbour table, without which a node just
+//! roadmap D180, D201): the neighbour table, without which a node just
 //! back knows no way on for what it carries, and the message records,
 //! which a return to it needs and what it holds goes on with. Beside what
 //! the node holds ([`Node::held`]), which it puts back.

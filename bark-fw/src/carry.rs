@@ -1,6 +1,6 @@
 //! What the node still holds when it reboots into an image gathered over
 //! the mesh, kept across the reboot (spec "Updates over the mesh", the
-//! install; roadmap D199; `bark_app_layer::carry`): written to its region
+//! install; roadmap D201; `bark_app_layer::carry`): written to its region
 //! of the external flash just before the reset, and at the boot after it
 //! put back where it was, after the tables kept with it. The application's
 //! own message, if the node held one, is offered to the core again as the

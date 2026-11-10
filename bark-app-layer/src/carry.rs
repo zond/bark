@@ -1,6 +1,6 @@
 //! What a node still holds when it reboots into a new image, kept across
 //! the reboot and put back where it was (spec "Updates over the mesh", the
-//! install; roadmap D199): a slot for each message, with its destination
+//! install; roadmap D201): a slot for each message, with its destination
 //! and payload, which [`MsgId::of`] is taken of, so that it is the same
 //! message after, its count, and where it was, as [`Held`] says.
 //!
