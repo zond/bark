@@ -1496,7 +1496,13 @@ an operation only what it changes: the settings that never change go once,
 a retune is standby, frequency and receive, a listen-before-talk is the
 CAD's preparation and sampling with the RSSI read inside it, and the whole
 configuration goes again after a reset, a sleep or an error, when the chip
-may not hold it. `src/radio.rs` is the chip on this board, one command at a
+may not hold it. After a reset the radio is brought back as at boot
+(roadmap D192, `docs/radio-recovery-2026-11-10.md`): the error word is read
+and logged first, the chip is calibrated at the longest oscillator delay,
+4 ms, since the calibrations run on a frequency that settles after the
+oscillator starts, and before it next listens the boot's measurements
+below, both oscillator delays and the reading inside a CAD, are taken
+again. `src/radio.rs` is the chip on this board, one command at a
 time: power-up, the pins, the SPI bus, and the encoding of each command
 from `lora-phy`, copied into `vendor/lora-phy` from revision `7a9c2ec` of
 the lora-rs `main` branch (2026-10-06; roadmap D4, D20); `vendor/README.md`
@@ -1520,10 +1526,11 @@ Between operations the radio waits in STDBY_XOSC, with its oscillator
 running, and transmit and receive end there (SetRxTxFallbackMode). The
 SX1262 powers the T-Echo's TCXO from DIO3 in every mode but sleep and
 STDBY_RC, and on each start it waits out a programmed delay in full, with
-no ready signal; a delay too short sets XOSC_START_ERR and lets the chip
-run on a clock still settling, which costs a few dB at the start of a
-frame, and a delay of zero hangs it (DS §13.3.6,
-`docs/bench-2026-10-30.md`). From STDBY_XOSC no start is needed: the chip
+no ready signal; a delay too short sets XOSC_START_ERR, or the PLL
+cannot lock and sets PLL_LOCK_ERR, and the chip may fall back to STDBY_RC
+instead of entering the mode it was sent to, and a delay of zero hangs it
+(DS §13.3.6, Table 13-84; `docs/bench-2026-10-30.md`,
+`docs/radio-recovery-2026-11-10.md`). From STDBY_XOSC no start is needed: the chip
 reaches RX in 62 µs and TX in 105 µs (DS Table 8-2). A CAD ends in
 STDBY_RC whatever the driver asks (DS Table 13-73), so every
 listen-before-talk restarts the oscillator. Restarted within a
@@ -1547,13 +1554,18 @@ flickers at the edge, and one step of margin; on the bench's board that
 is 500 µs and 100 µs. The time since the stop is measured: a CAD's end is
 taken as the earliest it can be, its eight symbols after the command,
 since its interrupt may reach the driver late while another task runs; a
-start found a millisecond or more after the stop takes the cold delay.
+start found a millisecond or more after the stop takes the cold delay,
+and the time is taken again after the delay is programmed, since other
+tasks may run while that command waits for the chip, so that a restart
+whose millisecond passed meanwhile is made cold.
 
 In use the error word is read after every start, and a start that set
 the oscillator's or the PLL's error steps its own delay up at once, with a
-log line giving the delay and how long the oscillator had been off; a
-restart that failed is followed by a cold start rather than left in
-STDBY_RC. Each delay comes back down by a probe two steps below it, which
+log line giving the delay and how long the oscillator had been off. A
+receive whose start failed, by the error word or by the chip's mode in the
+status byte read with it (DS §13.5.1), is stopped and started again cold,
+with the delay stepped up, rather than left in STDBY_RC; if that cold
+start fails too, the chip is reset before its next operation. Each delay comes back down by a probe two steps below it, which
 lowers it a step if it passes: due an hour at the earliest after the delay
 settled, when the processor's die temperature has moved 3 °C since, or
 after a day without an error whatever the temperature did. The console's
@@ -1570,6 +1582,13 @@ inside a CAD. If a pair has no reading inside, or the offset is beyond
 12 dB, twice the largest the bench saw, the reading is taken after the CAD
 instead, with the receiver started on the channel and settled, 1.1 ms more.
 The choice and the offset are logged at boot (`radio up`, `lbt reading`).
+
+A heartbeat skipped on every channel with no check found clear in between
+is taken to mean the radio reads wrong, not that the air is full (spec
+"Heartbeat"): the radio is reset and brought back as after an error, with
+a line giving the busy checks, those with a preamble seen and the range of
+the readings, and the 10 s line counts it in `recoveries`. The console's
+`recover` does the same by hand.
 
 Waiting in STDBY_XOSC costs 0.8 mA against 0.6 mA in STDBY_RC (DS Table
 3-5), plus the TCXO's own current, nominally 1.5 mA (DS §4.1.4), which it
