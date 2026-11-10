@@ -50,7 +50,8 @@ is a prototype for the bench, not the app people will carry.
   connected. Texts wait on the phone". Why the phone is on that node,
   or on none, is not in the line: its info button opens a few sentences
   that say, such as that none of the paired nodes has been in reach for
-  30 s, or that the phone is paired with no node near the person.
+  30 s or that they are heard too weakly, or that the phone is paired
+  with no node near the person.
   Settings' Node section shows the same line and button. Tapping the
   line opens Settings. Once there is a contact and
   until the backup words are written down, a card says "If you lose
@@ -176,7 +177,7 @@ is a prototype for the bench, not the app people will carry.
   uses it as a guest), how the connected node fares, and under
   "Paired with" the nodes the phone is paired with, the home first, each
   marked as the home, connected, not in reach while the search looks,
-  or no longer yours; on a paired node of link version 7 or later the
+  or no longer yours, with **Forget** (Unpairing, below); on a paired node of link version 7 or later the
   switch **Public: serve phones without pairing**, on unless the owner
   turns it off (Public nodes, below), and from link version 12
   **Unpair** on the connected node's row: a dialog names the node and
@@ -344,6 +345,20 @@ it: the node keeps the mailbox key. The search then uses the node as a
 guest; the texts, the contacts, the home and the card stay as they
 were.
 
+**Forget**, on the row of a node no longer the phone's, takes the node
+from the paired nodes after a dialog that says another phone has paired
+with it, that this phone stops listing it and forgets its own pairing
+with it, that pairing by the code on its screen makes it the person's
+again, and, for the home, that it stays the home, as after Unpair.
+Android names a bond by the device address, which the app learns only
+by hearing the node in a scan, and does not keep across runs. Where it
+has heard the node since it started, it has Android remove the bond as
+on unpairing, and where Android keeps it, says so with **Bluetooth
+settings**. Where it has not, a dialog says that the app removes the
+bond once it hears the node (A pairing found again, below) and that the
+person may forget the node in the phone's Bluetooth settings now, with
+the same button.
+
 **A pairing found again.** Android may list a bond with a node the
 app does not count as paired, as after the app's data was cleared, on
 a new install, after restoring the 12 words, or from an older app that
@@ -438,16 +453,30 @@ home, when the phone is paired with it; else the paired node heard
 strongest, by the best RSSI each node had over the round. When it is
 paired with none that is still its own, or they are out of reach, it
 goes on its errands at the public node heard strongest (spec "Phone
-link", Which node a phone uses). The paired nodes are out of reach
+link", Which node a phone uses). The order holds among the nodes heard
+at −85 dBm or above, where Settings stops saying "weak"
+(`FoundNode.usable`): a home or paired node heard below it is passed
+over for a node further down the order heard above it, a public one at
+once, and a weak node is taken only when nothing better is heard
+(`chooseNode`). The paired nodes are out of reach
 once two rounds in a row, 30 s, have reached none of them, heard or
 connected (`ownGone`): one round with the screen off may miss a node in
-reach. A paired node always comes first, and the app moves to it in the
-first round that hears it, so at the edge of its reach, heard every
-other round, the phone stays with it. On a paired node that is not the
-home the phone is its owner, with the standing link and the owner's
-inbox, as on the home. A connected paired node keeps the phone until
-the link drops: the search does not run meanwhile, so a home that
-comes into reach is taken at the next drop. A fetch sent from a public node brings the mail back there, read
+reach. A paired node heard well always comes first, and the app moves
+to it in the first round that hears it, so at the edge of its reach,
+heard every other round, the phone stays with it. On a paired node that
+is not the home the phone is its owner, with the standing link and the
+owner's inbox, as on the home. There, while the phone is paired with
+the home and the search made the link, the app scans for the home once
+a minute (`lookAround`, the errand's `guestCheck`) and moves to it when
+it hears it at −85 dBm or above and nothing on the link would be cut
+(`settled`): no Send written and not yet answered, no inbox message
+read and not yet confirmed, no fetch awaiting its answer
+(`Session.inFlight`), no update sending, being checked or rebooting
+(`Updater.underWay`); otherwise it tries at the next minute. The link
+to the paired node closes, and the line changes to the home's. It never
+moves between two paired nodes, and on the home, or on a node the
+person tapped, it does not scan. A fetch sent from a public node brings
+the mail back there, read
 as a guest's. Each errand takes the
 strongest public node of its round, so the phone moves to a nearer one
 as it walks. The
@@ -477,8 +506,9 @@ sixth scan started within 30 s, and two leave room for the person's own
 Scan and Pair again. A phone's Bluetooth scanning without a break draws
 in the order of 10 mA (an estimate, not measured here), so the search
 costs about 3 mAh an hour, under a tenth of a percent of a phone's
-battery. The app stops looking while it is connected to a paired
-node or Bluetooth is off; a node of which it said "This node is no
+battery, and the scan for the home from a paired node, once a minute,
+about a quarter of that. The app stops looking, but for that scan, while
+it is connected to a paired node, and while Bluetooth is off; a node of which it said "This node is no
 longer yours" it looks for no more (the person decides with **Pair
 again**), and with no other paired node it looks for public nodes
 alone; and it stops after the

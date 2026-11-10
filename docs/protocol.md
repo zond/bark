@@ -3746,36 +3746,64 @@ see it.
 
 **Which node a phone uses.** A node keeps up to eight phones (Pairing,
 above), and a phone may be paired with many nodes, each holding its bond. It
-uses, of the nodes it reaches, its home when it is paired with it, else
-the node it is paired with that it hears strongest; on either it is the
-owner. It uses the public node it hears strongest, as a guest, while
-it is paired with none that is still its own (The removed phone,
-above), and while those are out of reach: none reached in two of the
-app's scans in a row, 15 s apart, so 30 s. A scan that hears one of
-its nodes again takes the phone back to it at once. A phone that holds
-a bond with a node joins it only as its owner, never as a guest, as
-the node takes a link encrypted with its bond as the owner's or ends
-it. On a public node the phone is a guest like any other: its texts go
-from that node, so replies come to it, and it reads them there by its
-recipient tag; a fetch it sends there carries its tag at that node, so
-the home's answer comes there too ([mailbox](#mailbox), The fetch)
-(roadmap D163, D166).
+uses, of the nodes it hears well, at −85 dBm or above, its home when it is
+paired with it, else the node it is paired with that it hears strongest; on
+either it is the owner. It uses the public node it hears strongest, as a
+guest, while it is paired with none that is still its own (The removed
+phone, above), while those are out of reach: none reached in two of the
+app's scans in a row, 15 s apart, so 30 s; and while it hears them only
+weakly. A node heard weakly is passed over for one further down the order
+heard well, and used only when the phone hears no node well. A scan that
+hears one of its nodes well takes the phone back to it at once. On a node
+it is paired with that is not its home, the phone listens for the home once
+a minute and moves to it once it hears it well and nothing on the link is
+under way: no message written and not yet taken, none read and not yet
+confirmed, no fetch awaiting its answer, no update. It moves only up, from
+a public node to one it is paired with, from such a node to the home; never
+between two of its own nodes nor two public ones; and not from a node the
+person chose, until that link drops. A phone that holds a bond with a node
+joins it only as its owner, never as a guest, as the node takes a link
+encrypted with its bond as the owner's or ends it. On a public node the
+phone is a guest like any other: its texts go from that node, so replies
+come to it, and it reads them there by its recipient tag; a fetch it sends
+there carries its tag at that node, so the home's answer comes there too
+([mailbox](#mailbox), The fetch) (roadmap D163, D166, D171, D172).
 
 *Why the home first.* The home keeps the person's mail and its address
 is on their card, so on it nothing waits elsewhere for them; on another
 of their nodes, texts sent to the home wait there to be fetched.
 
+*Why a weak node is passed over.* A link to a node at the edge of its reach
+may not hold, while a node nearer would. −85 dBm is a choice, the line
+below which the app calls a signal weak, as the phone hears an
+advertisement before any link. It is applied only when the phone takes a
+node: a link once up is not left for its signal, so a node heard about the
+line does not move the phone back and forth.
+
 *Why two scans, and back at once.* A scan lasts four of the node's
 advertising intervals, 4.1 s, and hears a node in reach while the
 phone's screen is on; with the screen off the phone listens less and
 may miss it in one scan, so one miss does not prove the node gone. A
-scan every 15 s is two in 30 s, within the five Android lets an app
-start in 30 s. A node the phone is paired with serves the person whole,
-its inbox and its settings, so the phone goes back to one at once. The
-two differ on purpose: at the edge of such a node's reach, heard in
+node heard weakly was not missed, so the public node goes before it at
+once. A scan every 15 s is two in 30 s, within the five Android lets an
+app start in 30 s. A node the phone is paired with serves the person
+whole, its inbox and its settings, so the phone goes back to one at once.
+The two differ on purpose: at the edge of such a node's reach, heard in
 some scans and not others, the phone stays with it rather than going
 back and forth, and a text and the replies to it do not go by a public
 node the phone then leaves.
+
+*Why a minute, and only up.* On a standing link a scan serves only this
+and costs the phone's battery: 4.1 s a minute listens 7 % of the time,
+against 27 % every 15 s, for a home reached at most 45 s sooner. A
+minute is also how long a person on foot stays within a relay's reach
+(Where a text goes, Why a minute). A guest's link lasts one errand, so
+the next scan, at most 15 s on, takes a node the phone is paired with.
+Between two nodes of one place in the order, heard in turn at like
+signals, the phone would move back and forth. Nothing under way is cut,
+as a message cut between its write and the node's answer may go twice,
+and a fetch's answer comes to the node it was sent from. A node the
+person chose they may be at for its settings or an update.
 
 **The payload.** The app owns it; this is its layout (roadmap D123 to
 D127, D150). The reasons, and the alternatives a reader would ask about, are
