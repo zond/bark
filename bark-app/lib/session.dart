@@ -1196,15 +1196,6 @@ class Session extends ChangeNotifier {
     await save();
   }
 
-  /// Offers a given-back message again; the node takes it when ready.
-  Future<void> offerAgain(Outgoing o) async {
-    o.state = OutState.queued;
-    o.retryAt = null;
-    notifyListeners();
-    await save();
-    _pump();
-  }
-
   Future<void> drop(Outgoing o) async {
     if (o.state == OutState.writing) return;
     outbox.remove(o);

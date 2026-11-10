@@ -298,9 +298,6 @@ class HomeOfferLine extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!app.offerHome) return const SizedBox.shrink();
     final guest = app.guestHere != null;
-    final card = app.contacts.list.isEmpty
-        ? ''
-        : ' Your new card then goes to your contacts.';
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
@@ -308,15 +305,10 @@ class HomeOfferLine extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              guest
-                  ? 'This phone has no home node set. As your home, this '
-                        'node keeps texts to you and gives your card a fixed '
-                        'address. The phone pairs with it first: you type '
-                        'the code its screen shows.$card'
-                  : app.contacts.list.isEmpty
-                  ? 'This phone has no home node set.'
-                  : 'This phone has no home node set. Making this node '
-                        'your home sends your new card to your contacts.',
+              'This phone has no home node set. As your home, this node '
+              'keeps texts to you and gives your card a fixed address.'
+              '${guest ? ' The phone pairs with it first: you type the code its screen shows.' : ''}'
+              '${app.contacts.list.isEmpty ? '' : ' Your new card then goes to your contacts.'}',
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,

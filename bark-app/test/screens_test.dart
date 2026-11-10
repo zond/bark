@@ -116,11 +116,20 @@ void main() {
     await t.tap(find.text('I wrote them down'));
     await t.pumpAndSettle();
     expect(app.me.backedUp, isTrue);
-    await t.scrollUntilVisible(
-      find.text('Node\'s place'),
-      100,
-      scrollable: find.byType(Scrollable).first,
-    );
+    // The sections in the order a person looks for things.
+    final ys = [
+      for (final h in [
+        'Node',
+        'Home node',
+        'This node',
+        'Updates',
+        'My name',
+        'Backup',
+        'Debug',
+      ])
+        t.getTopLeft(find.text(h, skipOffstage: false)).dy,
+    ];
+    expect(ys, [...ys]..sort());
     await t.pageBack();
     await t.pumpAndSettle();
 
@@ -528,13 +537,15 @@ void main() {
       ..changed();
     await t.pump();
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    const noPlace = 'This node has no place yet, so it cannot be a home.';
     await t.scrollUntilVisible(
-      find.text('This node has no place yet.'),
+      find.textContaining(noPlace),
       100,
       scrollable: find.byType(Scrollable).first,
     );
-    // The one action, the same under Home node and under Node's place.
-    expect(find.text('Use this phone\'s location'), findsNWidgets(2));
+    // The home points to the one place to set it, under This node.
+    expect(find.textContaining('Set its place under This node'), findsOne);
+    expect(find.text('Use this phone\'s location'), findsOneWidget);
     expect(find.text('Phone location'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
 
@@ -543,7 +554,7 @@ void main() {
       ..sleepy = true
       ..changed();
     await t.pump();
-    expect(find.text('This node has no place yet.'), findsNothing);
+    expect(find.textContaining(noPlace), findsNothing);
     final make = find.widgetWithText(FilledButton, 'Make this node my home');
     expect(t.widget<FilledButton>(make).enabled, isFalse);
     expect(
@@ -1477,8 +1488,9 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('Unpair ID FA4E00000001?'), findsOneWidget);
     expect(find.textContaining('forgets this phone'), findsOneWidget);
-    expect(find.textContaining('UNPAIRED'), findsOneWidget);
-    expect(find.textContaining('public again'), findsOneWidget);
+    // The last phone paired: the node is public once it has gone.
+    expect(find.textContaining('PHONE UNPAIRED'), findsOneWidget);
+    expect(find.textContaining('it is public'), findsOneWidget);
     expect(find.textContaining('code on its screen'), findsOneWidget);
     expect(find.textContaining('texts and contacts stay'), findsOneWidget);
     expect(find.textContaining('forgets its own pairing'), findsOneWidget);
@@ -1553,6 +1565,8 @@ void main() {
     // On by default; the owner turns it off.
     final toggle = find.widgetWithText(SwitchListTile, public);
     expect(t.widget<SwitchListTile>(toggle).value, isTrue);
+    await t.ensureVisible(toggle);
+    await t.pumpAndSettle();
     await t.tap(find.text(public));
     await t.runAsync(() => Future<void>.delayed(Duration.zero));
     await t.pump();
@@ -1570,7 +1584,7 @@ void main() {
     expect(find.text('Send to the node'), findsNothing);
     expect(find.text('Pick a firmware file'), findsNothing);
     expect(find.text('Make this node my home'), findsNothing);
-    expect(find.text('Node\'s place'), findsNothing);
+    expect(find.text('This node'), findsNothing);
     await t.pumpWidget(BarkApp(app));
     await t.pump();
     expect(find.text(guestLine), findsOneWidget);

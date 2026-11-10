@@ -1,8 +1,9 @@
-// Settings: the node to connect to and the phone paired with it, the
-// fake node, whether the node serves phones without pairing, the node's
-// firmware, the battery exemption
-// that keeps the link with the screen off, the person's name, their home
-// node, their backup words, and the node's map point.
+// Settings, in the order a person looks for things: the node the phone
+// is on and the nodes it is paired with; the home node; on a paired node,
+// its own settings, whether it serves phones without pairing, its place
+// and the phones paired with it; updates of the app and the node; the
+// person's name and backup words; the battery exemption that keeps the
+// link with the screen off; then the demo and Debug.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -202,10 +203,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text('This node is no longer yours'),
         content: Text(
           '${shownName(e.node)} no longer knows this phone: someone paired '
-          'with it removed this phone, or, on older firmware, another phone '
-          'paired in its place. To make it yours again, pair again at the '
-          'node: it shows a six-digit code on its screen, and the phone '
-          'asks for it.',
+          'with it removed this phone, or the node lost what it had stored. '
+          'To make it yours again, pair again at the node: it shows a '
+          'six-digit code on its screen, and the phone asks for it.',
         ),
         actions: [
           TextButton(
@@ -304,11 +304,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               NoticeCard(app),
               StaleBondLine(app),
               ..._connection(),
-              ..._public(),
-              ..._phones(),
               ..._home(),
+              ..._thisNode(),
               ..._updates(),
-              ..._battery(),
               _heading('My name'),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -335,14 +333,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: _backup(),
                 ),
               ),
-              ..._mapPoint(),
+              ..._battery(),
               const SizedBox(height: 24),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Try without a node (demo)'),
-                subtitle: const Text(
+                subtitle: Text(
                   'A node in the app with an invented network; nothing leaves '
-                  'this phone',
+                  'this phone${app.session.connected && !app.fake ? '. Disconnect from the node first' : ''}',
                 ),
                 value: app.fake,
                 onChanged: app.session.connected ? null : app.setFake,
@@ -652,12 +650,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok == true) await _connect(() => app.connect(n), pairs: true);
   }
 
-  /// The owner's switch of whether the node serves phones that have not
-  /// paired with it.
-  List<Widget> _public() {
+  /// On a paired node, its own settings: whether it serves phones without
+  /// pairing, its place and the phones paired with it.
+  List<Widget> _thisNode() {
     final s = app.session;
-    final p = s.nodePublic;
-    if (!s.connected || s.guest || p == null) return [];
+    if (!s.connected || s.guest) return [];
+    return [_heading('This node'), ..._public(), ..._place(), ..._phones()];
+  }
+
+  /// The switch of whether the node serves phones that have not paired
+  /// with it.
+  List<Widget> _public() {
+    final p = app.session.nodePublic;
+    if (p == null) return [];
     return [
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
@@ -670,24 +675,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'alone.',
         ),
         value: p,
-        onChanged: (v) => _try(() => s.writePublic(v), 'Setting Public failed'),
+        onChanged: (v) =>
+            _try(() => app.session.writePublic(v), 'Setting Public failed'),
       ),
     ];
   }
 
-  /// The node's phones, on an owner's link: those
-  /// paired with it, and those whose home it is, a record holding both
-  /// in both lists (spec "Phone link", Phones). Another's row has Remove,
-  /// the person's own paired row Unpair; their own home is changed under
-  /// Home node.
+  /// The node's phones: those paired with it, and those whose home it
+  /// is, a record holding both in both lists (spec "Phone link", Phones).
+  /// Another's row has Remove, the person's own paired row Unpair; their
+  /// own home is changed under Home node.
   List<Widget> _phones() {
     final s = app.session;
     final rs = s.phones;
-    if (!s.connected || s.guest || rs == null) return [];
+    if (rs == null) return [];
     final paired = rs.where((r) => r.paired).toList();
     final homes = rs.where((r) => r.home).toList();
     return [
-      _heading('Phones at this node'),
+      _subheading('Phones paired with this node'),
       Text(
         'A node keeps up to eight phones: anyone at it can pair by the '
         'six-digit code it shows, and every phone paired with it may change '
@@ -703,7 +708,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
-      _subheading('Phones paired with this node'),
       for (final r in paired) _phoneRow(r, home: false),
       if (homes.isNotEmpty) ...[
         _subheading('Phones with a home here'),
@@ -713,7 +717,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _subheading(String t) => Padding(
-    padding: const EdgeInsets.only(top: 12),
+    padding: const EdgeInsets.only(top: 16, bottom: 4),
     child: Text(t, style: Theme.of(context).textTheme.titleSmall),
   );
 
@@ -855,14 +859,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final others = s.pairedWith.length > 1
         ? ' It stays paired with your other nodes.'
         : '';
+    // With the last phone gone a node is public, whatever its owners set.
+    final last = !(s.phones ?? const []).any((r) => r.paired && !r.mine);
+    final after = last
+        ? 'Its screen then says PHONE UNPAIRED, and it is public, serving '
+              'any phone nearby. Anyone at the node can pair with it by the '
+              'code on its screen.'
+        : 'The other phones paired with it keep theirs, and its settings '
+              'stay as they are.';
+    final done = last ? 'Unpaired: the node is public again.' : 'Unpaired.';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Unpair ${shownName(name)}?'),
         content: Text(
-          'The node forgets this phone. Its screen then says UNPAIRED, '
-          'and it is public again, serving any phone nearby. Anyone at '
-          'the node can pair with it by the code on its screen.\n\n'
+          'The node forgets this phone. $after\n\n'
           'Your texts and contacts stay on this phone, and the phone '
           'forgets its own pairing with the node too.$others',
         ),
@@ -887,13 +898,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final forgotten = await app.unpair();
       if (!mounted) return;
       if (forgotten) {
-        say(context, 'Unpaired: the node is public again.$home');
+        say(context, '$done$home');
         return;
       }
       await askToForget(
         context,
         app,
-        'Unpaired: the node is public again.$home This phone could not '
+        '$done$home This phone could not '
         'forget its own pairing with it: forget the node in the phone\'s '
         'Bluetooth settings, or the phone cannot use it as a guest.',
       );
@@ -1023,8 +1034,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         'tap to download it in the browser, and Android asks '
                         'before it installs it over this one'
                   : 'Version ${r.app}') +
-              // A newer node works with this app, which uses what it knows
-              // (roadmap D176).
               (s.nodeNewer
                   ? '. The node\'s firmware is newer than this app: it '
                         'works, and an update of the app brings the node\'s '
@@ -1040,7 +1049,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           n == null
               ? 'No node linked'
               : s.guest
-              ? 'Only the phone paired with the node updates it'
+              ? 'Only a phone paired with the node updates it'
               : newerImage
               ? 'Version ${n.image}; version ${latest.firmware} is available'
               : 'Version ${n.image}',
@@ -1109,17 +1118,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'inbox button on the first screen, brings your mail from '
                   'it to the node you are connected to.',
       ),
-      if (owned && s.connected && here == null && st != null) ...[
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('This node has no place yet.'),
-        ),
-        ..._placeHereButton(),
-      ],
-      if (guest != null && here == null)
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('This node has no place yet, so it cannot be a home.'),
+      if (here == null && (owned ? st != null : guest != null))
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(
+            'This node has no place yet, so it cannot be a home.'
+            '${owned ? ' Set its place under This node, below.' : ''}',
+          ),
         ),
       if (here != null && !atHome && !homeable)
         const Padding(
@@ -1317,12 +1322,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) say(context, 'Identity restored');
   }
 
-  List<Widget> _mapPoint() {
+  /// The node's place, from its GPS or set here.
+  List<Widget> _place() {
     final s = app.session;
-    if (!s.connected || s.guest) return [];
     final st = s.status;
     return [
-      _heading('Node\'s place'),
+      _subheading('Place'),
       Text(
         st == null || !st.placed
             ? 'The node has no place yet.'
