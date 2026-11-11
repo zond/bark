@@ -818,8 +818,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The piece frame for channel `c`, as it goes now.
-    fn update_frame(&self, c: Channel, now: Instant) -> Option<Frame> {
+    /// The piece frame for channel `c`, as it goes now, and its block.
+    fn update_frame(&self, c: Channel, now: Instant) -> Option<(Frame, u8)> {
         self.stream_channels(now)
             .into_iter()
             .flatten()
@@ -832,7 +832,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             index: self.spread.index[usize::from(block)],
             bytes: &[0; PIECE_BYTES],
         };
-        Some(mac::frame(&Packet::Update(packet), c, MIN_PREAMBLE_SYMBOLS))
+        Some((
+            mac::frame(&Packet::Update(packet), c, MIN_PREAMBLE_SYMBOLS),
+            block,
+        ))
     }
 
     /// Start the next piece that is due: its check of the channel, once
@@ -875,7 +878,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(c) = self.spread.current else {
             return false;
         };
-        let Some(f) = self.update_frame(c, now) else {
+        let Some((f, _)) = self.update_frame(c, now) else {
             self.spread.current = None;
             self.spread.ready_at = now + PACE;
             return false;
@@ -965,7 +968,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        let Some(f) = self.update_frame(c, now) else {
+        let Some((f, block)) = self.update_frame(c, now) else {
             self.spread.current = None;
             return;
         };
@@ -975,15 +978,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.spread.ready_at = now;
             return;
         }
-        let block = match Packet::decode(f.payload()) {
-            Ok(Packet::Update(Update::Piece { block, .. })) => Some(block),
-            _ => None,
-        };
-        let deficit = block.map_or(0, |b| self.deficit(c, b, now));
+        let deficit = self.deficit(c, block, now);
         self.radio.budget.record(airtime, now);
         let slot = self.spread.slot_open.is_some();
         self.slot_end(SlotPiece::Sent, emit);
-        self.update_sent(c, block.map(|b| (b, deficit)), slot, now);
+        self.update_sent(c, Some((block, deficit)), slot, now);
         self.radio.excursion.serve(Job::Update, f, emit);
     }
 
