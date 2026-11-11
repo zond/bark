@@ -194,7 +194,7 @@ class NodeSection extends StatelessWidget {
         else if (r?.lost ?? false)
           'no longer yours'
         else if (r?.unserved ?? false)
-          'needs an update. Tap to try again'
+          'cannot be used yet. Tap to try again'
         else if (app.searchOn)
           'not in reach'
         else if (app.session.stopped)
@@ -215,7 +215,7 @@ class NodeSection extends StatelessWidget {
           text: [
             if (app.connectedTo(n.deviceId)) 'Connected',
             if (n.public) 'public',
-            if (app.nodes[n.name]?.unserved ?? false) 'needs an update',
+            if (app.nodes[n.name]?.unserved ?? false) 'cannot be used yet',
             signalWord(n.rssi),
           ].join(', '),
           children: [

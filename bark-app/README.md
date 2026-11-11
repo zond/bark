@@ -623,7 +623,7 @@ move to the home takes it. A paired node so refused counts as none, so
 the phone goes on at once to another paired node; with none in reach,
 to a public node after the two rounds as before, and with no other
 paired node, from the next round. Settings' row of the node, among the
-paired nodes or in a scan, says "Needs an update", and a tap on it tries
+paired nodes or in a scan, says "Cannot be used yet", and a tap on it tries
 it again; so does the app started again, as this is not kept. A link to
 the node ends it. The phone is by then on another node, so the notice
 stays there until the person dismisses it or the phone links to that
@@ -1332,8 +1332,8 @@ a phone (Trying it).
     screen says "ID … needs a newer app. Update the app.", A's ID, and
     within a round the phone is on B, as its owner; the log has one
     `Found …, connecting` for A and no more, and no scan while on B.
-    **Settings** says of A "Your home, needs an update. Tap to try
-    again". Dismiss the notice: it does not come back. A tap on A's row
+    **Settings** says of A "Your home, cannot be used yet. Tap to
+    try again". Dismiss the notice: it does not come back. A tap on A's row
     tries once, and the notice comes back. Switch B off: after two rounds,
     30 s, the phone is on C as a guest. Restart the app: A is
     tried once again. Flash A back to version 1 and tap its row: the

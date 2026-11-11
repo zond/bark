@@ -1500,7 +1500,7 @@ void main() {
   });
 
   testWidgets('a node passed over for its version: its rows in Settings say '
-      'it needs an update, and stay tappable', (t) async {
+      'it cannot be used yet, and stay tappable', (t) async {
     final app = await model(t);
     app.fakeNode = FakeNode(
       now: DateTime.now,
@@ -1521,7 +1521,7 @@ void main() {
     );
     final row = find.widgetWithText(
       ListTile,
-      'Needs an update. Tap to try again',
+      'Cannot be used yet. Tap to try again',
     );
     expect(row, findsOneWidget);
     expect(t.widget<ListTile>(row).onTap, isNotNull);
@@ -1529,7 +1529,7 @@ void main() {
     expect(
       find.descendant(
         of: found,
-        matching: find.textContaining('public, needs an update'),
+        matching: find.textContaining('public, cannot be used yet'),
       ),
       findsOneWidget,
     );

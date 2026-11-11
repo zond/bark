@@ -728,7 +728,7 @@ void main() {
         async.elapse(lookRound);
         expect(ble.connects, [paired, strong]);
         expect(app.guestNode, nodeName(strongId));
-        expect(connectionHelp(app), contains('needs an update'));
+        expect(connectionHelp(app), contains('cannot be used yet'));
         app.session.dismissNotice();
         async.elapse(const Duration(minutes: 3));
         expect(ble.connects.where((d) => d == paired), hasLength(1));
@@ -1814,7 +1814,7 @@ void main() {
         expect(app.ownAway, isTrue);
         expect(ble.connects, [home, strong]);
         expect(app.guestNode, nodeName(strongId));
-        expect(connectionHelp(app), contains('needs an update'));
+        expect(connectionHelp(app), contains('cannot be used yet'));
       });
     });
 

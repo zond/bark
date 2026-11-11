@@ -544,11 +544,11 @@ String connectionHelp(AppModel app) {
   final unservedLine = switch (unserved) {
     [] => '',
     [final n] =>
-      '\n\n$n needs an update to work with this app, so the phone does not '
-          'use it. Tap it in Settings to try again.',
+      '\n\n$n cannot be used yet: it or this app needs an update. Tap it in '
+          'Settings to try again.',
     _ =>
-      '\n\n${unserved.join(', ')} need an update to work with this app, so '
-          'the phone does not use them. Tap one in Settings to try again.',
+      '\n\n${unserved.join(', ')} cannot be used yet: they or this app '
+          'need an update. Tap one in Settings to try again.',
   };
   final others = '$lostLine$unservedLine';
   final install = app.installHelp;
