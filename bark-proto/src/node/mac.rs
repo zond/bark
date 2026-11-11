@@ -19,7 +19,6 @@ pub(crate) fn frame(packet: &Packet<'_>, channel: Channel, preamble_symbols: u16
     f
 }
 
-/// Airtime of `f`.
 pub(crate) fn airtime(f: &Frame) -> Duration {
     time_on_air(f.len, f.preamble_symbols)
 }
@@ -29,16 +28,13 @@ pub(crate) fn airtime(f: &Frame) -> Duration {
 pub(crate) enum Step {
     /// A listen-before-talk check; found clear, the owner transmits.
     Check,
-    /// A transmission.
     Tx,
     /// A signal strength reading.
     Read,
 }
 
-/// The one excursion a core may have outstanding, and the job that owns
-/// it: every job's use of the radio is a check on a channel and, if it
-/// is clear, a transmission, or one reading. The completion event goes
-/// back to the owner, which continues from there.
+/// The one excursion a core may have outstanding, and the job that owns it;
+/// the completion event goes back to that owner.
 pub(crate) struct Excursion<O: Copy + PartialEq> {
     out: Option<(O, Step)>,
 }

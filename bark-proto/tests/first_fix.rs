@@ -1,4 +1,4 @@
-//! A node with no place (spec "Position", roadmap D83): a board built
+//! A node with no place (spec "Position"): a board built
 //! without one and with nothing stored takes its first accepted fix as
 //! its place, fixed, at once, and sends no heartbeat until then.
 
@@ -131,8 +131,8 @@ fn a_sleepy_node_with_no_place_waits_for_its_first_fix() {
     assert_eq!(h.nodes[1].located.len(), searches);
 }
 
-/// The check a driver makes before it hands a fix (spec "Position",
-/// roadmap D74): within the hearing radius of a relay the node knows, or
+/// The check a driver makes before it hands a fix (spec "Position"):
+/// within the hearing radius of a relay the node knows, or
 /// any fix while it knows none or has no place.
 #[test]
 fn a_fix_is_in_reach_near_a_known_relay() {
@@ -155,12 +155,12 @@ fn a_fix_is_in_reach_near_a_known_relay() {
     assert!(!relay.fix_in_reach(pos(-2_800.0)));
 }
 
-/// The bench case of roadmap D133: a board built without a place whose
-/// stored state says it was carried has no place, since a carried node's
-/// stored place is where it stood when last fixed. It hears its
-/// neighbour before it has a place, sends no heartbeat, checks its first
-/// fix against no neighbour, and takes it as its place, fixed; the
-/// neighbour it heard is rebuilt near it, so the next fix is in reach.
+/// A board built without a place whose stored state says it was carried has
+/// no place, since a carried node's stored place is where it stood when
+/// last fixed. It hears its neighbour before it has a place, sends no
+/// heartbeat, checks its first fix against no neighbour, and takes it as
+/// its place, fixed; the neighbour it heard is rebuilt near it, so the next
+/// fix is in reach.
 #[test]
 fn a_node_stored_as_carried_has_no_place() {
     let stored = Stored {

@@ -2,11 +2,9 @@
 //! GPS fix, or from the phone while it has none, carried on by the node's
 //! clock (spec "Position", on time). The protocol reads none of it.
 //!
-//! A time is kept while its error can be under a minute, the least a
-//! clock that shows minutes needs: the second its source may lag by,
-//! and the drift of the node's clock since, at the tolerance the board
-//! gives that clock. Past that the node has no time, and the phone's is
-//! taken again.
+//! A time is kept while its error, the source's lag plus the clock's drift
+//! since, can be under the minute a clock that shows minutes needs; past
+//! that the node has no time and takes the phone's again.
 
 use bark_proto::{Duration, Instant};
 
@@ -22,10 +20,9 @@ pub enum Source {
 /// The error a time may reach and still keep the minute.
 const MINUTE: Duration = Duration::from_secs(60);
 
-/// How late either source's time can be when the node stamps it: a GPS
-/// sentence comes within the second it reports, the receiver sending one
-/// group a second; the phone's write within a connection event of its
-/// whole second, under a second at any interval a phone uses.
+/// How late either source's time can be when stamped: a GPS sentence comes
+/// within the second it reports, a phone's write within a connection event,
+/// under a second at any interval a phone uses.
 const STAMP: Duration = Duration::from_secs(1);
 
 /// The UTC time kept, and its source.

@@ -1,17 +1,14 @@
-//! How long the loader's swap of a staged image keeps a node off the air,
-//! from the loader's figures (`bark-fw/README.md`, "Updates", its steps 3
-//! to 5): what a node back from it tells its core it was away (spec
-//! "Updates over the mesh", the install; roadmap D180), and the
-//! simulator's swap.
+//! How long the loader's swap of a staged image keeps a node off the air:
+//! the time a node back from it tells its core it was away, and the
+//! simulator's swap (spec "Updates over the mesh").
 
 use super::cut::{INTERNAL_ERASE_US, INTERNAL_WORD_US};
 use crate::ext_flash::{ERASE_TYP_US, PROGRAM_PAGE, PROGRAM_TYP_US};
 use crate::layout::{ACTIVE, PAGE};
 
-/// The external flash's bus as measured on two boards: the mailbox's
-/// 256 KiB read in 2 088 ms, about 1 Mbit/s from the software bus, not the
-/// 2 to 3 Mbit/s its instructions give (roadmap, Phase 2, "The external
-/// flash's bus").
+/// The external flash's bus as measured on two boards: 256 KiB read in
+/// 2 088 ms, about 1 Mbit/s from the software bus (roadmap, Phase 2, "The
+/// external flash's bus").
 const BUS_BYTES: u64 = 256 * 1024;
 /// See [`BUS_BYTES`].
 const BUS_US: u64 = 2_088_000;
@@ -39,11 +36,9 @@ pub const CLOCK_START_US: u64 = 1_000_000;
 const _: () = assert!(CLOCK_START_US == crate::lfclk::START_MS as u64 * 1000);
 
 /// The swap of an image of `length` bytes, µs: every page of the slot,
-/// which embassy-boot swaps whole whatever the image's length, the hash
-/// of the image's bytes read over the bus, and the clock's start. From
-/// 51.6 s for the least image to 59.0 s for one that fills the slot; the
-/// bench measured 55 s from the reboot to the port back (roadmap, Phase
-/// 2, "A swap").
+/// which embassy-boot swaps whole whatever the length, the image's bytes
+/// read over the bus for its hash, and the clock's start. 51.6 s to 59.0 s;
+/// the bench measured 55 s (roadmap, Phase 2, "A swap").
 pub const fn swap_us(length: u32) -> u64 {
     (ACTIVE.len / PAGE) as u64 * PAGE_US + bus_us(length as u64) + CLOCK_START_US
 }

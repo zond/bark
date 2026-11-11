@@ -125,14 +125,13 @@ pub(crate) struct Excursion {
     /// Listen-before-talk and RSSI: the value read.
     pub rssi_dbm: Option<i16>,
     /// Whether the node stops receiving for it. An RSSI reading on the
-    /// resting channel does not (docs/core-interface.md §3 rule 7).
+    /// resting channel does not (docs/core-interface.md, "Radio", rule 7).
     pub deaf: bool,
     /// Transmit: the air slot.
     pub slot: Option<u32>,
 }
 
 impl Excursion {
-    /// Deaf reason at `t`.
     pub fn reason_at(&self, t: Instant) -> Deaf {
         for (b, r) in self.bounds.iter().zip(self.reasons) {
             if t < *b {
@@ -227,8 +226,8 @@ pub(crate) struct NodeState {
     pub observer: Option<u32>,
     pub cad_rng: Stream,
     pub rx_rng: Stream,
-    /// A CAD or RSSI held while a packet is being received (core-interface
-    /// spec "Regulatory limits" rule 8), and its generation.
+    /// A CAD or RSSI held while a packet is being received
+    /// (docs/core-interface.md, "Radio", rule 8), and its generation.
     pub held: Option<(ExKind, Channel)>,
     pub held_gen: u32,
     /// Times the node was restarted (`ScriptAction::Restart`).
@@ -260,7 +259,6 @@ pub(crate) struct BeatRing {
 }
 
 impl BeatRing {
-    /// A heartbeat reached the node.
     pub(crate) fn push(&mut self, start: Instant, end: Instant, channel: u8, sleepy: bool) {
         self.beats[self.next] = (start, end, channel, sleepy);
         self.next = (self.next + 1) % self.beats.len();
@@ -287,7 +285,6 @@ impl BeatRing {
 /// A DATA on the air to a sleepy node (`Sim::to_sleepy`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ToSleepy {
-    /// The node.
     pub node: u32,
     /// It could not hear the frame when it started: it received
     /// duty-cycled and the frame's preamble was short.
@@ -296,7 +293,6 @@ pub(crate) struct ToSleepy {
     pub absent: bool,
     /// The sender, its holder.
     pub holder: u32,
-    /// The message.
     pub msg: u32,
     /// The window it went in (`Sim::window_of`).
     pub window: usize,
@@ -432,13 +428,10 @@ struct OriginRecord {
 pub struct MessageRow {
     /// Traffic tag, in origination order.
     pub tag: u32,
-    /// Origin node.
     pub src: u32,
-    /// Destination node.
     pub dst: u32,
     /// When the traffic model had it, seconds.
     pub t_s: f64,
-    /// What became of it.
     pub fate: Fate,
     /// Whether its destination was reachable ([`Sim::reachable`]).
     pub reachable: bool,
@@ -506,7 +499,6 @@ pub struct MessageRow {
 /// Fates of a sleepy node's beat at the holder of a message for it, by
 /// index into [`HolderWatch::beats`].
 pub mod beat_fate {
-    /// Received.
     pub const RECEIVED: usize = 0;
     /// The node was dark: the beat reached nobody.
     pub const DARK: usize = 1;
@@ -530,9 +522,7 @@ pub mod beat_fate {
     pub const SKIPPED: usize = 9;
     /// The node beat without an anchor: no window follows.
     pub const ANCHORLESS: usize = 10;
-    /// Number of fates.
     pub const N: usize = 11;
-    /// Column names.
     pub const NAMES: [&str; N] = [
         "rx",
         "dark",
@@ -573,7 +563,6 @@ pub struct HolderWatch {
 /// What a frame of a message was, for [`Sim::message_frame`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FrameKind {
-    /// A DATA.
     Data,
     /// An ACK that takes it.
     Taken,
@@ -619,11 +608,8 @@ struct Offer {
 pub enum ScriptResult {
     /// A listen-before-talk finished.
     Lbt {
-        /// Node.
         node: u32,
-        /// When.
         at: Instant,
-        /// Channel.
         channel: u8,
         /// The CAD detected a preamble.
         busy: bool,
@@ -632,13 +618,9 @@ pub enum ScriptResult {
     },
     /// RSSI read.
     Rssi {
-        /// Node.
         node: u32,
-        /// When.
         at: Instant,
-        /// Channel.
         channel: u8,
-        /// Value.
         dbm: i16,
     },
     /// Transmission finished.
@@ -708,9 +690,9 @@ pub struct Sim {
     gps_error: Vec<(Xy, Instant, Stream)>,
     /// Per node, its GPS receiver's searches (`gps.rs`).
     pub(crate) receivers: Vec<crate::gps::Receiver>,
-    /// The texts held at a first far fix after the settle time (roadmap
-    /// D70): whether their holder had turned fixed again before, and how
-    /// it delivered them, an index of `metrics::Carried::held`.
+    /// The texts held at a first far fix after the settle time: whether
+    /// their holder had turned fixed again before, and how it delivered
+    /// them, an index of `metrics::Carried::held`.
     held_far: HashMap<u32, (bool, Option<usize>)>,
     /// Per relay, its last first far fix, and whether it has turned fixed
     /// again since it was first carried.
@@ -877,7 +859,6 @@ pub struct Sim {
     cadence: Option<Duration>,
     end: Instant,
     actions: Vec<Action>,
-    /// Counters.
     pub metrics: Metrics,
     /// Scenario name and seed, for the summary.
     pub(crate) scenario_name: String,
@@ -962,7 +943,6 @@ pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
     ((p.distance_m(Default::default()) / REACH_BIN_M) as usize).min(REACH_BINS - 1)
 }
 
-/// A node ID as a map key.
 /// The hand-overs of one message that ended, at any relay
 /// (`Sim::note_offer`).
 #[derive(Default)]
@@ -984,6 +964,7 @@ impl OfferLog {
     }
 }
 
+/// A node ID as a map key.
 pub(crate) fn key(id: NodeId) -> u64 {
     id.to_u64()
 }
@@ -1486,7 +1467,6 @@ impl Sim {
             self.nodes[i].alive = false;
             self.push(at, Ev::Boot(i as u32));
         }
-        // Observers.
         // The relays placed as such: those placed as people may be many.
         let all_relays: Vec<String> = (0..self.n_relays)
             .filter(|&i| self.person_of[i as usize] == u32::MAX)
@@ -1507,7 +1487,6 @@ impl Sim {
                 ..Observer::default()
             });
         }
-        // Interferers.
         for (k, s) in sc.interferers.iter().enumerate() {
             if Channel::new(s.channel).is_none() {
                 return Err(format!("interferer {k}: channel {} out of plan", s.channel));
@@ -1554,7 +1533,6 @@ impl Sim {
                 end: Instant::ZERO,
                 rng,
             });
-            // Toggle at its start into the start state.
             let from = Instant::ZERO + secs(s.from_s.max(0.0));
             if start_on {
                 self.push(from, Ev::Interferer(k as u32, 0));
@@ -1563,7 +1541,6 @@ impl Sim {
                 self.push(from + off, Ev::Interferer(k as u32, 0));
             }
         }
-        // Traffic.
         for t in &sc.traffic {
             match t {
                 TrafficSpec::Periodic {
@@ -1627,7 +1604,6 @@ impl Sim {
                 }
             }
         }
-        // Availability.
         if let Some(a) = &sc.availability {
             if a.mean_available_s <= 0.0 || a.mean_dark_s <= 0.0 {
                 return Err("availability periods must be positive".into());
@@ -1641,7 +1617,6 @@ impl Sim {
             }
             self.back_at = vec![None; self.avail_rng.len()];
         }
-        // Scripted events.
         for (k, e) in sc.events.iter().enumerate() {
             let node = resolve(placed, &e.node)?;
             let channel = match e.channel {
@@ -1685,7 +1660,6 @@ impl Sim {
         for (w, until) in legs.into_iter().enumerate() {
             self.push(until, Ev::Leg(w as u32));
         }
-        // GPS faults.
         for (k, f) in sc.gps.faults.iter().enumerate() {
             let mut r = Stream::new(sc.seed, Purpose::Gps, k as u64);
             let walks = self.walks.as_ref();
@@ -1724,7 +1698,6 @@ impl Sim {
                 }
             }
         }
-        // Fixes of every node that is not sleepy, and their error.
         if sc.gps.error_m > 0.0 {
             self.gps_error = (0..self.n_relays)
                 .map(|i| {
@@ -1745,7 +1718,6 @@ impl Sim {
                 }
             }
         }
-        // Groups that go dark together.
         for (k, g) in sc.dark_groups.iter().enumerate() {
             let near = resolve(placed, &g.near)?;
             let at = self.xy[near as usize];
@@ -2381,7 +2353,8 @@ impl Sim {
             });
             self.wakeups.set(node, order);
         }
-        // The application asks again after every event (core-interface §4).
+        // The application asks again after every event
+        // (docs/core-interface.md, "Application").
         let reply_due = self.mailboxes[node as usize]
             .as_ref()
             .is_some_and(|m| m.reply_due());
@@ -2492,8 +2465,8 @@ impl Sim {
     }
 
     /// When the sleepy nodes first took an anchor, s from each one's
-    /// switch-on: those that never did, and the median, 90th percentile and latest of the
-    /// others.
+    /// switch-on: those that never did, and the median, 90th percentile
+    /// and latest of the others.
     pub fn first_anchors(&self) -> (u64, Option<f64>, Option<f64>, Option<f64>) {
         let n = self.n_relays as usize;
         let mut at: Vec<u64> = self.first_anchor[n..]
@@ -2818,7 +2791,8 @@ impl Sim {
                 | Action::Transmit(_)
                 | Action::Serve(_)
         ) {
-            // Any use of the radio ends a sniff (core-interface §3 rule 10).
+            // Any use of the radio ends a sniff
+            // (docs/core-interface.md, "Radio", rule 10).
             self.wake(node);
         }
         // The core's instants are on its own clock; a script's are true.
@@ -3328,8 +3302,7 @@ impl Sim {
         Some(self.now.since(h.since).as_micros())
     }
 
-    /// What the nodes that move do (roadmap D70), from the first event
-    /// that shows one.
+    /// What the nodes that move do, from the first event that shows one.
     fn carried_metrics(&mut self) -> &mut crate::metrics::Carried {
         self.metrics
             .research
@@ -3561,7 +3534,8 @@ impl Sim {
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
     /// the checks on (spec "Position"), a fix the core finds out of reach
-    /// of every relay it knows (`Node::fix_in_reach`) is not handed over. The check of the satellites' C/N0 cannot be modelled: the
+    /// of every relay it knows (`Node::fix_in_reach`) is not handed over.
+    /// The check of the satellites' C/N0 cannot be modelled: the
     /// simulator has no satellites.
     fn fix(&mut self, n: u32) {
         self.fix_now(n);
@@ -3602,7 +3576,7 @@ impl Sim {
         let position = self.origin.position(at);
         let k = usize::from(n >= self.n_relays);
         // The check of spec "Position" the core answers, unchecked while
-        // the node has no place (roadmap D83).
+        // the node has no place.
         if self.gps.checks && !self.relays[n as usize].fix_in_reach(position) {
             if fault.is_some() {
                 self.metrics.research.fixes[k][1] += 1;
@@ -3680,9 +3654,9 @@ impl Sim {
 
     /// A listen-before-talk or an RSSI reading. One that would take the
     /// node off a packet it is receiving waits for the packet's end, at
-    /// most one longest frame
-    /// (docs/core-interface.md §3 rule 8; spec "Busy estimate": a reading is taken
-    /// only when no packet is in progress). Scripted checks are not held.
+    /// most one longest frame (docs/core-interface.md, "Radio", rule 8;
+    /// spec "Busy estimate": a reading is taken only when no packet is in
+    /// progress). Scripted checks are not held.
     fn check(&mut self, node: u32, kind: ExKind, c: Channel, scripted: bool) {
         self.settle(node);
         let now = self.now;
@@ -3925,7 +3899,7 @@ impl Sim {
     pub(crate) fn app_event(&mut self, node: u32, e: AppEvent) {
         let (len, payload) = match e {
             // The application reads the message at once and confirms it,
-            // so the inbox never fills (core-interface §4).
+            // so the inbox never fills (docs/core-interface.md, "Application").
             AppEvent::Message { msg_id } => {
                 let core = &mut self.relays[node as usize];
                 let mut payload = [0u8; MAX_FRAME];
@@ -4039,8 +4013,6 @@ impl Sim {
         }
     }
 
-    /// A frame of message `id` went on the air from `src`: it carried
-    /// `hops` (DATA) and took `air_us`.
     /// A DATA of the message `msg` went from `src` with the long preamble.
     pub(crate) fn note_long_try(&mut self, msg: u32, src: u32) {
         if let Some(&tag) = self.msg_tags.get(&msg) {
@@ -4080,6 +4052,8 @@ impl Sim {
         }
     }
 
+    /// A frame of message `id` went on the air from `src`: it carried
+    /// `hops` (DATA) and took `air_us`.
     pub(crate) fn message_frame(
         &mut self,
         id: MsgId,
@@ -4167,7 +4141,6 @@ impl Sim {
         out
     }
 
-    /// The fate of each message kept across a reboot into a new image.
     /// The fate of each message kept across a reboot into a new image from
     /// where `at` says, by where it was last kept.
     pub(crate) fn kept_messages(&self, at: impl Fn(crate::install::KeptAt) -> bool) -> Vec<Fate> {
@@ -4547,9 +4520,9 @@ impl Sim {
 
     /// The traffic model has a message from `src` to `dst`. Its
     /// application holds one at a time and hands it to the core the moment
-    /// the core takes one (core-interface §4); a message due while the last
-    /// still waits is skipped. Latency counts from here, so a busy network
-    /// shows as latency.
+    /// the core takes one (docs/core-interface.md, "Application"); a
+    /// message due while the last still waits is skipped. Latency counts
+    /// from here, so a busy network shows as latency.
     fn originate(&mut self, src: u32, dst: u32, len: u8) {
         let st = &self.nodes[src as usize];
         if !st.alive || !st.present {
@@ -4683,8 +4656,8 @@ impl Sim {
         let mut payload = [0u8; MAX_FRAME];
         payload[..4].copy_from_slice(&o.tag.to_le_bytes());
         let payload = &payload[..o.len as usize];
-        // The ID the core gives it (core-interface §7), to follow its
-        // traces and drops.
+        // The ID the core gives it (docs/core-interface.md, "Wire-format
+        // choices made here"), to follow its traces and drops.
         let id = MsgId::of(o.dst_pos, o.dst_id, payload);
         if self.msg_tags.insert(id.0, o.tag).is_some() {
             self.metrics.app.shared_ids += 1;
@@ -4710,7 +4683,7 @@ impl Sim {
 
     /// The recipient tag at `node` of the person whose home it is, in a run
     /// of `seed`: drawn from them, so that a test can address an item to
-    /// them (spec "Phone link", The payload).
+    /// them (spec "The payload").
     pub fn mailbox_tag(seed: u64, node: u32) -> u8 {
         Sim::mailbox_key(seed, node)[31]
     }
@@ -4944,8 +4917,8 @@ impl Sim {
             .summary(|tag| self.origins.get(tag as usize).and_then(|o| o.delivered_at))
     }
 
-    /// Power-on is delivered as a wakeup (docs/core-interface.md §2), and
-    /// then the power the node has (§4).
+    /// Power-on is delivered as a wakeup (docs/core-interface.md, "Time"),
+    /// and then the power the node has ("Application").
     pub(crate) fn power_on(&mut self, node: u32) {
         self.deliver(node, Event::Wakeup);
         let external = self.external(node);
@@ -5481,9 +5454,9 @@ mod tests {
 
     /// A relay whose GPS jumps beyond the hearing radius is handed the fix
     /// unchecked, and with the checks the jump is refused as far from every
-    /// neighbour; a drift inside the radius passes (roadmap D74). The
-    /// fault begins once the relays know each other: a node that knows no
-    /// relay takes every fix.
+    /// neighbour; a drift inside the radius passes. The fault begins once
+    /// the relays know each other: a node that knows no relay takes every
+    /// fix.
     #[test]
     fn checks_refuse_a_far_jump_and_pass_a_drift() {
         use crate::scenario::{FaultKind, GpsFault};
@@ -5517,7 +5490,7 @@ mod tests {
     /// With an error on every relay's fixes, a relay whose fixes stray far
     /// from where it stands for long enough turns carried, and with a
     /// small error none does; with no fixes asked for, nothing of it is in
-    /// the summary (roadmap D70).
+    /// the summary.
     #[test]
     fn relays_with_a_large_gps_error_turn_carried() {
         let run = |error_m: f64, every_s: f64| {
@@ -5556,8 +5529,8 @@ mod tests {
     }
 
     /// A relay on battery runs its GPS through its grace and then rests it
-    /// (spec "Beats", roadmap D82): its GPS on battery draws far less than
-    /// the receiver's current, and more than its standby.
+    /// (spec "Beats"): its GPS on battery draws far less than the
+    /// receiver's current, and more than its standby.
     #[test]
     fn a_relay_s_gps_rests_after_its_grace() {
         let mut sc = block(7, 1800.0);

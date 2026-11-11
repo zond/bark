@@ -1,8 +1,8 @@
 //! Sleepy and carried are two properties of a node, each measured on its
-//! own and each published as a heartbeat flag (spec "Nodes", "Position",
-//! roadmap D72): a node on battery in a pocket is both, and its power
-//! changes only whether it is sleepy. A sleepy node with an anchor takes
-//! no fix and keeps the flag it had (roadmap D91).
+//! own and each published as a heartbeat flag (spec "Nodes", "Position"):
+//! a node on battery in a pocket is both, and its power changes only
+//! whether it is sleepy. A sleepy node with an anchor takes no fix and
+//! keeps the flag it had.
 
 mod common;
 
@@ -198,7 +198,7 @@ fn the_four_combinations_heartbeat_their_flags() {
 }
 
 /// A sleepy node with an anchor works by the anchor's position and takes
-/// no fix (spec "Beats", roadmap D91): fixes that walk away make it
+/// no fix (spec "Beats"): fixes that walk away make it
 /// neither carried nor check its anchor, its beats carry the anchor's
 /// position, which its holder keeps it at, and its own place stays for
 /// when it is a relay again.
@@ -237,7 +237,7 @@ fn a_sleepy_node_with_an_anchor_takes_no_fix() {
 /// Without an anchor a sleepy node measures from its fixes as any node
 /// does: walking makes it carried and staying makes it fixed again, each
 /// said at once with a beat. The flag it has when it takes an anchor
-/// stays, since with one it takes no fix (roadmap D91).
+/// stays, since with one it takes no fix.
 #[test]
 fn an_anchorless_node_measures_its_fixes_and_keeps_the_flag_at_an_anchor() {
     let (r, l) = (0, 1);
@@ -273,9 +273,9 @@ fn an_anchorless_node_measures_its_fixes_and_keeps_the_flag_at_an_anchor() {
 }
 
 /// A carried sleepy node plugged in is a carried relay: it heartbeats
-/// carried alone, owns nothing by position, so queues no text for a sleepy node it
-/// hears, and no sleepy node anchors to it, however strong; four hours
-/// still (here `STILL`) make it fixed, a relay that holds mail.
+/// carried alone, owns nothing by position, so queues no text for a sleepy
+/// node it hears, and no sleepy node anchors to it, however strong; four
+/// hours still (here `STILL`) make it fixed, a relay that holds mail.
 #[test]
 fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
     let (r, c, t, o) = (0, 1, 2, 3);
@@ -357,7 +357,7 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
 
 /// A sleepy node that is not carried, plugged in, is fixed at once at the
 /// place it has, its own and not its anchor's; its first fix as a relay
-/// is its place (roadmap D85), which it keeps.
+/// is its place, which it keeps.
 #[test]
 fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
     let (r, s) = (0, 1);
@@ -385,7 +385,7 @@ fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
 /// A sleepy node plugged in at a place its last fix does not show takes
 /// its first fix within a search's limit as its place, and is not
 /// carried; one whose first fix comes later keeps the place it had, and
-/// a run of far fixes makes it carried (roadmap D85).
+/// a run of far fixes makes it carried.
 #[test]
 fn a_sleepy_node_plugged_in_takes_its_first_fix_as_its_place() {
     for (wait, carried) in [(10, false), (70, true)] {
@@ -453,7 +453,7 @@ fn a_map_point_fixes_any_node() {
         let until = h.now + secs(400);
         h.run_until(until, pinned);
         assert!(pinned(&h), "external: {external}");
-        // No fix replaces a map point (roadmap D84): only the application
+        // No fix replaces a map point: only the application
         // clears it, and the next accepted fix is the place.
         fix(&mut h, n, 900.0);
         assert_eq!(h.nodes[n].core.config().position, pos(700.0));

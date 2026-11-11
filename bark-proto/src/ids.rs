@@ -2,11 +2,8 @@
 
 use crate::position::Position;
 
-/// A node's 6-byte identifier, six opaque bytes in order. Every node
-/// has one; it names the node in the packet fields that only name a node
-/// (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) and with a
-/// position makes a destination address (spec "Node identity", "Addresses").
-/// Zero names no node.
+/// A node's identifier, six opaque bytes (spec "Node identity"). Zero
+/// names no node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct NodeId(pub [u8; NodeId::LEN]);
 
@@ -37,21 +34,17 @@ impl NodeId {
     }
 }
 
-/// A message's identity (spec "Packet formats", roadmap D15). No packet carries it
-/// except the ACK that answers for a message: every node that
-/// handles the message computes it with [`MsgId::of`], and gets the same
-/// value on every hop because none of the hashed fields changes.
+/// A message's identity (spec "Packet formats"). Only the ACK carries it;
+/// every hop computes it with [`MsgId::of`] from fields no hop changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct MsgId(pub u32);
 
 impl MsgId {
     /// The ID of a message to `(dst_pos, dst_id)` carrying `payload`:
-    /// 32-bit FNV-1a over `dst_pos` in its 7 wire bytes, `dst_id` and
-    /// `payload`, concatenated. FNV-1a because the phone app must compute
-    /// it too, and it is a few lines in any language. The app keeps
-    /// payloads unique (spec "Phone link"), so two IDs collide only by chance:
-    /// among the 667 messages a relay remembers at most (spec "Message records"), with
-    /// probability about 5 × 10⁻⁵.
+    /// 32-bit FNV-1a over the three in wire bytes, concatenated. FNV-1a
+    /// because the phone app computes it too. Payloads are unique (spec
+    /// "Phone link"), so IDs collide only by chance: about 5 × 10⁻⁵ among
+    /// the 667 a relay remembers (spec "Message records").
     pub fn of(dst_pos: Position, dst_id: NodeId, payload: &[u8]) -> MsgId {
         let mut h: u32 = 0x811c_9dc5;
         for part in [&dst_pos.encode()[..], &dst_id.0, payload] {

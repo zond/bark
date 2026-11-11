@@ -1,23 +1,5 @@
 //! The heard table: the sleepy nodes a node has heard beat on its home
-//! channel, by ID, for delivery (spec "Heard table").
-//!
-//! A sleepy node heartbeats only on its home channel, at a random time in
-//! the second half of each [`beat_period`], and listens for a while after
-//! each beat ([`HeardParams::awake`]) and after each message it takes
-//! ([`HeardParams::linger`]). A holder of a message
-//! for it sends the message then. The table keeps what that needs: the node's home
-//! channel, until when it listens, and whether a delivery to it went
-//! unanswered since its last beat.
-//!
-//! An entry is kept for two beat periods, the delivery TTL, after the last
-//! frame heard from the node, its beat, its own DATA or its ACK: one lost
-//! beat does not lose it, a node that answers is not lost for its beats
-//! going unheard, and a node that has gone is kept for the TTL, the least
-//! its messages are kept (spec "Sleepy nodes", "Heard table"). When the table
-//! is full a newcomer takes the place of an expired entry, else of the one
-//! heard longest ago: a node that beats now listens now, so a holder for
-//! more nodes than the table keeps still sends each its mail after each
-//! beat (roadmap D61).
+//! channel, by ID, for delivery (spec "Heard table", "Delivery").
 
 use crate::event::MAX_FRAME;
 use crate::ids::NodeId;
@@ -27,16 +9,12 @@ use crate::tables::fixed::FixedVec;
 use crate::tables::{attempt_span, retry_waits};
 use crate::time::{Duration, Instant};
 
-/// Table capacity (spec "Heard table"): three times the ≈80 sleepy nodes
-/// per relay expected at indoor density with 10 % adoption; at 50 %, ≈400,
-/// a full table does no harm.
+/// Table capacity: three times the ≈80 sleepy nodes per relay expected
+/// at indoor density with 10 % adoption (spec "Heard table").
 pub const HEARD: usize = 256;
 
 /// The longest interval between two heartbeats of a sleepy node: half the
-/// delivery TTL, 300 s (spec "Beats"). A
-/// holder keeps a node for two periods, a TTL, so one lost beat does not
-/// lose it and a node that has gone is kept the least its messages are;
-/// a message waits at most a period for its node to wake.
+/// delivery TTL, 300 s (spec "Beats").
 pub const fn beat_period(delivery_ttl: Duration) -> Duration {
     delivery_ttl.div(2)
 }
@@ -44,21 +22,14 @@ pub const fn beat_period(delivery_ttl: Duration) -> Duration {
 /// The table's parameters, from a configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeardParams {
-    /// How long an entry is kept after the last frame heard from its node:
-    /// two beat periods.
+    /// How long an entry is kept after the last frame heard from its node.
     pub keep: Duration,
-    /// How long a sleepy node listens after its beat, and so how long a
-    /// holder may start sending to it then: long enough for one hand-over
-    /// of a message that goes first to complete (spec "Delivery"), since
-    /// one cut short waits a beat period. That is the attempt the holder
-    /// may have under way, a full frame and the ACK timeout, 238.56 ms,
-    /// and the message's hand-over, as [`linger`](Self::linger):
-    /// 3387.36 ms.
+    /// How long a sleepy node listens after its beat: an attempt under
+    /// way, 238.56 ms, then a hand-over, as [`linger`](Self::linger):
+    /// 3387.36 ms (spec "Delivery").
     pub awake: Duration,
     /// How long it listens after it has answered a message: one hand-over
-    /// with all its attempts and retry waits, 3148.80 ms. Nothing is under
-    /// way ahead of the next message then: the holder has just had the
-    /// answer.
+    /// with all its attempts and retry waits, 3148.80 ms.
     pub linger: Duration,
 }
 

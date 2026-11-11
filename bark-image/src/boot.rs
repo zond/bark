@@ -1,20 +1,14 @@
-//! Both sides of a swap, on any two flashes: what the loader does at each
-//! boot ([`prepare`]), and what the application does to stage an image
-//! ([`Stager`]) and to keep the one it runs ([`start`], [`confirm`]). The internal
-//! flash holds the running image, the loader's state and the record; the
-//! external one the staged image (`crate::layout`).
+//! Both sides of a swap: what the loader does at each boot ([`prepare`]),
+//! and what the application does to stage an image ([`Stager`]) and to
+//! keep the one it runs ([`start`], [`confirm`])
+//! (spec "Updates over the mesh").
 //!
-//! The swap is embassy-boot's (`embassy_boot::BootLoader::prepare_boot`):
-//! it swaps [`ACTIVE`] and [`DFU`] a page at a time, each copy into a page
-//! whose content is held in another, and marks each copy done in the state
-//! page only once it is whole, so a power cut at any point is taken up
-//! again from the copy it stopped, and the swap ends with each image whole
-//! in the other's slot. If the new image has not marked itself booted by
-//! the next boot, the same steps run backwards (its documentation of
-//! `prepare_boot`, "SWAPPING" and "REVERTING"). Its partitions may lie on
-//! different flashes, each page of one copied into a sector of the other.
-//! This module adds the check of the staged image against the header in
-//! [`RECORD`] before the swap starts.
+//! The swap is `embassy_boot::BootLoader::prepare_boot`: it swaps
+//! [`ACTIVE`] and [`DFU`] a page at a time, marking each copy done in the
+//! state page only once it is whole, so a power cut is taken up again from
+//! the copy it stopped; an image not confirmed by the next boot is swapped
+//! back the same way. This module adds the check of the staged image
+//! against the header in [`RECORD`] before the swap starts.
 
 use core::cell::RefCell;
 
@@ -110,11 +104,10 @@ pub enum Refusal {
 }
 
 /// The loader's work at a boot: check a staged image against its record,
-/// then let embassy-boot swap, go on with a swap a power cut stopped, or
-/// swap back. `external` is the external flash, `None` if it failed its
-/// presence check: a swap not yet started is then cancelled, one under
-/// way fails, to go on at a boot that finds the chip. `page` is the copy
-/// buffer, one page.
+/// then swap, go on with a swap a power cut stopped, or swap back.
+/// `external` is `None` if the external flash failed its presence check: a
+/// swap not yet started is then cancelled, one under way fails, to go on at
+/// a boot that finds the chip. `page` is the copy buffer.
 pub fn prepare<I: NorFlash, E: NorFlash>(
     internal: &Shared<I>,
     external: Option<&Shared<E>>,
@@ -227,9 +220,7 @@ pub enum Started {
     /// loader will not swap it back.
     Confirmed,
     /// The first boot of a new image gathered over the mesh, not yet
-    /// confirmed: it keeps itself only once it hears a node ([`confirm`]),
-    /// and a reset before then swaps the previous image back (spec
-    /// "Updates over the mesh", the install).
+    /// confirmed: it keeps itself only once it hears a node ([`confirm`]).
     OnTrial,
     /// The previous image is back: the new one did not confirm itself,
     /// and is given up ([`crate::given_up`]).
@@ -242,10 +233,10 @@ pub enum Started {
     Refused,
 }
 
-/// What the running image does at its start, once the node has started:
-/// keep itself if a person staged it, or wait to hear a node if it came
-/// over the mesh; after a swap back, give up the image that failed and
-/// keep the one it runs. Only the internal flash takes part.
+/// What the running image does at its start: keep itself if a person
+/// staged it, or wait to hear a node if it came over the mesh; after a swap
+/// back, give up the image that failed and keep the one it runs. Only the
+/// internal flash takes part.
 pub fn start<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
     let found = state(flash)?;
     let mut record = part(flash, RECORD);
@@ -258,8 +249,7 @@ pub fn start<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
     };
     if found == State::Boot {
         // A record never checked, with no swap asked for, is one the
-        // loader refused: it cancels the swap before it checks anything
-        // else.
+        // loader refused.
         if bytes[..MAGIC.len()] == MAGIC && word(&mut record, CHECKED_AT)? != CHECKED {
             record.erase(0, RECORD.len).map_err(flash_error)?;
             return Ok(Started::Refused);
@@ -289,10 +279,10 @@ pub fn start<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
 }
 
 /// Keep the running image, on trial since [`start`] said
-/// [`Started::OnTrial`]: it has heard a node. `state` is the loader's
-/// [`STATE`] page, a flash that may wait, so that a firmware that writes
-/// its internal flash between radio events confirms with the same steps.
-/// Whether there was a trial to end.
+/// [`Started::OnTrial`], once it has heard a node. `state` is the
+/// [`STATE`] page as a flash that may wait, so that a firmware writing its
+/// internal flash between radio events can use it. Whether there was a
+/// trial to end.
 pub async fn confirm<S: AsyncNorFlash>(mut state: S) -> Result<bool, FlashError> {
     let mut word = AlignedBuffer([0u8; 4]);
     let mut s = FirmwareState::new(&mut state, &mut word.0);
@@ -371,8 +361,7 @@ pub fn blocking<'a, I: NorFlash, E: NorFlash>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
     /// A person staged it, from the phone or over USB, and is there to see
-    /// whether it works: it keeps itself at once, and the app warns if the
-    /// node then hears no one (spec "Phone link", Updates).
+    /// whether it works: it keeps itself at once.
     Person,
     /// It was gathered over the mesh, so the node had a neighbour to take
     /// it from: it keeps itself only once it hears a node.
@@ -381,12 +370,10 @@ pub enum Origin {
 
 /// An image being written into [`DFU`], in order, a chunk at a time.
 ///
-/// It takes its three regions as flashes that may wait, so that a
-/// firmware whose internal flash is written between radio events, and
-/// whose external flash leaves the processor free while it erases, stages
-/// with the same steps as one that blocks ([`blocking`]): `record` is
-/// [`RECORD`], `state` the loader's [`STATE`] page, `dfu` the staged slot,
-/// each addressed from its start.
+/// Its regions are flashes that may wait, so that a firmware writing
+/// between radio events stages with the same steps as one that blocks
+/// ([`blocking`]): `record` is [`RECORD`], `state` the [`STATE`] page,
+/// `dfu` the staged slot, each addressed from its start.
 pub struct Stager<R, S, D> {
     record: R,
     state: S,
@@ -442,10 +429,9 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
         })
     }
 
-    /// [`Stager::begin`] for an image already written into the staged
-    /// slot by other means, the mesh's store (`crate::pieces`), with the
-    /// same checks; [`Stager::finish`] then hashes it, records it as
-    /// gathered over the mesh ([`Origin::Mesh`]) and asks for the swap.
+    /// [`Stager::begin`] for an image the mesh's store (`crate::pieces`)
+    /// already wrote into the staged slot; [`Stager::finish`] then records
+    /// it as [`Origin::Mesh`].
     pub async fn written(
         record: R,
         state: S,

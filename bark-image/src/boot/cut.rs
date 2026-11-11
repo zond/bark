@@ -1,35 +1,23 @@
-//! A bench loader's reset in the middle of a swap (`BARK_LOADER_BENCH`,
-//! roadmap D143): once in each swap and once in each swap back it stops
-//! the copy at a moment drawn evenly over the time the two flashes spend
-//! erasing and writing, as a power cut would stop it, and the loader
-//! resets the chip. The next boot goes on with the copy from where it
-//! stopped, as after a power cut.
+//! A bench loader's reset in the middle of a swap (`BARK_LOADER_BENCH`):
+//! once in each swap and each swap back it stops the copy at a moment
+//! drawn evenly over the time the flashes spend erasing and writing, as a
+//! power cut would, and resets the chip. The next boot goes on from there.
 //!
-//! A reset alone cannot land inside an operation of the internal flash:
-//! the CPU halts while the NVMC erases or writes when it runs from flash
-//! (nRF52840 Product Specification, NVMC). So the operation the moment
-//! falls in is done only in part, as far as it had got: an erase as a
-//! partial erase that lasts as long, which leaves the page's bits
-//! undefined, as an incomplete erase does (same section); a write as the
-//! words written by then. The external chip runs an operation on its own:
-//! it is started and left running, and the reset drops the chip's rail
-//! (`docs/external-flash-2026-11-06.md`, "The supply"). Reads count for no
-//! time: a cut during one leaves the flashes as between two operations.
+//! A reset cannot land inside an internal flash operation: the CPU halts
+//! while the NVMC erases or writes (nRF52840 Product Specification, NVMC).
+//! So the operation the moment falls in is done in part: an erase as a
+//! partial erase that long, which leaves the page's bits undefined (same
+//! section); a write as the words written by then. The external chip is
+//! left running its operation, and the reset drops its rail
+//! (`docs/external-flash-2026-11-06.md`, "The supply"). Reads take no
+//! time: a cut during one is as between two operations.
 //!
-//! The moment is drawn at the boot that starts a swap or a swap back, and
-//! written to the record before the first copy; a boot that finds it
-//! there draws none. So a swap is stopped at most once, and ends at the
-//! next boot.
+//! The moment is written to the record before the first copy, and a boot
+//! that finds it there draws none, so a phase is stopped at most once.
 //!
-//! Or the moment is chosen ([`choose`]): the running image writes it to
-//! the record, on a bench script's behalf, before the boot that starts
-//! the phase. It names an operation by its index in the phase's erases
-//! and writes on both flashes, counted from the start of that boot, each
-//! page of an erase one, as the host test's power cuts count them
-//! (`boot/tests.rs`, `cut_everywhere`); [`operations`] says how many a
-//! phase has. That operation is done half way, as the host test's cut
-//! leaves it. Where it fell is written before the reset, and a boot that
-//! finds it there stops nothing, so the phase then ends.
+//! Or the moment is chosen ([`choose`]) as an operation's index, counted as
+//! the host test's power cuts count them (`boot/tests.rs`,
+//! `cut_everywhere`), and that operation is done half way.
 
 use core::cell::Cell;
 
@@ -96,11 +84,9 @@ pub enum Op {
     Write,
 }
 
-/// The time `op` takes on `side` over `len` bytes from `from`: an erase
-/// a page or sector at a time, an internal write a word at a time, an
-/// external one a page program at a time (ZD25WQ16B datasheet, Table 4-3,
-/// typical: the chip's own time, which the wait for the cut must stay
-/// inside).
+/// The time `op` takes on `side` over `len` bytes from `from`. External
+/// times are typical (ZD25WQ16B datasheet, Table 4-3), as the wait for the
+/// cut must stay inside the chip's own time.
 pub const fn cost(side: Side, op: Op, from: u32, len: u32) -> u32 {
     match (side, op) {
         (Side::Internal, Op::Erase) => len / PAGE * INTERNAL_ERASE_US,
@@ -118,12 +104,10 @@ const fn programs(from: u32, len: u32) -> u32 {
     }
 }
 
-/// The erases, a page each, and the writes a phase makes at the boot
-/// that starts it, in the order of embassy-boot's `prepare_boot` (as
-/// [`phase_us`]): the swap's first is the record's word that notes the
-/// image checked, then six a page, each copy an erase, a write and a
-/// progress word; a swap back's are six a page, then the word that marks
-/// its progress invalid, the state page's erase and its word.
+/// The erases, a page each, and the writes a phase makes at the boot that
+/// starts it: the swap's record word, then six a page (each copy an erase,
+/// a write and a progress word); the swap back's six a page, then the
+/// invalid mark, the state page's erase and its word.
 pub const fn operations(phase: Phase) -> u32 {
     match phase {
         Phase::Swap => 1 + 6 * PAGES,
@@ -132,11 +116,7 @@ pub const fn operations(phase: Phase) -> u32 {
 }
 
 /// The time a whole phase spends erasing and writing, in the order of
-/// embassy-boot's `prepare_boot` (its documentation, "SWAPPING" and
-/// "REVERTING", read at 0.7.0): each page copied out to the external
-/// flash and the staged one in, each copy a page erase, a page write and
-/// a progress word; a swap back then marks its progress invalid, erases
-/// the state page and writes its word.
+/// embassy-boot 0.7.0's `prepare_boot` ("SWAPPING", "REVERTING").
 pub const fn phase_us(phase: Phase) -> u32 {
     let word = cost(Side::Internal, Op::Write, 0, WORD);
     let out = cost(Side::External, Op::Erase, 0, PAGE) + cost(Side::External, Op::Write, 0, PAGE);
@@ -148,9 +128,8 @@ pub const fn phase_us(phase: Phase) -> u32 {
     }
 }
 
-/// The moment, in microseconds of a phase's `total`, a draw of 32 random
-/// bits picks: each of the `total` by as many draws as any other, to
-/// within one.
+/// The moment, in microseconds of a phase's `total`, that a draw of 32
+/// random bits picks, evenly to within one draw.
 pub fn moment(draw: u32, total: u32) -> u32 {
     ((u64::from(draw) * u64::from(total)) >> 32) as u32
 }
@@ -447,10 +426,9 @@ impl<F: NorFlash, P: Partial<F>> NorFlash for Cutting<'_, F, P> {
 }
 
 /// The phase a boot with a swap asked for is in, read as embassy-boot
-/// reads its state page: the progress words follow the state word and a
-/// word that marks them invalid, one for each copy of the swap, then one
-/// for each of the swap back; the swap is done once the last of its own
-/// is written, or the progress is marked invalid. `None` without a swap.
+/// reads its state page: the state word, the invalid mark, then a progress
+/// word for each copy of the swap and each of the swap back. `None`
+/// without a swap.
 pub fn phase<F: NorFlash>(internal: &Shared<F>) -> Result<Option<Phase>, FlashError> {
     if state(internal)? != State::Swap {
         return Ok(None);
@@ -483,10 +461,7 @@ fn progress_done<F: NorFlash>(internal: &Shared<F>, index: u32) -> Result<bool, 
 }
 
 /// Whether nothing of `phase` has been done yet, so that this boot's
-/// count of operations is the phase's from its start: for the swap, the
-/// record's word not yet noting the image checked and the first copy
-/// not done; for a swap back, its first copy not done and the progress
-/// not marked invalid.
+/// count of operations is the phase's from its start.
 fn at_start<F: NorFlash>(internal: &Shared<F>, phase: Phase) -> Result<bool, FlashError> {
     Ok(match phase {
         Phase::Swap => !super::was_checked(internal)? && !progress_done(internal, 0)?,
@@ -569,9 +544,8 @@ impl From<FlashError> for ChooseError {
 }
 
 /// Choose where a bench loader stops `phase` of the swap asked for: at
-/// operation `op` (`operations`), or nowhere with `None`, which a drawn
-/// moment would otherwise take. Written by the running image once it has
-/// asked for the swap, as staging erases the record.
+/// operation `op` (`operations`), or nowhere with `None`. Written once the
+/// swap is asked for, as staging erases the record.
 pub fn choose<F: NorFlash>(
     internal: &Shared<F>,
     phase: Phase,
@@ -594,10 +568,9 @@ pub fn choose<F: NorFlash>(
     Ok(())
 }
 
-/// [`super::prepare`] on flashes under `plan`. A boot that starts a swap
-/// or a swap back stops it at the plan's moment, notes where in the
-/// record, and returns an error, on which the loader resets as it does
-/// on any flash error.
+/// [`super::prepare`] on flashes under `plan`. A cut is noted in the
+/// record and returned as an error, on which the loader resets as on any
+/// flash error.
 pub fn prepare_cut<I, PI, E, PE>(
     internal: &Shared<Cutting<'_, I, PI>>,
     external: Option<&Shared<Cutting<'_, E, PE>>>,
@@ -656,9 +629,7 @@ pub fn recorded<F: NorFlash>(internal: &Shared<F>) -> Result<[Option<Recorded>; 
 
 impl core::fmt::Display for Recorded {
     /// As the firmware logs it, and `bark-fw/scripts/swapbench.py` and
-    /// `cutbench.py` read it: `bench reset in the swap at 12345678 us:
-    /// external erase of page 113, 37.0 % through`, `bench reset in the
-    /// swap back at operation 4: ...`, or `...: not reached`.
+    /// `cutbench.py` read it.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let phase = match self.phase {
             Phase::Swap => "swap",

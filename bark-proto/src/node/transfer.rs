@@ -1,43 +1,13 @@
-//! Per-hop transfer (spec "Hand-over"): one frame handed to one receiver
-//! until it answers or the sender gives up ([`HandOver`]), and the replies
-//! this node owes the senders of what it received ([`Replies`]): an ACK
-//! each, taking, refusing or seen.
+//! Per-hop transfer (spec "Hand-over", "Retry wait", "The ACK"): one frame
+//! handed to one receiver until it answers or the sender gives up
+//! ([`HandOver`]), and the replies this node owes the senders of what it
+//! received ([`Replies`]).
 //!
-//! A hand-over lives in its send-queue place ([`Outgoing`]): where it is,
-//! its transmissions so far and its receiver, which the ACK it expects
-//! names. What the radio side keeps of the one in flight is [`Flight`].
-//! The node owns the radio (`mac.rs`), encodes the frame when it goes and
-//! keeps the duty-cycle budget, starts each excursion and reports its completion
-//! here.
-//!
-//! # A hand-over
-//!
-//! 1. Listen before talking on the receiver's home channel: one check, a
-//!    CAD with the RSSI read while it samples ([`Action::Lbt`]). If it
-//!    finds the channel busy, wait a random 0–`hop_backoff_max`
-//!    (spec "Hand-over": 50 ms) and check again; once the checks of one attempt have
-//!    found it busy for [`LBT_GIVE_UP`] (500 ms), give up ([`Check::GaveUp`]).
-//!    The role decides what a give-up is: a forward keeps its receiver
-//!    and its transmissions, waits the retry window of those
-//!    transmissions ([`HandOver::channel_busy`]) and goes back to 1 with
-//!    a fresh period, since a busy channel says nothing about the
-//!    receiver (roadmap D96); so does a return (D111). A delivery, which
-//!    the delivery queue keeps if it fails, counts it as an attempt
-//!    ([`HandOver::lost_attempt`]).
-//! 2. Transmit, then listen home for the ACK for `ack_timeout` (100 ms).
-//! 3. No ACK: wait a random time in `[0, retry_window]` and go back to 1,
-//!    up to `hop_attempts` (3) transmissions; then the hand-over has
-//!    failed. The window is twice the time one hand-over holds its
-//!    receiver and doubles per attempt ([`retry_window`]), so that two
-//!    senders that cannot hear each other and have collided at the
-//!    receiver come apart (spec "Retry wait", roadmap D22).
-//!
-//! An ACK answers the hand-over only if it names the message, the
-//! receiver as `from` and this node as `to` (roadmap D19, D32): another
-//! sender may be offering the same message to the same receiver. One
-//! that arrives after the timeout but before the next attempt still
-//! counts: the receiver has the frame. Whether it takes or refuses the
-//! frame, the role decides what follows (D27).
+//! A hand-over lives in its send-queue place ([`Outgoing`]); what the radio
+//! side keeps of the one in flight is [`Flight`]. The node owns the radio
+//! (`mac.rs`) and the duty-cycle budget, starts each excursion and reports
+//! its completion here. The role decides what a listen-before-talk give-up,
+//! a refusal or a failure leads to.
 
 use crate::ids::{MsgId, NodeId};
 use crate::node::Rng;
@@ -48,15 +18,11 @@ use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
 use crate::wire::{Ack, Data};
 
-/// How many hand-overs the node has in flight at most: one, so that the
-/// radio listens at home for the ACK of the frame it sent, and the
-/// scheduler starts no other meanwhile (spec "Hand-over"). Raising it is
-/// a decision of its own.
+/// How many hand-overs the node has in flight at most: one, so the radio
+/// listens at home for the ACK of the frame it sent (spec "Hand-over").
 pub(crate) const IN_FLIGHT: usize = 1;
 
-/// What the radio side keeps of the hand-over in flight: until when it
-/// waits, and since when the checks of its attempt have found the channel
-/// busy.
+/// What the radio side keeps of the hand-over in flight.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Flight {
     until: Instant,
@@ -101,7 +67,6 @@ pub(crate) enum Missed {
 pub(crate) struct HandOver<'a> {
     out: &'a mut Outgoing,
     flight: &'a mut Flight,
-    /// This node, which the ACK names as `to`.
     me: NodeId,
 }
 
@@ -148,8 +113,8 @@ impl<'a> HandOver<'a> {
         self.out.state == State::AwaitAck
     }
 
-    /// Begin the hand-over of this place, ready at once, after the
-    /// unanswered transmissions it kept while it waited.
+    /// Begin the hand-over of this place, ready at once, keeping the
+    /// unanswered transmissions it had.
     pub(crate) fn start(&mut self, now: Instant) {
         *self.flight = Flight {
             until: now,
@@ -174,10 +139,9 @@ impl<'a> HandOver<'a> {
         self.wait(Wait::Reply, until);
     }
 
-    /// Hold the hand-over until the duty-cycle budget allows it. The
-    /// listen-before-talk give-up counts time the channel was found busy;
-    /// a wait of minutes for the budget is not that, so the checks after
-    /// it start a new period.
+    /// Hold the hand-over until the duty-cycle budget allows it. A wait for
+    /// the budget is not a busy channel, so the checks after it start a new
+    /// give-up period.
     pub(crate) fn defer(&mut self, until: Instant) {
         self.flight.lbt_since = None;
         self.wait(Wait::Budget, until);
@@ -250,13 +214,12 @@ impl<'a> HandOver<'a> {
         taken
     }
 
-    /// Listen-before-talk gave up on the receiver's channel: wait the
-    /// retry window of the transmissions made so far, one unit before
-    /// any, and listen again. Returns when. The 0–50 ms backoff waits for
-    /// a frame to end; a channel busy for longer than any frame is held
-    /// by one hand-over after another, so the wait is in their unit and
-    /// grows with the attempts, as the retry wait does, so that senders
-    /// waiting for the same channel come apart (spec "Retry wait").
+    /// Listen-before-talk gave up on the receiver's channel: wait the retry
+    /// window of the transmissions so far and listen again; returns when.
+    /// A channel busy longer than any frame is held by one hand-over after
+    /// another, so the wait is in their unit and grows like the retry wait,
+    /// so that senders waiting for the channel come apart
+    /// (spec "Retry wait").
     pub(crate) fn channel_busy(
         &mut self,
         now: Instant,
@@ -393,30 +356,25 @@ impl Owed {
     }
 }
 
-/// How many replies a node can owe at once (roadmap D29). One, because
-/// a node that owes a reply has the radio's next transmission promised:
-/// a second packet it took or refused meanwhile would be answered only
-/// after the first reply, and its sender may have stopped waiting by
-/// then. A relay takes or refuses a packet only when [`Replies::can_owe`]
-/// its reply; otherwise the node stays silent and the sender's retry
-/// brings the packet again.
+/// How many replies a node can owe at once. One: a second packet would be
+/// answered only after the first reply, when its sender may have stopped
+/// waiting. A relay takes or refuses a packet only when [`Replies::can_owe`]
+/// its reply; otherwise it stays silent and the sender's retry brings it
+/// again.
 pub(crate) const REPLIES: usize = 1;
 
-/// The replies this node owes, in the order it took them on, sent at
-/// once, as the receiver of spec "The ACK" does. One is abandoned once
-/// its sender has stopped waiting: a rule of this queue, not of its
-/// length. A reply abandoned that took a DATA leaves the DATA untaken,
-/// and the node reports it ([`Replies::untaken`]).
+/// The replies this node owes, in order (spec "The ACK"). One is abandoned
+/// once its sender has stopped waiting; one that took a DATA then leaves it
+/// untaken ([`Replies::untaken`]).
 ///
-/// `sending` says whether the first owed reply is on the radio now, which
-/// the node knows from its excursion: a packet can arrive meanwhile, as
-/// the driver may hold a check while a reception ends (core-interface §3
-/// rule 8).
+/// `sending` says whether the first owed reply is on the radio now: a
+/// packet can arrive meanwhile, as the driver may hold a check while a
+/// reception ends (core-interface §3 rule 8).
 #[derive(Clone)]
 pub(crate) struct Replies {
     owed: FixedVec<Owed, REPLIES>,
-    /// The reply being sent takes a DATA for this node: once it has gone,
-    /// the node listens one hand-over for the next (spec "Delivery").
+    /// The reply being sent takes a DATA for this node, so the node listens
+    /// on for the next (spec "Delivery").
     renew: bool,
     /// The message of a reply abandoned since the node last asked, whose
     /// DATA it left untaken.
@@ -471,12 +429,11 @@ impl Replies {
             .any(|o| o.reply == reply && o.channel == channel)
     }
 
-    /// Owe `reply` on `channel` until `deadline`, `renews` saying whether
-    /// it takes a DATA for this node and `takes` the DATA to act on once
-    /// it has gone out, if the take waits for that. A reply owed already
-    /// answers this copy too. With no place left, the oldest one that has
-    /// not started out gives way, as the one whose packet is older; if
-    /// that is the one being sent, `reply` is not owed.
+    /// Owe `reply` on `channel` until `deadline`; `renews` says whether it
+    /// takes a DATA for this node, `takes` is the DATA to act on once it has
+    /// gone out. A reply owed already answers this copy too. With no place
+    /// left, the oldest not yet started gives way; if that one is being
+    /// sent, `reply` is not owed.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn owe(
         &mut self,
@@ -610,8 +567,7 @@ mod tests {
         }
     }
 
-    /// A place whose message is `id`, to the receiver `ack(id).from`,
-    /// and the flight: a hand-over to drive.
+    /// A hand-over of message `id` to the receiver `ack(id).from`.
     fn place(id: u32) -> (Outgoing, Flight) {
         use crate::position::Position;
         use crate::radio::MIN_PREAMBLE_SYMBOLS;
@@ -628,8 +584,7 @@ mod tests {
         (out, Flight::NONE)
     }
 
-    /// The expected ACK names the message and the receiver of the frame
-    /// (roadmap D15).
+    /// The expected ACK names the message and the receiver of the frame.
     fn names(id: u32) -> Ack {
         let (out, _) = place(id);
         let e = out.expect(ack(id).to);
@@ -875,7 +830,7 @@ mod tests {
     }
 
     /// A reply that takes a DATA hands it over once sent, and leaves it
-    /// untaken, reported once, when it is given up (roadmap D93).
+    /// untaken, reported once, when it is given up.
     #[test]
     fn a_take_waits_for_its_reply() {
         let ch = Channel::new(3).unwrap();

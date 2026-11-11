@@ -1,9 +1,6 @@
-//! Global WGS-84 position in the 7-byte fixed-point wire form (spec "Heartbeat", "Positions on the wire").
-//!
-//! Latitude is 25 bits and longitude 26 bits of two's-complement fixed point.
-//! Both use the same angular unit, 180° / 2²⁵ = 360° / 2²⁶ ≈ 5.36 µdeg,
-//! which is ≈0.6 m along a meridian. A node's identity is its
-//! [`crate::NodeId`]; a position is where it is.
+//! WGS-84 position in the 7-byte fixed-point wire form, and its 4-byte
+//! short form (spec "Positions on the wire"). Latitude (25 bits) and
+//! longitude (26 bits) share one unit, 180° / 2²⁵ = 360° / 2²⁶.
 
 /// Angular unit of one count, in degrees: 180 / 2²⁵.
 pub const UNIT_DEG: f64 = 180.0 / (1u64 << 25) as f64;
@@ -52,10 +49,9 @@ impl Position {
         self.lon as f64 * UNIT_DEG
     }
 
-    /// Latitude and longitude in millionths of a degree, rounded to the
-    /// nearest, in integers alone: a count is 5.36 µdeg, so six decimals
-    /// show every count apart, and a firmware that prints a position needs
-    /// no floating-point formatting.
+    /// Latitude and longitude in millionths of a degree, rounded, in
+    /// integers alone, so firmware prints a position without float
+    /// formatting. A count is 5.36 µdeg, so six decimals tell counts apart.
     pub fn micro_degrees(self) -> (i64, i64) {
         // 180 · 10⁶ / 2²⁵ µdeg a count, rounded half away from zero.
         let udeg = |c: i32| {
@@ -100,11 +96,9 @@ impl Position {
     }
 
     /// The position named `short` nearest to `near`: on each axis the one
-    /// candidate within half a period, [`SHORT_PERIOD`] / 2 counts, of
-    /// `near`. Both axes wrap as their wire fields do, so longitude wraps
-    /// at the antimeridian. A real relay is never beyond a pole, so a name
-    /// that wraps latitude there is garbage, and rebuilds to a position
-    /// near the other pole that no table holds.
+    /// candidate within [`SHORT_PERIOD`] / 2 counts. Both axes wrap as their
+    /// wire fields do; a name that wraps latitude past a pole is garbage
+    /// and rebuilds near the other pole, where no table holds a relay.
     pub fn from_short(short: ShortName, near: Position) -> Position {
         // The wrapping i16 difference is the signed offset within half a period.
         let dlat = ((short.0 >> 16) as u16).wrapping_sub(near.lat as u16) as i16;
@@ -122,17 +116,8 @@ const SHORT_MASK: u32 = 0xffff;
 pub const SHORT_PERIOD: i32 = 1 << 16;
 
 /// A position's 4-byte short form, which the heartbeat carries (spec
-/// "Positions on the wire", roadmap D14): the low 16 bits of its latitude count,
-/// then the low 16 bits of its longitude count, big-endian.
-///
-/// One count is 180° / 2²⁵ ≈ 0.6 m, so the short form repeats every 2¹⁶
-/// counts: 39 km of latitude, and 39 km × cos(latitude) of longitude (25 km
-/// at 50° N). Two positions share it only if they share a 0.6 m cell or are
-/// at least that far apart on one axis, far beyond the ≈3 km a relay hears
-/// (spec "Capacity and sizing"). [`Position::from_short`] rebuilds
-/// the full position from any point within half a period on each axis,
-/// 19.5 km north-south and 12.6 km east-west at 50° N, so a name is
-/// unambiguous among everything a node hears up to about 80° N or S, where
+/// "Positions on the wire"): the low 16 bits of each count. It is
+/// unambiguous within the ≈3 km a node hears up to about 80° N or S, where
 /// the east-west half period shrinks to 3.4 km.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub struct ShortName(pub u32);

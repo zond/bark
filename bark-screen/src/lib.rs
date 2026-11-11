@@ -1,11 +1,7 @@
-//! What a node shows on its 1.54" e-paper (200 × 200, `bark-fw/src/display.rs`
-//! drives it): its ID, its image, and its state as a person reads it,
-//! drawn as the panel controller's RAM image. Building the picture needs
-//! no hardware, so it is tested here; the firmware sends it.
-//!
-//! Text is drawn from a 5 × 7 bitmap font of the digits, the capital
-//! letters, one lowercase letter and a few signs, scaled up by whole
-//! pixels.
+//! What a node shows on its 1.54" e-paper, 200 × 200, drawn as the panel
+//! controller's RAM image (spec "Screen and buttons"). Building the picture
+//! needs no hardware, so it is tested here; `bark-fw/src/display.rs` sends
+//! it. Text is a 5 × 7 bitmap font scaled up by whole pixels.
 
 #![no_std]
 
@@ -24,9 +20,8 @@ pub const HEIGHT: usize = 200;
 pub const ROW_BYTES: usize = WIDTH / 8;
 
 /// Quarter turns clockwise from the controller's own orientation to the
-/// board's. The controller's row 0 is at the edge the flex cable enters,
-/// which on the T-Echo is the board's right: drawn unturned, the picture
-/// came out a quarter turn clockwise (bench, 2026-10-30).
+/// board's: the controller's row 0 is at the edge the flex cable enters,
+/// which on the T-Echo is the board's right.
 const ROTATION: u8 = 1;
 
 /// A picture to show: the controller's RAM image, white until drawn on.
@@ -146,10 +141,8 @@ pub const fn line_chars(scale: usize) -> usize {
 }
 
 /// The glyph of `c`, seven rows, the leftmost pixel in bit 4; `None` for
-/// a character the font lacks. Lowercase is drawn as capitals, the ID's
-/// hex being lowercase in the log and on the bus, but for `s`, the one
-/// lowercase letter, five rows tall on the baseline, for the seconds
-/// in the buttons' labels (`labels`).
+/// a character the font lacks. Lowercase is drawn as capitals, as the ID's
+/// hex comes lowercase, but for `s`, the seconds in the buttons' labels.
 pub fn glyph(c: u8) -> Option<[u8; GLYPH_HEIGHT]> {
     if c == b's' {
         return Some([0x00, 0x00, 0x0F, 0x10, 0x0E, 0x01, 0x1E]);
@@ -277,9 +270,9 @@ pub enum Battery {
 }
 
 /// How long the node can go on as it runs now, as the BATTERY line says
-/// it beside the level: in the largest unit that keeps the figure to one
-/// or two digits, but hours up to two days, as the uptime has them, since a day is a
-/// coarse step there. Whole units, rounded down; days at most 99.
+/// it: the largest unit that keeps one or two digits, but hours up to two
+/// days, as the uptime has them, a day being a coarse step there. Rounded
+/// down; days at most 99.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Left {
     Minutes(u8),
@@ -346,8 +339,7 @@ pub struct Getting {
     pub blocks: u8,
 }
 
-/// The phone link as the screen says it (spec "Phone link", Pairing,
-/// Phones; "Screen and buttons").
+/// The phone link as the screen says it (spec "Pairing", "Phones").
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Phone {
     /// No phone has paired; the node is public all the same.
@@ -412,9 +404,9 @@ pub struct Clock {
 }
 
 /// What never changes: the node's ID as hex, its image's name and version,
-/// and whether it is a discharge bench build (roadmap D190), which runs by
-/// other rules than a node's and says so in place of the image's line and
-/// of the ID under the code ([`BENCH`]).
+/// and whether it is a discharge bench build, which runs by other rules
+/// than a node's and says so in place of the image's line and of the ID
+/// under the code ([`BENCH`]).
 #[derive(Clone, Copy, Debug)]
 pub struct Fixed<'a> {
     pub id: &'a [u8],
@@ -431,12 +423,11 @@ const _: () = assert!(BENCH.len() <= LINE);
 const TOP: usize = 10;
 const GAP: usize = 8;
 
-/// The buttons' labels: one font pixel a pixel, at the left edge, on the
-/// lines picture's top and bottom margins, each the one nearer its
-/// button: both buttons are on the case's left side as the screen reads,
-/// the reset button nearer the top and the user button below the glass
-/// (`docs/enclosure-2026-11-09.md`, the maker's case model). The long
-/// press's length is `bark-fw`'s `button::LONG_PRESS`.
+/// The buttons' labels sit at the left edge in the top and bottom margins,
+/// each nearer its button: both are on the case's left side as the screen
+/// reads, the reset button near the top and the user button below the
+/// glass (`docs/enclosure-2026-11-09.md`). The long press's length is
+/// `bark-fw`'s `button::LONG_PRESS`.
 pub const LABEL_SCALE: usize = 1;
 pub const LABEL_LEFT: usize = 2;
 /// The label's arrow's width, pixels: its head, as wide as half the
@@ -453,10 +444,8 @@ pub const LINES: usize = 10;
 const _: () = assert!(TOP + (LINES * line_height(SCALE)) + GAP <= ROLE_TOP);
 const _: () = assert!(REBOOT_TOP + GLYPH_HEIGHT * LABEL_SCALE < TOP);
 
-/// The labels the lines show beside the buttons that change something,
-/// each with its top row, drawn after an arrow pointing at the button
-/// ([`Picture::label`]): the reset button reboots; the user button held
-/// flips the role, so it says the role it would turn the node to
+/// The buttons' labels on the lines, each with its top row: the user
+/// button's says the role a long press would turn the node to
 /// (spec "Screen and buttons").
 pub fn labels(state: &State) -> [(&'static str, usize); 2] {
     let role = match state.sleepy {
@@ -468,11 +457,7 @@ pub fn labels(state: &State) -> [(&'static str, usize); 2] {
 
 /// The screen's lines, each with the row its top edge is at, for `state`
 /// with the node up `up_min` minutes and the time `clock`; `None` past
-/// the last.
-///
-/// The header says what the node is, a state as a word or two at the
-/// left; every line below it is a label at the left and its value flush
-/// right. Every line is a full line wide, so that it starts at the left
+/// the last. Every line is a full line wide, so that it starts at the left
 /// margin.
 pub fn lines(
     fixed: &Fixed<'_>,

@@ -1,5 +1,5 @@
 //! A role a person flips with the board's button (spec "Nodes",
-//! `relay/power.rs`, roadmap D160): it holds until the external power
+//! `relay/power.rs`): it holds until the external power
 //! changes, then the power's rules decide again; a forced relay on
 //! battery still turns sleepy at its low battery level.
 

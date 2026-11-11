@@ -1,56 +1,12 @@
-//! Per-message records (spec "Message records", roadmap D11, D17): what a relay
-//! remembers about each message it has received or originated, so that it
-//! can run its part of the depth-first search and recognise a repeat.
+//! Per-message records (spec "Message records"): what a relay remembers
+//! about each message it has received or originated, so that it can run
+//! its part of the depth-first search and recognise a repeat. The table's
+//! size is derived in spec "Bounds".
 //!
-//! # Eviction
-//!
-//! A record has no lifetime: it is kept until the table needs its place.
-//! A new record then takes the place of the least recently touched one,
-//! touched meaning that the message was received or sent here, of those
-//! whose message this relay does not hold. A message is held while it is
-//! in the send queue, the hand-over included, or set aside for the
-//! delivery queue; it needs its record to be routed when its turn comes,
-//! so overload never takes it (roadmap D31). The table holds more records
-//! than the relay can hold messages ([`HELD`]), so a new record always
-//! finds a place.
-//!
-//! # Size
-//!
-//! A message sent on can come back to this relay, returned or offered by
-//! a split copy, and its record must still be here then. On its way it
-//! may wait at each relay as long as a full send queue takes to drain,
-//! each entry waiting out one ban (spec "Bans", roadmap D31):
-//!
-//! ```text
-//! (39 + 64) places × 1.58 s = 162.9 s
-//! ```
-//!
-//! The most messages a relay can touch in that time within its duty
-//! cycle (spec "Duty cycle cap"): each costs at least an ACK (18 bytes, 16.96 ms) and one
-//! DATA packet with no payload (28 bytes, 22.08 ms), together 39.04 ms;
-//! any 162.9 s carries at most a full bucket and its refill,
-//! 6 s + 9.83 % × 162.9 s = 22.02 s of airtime ([`most_on_air`]), and
-//! ⌊22.02 s / 39.04 ms⌋ = 564. The records of held messages are not
-//! evicted and may be older than that, so the table has room for them on
-//! top: 564 + 103 = 667.
-//!
-//! # The tried set
-//!
-//! D17 defined the tried set as the parent, the last child, and every
-//! neighbour before the last child in the order of spec "Next hop" (distance to the
-//! destination, then ID), which is fixed for a message. The record
-//! keeps instead the neighbours that took the message from this relay,
-//! each by ACKing a hand-over of it, a forward or a return, as a mask
-//! over neighbour-table slots ([`Record::handed`]). With the table
-//! unchanged and every hand-over
-//! answered, the two agree; the last child itself is no longer kept
-//! (roadmap D35). They differ for a relay passed over because it was
-//! demoted, expired or not in the table, and for one that refused the
-//! message or never answered (roadmap D36): the order counts it as tried,
-//! the mask as untried, so it stays a candidate for later choices. When a
-//! slot changes hands its bit is cleared in every record
-//! ([`Records::slot_reoccupied`]), so a newcomer is never taken for a
-//! neighbour that was handed the message.
+//! The tried set is kept as a mask over neighbour-table slots
+//! ([`Record::handed`]); when a slot changes hands its bit is cleared in
+//! every record ([`Records::slot_reoccupied`]), so a newcomer is never
+//! taken for a neighbour that was handed the message.
 
 use crate::ids::MsgId;
 use crate::ids::NodeId;
@@ -65,16 +21,16 @@ use crate::wire::{ACK_LEN, DATA_HEADER_LEN};
 pub const MAX_HOPS: u8 = u8::MAX;
 
 /// How long a full send queue takes to drain with each entry waiting out
-/// one ban; see the module documentation.
+/// one ban: 103 × 1.58 s = 162.9 s (spec "Bounds").
 pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_SLOTS) as u64);
 
 /// The most messages a relay holds at once: one per place in its send
-/// queue. A message set aside for the delivery queue keeps its place
-/// (`relay/forward.rs`).
+/// queue, which a message set aside for the delivery queue keeps.
 pub const HELD: usize = SEND_QUEUE + HOP_SLOTS;
 
-/// The most messages a relay can touch in `span`; see the module
-/// documentation.
+/// The most messages a relay can touch in `span`: its most airtime over
+/// an ACK and an empty DATA each, ⌊22.02 s / 39.04 ms⌋ = 564 for
+/// [`DRAIN`] (spec "Bounds").
 pub const fn records_for(span: Duration) -> usize {
     let airtime = most_on_air(span).as_micros();
     let per_message = time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
@@ -82,7 +38,8 @@ pub const fn records_for(span: Duration) -> usize {
     (airtime / per_message) as usize
 }
 
-/// Record bound; see the module documentation.
+/// Record bound: what a relay touches in a drain, and the records of held
+/// messages, which are never evicted, on top (spec "Bounds").
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
 const _: () = assert!(RECORDS == 667);
@@ -109,13 +66,10 @@ const NO_HOME: Channel = match Channel::new(0) {
 pub struct Record {
     id: MsgId,
     parent: NodeId,
-    /// The sender of the last packet of the message received here, with
-    /// `last_hops`: the same pair again is a retransmission, answered as
-    /// the first was, taken or seen (spec "Receiving DATA").
+    /// With `last_hops`, the last packet received (spec "Receiving DATA").
     last_from: NodeId,
-    /// The parent's home channel when the message arrived. A return goes
-    /// to the parent's home as the neighbour table has it then, and to
-    /// this one only if the parent has left the table (spec "Return to parent").
+    /// The parent's home channel when the message arrived, used only if
+    /// the parent has left the table (spec "Return to parent").
     parent_home: Channel,
     highest_hops: u8,
     last_hops: u8,
@@ -187,8 +141,7 @@ impl Record {
 
     /// Whether a packet of the message from `from` with `hops` repeats
     /// the last one received: a retransmission whose ACK was lost
-    /// (spec "Receiving DATA"). A sender sends a count only once but in retries
-    /// (spec "Hop count"), so any other packet is another copy.
+    /// (spec "Receiving DATA", "Hop count").
     pub fn repeats(&self, from: NodeId, hops: u8) -> bool {
         (from, hops) == (self.last_from, self.last_hops)
     }
@@ -204,8 +157,7 @@ impl Record {
     }
 
     /// A packet of the message from `from` with `hops` was received at
-    /// `now` and answered seen (spec "Receiving DATA" case 6): the same
-    /// packet again, sent because that answer was lost, gets it again.
+    /// `now` and answered seen (spec "Receiving DATA" case 6).
     pub fn seen(&mut self, from: NodeId, hops: u8, now: Instant) {
         self.received(from, hops, now);
         self.flags |= LAST_SEEN;
@@ -216,18 +168,15 @@ impl Record {
         self.flags & LAST_SEEN != 0
     }
 
-    /// A hand-over of the message with count `hops` succeeded. The next
-    /// one starts above it, so this relay never sends the same count twice
-    /// but as a retry (spec "Hop count").
+    /// A hand-over of the message with count `hops` succeeded
+    /// (spec "Hop count").
     pub fn handed_over(&mut self, hops: u8) {
         self.highest_hops = self.highest_hops.max(hops);
     }
 
     /// The neighbour in neighbour-table `slot` has had the message from
-    /// this relay or offered it one: it acknowledged a hand-over of it, a
-    /// forward or a return, or answered seen, or this relay answered seen
-    /// to its copy. It is tried, and what it sends next is a return
-    /// (spec "Message records", "Receiving DATA" case 5).
+    /// this relay or offered it one (spec "Message records",
+    /// "Receiving DATA" case 5).
     pub fn handed_to(&mut self, slot: usize) {
         if slot < NEIGHBOURS {
             self.handed |= 1 << slot;
@@ -374,12 +323,10 @@ impl Records {
 pub const KEPT_LEN: usize = 32;
 
 impl Records {
-    /// Every record whose message was received or sent here within `ttl`
-    /// of `now`, as kept across a reset, taken at `now`; but those
-    /// `left_out`, of a message offered again as new after the reset
-    /// (spec "Updates over the mesh", the install). After the delivery
-    /// TTL no copy of a message is left to come back
-    /// (spec "Delivery queue"), so a record older than that serves nothing.
+    /// Every record active within `ttl` of `now`, as kept across a reset,
+    /// but those `left_out`, of a message offered again as new after it
+    /// (spec "Updates over the mesh"). After the delivery TTL no copy of a
+    /// message is left to come back, so an older record serves nothing.
     pub fn kept<'a>(
         &'a self,
         ttl: Duration,
@@ -469,7 +416,6 @@ mod tests {
 
     #[test]
     fn constants_follow_the_design() {
-        // 103 places × one ban, 1.58 s.
         assert_eq!(DRAIN, BAN.mul(103));
         assert_eq!(DRAIN.as_millis(), 162_900);
         assert_eq!(HELD, 103);

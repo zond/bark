@@ -1,9 +1,8 @@
 //! Instants as the tables keep them across a reset
-//! (spec "Updates over the mesh", the install; `Node::remembered`):
-//! signed whole milliseconds from the moment the tables were taken, since
-//! the clock after the reset counts from another epoch. A millisecond is
-//! far below anything an instant times there: a heartbeat's window is
-//! about 1.8 s (spec "Heartbeat").
+//! (spec "Updates over the mesh"; `Node::remembered`): signed whole milliseconds from the
+//! moment the tables were taken, since the clock after the reset counts
+//! from another epoch. A millisecond is far below anything an instant
+//! times there: a heartbeat's window is about 1.8 s.
 
 use crate::time::{Duration, Instant};
 
@@ -80,8 +79,7 @@ mod tests {
             now,
             Round::Earlier,
         );
-        // After a reset the clock reads 150 s; the tables were taken 50 s
-        // before, so the instant 100 s before that is the epoch.
+        // Taken 50 s before 150 s: 100 s before that is the epoch.
         let then = Then::before(Instant::from_micros(150_000_000), Duration::from_secs(50));
         assert_eq!(get(&b, then), Some(Instant::from_micros(0)));
         let then = Then::before(Instant::from_micros(150_000_000), Duration::from_secs(51));

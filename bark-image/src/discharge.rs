@@ -1,19 +1,13 @@
-//! The battery's discharge log (roadmap D178): samples of the cell's
-//! voltage kept on the external flash ([`DISCHARGE`]) so that the cell's
-//! own curve can be learned from a full discharge, which takes days to
-//! weeks on battery, where no host reads the USB log.
+//! The battery's discharge log: samples of the cell's voltage kept on the
+//! external flash ([`DISCHARGE`]), so that the cell's curve can be learned
+//! from a discharge of days to weeks, where no host reads the USB log.
 //!
-//! A sample is taken an hour after the last on battery ([`EVERY_S`]), or
-//! ten minutes after in a discharge bench build ([`BENCH_EVERY_S`]), at
-//! each boot, and at each change of power and of the way the node runs
-//! ([`Sampler`]). Each is a record of [`LEN`] bytes, written into the
-//! next slot of a ring ([`Ring`]): a sequence number, the time, the
-//! uptime, the reading, the power and the mode, and a check, so that a
-//! record a power cut tore is skipped. The ring wraps: each sector is
-//! erased whole as the ring comes to it, so a full log loses its oldest
-//! 256 samples. The discharge to read is the one that just
-//! ended, so the newest are the ones to keep; a log that stopped when
-//! full would lose it to a run not erased before it.
+//! [`Sampler`] says when to sample: every [`EVERY_S`] on battery (or
+//! [`BENCH_EVERY_S`] in a discharge bench build), at each boot, and at
+//! each change of power or mode. [`Ring`] writes each as a checked record,
+//! so a record a power cut tore is skipped. The ring wraps, erasing a
+//! sector at a time: the discharge to read is the one that just ended, so
+//! the newest samples are the ones to keep.
 //!
 //! [`DISCHARGE`]: crate::layout::external::DISCHARGE
 
@@ -26,22 +20,18 @@ pub const LEN: usize = 16;
 /// Records to a sector.
 pub const PER_SECTOR: u32 = SECTOR / LEN as u32;
 
-/// Seconds between samples on battery: an hour. A full sleepy node's 59
-/// days are 1416 samples, which [`DISCHARGE`] holds; a relay's 4.4 days
-/// to its low level are 106; and the battery estimate's sample of 15 h
-/// (`bark_proto::drain::SAMPLE`) spans 15, enough to see where its steps
-/// fall. A finer interval would show the readings' noise, a step of the
-/// mapping being some 5.7 mV.
+/// Seconds between samples on battery: an hour. A sleepy node's 59 days
+/// are 1416 samples, which [`DISCHARGE`] holds; the battery estimate's
+/// 15 h (`bark_proto::drain::SAMPLE`) spans 15. A finer interval would
+/// show the readings' noise, a step of the mapping being some 5.7 mV.
 ///
 /// [`DISCHARGE`]: crate::layout::external::DISCHARGE
 pub const EVERY_S: u32 = 3600;
 
-/// Seconds between samples on battery in a discharge bench build (roadmap
-/// D190), whose relay with its GPS tracking draws about 35.4 mA and empties
-/// the cell in about 24 h: ten minutes, so that a sample spans about as
-/// much of the charge as a relay's hour, 0.69 % against 0.75 %, 3600 s ×
-/// 6.41 / 35.4 = 652 s, rounded. A day is then about 144 samples, against
-/// the hour's 24, and [`DISCHARGE`] holds 14 days of them.
+/// Seconds between samples on battery in a discharge bench build, a relay
+/// with its GPS tracking at about 35.4 mA: a sample then spans about as
+/// much charge as a relay's hour at 6.41 mA, 3600 s × 6.41 / 35.4 = 652 s,
+/// rounded. [`DISCHARGE`] holds 14 days of them.
 ///
 /// [`DISCHARGE`]: crate::layout::external::DISCHARGE
 pub const BENCH_EVERY_S: u32 = 600;
@@ -109,11 +99,9 @@ pub struct Sample {
     pub external: bool,
     /// Sleepy, else a relay.
     pub sleepy: bool,
-    /// The GPS running, searching or tracking, at some 29 mA (spec
-    /// "Sleepy nodes", How long the battery lasts).
+    /// The GPS running, searching or tracking.
     pub gps: bool,
-    /// Taken by a discharge bench build (roadmap D190): a relay at any
-    /// battery level, its GPS tracking, sampled every [`BENCH_EVERY_S`].
+    /// Taken by a discharge bench build ([`BENCH_EVERY_S`]).
     pub bench: bool,
     /// Why it was taken.
     pub why: Why,
@@ -213,11 +201,9 @@ fn newest(slots: u32, read: &mut impl FnMut(u32, &mut [u8; LEN])) -> Option<(u32
     newest
 }
 
-/// The samples, oldest first, one at a time ([`Oldest::next`]): round the
-/// ring from the slot after the newest, each sample newer than the one
-/// before it. A sample an erase cut short left behind is older than
-/// every one written after it, so it is passed over where it lies out of
-/// order.
+/// The samples, oldest first, round the ring from the slot after the
+/// newest. A sample an erase cut short left behind is older than every one
+/// written after it, so it is passed over where it lies out of order.
 #[derive(Clone, Copy, Debug)]
 pub struct Oldest {
     slots: u32,
@@ -333,10 +319,9 @@ pub struct Write {
 }
 
 impl Ring {
-    /// The ring of `slots` slots that `read` reads: the next sample goes
-    /// after the newest and after anything else written in its sector, a
-    /// record a power cut tore or what an erase cut short left; at a
-    /// sector's start the sector is erased before it is written.
+    /// The ring of `slots` slots that `read` reads. The next sample goes
+    /// after the newest and after anything else written in its sector,
+    /// torn or left by a cut erase.
     pub fn open(slots: u32, mut read: impl FnMut(u32, &mut [u8; LEN])) -> Ring {
         assert!(slots >= 2 * PER_SECTOR && slots.is_multiple_of(PER_SECTOR));
         let Some((at, s)) = newest(slots, &mut read) else {
@@ -393,7 +378,7 @@ pub struct Now {
     pub gps: bool,
 }
 
-/// When to take a sample (module documentation).
+/// When to take a sample.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Sampler {
     /// A discharge bench build's: a sample every [`BENCH_EVERY_S`].
@@ -440,9 +425,8 @@ impl Sampler {
         }
         let was = self.external.replace(now.external);
         let why = if !self.booted {
-            // On battery the boot's sample waits for the first reading,
-            // which the driver takes at its first step: the cell as it
-            // rested before the boot's load.
+            // On battery the boot's sample waits for the first reading:
+            // the cell as it rested before the boot's load.
             (now.external || now.reading.is_some()).then_some(Why::Boot)
         } else if was == Some(false) && now.external {
             // The reading of at most a minute ago, the discharge's last.

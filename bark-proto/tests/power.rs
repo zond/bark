@@ -1,6 +1,6 @@
-//! A node's role by its power (spec "Nodes", "Sleepy nodes", roadmap
-//! D71): on external power a relay, on battery sleepy, set at boot and at
-//! every change the driver reports.
+//! A node's role by its power (spec "Nodes", "Sleepy nodes"): on external
+//! power a relay, on battery sleepy, set at boot and at every change the
+//! driver reports.
 
 mod common;
 
@@ -263,7 +263,7 @@ fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
                 "lost: {lost}"
             );
             // S hands the message to its application once its ACK, the
-            // one R turned sleepy on, has left S's antenna (roadmap D93).
+            // one R turned sleepy on, has left S's antenna.
             h.run_for(secs(1));
             assert!(delivered_at(&h, s, id).is_some());
         }
@@ -278,7 +278,7 @@ fn after_its_grace_a_relay_flushes_and_turns_sleepy() {
 /// A relay unplugged that turns carried in its grace has flushed at its
 /// first far fix: it turns sleepy as it turns carried, long before the
 /// grace's end, with no second flush, and stays carried: its beats are
-/// flagged sleepy and carried (roadmap D72, D152).
+/// flagged sleepy and carried.
 #[test]
 fn a_relay_carried_in_its_grace_turns_sleepy_at_once() {
     let (r, s) = (0, 2);
@@ -331,7 +331,7 @@ fn a_relay_carried_in_its_grace_turns_sleepy_at_once() {
 
 /// A carried relay unplugged has no grace: it takes no more mail and
 /// turns sleepy at once, carried, anchored to the relay it hears; plugged
-/// in again it is a relay at once (spec "Sleepy nodes", roadmap D152).
+/// in again it is a relay at once (spec "Sleepy nodes").
 #[test]
 fn a_carried_relay_unplugged_turns_sleepy_at_once() {
     let (r, o) = (0, 1);
@@ -381,7 +381,7 @@ fn a_lone_relay_unplugged_is_anchorless_and_plugged_in_again_a_relay() {
 /// A node that turns carried, a relay or a sleepy node, heartbeats at
 /// once on its home channel with the flag; carried, its position changes
 /// with each fix, and it sends no heartbeat for that beyond its slots or
-/// beats (spec "Heartbeat", roadmap D72).
+/// beats (spec "Heartbeat").
 #[test]
 fn a_change_of_flag_heartbeats_at_once_and_a_carried_node_s_fixes_do_not() {
     for external in [true, false] {

@@ -1,4 +1,4 @@
-//! How a relay runs its GPS (spec "Beats", roadmap D82): all the time on
+//! How a relay runs its GPS (spec "Beats"): all the time on
 //! external power and through its grace on battery; after that, and with a
 //! map point, it rests, searching at boot and when the heartbeats of its
 //! fixed relay neighbours change more than fading explains; a far fix
@@ -24,8 +24,7 @@ fn at(s: u64) -> Instant {
 const GRACE: Duration = Duration::from_secs(300);
 
 /// Five relays on USB 200 m apart, all hearing each other, with battery
-/// levels, so that a fixed one on battery relays on past its grace
-/// (roadmap D81).
+/// levels, so that a fixed one on battery relays on past its grace.
 fn row() -> Harness<Relay> {
     let nodes = (0..5)
         .map(|i| {
@@ -137,7 +136,7 @@ fn a_far_fix_keeps_it_on() {
         );
         assert!(h.nodes[0].core.gps_tracks() || h.nodes[0].core.carried());
     }
-    // Carried past its grace on battery, it turns sleepy (roadmap D81).
+    // Carried past its grace on battery, it turns sleepy.
     assert!(h.nodes[0].core.carried());
 }
 

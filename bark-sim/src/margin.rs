@@ -3,23 +3,13 @@
 //! `--margin FILE` (`docs/margin-2026-11-02.md`). Counting only: nothing
 //! here changes a draw or a decision, and off it costs nothing.
 //!
-//! The sender's side is its neighbour-table entry for the receiver at the
-//! moment the frame reaches the air: its averaged RSSI, its noise floor,
-//! the entry's age, demotion and failures. The link's side is the stored
-//! base power, the power at the receiver on the frame's channel with its
-//! fade, the fade the sender would see on its own home channel at the same
-//! moment (the pair's process there), and the receiver's own floor. The
-//! fade is a pure function of the pair, the channel and the step, so
-//! reading it on another channel moves no process.
+//! The fade is a pure function of the pair, the channel and the step, so
+//! reading it on another channel than the frame's moves no process.
 //!
 //! The alternatives are the sender's other live, unbanned, undemoted relay
-//! entries nearer the destination than the sender itself and no nearer
-//! than the chosen one: a nearer one with margin would have been chosen
-//! had it not been tried, set aside or the parent, which the simulator
-//! cannot see. Of them the row keeps the one with the highest averaged
-//! RSSI and, for each of several thresholds above the floor, the one
-//! nearest the destination whose average clears it, each with its link's
-//! power now on its home channel and whether it is listening there.
+//! entries nearer the destination than the sender and no nearer than the
+//! chosen one: a nearer one with margin was passed over for a reason the
+//! simulator cannot see (tried, set aside, or the parent).
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -37,10 +27,8 @@ use crate::sim::{key, Lock, Sim};
 /// nearest alternative that clears each.
 pub const THRESHOLDS_DB: [f32; 4] = [6.0, 8.0, 10.0, 12.0];
 
-/// One alternative next hop: averaged RSSI, dBm; the power its link
-/// carries now on its home channel, dBm, or NaN if no link is stored
-/// (below the table's cut-off, or a walker); its distance to the
-/// destination, m; whether it is listening and free on its home channel.
+/// One alternative next hop. `rx_dbm` is its link's power now on its home
+/// channel, NaN if no link is stored (below the cut-off, or a walker).
 #[derive(Clone, Copy)]
 struct Alt {
     est_dbm: f32,

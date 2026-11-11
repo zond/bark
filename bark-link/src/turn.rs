@@ -1,14 +1,13 @@
 //! Whose turn it is at the one message a node holds for its phones, and so
-//! whose Status has ready set (spec "Phone link", Sending; roadmap D184).
-//! The node keeps one [`Turn`] for its links; it lives here, beside the
+//! whose Status has ready set (spec "Sending"). It lives here, beside the
 //! values it acts on, so that the host tests it.
 
 use bark_proto::tables::budget::BAN;
 use bark_proto::{Duration, Instant};
 
 /// How long a turn lasts unused while another phone wants it: a ban, the
-/// shortest wait the protocol tells, as nothing in it acts sooner (spec
-/// "Bans").
+/// shortest wait the protocol tells, as nothing in it acts sooner
+/// (spec "Bans").
 pub const UNUSED: Duration = BAN;
 
 /// What the turn knows of the phone on one link.
@@ -76,9 +75,9 @@ impl<const N: usize> Turn<N> {
     }
 
     /// The node took the message of the phone in `slot`: if the turn is
-    /// still its, it goes to the next phone that wants it, or stays. A
-    /// write that waited for another phone's request may be taken after
-    /// the turn passed on, and does not end the new holder's.
+    /// still its, it passes. A write that waited behind another phone's
+    /// may be taken after the turn passed on, and does not end the new
+    /// holder's.
     pub fn taken(&mut self, slot: usize) {
         if self.holder == Some(slot) {
             self.pass();
@@ -113,7 +112,6 @@ impl<const N: usize> Turn<N> {
             .map(|t| t + UNUSED)
     }
 
-    /// Whether the phone in `slot` wants the turn: it asked.
     fn wants(&self, slot: usize) -> bool {
         let p = &self.phones[slot];
         p.live && p.asked
@@ -185,7 +183,6 @@ mod tests {
         assert!(!t.advance(at(1) - Duration::from_micros(1), true));
         assert!(t.advance(at(1), true));
         assert_eq!(t.holder(), Some(1));
-        // It keeps it unused, as nobody else asks.
         for n in 2..10 {
             assert!(!t.advance(at(n), true));
         }
@@ -218,12 +215,10 @@ mod tests {
         assert_eq!(t.holder(), Some(0));
         t.ask(1);
         t.ask(2);
-        // The holder's message taken: on to the next that asked.
         t.taken(0);
         assert_eq!(t.holder(), Some(1));
         t.taken(1);
         assert_eq!(t.holder(), Some(2));
-        // Nobody asks: the turn stays.
         t.taken(2);
         assert_eq!(t.holder(), Some(2));
         // 1 asks again, 2 leaves it unused for a ban.

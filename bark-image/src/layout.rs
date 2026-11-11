@@ -1,13 +1,10 @@
-//! Where everything sits in the T-Echo's flash, its external flash and
-//! its RAM, the one table the firmware, its loader, their linker scripts
-//! and `bark-fw/scripts/uf2.py` (through the symbols the linker scripts
-//! define) all take it from.
+//! Where everything sits in the T-Echo's flash, external flash and RAM:
+//! the one table the firmware, its loader, their linker scripts and
+//! `bark-fw/scripts/uf2.py` all take it from.
 //!
 //! The internal flash, 1 MiB in 4 KiB pages (nRF52840 Product
-//! Specification, Memory and NVMC: a page is the erase unit). What the
-//! board's bootloader fixes comes from its own source (roadmap D6, D129);
-//! what lies between is ours, laid out in `docs/flash-plan-2026-11-06.md`,
-//! section 1 (roadmap D139):
+//! Specification, Memory, NVMC). The board's bootloader fixes the ends;
+//! what lies between is ours (`docs/flash-plan-2026-11-06.md`):
 //!
 //! | Region | Holds |
 //! |---|---|
@@ -18,13 +15,11 @@
 //! | [`RECORD`] | the staged image's header, which the loader checks |
 //! | [`GIVEN_UP`] | the images this node swapped back, never gathered again |
 //! | [`SPARE`] | nothing yet: room for secrets to come |
-//! | [`STORE`] | the node's stored state (roadmap D73) |
+//! | [`STORE`] | the node's stored state |
 //! | `0xF4000`–`0x100000` | the bootloader, its settings, the MBR's parameters |
 //!
-//! What is large and not secret lies on the external flash
-//! ([`external`]): the staged image, the coded pieces of an update and
-//! the mailbox's ring. What runs, boots or is secret stays inside, the
-//! secrets above [`DRIVE_END`].
+//! What is large and not secret lies on the [`external`] flash. What
+//! runs, boots or is secret stays inside, the secrets above [`DRIVE_END`].
 
 /// The erase unit (nRF52840 Product Specification, NVMC).
 pub const PAGE: u32 = 4096;
@@ -68,10 +63,9 @@ pub const SOFTDEVICE_MAGIC_AT: u32 = 0x3004;
 /// The magic number the bootloader looks for there.
 pub const SOFTDEVICE_MAGIC: u32 = 0x51B1_E5DB;
 
-/// The end of the flash the board's bootloader serves on its drive, as
-/// `CURRENT.UF2`, and writes from a UF2 (`docs/softdevice-2026-11-05.md`,
-/// "How the drive places a UF2"): anyone with the board and a double tap
-/// reads every byte below it, so secrets lie above it.
+/// The end of the flash the board's bootloader serves on its drive as
+/// `CURRENT.UF2` and writes from a UF2 (`docs/softdevice-2026-11-05.md`):
+/// anyone with the board reads every byte below it.
 pub const DRIVE_END: u32 = 0xEA000;
 
 /// The first page of the board's bootloader, above everything of ours.
@@ -80,15 +74,14 @@ pub const BOOTLOADER_START: u32 = 0xF4000;
 /// The end of flash, 1 MiB.
 pub const FLASH_END: u32 = 0x10_0000;
 
-/// Pages for the loader, the note's 16 KiB. It builds to 8.5 KiB, three
-/// pages (`bark-fw/README.md`, "Updates"); the fourth leaves it room to
-/// grow by nearly as much again, since the layout cannot move once
-/// boards are in the field.
+/// Pages for the loader: it builds to 8.5 KiB, three pages, and the fourth
+/// leaves room to grow, since the layout cannot move once boards are in
+/// the field.
 const LOADER_PAGES: u32 = 4;
 
 /// The image's pages: everything between the loader's state and the
-/// record, which takes the last page the bootloader's drive writes, so
-/// that every UF2 writes it erased. 227 pages, 908 KiB.
+/// record, which takes the last page the drive writes, so that every UF2
+/// writes it erased. 227 pages, 908 KiB.
 const ACTIVE_PAGES: u32 = (DRIVE_END - PAGE - STATE.end()) / PAGE;
 
 const STORE_START: u32 = BOOTLOADER_START - PAGE;
@@ -99,28 +92,25 @@ pub const LOADER: Region = Region::pages_from(APPLICATION_START, LOADER_PAGES);
 pub const STATE: Region = Region::pages_from(LOADER.end(), 1);
 /// The running image (embassy-boot's ACTIVE partition).
 pub const ACTIVE: Region = Region::pages_from(STATE.end(), ACTIVE_PAGES);
-/// The staged image's record: its [`crate::Header`], then the word the
-/// loader writes once it has checked the image against it. Inside, where
-/// no clip on the external flash reaches it: it holds the hash the
-/// running firmware checked before it staged.
+/// The staged image's record (`crate::record`). Inside, where no clip on
+/// the external flash reaches it: it holds the hash the firmware checked
+/// before it staged.
 pub const RECORD: Region = Region::pages_from(ACTIVE.end(), 1);
 /// The versions of the images this node swapped back (`crate::given_up`):
 /// above [`DRIVE_END`], so that a UF2 copied over USB leaves them.
 pub const GIVEN_UP: Region = Region::pages_from(RECORD.end(), 1);
-/// Between the given-up images and the stored state, above
-/// [`DRIVE_END`]: unused, for secrets to come. Its pages hold what earlier
-/// layouts left there, so a use erases them first.
+/// Unused, above [`DRIVE_END`], for secrets to come. Its pages may hold
+/// what earlier layouts left there, so a use erases them first.
 pub const SPARE: Region = Region {
     start: GIVEN_UP.end(),
     len: STORE_START - GIVEN_UP.end(),
 };
-/// The node's stored state, one page (roadmap D73).
+/// The node's stored state.
 pub const STORE: Region = Region::pages_from(STORE_START, 1);
 
 /// The external flash, a ZD25WQ16B of 2 MiB in sectors of 4 KiB
-/// (`docs/external-flash-2026-11-06.md`; `crate::ext_flash`). Addresses
-/// are the chip's, from 0; nothing here is in the processor's address
-/// space.
+/// (`docs/external-flash-2026-11-06.md`). Addresses are the chip's, from 0,
+/// outside the processor's address space.
 ///
 /// | Region | Holds |
 /// |---|---|
@@ -133,22 +123,17 @@ pub const STORE: Region = Region::pages_from(STORE_START, 1);
 pub mod external {
     use super::{Region, ACTIVE_PAGES};
 
-    /// The erase unit, a sector (ZD25WQ16B datasheet, "Sector Erase"),
-    /// the size of an internal page, so that the swap copies one into
-    /// the other.
+    /// The erase unit (ZD25WQ16B datasheet, "Sector Erase"), the size of
+    /// an internal page, so that the swap copies one into the other.
     pub const SECTOR: u32 = super::PAGE;
 
     /// The chip's end, 16 Mbit (datasheet, "Features").
     pub const END: u32 = 2 * 1024 * 1024;
 
-    /// Blocks of an image the mesh carries, the table's among them: a
-    /// lane of four sectors, 64 pieces of 256 bytes, for each, since a
-    /// node keeps the pieces of every block it lacks (`crate::pieces`,
-    /// roadmap D151). 48 lanes and the head are what the chip has room
-    /// for beside the staged image and the mailbox, with about 108 KiB to
-    /// spare before what a reboot carries took 44, the discharge log 32
-    /// and the tables kept across a reboot 32: an image of 47 blocks,
-    /// 743 KB packed, today's 28.
+    /// Blocks of an image the mesh carries, the table's among them, each a
+    /// lane of four sectors, 64 pieces of 256 bytes, since a node keeps the
+    /// pieces of every block it lacks (`crate::pieces`). As many as the chip
+    /// holds beside the other regions: 47 blocks of image, 743 KB packed.
     pub const PIECE_LANES: u32 = 48;
 
     /// Sectors for coded pieces: a head of what has been gathered, then a
@@ -156,51 +141,43 @@ pub mod external {
     const PIECES_SECTORS: u32 = 1 + PIECE_LANES * 4;
 
     /// Sectors for the mailbox's ring: 64 of 16 items of 256 bytes, 1024
-    /// items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`,
-    /// section 5).
+    /// items, 44 days at 23 a day (`docs/app-layer-2026-11-05.md`).
     const MAILBOX_SECTORS: u32 = 64;
 
     /// Sectors for what a node carries across a reboot: 167 slots of 256
     /// bytes, 16 to a sector, rounded up.
     const CARRY_SECTORS: u32 = 167u32.div_ceil(16);
 
-    /// Sectors for the discharge log (`crate::discharge`): a full sleepy
-    /// node runs 59 days on its cell (spec "Sleepy nodes"), 1416 samples
-    /// at one an hour, 5.5 sectors of 256; a sector is erased whole
-    /// before it is written again, and boots and changes of power add
-    /// samples, so 8, half of what was free.
+    /// Sectors for the discharge log (`crate::discharge`): a sleepy node
+    /// runs 59 days on its cell (spec "Sleepy nodes"), 1416 hourly samples,
+    /// 5.5 sectors of 256; a sector is erased whole before it is rewritten,
+    /// and boots and changes of power add samples, so 8.
     const DISCHARGE_SECTORS: u32 = 8;
 
-    /// Sectors for the tables a node keeps across a reboot into a new
-    /// image (`bark_app_layer::tables`): a full neighbour table and every
-    /// record take 25 248 bytes, 6.2 sectors; the 8 the chip had left.
+    /// Sectors for the tables kept across a reboot into a new image
+    /// (`bark_app_layer::tables`): 25 248 bytes at most, 6.2 sectors; the 8
+    /// the chip had left.
     const TABLES_SECTORS: u32 = 8;
 
     /// The staged image (embassy-boot's DFU partition), one sector more
-    /// than the running one (embassy-boot, `BootLoader::new`: "The dfu
-    /// partition must be at least PAGE_SIZE bigger than the active
-    /// partition"). After a swap it holds the previous image, for the
-    /// swap back.
+    /// than the running one as `BootLoader::new` requires. After a swap it
+    /// holds the previous image, for the swap back.
     pub const DFU: Region = Region::pages_from(0, ACTIVE_PAGES + 1);
-    /// Coded pieces of an update arriving over the mesh, and what has been
-    /// gathered of it (`crate::pieces`).
+    /// Coded pieces of an update arriving over the mesh (`crate::pieces`).
     pub const PIECES: Region = Region::pages_from(DFU.end(), PIECES_SECTORS);
     /// The mailbox's ring. Its items are sealed to the phone, so whoever
     /// reads the chip learns nothing from them.
     pub const MAILBOX: Region = Region::pages_from(PIECES.end(), MAILBOX_SECTORS);
-    /// What a node still holds when it reboots into a new image, offered
-    /// again after it (`bark_app_layer::carry`): a slot of 256 bytes for
-    /// each of the 167 messages a node holds at most, 11 sectors. Its
-    /// payloads are the network's, sealed by their senders.
+    /// The messages a node still holds when it reboots into a new image
+    /// (`bark_app_layer::carry`): a 256-byte slot for each of the 167 it
+    /// holds at most. Their payloads are sealed by their senders.
     pub const CARRY: Region = Region::pages_from(MAILBOX.end(), CARRY_SECTORS);
-    /// The battery's discharge log, a sample an hour on battery and one
-    /// at each boot and change of power (`crate::discharge`, roadmap
-    /// D178). Kept across reboots and image swaps.
+    /// The battery's discharge log (`crate::discharge`), kept across
+    /// reboots and image swaps.
     pub const DISCHARGE: Region = Region::pages_from(CARRY.end(), DISCHARGE_SECTORS);
     /// The neighbour table and message records a node keeps across a
-    /// reboot into an image gathered over the mesh, given back to the
-    /// core after it (roadmap D180). The records name messages by their
-    /// IDs and neighbours by theirs, as every frame on the air does.
+    /// reboot into an image gathered over the mesh. They hold only IDs, as
+    /// every frame on the air does.
     pub const TABLES: Region = Region::pages_from(DISCHARGE.end(), TABLES_SECTORS);
 }
 
@@ -222,38 +199,31 @@ pub const PROTECT_HIGH: Region = Region {
 const RAM_START: u32 = 0x2000_0000;
 const RAM_END: u32 = 0x2004_0000;
 
-/// The MBR's RAM words, left untouched: Nordic SDK builds against the MBR
-/// start RAM at `0x20000008`, and the bootloader calls into the MBR on
-/// every reset.
+/// The MBR's RAM words, left untouched: builds against the MBR start RAM
+/// at `0x20000008`, and the bootloader calls into the MBR on every reset.
 const MBR_RAM: u32 = 8;
 
 /// Where a panic message waits for the next boot (`panic-persist` in
-/// `bark-fw`): below every other use of RAM, so neither the loader nor
-/// the bootloader overwrites it. The bootloader's own RAM starts at
-/// `0x20008000`, plus `0x20007F7C`..`0x20008000` for its double-reset
-/// word and noinit block, so a soft reset through it should leave this
-/// range intact; unverified on hardware.
+/// `bark-fw`): below every other use of RAM. The bootloader's RAM starts at
+/// `0x20007F7C`, so a soft reset through it should leave this intact;
+/// unverified on hardware.
 pub const PANIC_DUMP: Region = Region {
     start: RAM_START + MBR_RAM,
     len: 0x400 - MBR_RAM,
 };
 
 /// RAM for `.data`, `.bss` and the stack, in the firmware and the loader
-/// alike. The board's bootloader does not enable the SoftDevice on a
-/// boot to the application, so all of it is ours; the BLE controller
-/// (roadmap D5) will take its memory as a static buffer inside it.
+/// alike. The board's bootloader does not enable the SoftDevice on a boot
+/// to the application, so all of it is ours.
 pub const RAM: Region = Region {
     start: PANIC_DUMP.end(),
     len: RAM_END - PANIC_DUMP.end(),
 };
 
-// The internal regions fill the flash between the loader and the
-// bootloader, the stored state's page is where D73 put it, and each
-// protected region is within what the ACL takes: page-aligned, and at most
-// half the flash (Product Specification, ACL).
+// Each protected region is what the ACL takes: page-aligned, at most half
+// the flash (Product Specification, ACL).
 const _: () = {
-    // Every UF2 writes the running slot and the record, and the
-    // bootloader's drive writes only below its end.
+    // Every UF2 writes the running slot and the record.
     assert!(RECORD.end() == DRIVE_END);
     // The secrets lie where the drive neither reads nor writes.
     assert!(SPARE.start >= DRIVE_END && STORE.start >= DRIVE_END);
@@ -267,10 +237,9 @@ const _: () = {
     assert!(external::TABLES.end() == external::END);
     assert!(PROTECT_LOW.len.is_multiple_of(PAGE) && PROTECT_LOW.len <= FLASH_END / 2);
     assert!(PROTECT_HIGH.start.is_multiple_of(PAGE) && PROTECT_HIGH.len <= FLASH_END / 2);
-    // embassy-boot keeps two progress words a page for the swap and two for
-    // the swap back, after two words of its own, in the state page:
-    // `assert_partitions` in its `boot_loader.rs`. The NVMC writes words of
-    // 4 bytes.
+    // The state page holds two words, then two progress words a page for
+    // the swap and two for the swap back (embassy-boot,
+    // `assert_partitions`).
     assert!(2 + 4 * ACTIVE_PAGES <= PAGE / 4);
 };
 

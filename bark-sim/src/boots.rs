@@ -1,14 +1,11 @@
-//! How soon a node that switches on takes part (roadmap D73).
+//! How soon a node that switches on takes part.
 //!
-//! Each boot, the first at the node's switch-on and every scripted start
-//! or restart, is watched until it has its answers: when the node first
-//! knows a neighbour; for a sleepy node, when it first has an anchor; for
-//! a relay, when each relay in range, one that receives its heartbeat at
-//! or above sensitivity on average, first holds it in its neighbour
-//! table with the home channel it listens on then, so that what a
-//! restarted node's neighbours kept of it counts only while it is right;
-//! and for a scripted boot, when a text the node's application
-//! offers at once reaches its destination.
+//! Each boot, at switch-on or a scripted start or restart, is watched for:
+//! its first neighbour; a sleepy node's first anchor; a relay's being held
+//! by each relay in range (one that hears its heartbeat at or above
+//! sensitivity on average) with the home channel it listens on then, so a
+//! restarted node's stale entries do not count; and a scripted boot's
+//! text, offered at once, reaching its destination.
 
 use crate::metrics::percentile;
 use bark_proto::{Channel, Instant, NodeId, Relay};

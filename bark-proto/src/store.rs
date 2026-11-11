@@ -1,18 +1,13 @@
-//! What a node keeps across a reboot (spec "Implementation notes",
-//! roadmap D73).
+//! What a node keeps across a reboot (spec "Implementation notes").
 //!
-//! The core says what to keep with [`crate::Action::Store`] whenever it
-//! changes, and the driver hands the last one back at boot in
-//! [`crate::Config::stored`]. Only slow-changing state is kept, so that
-//! writes are rare: the home channel, the place a fixed node stands and
-//! whether it is a map point, the carried flag, a sleepy node's anchor,
-//! whether it was a relay, its battery reading's scale and the drains it
-//! learned (`drain.rs`). Time is not kept, since the board has no clock that runs while it is off.
+//! The core emits [`crate::Action::Store`] when it changes, and the driver
+//! hands the last one back in [`crate::Config::stored`]. Only slow-changing
+//! state is kept, so writes are rare; time is not, as the board has no
+//! clock that runs while it is off.
 //!
-//! [`Stored::record`] lays it out as a fixed 32-byte record with a
-//! checksum, for a driver that keeps it in flash: eight words, the unit
-//! the nRF52840 writes, and a record cut short by a power cut fails its
-//! checksum and is not taken.
+//! [`Stored::record`] is a fixed 32-byte record with a checksum: eight
+//! words, the unit the nRF52840 writes, and a record cut short by a power
+//! cut fails its checksum.
 
 use crate::ids::NodeId;
 use crate::node::Anchor;
@@ -24,9 +19,8 @@ use crate::radio::Channel;
 pub struct Stored {
     /// Its home channel; a sleepy node's is its anchor's.
     pub home: Channel,
-    /// The place it stands while fixed (spec "Position"), its position
-    /// after the reboot; while carried, the place it stood when last
-    /// fixed, since a place that changes with each fix is not kept.
+    /// The place it stands while fixed (spec "Position"); while carried,
+    /// where it stood when last fixed, as a moving place is not kept.
     pub place: Position,
     /// Whether it is carried.
     pub carried: bool,
@@ -37,21 +31,19 @@ pub struct Stored {
     /// Whether it was a relay: a fixed one that boots on battery relays
     /// on (`relay/power.rs`).
     pub relay: bool,
-    /// The scale of its battery readings from its last calibration, in
-    /// 2^-15 (`relay/power.rs`); `None` before the first.
+    /// Its battery readings' scale from its last calibration, in 2^-15
+    /// (`relay/power.rs`).
     pub battery_scale: Option<u16>,
     /// The drains it learned on battery, a relay's and a sleepy node's,
-    /// each as steps from its seed (`drain.rs`); `None` before the first.
+    /// each as steps from its seed (`drain.rs`).
     pub drain: Option<[i8; 2]>,
 }
 
 /// Bytes in a [`Stored::record`].
 pub const RECORD_LEN: usize = 32;
 
-/// The layout's version, the record's first byte: a record of another
-/// layout is not taken. A field added behind a flag of its own, in bytes
-/// a record without it leaves zero, keeps the version: such a record
-/// reads as before, without the field.
+/// The layout's version: a record of another is not taken. A field added
+/// behind its own flag, in bytes older records leave zero, keeps it.
 const VERSION: u8 = 1;
 
 const FLAG_CARRIED: u8 = 0x1;

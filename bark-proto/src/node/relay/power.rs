@@ -1,77 +1,13 @@
-//! A node's role by its power (spec "Nodes", "Sleepy nodes", roadmap
-//! D71).
-//!
-//! On external power a node is a relay; on battery it is sleepy. The
-//! driver reports the power at boot and at every change
-//! (`AppCommand::Power`). While the node boots nobody depends on it yet,
-//! and a report sets its role at once; a sleepy node handed back an
-//! anchor at boot takes it (`store.rs`).
-//!
-//! Running, a node plugged in is a relay at once: it leaves its anchor,
-//! its address is its own position, and it heartbeats as a relay.
-//!
-//! The power changes only whether the node is sleepy. Whether it is
-//! carried is measured from its fixes alike in either role, but for a
-//! sleepy node with an anchor, which takes none and keeps the flag it
-//! had (`relay/motion.rs`): a carried node plugged in is a carried relay,
-//! and a fixed one is fixed where it is then.
-//!
-//! A fixed relay unplugged changes nothing for [`Config::grace`], so that
-//! a charger moved across the room costs nobody anything; power back
-//! within it, nothing happened. A carried relay unplugged, or one on
-//! battery that turns carried, leaves at once: the grace keeps a
-//! district's relays from turning sleepy together in a grid outage, and
-//! a node in a pocket anchors nobody. A relay that leaves takes no more
-//! mail, as a carried node does, and flushes its delivery queue as a node
-//! does at its first far fix (`relay/delivery.rs`), listening all the
-//! time until each message has had its attempt, or for a delivery TTL at
-//! most; then it turns sleepy. It chooses an anchor among the relays it
-//! knows as a booting sleepy node does, and holds mail for nobody: what
-//! the flush did not deliver it hands on toward its address
-//! (`relay/forward.rs` `hand_on`), never dropping it, since a turn is no
-//! end spec "Overload waits" lists. A carried node flushed at its first
-//! far fix already.
-//!
-//! With [`Config::battery`] a fixed relay relays on past its grace until
-//! its battery reads at or below the low level (`AppCommand::Battery`),
-//! and leaves then, grace or not. The low reading holds
-//! until one at or above the high level, or external power; a node that
-//! turned sleepy by its battery relays again at the high level while it
-//! is fixed, as a solar box's battery recharges. A fixed relay that
-//! reboots on battery relays on, from what it stored (`store.rs`).
-//!
-//! The driver's readings are off by its converter's gain error until
-//! calibrated: a node on external power long enough to be full that is
-//! then on battery for a rest takes its next reading as a full cell's,
-//! and scales every reading after it to match, keeping the scale across
-//! reboots. Before the first calibration it compares the driver's
-//! readings as they are.
-//!
-//! From its readings on battery the node learns how fast its cell drains
-//! as a relay and as a sleepy node, and tells how long it lasts under
-//! the rules above (`drain.rs`).
-//!
-//! A person at the node may flip its role with the board's button
-//! (`AppCommand::ForceRole`): a relay, one that leaves among them, turns
-//! sleepy, leaving as at its battery's low level, flushing first; a
-//! sleepy node turns relay at once. Each flip turns the role again. The
-//! node is then forced: its role holds against the grace, the carried
-//! flag and a battery back at its high level, until the driver reports a
-//! change of external power, which returns it to automatic, the rules
-//! above, at once. A forced relay on battery still leaves at its low
-//! level, and the force ends there: the cell is the owner's, and an
-//! empty one serves nobody; for the same reason a flip to relay is not
-//! taken on battery at that level. A reboot forgets the force.
-//!
-//! A [`SleepyNode`](super::SleepyNode) has no room for the mail a relay
-//! holds, and stays sleepy whatever its power.
-//!
-//! [`Config::grace`]: crate::Config::grace
-//! [`Config::battery`]: crate::Config::battery
+//! A node's role by its power: relay on external power, sleepy on battery,
+//! with the grace, the battery levels, the flush of a relay that leaves and
+//! a role a person forced (spec "Nodes", "Sleepy nodes"). The battery's
+//! readings are `relay/battery.rs`'s. A [`SleepyNode`](super::SleepyNode)
+//! has no room for the mail a relay holds, and stays sleepy whatever its
+//! power.
 
 use super::{Mode, Node, Power, Sleep, Stage};
 
-/// The role a person forced on a node (module documentation).
+/// The role a person forced on a node (spec "Nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Forced {
     /// A relay, whatever its power, until the power changes or its
@@ -87,13 +23,12 @@ use crate::tables::send_queue::{Outgoing, State};
 use crate::time::{Duration, Instant};
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// Whether this node is sleepy now (module documentation).
+    /// Whether this node is sleepy now.
     pub fn sleepy(&self) -> bool {
         matches!(self.mode, Mode::Sleepy(_))
     }
 
-    /// The role a person forced on the node, while it lasts (module
-    /// documentation).
+    /// The role a person forced on the node, while it lasts.
     pub fn forced(&self) -> Option<Forced> {
         self.battery.forced()
     }
@@ -118,17 +53,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         H > 0 && Q > 0
     }
 
-    /// When the first rotation that began at `from` ends: a worst-case
-    /// rotation, by when every relay in range has been heard, since every
-    /// relay heartbeats from its own boot; for a sleepy node that hears
-    /// none, two, since a listening receiver misses one heartbeat in ten
+    /// When the first rotation that began at `from` ends; two for a sleepy
+    /// node, as a listening receiver misses one heartbeat in ten
     /// (spec "Channel at boot").
     pub(super) fn boot_end(&self, from: Instant) -> Instant {
         let rotations = if self.sleepy() { 2 } else { 1 };
         from + self.config.boot_listen.mul(rotations)
     }
 
-    /// The driver reports whether external power is present.
     pub(super) fn power(&mut self, external: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = !external || !Self::can_relay();
         self.battery.power(external, now);
@@ -144,7 +76,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let turns = sleepy && !kept;
             let was = self.sleepy();
             // Nobody depends on a node that boots, so its mode follows
-            // each report; a sleepy node keeps what it has.
+            // each report.
             self.mode = match (turns, was) {
                 (true, true) => self.mode,
                 (true, false) => Mode::Sleepy(Sleep::new(false)),
@@ -174,8 +106,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A person holds the button: the node flips its role, and is
-    /// forced until the power changes (module documentation).
+    /// A person holds the button: the node flips its role, and is forced
+    /// until the power changes (spec "Nodes").
     pub(super) fn force(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.stage == Stage::Off {
             return;
@@ -215,16 +147,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::Trace(Trace::Forced { sleepy }));
     }
 
-    /// The driver reads the battery (`relay/battery.rs`).
     pub(super) fn battery_read(&mut self, raw_mv: u16, now: Instant, emit: &mut dyn FnMut(Action)) {
         let running = self.running();
         self.battery
             .read(raw_mv, self.config.battery, running, now, emit);
     }
 
-    /// How the node runs now, as its drain is learned (`drain.rs`); `None`
-    /// while it leaves, which lasts a TTL at most, and while a relay's GPS
-    /// tracks, whose 29 mA would be taken for the relay's own drain.
+    /// How the node runs now, for learning its drain; `None` while it
+    /// leaves, which lasts a TTL at most, and while a relay's GPS tracks,
+    /// whose 29 mA would be taken for the relay's own drain.
     fn running(&self) -> Option<Running> {
         match self.mode {
             Mode::Sleepy(_) => Some(Running::Sleepy),
@@ -233,11 +164,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// How long the node can go on as it runs now, from its last reading:
-    /// a relay on battery until its battery is low, where it turns sleepy,
-    /// a sleepy node until the cell is flat (`drain.rs`). `None` on
-    /// external power, before a reading, past the time, and without
-    /// battery levels, whose rules it follows.
+    /// How long the node can go on as it runs now (spec "Sleepy nodes").
+    /// `None` on external power, before a reading, past the time, and
+    /// without battery levels.
     pub fn battery_left(&self, now: Instant) -> Option<Duration> {
         // Without levels it follows their rules, not its drain.
         self.config.battery?;
@@ -245,21 +174,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.battery.left(relay, now)
     }
 
-    /// The drains the node has learned, a relay's and a sleepy node's on
-    /// battery, percent of the cell an hour (`drain.rs`).
+    /// The drains learned, a relay's and a sleepy node's, in percent of
+    /// the cell an hour.
     pub fn battery_drains(&self) -> [f32; 2] {
         self.battery.drains()
     }
 
-    /// A driver's reading of the battery, `raw_mv`, as calibrated: scaled
-    /// by the calibration once there is one (module documentation).
+    /// A driver's battery reading, calibrated once there is a calibration.
     pub fn battery_millivolts(&self, raw_mv: u16) -> u16 {
         self.battery.millivolts(raw_mv)
     }
 
-    /// When the grace of a fixed relay on battery ends, if it is under
-    /// way and its end would turn the node (module documentation). A
-    /// carried one has none: it leaves at once.
+    /// When the grace of a fixed relay on battery ends, if its end would
+    /// turn the node.
     pub(super) fn grace_ends(&self) -> Option<Instant> {
         let Mode::Relay(Power::Battery(t)) = self.mode else {
             return None;
@@ -270,8 +197,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         ends.then_some(t + self.config.grace)
     }
 
-    /// When the flush of a relay leaving ends at the latest (module
-    /// documentation).
     pub(super) fn flush_ends(&self) -> Option<Instant> {
         let Mode::Relay(Power::Leaving(since)) = self.mode else {
             return None;
@@ -279,15 +204,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some(since + self.config.delivery_ttl)
     }
 
-    /// When the role next needs the core: the grace's end, or the
-    /// flush's.
     pub(super) fn power_wakeup(&self) -> Option<Instant> {
         crate::time::earlier(self.grace_ends(), self.flush_ends())
     }
 
-    /// The grace's end, a low battery, a carried relay on battery, and the
-    /// turn to sleepy once the flush is done; a node turned sleepy by its
-    /// battery relays again at the high level (module documentation).
+    /// The role's timers and levels (spec "Sleepy nodes").
     pub(super) fn power_timers(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.stage != Stage::Running {
             return;
@@ -323,10 +244,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 };
                 if leaves {
                     self.forwarding.feed_due = true;
-                    // What the network promises a node it cannot reach is a
-                    // delivery TTL; a flush that the duty cap or a busy
-                    // channel holds up longer would keep a node with a low
-                    // battery listening until it is flat.
+                    // The flush lasts a delivery TTL at most: held up longer
+                    // by the duty cap or a busy channel, a node with a low
+                    // battery would listen until it is flat.
                     self.mode = Mode::Relay(Power::Leaving(now));
                 }
             }
@@ -344,11 +264,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && !self.queue.iter().any(|o| o.kind.delivers())
     }
 
-    /// Plugged in, or its battery high again: a relay at once, on `power`,
-    /// with its own position as its address.
+    /// Plugged in, or its battery high again: a relay at once.
     fn turn_relay(&mut self, power: Power, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.mode = Mode::Relay(power);
-        // Its anchor went with the mode: it works by its own position.
+        // Its anchor went with the mode.
         self.replane();
         self.gps.relay();
         self.fixed_here(now);
@@ -361,7 +280,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.beacon.beat(at, 0);
         self.radio.beacon.burst(0);
         self.radio.restart_sweep(now);
-        // It listens all the time from now on.
         emit(Action::Listen(self.home));
         emit(Action::Trace(Trace::Role { sleepy: false }));
         self.changed();
@@ -378,8 +296,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let held = self.queue.iter().position(Outgoing::held);
         if let Some(h) = held.and_then(|i| self.queue.remove(i)) {
             // Its own message for a node it held for: routed on, as a
-            // sleepy node owns no other node's message, behind what is
-            // queued.
+            // sleepy node owns no other node's message.
             let _ = self.queue.push(Outgoing {
                 state: State::Queued,
                 ..h
@@ -400,13 +317,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // Its first beat, at once on the same channel, says it.
             self.radio.beacon.no_change();
         }
-        // An accepted message ends only as spec "Overload waits" lists,
-        // and a turn is none of those: what it held goes on.
+        // A turn is no end of a message (spec "Overload waits").
         self.hand_on(now, emit);
     }
 
-    /// Forget whatever a sleepy node listens for: its windows, the watch
-    /// for its anchor's heartbeat, a choice or a check under way.
     fn unwatch(&mut self) {
         self.listen.forget();
         if let Some(s) = self.sleep_mut() {

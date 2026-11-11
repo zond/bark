@@ -1,133 +1,15 @@
-//! The neighbour table (spec "Neighbour table"): relays heard by heartbeat, keyed by
-//! node ID, each with the position its heartbeat gave.
-//!
-//! # Slots
+//! The neighbour table (spec "Neighbour table"): relays heard by
+//! heartbeat, keyed by node ID, each with the position its heartbeat gave;
+//! their bans (spec "Bans"), service times and lines, eviction, and the
+//! answers owed to anchorless neighbours (spec "Sleepy nodes alone").
 //!
 //! An entry keeps its slot from when it is added until it expires or is
 //! replaced, so a slot index names a neighbour for as long as it is in the
-//! table. Per-message records mark the neighbours they have tried by slot
-//! (`tables/records.rs`), and that needs the index to stay put.
+//! table: the message records and the send queue mark neighbours by slot.
 //!
-//! # Liveness and demotion
-//!
-//! A rotation is the time for a neighbour's heartbeat to step through all
-//! channels and come back to ours: `CHANNELS` heartbeats at the mean
-//! interval, 13 × 10 s = 130 s. An entry expires
-//! `neighbour_expiry_rotations` rotations after its last heartbeat (spec "Neighbour table":
-//! 3, 390 s).
-//!
-//! A failed hand-over adds one to `fail_count`; at `demote_after_failures`
-//! (spec "Neighbour table": 3) the neighbour is demoted: a next hop only when no other with
-//! margin is left (spec "Next hop", roadmap D25). Demotion ends
-//! when the neighbour answers this relay, an ACK to it that takes,
-//! refuses or has seen a packet, or a DATA it addresses to it, which
-//! resets `fail_count`, since failures count only in a row with no answer
-//! between (roadmap D106); or `demotion_rotations` rotations (3, 390 s)
-//! after the failure that demoted it; then `fail_count` starts again from
-//! zero. A heartbeat, or a frame it sends to another node, refreshes the
-//! entry but leaves `fail_count` alone (roadmap D18): it proves the
-//! neighbour is alive, not that it hears us.
-//!
-//! # Margin (roadmap D38)
-//!
-//! A neighbour has margin when its averaged RSSI, `rssi`, is high enough
-//! for a full-length frame to get through a fade of [`FADE_DEPTH_DB`]
-//! (spec "Next hop"). The average takes in every reading of the link,
-//! each new one counting half (spec "Relay choice"): every frame heard
-//! from the neighbour, heartbeats, its DATA and its ACKs, which are the
-//! best evidence that its link carries frames; and each heartbeat of the
-//! neighbour that was due on this node's channel and not heard, as a
-//! reading at the floor weighted by the chance the radio would have
-//! heard it, the share of the heartbeat's window it listened through
-//! ([`Neighbours::missed`]), since an average of the frames that got
-//! through alone stands above the link (spec "Heartbeat"). A neighbour
-//! without margin stays in the table: it is alive.
-//!
-//! [`FADE_DEPTH_DB`]: crate::radio::FADE_DEPTH_DB
-//!
-//! # Bans
-//!
-//! A neighbour that refuses a hand-over (spec "Receiving DATA") is banned for
-//! the wait it tells, at least [`BAN`], in place of any ban it had; the
-//! refused message goes round it meanwhile (spec "Bans", "Next hop",
-//! roadmap D110). A refusal is no failure: it says the neighbour hears us.
-//!
-//! A failed hand-over bans it too, for [`hold`] of its `fail_count`: one
-//! ban after the first failure in a row, doubling with each further one up
-//! to the bucket's refill (roadmap D42). A refusal measures what the
-//! receiver's bucket lacks; silence says only that the channel or the
-//! receiver is full, and not how full, so the sender backs off further
-//! each time. Any answer to this relay resets `fail_count`, and so the
-//! doubling.
-//!
-//! [`BAN`]: crate::tables::budget::BAN
-//! [`hold`]: crate::tables::budget::hold
-//!
-//! # Service time
-//!
-//! Each entry keeps how long this relay takes to get one message through
-//! to the neighbour ([`Neighbours::took`], spec "Neighbour table"): what
-//! a sender refused for want of that way can be told it will wait.
-//!
-//! # Eviction (roadmap D12)
-//!
-//! When the table is full and an unknown relay is heard, the newcomer
-//! replaces
-//!
-//! 1. the least recently heard demoted entry, if any; else
-//! 2. the least recently heard entry, if it is *stale*: not heard for a
-//!    full worst-case rotation (`CHANNELS × heartbeat_max`, 195 s), so it
-//!    has certainly missed a heartbeat on our channel; else
-//! 3. for a relay within the owner radius (spec "Owner"), the least
-//!    recently heard entry beyond it, since the owner rule reads from the
-//!    table that no relay that near is closer (roadmap D68); else
-//! 4. nothing: the newcomer is not added.
-//!
-//! Least-recently-heard eviction fails on a rooftop relay that hears ≈270
-//! relays (spec "Capacity and sizing"): about two heartbeats a second arrive on its channel, so
-//! an entry would last about 64 / 2 = 30 s and every `fail_count` would be
-//! forgotten within a minute. Keeping incumbents replaces exactly the
-//! entries that are failing or not being heard. A set spread around the
-//! relay by bearing routes no better (roadmap D69).
-//!
-//! # Sleepy and anchorless neighbours
-//!
-//! A sleepy node's beat fills the table like any heartbeat, the entry
-//! marked sleepy: between its windows it receives duty-cycled, so it is
-//! sent to with the long preamble. One with an anchor is a next hop only
-//! as a last resort ([`Neighbour::last_resort`], spec "Next hop"), but for
-//! a message addressed to it while the relay spares the long frame, and
-//! its entry expires after two beat periods, since its beats come once a
-//! period and only on its anchor's channel. As a newcomer to a full table
-//! it takes only a free slot: eviction makes way for a node that is a
-//! next hop like any other (spec "Neighbour table").
-//!
-//! An anchorless entry counts the consecutive rotations of its sender's
-//! beats in which one was heard here ([`Neighbour::stays_anchorless`]).
-//!
-//! A sleepy node without an anchor beats with the anchorless bit too, once
-//! an anchorless beat period on the next channel each time: no anchor, a
-//! next hop like any other, and its entry expires two of its worst-case
-//! rotations and a beat's lag after its last beat. A rotation of its beats
-//! is 13 minutes; with one lost beat in ten an expiry after one would drop
-//! a live neighbour every tenth rotation, for a rotation, where it may be
-//! the only way on. Two lose it one time in a hundred; a stale entry costs
-//! a hand-over's attempts and a ban.
-//!
-//! A relay answers each beat of an anchorless neighbour with its own
-//! heartbeat on the neighbour's channel, with the long preamble, so that
-//! the neighbour hears it and takes it as its anchor: at once and every
-//! fade after, for two beat periods ([`Neighbours::answer_due`]). A relay
-//! flags the heartbeats of its burst anchorless too
-//! ([`Neighbour::anchorless`]); it listens all the time, and is answered
-//! once, with the ordinary preamble.
-//!
-//! # The anchor of a node that sleeps
-//!
-//! A sleeping node hears its anchor's heartbeat only when the rotation
-//! lands in one of its windows, so it keeps the anchor's entry
-//! ([`Neighbours::pin`]): the entry neither expires nor makes way for a
-//! newcomer while pinned (spec "Relay choice").
+//! A heartbeat, or a frame a neighbour sends to another node, refreshes
+//! its entry but leaves `fail_count` alone: it proves the neighbour is
+//! alive, not that it hears this relay.
 
 use crate::geo::{LocalPlane, Point};
 use crate::ids::NodeId;
@@ -154,63 +36,51 @@ pub struct Neighbour {
     pub local: Point,
     /// Its home channel, where to transmit to it.
     pub home: Channel,
-    /// The newest wire format it speaks, from its last heartbeat (spec
-    /// "Neighbour table"); shown to a person, used by no rule while
-    /// format 1 is the only one.
+    /// The newest wire format it speaks; shown to a person, used by no
+    /// rule while format 1 is the only one.
     pub format: u8,
-    /// Whether its position is a map point a person set, by its last
-    /// heartbeat (spec "Neighbour table"); shown, used by no rule yet.
+    /// Whether its position is a map point a person set; shown, used by no
+    /// rule.
     pub map_point: bool,
     /// Whether its last heartbeat said it is about to leave the air: a
     /// next hop only where no other is (spec "Next hop").
     pub leaving: bool,
     /// What the last heartbeat that carried a section said of its images
-    /// (spec "Updates over the mesh"), its image kept once in the table
     /// ([`Neighbours::section`]).
     pub update: Told,
-    /// When its last heartbeat was heard.
+    /// When its last heartbeat or answer was heard.
     pub last_heard: Instant,
     /// When `fail_count` last reached the demotion threshold.
     pub demoted_at: Instant,
-    /// Until when it is banned: it refused a hand-over, or its last ones
-    /// failed.
+    /// Until when it is banned (spec "Bans").
     pub banned_until: Instant,
     /// Averaged packet RSSI of the frames heard from it, dBm.
     pub rssi: f32,
-    /// Consecutive failed hand-overs to it.
+    /// Failed hand-overs to it in a row, with no answer between.
     pub fail_count: u8,
-    /// Whether it is sleepy (the heartbeat's sleepy flag): it receives
-    /// duty-cycled between its windows, and is sent to with the long
-    /// preamble.
+    /// The heartbeat's sleepy flag: it is sent to with the long preamble.
     pub sleepy: bool,
-    /// Whether its last heartbeat had the anchorless flag: it
-    /// knows no node that holds mail, and a relay that hears it answers
-    /// ([`Neighbours::answer_due`]). A sleepy one is in anchorless mode
-    /// ([`Neighbour::alone`]).
+    /// The anchorless flag of its last heartbeat: a relay that hears it
+    /// answers ([`Neighbours::answer_due`]).
     pub anchorless: bool,
-    /// Whether it moves (the heartbeat's carried flag): it holds mail for
-    /// nobody, so it is no anchor and does not keep this node from owning
-    /// a destination it is nearer (spec "Owner", "Relay choice").
+    /// The heartbeat's carried flag ([`Neighbour::holds_mail`]).
     pub carried: bool,
     /// Heartbeats heard from it, up to [`BEATS`]; of an anchorless one,
     /// the consecutive rotations of its beats in which one was heard here,
     /// up to [`BEATS`] ([`Neighbour::stays_anchorless`]).
     pub beats: u8,
     /// When its last heartbeat heard in a slot started, or a slot of its
-    /// that passed unheard ([`Neighbours::slot_passed`]), and on which
-    /// channel: with its fixed interval, when its next comes to any channel
+    /// that passed unheard, and on which channel
     /// ([`Neighbours::next_beat`]).
     pub beat_at: Instant,
     /// See `beat_at`.
     pub beat_on: Channel,
-    /// Whether `beat_at` is from a heartbeat heard in a slot, so that its
-    /// slots can be timed; not from a burst, which is in no slot (spec
-    /// "Heartbeat").
+    /// Whether `beat_at` is from a heartbeat heard in a slot, not from a
+    /// burst, which is in no slot, so that its slots can be timed.
     pub slotted: bool,
     /// How long the radio had been away from listening, in all, when the
-    /// window of its next heartbeat on this channel opened, once it has
-    /// (`relay/heartbeat.rs`, `count_missed_heartbeats`): what it has been
-    /// away since then is the share of the window it may have missed.
+    /// window of its next heartbeat on this channel opened: what it is
+    /// away beyond this is the share of the window it may have missed.
     pub away_base: Option<u32>,
     /// Of an anchorless neighbour, the answers sent since its last beat
     /// ([`Neighbours::answer_due`]).
@@ -226,8 +96,8 @@ pub struct Neighbour {
     /// ([`Neighbours::place_in_line`]).
     pub line_end: Instant,
     /// Of a sleepy one with an anchor, whether a hand-over to it with the
-    /// long preamble went unanswered since it was last heard: it is not
-    /// sent to at once again until it beats (spec "Next hop").
+    /// long preamble went unanswered since it was last heard
+    /// (spec "Next hop").
     pub unanswered: bool,
     /// This node's application asked for its status, and the question
     /// has not gone (spec "Neighbour status").
@@ -243,14 +113,13 @@ impl Neighbour {
         self.sleepy && !self.anchorless
     }
 
-    /// Whether it is a sleepy node without an anchor (sleepy and anchorless): no
-    /// anchor for a sleepy node, and a next hop like any other.
+    /// Whether it is a sleepy node without an anchor: a next hop like any
+    /// other (spec "Sleepy nodes alone").
     pub fn alone(&self) -> bool {
         self.sleepy && self.anchorless
     }
 
-    /// Its service time: the average time this relay takes to get one
-    /// message through to it ([`Neighbours::took`]).
+    /// Its service time ([`Neighbours::took`]).
     pub fn service(&self) -> Duration {
         SERVICE_UNIT.mul(self.service as u64)
     }
@@ -260,9 +129,9 @@ impl Neighbour {
         !self.sleepy
     }
 
-    /// Whether it holds mail: neither sleepy nor carried. Only such a
-    /// node is an anchor (spec "Relay choice"), or keeps another from
-    /// owning a destination it is nearer (spec "Owner").
+    /// Whether it holds mail: only such a node is an anchor, or keeps
+    /// another from owning a destination it is nearer
+    /// (spec "Relay choice", "Owner").
     pub fn holds_mail(&self) -> bool {
         !self.sleepy && !self.carried
     }
@@ -280,7 +149,6 @@ impl Neighbour {
 /// place there, so that each entry does not keep the image itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Told {
-    /// A heartbeat with a section was heard.
     heard: bool,
     /// When: a helper streams to a gatherer only while its section is
     /// fresh (spec "Updates over the mesh").
@@ -308,26 +176,21 @@ impl Told {
 }
 
 /// Distinct images the neighbours' sections name that a node keeps at
-/// once. A section names the newest image its node holds or gathers: the
-/// release spreading, the one before it, run by those that have not heard
-/// of it yet, and the older one of a node that was away through a
-/// release; a release follows the last no sooner than the day it takes to
-/// reach every relay (roadmap D151), so a fourth is room for an image of
-/// another key, a bench's. A fifth takes the place of the lowest version,
-/// which no neighbour that runs a newer one gathers
-/// (spec "Updates over the mesh").
+/// once: the release spreading, the one before it, the older one of a node
+/// that was away through a release, and one of another key. A fifth takes
+/// the place of the lowest version, which no neighbour that runs a newer
+/// one gathers (spec "Updates over the mesh").
 pub const IMAGES: usize = 4;
 
-/// The unit of a service time: 1/1024 of a ban, 1.5 ms, far below the
-/// ban in which waits are told (spec "Neighbour table").
+/// The unit of a service time: 1/1024 of a ban, 1.5 ms
+/// (spec "Neighbour table").
 pub const SERVICE_UNIT: Duration = BAN.div(1024);
 
 /// A service time before any take: one ban, the least wait a refusal
 /// tells (spec "Bans").
 const FIRST_SERVICE: u32 = 1024;
 
-/// How many takes the service time remembers: as many as a neighbour at
-/// its cap takes while its bucket refills from empty, one a ban for
+/// How many takes the service time remembers: one a ban over
 /// [`LONGEST_BAN`], 39 (spec "Neighbour table").
 pub const SERVICE_TAKES: u64 = LONGEST_BAN.as_micros().div_ceil(BAN.as_micros());
 
@@ -355,20 +218,16 @@ pub struct NeighbourParams {
     pub stale_after: Duration,
     /// Age at which an anchorless entry expires.
     pub anchorless_expire_after: Duration,
-    /// The longest rotation of an anchorless node's beats: 13 beats, one on
-    /// each channel, each at most an anchorless beat period after the
-    /// last. Two of its beats heard here come in consecutive rotations when
-    /// they are at least half of this apart, each beat at least half a
-    /// period after the last, and at most this and a heartbeat's lag
+    /// The longest rotation of an anchorless node's beats: 13 beats, each
+    /// at most an anchorless beat period after the last
     /// ([`NeighbourParams::anchorless_rotations`]).
     pub anchorless_rotation: Duration,
-    /// Age at which the entry of a sleepy node with an anchor expires: two
-    /// beat periods.
+    /// Age at which the entry of a sleepy node with an anchor expires.
     pub sleepy_expire_after: Duration,
 }
 
 impl NeighbourParams {
-    /// From the protocol configuration; see the module documentation.
+    /// From the protocol configuration (spec "Neighbour table").
     pub const fn from_config(c: &Config) -> NeighbourParams {
         let mean_rotation = Duration::from_micros(
             (c.heartbeat_min.as_micros() + c.heartbeat_max.as_micros()) * CHANNELS as u64 / 2,
@@ -388,8 +247,9 @@ impl NeighbourParams {
     }
 
     /// The least and the most time between two anchorless beats heard in
-    /// consecutive rotations of their sender's beats; the lag is what the
-    /// expiry adds to two rotations.
+    /// consecutive rotations of their sender's beats: half a rotation,
+    /// since each beat comes at least half a period after the last, and a
+    /// rotation and a heartbeat's lag.
     pub fn anchorless_rotations(&self) -> (Duration, Duration) {
         let rotation = self.anchorless_rotation;
         let lag = self.anchorless_expire_after - rotation.mul(2);
@@ -427,7 +287,7 @@ pub struct Neighbours {
     /// The images the entries' sections name ([`Told`]).
     images: [Option<crate::update::Image>; IMAGES],
     params: NeighbourParams,
-    /// The entry kept whatever its age (module documentation).
+    /// The entry kept whatever its age ([`Neighbours::pin`]).
     pinned: Option<NodeId>,
 }
 
@@ -581,9 +441,8 @@ impl Neighbours {
         n.fail_count >= self.params.demote_after && now.since(n.demoted_at) < self.params.demotion
     }
 
-    /// The averaged RSSI, dBm, from which a neighbour has margin: a
-    /// full-length frame reaches it through a fade, with the noise floor
-    /// at `noise_floor_dbm` (spec "Next hop", roadmap D38).
+    /// The averaged RSSI, dBm, from which a neighbour has margin, with the
+    /// noise floor at `noise_floor_dbm` (spec "Neighbour table").
     pub fn margin_dbm(noise_floor_dbm: i16) -> f32 {
         noise_floor_dbm as f32 + full_frame_rssi_above_noise_db()
     }
@@ -613,7 +472,9 @@ impl Neighbours {
         }
     }
 
-    /// Keep the entry of `id`, if any, whatever its age; `None` keeps none.
+    /// Keep the entry of `id`, if any, whatever its age and against any
+    /// newcomer: a sleeping node's anchor (spec "Relay choice"). `None`
+    /// keeps none.
     pub fn pin(&mut self, id: Option<NodeId>) {
         self.pinned = id;
     }
@@ -631,9 +492,8 @@ impl Neighbours {
     }
 
     /// A heartbeat from `hb.id` at `position` was heard at `now` with
-    /// packet RSSI `rssi`. Refreshes its position, channel, flags, time and
-    /// RSSI, or adds it; a sleepy node with an anchor only into a free
-    /// slot (module documentation).
+    /// packet RSSI `rssi`. Refreshes its entry, or adds it; a sleepy node
+    /// with an anchor only into a free slot (spec "Neighbour table").
     pub fn heard(
         &mut self,
         hb: &Heartbeat,
@@ -761,10 +621,8 @@ impl Neighbours {
     }
 
     /// A heartbeat of `id` was due on this node's channel and not heard:
-    /// a reading at the floor, `floor_dbm`, with the weight of a frame
-    /// heard times `heard_chance`, the chance the radio would have heard
-    /// it, the share of its window the radio listened through (spec
-    /// "Heartbeat").
+    /// a reading at `floor_dbm` weighted by `heard_chance`, the share of
+    /// its window the radio listened through (spec "Neighbour table").
     pub fn missed(&mut self, id: NodeId, floor_dbm: i16, heard_chance: f32) {
         if let Some(n) = self.entry_mut(id) {
             n.rssi += (floor_dbm as f32 - n.rssi) * heard_chance.clamp(0.0, 1.0) / 2.0;
@@ -804,11 +662,9 @@ impl Neighbours {
         }
     }
 
-    /// `id` answered this relay at `now`: an ACK to it that takes,
-    /// refuses or has seen a packet, or a DATA addressed to it. It hears
-    /// this relay and is alive, whether or not its heartbeats are heard,
-    /// so its failures in a row are over and any demotion lifts
-    /// (spec "Neighbour table", "The ACK").
+    /// `id` answered this relay at `now`: an ACK to it, or a DATA
+    /// addressed to it. Its failures in a row are over and any demotion
+    /// lifts (spec "Neighbour table").
     pub fn answered(&mut self, id: NodeId, now: Instant) {
         if let Some(n) = self.entry_mut(id) {
             n.fail_count = 0;
@@ -835,13 +691,8 @@ impl Neighbours {
     }
 
     /// `id` took a hand-over from this relay at `now` of a message that
-    /// began to wait for it here at `since`. The time since the later of
-    /// that and its last take is one sample of its service time, which
-    /// folds in whatever held the message: refusals and their bans,
-    /// failed attempts, this relay's bucket and its other hand-overs. The
-    /// average takes each sample at a weight of one in
-    /// [`SERVICE_TAKES`], and stays within [`LONGEST_TOLD`] (spec
-    /// "Neighbour table").
+    /// began to wait for it here at `since`: one sample of its service
+    /// time (spec "Neighbour table").
     pub fn took(&mut self, id: NodeId, since: Instant, now: Instant) {
         if let Some(n) = self.entry_mut(id) {
             let told = SERVICE_UNIT.mul(n.told as u64);
@@ -856,11 +707,10 @@ impl Neighbours {
     }
 
     /// How long this relay takes to get one message through to `id` now:
-    /// its service time, or the time the message waiting
-    /// for `id` here since `oldest` has waited, its refusals' waits aside,
-    /// if that is longer, so that a rising load is seen before the next
-    /// take (spec "Bans"). At most [`LONGEST_TOLD`]. `None` if `id` is not
-    /// in the table.
+    /// its service time, or the time the message waiting for `id` here
+    /// since `oldest` has waited, its refusals' waits aside, if that is
+    /// longer, so that a rising load is seen before the next take (spec
+    /// "Bans"). `None` if `id` is not in the table.
     pub fn service_now(
         &self,
         id: NodeId,
@@ -877,14 +727,11 @@ impl Neighbours {
 
     /// A refusal for want of `id` as the way on, told at `now`, the
     /// messages queued for it here taking `queue` to go: the place it
-    /// gives its sender in `id`'s line, from now, when its hand-over would
-    /// begin, and the service time that spaced it. The place is one
-    /// service time ([`Neighbours::service_now`]) after the last place
-    /// given, and at least a ban, the unit a refusal tells, since places
-    /// closer than that would be told the same wait and come back
-    /// together; or the end of `queue` if that is later (spec "Bans"). Time
-    /// passing shortens the line; a place is at most `limit` from now.
-    /// `None` if `id` is not in the table.
+    /// gives its sender in `id`'s line, from now, and the service time
+    /// that spaced it (spec "Bans"). Places are at least a ban apart, since
+    /// closer ones would be told the same wait and come back together; a
+    /// place is at most `limit` from now. `None` if `id` is not in the
+    /// table.
     pub fn place_in_line(
         &mut self,
         id: NodeId,
@@ -925,8 +772,8 @@ impl Neighbours {
     }
 
     /// A hand-over to `id` failed at `now`: it is banned, longer after each
-    /// failure in a row. Returns whether it is now demoted, or `None` if it
-    /// is not in the table.
+    /// failure in a row (spec "Bans"). Returns whether it is now demoted,
+    /// or `None` if it is not in the table.
     pub fn failed(&mut self, id: NodeId, now: Instant) -> Option<bool> {
         let params = self.params;
         let n = self.entry_mut(id)?;
@@ -1144,7 +991,7 @@ impl Neighbours {
             sleepy: flag(SLEEPY),
             anchorless: flag(ANCHORLESS),
             carried: flag(CARRIED),
-            // Until a heartbeat without it, as any (roadmap D181).
+            // Until a heartbeat without it, as any.
             leaving: flag(LEAVING),
             beats: b[46],
             beat_at: at(3).unwrap_or(Instant::ZERO),
@@ -1175,11 +1022,10 @@ fn average(avg: f32, dbm: i16) -> f32 {
 }
 
 impl Neighbours {
-    /// For a relay `new` within the owner radius of this node (spec
-    /// "Owner"), the slot of the least recently heard relay beyond it: the
-    /// owner rule reads from the table that no relay that near is closer to
-    /// a destination, so one turned away would have its messages claimed
-    /// by its neighbour (roadmap D68).
+    /// For a relay `new` within the owner radius of this node, the slot of
+    /// the least recently heard relay beyond it: one turned away would have
+    /// its messages claimed by its neighbour (spec "Neighbour table",
+    /// eviction step 3).
     fn near_victim(&self, new: &Neighbour) -> Option<usize> {
         let r2 = OWNER_RADIUS_M * OWNER_RADIUS_M;
         let near = |n: &Neighbour| n.local.distance2(Default::default()) <= r2;
@@ -1193,8 +1039,8 @@ impl Neighbours {
     }
 }
 
-/// The eviction policy (roadmap D12): which slot of a full table a
-/// newcomer takes at `now`, if any. See the module documentation.
+/// Which slot of a full table a newcomer takes at `now`, if any, by
+/// eviction steps 1 and 2 (spec "Neighbour table").
 pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
     let oldest = |demoted: bool| {
         table
@@ -1617,7 +1463,7 @@ mod tests {
         assert_eq!(t.candidates(at(2)).count(), 0);
         assert_eq!(t.failed(id(2), at(2)), None);
 
-        // Heartbeats keep it alive but demoted (D18).
+        // Heartbeats keep it alive but demoted.
         hear(&mut t, 1, 0, -80, at(300));
         assert_eq!(
             t.candidates(at(300)).count(),

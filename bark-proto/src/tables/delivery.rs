@@ -1,31 +1,13 @@
-//! The delivery queue (spec "Delivery queue"): messages that have reached
-//! their owner and are for another node, a sleepy one it hears, held until
-//! that node wakes instead of failed at once.
-//!
-//! Messages are kept oldest first. The node hands a sleepy node's messages
-//! to the send queue in arrival order while that node listens, after each
-//! of its beats (`tables/heard.rs`). One queued the delivery TTL ago or
-//! longer (spec "Sleepy nodes": 10 minutes) is stale: it stays, and is
-//! still delivered, until a message arrives at a full queue, when the
-//! oldest stale one makes way ([`DeliveryQueue::make_room`]).
-//!
-//! A message waits at most a beat period for its node, unless that node
-//! is a phone in a pocket, a basement or the metro, and then for its first
-//! beat after it is back. Nodes in one train or one
-//! basement go dark together, so the queue holds what arrives in a TTL for
-//! every sleepy node a node can serve, its heard table's [`HEARD`], at the
-//! [`TEXTS_PER_DAY`] each that the network carries (spec "Capacity and sizing"):
-//! `256 × 23 × 10 min / 1 day = 40.9`, so 41.
-//!
-//! A message refused by a neighbour leaving the air, where it may end,
-//! waits here for that neighbour by the same rules ([`Queued::waits_for`]).
-//! Its 6 bytes fit in what the entry's alignment left free.
+//! The delivery queue and the inbox (spec "Delivery queue"): messages
+//! that have reached their owner and are for a sleepy node it hears, or
+//! wait for a neighbour leaving the air, kept oldest first. A stale
+//! message stays until a full queue needs its place
+//! ([`DeliveryQueue::make_room`]).
 //!
 //! A message already queued is not queued twice (same `msg_id`): a
-//! duplicate that slipped past the per-message records costs nothing here.
-//! A message that finds the queue full of messages that are not stale is
-//! refused (spec "Receiving DATA"): what is queued stays, and the sender
-//! learns at once that this relay cannot take it.
+//! duplicate that slipped past the message records costs nothing here.
+//! The 6 bytes of [`Queued::waits_for`] fit in what the entry's alignment
+//! left free.
 
 use crate::ids::{MsgId, NodeId};
 use crate::node::Config;
@@ -37,12 +19,12 @@ use crate::tables::send_queue::Message;
 use crate::time::{Duration, Instant};
 use crate::wire::MAX_PAYLOAD;
 
-/// Texts a user receives a day when the network carries all it can
-/// (spec "Capacity and sizing": ≈23 at 300 000 users).
+/// Texts a user receives a day at the design rate, ≈23 at 300 000 users
+/// (spec "Capacity and sizing").
 pub const TEXTS_PER_DAY: u64 = 23;
 
-/// Queue capacity for `nodes` sleepy nodes and messages that live `ttl`;
-/// see the module documentation.
+/// Queue capacity for `nodes` sleepy nodes and messages that live `ttl`:
+/// what arrives for them in a TTL at [`TEXTS_PER_DAY`].
 pub const fn queue_for(nodes: usize, ttl: Duration) -> usize {
     const DAY: u64 = 86_400_000_000;
     (nodes as u64 * TEXTS_PER_DAY * ttl.as_micros()).div_ceil(DAY) as usize
@@ -54,10 +36,8 @@ pub const DELIVERY_QUEUE: usize = queue_for(HEARD, Duration::from_secs(600));
 const _: () = assert!(DELIVERY_QUEUE == 41);
 
 /// The inbox's capacity, the messages a node keeps for its own
-/// application until the application confirms each (spec "Phone link"):
-/// what one node receives in a day, for a phone that connects once a
-/// day. It follows the delivery queue's rule, a stale message making way
-/// and a full one of fresh messages refusing.
+/// application until it confirms each: what one node receives in a day,
+/// for a phone that connects once a day (spec "Receiving").
 pub const INBOX: usize = queue_for(1, Duration::from_secs(86_400));
 
 const _: () = assert!(INBOX == 23);
@@ -72,18 +52,17 @@ pub struct Queued {
     pub dst_pos: Position,
     /// The node it is for.
     pub node: NodeId,
-    /// The neighbour it waits for, which refused it while leaving the air
-    /// and where it may end; [`NodeId::NONE`] for a message to deliver
-    /// from here (spec "Delivery queue", roadmap D186).
+    /// The neighbour leaving the air it waits for; [`NodeId::NONE`] for a
+    /// message to deliver from here.
     pub waits_for: NodeId,
     /// When it was queued.
     pub enqueued: Instant,
     /// It went once with the long preamble after a far fix (spec
     /// "Delivery"): it does not again.
     pub flushed: bool,
-    /// The home channel its node's heartbeat named, heard as a node that
-    /// is not sleepy since the last hand-over of its messages to it went
-    /// unanswered: it goes to it there directly (spec "Delivery").
+    /// The home channel its node named in a heartbeat as a node that is
+    /// not sleepy, since a delivery to it went unanswered: it goes there
+    /// directly (spec "Delivery").
     pub relay_home: Option<Channel>,
     /// The count it arrived with, which it goes on from if the node turns
     /// sleepy before it is delivered (spec "Hop count", "Sleepy nodes").

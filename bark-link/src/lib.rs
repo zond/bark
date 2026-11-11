@@ -1,14 +1,8 @@
-//! The phone link's values: the BLE GATT service by which a phone app
-//! talks to its node (spec "Phone link"). One codec, used by the firmware
-//! and checked here on the host, so that the node and the app's tests
-//! read the same bytes.
-//!
-//! Positions and node IDs keep the radio's encodings (`bark_proto`
-//! `Position::encode`, `NodeId`), and multi-byte integers are big-endian
-//! as on the radio (`docs/core-interface.md` §7). A later link version
-//! may append fields to the values the node writes, so their decoders
-//! ignore what follows the fields they know; values the app writes are
-//! taken only whole (spec "Phone link", Versions).
+//! The phone link's values, one codec for the firmware and the app's tests
+//! (spec "Phone link"). Positions and node IDs keep the radio's encodings;
+//! integers are big-endian. Decoders of what the node writes ignore trailing
+//! bytes a later version may append; values the app writes are taken only
+//! whole (spec "Versions").
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -17,21 +11,17 @@
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Instant, MsgId, NodeId, Position};
 
-/// The link version this crate speaks, in [`Node::version`]. Every
-/// change to the node's attribute table comes with a new version, as the
-/// node tells a bonded phone of a change by the version it last saw
-/// (spec "Phone link", Changes to the table).
+/// The link version this crate speaks, in [`Node::version`]. Every change
+/// to the attribute table takes a new one: the node tells a bonded phone of
+/// a change by the version it last saw (spec "Versions").
 pub const VERSION: u8 = 1;
 
-/// The oldest link version whose apps this node still serves, in
-/// [`Node::oldest`] (spec "Phone link", Versions): its own, as no app of
-/// another is kept (roadmap D188).
+/// The oldest link version whose apps this node serves, in
+/// [`Node::oldest`] (spec "Versions").
 pub const OLDEST: u8 = VERSION;
 
-/// Whether an app of link version `version`, which serves nodes of link
-/// version `oldest` and later, and this node can serve each other: each
-/// side's version at least the other's oldest (spec "Phone link",
-/// Versions).
+/// Whether an app of link version `version`, serving nodes from `oldest`
+/// on, and this node serve each other (spec "Versions").
 pub const fn compatible(version: u8, oldest: u8) -> bool {
     version >= OLDEST && VERSION >= oldest
 }
@@ -39,7 +29,6 @@ pub const fn compatible(version: u8, oldest: u8) -> bool {
 /// The ATT MTU the node offers: the longest LL data PDU payload with the
 /// data length extension, 251 bytes (Bluetooth Core Specification 5.0,
 /// Vol 6 Part B §2.4), less the 4-byte L2CAP header (Vol 3 Part A §3.1).
-/// Every value then fits one ATT PDU and one link-layer packet.
 pub const ATT_MTU: u16 = 251 - 4;
 
 /// Bytes of a value an ATT PDU carries at an MTU: a write request and a
@@ -54,8 +43,7 @@ pub const DEFAULT_ATT_MTU: u16 = 23;
 
 /// The 128-bit UUIDs, as numbers; [`le_bytes`] gives the order on the air.
 /// One random version-4 UUID, its second 16 bits counting the service and
-/// its characteristics in the order of the spec's table. A change to what
-/// a field means takes a new UUID (spec "Phone link", Versions).
+/// its characteristics in the order of the spec's table (spec "The service").
 pub mod uuid {
     /// The service.
     pub const SERVICE: u128 = 0x28bc0001_a1b8_4893_9537_2ee3559d7644;
@@ -103,8 +91,8 @@ pub mod uuid {
     /// Phones: list the node's records, and remove one with a code drawn
     /// on the screen ([`crate::phones`]).
     pub const PHONES: u128 = 0x28bc0011_a1b8_4893_9537_2ee3559d7644;
-    /// What a public node advertises in place of [`SERVICE`]: the class
-    /// of nodes that serve any phone. No attribute has it.
+    /// What a public node advertises in place of [`SERVICE`]; no attribute
+    /// has it (spec "Public nodes").
     pub const PUBLIC_NODE: u128 = 0x28bc1001_a1b8_4893_9537_2ee3559d7644;
 }
 
@@ -139,17 +127,15 @@ pub mod att {
     pub const INVALID_LENGTH: u8 = 0x0D;
     /// The value has the right length and a field it does not take.
     pub const VALUE_NOT_ALLOWED: u8 = 0x13;
-    /// Not now: the node takes no message from its application at the
-    /// moment, or the turn is another phone's ([`crate::turn`]); the app
-    /// waits for [`crate::Status::ready`]. The first of
-    /// the application error codes, 0x80 to 0x9F.
+    /// Not now: the node takes no message, or the turn is another phone's
+    /// ([`crate::turn`]); the app waits for [`crate::Status::ready`]. The
+    /// first application error code, 0x80 to 0x9F.
     pub const NOT_READY: u8 = 0x80;
     /// The node refused a begin, a commit or a reboot of an update; Update
     /// says why ([`crate::update::Refusal`]).
     pub const REFUSED: u8 = 0x81;
-    /// The app's link version and the node's do not serve each other: one
-    /// is below the other's oldest (spec "Phone link", Versions). The node
-    /// answers Recipient's write so, then ends the link.
+    /// The app's link version and the node's do not serve each other; the
+    /// node answers Recipient's write so, then ends the link (spec "Versions").
     pub const INCOMPATIBLE: u8 = 0x82;
 }
 
@@ -198,10 +184,9 @@ fn u32_at(b: &[u8], at: usize) -> u32 {
     u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
 
-/// Whole seconds from `now` to `until`, rounded up so that an app that
-/// waits them is never early, and 0 once `until` has passed; at most
-/// `u16::MAX`, 18 h, beyond the longest wait a refusal tells, 89 min
-/// (spec "Bans").
+/// Whole seconds from `now` to `until`, rounded up so an app that waits
+/// them is never early; 0 once past. Capped at `u16::MAX`, 18 h, beyond the
+/// longest wait a refusal tells, 89 min (spec "Bans").
 pub fn seconds_left(now: Instant, until: Instant) -> u16 {
     const SECOND_US: u64 = 1_000_000;
     let us = until.since(now).as_micros();
@@ -219,7 +204,7 @@ pub struct Node {
     pub id: NodeId,
     /// The firmware image's version (`bark-fw/README.md`, "Updates").
     pub image: u32,
-    /// How many more phones may pair with it (spec "Phone link", Node).
+    /// How many more phones may pair with it (spec "Pairing").
     pub room: u8,
 }
 
@@ -256,23 +241,22 @@ impl Node {
     }
 }
 
-/// Status, read and notify: how the node stands now. The node notifies
-/// it whenever a field changes, but [`Status::boot_left_s`] counting
-/// down. It fits the 20 bytes a notification carries at the default MTU.
+/// Status, read and notify: how the node stands now. Notified whenever a
+/// field changes but [`Status::boot_left_s`] counting down. Fits a
+/// notification at the default MTU.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Status {
     /// The node takes a message from the app now ([`Send`]).
     pub ready: bool,
     /// External power, USB, is present.
     pub external_power: bool,
-    /// The node is sleepy (spec "Nodes"); measured, not set.
+    /// The node is sleepy (spec "Nodes").
     pub sleepy: bool,
-    /// The node is carried (spec "Nodes"); measured, not set.
+    /// The node is carried (spec "Nodes").
     pub carried: bool,
     /// The node's position is a map point, not a GPS fix (spec "Position").
     pub map_point: bool,
-    /// The node has a place, and [`Status::address`] is its address's
-    /// position; without one it is zero (spec "Position").
+    /// [`Status::address`] holds a position; else it is zero.
     pub placed: bool,
     /// The first rotation is under way (spec "Channel at boot").
     pub booting: bool,
@@ -284,15 +268,14 @@ pub struct Status {
     /// The battery in millivolts as last read, uncalibrated; 0 on external
     /// power and before the first reading.
     pub battery_mv: u16,
-    /// The relays it knows, nodes that are not sleepy.
+    /// The relays (nodes not sleepy) it knows.
     pub relays: u8,
-    /// Its live neighbours, sleepy or not (spec "Neighbour status",
-    /// heard).
+    /// Its live neighbours, sleepy or not (spec "Neighbour status").
     pub heard: u8,
     /// Seconds left of the first rotation, rounded up; 0 once it is over.
     pub boot_left_s: u16,
-    /// The low 16 bits of the image version the node drains to install
-    /// (spec "Updates over the mesh", the install); 0 when none.
+    /// The low 16 bits of the image version the node drains to install; 0
+    /// when none (spec "Updates over the mesh").
     pub installing: u16,
     /// The phone's messages in the node's ring not yet confirmed.
     pub inbox: u8,
@@ -309,8 +292,7 @@ impl Status {
     const AT_INSTALLING: usize = Self::AT_BOOT_LEFT + 2;
     const AT_INBOX: usize = Self::AT_INSTALLING + 2;
 
-    /// Every flag clear and every count zero: a node that has said
-    /// nothing yet.
+    /// Every flag clear and every count zero.
     pub const EMPTY: Status = Status {
         ready: false,
         external_power: false,
@@ -387,8 +369,7 @@ impl Status {
     }
 }
 
-/// Send, write: a message for the node to originate, as
-/// `AppCommand::Send` takes it (spec "Receiving DATA").
+/// Send, write: a message for the node to originate (spec "Sending").
 /// Written while ready is not set, it asks for the turn ([`turn`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Send<'a> {
@@ -396,8 +377,7 @@ pub struct Send<'a> {
     pub dst_pos: Position,
     /// The destination node.
     pub dst_id: NodeId,
-    /// The opaque payload, at most `MAX_PAYLOAD`, 227 bytes
-    /// (spec "Packet formats").
+    /// The opaque payload, at most `MAX_PAYLOAD` bytes.
     pub payload: &'a [u8],
 }
 
@@ -436,8 +416,7 @@ impl<'a> Send<'a> {
     }
 }
 
-/// Inbox, read: the oldest message the node holds for the app, as the
-/// core's inbox holds it (`Core::inbox`); the value is empty when it holds
+/// Inbox, read: the oldest message the node holds for the app; empty when
 /// none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Message<'a> {
@@ -462,8 +441,8 @@ impl<'a> Message<'a> {
         len
     }
 
-    /// Read a value: `None` when the inbox is empty. The whole value past
-    /// the ID is the payload, so this value never grows.
+    /// Read a value: `None` when the inbox is empty. All past the ID is the
+    /// payload, so this value never grows.
     pub fn decode(b: &'a [u8]) -> Result<Option<Message<'a>>, Malformed> {
         match b.len() {
             0 => Ok(None),
@@ -499,16 +478,14 @@ impl Confirm {
     }
 }
 
-/// Given back, read and notify: the app's message that the node gave
-/// back, refused (spec "Addresses"), and the wait the refusal asked
-/// for. The value is empty when the node has given none back since it
-/// last took one.
+/// Given back, read and notify: the app's message the node refused, and
+/// the wait the refusal asked for; empty when none was given back since the
+/// node last took one (spec "Sending").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GivenBack {
     /// The message's ID ([`Send::msg_id`]).
     pub msg_id: MsgId,
-    /// Seconds left of the wait, rounded up ([`seconds_left`]); 0 once it
-    /// is over.
+    /// Seconds left of the wait ([`seconds_left`]).
     pub wait_s: u16,
 }
 
@@ -539,7 +516,7 @@ impl GivenBack {
 }
 
 /// Map point, write: set the node's position to a map point, or clear it
-/// (spec "Position"; `AppCommand::SetPosition`, `ClearMapPoint`).
+/// (spec "Settings").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MapPoint {
     /// Clear the map point: one byte, 0.
@@ -584,12 +561,12 @@ impl MapPoint {
 /// zone database's range).
 pub const OFFSETS_MIN: core::ops::RangeInclusive<i16> = -12 * 60..=14 * 60;
 
-/// Clock, write: the phone's time, UTC seconds since 1970, and its UTC
-/// offset in minutes. The node takes the offset always and the time while
-/// it has none from its GPS (spec "Phone link").
+/// Clock, write: the phone's time and UTC offset. The node takes the
+/// offset always, the time only while it has none from its GPS (spec
+/// "Settings").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Clock {
-    /// UTC seconds since 1970-01-01.
+    /// UTC seconds since 1970.
     pub utc_s: u32,
     /// Minutes to add to UTC for the phone's local time.
     pub offset_min: i16,
@@ -689,11 +666,9 @@ impl NodeTime {
 }
 
 /// Recipient, write: the phone's recipient tag at this node, by which the
-/// node hands it the payloads that are its own (spec "Phone link",
-/// Recipient tag; `bark_app_layer::seal::recipient`), the app's link
-/// version, the oldest node version it serves (spec "Phone link",
-/// Versions) and its person's name as their card has it, which a paired
-/// phone's record keeps (spec "Phone link", Pairing).
+/// node picks the payloads that are its own (spec "Receiving"), the app's
+/// link versions (spec "Versions"), and its person's name, which a paired
+/// phone's record keeps (spec "Pairing").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Recipient {
     /// The tag.
@@ -740,9 +715,8 @@ impl Recipient {
     }
 }
 
-/// Public, read and write: 1 when the node serves phones that have not
-/// paired with it, as it does unless its owner says otherwise; 0 when
-/// the owner has made it private, its alone (spec "Phone link", Public).
+/// Public, read and write: whether the node serves phones that have not
+/// paired with it (spec "Public nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Public(pub bool);
 
@@ -766,9 +740,8 @@ impl Public {
     }
 }
 
-/// Public, as the owner writes it: whether the node is public, or that
-/// the node is to forget its bond, unpaired, and be public again as a
-/// node nobody has paired with is (spec "Phone link", Public).
+/// Public, as the owner writes it: set public or private, or unpair
+/// (spec "Public nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicWrite {
     /// Public or private.
@@ -804,7 +777,7 @@ const NUMBER: usize = 3;
 
 /// Guest, write: the number of the last item the guest took; its next
 /// read of Inbox gives the oldest item after it for its recipient tag
-/// (spec "Phone link", Public). 0 at each connection.
+/// (spec "Public nodes"). 0 at each connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct After(pub u32);
 
@@ -869,8 +842,7 @@ impl<'a> GuestItem<'a> {
     }
 }
 
-/// Ask, write: ask this neighbour for its status
-/// (spec "Neighbour status"; `AppCommand::Ask`).
+/// Ask, write: ask this neighbour for its status (spec "Neighbour status").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ask(pub NodeId);
 
@@ -892,11 +864,9 @@ impl Ask {
     }
 }
 
-/// Ask, read and notify: the last answer the node was given, the
-/// neighbour's ID and its status in the radio's encoding
-/// (`bark_proto::wire::encode_status`); empty before the first since
-/// the node booted. A notification at the default MTU carries its first
-/// 20 bytes, all but the image the neighbour gathers.
+/// Ask, read and notify: the last answer the node was given, in the radio's
+/// encoding; empty before the first since boot. A notification at the
+/// default MTU carries all but the image the neighbour gathers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Answer {
     /// The neighbour that answered.
@@ -919,8 +889,8 @@ impl Answer {
     }
 
     /// Read a value, `None` when empty, ignoring what a later version
-    /// appends; one without the image gathered whole, a notification's at
-    /// the default MTU, as gathering none.
+    /// appends. One cut short of the gathered image, as a notification at
+    /// the default MTU is, reads as gathering none.
     pub fn decode(b: &[u8]) -> Result<Option<Answer>, Malformed> {
         let mut status = [0u8; STATUS];
         match b.len() {
@@ -949,15 +919,14 @@ const STATUS: usize = bark_proto::wire::STATUS_LEN;
 /// the default MTU carries whole.
 const STATUS_UNGATHERED: usize = 9;
 
-// Every value the node or the app writes fits one ATT PDU at the MTU the
-// node offers; the status fits one at the default MTU.
+// Every value fits one ATT PDU at the MTU the node offers; Status and
+// Given back fit one at the default MTU, and Ask's answer all but the
+// gathered image.
 const _: () = assert!(Send::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(Message::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(GuestItem::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
-// Ask's answer needs the MTU the app asks for; a notification at the
-// default one still carries all but the image gathered.
 const _: () = assert!(Answer::LEN <= value_room(ATT_MTU));
 const _: () = assert!(ID + STATUS_UNGATHERED <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Send::MAX_LEN == 240);

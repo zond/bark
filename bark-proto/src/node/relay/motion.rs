@@ -1,30 +1,7 @@
-//! A node that moves (spec "Position", roadmap D70, D72).
-//!
-//! Whether a node is fixed or carried is measured the same way whether it
-//! is sleepy or not. Fixed, its fixes are compared with the place it
-//! stands: its first fix, its map point, or the fix it had when it was
-//! last made fixed. A fix farther than [`CARRY_RADIUS_M`] from that place
-//! is a far fix. After far fixes for [`CARRY_AFTER`] with none near
-//! between, it is carried. The run counts only time in which the GPS gave
-//! fixes: from a loss of fix (`AppCommand::NoFix`) to the next far fix
-//! adds nothing, since where the node was meanwhile is unknown. Carried,
-//! it is fixed again once its fixes have stayed within the radius of one
-//! place for [`Config::fixed_after`], and keeps the fix it has then.
-//!
-//! A node that is neither sleepy nor carried keeps its place as its
-//! position, so that no later fix, true or spoofed, moves it (roadmap
-//! D63). A carried node, and a sleepy node without an anchor, takes each
-//! fix. A sleepy node with an anchor takes none and measures nothing: it
-//! works by its anchor's position (`relay/anchor.rs`) and keeps the flag
-//! it had, carried or fixed, until it is anchorless or a relay again,
-//! where its fixes measure it as before (roadmap D91). A carried node
-//! owns nothing by position, holds mail for nobody and is nobody's
-//! anchor; it flags its heartbeats. At the first far fix of a run a node
-//! that holds mail flushes its delivery queue: each message goes to its
-//! node once, with the long preamble (`relay/delivery.rs`), since a node
-//! that is leaving will not hear its sleepy nodes' beats for long.
-//!
-//! [`Config::fixed_after`]: crate::Config::fixed_after
+//! A node that moves: whether it is fixed or carried, measured from its
+//! fixes, and which fixes it takes as its position (spec "Position",
+//! "Nodes"). A relay that is not carried keeps its place as its position,
+//! so no later fix, true or spoofed, moves it.
 
 use super::gps::mark;
 use super::Node;
@@ -39,28 +16,23 @@ use crate::Config;
 /// Whether a node is fixed or carried, and the fixes that decide it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Motion {
-    /// It moves: it takes each fix and holds mail for nobody.
     carried: bool,
-    /// Its position is a map point the application set (spec
-    /// "Position"); until the application clears it no fix is taken.
+    /// Its position is a map point; until it is cleared no fix is taken.
     map_point: bool,
-    /// It has a place: the position it heartbeats is where it is. A
-    /// board built without one has none until its first accepted fix.
+    /// It has a place (spec "Position"); a board built without one has
+    /// none until its first accepted fix.
     placed: bool,
-    /// Until when its next accepted fix is its place, fixed, at once, in
-    /// whole seconds as the GPS keeps its times, 0 for never: for good if
-    /// it has none or its map point was cleared, for a search's limit
-    /// after it was plugged in (roadmap D83, D84, D85).
+    /// Until when its next accepted fix is its place, in whole seconds as
+    /// the GPS keeps its times; 0 for never, `u32::MAX` for good.
     first_fix: u32,
-    /// Fixed: since when its fixes have been far, with none near since,
-    /// moved on by the time the GPS gave no fix.
+    /// Fixed: since when its fixes have been far, moved on by the time the
+    /// GPS gave no fix.
     far_since: Option<Instant>,
-    /// The last far fix of the run under way.
     far_last: Instant,
     /// The GPS lost its fix since [`Motion::far_last`].
     far_lost: bool,
     /// The place its fixes are compared with, and, carried, since when
-    /// they have stayed within the allowance of it.
+    /// they have stayed near it.
     still_at: Position,
     still_since: Instant,
 }
@@ -72,8 +44,7 @@ pub(super) enum Fixed {
     Not,
     /// The node's place, fixed there at once.
     Place,
-    /// Measured: whether the node takes it as its position, whether it
-    /// began a run of far fixes, and the carried flag if it changed.
+    /// Measured; `turned`: the carried flag if it changed.
     Measured {
         takes: bool,
         far_began: bool,
@@ -97,10 +68,8 @@ impl Motion {
         }
     }
 
-    /// Fixed where `config` puts it after a boot, on the map point it
-    /// stood on before, if it did. A carried node's stored place is where
-    /// it stood when last fixed, not where it is, so it is no place
-    /// (roadmap D133).
+    /// Fixed where `config` puts it after a boot. A carried node's stored
+    /// place is where it last stood, so it is no place (spec "Position").
     pub(super) const fn at_boot(config: &Config) -> Motion {
         let placed = config.placed
             || match config.stored {
@@ -118,7 +87,6 @@ impl Motion {
         }
     }
 
-    /// Carried at `at`, still there since `now`.
     pub(super) const fn carried_at(at: Position, now: Instant) -> Motion {
         Motion {
             carried: true,
@@ -139,17 +107,14 @@ impl Motion {
         self.still_at
     }
 
-    /// Whether it is carried.
     pub(super) fn carried(&self) -> bool {
         self.carried
     }
 
-    /// Whether its position is a map point.
     pub(super) fn map_point(&self) -> bool {
         self.map_point
     }
 
-    /// Whether it has a place.
     pub(super) fn placed(&self) -> bool {
         self.placed
     }
@@ -160,8 +125,7 @@ impl Motion {
         self.carried || self.far_since.is_some()
     }
 
-    /// The application set a map point at `at`: fixed there. Returns
-    /// whether it was carried.
+    /// A map point was set: fixed there. Returns whether it was carried.
     pub(super) fn set_map_point(&mut self, at: Position) -> bool {
         let was = self.carried;
         *self = Motion {
@@ -171,8 +135,8 @@ impl Motion {
         was
     }
 
-    /// The application cleared its map point: its next accepted fix is
-    /// its place. Returns whether there was one.
+    /// The map point was cleared: the next accepted fix is the place.
+    /// Returns whether there was one.
     pub(super) fn clear_map_point(&mut self) -> bool {
         if !self.map_point {
             return false;
@@ -182,8 +146,7 @@ impl Motion {
         true
     }
 
-    /// A GPS fix at `at`, the node `sleepy`, with an anchor if
-    /// `anchored`, measured on `plane` (module documentation).
+    /// A GPS fix (spec "Position").
     pub(super) fn fix(
         &mut self,
         at: Position,
@@ -242,16 +205,15 @@ impl Motion {
         measured(began, Some(true))
     }
 
-    /// The GPS, running, gave no fix the driver hands: the time until the
-    /// next fix does not count towards a run of far fixes.
+    /// The running GPS gave no usable fix: the time until the next fix does
+    /// not count towards a run of far fixes.
     pub(super) fn no_fix(&mut self) {
         self.far_lost = true;
     }
 
-    /// Plugged in at `at`: a carried node stays carried; a fixed one is
-    /// fixed there, which it keeps as a relay unless a fix comes within a
-    /// search's limit: a sleepy node's last fix may be hours old (roadmap
-    /// D80), and one that sees the sky has a fix by then (roadmap D85).
+    /// Plugged in at `at` (spec "Position", power): a fixed node takes a
+    /// fix within a search's limit as its place, since a sleepy node's last
+    /// fix may be hours old.
     pub(super) fn plugged_in(&mut self, at: Position, now: Instant) {
         if !self.carried {
             let map_point = self.map_point;
@@ -270,14 +232,14 @@ impl Motion {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// Whether this node has a place (module documentation): until it
-    /// has, its driver does not check fixes against its neighbours, whose
-    /// positions it cannot rebuild.
+    /// Whether this node has a place (spec "Position"): until it has, its
+    /// driver does not check fixes against its neighbours, whose positions
+    /// it cannot rebuild.
     pub fn placed(&self) -> bool {
         self.motion.placed()
     }
 
-    /// Whether this node is carried (module documentation).
+    /// Whether this node is carried (spec "Position").
     pub fn carried(&self) -> bool {
         self.motion.carried()
     }
@@ -288,8 +250,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.motion.far()
     }
 
-    /// The application set a map point: the node is there, and fixed.
-    /// Returns whether it was carried.
+    /// A map point was set: the node is there, and fixed. Returns whether
+    /// it was carried.
     pub(super) fn map_point(&mut self, position: Position, now: Instant) -> bool {
         if !self.motion.placed() {
             self.first_place(position, now);
@@ -298,16 +260,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.motion.set_map_point(position)
     }
 
-    /// The application cleared its map point: the node stays where it is
-    /// until its next accepted fix, which is its place.
+    /// The map point was cleared: the node stays where it is until its
+    /// next accepted fix, which is its place.
     pub(super) fn clear_map_point(&mut self) {
         if self.motion.clear_map_point() {
             self.changed();
         }
     }
 
-    /// The driver hands a GPS fix that passed its checks (module
-    /// documentation). Returns whether the node took it as its position.
+    /// A GPS fix that passed the driver's checks (spec "Position").
+    /// Returns whether the node took it as its position.
     pub(super) fn fix(&mut self, at: Position, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         let sleepy = self.sleepy();
         let fixed = self.motion.fix(
@@ -350,10 +312,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The first accepted fix of a node that takes it as its place: fixed
-    /// there at once. A node that had no place rebuilds its neighbours'
-    /// positions and heartbeats from now, a relay its first rotation's
-    /// burst first, as at boot; a relay whose place moved says so at once.
+    /// A fix taken as the node's place: fixed there at once; a relay whose
+    /// place moved says so at once.
     fn place_at(&mut self, at: Position, now: Instant) {
         let had = self.motion.placed();
         let moved = at != self.config.position;
@@ -367,8 +327,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A node with no place has one at `at`: the positions it heard,
-    /// rebuilt from their short forms near it, and it heartbeats from now.
+    /// A node with no place has one: it rebuilds the short positions it
+    /// heard near it, and heartbeats from now.
     fn first_place(&mut self, at: Position, now: Instant) {
         self.neighbours.rebuild(at);
         if let Some(a) = self.sleep_mut().and_then(|s| s.anchor.as_mut()) {
@@ -377,8 +337,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.beacon.next_at(now);
     }
 
-    /// Plugged in: fixed where it is now, unless carried
-    /// ([`Motion::plugged_in`]).
+    /// Plugged in ([`Motion::plugged_in`]).
     pub(super) fn fixed_here(&mut self, now: Instant) {
         self.motion.plugged_in(self.config.position, now);
     }

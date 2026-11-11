@@ -1,13 +1,10 @@
-//! What a node still holds when it reboots into a new image, kept across
-//! the reboot and put back where it was (spec "Updates over the mesh", the
-//! install; roadmap D201): a slot for each message, with its destination
-//! and payload, which [`MsgId::of`] is taken of, so that it is the same
-//! message after, its count, and where it was, as [`Held`] says.
+//! The messages a node holds, kept across a reboot into a new image and put
+//! back where they were (spec "Updates over the mesh"): one slot per
+//! [`Held`] message.
 //!
-//! A slot is a page of the external flash, written once; the region is
-//! erased once every message in it is put back or offered again. Its ID is
-//! the check of what it is taken of, and a CRC-8 of the rest is the check
-//! of where it was: a slot cut short by a power cut fails one of them.
+//! A slot is a flash page written once. [`MsgId::of`] checks the
+//! destination and payload, a CRC-8 checks the rest, so a slot a power cut
+//! tore fails one of them.
 
 use bark_proto::tables::delivery::{DELIVERY_QUEUE, INBOX};
 use bark_proto::tables::send_queue::{HOP_SLOTS, SEND_QUEUE};

@@ -1,49 +1,15 @@
-//! Delivery to the sleepy nodes a node hears
-//! (spec "Delivery", "Delivery queue").
-//!
-//! A message that reaches the owner of its position and is for another
-//! node waits in the delivery queue, whether or not that node is heard,
-//! and leaves it when the node ACKs it or, stale after the delivery TTL,
-//! when a newer message needs its place (`tables/delivery.rs`).
-//! It goes to the node as DATA addressed to its ID, through the send queue
-//! like any hand-over, only while the node listens: from each of its beats
-//! for the heard table's window, which each message it takes renews
-//! (`tables/heard.rs`). So the holder sends on the beat, which is what a
-//! node that sleeps between beats needs. A queued message is handed to
-//! the send queue one per node at a time and oldest first: when it
-//! arrives, when the node beats, when the node takes the one before, and
-//! whenever a hand-over ends and frees room in the send queue. In its
-//! node's window it needs a place in the regular room and its own frame in
-//! the bucket with the reply reserve left, not the airtime of everything
-//! queued, which it goes ahead of (spec "Delivery queue"). One the bucket cannot fit yet is
-//! offered again the moment it will, as a deferred hand-over is started
-//! then (`feed_at`). One whose node has stopped listening by the time its
-//! hand-over would start leaves the send queue and waits for the next
-//! beat; one whose hand-over goes unanswered marks its node asleep until
-//! then.
-//!
-//! Outside its window a heard node's oldest message goes at once with the
-//! long preamble when the bucket spares it, and not again once one has
-//! gone unanswered, until the node beats (spec "Delivery", roadmap D112).
-//!
-//! With [`Config::sleepy_listens`], a research switch, a node heard is
-//! taken to listen all the time: its messages go at once, and after an
-//! unanswered one every `delivery_retry` (60 s) as well as on its beats.
+//! Delivery to the sleepy nodes a node holds messages for
+//! (spec "Delivery", "Delivery queue"): what leaves the delivery queue
+//! for the send queue, when, and with which preamble. The queue itself is
+//! `tables/delivery.rs`, the listening windows `tables/heard.rs`.
 //!
 //! A message that waits for a neighbour leaving the air is not delivered
 //! from here: it goes back into the send queue as a forward once that
-//! neighbour is back or gone (`relay/forward.rs` `release`, roadmap D186).
+//! neighbour is back or gone (`relay/forward.rs` `release`).
 //!
-//! Messages for a node this one does not hear wait for it all the same, as
-//! spec "Owner" has the owner queue when nobody knows the node.
-//!
-//! Two kinds go whether or not their node is in a window, one at a time
-//! and after the windows' (`Kind::Direct`): a message for a node heard as
-//! one that is not sleepy goes to it with the ordinary preamble, done on
-//! its ACK; and once this node's last fix is far (`relay/motion.rs`), or
-//! it is leaving to turn sleepy (`relay/power.rs`), each message goes once
-//! with the long preamble, one attempt, and stays queued if unanswered
-//! (spec "Delivery").
+//! With [`Config::sleepy_listens`], a research switch, a node heard is
+//! taken to listen all the time: its messages go at once, and after an
+//! unanswered one every `delivery_retry` as well as on its beats.
 //!
 //! [`Config::sleepy_listens`]: crate::Config::sleepy_listens
 
@@ -69,17 +35,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.heard.awake(id, now)
     }
 
-    /// Hand the oldest message queued for `node` to the send queue, if
-    /// the node listens and has none there already; with `sleepy_listens`,
-    /// a node whose last delivery went unanswered only on a `retry`. If the
-    /// send queue has no room for it: `Err(Some(t))` when the bucket will
-    /// fit it at `t`, `Err(None)` when only a hand-over ending will make
-    /// room.
-    ///
-    /// Outside its window, the node receiving duty-cycled, the message goes
-    /// with the long preamble if this node spares it ([`Self::spares_long`]).
-    /// Otherwise, or once a delivery to the node has gone unanswered, it
-    /// waits for its beat.
+    /// Hand the oldest message queued for `node` to the send queue, if the
+    /// node listens and has none there already (spec "Delivery"). No room:
+    /// `Err(Some(t))` when the bucket will fit it at `t`, `Err(None)` when
+    /// only a hand-over ending will make room.
     pub(super) fn try_deliver(
         &mut self,
         node: NodeId,
@@ -118,9 +77,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return Ok(());
         }
-        // In its window it goes ahead of everything queued, and needs room
-        // for itself only: held back by the forwards behind it, a capped
-        // holder's deliveries missed their windows (roadmap D55).
+        // In its window it goes ahead of everything queued and needs room
+        // for itself only, or a capped holder's deliveries miss their
+        // windows (spec "Delivery queue").
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
@@ -130,12 +89,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Ok(())
     }
 
-    /// Whether this node spares a frame of `airtime` with the long
-    /// preamble now, to a sleepy node outside its window (spec "Next hop",
-    /// "Delivery"): its bucket holds the frame beyond everything else it
-    /// has to send, its send queue, every message of its delivery queue but
-    /// `except` at the ordinary preamble in its window, and the reply
-    /// reserve.
+    /// Whether the bucket holds a long-preamble frame of `airtime` beyond
+    /// everything else this node has to send: its send queue, its delivery
+    /// queue but `except` at the ordinary preamble, and the reply reserve
+    /// (spec "Next hop", "Delivery").
     pub(super) fn spares_long(
         &self,
         airtime: Duration,
@@ -157,9 +114,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Offer the send queue the oldest queued message of each node, oldest
-    /// first, until it has no room, and note when to offer again: when the
-    /// bucket will fit the message that did not, or else when a hand-over
-    /// ends (`feed_due`).
+    /// first, until it has no room, and note when to offer again.
     pub(super) fn feed(&mut self, retry: bool, now: Instant) {
         self.forwarding.feed_due = false;
         self.forwarding.feed_at = None;
@@ -200,8 +155,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// `node` ACKed the message `msg_id` handed to it `by` that way: it
-    /// listens one hand-over for the next.
+    /// `node` ACKed `msg_id`: it listens one hand-over for the next.
     pub(super) fn delivered_to(
         &mut self,
         msg_id: MsgId,
@@ -217,13 +171,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.deliver_now(node, now);
     }
 
-    /// Hand the send queue the next message that goes to its node whether
-    /// or not the node is in a window, one at a time
-    /// (spec "Delivery"): to a node heard as one that is not sleepy, with the
-    /// ordinary preamble on its home channel; else, once the last fix is
-    /// far, each message not yet flushed, once, with the long preamble on
-    /// the channel its node listens on, this node's own if it has not
-    /// heard it. Through the bucket as any delivery, ahead of the rest.
+    /// Hand the send queue the next message that goes whether or not its
+    /// node is in a window, one at a time: to a node heard as a relay, or
+    /// the flush once this node is far or leaving (spec "Delivery").
     /// Returns when the bucket will fit it, if only the bucket lacks.
     fn feed_direct(&mut self, now: Instant) -> Result<(), Option<Instant>> {
         if self.queue.iter().any(|o| o.kind == Kind::Direct) {
@@ -282,11 +232,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// `node` was heard as a node that is neither sleepy nor leaving the
-    /// air, at home on `home`:
-    /// what is queued for it goes to it there directly
-    /// (spec "Delivery"), whether or not it has a place in the
-    /// neighbour table.
+    /// `node` was heard as a relay not leaving the air: what is queued for
+    /// it goes to it directly, in the neighbour table or not
+    /// (spec "Delivery").
     pub(super) fn heard_as_relay(&mut self, node: NodeId, home: Channel) {
         let mut any = false;
         for q in self
@@ -318,9 +266,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }));
     }
 
-    /// Expire the heard table, and the neighbour table while a message
-    /// waits for a neighbour, and with `sleepy_listens` retry the delivery
-    /// queue.
     pub(super) fn delivery_timers(&mut self, now: Instant) {
         self.heard.expire(now);
         if self.delivery.iter().any(|q| q.waits()) {
@@ -333,9 +278,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// When delivery next needs the core: the feed's bucket, the retry,
-    /// a place for the application's message set aside, and the expiries
-    /// of the heard table and of the neighbours waited for.
     pub(super) fn delivery_wakeup(&self) -> Option<Instant> {
         let retry = (self.config.sleepy_listens && !self.delivery.is_empty())
             .then_some(self.forwarding.delivery_retry_at);

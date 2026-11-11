@@ -1,19 +1,13 @@
-//! The 32.768 kHz clock (LFCLK) and its source, started at boot by the
-//! loader before a trial's watchdog and by the firmware: the crystal if it
-//! starts, else the internal RC oscillator. The BLE controller keeps a
-//! connection's timing on it, and the core's timing assumes a watch
-//! crystal (spec "Heartbeat"); whether a board has the crystal fitted is
-//! not known.
+//! The 32.768 kHz clock (LFCLK), started at boot by the loader and by the
+//! firmware on the crystal if it starts, else the internal RC oscillator:
+//! whether a board has the crystal fitted is not known.
 //!
-//! A running watchdog holds the clock until a reset other than a soft
-//! one: LFCLKSTOP then leaves it running, and a watchdog started with no
-//! clock running forces the RC oscillator on (nRF52840 Product
-//! Specification, WDT, CLOCK, and POWER's reset behaviour). So the loader
-//! starts the clock before the watchdog, and nothing here stops a held
-//! clock.
-//!
-//! The crystal either starts within its start-up time or never raises
-//! LFCLKSTARTED, and nothing else on the chip tells the two apart
+//! A running watchdog holds the clock until a reset other than a soft one:
+//! LFCLKSTOP then leaves it running, and a watchdog started with no clock
+//! forces the RC oscillator on (nRF52840 Product Specification, WDT, CLOCK,
+//! POWER). So the loader starts the clock before the watchdog, and nothing
+//! here stops a held clock. A crystal that does not start never raises
+//! LFCLKSTARTED, and nothing else tells a slow one from a missing one
 //! (Product Specification, CLOCK, LFCLK).
 
 use embedded_hal::delay::DelayNs;
@@ -32,7 +26,7 @@ pub enum Source {
 /// What [`probe`] found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Found {
-    /// The crystal, started this many ms after it was asked.
+    /// The crystal.
     Crystal {
         /// Milliseconds from the start task to LFCLKSTARTED.
         started_ms: u32,
@@ -54,9 +48,8 @@ impl Found {
     }
 }
 
-/// How long the crystal is given to start: four times its typical start-up
-/// time of 0.25 s (Product Specification, 32.768 kHz crystal oscillator,
-/// tSTART,LFXO), so that a slow crystal is not taken for a missing one.
+/// How long the crystal is given to start: four times its typical 0.25 s
+/// (Product Specification, 32.768 kHz crystal oscillator, tSTART,LFXO).
 pub const START_MS: u32 = 1000;
 
 /// The source a running watchdog holds the clock on, or `None` when no

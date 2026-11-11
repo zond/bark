@@ -106,10 +106,10 @@ fn busy_block(seed: u64) -> Scenario {
 /// No message to a destination reachable from its origin is lost without
 /// a trace: each is delivered, reported lost where it died, or still held
 /// by a core at the end (`Sim::messages`). A message to an unreachable
-/// destination can end untraced when it has split in two (spec "Why the search finds a path"):
-/// both copies search the same relays, and a relay whose search for one
-/// copy has ended absorbs the other. It would be lost anyway, and is
-/// only counted.
+/// destination can end untraced when it has split in two
+/// (spec "Why the search finds a path"): both copies search the same
+/// relays, and a relay whose search for one copy has ended absorbs the
+/// other. It would be lost anyway, and is only counted.
 fn accounted(sim: &Sim, what: &str) {
     let lost: Vec<_> = sim
         .messages()
@@ -157,14 +157,14 @@ fn same_seed_gives_bit_identical_output() {
         s.channels[6].busy_fraction.unwrap() > 0.0,
         "the interferer shows"
     );
-    // Different seed, different run.
     assert_ne!(run(&busy_block(43)).0, j1);
 }
 
 #[test]
 fn capacity_scenario_runs_a_minute_quickly() {
-    // S4 (`scenarios/s4-capacity.toml`): spec "Capacity and sizing"'s collision domain,
-    // 28 km² with 269 relays, a fifth of them on roofs, and 20 000 leaves.
+    // S4 (`scenarios/s4-capacity.toml`): the collision domain of spec
+    // "Capacity and sizing", 28 km² with 269 relays, a fifth of them on
+    // roofs, and 20 000 leaves.
     let mut sc = scenario("s4-capacity.toml");
     sc.duration_s = 60.0;
     // Every node switched on at once, so that the minute holds all of them.
@@ -194,7 +194,8 @@ fn capacity_scenario_runs_a_minute_quickly() {
         .count();
     assert_eq!(roofs, 53);
     // Two rooftops 3 km apart hear each other at sensitivity on average
-    // (spec "Physical layer", "Capacity and sizing"); a windowsill pair that far apart does not.
+    // (spec "Physical layer", "Capacity and sizing"); a windowsill pair
+    // that far apart does not.
     let p = &sc.links;
     let at_3km = 10.0 - p.path_loss_db(3000.0);
     let sens = sc.radio.sensitivity_dbm();
@@ -216,9 +217,8 @@ fn capacity_scenario_runs_a_minute_quickly() {
     );
 }
 
-/// S1 seeds run by the test: the first ten, and the four that lost
-/// messages at B before the owner rule ignored the leaf table (roadmap
-/// D21).
+/// S1 seeds run by the test: the first ten, and four that once lost
+/// messages at B (roadmap D21).
 const S1_SEEDS: [u64; 14] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 27, 32, 40];
 
 #[test]
@@ -257,15 +257,16 @@ fn s1_parses_and_runs() {
 }
 
 /// One run of S1. Once the relays know each other, a worst-case rotation
-/// after their first (spec "Channel at boot", "Heartbeat"), every text with an address
-/// is delivered until B is removed at 20 minutes; after that every one is
-/// dropped at A for want of a route (spec "Return to parent"), or, while A
-/// waits out the ban on B, refused at LA and given back to its application
-/// with that wait (spec "A sleepy node's own message"). The
-/// sleepy node LA hands its texts to A, then, as the origin of their
-/// search (`docs/one-node-type-2026-10-16.md`); the application skips the
-/// texts due while LA holds one (roadmap D34). Every message has a fate,
-/// except one sent as the run ends.
+/// after their first (spec "Channel at boot", "Heartbeat"), every text
+/// with an address is delivered until B is removed at 20 minutes; after
+/// that every one is dropped at A for want of a route
+/// (spec "Return to parent"), or, while A waits out the ban on B, refused
+/// at LA and given back to its application with that wait
+/// (spec "A sleepy node's own message"). The sleepy node LA hands its
+/// texts to A, then, as the origin of their search
+/// (`docs/one-node-type-2026-10-16.md`); the application skips the texts
+/// due while LA holds one. Every message has a fate, except one sent as
+/// the run ends.
 fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
     let seed = sc.seed;
     let mut sim = Sim::new(sc).expect("S1 builds");
@@ -337,13 +338,10 @@ fn s1_seed(sc: &Scenario, settled: bark_proto::Instant) {
 
 /// S1b: A and C, which cannot hear each other, hand to B at the same
 /// instant every 30 s, so every first hand-over collides at B. The retry
-/// wait (spec "Retry wait", roadmap D22) pulls them apart: over 100 seeds the
-/// settled phase delivers 0.961 on average, worst seed 0.900, against
-/// 0.136 with the old 0–50 ms over 20. What is lost is a message whose
-/// three attempts all collided. B demoted by A or C after two such
-/// failures is still tried, as their last neighbour (roadmap D25); before
-/// that, a seed where it happened lost a whole demotion's worth of
-/// messages (worst seed 0.633).
+/// wait (spec "Retry wait") pulls them apart: over 100 seeds the settled
+/// phase delivers 0.961 on average, worst seed 0.900. What is lost is a
+/// message whose three attempts all collided. B demoted by A or C after
+/// two such failures is still tried, as their last neighbour.
 #[test]
 fn s1b_hidden_terminals_come_apart() {
     let path =
@@ -376,14 +374,14 @@ fn s1b_hidden_terminals_come_apart() {
     assert!(mean >= 0.93, "{ratios:?}");
 }
 
-/// S2, the block (docs/simulator-design.md §6): ten windowsill relays and
-/// eighty indoor leaves over a square kilometre for an hour. A smoke test
-/// on one seed: it runs, delivers most texts, and the relays neither
-/// oscillate between channels nor approach their duty cycle.
+/// S2, the block (docs/simulator-design.md, "Scenario catalogue"): ten
+/// windowsill relays and eighty indoor leaves over a square kilometre for
+/// an hour. A smoke test on one seed: it runs, delivers most texts, and
+/// the relays neither oscillate between channels nor approach their duty
+/// cycle.
 ///
 /// Over seeds 1 to 10 the settled phase delivers 0.86, worst seed 0.70
-/// (seed 1: 0.78), and the 80 leaves change relay 70 times an hour; before
-/// a leaf kept its relay through a fade (roadmap D23), 0.79 and 174. The
+/// (seed 1: 0.78), and the 80 leaves change relay 70 times an hour. The
 /// bounds leave a margin below seed 1's 0.78 and 65. Indoors at the
 /// design's relay density half the leaves hear their relay less than
 /// 12 dB above sensitivity; a leaf still changes relay about once an
@@ -456,8 +454,7 @@ fn trace_follows_a_message_and_changes_nothing() {
 
 /// The corridor (`scenarios/corridor.toml`): two flows meet head on at
 /// every relay of a line of five. Seeds 1 to 3 deliver at least 0.93 of
-/// the settled phase on `main` as of roadmap D28; the bound leaves room
-/// for the spread between seeds.
+/// the settled phase; the bound leaves room for the spread between seeds.
 ///
 /// Its sleepy nodes take what is held for them at once here
 /// (`sleepy_listens`), so that what is measured is the corridor, not the
@@ -484,10 +481,9 @@ fn corridor_carries_crossing_flows() {
 /// The ring (`scenarios/ring.toml`): eight relays, each leaf sending to
 /// the leaf three relays on, every 2 s. The relays run at their duty cap
 /// with messages waiting for each other round the ring, and none is
-/// dropped for want of room (roadmap D31): seeds 1 to 40 deliver 0.958 to
-/// 0.982 of the settled phase (roadmap D86), where returning or dropping
-/// what found every neighbour busy delivered 0.49 to 0.66. The bound
-/// leaves room for the spread between seeds (`docs/ring-jam-2026-10-18.md`).
+/// dropped for want of room: seeds 1 to 40 deliver 0.958 to 0.982 of the
+/// settled phase. The bound leaves room for the spread between seeds
+/// (`docs/ring-jam-2026-10-18.md`).
 ///
 /// Its sleepy nodes take what is held for them at once here
 /// (`sleepy_listens`): on the beat a node can take only what its holder's
@@ -549,10 +545,9 @@ fn mesh_routes_bursts_and_a_restart() {
 /// The desk (`scenarios/desk.toml`): four relays with one position, so
 /// each of A, B and C owns D's. A text for D is handed to D at once, by
 /// its origin A or by whichever of A, B, C it reaches from F, not queued
-/// for D's beat on its channel (spec "Owner"), which took 44 s at the
-/// median and up to 162 s over seeds 1 to 10 before the owner did so
-/// (`docs/addressed-2026-11-06.md`). The bound is the shortest
-/// heartbeat interval: no text to D waits for a beat.
+/// for D's beat on its channel (spec "Owner",
+/// `docs/addressed-2026-11-06.md`). The bound is the shortest heartbeat
+/// interval: no text to D waits for a beat.
 #[test]
 fn on_the_desk_a_text_reaches_its_node_at_once() {
     let sc = scenario("desk.toml");
@@ -855,7 +850,7 @@ fn district_is_a_tenth_of_the_city() {
 
 /// S2 with a third of the sleepy nodes walking, on battery while they
 /// walk and on USB at their stops, and a third of the others switching
-/// at random (`[power]`, roadmap D71, D152): fixed nodes turn sleepy
+/// at random (`[power]`): fixed nodes turn sleepy
 /// after their grace, carried ones as they leave the charger, and both
 /// relays at once on it; some power comes back within the grace, what a
 /// node held when it left goes on, and texts still arrive or are
@@ -883,7 +878,7 @@ fn nodes_switch_with_their_power() {
     assert!(p.graces > 10, "{} graces", p.graces);
     assert!(p.carried > 10, "{} carried on battery", p.carried);
     // What a node held when it left goes on, never dropped there (spec
-    // "Sleepy nodes", roadmap D152).
+    // "Sleepy nodes").
     assert_eq!(
         p.held[4], 0,
         "{:?} dropped by the node that held them",
@@ -968,7 +963,7 @@ fn the_install_run_is_its_baseline_with_installs() {
 }
 
 /// Every node of a mesh reboots into a new image over its settled half
-/// hour (spec "Updates over the mesh", the install; roadmap D170, D180):
+/// hour (spec "Updates over the mesh"):
 /// each drains, reboots within the bound of its staging, comes back after
 /// the swap with its relays and records, and what it kept, if anything,
 /// is put back, none of it lost. With its tables back a node at this

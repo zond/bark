@@ -1,15 +1,11 @@
-//! What a reset would lose and still be true after it, kept across the
-//! reboot into a new image (spec "Updates over the mesh", the install;
-//! roadmap D180, D201): the neighbour table, without which a node just
-//! back knows no way on for what it carries, and the message records,
-//! which a return to it needs and what it holds goes on with. Beside what
-//! the node holds ([`Node::held`]), which it puts back.
+//! The neighbour table and the message records, kept across the reboot
+//! into a new image (spec "Updates over the mesh"), beside what the node
+//! holds ([`Node::held`]): without them a node just back knows no way on for
+//! what it carries, and a return to it finds no record.
 //!
-//! Each instant is kept as a time before the moment the tables were
-//! taken, and put back that long before that moment on the clock after
-//! the reset, the time away given by the driver: each entry ages as if
-//! the node had listened and heard nothing meanwhile, and nothing is
-//! taken as fresher than it is.
+//! Each instant is kept as an age at the moment the tables were taken, and
+//! put back that age plus the time away: each entry ages as if the node had
+//! heard nothing meanwhile, so nothing is taken as fresher than it is.
 
 use super::Node;
 use crate::ids::MsgId;
@@ -28,13 +24,12 @@ pub enum Kept {
     Record([u8; RECORD_LEN]),
 }
 
-/// The longest a kept entry counts for after it was last renewed: a
-/// neighbour's expiry, the longest an anchorless sleepy one's, 1 200.9 s
-/// with the design's delivery TTL (spec "Neighbour table"), or a
-/// record's delivery TTL. A driver whose clock starts at its reset sets
-/// the core's epoch at least this, the time away and the time it takes
-/// to write the tables, before it, so that every entry still alive has
-/// an instant.
+/// The longest a kept entry counts for after it was last renewed: the
+/// longest neighbour expiry (an anchorless sleepy one's, 1 200.9 s by
+/// default, spec "Neighbour table") or the delivery TTL. A driver whose
+/// clock starts at its reset puts the core's epoch at least this plus the
+/// time away and the time to write the tables before it, so every entry
+/// still alive has an instant.
 pub const fn remembered_within(config: &Config) -> Duration {
     let p = NeighbourParams::from_config(config);
     let mut d = config.delivery_ttl.as_micros();
@@ -54,10 +49,9 @@ pub const fn remembered_within(config: &Config) -> Duration {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// What a reset at `now` would lose and still be true after it: every
-    /// neighbour entry, then every message record within the delivery
-    /// TTL of its message's last activity, but that of the application's
-    /// own message, which the application offers again as new.
+    /// What to keep across a reset at `now`: every neighbour entry, then
+    /// every record within the delivery TTL of its last activity, but the
+    /// application's own message's, which the application offers again.
     pub fn remembered(&self, now: Instant) -> impl Iterator<Item = Kept> + '_ {
         let own = self.own.id;
         self.neighbours.kept(now).map(Kept::Neighbour).chain(
@@ -73,11 +67,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Put back an entry [`Node::remembered`] gave, taken `ago` before
     /// `now`, after the reset and before the first event: whether it was
-    /// kept. An entry is dropped that has expired by `now`, a record past
-    /// the delivery TTL, and an entry from before the clock's epoch. A
-    /// neighbour's heartbeats due on this node's channel meanwhile pass
-    /// unheard with no reading, as any the radio was away for (spec
-    /// "Heartbeat").
+    /// kept. Expired entries and those from before the clock's epoch are
+    /// dropped. Heartbeat slots that passed meanwhile pass unheard with no
+    /// reading, as any the radio was away for (spec "Heartbeat").
     pub fn remember(&mut self, kept: &Kept, ago: Duration, now: Instant) -> bool {
         let then = Then::before(now, ago);
         match kept {
@@ -206,8 +198,7 @@ mod tests {
         let rssi = r.neighbours.get(id).unwrap().rssi;
         record(&mut r, 1, now - s(50));
         let kept = taken(&r, now);
-        // The clock after the reset reads 2 000 s; the tables were taken
-        // 60 s before.
+        // The tables were taken 60 s before the new clock's 2 000 s.
         let mut back = Relay::new(config, 4);
         let later = at(2_000);
         assert_eq!(put_back(&mut back, &kept, s(60), later), 2);

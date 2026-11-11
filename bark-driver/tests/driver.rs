@@ -1,10 +1,8 @@
 //! The driver loop on the host, against a fake radio and a virtual clock.
 //!
-//! Time is virtual: every future the loop waits on is a check against the
-//! world's clock, and when one poll of a step finds nothing ready the test
-//! moves the clock to the earliest moment anything waits for. A step then
-//! takes no time of its own, so wakeups and completions land exactly when
-//! they are due and any lateness or earliness is the driver's.
+//! When a poll finds nothing ready the test moves the clock to the earliest
+//! moment anything waits for, so a step takes no time of its own and any
+//! lateness or earliness is the driver's.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -328,16 +326,14 @@ struct TestApp {
     gps: Vec<Gps>,
     /// A signal raised and not yet seen by `ready`.
     signalled: bool,
-    /// `ready` resolves at once whether anything waits or not, against
-    /// its contract, as the node's did while its mailbox said a reply was
-    /// due that it then did not give; and how many times it resolved.
+    /// `ready` resolves at once whether anything waits or not, against its
+    /// contract; and how many times it resolved.
     eager: bool,
     readies: u32,
-    /// Work of its own the loop that runs the driver serves after the
-    /// step, as the node does a phone's read of the neighbour table.
+    /// Work of its own the outer loop serves after the step.
     own: bool,
-    /// What it queues, without a signal, when the core hands it a
-    /// message, as a home's mailbox does a reply to a fetch.
+    /// What it queues, without a signal, when the core hands it a message,
+    /// as a mailbox does a reply to a fetch.
     reply: Option<(Outgoing, Vec<u8>)>,
     /// The images offered and the pieces handed to it, and the byte it
     /// fills a piece served with, `None` if it cannot.
@@ -821,9 +817,8 @@ fn a_check_waits_for_the_packet_in_progress() {
     assert_eq!(d.stats().held, 1);
 }
 
-/// A reading of another channel waits until the reading is right, where
-/// the old 300 µs read 10 dB low; one of the resting channel is read as
-/// the radio listens, without a restart.
+/// A reading of another channel waits for the receiver to settle (300 µs
+/// reads 10 dB low); one of the resting channel is read without a restart.
 #[test]
 fn a_reading_waits_for_the_receiver_to_settle() {
     assert_eq!(climb(Duration::from_micros(300)), -90);
@@ -974,9 +969,8 @@ fn a_relay_runs_through_the_loop() {
     assert!(d.app().outgoing.is_none(), "taken");
 }
 
-/// A radio whose every check reads busy: the relay skips a heartbeat on
-/// every channel in turn, and once it has on all of them, the driver
-/// brings the radio back as at boot (roadmap D192), and not before.
+/// A radio whose every check reads busy is brought back as at boot once a
+/// heartbeat was skipped on every channel, and not before.
 #[test]
 fn a_heartbeat_skipped_on_every_channel_brings_the_radio_back() {
     let world = World::default();
@@ -1002,8 +996,7 @@ fn a_heartbeat_skipped_on_every_channel_brings_the_radio_back() {
         .iter()
         .position(|(_, op)| *op == Op::Recover)
         .expect("the radio was brought back");
-    // Before it, every check found its channel busy, three to a
-    // heartbeat, on every channel, and nothing was sent.
+    // Before it: three busy checks a heartbeat on every channel, no send.
     let checked: std::collections::BTreeSet<u8> = ops[..first]
         .iter()
         .filter_map(|(_, op)| match op {
@@ -1382,7 +1375,7 @@ fn the_gps_follows_the_core() {
 }
 
 /// A relay built with a place runs its GPS on external power: the place
-/// is not a map point (roadmap D83).
+/// is not a map point.
 #[test]
 fn a_placed_relay_on_usb_tracks() {
     let world = World::default();
@@ -1409,11 +1402,9 @@ fn run_bounded<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant, ma
     }
 }
 
-/// An application that says it is ready at once, always, and then gives
-/// nothing, as the node's did on the bench 2026-11-06 while its mailbox
-/// said a reply was due that it then did not give: the loop still waits for its clock
-/// and its radio as with an idle application, and asks the application
-/// again only after one of them woke it (core-interface §4).
+/// An application always ready and giving nothing: the loop still waits
+/// for its clock and radio, and asks the application again only after one
+/// of them woke it (core-interface §4).
 #[test]
 fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
     let world = World::default();
@@ -1422,9 +1413,8 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
     let mut d = driver(core, &world, Duration::ZERO);
     d.app_mut().eager = true;
     world.send(at_ms(150), ch(3), &[1, 2, 3]);
-    // The boot, and per event of the clock or the radio, the frame's start
-    // and its end among them, one step for it and one for the
-    // application's empty readiness.
+    // The boot, then per clock or radio event (five, the frame's start
+    // and end among them) one step and one for the empty readiness.
     run_bounded(&mut d, &world, at_ms(300), 1 + 2 * 5);
     assert_eq!(
         seen(&d),
@@ -1444,11 +1434,9 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
     assert_eq!(d.stats().empty_readies, 5);
 }
 
-/// A readiness for the application's own turn, as the node's for a
-/// phone's read of the neighbour table or the inbox, which only the loop
-/// that runs the driver serves, ends the step at once and is no empty
-/// readiness: the next signal ends the next step as quickly, rather than
-/// waiting for the clock or the radio (bench 2026-11-10, core-interface §4).
+/// A readiness for the application's own turn ends the step at once and
+/// is no empty readiness; the next does the same, rather than waiting for
+/// the clock or the radio (core-interface §4).
 #[test]
 fn a_ready_for_the_application_itself_ends_the_step() {
     let world = World::default();
@@ -1519,8 +1507,7 @@ fn a_waiting_message_goes_without_a_signal() {
     core.accepts_from = Some(at_ms(100));
     let mut d = driver(core, &world, Duration::ZERO);
     step(&mut d, &world);
-    // The core takes none until its wakeup at 100 ms; the application
-    // holds what arrives meanwhile.
+    // The core takes none until its wakeup at 100 ms.
     d.app_mut().outgoing = Some((out(), vec![6]));
     d.app_mut().signal();
     run_bounded(&mut d, &world, at_ms(100), 1);

@@ -24,9 +24,9 @@ fn pos(east: f64, north: f64) -> Position {
 }
 
 /// A node at `east`, sleepy, on battery, or not, and whether it is on
-/// external power. The first rotation is a full rotation in the design (spec
-/// "Channel at boot"); a short one keeps the tests quick, except for a
-/// sleepy node, which chooses its anchor at its end.
+/// external power. The first rotation is a full rotation in the design
+/// (spec "Channel at boot"); a short one keeps the tests quick, except for
+/// a sleepy node, which chooses its anchor at its end.
 fn node(east: f64, sleepy: bool, seed: u64) -> (Relay, bool) {
     node_with(east, sleepy, seed, Config::default())
 }
@@ -235,9 +235,9 @@ fn a_message_for_a_sleepy_node_goes_at_once_with_the_long_preamble() {
 /// hands a message for D to A, though S is nearer D, and once A has gone
 /// from its table it hands the next to S, with the long preamble, and S
 /// forwards it at once to D with the short one. S's beats put it in O's
-/// neighbour table, marked sleepy, and in O's heard table (spec
-/// "Neighbour table", "Next hop"). All share one channel, so O hears S's
-/// beats.
+/// neighbour table, marked sleepy, and in O's heard table
+/// (spec "Neighbour table", "Next hop"). All share one channel, so O hears
+/// S's beats.
 ///
 /// ```text
 ///   O ---- A ---- D
@@ -459,7 +459,7 @@ fn a_relay_answers_an_anchorless_beat_and_brings_the_node_in() {
 
 /// A sleepy node's own message with no live neighbour waits for one,
 /// past the delivery TTL: no message ends by age
-/// (spec "A sleepy node's own message", roadmap D106).
+/// (spec "A sleepy node's own message").
 #[test]
 fn a_sleepy_node_alone_keeps_its_message() {
     let mut h = Harness::powered(vec![node(0.0, true, 41)]);
@@ -644,8 +644,7 @@ fn a_sleeping_node_hears_the_ack_to_its_own_message() {
 
 /// A sleepy node whose anchor's channel is busy keeps its own message
 /// for the anchor, its only candidate, and hands it over once the
-/// channel clears (spec "Hand-over" step 2, roadmap D96): a busy
-/// channel ends no search.
+/// channel clears (spec "Hand-over" step 2): a busy channel ends no search.
 #[test]
 fn a_sleepy_node_waits_for_its_anchor_s_channel() {
     let (r, s) = (0, 1);
@@ -1032,10 +1031,10 @@ fn a_sleeping_node_follows_its_anchor_to_a_new_channel() {
     assert_eq!(h.resting(s), Some(old));
     // A carrier on the anchor's home a third of the time: it moves after
     // the dwell and wait of spec "Channel moves", and its heartbeats still
-    // get through on the old channel. One there all the time would keep them
-    // off it, and the node would lose its anchor (`a_node_whose_anchor_is_gone`).
-    // Its period shares no factor with the sweep's (as in the move test of
-    // `tests/mac.rs`).
+    // get through on the old channel. One there all the time would keep
+    // them off it, and the node would lose its anchor
+    // (`a_node_whose_anchor_is_gone`). Its period shares no factor with the
+    // sweep's (as in the move test of `tests/mac.rs`).
     h.jam_part(
         r,
         old,

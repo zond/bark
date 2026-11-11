@@ -1,21 +1,15 @@
 //! The simulator's queues, earliest first: its events, and apart from
 //! them each node's core wakeup.
 //!
-//! Every entry is ordered by its time and then by a sequence number
-//! given when it was queued (`sim::Sim::push`), so that entries due at
-//! the same instant come out in the order they were queued. The two make
-//! one integer, [`order`]: the queues compare entries tens of times per
-//! event, and one integer compares in one step even in a debug build.
+//! Entries order by time, then by the sequence number they were queued
+//! with (`sim::Sim::push`), so entries due at the same instant keep queue
+//! order. The pair is one integer, [`order`], because the queues compare
+//! it tens of times per event.
 //!
-//! # Wakeups
-//!
-//! A core has one wakeup at a time: each one it asks for replaces the
-//! last. Pushed on the event queue, every replaced one would stay there
-//! until its time came, to be skipped then; a sleepy node that asks for
-//! the end of its first rotation whenever its radio is busy leaves one
-//! behind at each reading, and in a city-sized run they make up nearly
-//! all of the queue. Here each node has one place, in a heap that moves
-//! or removes it.
+//! Wakeups have their own heap with one place per node because each
+//! wakeup a core asks for replaces its last: on the event queue every
+//! replaced one would wait to be skipped, and in a city-sized run they
+//! would make up nearly all of it.
 
 use bark_proto::Instant;
 
