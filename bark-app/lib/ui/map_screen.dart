@@ -4,7 +4,8 @@
 // the person asks. When it opens and when the person asks, each
 // neighbour without a fresh answer is also asked what its own screen
 // shows, and asked again while it does not answer (spec "Phone link",
-// Ask), and its marker says it in those words.
+// Ask), and its marker says it in those words. Nodes too close on the
+// screen for a finger to choose share one marker, which lists them.
 
 import 'dart:async';
 
@@ -187,6 +188,64 @@ String? contactsAt(Contacts contacts, List<int> id) {
 
 LatLng _at(Position p) => LatLng(p.latDeg, p.lonDeg);
 
+/// The places a finger can tell apart among markers at `at` on the
+/// screen: markers whose tap targets, squares of side `target` centred on
+/// each, overlap share a place, and so on along any chain of them. Each
+/// place lists its markers' indices in order, the places in the order of
+/// their first.
+List<List<int>> places(List<Offset> at, double target) {
+  bool near(Offset a, Offset b) =>
+      (a.dx - b.dx).abs() < target && (a.dy - b.dy).abs() < target;
+  final taken = List.filled(at.length, false);
+  final out = <List<int>>[];
+  for (var i = 0; i < at.length; i++) {
+    if (taken[i]) continue;
+    taken[i] = true;
+    final place = [i];
+    for (var k = 0; k < place.length; k++) {
+      for (var j = i + 1; j < at.length; j++) {
+        if (!taken[j] && near(at[place[k]], at[j])) {
+          taken[j] = true;
+          place.add(j);
+        }
+      }
+    }
+    out.add(place..sort());
+  }
+  return out;
+}
+
+/// A node on the map: where its marker goes and how big it is, its name
+/// and kind as a list of the nodes at one place says them, its marker,
+/// with a count when it stands for several, and its sheet.
+class _Spot {
+  final LatLng point;
+  final double width;
+  final double height;
+  final String name;
+  final String kind;
+  final IconData icon;
+  final Color color;
+  final Widget Function(int count) look;
+  final Widget Function() sheet;
+  const _Spot(
+    this.point, {
+    required this.width,
+    required this.height,
+    required this.name,
+    required this.kind,
+    required this.icon,
+    required this.color,
+    required this.look,
+    required this.sheet,
+  });
+}
+
+/// A marker's icon, with the number of nodes at its place when several
+/// share it.
+Widget _counted(Widget icon, int count) =>
+    count < 2 ? icon : Badge.count(count: count, child: icon);
+
 class MapScreen extends StatefulWidget {
   final AppModel app;
 
@@ -345,17 +404,23 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                 ],
               ),
-            MarkerLayer(
-              markers: [
-                for (final m in t.list) _neighbour(m, t, own),
-                if (own != null)
-                  Marker(
-                    point: own,
-                    width: 44,
-                    height: 44,
-                    child: _NodeMarker(widget.app, t),
-                  ),
-              ],
+            // Grouped anew as the camera moves, so that zooming in
+            // separates nodes that are near but not at one place.
+            Builder(
+              builder: (context) {
+                final spots = _spots(context, t, own);
+                final camera = MapCamera.of(context);
+                final groups = places([
+                  for (final s in spots) camera.latLngToScreenOffset(s.point),
+                ], kMinInteractiveDimension);
+                return MarkerLayer(
+                  // The node most likely wanted drawn last, on top.
+                  markers: [
+                    for (final g in groups.reversed)
+                      _marker(context, [for (final i in g) spots[i]]),
+                  ],
+                );
+              },
             ),
             const SimpleAttributionWidget(
               source: Text('© OpenStreetMap contributors'),
@@ -389,19 +454,139 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Marker _neighbour(Neighbour m, NeighbourTable t, LatLng? own) {
-    final said = _s.answers[hex(m.id)];
+  /// The nodes on the map in the order a person most likely wants one
+  /// where several share a place: this node, then relays, then sleepy
+  /// nodes, each kind in the table's order.
+  List<_Spot> _spots(BuildContext context, NeighbourTable t, LatLng? own) {
+    final contacts = widget.app.contacts;
+    _Spot neighbour(Neighbour m) {
+      final said = _s.answers[hex(m.id)];
+      final look = _NeighbourMarker(m, t, own, said, contacts);
+      return _Spot(
+        _at(m.position),
+        width: said == null
+            ? _NeighbourMarker.size
+            : _NeighbourMarker.labelledWidth,
+        height: said == null
+            ? _NeighbourMarker.size
+            : _NeighbourMarker.labelledHeight,
+        name: contactsAt(contacts, m.id) ?? nodeLabel(m.id),
+        kind: m.carried
+            ? 'carried'
+            : m.sleepy
+            ? 'sleepy'
+            : 'relay',
+        icon: look.icon,
+        color: qualityColor(m.quality(t.floorDbm)),
+        look: look.build,
+        sheet: () =>
+            _Sheet(contactsAt(contacts, m.id), nodeLabel(m.id), look.facts()),
+      );
+    }
+
+    final id = _s.node!.id;
+    return [
+      if (own != null)
+        _Spot(
+          own,
+          width: _NodeMarker.size,
+          height: _NodeMarker.size,
+          name: contactsAt(contacts, id) ?? nodeLabel(id),
+          kind: 'this node',
+          icon: _NodeMarker.icon,
+          color: Theme.of(context).colorScheme.primary,
+          look: (count) => _NodeMarker.look(context, count),
+          sheet: () => _Sheet(
+            contactsAt(contacts, id),
+            nodeLabel(id),
+            _NodeMarker(widget.app, t).facts(),
+          ),
+        ),
+      for (final m in t.list)
+        if (!m.sleepy) neighbour(m),
+      for (final m in t.list)
+        if (m.sleepy) neighbour(m),
+    ];
+  }
+
+  /// A place's marker: one node's, which a tap opens, or the first's with
+  /// their count, which a tap lists.
+  Marker _marker(BuildContext context, List<_Spot> here) {
+    final first = here.first;
+    final Widget child;
+    if (here.length == 1) {
+      child = GestureDetector(
+        onTap: () => _open(context, first),
+        child: first.look(1),
+      );
+    } else {
+      child = Semantics(
+        // Its own node, not merged into the map's.
+        container: true,
+        button: true,
+        label:
+            '${here.length} nodes here: '
+            '${here.map((s) => s.name).join(', ')}',
+        excludeSemantics: true,
+        child: GestureDetector(
+          onTap: () => _list(context, here),
+          child: first.look(here.length),
+        ),
+      );
+    }
     return Marker(
-      point: _at(m.position),
-      width: said == null
-          ? _NeighbourMarker.size
-          : _NeighbourMarker.labelledWidth,
-      height: said == null
-          ? _NeighbourMarker.size
-          : _NeighbourMarker.labelledHeight,
-      child: _NeighbourMarker(m, t, own, said, widget.app.contacts),
+      point: first.point,
+      width: first.width,
+      height: first.height,
+      child: child,
     );
   }
+
+  void _open(BuildContext context, _Spot s) => showModalBottomSheet<void>(
+    context: context,
+    // Taller than half the screen when its rows need it.
+    isScrollControlled: true,
+    builder: (_) => s.sheet(),
+  );
+
+  /// The nodes at one place, a row each, which opens its sheet.
+  void _list(BuildContext context, List<_Spot> here) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheet) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    '${here.length} nodes here',
+                    style: Theme.of(sheet).textTheme.titleLarge,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (final s in here)
+                  Semantics(
+                    button: true,
+                    child: ListTile(
+                      leading: Icon(s.icon, color: s.color),
+                      title: Text(s.name),
+                      subtitle: Text(s.kind),
+                      onTap: () {
+                        Navigator.pop(sheet);
+                        _open(context, s);
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
 
   Widget _banner(String s) => Card(
     child: Padding(padding: const EdgeInsets.all(8), child: Text(s)),
@@ -443,6 +628,17 @@ class _MapScreenState extends State<MapScreen> {
             kind(Icons.cell_tower, 'a relay'),
             kind(Icons.battery_std, 'a sleepy node'),
             kind(Icons.directions_walk, 'a carried node'),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Badge.count(count: 2),
+                const SizedBox(width: 4),
+                const Text(
+                  'nodes at one place',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -450,7 +646,8 @@ class _MapScreenState extends State<MapScreen> {
   }
 }
 
-class _NodeMarker extends StatelessWidget {
+/// The paired node: its facts and its marker.
+class _NodeMarker {
   final AppModel app;
   final NeighbourTable t;
   const _NodeMarker(this.app, this.t);
@@ -479,28 +676,23 @@ class _NodeMarker extends StatelessWidget {
     ];
   }
 
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: () => showModalBottomSheet<void>(
-      context: context,
-      // Taller than half the screen when its rows need it.
-      isScrollControlled: true,
-      builder: (_) => _Sheet(
-        contactsAt(app.contacts, app.session.node!.id),
-        nodeLabel(app.session.node!.id),
-        facts(),
-      ),
-    ),
-    child: Icon(
-      Icons.my_location,
+  static const size = 44.0;
+  static const icon = Icons.my_location;
+
+  /// Its marker, with `count` when it stands for that many at its place.
+  static Widget look(BuildContext context, int count) => _counted(
+    Icon(
+      icon,
       size: 36,
       color: Theme.of(context).colorScheme.primary,
       semanticLabel: 'this node',
     ),
+    count,
   );
 }
 
-class _NeighbourMarker extends StatelessWidget {
+/// A neighbour: its facts and its marker.
+class _NeighbourMarker {
   final Neighbour n;
   final NeighbourTable t;
   final LatLng? own;
@@ -605,31 +797,28 @@ class _NeighbourMarker extends StatelessWidget {
     ];
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final q = n.quality(t.floorDbm);
-    final icon = Icon(
-      n.carried
-          ? Icons.directions_walk
-          : n.sleepy
-          ? Icons.battery_std
-          : Icons.cell_tower,
-      size: 32,
-      color: qualityColor(q),
-      semanticLabel: nodeLabel(n.id),
+  IconData get icon => n.carried
+      ? Icons.directions_walk
+      : n.sleepy
+      ? Icons.battery_std
+      : Icons.cell_tower;
+
+  /// Its marker, with `count` when it stands for that many at its place.
+  Widget build(int count) {
+    final icon = _counted(
+      Icon(
+        this.icon,
+        size: 32,
+        color: qualityColor(n.quality(t.floorDbm)),
+        semanticLabel: nodeLabel(n.id),
+      ),
+      count,
     );
     final s = said;
-    return GestureDetector(
-      onTap: () => showModalBottomSheet<void>(
-        context: context,
-        // Taller than half the screen when its rows need it.
-        isScrollControlled: true,
-        builder: (_) =>
-            _Sheet(contactsAt(contacts, n.id), nodeLabel(n.id), facts()),
-      ),
-      child: s == null
-          ? icon
-          : Column(
+    return s == null
+        ? icon
+        : Builder(
+            builder: (context) => Column(
               children: [
                 const SizedBox(height: _label),
                 SizedBox(
@@ -648,7 +837,7 @@ class _NeighbourMarker extends StatelessWidget {
                 ),
               ],
             ),
-    );
+          );
   }
 }
 

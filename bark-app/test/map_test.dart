@@ -5,7 +5,8 @@
 // Then Ask: each neighbour asked as the map opens, one that does not
 // answer asked again every 2 s up to three asks, a refresh asking only
 // those without an answer in the last 10 s, and the answers drawn in the
-// words of the neighbours' screens.
+// words of the neighbours' screens. Last, nodes a finger cannot tell
+// apart: one marker with their count, which lists them.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/card.dart';
@@ -485,6 +486,167 @@ void main() {
       findsOneWidget,
     );
     await closeSheet(t);
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  test('places: markers whose tap targets overlap share one', () {
+    const s = 48.0;
+    for (final (at, want) in [
+      // Identical: a sleepy node on its anchor.
+      (
+        const [Offset(100, 100), Offset(100, 100)],
+        [
+          [0, 1],
+        ],
+      ),
+      // Overlapping, apart along one axis only, and apart.
+      (
+        const [Offset(100, 100), Offset(140, 130)],
+        [
+          [0, 1],
+        ],
+      ),
+      (
+        const [Offset(100, 100), Offset(148, 100)],
+        [
+          [0],
+          [1],
+        ],
+      ),
+      (
+        const [Offset(100, 100), Offset(100, 300)],
+        [
+          [0],
+          [1],
+        ],
+      ),
+      // Three in a chain: the ends apart, each near the middle one.
+      (
+        const [Offset(100, 100), Offset(180, 100), Offset(140, 100)],
+        [
+          [0, 1, 2],
+        ],
+      ),
+      // Two places, each in the order given.
+      (
+        const [Offset(0, 0), Offset(300, 0), Offset(10, 10), Offset(310, 0)],
+        [
+          [0, 2],
+          [1, 3],
+        ],
+      ),
+      (const <Offset>[], <List<int>>[]),
+    ]) {
+      expect(places(at, s), want, reason: '$at');
+    }
+  });
+
+  testWidgets('a sleepy node on its anchor: one marker with a count, a list '
+      'of both, and each one\'s sheet from it', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    final semantics = t.ensureSemantics();
+    // A tall screen, so that no marker is under the legend.
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final anchor = fake.neighbours[0]!;
+    final s = fake.neighbours[12]!;
+    // Its address, its anchor's position, is what its heartbeats carry.
+    fake.neighbours[12] = Neighbour(
+      s.id,
+      anchor.position,
+      rssiDdbm: s.rssiDdbm,
+      ageS: s.ageS,
+      sleepy: true,
+    );
+    await t.runAsync(
+      () => app.contacts.put(
+        Contact(
+          PersonCard(
+            List.filled(32, 7),
+            Address(anchor.position, s.id),
+            0,
+            'Olena',
+          ),
+          '',
+        ),
+      ),
+    );
+    fake.changed();
+    await t.pump(FakeNode.answerAfter);
+    Finder icon(String label) =>
+        find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
+    // One marker, the relay's, with a count; the sleepy one's is not drawn.
+    expect(icon(nodeLabel(s.id)), findsNothing);
+    final badge = find.descendant(
+      of: find.byType(MarkerLayer),
+      matching: find.byType(Badge),
+    );
+    expect(badge, findsOneWidget);
+    expect(
+      find.descendant(of: badge, matching: icon(nodeLabel(anchor.id))),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: badge, matching: find.text('2')),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel('2 nodes here: ${nodeLabel(anchor.id)}, Olena'),
+      findsOneWidget,
+    );
+
+    // A tap lists both, the relay first, each a labelled button.
+    await t.tap(badge);
+    await t.pumpAndSettle();
+    expect(find.text('2 nodes here'), findsOneWidget);
+    final relay = find.widgetWithText(ListTile, nodeLabel(anchor.id));
+    final sleepy = find.widgetWithText(ListTile, 'Olena');
+    expect(
+      find.descendant(of: relay, matching: find.text('relay')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: sleepy, matching: find.text('sleepy')),
+      findsOneWidget,
+    );
+    expect(t.getTopLeft(relay).dy, lessThan(t.getTopLeft(sleepy).dy));
+    expect(
+      t.getSemantics(sleepy),
+      isSemantics(label: 'Olena\nsleepy', isButton: true, hasTapAction: true),
+    );
+
+    // Back closes the list.
+    Navigator.pop(t.element(find.byType(BottomSheet)));
+    await t.pumpAndSettle();
+    expect(find.text('2 nodes here'), findsNothing);
+
+    // A tap on the sleepy one's row: the list goes, its sheet comes.
+    await t.tap(badge);
+    await t.pumpAndSettle();
+    await t.tap(sleepy);
+    await t.pumpAndSettle();
+    expect(find.text('2 nodes here'), findsNothing);
+    expect(find.byType(BottomSheet), findsOneWidget);
+    expect(find.text(nodeLabel(s.id)), findsOneWidget);
+    expect(
+      find.text('sleepy: wakes in windows, speaks through its anchor'),
+      findsOneWidget,
+    );
+    await closeSheet(t);
+
+    // A node alone at its place opens its sheet with no list.
+    final alone = fake.neighbours[3]!;
+    await t.tap(icon(nodeLabel(alone.id)));
+    await t.pumpAndSettle();
+    expect(find.textContaining('nodes here'), findsNothing);
+    expect(find.text(nodeLabel(alone.id)), findsOneWidget);
+    await closeSheet(t);
+    semantics.dispose();
     await shut(t, app);
     debugPrint = print;
   });
