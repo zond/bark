@@ -1,18 +1,14 @@
 //! A log line that reaches the host whole or not at all.
 //!
-//! The firmware formats each record into one [`Line`], then copies it into
-//! the ring the USB port drains only if the ring has room for all of it
-//! ([`put_whole`]); otherwise the record is dropped and counted
-//! ([`Drops`]), and the count is logged later as a line of its own. A
-//! record copied in pieces as it is formatted, as a plain writer does,
-//! loses its tail when the ring fills part way, and the next record's
-//! start joins the stump: a line goes missing and two merge.
+//! Each record is formatted into one [`Line`] and copied into the USB ring
+//! only if all of it fits ([`put_whole`]); otherwise it is counted
+//! ([`Drops`]) and the count logged later. A record copied piecemeal loses
+//! its tail when the ring fills, and the next record joins the stump.
 
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-/// What a line cut short ends with, before the line end: it tells the
-/// reader the line was longer.
+/// What a line cut short ends with, before the line end.
 const CUT: &str = "...";
 /// The line end a terminal and `readline` both expect.
 const END: &str = "\r\n";

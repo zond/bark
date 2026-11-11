@@ -6,12 +6,11 @@
 //! fill and stay full. Excursions complete at once, as on a quiet channel.
 //!
 //! `cargo run --release -p bark-driver --example handle_time` runs it five
-//! times and prints, by event, each call's shortest time over the five,
-//! which leaves out what other work on the machine added, and the slowest
-//! calls. With a call count `STOP` it runs once and stops before that call,
-//! so that runs under `perf stat -e instructions:u` stopping before and
-//! after one call give that call's instruction count: the run is
-//! deterministic.
+//! times and prints, by event, each call's shortest time over the five (to
+//! leave out other load on the machine) and the slowest calls. With a call
+//! count `STOP` it runs once and stops before that call; the run is
+//! deterministic, so two runs under `perf stat -e instructions:u` give one
+//! call's instruction count.
 
 use std::time::Instant as Wall;
 
@@ -90,9 +89,8 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
             (Kind::Completion, Some(d), t)
         } else if next_rx < wake {
             seq += 1;
-            // One frame in eight is a heartbeat, going round the neighbours:
-            // 64 neighbours each heard once a rotation on this channel make
-            // about one every two seconds. DATA comes from any of them.
+            // One frame in eight is a heartbeat, about one every two seconds
+            // from 64 neighbours each heard once a rotation on this channel.
             let beat = seq.is_multiple_of(8);
             let k = if beat { seq / 8 } else { seq };
             let (pos, nhome) = neighbours[k as usize % NEIGHBOURS];

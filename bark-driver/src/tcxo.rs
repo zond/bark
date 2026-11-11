@@ -1,61 +1,45 @@
-//! The radio's oscillator start, probed (roadmap D88, D193).
+//! The radio's oscillator start, probed.
 //!
-//! The SX1262 powers the board's TCXO each time it leaves STDBY_RC or
-//! sleep, waits out a programmed delay, and only then goes on; it has no
-//! ready signal, but sets `XOSC_START_ERR` (`GetDeviceErrors`, SX1261/2
-//! datasheet §13.3.6) when the oscillator was not up by the delay's end.
-//! A delay of zero hangs the chip. So the board measures its own start.
+//! The SX1262 powers the TCXO on leaving STDBY_RC or sleep and waits a
+//! programmed delay; it has no ready signal, but sets `XOSC_START_ERR`
+//! (`GetDeviceErrors`, SX1261/2 DS §13.3.6) if the oscillator was not up by
+//! then, and a delay of zero hangs it. So the board measures its own start.
 //!
-//! There are two starts. A cold one, after the oscillator has been off
-//! for [`STILL_RUNNING`] or more. A restart sooner than that, which is
-//! the return after every CAD, since a CAD ends in STDBY_RC: the
-//! oscillator is then still running, or nearly, and needs far less. Each
-//! has its own [`Delay`], probed the same way: a binary search at boot,
-//! each probe a start with the error word read after it, then
-//! confirmation probes at the chosen delay, since the flag flickers at
-//! the edge, plus one step of margin; in use the flag read after every
-//! start and the delay stepped up at once when it is set; and a probe
-//! below the delay now and then, when the die's temperature has moved or
-//! a day has passed without an error, which brings it back down
-//! (`docs/bench-2026-10-30.md`, "The oscillator's start, probed";
-//! `docs/radio-recovery-2026-11-10.md`). The restart's delay never
-//! exceeds the cold one, which is its ceiling.
+//! Two starts each have a [`Delay`]: a cold one, after [`STILL_RUNNING`]
+//! or more off, and a restart, such as the return after every CAD (a CAD
+//! ends in STDBY_RC), which needs far less and is capped by the cold one.
+//! Each is found by a binary search at boot, then confirmation probes, as
+//! the flag flickers at the edge, plus one step of margin; in use it steps
+//! up on any error and is probed lower when the temperature moves or a day
+//! passes (`docs/bench-2026-10-30.md`, "The oscillator's start, probed";
+//! `docs/radio-recovery-2026-11-10.md`).
 
 use crate::{Duration, Instant};
 
-/// The cold delay's step. The bench probed the flag at 50, 100, 200 and
-/// 500 µs: it flickered between 50 and 200 and never showed at 500, so
-/// the start is known to about a quarter millisecond and a finer step
-/// would resolve nothing. A step this wide also holds the whole band in
-/// which the flag flickers, so one step of margin clears it.
+/// The cold delay's step. On the bench the flag flickered between 50 and
+/// 200 µs and never showed at 500, so a finer step resolves nothing, and
+/// one step of margin clears the flicker band.
 pub const STEP: Duration = Duration::from_micros(250);
 
 /// The shortest cold delay probed: one step. Zero hangs the chip.
 pub const MIN: Duration = STEP;
 
-/// The longest cold delay probed, 16 steps: a factor eight over the
-/// 500 µs the bench found at room temperature, where roadmap D87's 2 ms
-/// kept a factor four; a cold board is unmeasured. A board whose
-/// oscillator takes longer runs at this delay with the error flag set,
-/// which costs a few dB at the start of each frame, not the frame.
+/// The longest cold delay probed, 16 steps: eight times the 500 µs the
+/// bench found at room temperature, as a cold board is unmeasured. A slower
+/// oscillator costs a few dB at the start of each frame, not the frame.
 pub const MAX: Duration = Duration::from_micros(16 * STEP.as_micros());
 
-/// The margin over the lowest cold delay that passed its confirmation
-/// probes: one step, the width of the band in which the flag flickers.
+/// The margin over the lowest confirmed cold delay: one step, the width of
+/// the flicker band.
 pub const MARGIN: Duration = STEP;
 
-/// The restart's step, and its floor. The bench restarted the
-/// oscillator within a millisecond of stopping 90 times at 50 µs without
-/// an error and tried nothing shorter, so 50 µs is the least delay known
-/// to pass; zero hangs the chip. The chip's own step, 15.625 µs, would
-/// resolve starts nobody has measured. One step up costs 50 µs at each
-/// return after a CAD, nothing beside the CAD's 2 ms, and from the floor
-/// to the bench's cold delay of 500 µs is nine steps.
+/// The restart's step and floor: the least delay known to pass (90
+/// restarts within 1 ms of stopping, on the bench, nothing shorter tried).
+/// A step costs 50 µs per return after a CAD, nothing beside its 2 ms.
 pub const SHORT_STEP: Duration = Duration::from_micros(50);
 
-/// Probes at a delay after the search lands on it, all of which must pass,
-/// since at the edge about half the probes fail: four passes at a delay
-/// where half fail happen one time in sixteen.
+/// Probes at the delay the search lands on, all of which must pass: at the
+/// edge half fail, and four passes there happen one time in sixteen.
 pub const CONFIRM: u8 = 4;
 
 /// How long after stopping the oscillator still runs: a restart within a
@@ -67,29 +51,21 @@ pub const STILL_RUNNING: Duration = Duration::from_millis(1);
 /// [`STILL_RUNNING`], so that every such probe is a cold start.
 pub const COLD_WAIT: Duration = Duration::from_millis(2);
 
-/// The least time between a delay settling and a probe below it. A probe
-/// deafens the radio for a few milliseconds; once an hour it costs
-/// nothing, and the delay only has to follow the day's temperature.
+/// The least time between a delay settling and a probe below it: a probe
+/// deafens the radio for milliseconds, and the delay need only follow the
+/// day's temperature.
 pub const REPROBE_FLOOR: Duration = Duration::from_secs(3600);
 
-/// How long a delay is kept without a start error before a probe below it
-/// is due whatever the temperature did: a day, the period of the
-/// temperature a board lives in. A delay that a day of starts at every
-/// temperature of the day never faulted was set by one unlucky start, or
-/// by an error blamed on the wrong start, and not by the board; a probe
-/// then brings it down a step. An hour would be the floor, a probe every
-/// hour on every board, each one a chance for an error in use where the
-/// delay sits at the edge; a week would leave a needless step in place for
-/// a week. A board that reads no temperature recovers by this alone.
+/// How long a delay is kept without an error before a probe below it is
+/// due whatever the temperature did: a day, the temperature's period. A
+/// delay that a whole day never faulted was set by an unlucky start, not
+/// the board. A board that reads no temperature recovers by this alone.
 pub const REPROBE_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 /// How far the die's temperature must have moved since a delay settled,
-/// in the nRF52840 TEMP peripheral's quarter degrees: 3 °C. The sensor is
-/// uncalibrated and only its change is used; its resolution is a quarter
-/// degree, so a move of twelve steps is a real one, and a start time that
-/// a move this small would change is within the margin anyway. No bench
-/// number sets it: the in-use check steps the delay up on any error,
-/// whatever the temperature did, so this only paces the recovery.
+/// in the nRF52840 TEMP's quarter degrees: 3 °C, twelve steps of its
+/// resolution. No bench number sets it: errors step the delay up anyway, so
+/// this only paces the recovery.
 pub const REPROBE_TEMP_QUARTERS: i16 = 12;
 
 /// How often the schedule reads the die's temperature once the floor has
@@ -208,8 +184,7 @@ pub struct Delay {
     pub errors: u32,
     /// The last probe.
     pub last: Option<Probe>,
-    /// When the delay was last probed or stepped, and the die's
-    /// temperature then.
+    /// When the delay was last probed or stepped, and the temperature then.
     settled_at: Instant,
     settled_temp: Option<i16>,
     /// When the die's temperature was last read for the schedule.
@@ -376,8 +351,7 @@ mod tests {
         assert_eq!(STEP, us(250));
         assert_eq!(MAX, ms(4));
         assert_eq!(cold().search(MAX).max, 16);
-        // The restart's floor is what passed 90 probes on the bench, and
-        // with its margin it is the 100 µs D88 programmed.
+        // The restart's floor is what passed 90 probes on the bench.
         assert_eq!(SHORT_STEP, us(50));
         let (lowest, _) = run(
             Delay::new(SHORT_STEP, us(500), Instant::ZERO).search(us(500)),
@@ -429,9 +403,8 @@ mod tests {
 
     #[test]
     fn a_flickering_edge_is_climbed_by_the_confirmation() {
-        // The oscillator takes 1.1 ms; the flag flickers from 0.6 ms up.
-        // A lucky binary probe at 1.0 ms may pass; the confirmation then
-        // sees a failure and climbs to 1.25 ms.
+        // The oscillator takes 1.1 ms; the flag flickers from 0.6 ms up. A
+        // lucky probe at 1.0 ms may pass; the confirmation climbs to 1.25.
         let (lowest, probes) = run(cold().search(MAX), us(1100), us(500));
         assert_eq!(lowest, Some(us(1250)), "{probes:?}");
     }
