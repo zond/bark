@@ -86,6 +86,14 @@ without the `central` feature, 6 KB the image has no room for
   §3.5.5), before any key is made, and the application gets `PairingFailed`. A
   node with every phone record in use refuses so (roadmap D168). A test in
   `pairing/peripheral.rs` sends such a request.
+- `src/fmt.rs`, `src/gatt.rs`, `src/attribute.rs` and
+  `src/security_manager/crypto.rs`: a panic names what failed and its place
+  but not the value: `unwrap!`'s message leaves out the error, the three
+  `unreachable!` for a PDU that is not the client's leave out the PDU, the
+  attribute table's `push` panics without the attribute, and the nonce's
+  check is `assert!` rather than `assert_ne!`. Each value's `Debug` was the
+  only use of the ATT PDUs', the attribute's, the UUID's and `u128`'s
+  formatting: 3 820 B of flash less.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
   central's side, so they run only with `central`.
 

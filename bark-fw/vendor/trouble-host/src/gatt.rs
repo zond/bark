@@ -380,7 +380,7 @@ impl<'stack, P: PacketPool> GattData<'stack, P> {
         // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
         let att = unwrap!(Att::decode(self.pdu.as_ref().unwrap().as_ref()));
         let Att::Client(client) = att else {
-            unreachable!("Expected Att::Client, got {:?}", att)
+            unreachable!("Expected Att::Client")
         };
 
         client
@@ -886,7 +886,7 @@ where
     // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
     let att = unwrap!(Att::decode(pdu.as_ref()));
     let Att::Client(att) = att else {
-        unreachable!("Expected Att::Client, got {:?}", att)
+        unreachable!("Expected Att::Client")
     };
     let mut tx = P::allocate().ok_or(Error::OutOfMemory)?;
     let mut w = WriteCursor::new(tx.as_mut());
@@ -923,7 +923,7 @@ fn process_reject<'stack, P: PacketPool>(
     // - The PDU is of type `Att::Client` because only those types of PDUs are added to the connection queue
     let att = unwrap!(Att::decode(pdu.as_ref()));
     let Att::Client(att) = att else {
-        unreachable!("Expected Att::Client, got {:?}", att)
+        unreachable!("Expected Att::Client")
     };
     // An Execute Write empties the prepare queue regardless of outcome (Core
     // Spec Vol 3, Part F, §3.4.6.3). `process_accept` clears it via the attribute
