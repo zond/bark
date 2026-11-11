@@ -485,9 +485,10 @@ impl Default for Power {
 #[serde(default, deny_unknown_fields)]
 pub struct Battery {
     pub on: bool,
-    /// The nominal capacity.
+    /// A cell's charge, mAh, as the core counts it
+    /// (`bark_proto::drain::CELL_MAH`).
     pub capacity_mah: f64,
-    /// Each cell's capacity as a share of the nominal, drawn uniformly
+    /// Each cell's capacity as a share of `capacity_mah`, drawn uniformly
     /// between the two.
     pub cell: [f64; 2],
     /// The charge of a node on USB at the start as a share of its cell's
@@ -516,7 +517,7 @@ impl Default for Battery {
     fn default() -> Self {
         Battery {
             on: false,
-            capacity_mah: 850.0,
+            capacity_mah: bark_proto::drain::CELL_MAH as f64,
             cell: [1.0, 1.0],
             charge_on_usb: [1.0, 1.0],
             charge_on_battery: [1.0, 1.0],

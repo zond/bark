@@ -119,8 +119,8 @@ pub struct Config {
     pub version: u32,
 }
 
-/// A battery's open-circuit voltage, millivolts, at which a fixed relay
-/// on battery turns sleepy, `low`, and at which a node its battery turned
+/// A calibrated battery reading, millivolts, at which a fixed relay on
+/// battery turns sleepy, `low`, and at which a node its battery turned
 /// sleepy relays again, `high` (spec "Sleepy nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BatteryLevels {
@@ -131,14 +131,13 @@ pub struct BatteryLevels {
 }
 
 impl BatteryLevels {
-    /// A typical Li-ion cell's open-circuit voltage at 20 % and 30 % of its
-    /// charge, 3741 and 3775 mV (Maxim Integrated, Application Note 4189,
-    /// Table 1). The load moves the reading by its current times the
-    /// cell's resistance, a few millivolts at a relay's; the gap is several
-    /// times that and a reading's noise, so that the role does not flap.
+    /// The cell's curve at [`BATTERY_LOW_PERCENT`] and
+    /// [`BATTERY_HIGH_PERCENT`], 3504 and 3611 mV. The gap is many times
+    /// the readings' noise and the few millivolts a change of load moves
+    /// them, so the role does not flap.
     pub const DESIGN: BatteryLevels = BatteryLevels {
-        low_mv: 3741,
-        high_mv: 3775,
+        low_mv: cell_mv(BATTERY_LOW_PERCENT),
+        high_mv: cell_mv(BATTERY_HIGH_PERCENT),
     };
 
     /// Whether a node may start swapping in a new image (spec
@@ -149,38 +148,74 @@ impl BatteryLevels {
     }
 }
 
-/// A full cell's open-circuit voltage, millivolts, read after an hour's
-/// rest (Maxim AN4189, Table 1): what a calibrated reading of a cell that
-/// has finished charging and rested is (spec "Sleepy nodes").
-pub const BATTERY_FULL_MV: u16 = 4177;
+/// What a calibrated reading of a full cell is, millivolts: the curve's
+/// 100 % (spec "Sleepy nodes"). The curve and the calibration so share one
+/// scale, the board's whose run fitted the curve; a board calibrated to
+/// it also has its lighter load's higher reading scaled away near full.
+pub const BATTERY_FULL_MV: u16 = cell_mv(100);
 
-/// The charge at the low level, percent: [`BatteryLevels::DESIGN`]'s
-/// `low_mv` on Maxim AN4189's curve.
+/// The charge at the low level, percent: a fixed relay keeps a fifth of
+/// its cell for its owner when it turns sleepy (spec "Sleepy nodes").
 pub const BATTERY_LOW_PERCENT: u8 = 20;
 
-/// About how much charge is left at `mv`, a calibrated reading, in percent;
-/// `None` at or below the low level. Interpolated linearly between the known
-/// points ([`BatteryLevels::DESIGN`], [`BATTERY_FULL_MV`]): coarse above
-/// 30 %, for a person to read, and used by no rule.
-pub fn battery_percent(mv: u16) -> Option<u8> {
-    let BatteryLevels { low_mv, high_mv } = BatteryLevels::DESIGN;
-    if mv <= low_mv {
-        return None;
+/// The charge at which a node its battery turned sleepy relays again.
+pub const BATTERY_HIGH_PERCENT: u8 = 30;
+
+/// The cell's curve, charge left in millionths of a percent against `u`,
+/// mV above [`CURVE_FROM_MV`]: `[a, b, c]` of a + b·u + c·u², that is
+/// 5 % + 60 %/V + 66 %/V². A least-squares fit to the T-Echo cell's
+/// discharge at a constant 35.4 mA, its readings at 3 % and above
+/// (`docs/data/discharge-f4f5-2026-11-11.csv`, reproduced by
+/// `bark-fw/scripts/discharge.py`; `docs/discharge-2026-11-11.md`),
+/// rounded to two figures, which costs nothing: against the run's 131
+/// samples it is within 1.1 % rms and 3.1 % at most, the ADC's 1.76 mV
+/// step being 0.1 to 0.3 % of the charge.
+const CURVE: [i64; 3] = [5_000_000, 60_000, 66];
+
+/// The curve's origin, mV.
+const CURVE_FROM_MV: i64 = 3300;
+
+/// A whole percent in [`CURVE`]'s units.
+const PERCENT: i64 = 1_000_000;
+
+/// How much of its charge the cell has left at reading `mv`, calibrated,
+/// in whole percent, on the cell's curve ([`CURVE`]), 0 to 100.
+pub const fn cell_percent(mv: u16) -> u8 {
+    let [a, b, c] = CURVE;
+    let u = mv as i64 - CURVE_FROM_MV;
+    // Below its lowest point the parabola rises again; it is below 0 there.
+    if b + 2 * c * u <= 0 {
+        return 0;
     }
-    let between = |mv: u16, (lo_mv, lo): (u16, u32), (hi_mv, hi): (u16, u32)| {
-        let span = u32::from(hi_mv - lo_mv);
-        lo + (u32::from(mv - lo_mv) * (hi - lo) + span / 2) / span
-    };
-    let percent = if mv < high_mv {
-        between(mv, (low_mv, BATTERY_LOW_PERCENT.into()), (high_mv, 30))
+    let p = a + b * u + c * u * u;
+    if p <= 0 {
+        0
+    } else if p >= 100 * PERCENT {
+        100
     } else {
-        between(
-            mv.min(BATTERY_FULL_MV),
-            (high_mv, 30),
-            (BATTERY_FULL_MV, 100),
-        )
-    };
-    Some(percent as u8)
+        ((p + PERCENT / 2) / PERCENT) as u8
+    }
+}
+
+/// The reading, mV, at which the cell has `percent` of its charge left:
+/// the inverse of [`cell_percent`], rounded to the millivolt.
+pub const fn cell_mv(percent: u8) -> u16 {
+    let [a, b, c] = CURVE;
+    let p = (if percent > 100 { 100 } else { percent }) as i64 * PERCENT;
+    let root = (b * b + 4 * c * (p - a)) as u64;
+    let u = (root.isqrt() as i64 - b + c).div_euclid(2 * c);
+    (CURVE_FROM_MV + u) as u16
+}
+
+/// About how much charge is left at `mv`, a calibrated reading, in percent
+/// ([`cell_percent`]); `None` at or below the low level, where a node shows
+/// it low rather than a number.
+pub const fn battery_percent(mv: u16) -> Option<u8> {
+    if mv <= BatteryLevels::DESIGN.low_mv {
+        None
+    } else {
+        Some(cell_percent(mv))
+    }
 }
 
 /// How long on external power a cell is full: the charger's 500 mA
@@ -190,7 +225,9 @@ pub fn battery_percent(mv: u16) -> Option<u8> {
 pub const BATTERY_CHARGED_AFTER: Duration = Duration::from_secs(3 * 3600);
 
 /// How long a full cell rests on battery before its reading calibrates:
-/// the hour AN4189's readings rest.
+/// in the cell's measured run the charger's lift, some 35 mV beyond what
+/// the charge used explains, was gone within 40 minutes
+/// (`docs/discharge-2026-11-11.md`).
 pub const BATTERY_REST: Duration = Duration::from_secs(3600);
 
 /// A calibration that would scale the readings by more than this,
@@ -412,14 +449,35 @@ mod battery_percent_tests {
     use super::*;
 
     #[test]
-    fn the_known_points_and_between() {
-        assert_eq!(battery_percent(3741), None);
-        assert_eq!(battery_percent(3742), Some(20));
-        assert_eq!(battery_percent(3775), Some(30));
-        assert_eq!(battery_percent(4177), Some(100));
+    fn the_levels_on_the_curve() {
+        let levels = BatteryLevels::DESIGN;
+        assert_eq!((levels.low_mv, levels.high_mv), (3504, 3611));
+        assert_eq!(BATTERY_FULL_MV, 4128);
+        assert_eq!(battery_percent(levels.low_mv), None);
+        assert_eq!(battery_percent(levels.low_mv + 1), Some(20));
+        assert_eq!(battery_percent(levels.high_mv), Some(30));
+        assert_eq!(battery_percent(BATTERY_FULL_MV), Some(100));
         assert_eq!(battery_percent(4300), Some(100));
-        assert_eq!(battery_percent(3758), Some(25));
-        assert_eq!(battery_percent(3976), Some(65));
+        // The old low level, 3741 mV, is about half the charge.
+        assert_eq!(battery_percent(3741), Some(44));
+    }
+
+    /// The inverse is the curve's: each percent's reading reads back as
+    /// it, and the curve never falls.
+    #[test]
+    fn the_inverse_and_the_curve_agree() {
+        for p in 0..=100 {
+            assert_eq!(cell_percent(cell_mv(p)), p, "{p} %");
+        }
+        assert_eq!(cell_mv(0), 3207);
+        assert_eq!(cell_percent(0), 0);
+        assert_eq!(cell_percent(3300), 5);
+        let mut last = 0;
+        for mv in 0..=u16::MAX {
+            let p = cell_percent(mv);
+            assert!(p >= last, "{mv} mV");
+            last = p;
+        }
     }
 
     #[test]

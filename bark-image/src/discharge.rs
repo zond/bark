@@ -11,6 +11,8 @@
 //!
 //! [`DISCHARGE`]: crate::layout::external::DISCHARGE
 
+use core::fmt;
+
 use crate::layout::external::SECTOR;
 
 /// Bytes of a record ([`Sample::encode`]): 256 to a sector, so none
@@ -20,10 +22,10 @@ pub const LEN: usize = 16;
 /// Records to a sector.
 pub const PER_SECTOR: u32 = SECTOR / LEN as u32;
 
-/// Seconds between samples on battery: an hour. A sleepy node's 59 days
-/// are 1416 samples, which [`DISCHARGE`] holds; the battery estimate's
-/// 15 h (`bark_proto::drain::SAMPLE`) spans 15. A finer interval would
-/// show the readings' noise, a step of the mapping being some 5.7 mV.
+/// Seconds between samples on battery: an hour. A sleepy node's 54 days
+/// are 1296 samples, which [`DISCHARGE`] holds; the battery estimate's
+/// 13 h (`bark_proto::drain::SAMPLE`) spans 13. A finer interval would
+/// show the readings' noise, a step of the level being 6 to 10 mV.
 ///
 /// [`DISCHARGE`]: crate::layout::external::DISCHARGE
 pub const EVERY_S: u32 = 3600;
@@ -111,7 +113,12 @@ pub struct Sample {
 /// power cut, or programmed all zero, fails it, and whatever the chip
 /// held before the log was there passes it once in 65 536 slots.
 fn crc16(bytes: &[u8]) -> u16 {
-    bytes.iter().fold(0xffff, |mut c, &b| {
+    crc16_on(0xffff, bytes)
+}
+
+/// [`crc16`] carried on from `crc` over more bytes.
+fn crc16_on(crc: u16, bytes: &[u8]) -> u16 {
+    bytes.iter().fold(crc, |mut c, &b| {
         c ^= u16::from(b) << 8;
         for _ in 0..8 {
             c = if c & 0x8000 != 0 {
@@ -168,6 +175,60 @@ impl Sample {
             bench: flags & 8 != 0,
             why: Why::from_bits(flags >> 4 & 7)?,
         })
+    }
+}
+
+impl Sample {
+    /// The sample as the console prints it, one line ([`Line`]).
+    pub fn line(&self) -> Line<'_> {
+        Line(self)
+    }
+}
+
+/// A sample's line: `discharge seq=.. utc_s=.. uptime_s=.. mv=..
+/// external=.. sleepy=.. gps=.. bench=.. why=.. crc=....`, the last field
+/// the [`crc16`] of the text before ` crc=`, four hex digits, so that a
+/// reader can tell a line cut or spliced on its way to the host from a
+/// whole one.
+pub struct Line<'s>(&'s Sample);
+
+/// The fields of a [`Line`], before its check.
+struct Fields<'s>(&'s Sample);
+
+impl fmt::Display for Fields<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0;
+        write!(
+            f,
+            "discharge seq={} utc_s={} uptime_s={} mv={} external={} sleepy={} gps={} bench={} why={}",
+            s.seq,
+            s.utc_s,
+            s.uptime_s,
+            s.mv,
+            u8::from(s.external),
+            u8::from(s.sleepy),
+            u8::from(s.gps),
+            u8::from(s.bench),
+            s.why.name()
+        )
+    }
+}
+
+/// A [`crc16`] over what is written to it.
+struct Crc(u16);
+
+impl fmt::Write for Crc {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 = crc16_on(self.0, s.as_bytes());
+        Ok(())
+    }
+}
+
+impl fmt::Display for Line<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut crc = Crc(0xffff);
+        fmt::write(&mut crc, format_args!("{}", Fields(self.0)))?;
+        write!(f, "{} crc={:04x}", Fields(self.0), crc.0)
     }
 }
 

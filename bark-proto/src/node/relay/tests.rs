@@ -3773,7 +3773,7 @@ fn the_status_tells_the_battery() {
     cmd(&mut r, AppCommand::Battery { millivolts: 3900 });
     let p = crate::node::battery_percent(3900).unwrap();
     assert_eq!(r.status(now).battery, Battery::Percent(p));
-    cmd(&mut r, AppCommand::Battery { millivolts: 3700 });
+    cmd(&mut r, AppCommand::Battery { millivolts: 3400 });
     assert_eq!(r.status(now).battery, Battery::Low);
     cmd(&mut r, AppCommand::Power { external: true });
     assert_eq!(r.status(now).battery, Battery::Usb);

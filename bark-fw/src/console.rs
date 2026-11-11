@@ -303,12 +303,6 @@ struct Survey {
     ring: &'static mut Ring,
 }
 
-/// A `survey` line's longest form, bytes, with the log's prefix: the pace
-/// at which its lines are printed, one per 64-byte USB packet and 1 ms
-/// frame, so that the log buffer never fills and drops them.
-const SURVEY_LINE: usize = 200;
-const SURVEY_LINE_DRAIN: Duration = Duration::from_millis(SURVEY_LINE.div_ceil(64) as u64);
-
 /// What `tx` sends.
 enum Payload<'l> {
     /// A bench frame of this length.
@@ -1339,12 +1333,14 @@ impl<'a> Console<'a> {
         Ok(())
     }
 
-    /// The newest `n` samples of the ring, oldest first, paced for the log.
+    /// The newest `n` samples of the ring, oldest first, each line once
+    /// the log has room for it, so that none is dropped.
     async fn print_survey(&mut self, n: usize) {
         let Some(survey) = self.survey.as_ref() else {
             log::warn!("survey: not a survey build (BARK_SURVEY at build time)");
             return;
         };
+        crate::log_room().await;
         log::info!(
             "survey ch={} step={} of {} samples={} of {} every_s={}",
             survey.ch.index(),
@@ -1355,13 +1351,13 @@ impl<'a> Console<'a> {
             SAMPLE_EVERY.as_secs()
         );
         for sample in survey.ring.newest(n) {
+            crate::log_room().await;
             log::info!(
                 "survey t_s={} p10={} median={}",
                 sample.at_s,
                 List(&sample.p10),
                 List(&sample.median)
             );
-            Timer::after(SURVEY_LINE_DRAIN).await;
         }
     }
 

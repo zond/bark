@@ -6,8 +6,8 @@
 //! the time the metrics counted in each radio state, the GPS's while it
 //! runs (`gps.rs`), and a board current by role. The metrics count from
 //! the settle time, so outages must begin after it. Once a minute the
-//! driver reports a node on battery its cell's open-circuit voltage, off
-//! by its converter's gain error (`AppCommand::Battery`).
+//! driver reports a node on battery its cell's reading on the cell's
+//! curve, off by its converter's gain error (`AppCommand::Battery`).
 
 use crate::metrics::NodeMetrics;
 use crate::rng::{Purpose, Stream};
@@ -17,23 +17,14 @@ use bark_proto::gps::GPS_CURRENT_UA;
 use bark_proto::sniff::{RX_CURRENT_UA, SNIFF_CURRENT_NA, TX_CURRENT_UA};
 use bark_proto::{AppCommand, Event, Instant};
 
-/// A typical Li-ion cell's open-circuit voltage, V, at 0, 5, ... 100 % of
-/// its charge, each read after an hour's rest following a discharge of
-/// 5 % at about 0.2 C (Maxim Integrated, Application Note 4189,
-/// "Characterizing a Lithium-Ion (Li+) Cell for Use with an
-/// Open-Circuit-Voltage (OCV) Based Fuel Gauge", Table 1).
-pub const OCV_V: [f64; 21] = [
-    3.305545, 3.674776, 3.686654, 3.7098, 3.741018, 3.762185, 3.775129, 3.783504, 3.79325,
-    3.805737, 3.820965, 3.841219, 3.884009, 3.917968, 3.945074, 3.974769, 4.008118, 4.045427,
-    4.085934, 4.129486, 4.177454,
-];
-
-/// The open-circuit voltage, V, at charge `soc`, 0 to 1, between the
-/// points of [`OCV_V`].
-pub fn ocv(soc: f64) -> f64 {
-    let x = soc.clamp(0.0, 1.0) * (OCV_V.len() - 1) as f64;
-    let i = (x.floor() as usize).min(OCV_V.len() - 2);
-    OCV_V[i] + (OCV_V[i + 1] - OCV_V[i]) * (x - i as f64)
+/// The cell's reading, V, at charge `soc`, 0 to 1: the core's curve
+/// (`bark_proto::node::cell_mv`), straight between its whole percents.
+pub fn cell_v(soc: f64) -> f64 {
+    use bark_proto::node::cell_mv;
+    let x = soc.clamp(0.0, 1.0) * 100.0;
+    let i = (x.floor() as u8).min(99);
+    let (lo, hi) = (f64::from(cell_mv(i)), f64::from(cell_mv(i + 1)));
+    (lo + (hi - lo) * (x - f64::from(i))) / 1000.0
 }
 
 /// One node's cell.
@@ -179,7 +170,7 @@ impl Sim {
             .enumerate()
             .filter(|&(i, _)| !self.external[i] && self.nodes[i].alive)
             .map(|(i, c)| {
-                let v = ocv(c.charge / c.capacity) * c.gain;
+                let v = cell_v(c.charge / c.capacity) * c.gain;
                 (i as u32, (v * 1000.0).round() as u16)
             })
             .collect();
@@ -199,7 +190,7 @@ impl Sim {
     /// driver hands it over; `None` without cells in the run.
     pub(crate) fn millivolts(&self, node: u32) -> Option<u16> {
         let c = self.battery.as_ref()?.cells.get(node as usize)?;
-        Some((ocv(c.charge / c.capacity) * c.gain * 1000.0).round() as u16)
+        Some((cell_v(c.charge / c.capacity) * c.gain * 1000.0).round() as u16)
     }
 
     /// A trace of a core about its role (`Trace::Role`).
@@ -302,16 +293,16 @@ fn radio_ua_us(node: &NodeMetrics, window: f64) -> f64 {
 mod tests {
     use super::*;
 
-    /// The curve rises with the charge, passes through its points, and
-    /// puts the design's levels at 20 and 30 % (`BatteryLevels::DESIGN`).
+    /// The curve rises with the charge, passes through the core's whole
+    /// percents, and puts the design's levels at 20 and 30 %
+    /// (`BatteryLevels::DESIGN`).
     #[test]
     fn the_curve_and_the_levels() {
-        assert!(OCV_V.windows(2).all(|w| w[0] < w[1]));
-        assert_eq!(ocv(0.0), OCV_V[0]);
-        assert_eq!(ocv(1.0), OCV_V[20]);
-        assert!((ocv(0.125) - (OCV_V[2] + OCV_V[3]) / 2.0).abs() < 1e-9);
+        let mv = |soc: f64| (cell_v(soc) * 1000.0).round() as u16;
+        assert!((0..1000).all(|i| cell_v(i as f64 / 1000.0) < cell_v((i + 1) as f64 / 1000.0)));
+        assert_eq!(mv(1.0), bark_proto::node::BATTERY_FULL_MV);
         let levels = bark_proto::BatteryLevels::DESIGN;
-        assert_eq!((ocv(0.2) * 1000.0).round() as u16, levels.low_mv);
-        assert_eq!((ocv(0.3) * 1000.0).round() as u16, levels.high_mv);
+        assert_eq!(mv(0.2), levels.low_mv);
+        assert_eq!(mv(0.3), levels.high_mv);
     }
 }

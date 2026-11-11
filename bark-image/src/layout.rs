@@ -149,8 +149,8 @@ pub mod external {
     const CARRY_SECTORS: u32 = 167u32.div_ceil(16);
 
     /// Sectors for the discharge log (`crate::discharge`): a sleepy node
-    /// runs 59 days on its cell (spec "Sleepy nodes"), 1416 hourly samples,
-    /// 5.5 sectors of 256; a sector is erased whole before it is rewritten,
+    /// runs 54 days on its cell (spec "Sleepy nodes"), 1296 hourly samples,
+    /// 5.1 sectors of 256; a sector is erased whole before it is rewritten,
     /// and boots and changes of power add samples, so 8.
     const DISCHARGE_SECTORS: u32 = 8;
 
