@@ -224,33 +224,50 @@ enum Case {
     Seen,
 }
 
-/// What a received DATA gives this relay to do, and whether it takes or
-/// refuses it (spec "Receiving DATA"), decided before the reply and acted
-/// on after it where the take waits for the ACK.
+/// What a received DATA is to this relay (spec "Receiving DATA").
 #[derive(Clone, Copy, Debug)]
-struct Verdict {
+struct Arrival {
     case: Case,
     /// The sender's neighbour-table slot.
     slot: Option<usize>,
-    /// For a copy of a message the relay has a record of: whether it came
-    /// from a node that has the message from this relay, whether it
-    /// merges with a copy held here, and whether it is answered seen.
-    copy: Option<(bool, bool, bool)>,
+    /// A copy of a message this relay has a record of that has not arrived
+    /// here, other than its last packet again.
+    copy: bool,
+    /// From a node that has the message from this relay: a return.
+    returned: bool,
     /// This relay owns the destination, and acts on the packet.
     owner: bool,
     /// A sleepy node's own message, count 0, whose search starts here.
     fresh: bool,
+}
+
+impl Arrival {
+    /// Whether the packet is work: sent on or delivered (cases 2 and 5).
+    fn acts(&self) -> bool {
+        matches!(self.case, Case::New | Case::Search)
+    }
+}
+
+/// Where a packet taken goes.
+#[derive(Clone, Copy, Debug, Default)]
+struct Room {
     /// Where a new record goes.
     record_at: Option<usize>,
-    /// The send-queue place it takes; 0 the regular room.
+    /// The send-queue place of one to send on; 0 the regular room.
     place: u8,
+}
+
+/// Whether a DATA is taken, decided when it arrives (spec "Receiving DATA").
+#[derive(Clone, Copy, Debug)]
+struct Verdict {
+    arrival: Arrival,
     /// Why it is refused, if it is.
     refusal: Option<DropReason>,
-    /// The pushback its way on gave, for the wait a refusal tells.
-    pushback: Duration,
     /// Its way on, for a refusal's place in that way's line.
     way: Option<NodeId>,
-    /// What the gate found on that way.
+    /// The rest of the ban on its way on, for the wait a refusal tells.
+    pushback: Duration,
+    /// What the gate found on its way on.
     gate: Option<Gate>,
 }
 
@@ -265,13 +282,6 @@ struct Gate {
     /// The wait passes [`HOP_WAIT`] and one of them has come as far or
     /// farther: the message is refused.
     over: bool,
-}
-
-impl Verdict {
-    /// Whether the packet is work: sent on or delivered (cases 2 and 5).
-    fn acts(&self) -> bool {
-        matches!(self.case, Case::New | Case::Search)
-    }
 }
 
 /// What became of a forward when it was addressed. Short-lived, so the
@@ -954,7 +964,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A packet from the relay this one is handing the message to shows
         // that it took it, and ends that hand-over, which frees its place.
         let completes = !repeat && self.handing(id, d.src_hop);
-        let v = self.verdict(&d, ACK_AIRTIME, completes, now);
+        let v = self.verdict(&d, completes, now);
         let deadline = now + self.config.ack_timeout;
         let air = self.data_airtime(d.payload.len());
         if let Some(g) = v.gate {
@@ -973,7 +983,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             to: d.src_hop,
             refused: v.refusal.is_some(),
             wait,
-            seen: v.case == Case::Seen,
+            seen: v.arrival.case == Case::Seen,
         };
         let sending = self.sending_reply();
         if !self
@@ -1022,7 +1032,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // The reply carries a packet with work until it has gone out
         // (module documentation); one that is no work is acted on now:
         // nothing is lost if its ACK never goes.
-        let later = v.acts();
+        let later = v.arrival.acts();
         let takes = later.then(|| Take::of(&d));
         self.radio
             .replies
@@ -1032,179 +1042,211 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.handover_done(now, emit);
         }
         if !later {
-            self.act_on(&d, v, now, emit);
+            self.act_on(&d, v.arrival, Room::default(), now, emit);
         }
     }
 
-    /// Whether `d` is taken or refused, and what it gives this relay to do
-    /// (spec "Receiving DATA"). `spend`: what the ACK that takes it will
-    /// cost the bucket, nothing once it has gone, when the gate is not
-    /// asked again; `completes`: it comes
-    /// from the neighbour being handed the message, whose hand-over ends
-    /// first, giving up its place.
-    fn verdict(&self, d: &Data<'_>, spend: Duration, completes: bool, now: Instant) -> Verdict {
-        let id = d.msg_id();
-        // Count 0: a sleepy node's own message, fresh work that starts its
-        // search here (spec "Packet sender", "Hop count").
-        let fresh = d.hops == 0;
-        let repeat = self
-            .records
-            .get(id)
-            .is_some_and(|r| r.repeats(d.src_hop, d.hops));
-        // From a neighbour that has the message from this relay: a return
-        // (spec "Receiving DATA" case 5). The one being handed to has it
-        // too, though its ACK has not come.
-        let slot = self.neighbours.slot_of(d.src_hop);
-        let returned = completes
-            || self
-                .records
-                .get(id)
-                .zip(slot)
-                .is_some_and(|(r, s)| r.handed(s));
-        let owner_here = self.ends_here(
-            (d.dst_id, d.dst_pos),
-            self.records.get(id),
-            0,
-            Some(d.src_hop),
-            now,
-        );
-        let case = self.classify(id, repeat, returned, owner_here);
-        let copy = self
-            .records
-            .get(id)
-            .filter(|r| !repeat && !r.arrived())
-            .map(|_| (returned, case == Case::AckOnly, case == Case::Seen));
-        let acts = matches!(case, Case::New | Case::Search);
-        let owner = acts && owner_here;
-        let sends = acts && !owner;
-        let record_at = match case {
-            Case::New => self.record_place(),
-            _ => None,
-        };
-        let mut place = 0;
-        // Where it would go from here now, as the record it would have
-        // routes it: its sender, a sleepy node handing over its own or a
-        // child returning it, has it.
-        let heads = if sends {
-            let mut probe = match self.records.get(id) {
-                Some(r) if case == Case::Search => *r,
-                _ => Record::new(
-                    id,
-                    (!fresh).then_some((d.src_hop, d.sender_home)),
-                    d.hops,
-                    now,
-                ),
-            };
-            if let Some(s) = slot.filter(|_| fresh || case == Case::Search) {
-                probe.handed_to(s);
-            }
-            self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
-        } else {
+    /// Whether `d`, just arrived, is taken or refused, and what it is
+    /// (spec "Receiving DATA"), with the ACK that would take it still to
+    /// pay for. `completes`: it comes from the neighbour being handed the
+    /// message, whose hand-over ends first, giving up its place.
+    fn verdict(&self, d: &Data<'_>, completes: bool, now: Instant) -> Verdict {
+        let arrival = self.arrival(d, completes, now);
+        let heads = self.way_on(d, &arrival, now);
+        let gate = heads.map(|(to, _)| self.gate(d.msg_id(), to, d.hops, now));
+        let refusal = if !arrival.acts() {
             None
-        };
-        // The rest of the ban on its way on (spec "Bans"). Fresh work is
-        // refused while it lasts, and told how long, as spec "Receiving DATA"
-        // says. A message already in the network is not: refused for
-        // that, its sender would send it round the pushback, and around
-        // a ring of relays the refusals kept each other up.
-        let pushback = heads.map_or(Duration::ZERO, |(_, ban)| ban.since(now));
-        // Not again once the take is final: the sender is done with it.
-        let gate = heads
-            .filter(|_| spend > Duration::ZERO)
-            .map(|(to, _)| self.gate(id, to, d.hops, now));
-        let refusal = if !acts {
-            None
-        } else if self.draining() && spend > Duration::ZERO {
-            // A take answered before the drain began stands: its sender
-            // is done with the message.
+        } else if self.draining() {
             Some(DropReason::Draining)
-        } else if case == Case::New && record_at.is_none() {
-            Some(DropReason::NoRecord)
-        } else if gate.is_some_and(|g| g.over) {
-            Some(DropReason::SameHop)
-        } else if sends {
-            let air = self.data_airtime(d.payload.len());
-            match self.admit(air, spend, d.hops, completes, now) {
-                Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
-                Ok(_) if fresh && pushback > Duration::ZERO => Some(DropReason::Banned),
-                Ok(k) => {
-                    place = k;
-                    None
-                }
-                Err(why) => Some(why),
-            }
-        } else if owner && !self.has_room_for(d.dst_id, now) {
-            Some(DropReason::DeliveryFull)
-        } else if !self.affordable(spend, now) {
-            Some(DropReason::Budget)
         } else {
-            None
+            self.room(d, &arrival, heads, gate, ACK_AIRTIME, completes, now)
+                .err()
         };
         Verdict {
-            case,
-            slot,
-            copy,
-            owner,
-            fresh,
-            record_at,
-            place,
+            arrival,
             refusal,
-            pushback,
             way: heads.map(|(to, _)| to),
+            pushback: heads.map_or(Duration::ZERO, |(_, ban)| ban.since(now)),
             gate,
         }
     }
 
-    /// Act on `d`, answered with verdict `v`: its record, then its work.
-    fn act_on(&mut self, d: &Data<'_>, v: Verdict, now: Instant, emit: &mut dyn FnMut(Action)) {
+    /// What remains to be checked of `d` once its take is final, its ACK
+    /// gone out (spec "The ACK"): what it is now, since a hand-over may
+    /// have ended or the message arrived while the ACK waited for the
+    /// radio, and whether the room it takes is still there. Not the gate
+    /// nor the drain: its sender is done with it.
+    fn when_taken(&self, d: &Data<'_>, now: Instant) -> Result<(Arrival, Room), DropReason> {
+        let arrival = self.arrival(d, false, now);
+        if !arrival.acts() {
+            return Ok((arrival, Room::default()));
+        }
+        let heads = self.way_on(d, &arrival, now);
+        self.room(d, &arrival, heads, None, Duration::ZERO, false, now)
+            .map(|room| (arrival, room))
+    }
+
+    /// What `d` is to this relay: its case of spec "Receiving DATA" and
+    /// what that was decided from. `completes`: as for [`Self::verdict`].
+    fn arrival(&self, d: &Data<'_>, completes: bool, now: Instant) -> Arrival {
         let id = d.msg_id();
-        if v.case == Case::New {
-            let parent = (!v.fresh).then_some((d.src_hop, d.sender_home));
+        let record = self.records.get(id);
+        let repeat = record.is_some_and(|r| r.repeats(d.src_hop, d.hops));
+        // From a neighbour that has the message from this relay: a return
+        // (spec "Receiving DATA" case 5). The one being handed to has it
+        // too, though its ACK has not come.
+        let slot = self.neighbours.slot_of(d.src_hop);
+        let returned = completes || record.zip(slot).is_some_and(|(r, s)| r.handed(s));
+        let owner = self.ends_here((d.dst_id, d.dst_pos), record, 0, Some(d.src_hop), now);
+        let case = self.classify(id, repeat, returned, owner);
+        Arrival {
+            case,
+            slot,
+            copy: record.is_some_and(|r| !repeat && !r.arrived()),
+            returned,
+            owner: owner && matches!(case, Case::New | Case::Search),
+            // Count 0: a sleepy node's own message, fresh work that starts
+            // its search here (spec "Packet sender", "Hop count").
+            fresh: d.hops == 0,
+        }
+    }
+
+    /// Where the message of `d`, to send on, would go from here now, and
+    /// when that one's ban ends: routed as the record it would have, whose
+    /// sender, a sleepy node handing over its own or a child returning
+    /// it, has it.
+    fn way_on(&self, d: &Data<'_>, a: &Arrival, now: Instant) -> Option<(NodeId, Instant)> {
+        if !a.acts() || a.owner {
+            return None;
+        }
+        let id = d.msg_id();
+        let mut probe = match self.records.get(id) {
+            Some(r) if a.case == Case::Search => *r,
+            _ => Record::new(
+                id,
+                (!a.fresh).then_some((d.src_hop, d.sender_home)),
+                d.hops,
+                now,
+            ),
+        };
+        if let Some(s) = a.slot.filter(|_| a.fresh || a.case == Case::Search) {
+            probe.handed_to(s);
+        }
+        self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
+    }
+
+    /// The room a packet with work takes, or why there is none (spec
+    /// "Receiving DATA"): a place for a new record; for one to send on,
+    /// past the gate, a send-queue place, and for fresh work no ban on its
+    /// way on, `heads`; for one to deliver, a place in the delivery queue
+    /// or the inbox and the budget. `spend`: the ACK that takes it, if it
+    /// has not gone out; `gate`: asked only then; `completes`: as for
+    /// [`Self::verdict`].
+    #[allow(clippy::too_many_arguments)]
+    fn room(
+        &self,
+        d: &Data<'_>,
+        a: &Arrival,
+        heads: Option<(NodeId, Instant)>,
+        gate: Option<Gate>,
+        spend: Duration,
+        completes: bool,
+        now: Instant,
+    ) -> Result<Room, DropReason> {
+        let record_at = match a.case {
+            Case::New => self.record_place(),
+            _ => None,
+        };
+        if a.case == Case::New && record_at.is_none() {
+            return Err(DropReason::NoRecord);
+        }
+        if gate.is_some_and(|g| g.over) {
+            return Err(DropReason::SameHop);
+        }
+        if a.owner {
+            if !self.has_room_for(d.dst_id, now) {
+                return Err(DropReason::DeliveryFull);
+            }
+            if !self.affordable(spend, now) {
+                return Err(DropReason::Budget);
+            }
+            return Ok(Room {
+                record_at,
+                place: 0,
+            });
+        }
+        let air = self.data_airtime(d.payload.len());
+        let place = self.admit(air, spend, d.hops, completes, now)?;
+        // Fresh work is refused while its way on is banned, and told how
+        // long (spec "Receiving DATA"). A message already in the network
+        // is not: refused for that, its sender would send it round the
+        // pushback, and around a ring of relays the refusals kept each
+        // other up.
+        let banned = heads.is_some_and(|(_, ban)| ban > now);
+        if a.fresh && (self.bans_end(now).is_some() || banned) {
+            return Err(DropReason::Banned);
+        }
+        Ok(Room { record_at, place })
+    }
+
+    /// Act on `d`, which is `a` to this relay and taken into `room`: its
+    /// record, then its work.
+    fn act_on(
+        &mut self,
+        d: &Data<'_>,
+        a: Arrival,
+        room: Room,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
+        let id = d.msg_id();
+        if a.case == Case::New {
+            let parent = (!a.fresh).then_some((d.src_hop, d.sender_home));
             let mut record = Record::new(id, parent, d.hops, now);
-            if v.owner {
+            if a.owner {
                 record.set_arrived();
             }
-            if let (true, Some(slot)) = (v.fresh, v.slot) {
+            if let (true, Some(slot)) = (a.fresh, a.slot) {
                 // The sleepy node it came from has it, and would end the
                 // search there: it is tried.
                 record.handed_to(slot);
             }
-            if let Some(at) = v.record_at {
+            if let Some(at) = room.record_at {
                 self.records.put(at, record);
             }
         } else if let Some(r) = self.records.get_mut(id) {
-            if v.case == Case::Seen {
+            if a.case == Case::Seen {
                 // The sender has the message and searches on from its own
                 // record; it need not be offered this one.
                 r.seen(d.src_hop, d.hops, now);
-                if let Some(s) = v.slot {
+                if let Some(s) = a.slot {
                     r.handed_to(s);
                 }
             } else {
                 r.received(d.src_hop, d.hops, now);
             }
-            if v.owner {
+            if a.owner {
                 r.set_arrived();
             }
         }
-        if let Some((returned, merged, seen)) = v.copy {
+        if a.copy {
             emit(Action::Trace(Trace::Copy {
                 msg_id: id,
-                returned,
-                merged,
-                seen,
+                returned: a.returned,
+                merged: a.case == Case::AckOnly,
+                seen: a.case == Case::Seen,
             }));
         }
-        match v.case {
+        match a.case {
             Case::AckOnly => {
                 self.delivered.offered(id, now);
             }
             // The copy stays with its sender, which goes on.
             Case::Seen => {}
-            Case::New | Case::Search if v.owner => {
+            Case::New | Case::Search if a.owner => {
                 self.arrive(id, d, now, emit);
             }
-            Case::New | Case::Search => self.send_on(d, v.place, now, emit),
+            Case::New | Case::Search => self.send_on(d, room.place, now, emit),
         }
     }
 
@@ -1215,12 +1257,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// here, since its sender is done with it.
     pub(super) fn taken(&mut self, take: Take, now: Instant, emit: &mut dyn FnMut(Action)) {
         let d = take.data(self.me());
-        let v = self.verdict(&d, Duration::ZERO, false, now);
-        if let Some(why) = v.refusal {
-            self.drop_msg(d.msg_id(), why, emit);
-            return;
+        match self.when_taken(&d, now) {
+            Ok((a, room)) => self.act_on(&d, a, room, now, emit),
+            Err(why) => self.drop_msg(d.msg_id(), why, emit),
         }
-        self.act_on(&d, v, now, emit);
     }
 
     /// Report a DATA that a reply given up left untaken: refused, for its
