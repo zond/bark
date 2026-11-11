@@ -3,8 +3,8 @@
 //!
 //! Sources: SX1261/2 datasheet Rev 1.2 (June 2019), cited as "DS" with the
 //! table or section. Numbers the datasheet does not give are marked as
-//! assumptions to be replaced by Phase 2 bench measurements. Every value is
-//! a default in [`RadioParams`]; scenarios override them.
+//! bench measurements or assumptions. Every value is a default in
+//! [`RadioParams`]; scenarios override them.
 
 use bark_proto::radio::{time_on_air, BANDWIDTH_HZ, RSSI_SETTLE, SPREADING_FACTOR, SYMBOL_TIME};
 use bark_proto::Duration;
@@ -45,26 +45,23 @@ pub const SENSITIVITY_PACKET_BYTES: u8 = 64;
 /// Preamble of the datasheet's sensitivity packet, symbols (DS §3.5).
 pub const SENSITIVITY_PREAMBLE_SYMBOLS: u16 = 8;
 
-/// Same-SF capture threshold, dB: DS Table 3-8 `CCR_L` at SF7, measured
-/// with a tone, no SF5 figure. The bench saw the stronger of two frames
-/// started within one preamble decoded but not by how much
-/// (docs/bench-capture-2026-11-03.md), so this stays a stand-in.
+/// Same-SF capture threshold, dB: DS Table 3-8 `CCR_L` at SF7, with a tone;
+/// a stand-in, as the bench saw capture but not its margin
+/// (docs/bench-capture-2026-11-03.md).
 pub const CAPTURE_DB: f64 = 5.0;
 
-/// A frame at least this much weaker than the frame being received costs
-/// it nothing; a later one less weaker breaks it. Measured on the bench at
-/// SF5 between −4 dB (kept) and −2 dB (mostly lost), resolved to 1 dB, and
-/// with no loss at −3 dB over 111 ms overlaps
+/// A frame at least this much weaker than the one being received costs it
+/// nothing; a later one less weaker breaks it. Bench, SF5: −4 dB kept, −2 dB
+/// mostly lost, no loss at −3 dB over 111 ms overlaps
 /// (docs/bench-capture-2026-11-03.md, "Result", "Two long frames").
 pub const HARMLESS_BELOW_DB: f64 = 3.0;
 
 /// Probability that a receiver picks the wrong one of the 2^SF symbols at
-/// symbol energy to noise density `es_n0` (linear), in white noise. LoRa
-/// symbols are orthogonal and the receiver detects them without phase,
-/// so this is the exact error rate of noncoherent detection of M
-/// orthogonal signals (Proakis and Salehi, Digital Communications, 5th
-/// ed., §4.5): the sum over k of (−1)^(k+1) C(M−1, k) / (k+1) ·
-/// exp(−k/(k+1) · Es/N0).
+/// symbol energy to noise density `es_n0` (linear), in white noise: LoRa
+/// symbols are orthogonal and detected without phase, so this is
+/// noncoherent detection of M orthogonal signals, Σₖ (−1)^(k+1) C(M−1, k) /
+/// (k+1) · exp(−k/(k+1) · Es/N0) (Proakis and Salehi, Digital
+/// Communications, 5th ed., §4.5).
 pub fn symbol_error(es_n0: f64) -> f64 {
     // The alternating sum cancels terms up to C(31, 15) / 16 ≈ 2^24 at
     // SF5, which leaves eight of f64's sixteen digits. At SF6 it would
@@ -308,48 +305,38 @@ pub struct RadioParams {
     /// Assumption: 0 until measured.
     pub cad_miss_probability: f64,
     /// Dwell after the receiver starts on another channel before
-    /// `GetRssiInst` is read, µs. Default `radio::RSSI_SETTLE`, four
-    /// symbol periods, 1024 µs, when the reading is right.
+    /// `GetRssiInst` is read, µs. Default `radio::RSSI_SETTLE`.
     pub rssi_dwell_us: u64,
     /// One `GetRssiInst` over the bus, µs. Measured, 51 µs on the lean
     /// driver (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub rssi_read_us: u64,
-    /// Leaving RX for FS, µs. With `synth_hop_us` and `fs_to_rx_us` it
-    /// makes the retune between two channels: standby, frequency and
-    /// receive, measured 388 µs whatever the hop on the lean driver
-    /// (docs/lean-driver-2026-10-30.md, "Measured on the board"). The
-    /// sum is measured; its split into the three is not.
+    /// Leaving RX for FS, µs: half the retune (standby, frequency, receive),
+    /// measured 388 µs whatever the hop; the split is not measured
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub rx_to_fs_us: u64,
     /// FS back to RX, µs: the other half of the measured retune, see
     /// `rx_to_fs_us`.
     pub fs_to_rx_us: u64,
-    /// From the decision to transmit to the frame's first symbol, µs:
-    /// the transmit's preparation, standby, the packet parameters, the
-    /// payload and the start, and its excess over the airtime formula.
-    /// Measured on the lean driver: 547 µs to prepare 9 bytes and 794
-    /// for 255, so 602 for a 64-byte frame, and 163 µs of excess
+    /// From the decision to transmit to the frame's first symbol, µs: the
+    /// preparation, measured 547 µs for 9 bytes and 794 for 255, so 602 for
+    /// 64, plus 163 µs over the airtime formula
     /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub rx_to_tx_us: u64,
-    /// Back to listening after a transmission, µs: the receiver's packet
-    /// parameters, the frequency and receive from the standby the
-    /// transmission ends in. Measured, 369 µs on the lean driver
-    /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
+    /// Back to listening after a transmission, µs, from the standby it ends
+    /// in: measured 369 µs (docs/lean-driver-2026-10-30.md, "Measured on
+    /// the board").
     pub stby_to_rx_us: u64,
     /// Synthesiser hop on top of the retune, µs: 0, since the measured
     /// retune does not grow with the hop (see `rx_to_fs_us`).
     pub synth_hop_us: u64,
     /// Preparing a listen-before-talk from listening, µs: standby, the
-    /// frequency, the CAD's parameters and its start. Measured 430 µs
-    /// on the lean driver with the CAD's parameters sent before each CAD
+    /// frequency, the CAD's parameters and its start, measured 430 µs
     /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub lbt_prepare_us: u64,
     /// From the CAD's end to listening on the resting channel, µs: the
-    /// result read and cleared, the frequency, receive, and the
-    /// oscillator's restart from the standby a CAD ends in, programmed
-    /// with the restart's probed delay since it stopped under a
-    /// millisecond before (`bark_driver::tcxo`). Measured, 505 to 515 µs on the
-    /// lean driver (docs/lean-driver-2026-10-30.md, "Measured on the
-    /// board").
+    /// result read and cleared, the frequency, receive and the oscillator's
+    /// restart (`bark_driver::tcxo`), measured 505 to 515 µs
+    /// (docs/lean-driver-2026-10-30.md, "Measured on the board").
     pub lbt_return_us: u64,
     /// Cut-off below sensitivity, in dB, under which a link is not stored.
     /// Default 10 dB: −129 dBm, 12.5 dB under the noise floor, where one

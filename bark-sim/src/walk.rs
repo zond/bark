@@ -1,14 +1,7 @@
-//! Walking nodes (docs/simulator-design.md §3.7, "Movement").
-//!
-//! A share of the sleepy nodes walk: each stops indoors at a point for a
-//! while, then walks outdoors in a straight line to another, and so on.
-//! Their links cannot be stored, since they change as the node moves, so
-//! they are worked out when a frame needs them, from the same path loss as
-//! the stored ones, a shadowing that varies over the walker's position and
-//! a fading that varies over time, faster while it walks.
-//!
-//! Every link with a walker at either end is worked out here; the stored
-//! table holds none.
+//! Walking and riding nodes (docs/simulator-design.md §3.7, "Movement",
+//! "Vehicles"). Their links change as they move, so the stored table holds
+//! none: every link with a walker at either end is worked out here, when a
+//! frame needs it.
 
 use crate::geo::{Grid, Xy};
 use crate::links::{LinkParams, Site, SHADOW_TRUNCATE_SIGMA};
