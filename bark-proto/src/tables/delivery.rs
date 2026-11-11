@@ -33,6 +33,7 @@ use crate::position::Position;
 use crate::radio::Channel;
 use crate::tables::fixed::FixedVec;
 use crate::tables::heard::HEARD;
+use crate::tables::send_queue::Message;
 use crate::time::{Duration, Instant};
 use crate::wire::MAX_PAYLOAD;
 
@@ -122,6 +123,11 @@ impl Queued {
     /// The payload.
     pub fn payload(&self) -> &[u8] {
         &self.payload[..self.len as usize]
+    }
+
+    /// The message.
+    pub fn message(&self) -> Message {
+        Message::new(self.dst_pos, self.node, self.payload())
     }
 
     /// Whether it waits for a neighbour leaving the air, not for

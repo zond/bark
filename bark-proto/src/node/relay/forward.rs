@@ -1,194 +1,32 @@
-//! Forwarding (spec "Forwarding"): the node's part of the depth-first search, the
-//! owner rule, and the per-hop transfer of its send queue.
+//! Forwarding (spec "Forwarding"): what a node does with a DATA addressed
+//! to it, and the hand-overs of its send queue.
 //!
-//! A node owns a message addressed to its own ID wherever it is (spec
-//! "Owner"). A message that reaches the owner of its position and is for
-//! another node waits in the delivery queue until that node, a sleepy one
-//! this node hears, listens (`relay/delivery.rs`); it goes to it as DATA
-//! in the send queue, a hand-over like any other. A sleepy node holds mail
-//! for nobody, so it owns no other node's message and forwards it (spec
-//! "Sleepy nodes"); nor does a sleepy neighbour closer to a destination
-//! keep the owner rule from holding here. The same holds for a carried
-//! node, which also holds mail for nobody (`relay/motion.rs`).
+//! First the types a received DATA is judged by, and three pure functions
+//! that say where a queued entry stands after a failed hand-over
+//! (`failure`), a refused one (`refusal`) and a routing (`way`), with
+//! their table tests at the end of the file. Then the node's methods, in
+//! sections:
 //!
-//! A sleepy neighbour with an anchor is a next hop only as a last resort,
-//! where no other neighbour is left that could take the message but for
-//! a ban, and every DATA to a sleepy neighbour carries the long preamble
-//! (spec "Next hop"). The node a message is addressed to goes first,
-//! though carried and stale, but a sleepy one with an anchor stays a
-//! last resort.
+//! - the send queue's bookkeeping: the hand-over in flight, the wait a
+//!   refusal tells, the gate and admission (spec "Send queue", "Bans");
+//! - the owner and the next hop (spec "Owner", "Next hop");
+//! - receiving DATA, judged when it arrives and checked again when its
+//!   take is final, and messages that enter the send queue from the
+//!   delivery queue (spec "Receiving DATA", "The ACK", "Delivery queue");
+//! - the application's own message (spec "Addresses", "Receiving DATA");
+//! - the hand-over: routing an entry, stamping its count, and what an
+//!   answer or a silence makes of it (spec "Hand-over", "Hop count",
+//!   "Return to parent", "Overload waits");
+//! - the owed reply (spec "The ACK") and the timers.
 //!
-//! # Receiving a DATA packet (spec "Receiving DATA")
-//!
-//! [`Relay::data`] classifies the packet by the six cases of spec "Receiving DATA" in
-//! order and decides whether acting on it is work: sending it on, which
-//! may be a forward or a return, or a delivery. Work to send on first
-//! passes the gate ([`Relay::gate`]): it is routed as it would be from
-//! here now, and so is every message queued, and it is refused if those
-//! that go to the same next hop take longer than [`HOP_WAIT`] to go, by
-//! that neighbour's service time, and one has a count as high or higher,
-//! told when its place in that neighbour's line will be within the budget
-//! (spec "Send queue", "Bans"). It then goes into the
-//! send queue's regular room if it has a place and the bucket holds the
-//! ACK, the airtime of everything queued with the new frame, and the reply
-//! reserve (spec "Receiving DATA", roadmap D29); else into a free hop place numbered no
-//! higher than the packet's count (roadmap D31); else it is refused with
-//! an ACK that says so. A sleepy node's own message, count 0, is refused
-//! too while every neighbour is banned (roadmap D34); one already in the
-//! network is not, since the hop places keep nodes from locking up only
-//! if it moves on.
-//! A new message also needs a place for its record,
-//! which the size of the table guarantees (`tables/records.rs`). A
-//! delivery is refused when
-//! the delivery queue is full, or when the bucket holds less than the
-//! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
-//! owed before acting. A packet that gives no work (cases 1, 3, 4 and 6)
-//! is ACKed from the reply reserve: the message has arrived, the packet
-//! was answered already, a copy held here goes on, or the copy is seen
-//! (below), and a refusal would send its sender on with a second copy. A
-//! relay that cannot afford even the reply stays silent, and its sender
-//! retries.
-//!
-//! A relay owes one reply at a time (`transfer::REPLIES`, roadmap D29). A
-//! packet that arrives while it owes another one, its ACK still waiting
-//! for the channel, is neither taken nor refused: the relay says nothing,
-//! and the sender's retry brings the packet again. A copy of the packet
-//! the owed reply answers is answered by it too.
-//!
-//! The ACK goes at once, without listening first, and the take is final
-//! only when it has gone out: the reply carries the DATA, and the relay
-//! acts on it at the ACK's `TxDone` ([`Relay::taken`]); an ACK that
-//! cannot go out, for want of budget, leaves the packet untaken,
-//! reported as refused for `DropReason::Unanswered`, and the sender's
-//! retry brings it again: a take the sender does not know of would leave
-//! a second copy searching (spec "The ACK", roadmap D93).
-//!
-//! A packet is ACKed without being acted on only where that cannot end the
-//! last copy (roadmap D35). A copy from a node this relay did not hand
-//! the message to, while it holds none, is answered seen (case 6, roadmap
-//! D90): the ACK's seen flag says the relay has the record and no copy,
-//! and the sender keeps the copy, marks this relay tried and goes on, so
-//! a split's copies do not start the search again at every relay they
-//! reach, and no copy ends. The relay counts the sender as tried too: it
-//! has the message, and searches on from its own record. The same packet
-//! again, its seen answer lost, is answered seen again. A return, from a
-//! node in the record's `handed` set or the one being handed to, is taken
-//! on with this relay's own search (case 5), as is a copy for a
-//! destination this relay owns now. A hand-over under way whose frame has
-//! been on air does not count as a copy held here: its receiver may have
-//! taken it, the ACK been lost, and the copy now offered be that one come
-//! back. A message delivered here, or waiting in the delivery queue, is only
-//! ACKed whatever its record says: the delivered window and the delivery
-//! queue remember it, and its record may have made way for newer ones
-//! (spec "Owner").
-//!
-//! # The send queue (spec "Send queue")
-//!
-//! Every packet this relay sends for a message goes through the send
-//! queue, one hand-over in flight at a time ([`IN_FLIGHT`]); each place
-//! carries its own hand-over ([`HandOver`]). A forward is addressed
-//! when its hand-over starts, by the one next-hop function of spec "Next hop",
-//! from the state as it is then; with no candidate left it becomes a
-//! return to the parent, or at the origin a drop. Nothing of the choice
-//! is kept once the hand-over ends: the next routing makes it afresh.
-//! The hop count a packet
-//! carries is stamped at each hand-over's first transmission, the record's
-//! highest count plus one, and repeated by its retries (spec "Hop count").
-//!
-//! Where a frame goes is read at the moment of sending (roadmap D29 rule
-//! 7): before each attempt its channel is the receiver's home as the
-//! neighbour table has it, from the latest heartbeat or packet of that
-//! neighbour, or the heard table for a sleepy node it delivers to. A neighbour that
-//! moves home (spec "Channel moves") between attempts, or while a message waits to come
-//! back to it, is followed.
-//!
-//! A neighbour is tried, marked in the record, only once it has ACKed
-//! the message, taking it or having seen it (roadmap D36, D90). A seen
-//! ACK says the neighbour has the message's record and no copy of it:
-//! the forward is routed again at once from the record, past that
-//! neighbour, by the same choice a return taken from a child gets; a
-//! return answered seen is dropped, its parent having gone on without
-//! it. A neighbour that failed a hand-over stays untried: an unanswered
-//! frame is more often lost than its ACK, so the neighbour most likely
-//! lacks the message; marked tried, it would end its own search if it
-//! later got the message elsewhere and offered it here.
-//!
-//! A busy channel moves nothing (spec "Hand-over" step 2, roadmap D96,
-//! D111). When listen-before-talk gives up on a forward's or a return's
-//! neighbour, the hand-over keeps the neighbour and its transmissions so
-//! far, waits a retry wait and listens again: the channel says nothing
-//! about the neighbour, and after a transmission the neighbour may hold
-//! the message, so offering it to the next candidate would split it, and
-//! dropping a return would lose the last copy. A DATA from the delivery
-//! queue stays there when it fails and waits for its node's next beat;
-//! for it a give-up counts as one of the three attempts, and never as a
-//! failure against the neighbour.
-//!
-//! An ACK that refuses the current hand-over bans its receiver for the
-//! wait it asks, at least [`BAN`], so no message takes it until then
-//! (spec "Bans", roadmap D27, D29, D32). The refused message stays in its
-//! place, a return now as a forward, the refused transmission not
-//! counting as an attempt, and is routed round the refuser while that
-//! ban lasts: the refusal says the refuser's queue that way is full, and
-//! a neighbour with room may sit beside it (roadmap D110). Where no other
-//! is left that is no worse a last resort, it waits for the ban and is
-//! offered to the same neighbour again. For every other message a ban is
-//! a wait and not an exclusion (spec "Next hop").
-//!
-//! A hand-over whose attempts all go unanswered bans its receiver too,
-//! longer after each failure in a row (`tables/neighbours.rs`, roadmap
-//! D42): silence says the channel or the receiver is full, and offering
-//! it the next message at once only adds frames there. The failed
-//! forward waits for the ban and goes to the same neighbour again; a
-//! return waits the same way. Going to the next candidate at once would
-//! send the message the long way round just when the channel is full;
-//! measured, it undoes the ban's gain (roadmap D42).
-//!
-//! Failed, a forward waits for its neighbour while the neighbour ranks
-//! first, however its ban has grown meanwhile; once it is demoted it
-//! ranks behind the others and the message goes elsewhere, and a return
-//! is dropped once its parent is demoted or gone (roadmap D102, D106).
-//! Refused, it goes round the refuser, as above. The demotion, failed hand-overs in a row with no answer
-//! to this relay between ([`DEMOTE_AFTER_FAILURES`]), is the one test
-//! that the neighbour no longer hears this relay, and the neighbour table
-//! holds it for every message alike: the message keeps nothing of it.
-//!
-//! A forward whose next hop is banned waits in its place until the ban
-//! ends, and is routed again then (roadmap D31). It is not returned or
-//! dropped: overload makes a message wait, never end (roadmap D106,
-//! spec "Overload waits"). Only a search exhausted by neighbours tried
-//! returns or drops.
-//! Waiting entries keep their airtime in admission, and the queue hands
-//! over the first entry that is due. The application's own message,
-//! refused, goes round the refuser as a forward does; where no other is
-//! left it waits for the refuser, longer after refusals in a row
-//! ([`hold`]). One for a node this one holds for that finds the delivery
-//! queue full is set aside in its place ([`State::Held`]) until the queue
-//! has a place (spec "Return to parent"). Either way the application is
-//! given no other meanwhile.
-//!
-//! A sleepy node with an anchor hands its own message to the anchor
-//! (spec "A sleepy node's own message", "Packet sender") with count 0, so
-//! that the node that takes it is the origin of its search, takes it only
-//! into its regular room and only while not every neighbour of its is
-//! banned. Overload then stops a new message where it enters (roadmap D31,
-//! D34), and the search never returns to a node that sleeps. A sleepy
-//! node's own message that finds no live neighbour at all waits for one,
-//! routed again every `fade_retry`: a node in a pocket loses its
-//! neighbours by going dark and finds them again.
-//!
-//! No message ends by age on its way (spec "Overload waits", roadmap
-//! D106): the refusals that hold it carry the load back to its origin
-//! instead.
-//!
-//! [`HandOver`]: crate::node::transfer::HandOver
-//! [`DEMOTE_AFTER_FAILURES`]: crate::tables::DEMOTE_AFTER_FAILURES
-//! [`IN_FLIGHT`]: crate::node::transfer::IN_FLIGHT
+//! The radio steps of one hand-over are in `node/transfer.rs`, the
+//! queue's order in `tables/send_queue.rs`, and delivery to sleepy nodes
+//! in `relay/delivery.rs`.
 
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
-use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, IN_FLIGHT};
+use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, Take, IN_FLIGHT};
 use crate::node::Rng;
 use crate::node::{heartbeat_interval, mac};
 use crate::position::Position;
@@ -201,7 +39,7 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD, MAX_HOPS};
-use crate::tables::send_queue::{Kind, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Message, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
 
@@ -224,33 +62,50 @@ enum Case {
     Seen,
 }
 
-/// What a received DATA gives this relay to do, and whether it takes or
-/// refuses it (spec "Receiving DATA"), decided before the reply and acted
-/// on after it where the take waits for the ACK.
+/// What a received DATA is to this relay (spec "Receiving DATA").
 #[derive(Clone, Copy, Debug)]
-struct Verdict {
+struct Arrival {
     case: Case,
     /// The sender's neighbour-table slot.
     slot: Option<usize>,
-    /// For a copy of a message the relay has a record of: whether it came
-    /// from a node that has the message from this relay, whether it
-    /// merges with a copy held here, and whether it is answered seen.
-    copy: Option<(bool, bool, bool)>,
+    /// A copy of a message this relay has a record of that has not arrived
+    /// here, other than its last packet again.
+    copy: bool,
+    /// From a node that has the message from this relay: a return.
+    returned: bool,
     /// This relay owns the destination, and acts on the packet.
     owner: bool,
     /// A sleepy node's own message, count 0, whose search starts here.
     fresh: bool,
+}
+
+impl Arrival {
+    /// Whether the packet is work: sent on or delivered (cases 2 and 5).
+    fn acts(&self) -> bool {
+        matches!(self.case, Case::New | Case::Search)
+    }
+}
+
+/// Where a packet taken goes.
+#[derive(Clone, Copy, Debug, Default)]
+struct Room {
     /// Where a new record goes.
     record_at: Option<usize>,
-    /// The send-queue place it takes; 0 the regular room.
+    /// The send-queue place of one to send on; 0 the regular room.
     place: u8,
+}
+
+/// Whether a DATA is taken, decided when it arrives (spec "Receiving DATA").
+#[derive(Clone, Copy, Debug)]
+struct Verdict {
+    arrival: Arrival,
     /// Why it is refused, if it is.
     refusal: Option<DropReason>,
-    /// The pushback its way on gave, for the wait a refusal tells.
-    pushback: Duration,
     /// Its way on, for a refusal's place in that way's line.
     way: Option<NodeId>,
-    /// What the gate found on that way.
+    /// The rest of the ban on its way on, for the wait a refusal tells.
+    pushback: Duration,
+    /// What the gate found on its way on.
     gate: Option<Gate>,
 }
 
@@ -267,10 +122,110 @@ struct Gate {
     over: bool,
 }
 
-impl Verdict {
-    /// Whether the packet is work: sent on or delivered (cases 2 and 5).
-    fn acts(&self) -> bool {
-        matches!(self.case, Case::New | Case::Search)
+/// Where an entry whose hand-over failed stands (spec "Hand-over" step 6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Failure {
+    /// A sleepy node's own message, handed to its anchor.
+    OwnAtAnchor,
+    /// A forward.
+    Forward,
+    /// A return whose parent is a neighbour not demoted.
+    Return,
+    /// A return whose parent is demoted or gone.
+    ReturnWithoutParent,
+    /// A delivery in its node's window.
+    Deliver,
+    /// A delivery whether or not its node is in a window.
+    Direct,
+}
+
+/// Where an entry of `kind` stands once its hand-over failed:
+/// `own_at_anchor`, a sleepy node's own message; `gone`, its receiver is
+/// demoted or no longer in the neighbour table.
+fn failure(kind: Kind, own_at_anchor: bool, gone: bool) -> Failure {
+    match kind {
+        Kind::Deliver => Failure::Deliver,
+        Kind::Direct => Failure::Direct,
+        _ if own_at_anchor => Failure::OwnAtAnchor,
+        Kind::Forward => Failure::Forward,
+        Kind::Return if gone => Failure::ReturnWithoutParent,
+        Kind::Return => Failure::Return,
+    }
+}
+
+/// What a refusal of its hand-over makes of an entry (spec "Bans").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Refusal {
+    /// Waits in the delivery queue for its refuser, which is leaving the
+    /// air and where it may end.
+    WaitsForRefuser,
+    /// A sleepy node's own message, given back to its application.
+    GivenBack,
+    /// A forward or a return, which goes round its refuser.
+    GoesRound,
+    /// A delivery, which has no other receiver: it waits.
+    Waits,
+}
+
+/// What a refusal makes of an entry of `kind`: `waits_for_refuser`, its
+/// refuser is leaving the air where it may end and the delivery queue
+/// has a place; `sleepy_own`, a sleepy node's own message.
+fn refusal(kind: Kind, waits_for_refuser: bool, sleepy_own: bool) -> Refusal {
+    match kind {
+        Kind::Deliver | Kind::Direct => Refusal::Waits,
+        _ if waits_for_refuser => Refusal::WaitsForRefuser,
+        Kind::Forward if sleepy_own => Refusal::GivenBack,
+        Kind::Forward | Kind::Return => Refusal::GoesRound,
+    }
+}
+
+/// Where routing sends a queued forward now: `N` its next hop, `P` its
+/// parent (spec "Next hop", "Return to parent").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Way<N, P> {
+    /// It ends here.
+    EndsHere,
+    /// It ends here, the application's own message, with no place here
+    /// yet: set aside until there is.
+    SetAside,
+    /// Its next hop, or its parent, is banned until then.
+    Banned(Instant),
+    /// To its next hop.
+    Next(N),
+    /// Its origin holds it until then.
+    WaitsUntil(Instant),
+    /// Back to its parent.
+    Parent(P),
+    /// No candidate is left and it has no parent: its search ends.
+    Exhausted,
+}
+
+/// Where routing sends a queued forward at `now`: `ends_here`, this node
+/// owns its destination; `room_here`, it has a place here if it ends
+/// here; `next`, its next hop and when that one's ban ends; `waits`,
+/// until when its origin holds it with no next hop; `parent`, its parent
+/// and when that one's ban ends.
+fn way<N, P>(
+    ends_here: bool,
+    room_here: bool,
+    next: Option<(N, Instant)>,
+    waits: Option<Instant>,
+    parent: Option<(P, Instant)>,
+    now: Instant,
+) -> Way<N, P> {
+    if ends_here {
+        return match room_here {
+            true => Way::EndsHere,
+            false => Way::SetAside,
+        };
+    }
+    match (next, waits, parent) {
+        (Some((_, ban)), _, _) if ban > now => Way::Banned(ban),
+        (Some((n, _)), _, _) => Way::Next(n),
+        (None, Some(t), _) => Way::WaitsUntil(t),
+        (None, None, Some((_, ban))) if ban > now => Way::Banned(ban),
+        (None, None, Some((p, _))) => Way::Parent(p),
+        (None, None, None) => Way::Exhausted,
     }
 }
 
@@ -305,11 +260,6 @@ fn reply_frame(o: Owed) -> Frame {
     match o.reply {
         Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
     }
-}
-
-/// `d` as a frame on `channel` with `preamble` symbols.
-fn data_frame(d: &Data<'_>, channel: Channel, preamble: u16) -> Frame {
-    mac::frame(&Packet::Data(*d), channel, preamble)
 }
 
 /// A full DATA frame with the long preamble, 372.8 ms
@@ -532,24 +482,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if o.kind.delivers() || o.held() {
             return None;
         }
-        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
-            return None;
-        };
         if o.in_flight() {
-            return Some(d.dst_hop);
+            return Some(o.to);
         }
-        self.heading(o, &d, now).map(|(to, _, _)| to)
+        self.heading(o, now).map(|(to, _, _)| to)
     }
 
-    /// Where queued forward `o`, carrying `d`, goes if routed now, when
-    /// that one's ban ends, and where its record is: `None` if this relay
-    /// owns its destination now, or it has no record.
-    fn heading(&self, o: &Outgoing, d: &Data<'_>, now: Instant) -> Option<(NodeId, Instant, u16)> {
-        let (at, record) = self.records.find(d.msg_id(), o.record)?;
-        if self.ends_here((d.dst_id, d.dst_pos), Some(record), o.passed, None, now) {
+    /// Where queued forward `o` goes if routed now, when that one's ban
+    /// ends, and where its record is: `None` if this relay owns its
+    /// destination now, or it has no record.
+    fn heading(&self, o: &Outgoing, now: Instant) -> Option<(NodeId, Instant, u16)> {
+        let (at, record) = self.records.find(o.msg_id(), o.record)?;
+        let dst = (o.message.dst_id, o.message.dst_pos);
+        if self.ends_here(dst, Some(record), o.passed, None, now) {
             return None;
         }
-        self.heads_to(record, o.passed, o.avoid, (d.dst_id, d.dst_pos), now)
+        self.heads_to(record, o.passed, o.avoid, dst, now)
             .map(|(to, ban)| (to, ban, at))
     }
 
@@ -578,10 +526,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if o.kind != Kind::Forward {
                 continue;
             }
-            let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
-                continue;
-            };
-            if let Some((to, ban, at)) = self.heading(o, &d, now) {
+            if let Some((to, ban, at)) = self.heading(o, now) {
                 hints[i] = Some(at);
                 toward[i] = self.neighbours.slot_of(to).map_or(0, |s| s as u8 + 1);
                 if ban > now {
@@ -621,10 +566,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// times the neighbour table's entries per call, and no allocation.
     fn gate(&self, id: MsgId, to: NodeId, hops: u8, now: Instant) -> Gate {
         let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
-        for o in self.queue.iter().filter(|o| o.msg_id() != Some(id)) {
+        for o in self.queue.iter().filter(|o| o.msg_id() != id) {
             if self.bound_for(o, now) == Some(to) {
                 ahead += 1;
-                barred |= o.hops().saturating_sub(1) >= hops;
+                barred |= o.hops.saturating_sub(1) >= hops;
                 oldest = Some(oldest.map_or(o.since, |t| t.min(o.since)));
             }
         }
@@ -665,7 +610,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
     ) -> Result<u8, DropReason> {
         let current = self.queue.current().filter(|_| freed);
-        let current_air = current.map_or(Duration::ZERO, |o| mac::airtime(&o.frame));
+        let current_air = current.map_or(Duration::ZERO, Outgoing::airtime);
         let queued = self.queue.airtime() - current_air;
         let regular = self.regular() - usize::from(current.is_some_and(|o| o.place == 0));
         let why = if regular >= SEND_QUEUE {
@@ -769,10 +714,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether this relay owns the destination `dst` of another node's
-    /// message (spec "Owner"). A sleepy node owns none (module
-    /// documentation), nor does a carried one, nor one leaving to turn
-    /// sleepy (`relay/power.rs`): they hold mail for nobody, and
-    /// a neighbour that is carried keeps no other from owning.
+    /// message (spec "Owner"). A sleepy node owns none, nor does a
+    /// carried one, nor one leaving to turn sleepy (`relay/power.rs`):
+    /// they hold mail for nobody, and a neighbour that is carried keeps
+    /// no other from owning.
     fn owns(&self, dst: Position, now: Instant) -> bool {
         if self.sleepy() || self.motion.carried || self.leaving() {
             return false;
@@ -964,7 +909,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A packet from the relay this one is handing the message to shows
         // that it took it, and ends that hand-over, which frees its place.
         let completes = !repeat && self.handing(id, d.src_hop);
-        let v = self.verdict(&d, ACK_AIRTIME, completes, now);
+        let v = self.verdict(&d, completes, now);
         let deadline = now + self.config.ack_timeout;
         let air = self.data_airtime(d.payload.len());
         if let Some(g) = v.gate {
@@ -983,7 +928,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             to: d.src_hop,
             refused: v.refusal.is_some(),
             wait,
-            seen: v.case == Case::Seen,
+            seen: v.arrival.case == Case::Seen,
         };
         let sending = self.sending_reply();
         if !self
@@ -1030,10 +975,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // (spec "Delivery").
         let renews = d.dst_id == self.me();
         // The reply carries a packet with work until it has gone out
-        // (module documentation); one that is no work is acted on now:
-        // nothing is lost if its ACK never goes.
-        let later = v.acts();
-        let takes = later.then(|| data_frame(&d, d.sender_home, MIN_PREAMBLE_SYMBOLS));
+        // (spec "The ACK"); one that is no work is acted on now: nothing
+        // is lost if its ACK never goes.
+        let later = v.arrival.acts();
+        let takes = later.then(|| Take::of(&d));
         self.radio
             .replies
             .owe(reply, d.sender_home, deadline, renews, takes, sending, now);
@@ -1042,197 +987,225 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.handover_done(now, emit);
         }
         if !later {
-            self.act_on(&d, v, now, emit);
+            self.act_on(&d, v.arrival, Room::default(), now, emit);
         }
     }
 
-    /// Whether `d` is taken or refused, and what it gives this relay to do
-    /// (spec "Receiving DATA"). `spend`: what the ACK that takes it will
-    /// cost the bucket, nothing once it has gone, when the gate is not
-    /// asked again; `completes`: it comes
-    /// from the neighbour being handed the message, whose hand-over ends
-    /// first, giving up its place.
-    fn verdict(&self, d: &Data<'_>, spend: Duration, completes: bool, now: Instant) -> Verdict {
-        let id = d.msg_id();
-        // Count 0: a sleepy node's own message, fresh work that starts its
-        // search here (spec "Packet sender", "Hop count").
-        let fresh = d.hops == 0;
-        let repeat = self
-            .records
-            .get(id)
-            .is_some_and(|r| r.repeats(d.src_hop, d.hops));
-        // From a neighbour that has the message from this relay: a return
-        // (spec "Receiving DATA" case 5). The one being handed to has it
-        // too, though its ACK has not come.
-        let slot = self.neighbours.slot_of(d.src_hop);
-        let returned = completes
-            || self
-                .records
-                .get(id)
-                .zip(slot)
-                .is_some_and(|(r, s)| r.handed(s));
-        let owner_here = self.ends_here(
-            (d.dst_id, d.dst_pos),
-            self.records.get(id),
-            0,
-            Some(d.src_hop),
-            now,
-        );
-        let case = self.classify(id, repeat, returned, owner_here);
-        let copy = self
-            .records
-            .get(id)
-            .filter(|r| !repeat && !r.arrived())
-            .map(|_| (returned, case == Case::AckOnly, case == Case::Seen));
-        let acts = matches!(case, Case::New | Case::Search);
-        let owner = acts && owner_here;
-        let sends = acts && !owner;
-        let record_at = match case {
-            Case::New => self.record_place(),
-            _ => None,
-        };
-        let mut place = 0;
-        // Where it would go from here now, as the record it would have
-        // routes it: its sender, a sleepy node handing over its own or a
-        // child returning it, has it.
-        let heads = if sends {
-            let mut probe = match self.records.get(id) {
-                Some(r) if case == Case::Search => *r,
-                _ => Record::new(
-                    id,
-                    (!fresh).then_some((d.src_hop, d.sender_home)),
-                    d.hops,
-                    now,
-                ),
-            };
-            if let Some(s) = slot.filter(|_| fresh || case == Case::Search) {
-                probe.handed_to(s);
-            }
-            self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
-        } else {
+    /// Whether `d`, just arrived, is taken or refused, and what it is
+    /// (spec "Receiving DATA"), with the ACK that would take it still to
+    /// pay for. `completes`: it comes from the neighbour being handed the
+    /// message, whose hand-over ends first, giving up its place.
+    fn verdict(&self, d: &Data<'_>, completes: bool, now: Instant) -> Verdict {
+        let arrival = self.arrival(d, completes, now);
+        let heads = self.way_on(d, &arrival, now);
+        let gate = heads.map(|(to, _)| self.gate(d.msg_id(), to, d.hops, now));
+        let refusal = if !arrival.acts() {
             None
-        };
-        // The rest of the ban on its way on (spec "Bans"). Fresh work is
-        // refused while it lasts, and told how long, as spec "Receiving DATA"
-        // says. A message already in the network is not: refused for
-        // that, its sender would send it round the pushback, and around
-        // a ring of relays the refusals kept each other up.
-        let pushback = heads.map_or(Duration::ZERO, |(_, ban)| ban.since(now));
-        // Not again once the take is final: the sender is done with it.
-        let gate = heads
-            .filter(|_| spend > Duration::ZERO)
-            .map(|(to, _)| self.gate(id, to, d.hops, now));
-        let refusal = if !acts {
-            None
-        } else if self.draining() && spend > Duration::ZERO {
-            // A take answered before the drain began stands: its sender
-            // is done with the message.
+        } else if self.draining() {
             Some(DropReason::Draining)
-        } else if case == Case::New && record_at.is_none() {
-            Some(DropReason::NoRecord)
-        } else if gate.is_some_and(|g| g.over) {
-            Some(DropReason::SameHop)
-        } else if sends {
-            let air = self.data_airtime(d.payload.len());
-            match self.admit(air, spend, d.hops, completes, now) {
-                Ok(_) if fresh && self.bans_end(now).is_some() => Some(DropReason::Banned),
-                Ok(_) if fresh && pushback > Duration::ZERO => Some(DropReason::Banned),
-                Ok(k) => {
-                    place = k;
-                    None
-                }
-                Err(why) => Some(why),
-            }
-        } else if owner && !self.has_room_for(d.dst_id, now) {
-            Some(DropReason::DeliveryFull)
-        } else if !self.affordable(spend, now) {
-            Some(DropReason::Budget)
         } else {
-            None
+            self.room(d, &arrival, heads, gate, ACK_AIRTIME, completes, now)
+                .err()
         };
         Verdict {
-            case,
-            slot,
-            copy,
-            owner,
-            fresh,
-            record_at,
-            place,
+            arrival,
             refusal,
-            pushback,
             way: heads.map(|(to, _)| to),
+            pushback: heads.map_or(Duration::ZERO, |(_, ban)| ban.since(now)),
             gate,
         }
     }
 
-    /// Act on `d`, answered with verdict `v`: its record, then its work.
-    fn act_on(&mut self, d: &Data<'_>, v: Verdict, now: Instant, emit: &mut dyn FnMut(Action)) {
+    /// What remains to be checked of `d` once its take is final, its ACK
+    /// gone out (spec "The ACK"): what it is now, since a hand-over may
+    /// have ended or the message arrived while the ACK waited for the
+    /// radio, and whether the room it takes is still there. Not the gate
+    /// nor the drain: its sender is done with it.
+    fn when_taken(&self, d: &Data<'_>, now: Instant) -> Result<(Arrival, Room), DropReason> {
+        let arrival = self.arrival(d, false, now);
+        if !arrival.acts() {
+            return Ok((arrival, Room::default()));
+        }
+        let heads = self.way_on(d, &arrival, now);
+        self.room(d, &arrival, heads, None, Duration::ZERO, false, now)
+            .map(|room| (arrival, room))
+    }
+
+    /// What `d` is to this relay: its case of spec "Receiving DATA" and
+    /// what that was decided from. `completes`: as for [`Self::verdict`].
+    fn arrival(&self, d: &Data<'_>, completes: bool, now: Instant) -> Arrival {
         let id = d.msg_id();
-        if v.case == Case::New {
-            let parent = (!v.fresh).then_some((d.src_hop, d.sender_home));
+        let record = self.records.get(id);
+        let repeat = record.is_some_and(|r| r.repeats(d.src_hop, d.hops));
+        // From a neighbour that has the message from this relay: a return
+        // (spec "Receiving DATA" case 5). The one being handed to has it
+        // too, though its ACK has not come.
+        let slot = self.neighbours.slot_of(d.src_hop);
+        let returned = completes || record.zip(slot).is_some_and(|(r, s)| r.handed(s));
+        let owner = self.ends_here((d.dst_id, d.dst_pos), record, 0, Some(d.src_hop), now);
+        let case = self.classify(id, repeat, returned, owner);
+        Arrival {
+            case,
+            slot,
+            copy: record.is_some_and(|r| !repeat && !r.arrived()),
+            returned,
+            owner: owner && matches!(case, Case::New | Case::Search),
+            // Count 0: a sleepy node's own message, fresh work that starts
+            // its search here (spec "Packet sender", "Hop count").
+            fresh: d.hops == 0,
+        }
+    }
+
+    /// Where the message of `d`, to send on, would go from here now, and
+    /// when that one's ban ends: routed as the record it would have, whose
+    /// sender, a sleepy node handing over its own or a child returning
+    /// it, has it.
+    fn way_on(&self, d: &Data<'_>, a: &Arrival, now: Instant) -> Option<(NodeId, Instant)> {
+        if !a.acts() || a.owner {
+            return None;
+        }
+        let id = d.msg_id();
+        let mut probe = match self.records.get(id) {
+            Some(r) if a.case == Case::Search => *r,
+            _ => Record::new(
+                id,
+                (!a.fresh).then_some((d.src_hop, d.sender_home)),
+                d.hops,
+                now,
+            ),
+        };
+        if let Some(s) = a.slot.filter(|_| a.fresh || a.case == Case::Search) {
+            probe.handed_to(s);
+        }
+        self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
+    }
+
+    /// The room a packet with work takes, or why there is none (spec
+    /// "Receiving DATA"): a place for a new record; for one to send on,
+    /// past the gate, a send-queue place, and for fresh work no ban on its
+    /// way on, `heads`; for one to deliver, a place in the delivery queue
+    /// or the inbox and the budget. `spend`: the ACK that takes it, if it
+    /// has not gone out; `gate`: asked only then; `completes`: as for
+    /// [`Self::verdict`].
+    #[allow(clippy::too_many_arguments)]
+    fn room(
+        &self,
+        d: &Data<'_>,
+        a: &Arrival,
+        heads: Option<(NodeId, Instant)>,
+        gate: Option<Gate>,
+        spend: Duration,
+        completes: bool,
+        now: Instant,
+    ) -> Result<Room, DropReason> {
+        let record_at = match a.case {
+            Case::New => self.record_place(),
+            _ => None,
+        };
+        if a.case == Case::New && record_at.is_none() {
+            return Err(DropReason::NoRecord);
+        }
+        if gate.is_some_and(|g| g.over) {
+            return Err(DropReason::SameHop);
+        }
+        if a.owner {
+            if !self.has_room_for(d.dst_id, now) {
+                return Err(DropReason::DeliveryFull);
+            }
+            if !self.affordable(spend, now) {
+                return Err(DropReason::Budget);
+            }
+            return Ok(Room {
+                record_at,
+                place: 0,
+            });
+        }
+        let air = self.data_airtime(d.payload.len());
+        let place = self.admit(air, spend, d.hops, completes, now)?;
+        // Fresh work is refused while its way on is banned, and told how
+        // long (spec "Receiving DATA"). A message already in the network
+        // is not: refused for that, its sender would send it round the
+        // pushback, and around a ring of relays the refusals kept each
+        // other up.
+        let banned = heads.is_some_and(|(_, ban)| ban > now);
+        if a.fresh && (self.bans_end(now).is_some() || banned) {
+            return Err(DropReason::Banned);
+        }
+        Ok(Room { record_at, place })
+    }
+
+    /// Act on `d`, which is `a` to this relay and taken into `room`: its
+    /// record, then its work.
+    fn act_on(
+        &mut self,
+        d: &Data<'_>,
+        a: Arrival,
+        room: Room,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
+        let id = d.msg_id();
+        if a.case == Case::New {
+            let parent = (!a.fresh).then_some((d.src_hop, d.sender_home));
             let mut record = Record::new(id, parent, d.hops, now);
-            if v.owner {
+            if a.owner {
                 record.set_arrived();
             }
-            if let (true, Some(slot)) = (v.fresh, v.slot) {
+            if let (true, Some(slot)) = (a.fresh, a.slot) {
                 // The sleepy node it came from has it, and would end the
                 // search there: it is tried.
                 record.handed_to(slot);
             }
-            if let Some(at) = v.record_at {
+            if let Some(at) = room.record_at {
                 self.records.put(at, record);
             }
         } else if let Some(r) = self.records.get_mut(id) {
-            if v.case == Case::Seen {
+            if a.case == Case::Seen {
                 // The sender has the message and searches on from its own
                 // record; it need not be offered this one.
                 r.seen(d.src_hop, d.hops, now);
-                if let Some(s) = v.slot {
+                if let Some(s) = a.slot {
                     r.handed_to(s);
                 }
             } else {
                 r.received(d.src_hop, d.hops, now);
             }
-            if v.owner {
+            if a.owner {
                 r.set_arrived();
             }
         }
-        if let Some((returned, merged, seen)) = v.copy {
+        if a.copy {
             emit(Action::Trace(Trace::Copy {
                 msg_id: id,
-                returned,
-                merged,
-                seen,
+                returned: a.returned,
+                merged: a.case == Case::AckOnly,
+                seen: a.case == Case::Seen,
             }));
         }
-        match v.case {
+        match a.case {
             Case::AckOnly => {
                 self.delivered.offered(id, now);
             }
             // The copy stays with its sender, which goes on.
             Case::Seen => {}
-            Case::New | Case::Search if v.owner => {
+            Case::New | Case::Search if a.owner => {
                 self.arrive(id, d, now, emit);
             }
-            Case::New | Case::Search => self.send_on(d, v.place, now, emit),
+            Case::New | Case::Search => self.send_on(d, room.place, now, emit),
         }
     }
 
-    /// The ACK that takes the DATA in `frame` has left the antenna: the
+    /// The ACK that takes the DATA of `take` has left the antenna: the
     /// take is final, and the relay acts on it now (spec "The ACK").
     /// Nothing has changed since it was answered taken but the ACK's own
     /// airtime, spent; should the room be gone after all, the copy ends
     /// here, since its sender is done with it.
-    pub(super) fn taken(&mut self, frame: Frame, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let Ok(Packet::Data(d)) = Packet::decode(frame.payload()) else {
-            return;
-        };
-        let v = self.verdict(&d, Duration::ZERO, false, now);
-        if let Some(why) = v.refusal {
-            self.drop_msg(d.msg_id(), why, emit);
-            return;
+    pub(super) fn taken(&mut self, take: Take, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let d = take.data(self.me());
+        match self.when_taken(&d, now) {
+            Ok((a, room)) => self.act_on(&d, a, room, now, emit),
+            Err(why) => self.drop_msg(d.msg_id(), why, emit),
         }
-        self.act_on(&d, v, now, emit);
     }
 
     /// Report a DATA that a reply given up left untaken: refused, for its
@@ -1288,7 +1261,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue
             .iter()
             .enumerate()
-            .any(|(i, o)| Some(i) != current && o.msg_id() == Some(id))
+            .any(|(i, o)| Some(i) != current && o.msg_id() == id)
     }
 
     /// Whether the current hand-over is of message `id` to `to`, sent at
@@ -1296,7 +1269,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn handing(&self, id: MsgId, to: NodeId) -> bool {
         self.in_flight()
             .filter(|o| o.transmitted())
-            .and_then(|o| o.expect(self.me()))
+            .map(|o| o.expect(self.me()))
             == Some(self.expect(id, to))
     }
 
@@ -1308,7 +1281,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut held = [MsgId(0); HELD + 1];
         let mut n = 0;
         if self.records.is_full() {
-            for id in self.queue.iter().filter_map(Outgoing::msg_id) {
+            for id in self.queue.iter().map(Outgoing::msg_id) {
                 held[n] = id;
                 n += 1;
             }
@@ -1331,20 +1304,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::HopCap, emit);
             return;
         }
-        let out = Data {
-            sender_home: self.home,
-            dst_hop: NodeId::NONE,
-            src_hop: self.me(),
-            hops: d.hops + 1,
-            ..*d
-        };
         let out = Outgoing {
             place,
             since: now,
-            ..Outgoing::new(
-                data_frame(&out, self.home, self.forward_preamble()),
-                Kind::Forward,
-            )
+            ..self.onward(Message::of(d), d.hops)
         };
         if self.queue.push(out).is_err() {
             self.drop_msg(id, DropReason::SendQueueFull, emit);
@@ -1417,9 +1380,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::HopCap, emit);
                 continue;
             }
-            let frame = self.onward(q.dst_pos, q.node, q.payload(), hops);
-            let air = mac::airtime(&frame);
-            let Ok(place) = self.admit(air, Duration::ZERO, hops, false, now) else {
+            let out = self.onward(q.message(), hops);
+            let Ok(place) = self.admit(out.airtime(), Duration::ZERO, hops, false, now) else {
                 return;
             };
             self.records.forget(id);
@@ -1428,7 +1390,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 return;
             };
             self.records.put(at, Record::new(id, None, hops, now));
-            if !self.push_forward(frame, place, now) {
+            if !self.push_forward(out, place, now) {
                 return;
             }
             self.delivery.remove(id);
@@ -1436,45 +1398,43 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The forward `out`, refused by `by`, waits for it in the delivery
-    /// queue if `by` is leaving the air and the message may end there
-    /// ([`Self::ends_at`]): sent round it, it would only wander among its
-    /// neighbours to the hop cap (spec "Delivery queue", roadmap D186).
-    /// Not at a node that is sleepy or leaving to turn sleepy, which holds
+    /// Whether the forward `out`, refused by `by`, waits for it in the
+    /// delivery queue: `by` is leaving the air and the message may end
+    /// there ([`Self::ends_at`]); sent round it, it would only wander
+    /// among its neighbours to the hop cap (spec "Delivery queue"). Not
+    /// at a node that is sleepy or leaving to turn sleepy, which holds
     /// mail for nobody, nor where the queue has no place; then it goes
-    /// round as any refused forward. Returns whether it waits.
-    fn wait_for(
-        &mut self,
-        out: &Outgoing,
-        by: NodeId,
-        now: Instant,
-        emit: &mut dyn FnMut(Action),
-    ) -> bool {
+    /// round as any refused forward.
+    fn waits_for_refuser(&self, out: &Outgoing, by: NodeId, now: Instant) -> bool {
         if self.sleepy() || self.leaving() {
             return false;
         }
-        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
-            return false;
-        };
+        let m = &out.message;
         let ends = self
             .neighbours
             .get(by)
-            .is_some_and(|n| n.leaving && self.ends_at(n, (d.dst_id, d.dst_pos)));
-        let id = d.msg_id();
-        let Some(mut q) = Queued::new(id, d.dst_pos, d.dst_id, d.payload, now).filter(|_| ends)
-        else {
-            return false;
+            .is_some_and(|n| n.leaving && self.ends_at(n, (m.dst_id, m.dst_pos)));
+        let id = m.id();
+        ends && (self.delivery.has_room(now) || self.delivery.iter().any(|q| q.msg_id == id))
+    }
+
+    /// The current forward `out` leaves the send queue to wait for `by`
+    /// in the delivery queue ([`Self::waits_for_refuser`]).
+    fn wait_for(&mut self, out: &Outgoing, by: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let m = &out.message;
+        let id = m.id();
+        let Some(mut q) = Queued::new(id, m.dst_pos, m.dst_id, m.payload(), now) else {
+            return;
         };
         // The count it arrived with, which it goes on from (`release`).
         q.hops = self
             .records
             .get(id)
-            .map_or(d.hops.saturating_sub(1), Record::highest_hops);
+            .map_or(out.hops.saturating_sub(1), Record::highest_hops);
         q.waits_for = by;
         self.make_room(now, emit);
-        if self.delivery.push(q) == Pushed::Full {
-            return false;
-        }
+        let pushed = self.delivery.push(q);
+        debug_assert!(pushed != Pushed::Full, "a place was found for it");
         self.cancel_handover();
         self.queue.take_current();
         self.forwarding.feed_due = true;
@@ -1486,7 +1446,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             msg_id: id,
             node: by,
         }));
-        true
     }
 
     /// Whether a message that waits for `id` waits no longer at `now`:
@@ -1524,9 +1483,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::HopCap, emit);
                 continue;
             }
-            let frame = self.onward(q.dst_pos, q.node, q.payload(), hops);
-            let air = mac::airtime(&frame);
-            let Ok(place) = self.admit(air, Duration::ZERO, hops, false, now) else {
+            let out = self.onward(q.message(), hops);
+            let Ok(place) = self.admit(out.airtime(), Duration::ZERO, hops, false, now) else {
                 return;
             };
             if self.records.get(id).is_none() {
@@ -1536,7 +1494,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 };
                 self.records.put(at, Record::new(id, None, hops, now));
             }
-            if !self.push_forward(frame, place, now) {
+            if !self.push_forward(out, place, now) {
                 return;
             }
             self.delivery.remove(id);
@@ -1544,35 +1502,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The frame of a message this node sends on as a forward, going on
-    /// from count `hops`, which places it among waiting entries until its
-    /// hand-over stamps the count it goes with (spec "Hop count").
-    pub(super) fn onward(
-        &self,
-        dst_pos: Position,
-        dst_id: NodeId,
-        payload: &[u8],
-        hops: u8,
-    ) -> Frame {
-        let d = Data {
-            sender_home: self.home,
-            dst_hop: NodeId::NONE,
-            src_hop: self.me(),
-            dst_pos,
-            dst_id,
-            hops: hops.saturating_add(1),
-            payload,
-        };
-        data_frame(&d, self.home, self.forward_preamble())
+    /// `message` as a forward this node sends on, going on from count
+    /// `hops`, which places it among waiting entries until its hand-over
+    /// stamps the count it goes with (spec "Hop count"), addressed when
+    /// its hand-over starts.
+    pub(super) fn onward(&self, message: Message, hops: u8) -> Outgoing {
+        Outgoing::new(
+            message,
+            hops.saturating_add(1),
+            NodeId::NONE,
+            self.home,
+            self.forward_preamble(),
+            Kind::Forward,
+        )
     }
 
-    /// Queue `frame`, a forward whose record is in the table, into
-    /// `place`, addressed when its hand-over starts: whether it was.
-    pub(super) fn push_forward(&mut self, frame: Frame, place: u8, now: Instant) -> bool {
+    /// Queue the forward `out`, whose record is in the table, into
+    /// `place`: whether it was.
+    pub(super) fn push_forward(&mut self, out: Outgoing, place: u8, now: Instant) -> bool {
         let out = Outgoing {
             place,
             since: now,
-            ..Outgoing::new(frame, Kind::Forward)
+            ..out
         };
         let pushed = self.queue.push(out).is_ok();
         self.forwarding.feed_due |= pushed;
@@ -1629,20 +1580,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(i) = self.queue.iter().position(Outgoing::held) else {
             return;
         };
-        let room = match Packet::decode(self.queue.iter().nth(i).map_or(&[], |h| h.frame.payload()))
-        {
-            Ok(Packet::Data(d)) => self.has_room_for(d.dst_id, now),
-            _ => true,
-        };
+        let room = self
+            .queue
+            .get(i)
+            .is_none_or(|h| self.has_room_for(h.message.dst_id, now));
         if !room {
             return;
         }
         let Some(h) = self.queue.remove(i) else {
             return;
         };
-        if let Ok(Packet::Data(d)) = Packet::decode(h.frame.payload()) {
-            self.arrive(d.msg_id(), &d, now, emit);
-        }
+        self.arrive(h.msg_id(), &h.data(self.me(), self.home), now, emit);
     }
 
     /// Whether a message for `node` that ends here at `now` finds a place:
@@ -1710,7 +1658,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     state: State::Held,
                     since: now,
                     ..Outgoing::new(
-                        data_frame(&d, self.home, self.forward_preamble()),
+                        Message::of(&d),
+                        d.hops,
+                        NodeId::NONE,
+                        self.home,
+                        self.forward_preamble(),
                         Kind::Forward,
                     )
                 };
@@ -1769,31 +1721,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             };
             let routed = match out.kind {
                 Kind::Forward => self.route(out, now, emit),
-                Kind::Return => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(_)) => Routed::To(out),
-                    _ => Routed::Done,
-                },
+                Kind::Return => Routed::To(out),
                 // Stays in the delivery queue while its node sleeps.
-                Kind::Deliver => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(d)) if self.listening(d.dst_hop, now) || self.early(&out) => {
-                        Routed::To(out)
-                    }
-                    Ok(Packet::Data(d)) => {
-                        emit(Action::Trace(Trace::DeliveryWaits {
-                            msg_id: d.msg_id(),
-                            node: d.dst_hop,
-                            tried: false,
-                        }));
-                        Routed::Done
-                    }
-                    _ => Routed::Done,
-                },
+                Kind::Deliver if self.listening(out.to, now) || self.early(&out) => Routed::To(out),
+                Kind::Deliver => {
+                    emit(Action::Trace(Trace::DeliveryWaits {
+                        msg_id: out.msg_id(),
+                        node: out.to,
+                        tried: false,
+                    }));
+                    Routed::Done
+                }
                 // Goes whether or not its node is in a window
                 // (`relay/delivery.rs`).
-                Kind::Direct => match Packet::decode(out.frame.payload()) {
-                    Ok(Packet::Data(_)) => Routed::To(out),
-                    _ => Routed::Done,
-                },
+                Kind::Direct => Routed::To(out),
             };
             match routed {
                 Routed::To(out) => {
@@ -1857,12 +1798,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// long preamble, to a node not known to be out of reach (spec
     /// "Delivery", `relay/delivery.rs`).
     fn early(&self, out: &Outgoing) -> bool {
-        let to = match Packet::decode(out.frame.payload()) {
-            Ok(Packet::Data(d)) => d.dst_hop,
-            _ => return false,
-        };
-        out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS
-            && self.heard.get(to).is_some_and(|n| !n.missed)
+        out.preamble >= LONG_PREAMBLE_SYMBOLS && self.heard.get(out.to).is_some_and(|n| !n.missed)
     }
 
     /// Address the forward `out` from the state as it is now: to its next
@@ -1875,10 +1811,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Ownership is checked again first: a closer neighbour may have been
     /// demoted since (spec "Receiving DATA" case 5).
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
-        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
-            return Routed::Done;
-        };
-        let id = d.msg_id();
+        let id = out.msg_id();
+        let dst = (out.message.dst_id, out.message.dst_pos);
         debug_assert!(
             self.records.get(id).is_some(),
             "a held message keeps its record"
@@ -1887,79 +1821,82 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
-        if self.ends_here((d.dst_id, d.dst_pos), Some(&record), out.passed, None, now) {
-            if let Some(r) = self.records.get_mut(id) {
-                r.set_arrived();
+        let next = self
+            .next_hop(&record, out.passed, out.avoid, dst, now)
+            .map(|(_, n)| (n, n.banned_until));
+        let parent = record.parent().map(|(p, stored)| {
+            let ban = self
+                .neighbours
+                .get(p)
+                .map_or(Instant::ZERO, |n| n.banned_until);
+            ((p, stored), ban)
+        });
+        let found = way(
+            self.ends_here(dst, Some(&record), out.passed, None, now),
+            self.own.id != Some(id) || self.has_room_for(out.message.dst_id, now),
+            next,
+            self.origin_waits(&record, id, now),
+            parent,
+            now,
+        );
+        match found {
+            Way::EndsHere => {
+                if let Some(r) = self.records.get_mut(id) {
+                    r.set_arrived();
+                }
+                self.arrive(id, &out.data(self.me(), self.home), now, emit);
+                Routed::Done
             }
-            if self.own.id == Some(id) && !self.has_room_for(d.dst_id, now) {
-                return Routed::Hold;
+            Way::SetAside => {
+                if let Some(r) = self.records.get_mut(id) {
+                    r.set_arrived();
+                }
+                Routed::Hold
             }
-            self.arrive(id, &d, now, emit);
-            return Routed::Done;
-        }
-        if let Some((_, n)) =
-            self.next_hop(&record, out.passed, out.avoid, (d.dst_id, d.dst_pos), now)
-        {
-            if self.neighbours.is_banned(&n, now) {
-                // A ban is a wait, not an exclusion (spec "Next hop").
-                return Routed::Banned(n.banned_until);
-            }
-            let to = n.id;
-            let frame = data_frame(&Data { dst_hop: to, ..d }, n.home, preamble(&n));
+            // A ban is a wait, not an exclusion (spec "Next hop").
+            Way::Banned(t) => Routed::Banned(t),
             // Addressed afresh, its attempts start afresh.
-            return Routed::To(Outgoing {
-                frame,
+            Way::Next(n) => Routed::To(Outgoing {
+                to: n.id,
+                channel: n.home,
+                preamble: preamble(&n),
                 kind: Kind::Forward,
                 tries: 0,
                 state: State::Queued,
                 ..out
-            });
-        }
-        if let Some(ends) = self.timers.boot_ends {
-            if self.own.id == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
-                // Until it hears a relay, or its first rotation ends
-                // (`heard`).
-                return Routed::Wait(ends);
-            }
-        }
-        let alone = self.neighbours.live(now).next().is_none();
-        if self.sleepy() && record.parent().is_none() && alone {
-            // Its own message, or one it held when it turned sleepy:
-            // until it hears a neighbour again, routed every fade
-            // (spec "A sleepy node's own message", "Sleepy nodes").
-            return Routed::Wait(now + self.config.fade_retry);
-        }
-        match record.parent() {
-            Some((parent, stored)) => {
-                if let Some(p) = self
-                    .neighbours
-                    .get(parent)
-                    .filter(|p| self.neighbours.is_banned(p, now))
-                {
-                    return Routed::Banned(p.banned_until);
-                }
-                let home = self.home_of(parent).unwrap_or(stored);
-                let frame = data_frame(
-                    &Data {
-                        dst_hop: parent,
-                        ..d
-                    },
-                    home,
-                    self.preamble_to(parent),
-                );
-                Routed::To(Outgoing {
-                    frame,
-                    kind: Kind::Return,
-                    tries: 0,
-                    state: State::Queued,
-                    ..out
-                })
-            }
-            None => {
+            }),
+            Way::WaitsUntil(t) => Routed::Wait(t),
+            Way::Parent((parent, stored)) => Routed::To(Outgoing {
+                to: parent,
+                channel: self.home_of(parent).unwrap_or(stored),
+                preamble: self.preamble_to(parent),
+                kind: Kind::Return,
+                tries: 0,
+                state: State::Queued,
+                ..out
+            }),
+            Way::Exhausted => {
                 self.drop_msg(id, DropReason::NoRoute, emit);
                 Routed::Done
             }
         }
+    }
+
+    /// Until when an origin holds message `id` of `record` while it has
+    /// no candidate, rather than end its search: its application's own
+    /// in its first rotation until it hears a relay or the rotation ends
+    /// (spec "Return to parent", `heard`); at a sleepy node, its own or
+    /// one it held when it turned sleepy, while it hears no neighbour,
+    /// routed again every fade (spec "A sleepy node's own message",
+    /// "Sleepy nodes").
+    fn origin_waits(&self, record: &Record, id: MsgId, now: Instant) -> Option<Instant> {
+        if let Some(ends) = self.timers.boot_ends {
+            if self.own.id == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
+                return Some(ends);
+            }
+        }
+        let alone = self.neighbours.live(now).next().is_none();
+        (self.sleepy() && record.parent().is_none() && alone).then(|| now + self.config.fade_retry)
     }
 
     /// When fresh work could next start moving, if every live neighbour is
@@ -2023,7 +1960,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let preamble = self
             .queue
             .current()
-            .map_or(MIN_PREAMBLE_SYMBOLS, |o| o.frame.preamble_symbols);
+            .map_or(MIN_PREAMBLE_SYMBOLS, |o| o.preamble);
         let longer = time_on_air(MAX_FRAME as u8, preamble)
             .as_micros()
             .saturating_sub(time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros());
@@ -2037,24 +1974,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// its table keeps the address it had.
     fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
-        let (channel, preamble) = match Packet::decode(out.frame.payload()) {
+        let to = out.to;
+        let (channel, preamble) = match out.kind {
             // Its preamble is chosen when it is queued.
-            Ok(Packet::Data(d)) if out.kind == Kind::Direct => (self.home_of(d.dst_hop), None),
-            Ok(Packet::Data(d)) if out.kind != Kind::Deliver => (
-                self.home_of(d.dst_hop),
-                self.neighbours.get(d.dst_hop).map(preamble),
-            ),
+            Kind::Direct => (self.home_of(to), None),
+            Kind::Forward | Kind::Return => {
+                (self.home_of(to), self.neighbours.get(to).map(preamble))
+            }
             // Its holder moves its sleepy nodes with it (`take_listeners`);
             // one that listens now needs no long preamble.
-            Ok(Packet::Data(d)) => (
-                self.heard.get(d.dst_hop).map(|n| n.home),
-                self.listening(d.dst_hop, now)
-                    .then_some(MIN_PREAMBLE_SYMBOLS),
+            Kind::Deliver => (
+                self.heard.get(to).map(|n| n.home),
+                self.listening(to, now).then_some(MIN_PREAMBLE_SYMBOLS),
             ),
-            _ => (None, None),
         };
-        out.frame.channel = channel.unwrap_or(out.frame.channel);
-        out.frame.preamble_symbols = preamble.unwrap_or(out.frame.preamble_symbols);
+        out.channel = channel.unwrap_or(out.channel);
+        out.preamble = preamble.unwrap_or(out.preamble);
         if let Some(current) = self.queue.current_mut() {
             *current = out;
         }
@@ -2070,21 +2005,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(out) = self.readdress(now) else {
             return false;
         };
-        if !self.affordable(mac::airtime(&out.frame), now) {
+        if !self.affordable(out.airtime(), now) {
             self.defer_handover(&out, now, emit);
             return false;
         }
         if let Some((mut h, _)) = self.handover() {
             h.begin_lbt(now);
         }
-        self.radio
-            .excursion
-            .check(Job::HandOver, out.frame.channel, emit);
+        self.radio.excursion.check(Job::HandOver, out.channel, emit);
         true
     }
 
     fn defer_handover(&mut self, out: &Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let airtime = mac::airtime(&out.frame);
+        let airtime = out.airtime();
         let until = self
             .radio
             .budget
@@ -2093,8 +2026,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some((mut h, _)) = self.handover() {
             h.defer(until);
         }
-        let msg_id = out.msg_id().unwrap_or_default();
-        emit(Action::Trace(Trace::HandOverDeferred { msg_id, until }));
+        emit(Action::Trace(Trace::HandOverDeferred {
+            msg_id: out.msg_id(),
+            until,
+        }));
     }
 
     /// The listen-before-talk check of the current hand-over completed.
@@ -2126,71 +2061,61 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// relay's home channel as it is now (spec "Packet formats" `aux`).
     /// An owed ACK goes first, and the check is then repeated.
     fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let Some(frame) = self.stamp(out, now, emit) else {
+        let Some(out) = self.stamp(out, now, emit) else {
             return;
         };
-        let airtime = mac::airtime(&frame);
+        let airtime = out.airtime();
         if !self.affordable(airtime, now) {
             // An owed reply spent the budget since the check began.
             self.defer_handover(&out, now, emit);
             return;
         }
         if let Some(current) = self.queue.current_mut() {
-            current.frame = frame;
+            current.hops = out.hops;
         }
         self.radio.budget.record(airtime, now);
+        let frame = out.frame(self.me(), self.home);
         self.radio.excursion.transmit(Job::HandOver, frame, emit);
     }
 
-    /// The current frame as it goes now, its count stamped, or `None`
+    /// The current entry as it goes now, its count stamped, or `None`
     /// where it is dropped at the cap, or held for an owed reply.
     fn stamp(
         &mut self,
         out: Outgoing,
         now: Instant,
         emit: &mut dyn FnMut(Action),
-    ) -> Option<Frame> {
+    ) -> Option<Outgoing> {
         if self.radio.replies.wake_at().is_some_and(|t| t <= now) {
             if let Some((mut h, _)) = self.handover() {
                 h.hold(now);
             }
             return None;
         }
-        let mut frame = out.frame;
-        if let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) {
-            let id = d.msg_id();
-            let Some(hops) = self.count(&d, id, &out) else {
-                self.queue.take_current();
-                self.forwarding.feed_due = true;
-                self.drop_msg(id, DropReason::HopCap, emit);
-                return None;
-            };
-            frame = data_frame(
-                &Data {
-                    sender_home: self.home,
-                    hops,
-                    ..d
-                },
-                out.frame.channel,
-                out.frame.preamble_symbols,
-            );
-            if let Some(r) = self.records.get_mut(id) {
-                r.sent(now);
-            }
+        let id = out.msg_id();
+        let Some(hops) = self.count(id, &out) else {
+            self.queue.take_current();
+            self.forwarding.feed_due = true;
+            self.drop_msg(id, DropReason::HopCap, emit);
+            return None;
+        };
+        if let Some(r) = self.records.get_mut(id) {
+            r.sent(now);
         }
-        Some(frame)
+        Some(Outgoing { hops, ..out })
     }
 
-    /// The count the current hand-over of `d` carries (spec "Hop count"): stamped at
-    /// its first transmission as the record's highest plus one, repeated by
-    /// its retries. Stamped when queued, a frame would keep a count older
-    /// than one this relay has since received or sent, and a relay that
-    /// readdressed it would offer a count it had already used. `None` past
-    /// the hop cap, but for a delivery: its search has ended, and the cap
-    /// ends searches, so it goes at the cap.
-    fn count(&self, d: &Data<'_>, id: MsgId, out: &Outgoing) -> Option<u8> {
+    /// The count the current hand-over of `out`, of message `id`, carries
+    /// (spec "Hop count"): stamped at its first transmission as the
+    /// record's highest plus one, repeated by its retries. Stamped when
+    /// queued, a frame would keep a count older than one this relay has
+    /// since received or sent, and a relay that readdressed it would offer
+    /// a count it had already used. `None` past the hop cap, but for a
+    /// delivery: its search has ended, and the cap ends searches, so it
+    /// goes at the cap.
+    fn count(&self, id: MsgId, out: &Outgoing) -> Option<u8> {
         if out.transmitted() {
-            return Some(d.hops);
+            return Some(out.hops);
         }
         debug_assert!(
             self.records.get(id).is_some(),
@@ -2198,7 +2123,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         );
         match self.records.get(id) {
             // A sleepy node hands its own message over as fresh work: the
-            // node that takes it is its origin (module documentation).
+            // node that takes it is its origin (spec "Hop count").
             Some(r)
                 if self.anchored_sleepy() && self.own.id == Some(id) && r.parent().is_none() =>
             {
@@ -2206,15 +2131,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             Some(r) if out.kind.delivers() => Some(r.highest_hops().saturating_add(1)),
             Some(r) => r.highest_hops().checked_add(1),
-            None => Some(d.hops),
+            None => Some(out.hops),
         }
     }
 
     /// Listen-before-talk gave up on the current hand-over's channel.
     fn handover_gave_up(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let (msg_id, to) = out
-            .expect(self.me())
-            .map_or((MsgId::default(), NodeId::NONE), |e| (e.msg_id, e.from));
+        let (msg_id, to) = (out.msg_id(), out.to);
         match out.kind {
             Kind::Forward | Kind::Return => {
                 // The channel says nothing about the neighbour: the same
@@ -2238,7 +2161,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let until = self.forwarding.flight.until().max(now);
                 emit(Action::Trace(Trace::ChannelBusy { msg_id, to, until }));
                 if missed == Missed::Failed {
-                    self.handover_failed(out, false, now, emit);
+                    self.handover_failed(out, now, emit);
                 }
             }
         }
@@ -2246,7 +2169,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// An ACK arrived: if it answers the current hand-over, the receiver
     /// took the packet, refused it, or has seen it (spec "The ACK",
-    /// "Bans"); see the module documentation.
+    /// "Bans").
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
@@ -2275,12 +2198,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(out) = self.queue.current().copied() else {
             return;
         };
-        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
-            return;
-        };
-        let (id, to) = (d.msg_id(), d.dst_hop);
+        let (id, to) = (out.msg_id(), out.to);
         emit(Action::Trace(Trace::Seen { msg_id: id, by: to }));
-        self.tried(id, to, d.hops, now, emit);
+        self.tried(id, to, out.hops, now, emit);
         if out.kind == Kind::Forward {
             self.cancel_handover();
             return;
@@ -2331,6 +2251,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// The receiver of the current hand-over refused it (spec "Bans").
     fn refused(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if !self
             .in_flight()
@@ -2341,7 +2262,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(out) = self.queue.current().copied() else {
             return;
         };
-        let msg_id = out.msg_id().unwrap_or_default();
+        let msg_id = out.msg_id();
         let by = ack.from;
         emit(Action::Trace(Trace::TurnedAway { msg_id, by }));
         // As long as the refuser asks: its pushback, learned per neighbour
@@ -2353,35 +2274,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.neighbours.refused(by, now + wait);
             self.neighbours.told(by, wait);
         }
-        if out.kind != Kind::Deliver
-            && out.kind != Kind::Direct
-            && self.wait_for(&out, by, now, emit)
-        {
-            return;
-        }
-        if self.sleepy() && self.own.id == Some(msg_id) && out.kind == Kind::Forward {
-            // A sleepy node's own message goes back to its application,
-            // which may offer it again once the wait is over: refused at
-            // the origin, it does not age here (spec "A sleepy node's own message").
-            self.queue.take_current();
-            self.forwarding.feed_due = true;
-            self.timers.retry_at = now + wait;
-            self.records.forget(msg_id);
-            self.drop_msg(msg_id, DropReason::Pushback, emit);
-            emit(Action::App(AppEvent::GivenBack {
-                msg_id,
-                retry_at: self.timers.retry_at,
-            }));
-            return;
-        }
-        match out.kind {
-            // Routed again when its turn comes, round the refuser for the
-            // wait it told: its queue that way is full, and a neighbour
-            // with room may sit beside it (spec "Bans", "Next hop",
-            // roadmap D110).
-            Kind::Forward | Kind::Return => {
+        let waits = !out.kind.delivers() && self.waits_for_refuser(&out, by, now);
+        let own = self.own.id == Some(msg_id);
+        match refusal(out.kind, waits, self.sleepy() && own) {
+            // Leaves for the delivery queue, to wait for the refuser.
+            Refusal::WaitsForRefuser => self.wait_for(&out, by, now, emit),
+            // Leaves and goes back to its application, which may offer it
+            // again once the wait is over: refused at the origin, it does
+            // not age here.
+            Refusal::GivenBack => {
+                self.queue.take_current();
+                self.forwarding.feed_due = true;
+                self.timers.retry_at = now + wait;
+                self.records.forget(msg_id);
+                self.drop_msg(msg_id, DropReason::Pushback, emit);
+                emit(Action::App(AppEvent::GivenBack {
+                    msg_id,
+                    retry_at: self.timers.retry_at,
+                }));
+            }
+            // Stays, to be routed again when its turn comes, round the
+            // refuser for the wait it told: its queue that way is full,
+            // and a neighbour with room may sit beside it.
+            Refusal::GoesRound => {
                 self.go_round(by);
-                if self.own.id == Some(msg_id) {
+                if own {
                     // Every refusal in a row counts, gone round or not:
                     // each is a frame and a reply on the full channels
                     // round the origin, so the origin offers no faster
@@ -2401,8 +2318,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     current.tries = 0;
                 }
             }
-            // No other receiver: wait for the ban, and let the queue move.
-            Kind::Deliver | Kind::Direct => {
+            // Stays, waiting for the told wait with the transmissions it
+            // has made: it has no other receiver.
+            Refusal::Waits => {
                 let tries = self.handover().map_or(0, |(mut h, _)| h.refused());
                 if let Some(current) = self.queue.current_mut() {
                     current.not_before = now + wait;
@@ -2418,13 +2336,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         };
         self.forwarding.feed_due = true;
-        let Ok(Packet::Data(d)) = Packet::decode(out.frame.payload()) else {
-            return;
-        };
-        let (id, to) = (d.msg_id(), d.dst_hop);
+        let (id, to) = (out.msg_id(), out.to);
         if out.kind.delivers() {
             self.answer_from(to, now, emit);
-            let long = out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS;
+            let long = out.preamble >= LONG_PREAMBLE_SYMBOLS;
             let by = match (out.kind, long) {
                 (Kind::Direct, true) => Delivery::Flush,
                 (Kind::Direct, false) => Delivery::Relay,
@@ -2434,8 +2349,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return self.delivered_to(id, to, by, now, emit);
         }
         self.neighbours.took(to, out.since, now);
-        self.tried(id, to, d.hops, now, emit);
-        if to == d.dst_id {
+        self.tried(id, to, out.hops, now, emit);
+        if to == out.message.dst_id {
             // The node it is addressed to took it: it has arrived.
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
@@ -2449,7 +2364,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 Trace::Forwarded {
                     msg_id: id,
                     to,
-                    hops: d.hops,
+                    hops: out.hops,
                     attempts: out.tries,
                 }
             }
@@ -2463,113 +2378,96 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Every attempt of the current hand-over went unanswered (spec "Hand-over" step 6).
-    /// `counted`: a failure is counted against the neighbour (spec "Neighbour table").
-    fn handover_failed(
-        &mut self,
-        out: Outgoing,
-        counted: bool,
-        now: Instant,
-        emit: &mut dyn FnMut(Action),
-    ) {
-        let id = out.msg_id().unwrap_or_default();
-        let data = Packet::decode(out.frame.payload());
-        if let (Ok(Packet::Data(d)), true) = (data, !out.kind.delivers()) {
-            if out.frame.preamble_symbols >= LONG_PREAMBLE_SYMBOLS && d.dst_hop == d.dst_id {
+    fn handover_failed(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let (id, to) = (out.msg_id(), out.to);
+        let own_at_anchor = self.sleepy() && out.hops == 0;
+        let mut gone = false;
+        if !out.kind.delivers() {
+            if out.preamble >= LONG_PREAMBLE_SYMBOLS && to == out.message.dst_id {
                 // Not again at once before it beats: its anchor delivers
                 // it (spec "Next hop").
-                self.neighbours.unanswered(d.dst_hop);
+                self.neighbours.unanswered(to);
             }
-            if counted {
-                self.count_failure(d.dst_hop, now, emit);
-                let own_at_anchor = self.sleepy() && d.hops == 0;
-                if out.kind == Kind::Forward && !own_at_anchor {
-                    self.passed_if_demoted(d.dst_hop, now);
-                }
-                let (passed, avoid) = self.queue.current().map_or((0, 0), |o| (o.passed, o.avoid));
-                let ban = self
-                    .neighbours
-                    .get(d.dst_hop)
-                    .map(|n| n.banned_until)
-                    .filter(|&t| t > now);
-                // The neighbour now demoted or gone: a return ends, and a
-                // forward goes where its next routing takes it.
-                let gone = self
-                    .neighbours
-                    .get(d.dst_hop)
-                    .is_none_or(|n| self.neighbours.is_demoted(n, now));
-                let moves_on = match out.kind {
-                    Kind::Forward => {
-                        !own_at_anchor
-                            && self
-                                .goes_to(&d, passed, avoid, now)
-                                .is_some_and(|to| to != d.dst_hop)
-                    }
-                    _ => gone,
-                };
-                emit(Action::Trace(Trace::HandOverFailed {
-                    msg_id: id,
-                    to: d.dst_hop,
-                    moves_on,
-                }));
-                if own_at_anchor {
-                    // A sleepy node's own message tries its anchor again a
-                    // fade later, doubled for each silence in a row
-                    // (spec "A sleepy node's own message"): the ban's ladder would
-                    // offer it every few seconds to a node whose channel is
-                    // full, and a fixed fade every minute for as long as it
-                    // waits.
-                    let ban = ban.unwrap_or(now);
-                    let silences = self
-                        .neighbours
-                        .by_id(d.dst_hop)
-                        .map_or(1, |(_, n)| n.fail_count.max(1));
-                    let mut fade = self.config.fade_retry;
-                    for _ in 1..silences {
-                        fade = fade.mul(2).min(self.config.delivery_ttl);
-                    }
-                    if let Some(current) = self.queue.current_mut() {
-                        current.not_before = ban.max(now + fade);
-                        current.tries = 0;
-                    }
-                    return;
-                }
-                if out.kind == Kind::Forward || !gone {
-                    // Routed again when its turn comes, with fresh
-                    // attempts: banned now, the neighbour is waited for
-                    // while it ranks first, and the message goes elsewhere
-                    // once its demotion makes it a last resort (roadmap
-                    // D42, D106). Most likely the frame, not the ACK, was
-                    // lost, so the neighbour stays untried.
-                    if let Some(current) = self.queue.current_mut() {
-                        current.kind = Kind::Forward;
-                        current.tries = 0;
-                    }
-                    return;
-                }
+            self.count_failure(to, now, emit);
+            if out.kind == Kind::Forward && !own_at_anchor {
+                self.passed_if_demoted(to, now);
             }
-        }
-        let reason = match out.kind {
-            Kind::Forward => return,
-            Kind::Return => Some(DropReason::ReturnFailed),
-            Kind::Deliver | Kind::Direct => None,
-        };
-        if let (Ok(Packet::Data(d)), Kind::Direct) = (data, out.kind) {
-            // Unanswered as a relay: again once it is heard again.
-            self.direct_failed(d.dst_hop);
-        }
-        if let (Ok(Packet::Data(d)), Kind::Deliver) = (data, out.kind) {
-            // Asleep: its messages wait for its next beat.
-            self.heard.missed(d.dst_hop);
-            emit(Action::Trace(Trace::DeliveryWaits {
+            gone = self
+                .neighbours
+                .get(to)
+                .is_none_or(|n| self.neighbours.is_demoted(n, now));
+            let moves_on = match out.kind {
+                Kind::Forward => {
+                    let (passed, avoid) =
+                        self.queue.current().map_or((0, 0), |o| (o.passed, o.avoid));
+                    !own_at_anchor
+                        && self
+                            .goes_to(&out.message, passed, avoid, now)
+                            .is_some_and(|next| next != to)
+                }
+                _ => gone,
+            };
+            emit(Action::Trace(Trace::HandOverFailed {
                 msg_id: id,
-                node: d.dst_hop,
-                tried: true,
+                to,
+                moves_on,
             }));
         }
-        self.queue.take_current();
-        self.forwarding.feed_due = true;
-        if let Some(reason) = reason {
-            self.drop_msg(id, reason, emit);
+        match failure(out.kind, own_at_anchor, gone) {
+            // Waits a fade, doubled for each silence in a row, and tries
+            // its anchor again: the ban's ladder would offer it every few
+            // seconds to a node whose channel is full, and a fixed fade
+            // every minute for as long as it waits.
+            Failure::OwnAtAnchor => {
+                let neighbour = self.neighbours.by_id(to).map(|(_, n)| *n);
+                let ban = neighbour
+                    .map(|n| n.banned_until)
+                    .filter(|&t| t > now)
+                    .unwrap_or(now);
+                let silences = neighbour.map_or(1, |n| n.fail_count.max(1));
+                let mut fade = self.config.fade_retry;
+                for _ in 1..silences {
+                    fade = fade.mul(2).min(self.config.delivery_ttl);
+                }
+                if let Some(current) = self.queue.current_mut() {
+                    current.not_before = ban.max(now + fade);
+                    current.tries = 0;
+                }
+            }
+            // Stays, to be routed again when its turn comes, with fresh
+            // attempts: banned now, the neighbour is waited for while it
+            // ranks first, and the message goes elsewhere once its
+            // demotion makes it a last resort. Most likely the frame, not
+            // the ACK, was lost, so the neighbour stays untried.
+            Failure::Forward | Failure::Return => {
+                if let Some(current) = self.queue.current_mut() {
+                    current.kind = Kind::Forward;
+                    current.tries = 0;
+                }
+            }
+            // Leaves, and ends.
+            Failure::ReturnWithoutParent => {
+                self.queue.take_current();
+                self.forwarding.feed_due = true;
+                self.drop_msg(id, DropReason::ReturnFailed, emit);
+            }
+            // Leaves; the delivery queue keeps it, for its node's next beat.
+            Failure::Deliver => {
+                self.heard.missed(to);
+                emit(Action::Trace(Trace::DeliveryWaits {
+                    msg_id: id,
+                    node: to,
+                    tried: true,
+                }));
+                self.queue.take_current();
+                self.forwarding.feed_due = true;
+            }
+            // Leaves; the delivery queue keeps it, for its node heard again.
+            Failure::Direct => {
+                self.direct_failed(to);
+                self.queue.take_current();
+                self.forwarding.feed_due = true;
+            }
         }
     }
 
@@ -2599,10 +2497,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(o) = self.queue.current() else {
             return false;
         };
-        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
-            return false;
-        };
-        self.goes_to(&d, o.passed, o.avoid, now)
+        self.goes_to(&o.message, o.passed, o.avoid, now)
             .is_some_and(|to| to != by)
     }
 
@@ -2616,11 +2511,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Where the forward of `d` would go if routed now: its next hop, or
+    /// Where the forward of `m` would go if routed now: its next hop, or
     /// its parent once none is left (spec "Next hop", "Return to parent").
-    fn goes_to(&self, d: &Data<'_>, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
-        let record = self.records.get(d.msg_id())?;
-        self.next_hop(record, passed, avoid, (d.dst_id, d.dst_pos), now)
+    fn goes_to(&self, m: &Message, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
+        let record = self.records.get(m.id())?;
+        self.next_hop(record, passed, avoid, (m.dst_id, m.dst_pos), now)
             .map(|(_, n)| n.id)
             .or_else(|| record.parent().map(|(p, _)| p))
     }
@@ -2680,7 +2575,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .and_then(|(mut h, rng)| h.timeout(now, max, rng, retry));
             if missed == Some(Missed::Failed) {
                 if let Some(out) = self.queue.current().copied() {
-                    self.handover_failed(out, true, now, emit);
+                    self.handover_failed(out, now, emit);
                 }
             }
         }
@@ -2691,6 +2586,254 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.in_flight()?.state {
             State::Waiting(_) | State::AwaitAck => Some(self.forwarding.flight.until()),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_hand_over() {
+        use Failure::*;
+        use Kind::{Deliver as D, Direct as X, Forward as F, Return as R};
+        // (rule, kind, a sleepy node's own message, receiver demoted or gone, outcome)
+        let rows = [
+            (
+                "spec \"Hand-over\": a forward keeps its place",
+                F,
+                false,
+                false,
+                Forward,
+            ),
+            (
+                "spec \"Hand-over\": it goes elsewhere once demoted",
+                F,
+                false,
+                true,
+                Forward,
+            ),
+            (
+                "spec \"A sleepy node's own message\"",
+                F,
+                true,
+                false,
+                OwnAtAnchor,
+            ),
+            (
+                "spec \"A sleepy node's own message\", demoted",
+                F,
+                true,
+                true,
+                OwnAtAnchor,
+            ),
+            (
+                "spec \"Return to parent\": a parent is waited for",
+                R,
+                false,
+                false,
+                Return,
+            ),
+            (
+                "spec \"Return to parent\": demoted or gone, dropped",
+                R,
+                false,
+                true,
+                ReturnWithoutParent,
+            ),
+            (
+                "spec \"Delivery queue\": kept whatever its hand-over does",
+                D,
+                false,
+                false,
+                Deliver,
+            ),
+            (
+                "spec \"Delivery queue\": kept, demoted or not",
+                D,
+                false,
+                true,
+                Deliver,
+            ),
+            (
+                "spec \"Delivery\": a node heard as a relay",
+                X,
+                false,
+                false,
+                Direct,
+            ),
+            ("spec \"Delivery\": the flush", X, false, true, Direct),
+        ];
+        for (rule, kind, own, gone, then) in rows {
+            assert_eq!(failure(kind, own, gone), then, "{rule}");
+        }
+    }
+
+    #[test]
+    fn a_refused_hand_over() {
+        use Kind::{Deliver as D, Direct as X, Forward as F, Return as R};
+        use Refusal::*;
+        // (rule, kind, the refuser leaving where it may end, a sleepy node's own message, outcome)
+        let rows = [
+            (
+                "spec \"Bans\": a refused forward goes round",
+                F,
+                false,
+                false,
+                GoesRound,
+            ),
+            (
+                "spec \"Bans\": a refused return goes on as a forward",
+                R,
+                false,
+                false,
+                GoesRound,
+            ),
+            (
+                "spec \"Next hop\": waits for a leaving neighbour",
+                F,
+                true,
+                false,
+                WaitsForRefuser,
+            ),
+            (
+                "spec \"Next hop\": a return too",
+                R,
+                true,
+                false,
+                WaitsForRefuser,
+            ),
+            (
+                "spec \"A sleepy node's own message\"",
+                F,
+                false,
+                true,
+                GivenBack,
+            ),
+            (
+                "spec \"Next hop\": waiting goes before giving back",
+                F,
+                true,
+                true,
+                WaitsForRefuser,
+            ),
+            (
+                "spec \"Bans\": a refused delivery waits the told wait",
+                D,
+                false,
+                false,
+                Waits,
+            ),
+            ("spec \"Bans\": whatever its refuser", D, true, false, Waits),
+            ("spec \"Bans\": a direct delivery too", X, true, true, Waits),
+        ];
+        for (rule, kind, leaving, sleepy_own, then) in rows {
+            assert_eq!(refusal(kind, leaving, sleepy_own), then, "{rule}");
+        }
+    }
+
+    #[test]
+    fn where_routing_sends_a_forward() {
+        let t = |s| Instant::ZERO + Duration::from_secs(s);
+        let now = t(10);
+        let (free, banned) = (t(5), t(20));
+        type W = Way<&'static str, &'static str>;
+        // (rule, ends here, room here, next hop, origin waits, parent, outcome)
+        let rows: [(&str, bool, bool, _, _, _, W); 10] = [
+            (
+                "spec \"Owner\"",
+                true,
+                true,
+                Some(("n", free)),
+                None,
+                Some(("p", free)),
+                Way::EndsHere,
+            ),
+            (
+                "spec \"Receiving DATA\": kept aside",
+                true,
+                false,
+                None,
+                None,
+                None,
+                Way::SetAside,
+            ),
+            (
+                "spec \"Next hop\"",
+                false,
+                true,
+                Some(("n", free)),
+                None,
+                Some(("p", free)),
+                Way::Next("n"),
+            ),
+            (
+                "spec \"Next hop\": a ban is a wait",
+                false,
+                true,
+                Some(("n", banned)),
+                None,
+                None,
+                Way::Banned(banned),
+            ),
+            (
+                "spec \"Next hop\": a ban that ended",
+                false,
+                true,
+                Some(("n", now)),
+                None,
+                None,
+                Way::Next("n"),
+            ),
+            (
+                "spec \"Return to parent\"",
+                false,
+                true,
+                None,
+                None,
+                Some(("p", free)),
+                Way::Parent("p"),
+            ),
+            (
+                "spec \"Return to parent\": waits while banned",
+                false,
+                true,
+                None,
+                None,
+                Some(("p", banned)),
+                Way::Banned(banned),
+            ),
+            (
+                "spec \"Return to parent\": the origin drops",
+                false,
+                true,
+                None,
+                None,
+                None,
+                Way::Exhausted,
+            ),
+            (
+                "spec \"Return to parent\": the first rotation",
+                false,
+                true,
+                None,
+                Some(banned),
+                None,
+                Way::WaitsUntil(banned),
+            ),
+            (
+                "spec \"A sleepy node's own message\": alone",
+                false,
+                true,
+                None,
+                Some(t(70)),
+                None,
+                Way::WaitsUntil(t(70)),
+            ),
+        ];
+        for (rule, ends, room, next, waits, parent, then) in rows {
+            assert_eq!(way(ends, room, next, waits, parent, now), then, "{rule}");
         }
     }
 }

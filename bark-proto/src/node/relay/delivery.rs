@@ -50,14 +50,13 @@
 use super::Node;
 use crate::event::{Action, Delivery, DropReason, Trace};
 use crate::ids::{MsgId, NodeId};
-use crate::node::mac;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::delivery::Queued;
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::{Data, Packet, DATA_HEADER_LEN};
+use crate::wire::DATA_HEADER_LEN;
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the sleepy node `id` may be sent to with the short preamble
@@ -95,10 +94,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         } else {
             self.heard.awake(node, now)
         };
-        let is_for = |o: &Outgoing| {
-            o.kind.delivers()
-                && matches!(Packet::decode(o.frame.payload()), Ok(Packet::Data(d)) if d.dst_hop == node)
-        };
+        let is_for = |o: &Outgoing| o.kind.delivers() && o.to == node;
         // Outside its window, and not known to be out of reach.
         let early = !listens && !self.config.sleepy_listens && !n.missed;
         if (!listens && !early) || self.queue.iter().any(is_for) {
@@ -108,26 +104,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(q) = self.delivery.iter().find(|q| q.node == node && !q.waits()) else {
             return Ok(());
         };
-        // The count is stamped when its hand-over starts (spec "Hop count").
-        let data = Data {
-            sender_home: self.home,
-            dst_hop: node,
-            src_hop: self.me(),
-            dst_pos: q.dst_pos,
-            dst_id: node,
-            hops: 0,
-            payload: q.payload(),
-        };
         let preamble = if early {
             LONG_PREAMBLE_SYMBOLS
         } else {
             MIN_PREAMBLE_SYMBOLS
         };
-        let (msg_id, frame) = (q.msg_id, mac::frame(&Packet::Data(data), home, preamble));
-        let airtime = mac::airtime(&frame);
+        // The count is stamped when its hand-over starts (spec "Hop count").
+        let out = Outgoing::new(q.message(), 0, node, home, preamble, Kind::Deliver);
+        let (msg_id, airtime) = (q.msg_id, out.airtime());
         if early {
             if self.spares_long(airtime, Some(msg_id), now) {
-                let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
+                let _ = self.queue.push(out);
             }
             return Ok(());
         }
@@ -139,7 +126,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(DropReason::SendQueueFull) => return Err(None),
             Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
         }
-        let _ = self.queue.push(Outgoing::new(frame, Kind::Deliver));
+        let _ = self.queue.push(out);
         Ok(())
     }
 
@@ -244,7 +231,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // At a first far fix, or once it is leaving to turn sleepy.
         let far = self.far() || self.leaving();
-        let queued = |q: &Queued| self.queue.iter().any(|o| o.msg_id() == Some(q.msg_id));
+        let queued = |q: &Queued| self.queue.iter().any(|o| o.msg_id() == q.msg_id);
         let Some(q) = self
             .delivery
             .iter()
@@ -266,17 +253,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let once = self.config.hop_attempts.saturating_sub(1);
             (home, LONG_PREAMBLE_SYMBOLS, once)
         };
-        let data = Data {
-            sender_home: self.home,
-            dst_hop: q.node,
-            src_hop: self.me(),
-            dst_pos: q.dst_pos,
-            dst_id: q.node,
-            hops: 0,
-            payload: q.payload(),
+        let out = Outgoing {
+            tries,
+            ..Outgoing::new(q.message(), 0, q.node, channel, preamble, Kind::Direct)
         };
-        let frame = mac::frame(&Packet::Data(data), channel, preamble);
-        let airtime = mac::airtime(&frame);
+        let airtime = out.airtime();
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
@@ -285,10 +266,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(e) = self.delivery.iter_mut().find(|e| e.msg_id == q.msg_id) {
             e.flushed |= q.relay_home.is_none();
         }
-        let out = Outgoing {
-            tries,
-            ..Outgoing::new(frame, Kind::Direct)
-        };
         let _ = self.queue.push(out);
         Ok(())
     }
@@ -332,9 +309,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A hand-over of it not yet on its way goes with it.
         let id = q.msg_id;
         let active = !self.handover_idle();
-        self.queue.retain(|current, o| {
-            (current && active) || !o.kind.delivers() || o.msg_id() != Some(id)
-        });
+        self.queue
+            .retain(|current, o| (current && active) || !o.kind.delivers() || o.msg_id() != id);
         self.forwarding.feed_due = true;
         emit(Action::Trace(Trace::Dropped {
             msg_id: id,

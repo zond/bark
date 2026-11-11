@@ -719,7 +719,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub fn holding(&self) -> impl Iterator<Item = MsgId> + '_ {
         self.queue
             .iter()
-            .filter_map(|o| o.msg_id())
+            .map(|o| o.msg_id())
             .chain(self.delivery.iter().map(|q| q.msg_id))
     }
 
@@ -758,7 +758,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.queue
             .iter()
             .filter(|o| o.kind == Kind::Forward && !o.held())
-            .filter_map(|o| self.records.get(o.msg_id()?))
+            .filter_map(|o| self.records.get(o.msg_id()))
             .filter(|r| !r.handed(slot) && r.parent().map(|(p, _)| p) != Some(to))
             .map(|r| r.highest_hops().saturating_add(1))
             .max()
@@ -1164,8 +1164,8 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                     if listens_on {
                         self.took(now);
                     }
-                    if let Some(frame) = taken {
-                        self.taken(frame, now, emit);
+                    if let Some(take) = taken {
+                        self.taken(take, now, emit);
                     }
                 }
                 _ => {}
