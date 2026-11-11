@@ -40,10 +40,6 @@ use crate::store::SharedFlash;
 
 const _: () = assert!(PIECE == PIECE_BYTES);
 
-/// Raised once the image has confirmed itself, so that no swap is asked
-/// for by the trial, and the external flash is up (`main.rs`).
-pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
 /// The pieces of the image gathered: the radio's task offers, this one
 /// steps. At about 4 KB it is built in place, never on the stack.
 static STORE: Mutex<ThreadModeRawMutex, RefCell<Store>> = Mutex::new(RefCell::new(Store::EMPTY));
@@ -247,7 +243,7 @@ pub async fn yield_to_phone() -> bool {
 
 /// Run the mesh's update for ever, once [`START`] is raised.
 pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -> ! {
-    START.wait().await;
+    super::kept_for_mesh().await;
     if crate::ext_flash::with(|_| ()).is_none() {
         log::error!("update: no external flash; nothing gathered or served");
         core::future::pending::<()>().await;

@@ -604,10 +604,10 @@ static NOTIFY: [Signal<CriticalSectionRawMutex, Notify>; LINKS] = [const { Signa
 /// Raised when the advertisement is to change or may start again: the
 /// public setting changed, or a link ended.
 static ADVERTISE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-/// Raised once the image has confirmed itself (`update.rs`): the
-/// controller starts only then, since the confirmation writes the flash
-/// directly, which the controller's radio timing could not wait for.
-pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Raised once the image's start has written the flash (`update::started`):
+/// the controller starts only then, since that writes the flash directly,
+/// which the controller's radio timing could not wait for.
+pub static MAY_START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// What to notify, and whether a guest's link, or the link itself, is to
 /// close.

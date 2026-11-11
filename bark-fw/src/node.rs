@@ -666,6 +666,7 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 /// Run the core forever.
 pub async fn run<'a>(
     core: &'static mut Role,
+    deaf: bool,
     radio: Radio<'a>,
     battery: Battery<'a>,
     config: &Config,
@@ -681,7 +682,7 @@ pub async fn run<'a>(
         placing: None,
         replying: None,
     };
-    let mut driver = Driver::new(Static(core), radio, clock, app, dbm);
+    let mut driver = Driver::new(Static { core, deaf }, radio, clock, app, dbm);
     log::info!(
         "node id={:02x?} at {} power_dbm={} usb={}",
         config.node_id.0,
@@ -709,14 +710,14 @@ pub async fn run<'a>(
         // Every message is placed in the ring one at a time, each confirmed
         // to the core once it is (`request`); the phones read their own
         // from the ring.
-        let head = driver.core().0.inbox().map(|(id, p)| {
+        let head = driver.core().core.inbox().map(|(id, p)| {
             let mut payload = [0; MAX_PAYLOAD];
             payload[..p.len()].copy_from_slice(p);
             (id, p.len() as u8, payload)
         });
         let oldest = head.as_ref().map(|(id, n, p)| (*id, &p[..usize::from(*n)]));
         driver.app_mut().place(oldest);
-        let core = &driver.core().0;
+        let core = &driver.core().core;
         // An image gathered over the mesh and staged: the node drains, and
         // the reboot into it waits for a moment that loses nothing
         // (`bark_image::policy`). The phones are told while it drains, and
@@ -734,7 +735,7 @@ pub async fn run<'a>(
             battery_mv: core.battery_millivolts(driver.app().battery_mv),
         });
         publish_ring(status);
-        let core = &driver.core().0;
+        let core = &driver.core().core;
         crate::ble::serve_read(|r, b| match *r {
             crate::ble::Request::Neighbours(from) => neighbours_page(core, now, from, b),
             crate::ble::Request::Inbox { record, .. } => inbox_message(record, b),
@@ -748,7 +749,7 @@ pub async fn run<'a>(
         // At the quiet moment the node keeps what the core still holds and
         // its tables, and ends the phones' links first.
         if let (Some(version), Some(want)) = (staged, plan.drain) {
-            let core = &driver.core().0;
+            let core = &driver.core().core;
             if let Some(want) = install.ask(want, core.draining()) {
                 if crate::update::mesh::ask_drain(want) {
                     install.asked(want);
@@ -773,7 +774,7 @@ pub async fn run<'a>(
             }
         }
         crate::carry::tidy().await;
-        crate::discharge::note(driver.core().0.sleepy()).await;
+        crate::discharge::note(driver.core().core.sleepy()).await;
         if embassy_time::Instant::now() >= report_at {
             report_at += REPORT_EVERY;
             if core::mem::take(&mut first_report) {
@@ -781,7 +782,7 @@ pub async fn run<'a>(
                 facts.display = crate::display::OUTCOME.lock(core::cell::Cell::get);
                 // A map point keeps the GPS at rest by rule (spec
                 // "Position").
-                let map_point = driver.core().0.on_map_point();
+                let map_point = driver.core().core.on_map_point();
                 log::info!("boot: {} map_point={}", facts, map_point);
             }
             let s = driver.stats();
@@ -817,7 +818,7 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} restarts={} res
                 s.unserved,
                 crate::update::mesh::phase(),
                 Time(crate::utc::time()),
-                Drain(driver.core().0, now)
+                Drain(driver.core().core, now)
             );
         }
     }
@@ -877,43 +878,47 @@ impl core::fmt::Display for Drain<'_> {
 }
 
 /// The core in static memory: at 93 KiB a relay is kept out of every
-/// task's future and stack.
-struct Static(&'static mut Role);
+/// task's future and stack. `deaf`: a bench image's deafness
+/// (`update::Boot`).
+struct Static {
+    core: &'static mut Role,
+    deaf: bool,
+}
 
 impl Core for Static {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(bark_proto::Action)) {
         // A bench image's deafness: the frame never reached the core.
-        if crate::update::deaf() && matches!(event, Event::Received { .. }) {
+        if self.deaf && matches!(event, Event::Received { .. }) {
             return;
         }
-        self.0.handle(event, now, emit)
+        self.core.handle(event, now, emit)
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
-        self.0.next_wakeup()
+        self.core.next_wakeup()
     }
 
     fn accepts_send(&self, now: Instant) -> bool {
-        self.0.accepts_send(now)
+        self.core.accepts_send(now)
     }
 
     fn inbox(&self) -> Option<(bark_proto::MsgId, &[u8])> {
-        self.0.inbox()
+        self.core.inbox()
     }
 
     fn inbox_len(&self) -> usize {
-        self.0.inbox_len()
+        self.core.inbox_len()
     }
 
     fn confirm(&mut self, msg_id: bark_proto::MsgId) -> bool {
-        self.0.confirm(msg_id)
+        self.core.confirm(msg_id)
     }
 
     fn gps_tracks(&self) -> bool {
-        self.0.gps_tracks()
+        self.core.gps_tracks()
     }
 
     fn fix_in_reach(&self, position: Position) -> bool {
-        self.0.fix_in_reach(position)
+        self.core.fix_in_reach(position)
     }
 }

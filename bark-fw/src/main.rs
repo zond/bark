@@ -416,7 +416,7 @@ async fn main(spawner: Spawner) {
         // The node's flash: the stored state through the MPSL's timeslots
         // (`store.rs`), and the update's start through the NVMC driver
         // directly, which runs once at boot before the BLE controller
-        // starts (`ble::START`); a gathered image's later confirmation
+        // starts (`ble::MAY_START`); a gathered image's later confirmation
         // goes through the timeslots (`update::trial`).
         let mpsl_flash = nrf_mpsl::Flash::take(mpsl, p.NVMC);
         // SAFETY: a second handle on the NVMC, which writes only in
@@ -584,7 +584,7 @@ async fn mpsl_task(mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>) 
 }
 
 /// The phone link: the controller once the image has confirmed itself
-/// (`ble::START`), and the host and the service over it (`ble.rs`).
+/// (`ble::MAY_START`), and the host and the service over it (`ble.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn phone(
@@ -595,7 +595,7 @@ async fn phone(
     internal: &'static store::SharedFlash,
     flash: &'static update::Flash,
 ) {
-    ble::START.wait().await;
+    ble::MAY_START.wait().await;
     match ble::controller(parts, rng, mpsl) {
         Ok(c) => {
             let image = update::BARK_IMAGE_VERSION;
@@ -667,14 +667,14 @@ async fn node_radio(n: NodeRadio) {
             ext_flash::init(n.flash);
             mailbox::open();
             discharge::open();
-            let swapped = update::started(n.shared);
-            let ago = tables::restore(n.core, swapped).await;
+            let boot = update::started(n.shared);
+            let ago = tables::restore(n.core, boot.swapped).await;
             // Unknown, the time away is taken as the delivery TTL: a queued
             // message is then stale, never fresher than it is.
             let ago = ago.unwrap_or(n.core.config().delivery_ttl);
             carry::put_back(n.core, ago).await;
-            ble::START.signal(());
-            node::run(n.core, radio, n.battery, &n.config, &clock).await;
+            ble::MAY_START.signal(());
+            node::run(n.core, boot.deaf, radio, n.battery, &n.config, &clock).await;
         }
         // Without a radio USB and the log keep running so the error can be
         // read, and the phone link still comes up, so the node can be found,
@@ -682,7 +682,7 @@ async fn node_radio(n: NodeRadio) {
         Err(e) => {
             log::error!("radio init failed: {:?}", e);
             mailbox::open();
-            ble::START.signal(());
+            ble::MAY_START.signal(());
         }
     }
 }

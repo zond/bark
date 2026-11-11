@@ -25,8 +25,6 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 
-#[cfg(not(feature = "console"))]
-use core::sync::atomic::{AtomicBool, Ordering};
 use embedded_storage::nor_flash::NorFlash;
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 
@@ -138,17 +136,48 @@ pub fn external() -> &'static External {
     EXTERNAL.init(Mutex::new(RefCell::new(crate::ext_flash::Kept)))
 }
 
-/// Set once the image has confirmed itself, for [`watchdog`].
-static CONFIRMED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// What the image's trial tells the tasks that wait on it, one signal for
+/// each waiter: [`watchdog`] and the update over the mesh wait for the
+/// image to be kept, [`trial`] for it to be on trial and then for a node
+/// heard.
+struct Trial {
+    kept_for_watchdog: Signal<CriticalSectionRawMutex, ()>,
+    #[cfg(not(feature = "console"))]
+    kept_for_mesh: Signal<CriticalSectionRawMutex, ()>,
+    #[cfg(not(feature = "console"))]
+    on_trial: Signal<CriticalSectionRawMutex, ()>,
+    #[cfg(not(feature = "console"))]
+    heard: Signal<CriticalSectionRawMutex, ()>,
+}
+
+static TRIAL: Trial = Trial {
+    kept_for_watchdog: Signal::new(),
+    #[cfg(not(feature = "console"))]
+    kept_for_mesh: Signal::new(),
+    #[cfg(not(feature = "console"))]
+    on_trial: Signal::new(),
+    #[cfg(not(feature = "console"))]
+    heard: Signal::new(),
+};
+
+/// What [`started`] found; the console reads none of it.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "console", allow(dead_code))]
+pub struct Boot {
+    /// The length of the image a swap has just put in place, at its first
+    /// boot, for the time the swap took (`tables.rs`).
+    pub swapped: Option<u32>,
+    /// A [`Bench::Deaf`] image on the boot that swapped it in: the node
+    /// drops every frame it receives.
+    pub deaf: bool,
+}
 
 /// The node has started, its core set up and its radio up: keep this
 /// image, if a person staged it, or wait for the node to hear another
 /// ([`trial`]), if it came over the mesh. Until it is kept, a reset swaps
 /// the previous image back. It writes the internal flash through the
 /// NVMC directly, so it runs before the phone link's controller starts.
-/// Returns the length of the image a swap has just put in place, at its
-/// first boot, for the time the swap took (`tables.rs`).
-pub fn started(flash: &Flash) -> Option<u32> {
+pub fn started(flash: &Flash) -> Boot {
     // What the loader protected, as the ACL reads back (nRF52840 Product
     // Specification, ACL): all zeros if this image runs without it.
     for n in 0..2 {
@@ -171,11 +200,11 @@ pub fn started(flash: &Flash) -> Option<u32> {
                 "the loader's page erase returned {:?}: not protected",
                 erased
             );
-            return None;
+            return Boot::NOTHING;
         }
         Some(Bench::Unconfirmed) => {
             log::warn!("bench image: not confirming");
-            return None;
+            return Boot::NOTHING;
         }
         Some(Bench::Panic) => panic!("bench image: panicking before it confirms"),
         Some(Bench::Hang) => {
@@ -186,11 +215,12 @@ pub fn started(flash: &Flash) -> Option<u32> {
         }
     }
     let started = start(flash);
+    let mut deaf = false;
     let on_trial = match started {
         Ok(Started::Normal) => false,
         Ok(Started::Confirmed) => {
             log::info!("update: version {} confirmed", BARK_IMAGE_VERSION);
-            swapped_in();
+            deaf = swapped_in();
             false
         }
         Ok(Started::OnTrial) => {
@@ -199,7 +229,7 @@ pub fn started(flash: &Flash) -> Option<u32> {
                 BARK_IMAGE_VERSION,
                 HEARD_WITHIN.as_secs()
             );
-            swapped_in();
+            deaf = swapped_in();
             true
         }
         Ok(Started::Reverted { gave_up }) => {
@@ -235,9 +265,20 @@ pub fn started(flash: &Flash) -> Option<u32> {
         true => on_trial_now(flash),
         false => kept(),
     }
-    matches!(started, Ok(Started::Confirmed | Started::OnTrial))
-        .then(|| recorded_length(flash))
-        .flatten()
+    Boot {
+        swapped: matches!(started, Ok(Started::Confirmed | Started::OnTrial))
+            .then(|| recorded_length(flash))
+            .flatten(),
+        deaf,
+    }
+}
+
+impl Boot {
+    /// A bench image that never confirms: no swap, nothing deaf.
+    const NOTHING: Boot = Boot {
+        swapped: None,
+        deaf: false,
+    };
 }
 
 /// The length of the image the record names, the one swapped in.
@@ -252,9 +293,16 @@ fn recorded_length(flash: &Flash) -> Option<u32> {
 /// The image is kept: the watchdog is fed from now on, and the update over
 /// the mesh starts, which must not ask for a swap while one is on trial.
 fn kept() {
-    CONFIRMED.signal(());
+    TRIAL.kept_for_watchdog.signal(());
     #[cfg(not(feature = "console"))]
-    mesh::START.signal(());
+    TRIAL.kept_for_mesh.signal(());
+}
+
+/// The update over the mesh waits for the image to be kept, so that it
+/// asks for no swap while one is on trial.
+#[cfg(not(feature = "console"))]
+async fn kept_for_mesh() {
+    TRIAL.kept_for_mesh.wait().await
 }
 
 /// How long an image gathered over the mesh waits to hear a node, from its
@@ -268,42 +316,25 @@ const HEARD_WITHIN: Duration = Duration::from_micros(
 // after the loader's last feed, just before the jump.
 const _: () = assert!(HEARD_WITHIN.as_micros() < bark_image::TRIAL_SECONDS as u64 * 1_000_000);
 
-/// The image on trial, for [`trial`].
-#[cfg(not(feature = "console"))]
-static ON_TRIAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-/// A node was heard (`AppEvent::Heard`), for [`trial`].
-#[cfg(not(feature = "console"))]
-static HEARD: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-/// Set on the boot that swapped in a [`Bench::Deaf`] image.
-#[cfg(not(feature = "console"))]
-static DEAF: AtomicBool = AtomicBool::new(false);
-
-/// This is the boot that swapped the image in.
-fn swapped_in() {
-    #[cfg(not(feature = "console"))]
-    if matches!(BENCH, Some(Bench::Deaf)) {
+/// This is the boot that swapped the image in: whether the node is deaf
+/// to every frame ([`Bench::Deaf`]).
+fn swapped_in() -> bool {
+    let deaf = cfg!(not(feature = "console")) && matches!(BENCH, Some(Bench::Deaf));
+    if deaf {
         log::warn!("bench image: deaf to every frame until the next reset");
-        DEAF.store(true, Ordering::Relaxed);
     }
-}
-
-/// Whether the node drops every frame it receives ([`Bench::Deaf`]).
-#[cfg(not(feature = "console"))]
-pub fn deaf() -> bool {
-    DEAF.load(Ordering::Relaxed)
+    deaf
 }
 
 /// The core heard another node (`node.rs`).
 #[cfg(not(feature = "console"))]
 pub fn heard() {
-    HEARD.signal(());
+    TRIAL.heard.signal(());
 }
 
 #[cfg(not(feature = "console"))]
 fn on_trial_now(_: &Flash) {
-    ON_TRIAL.signal(());
+    TRIAL.on_trial.signal(());
 }
 
 /// The console has no core to hear with: it keeps itself. No console
@@ -331,9 +362,9 @@ pub async fn trial(internal: &'static crate::store::SharedFlash) {
     use bark_image::layout::STATE;
     use embassy_embedded_hal::flash::partition::Partition;
     use embassy_futures::select::{select, Either};
-    ON_TRIAL.wait().await;
+    TRIAL.on_trial.wait().await;
     let deadline = embassy_time::Instant::from_micros(HEARD_WITHIN.as_micros());
-    if let Either::Second(()) = select(HEARD.wait(), Timer::at(deadline)).await {
+    if let Either::Second(()) = select(TRIAL.heard.wait(), Timer::at(deadline)).await {
         log::warn!(
             "update: version {} heard no node within {} s; resetting so that the loader swaps the previous image back",
             BARK_IMAGE_VERSION,
@@ -371,7 +402,7 @@ pub async fn trial(internal: &'static crate::store::SharedFlash) {
 /// twice a period, so that one late wakeup still passes. Not before: the
 /// loader's watchdog is what ends a trial whose image hangs.
 pub async fn watchdog(dog: Peri<'static, peripherals::WDT>) {
-    CONFIRMED.wait().await;
+    TRIAL.kept_for_watchdog.wait().await;
     let Some(config) = wdt::Config::try_new(&dog) else {
         return;
     };
