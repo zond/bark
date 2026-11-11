@@ -71,23 +71,32 @@ void main() {
       inbox: 2,
       heard: 5,
       installing: 0x0118,
+      phones: 7,
     );
     final bytes = [
       0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, //
-      0x01, 0x18, 2,
+      0x01, 0x18, 2, 7,
     ];
     expect(s.encode(), bytes);
     final d = Status.decode(bytes);
     expect(d.ready && d.externalPower && d.placed && d.booting, isTrue);
     expect(d.sleepy || d.carried || d.mapPoint || d.anchorless, isFalse);
     expect(
-      [d.relays, d.bootLeftS, d.batteryMv, d.inbox, d.heard, d.installing],
-      [3, 100, 0, 2, 5, 0x0118],
+      [
+        d.relays,
+        d.bootLeftS,
+        d.batteryMv,
+        d.inbox,
+        d.heard,
+        d.installing,
+        d.phones,
+      ],
+      [3, 100, 0, 2, 5, 0x0118, 7],
     );
     expect(d.address, kyiv);
     // Each flag is its own bit.
     for (var bit = 0; bit < 8; bit++) {
-      final one = Status.decode([1 << bit, ...List.filled(16, 0)]);
+      final one = Status.decode([1 << bit, ...List.filled(Status.len - 1, 0)]);
       expect(one.encode()[0], 1 << bit);
     }
   });
@@ -119,7 +128,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(to, 7, room: 3);
-    expect(n.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    expect(n.encode(), [2, 2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
     // What a later version appends after room is ignored.
     final d = NodeInfo.decode([2, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 0xaa]);
     expect([d.version, d.oldest, d.image, d.room], [2, 1, 7, 0]);

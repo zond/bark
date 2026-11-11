@@ -325,6 +325,16 @@ class Session extends ChangeNotifier {
   /// to read (spec "Phone link", Phones).
   List<PhoneRecord>? phones;
 
+  /// Status's `phones` as the last read of [phones] began; null before the
+  /// first on this link.
+  int? _phonesAt;
+
+  /// The read of [phones] under way, on [_phonesLink], and whether it is
+  /// to read them again.
+  Future<void>? _readingPhones;
+  NodeLink? _phonesLink;
+  bool _phonesAgain = false;
+
   /// Whether the node serves phones that have not paired, as last read;
   /// the paired phone's alone to read.
   bool? nodePublic;
@@ -756,28 +766,60 @@ class Session extends ChangeNotifier {
   /// their home there ([_keepHome]).
   bool homeRemoved = false;
 
-  /// Reads the node's records, page by page.
-  Future<void> _readPhones(NodeLink link) async {
+  /// Reads the node's records, page by page, once the read under way, if
+  /// any, is done: a read asked for while one runs makes it read again,
+  /// so the list ends as the node's newest.
+  Future<void> _readPhones(NodeLink link) {
+    _phonesAgain = true;
+    final running = _readingPhones;
+    if (running != null && _phonesLink == link) return running;
+    if (_link != link) return Future.value();
+    _phonesLink = link;
+    return _readingPhones = _phonesLoop(link);
+  }
+
+  /// Reads the records until a read finds Status's `phones` where it was
+  /// as the read began, so that no list is made of the pages of two. Once
+  /// the screen shows the node, its Node and Home are read again too, as
+  /// a node's room and whether it is anyone's home follow its records.
+  Future<void> _phonesLoop(NodeLink link) async {
     try {
-      final all = <PhoneRecord>[];
-      var from = 0;
-      do {
-        await link.setPhonesFrom(from);
-        final page = await link.readPhones();
-        all.addAll(page.records);
-        // A next place at or before the last guards against a loop.
-        from = page.next > from ? page.next : 0;
-      } while (from != 0);
-      phones = all;
-      note(
-        'Phones: ${all.length} records, '
-        '${all.where((r) => r.paired).length} paired, '
-        '${all.where((r) => r.home).length} homes',
-      );
+      while (_phonesAgain && _link == link) {
+        _phonesAgain = false;
+        _phonesAt = status?.phones;
+        final all = <PhoneRecord>[];
+        var from = 0;
+        do {
+          await link.setPhonesFrom(from);
+          final page = await link.readPhones();
+          all.addAll(page.records);
+          // A next place at or before the last guards against a loop.
+          from = page.next > from ? page.next : 0;
+        } while (from != 0);
+        // A change since the read began moves `phones`, and [_onStatus]
+        // asks for another read.
+        _onStatus(await link.readStatus());
+        if (_phonesAgain || _link != link) continue;
+        phones = all;
+        note(
+          'Phones: ${all.length} records, '
+          '${all.where((r) => r.paired).length} paired, '
+          '${all.where((r) => r.home).length} homes',
+        );
+        if (nodeHome != null) {
+          final n = await link.readNode();
+          if (_link == link && listEquals(n.id, node?.id)) node = n;
+          final h = await link.readHome();
+          if (_link == link) nodeHome = h;
+        }
+        notifyListeners();
+      }
     } catch (e) {
       note('Phones: $e');
+      notifyListeners();
+    } finally {
+      if (_phonesLink == link) _readingPhones = null;
     }
-    notifyListeners();
   }
 
   /// Reads the node's records again.
@@ -984,6 +1026,8 @@ class Session extends ChangeNotifier {
     nodeHome = null;
     homeRemoved = false;
     phones = null;
+    _phonesAt = null;
+    _phonesAgain = false;
     nodePublic = null;
     guest = false;
     neighbours = null;
@@ -1006,6 +1050,11 @@ class Session extends ChangeNotifier {
     notifyListeners();
     // A guest's mail is the ring's, read through Guest.
     if (s.inbox > 0 && !guest) _drain();
+    final link = _link;
+    final at = _phonesAt;
+    if (!guest && link != null && at != null && s.phones != at) {
+      unawaited(_readPhones(link));
+    }
     _pump();
   }
 

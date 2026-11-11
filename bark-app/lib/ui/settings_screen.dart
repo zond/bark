@@ -340,9 +340,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (r.paired) '$whoCap can no longer use the node unless paired again.',
       if (r.home) 'The node stops keeping their mail.',
     ];
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
+    final (ok, gone) = await _whileListed<bool>(
+      r,
+      (context) => AlertDialog(
         title: Text(
           r.paired && r.home
               ? 'Remove $who and its home?'
@@ -365,8 +365,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (ok != true || !mounted) return;
+    if (!mounted) return;
+    if (gone) {
+      say(context, 'Already gone.');
+      return;
+    }
+    if (ok != true) return;
     await _removeByCode(r);
+  }
+
+  /// Whether the node's list, as last read, still holds `r` with what its
+  /// removal takes; with no list, as once the link ended, it is not known
+  /// to have gone.
+  bool _listed(PhoneRecord r) =>
+      app.session.phones?.any(
+        (x) =>
+            x.number == r.number &&
+            (x.paired || !r.paired) &&
+            (x.home || !r.home),
+      ) ??
+      true;
+
+  /// Shows a dialog of `r`'s removal, which closes by itself once the list,
+  /// read again as it changes, no longer holds `r`: another phone removed
+  /// it first. Its answer, and whether `r` went.
+  Future<(T?, bool)> _whileListed<T>(
+    PhoneRecord r,
+    WidgetBuilder builder,
+  ) async {
+    final s = app.session;
+    BuildContext? shown;
+    var gone = false;
+    void check() {
+      if (gone || _listed(r)) return;
+      gone = true;
+      final c = shown;
+      if (c != null && c.mounted) Navigator.pop(c);
+    }
+
+    s.addListener(check);
+    try {
+      final v = await showDialog<T>(
+        context: context,
+        builder: (c) {
+          shown = c;
+          return builder(c);
+        },
+      );
+      return (v, gone);
+    } finally {
+      s.removeListener(check);
+    }
   }
 
   /// Asks the node for a code, takes the six digits, and writes the
@@ -382,11 +431,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
       if (!mounted) return;
-      final code = await showDialog<String>(
-        context: context,
-        builder: (context) => const _CodeDialog(),
+      final (code, gone) = await _whileListed<String>(
+        r,
+        (context) => const _CodeDialog(),
       );
-      if (code == null || !mounted) return;
+      if (!mounted) return;
+      if (gone) {
+        say(context, 'Already gone.');
+        return;
+      }
+      if (code == null) return;
       try {
         await s.removePhone(
           r,

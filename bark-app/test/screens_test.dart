@@ -1381,6 +1381,62 @@ void main() {
     app.disposeWithNode();
   });
 
+  testWidgets('another phone pairs while Settings is open and shows; a '
+      'removal\'s dialog for a phone removed meanwhile closes, saying so', (
+    t,
+  ) async {
+    final app = await model(t);
+    final f = app.fakeNode = FakeNode(
+      now: DateTime.now,
+      sodium: sodium,
+      app: app.me.identity,
+    );
+    await app.connectFake();
+    await app.session.setPaired(nodeName(FakeNode.id));
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    expect(find.widgetWithText(TextButton, 'Remove'), findsNothing);
+
+    f.others.add(const PhoneRecord(number: 2, paired: true, name: 'Bo'));
+    f.changed();
+    await t.pumpAndSettle();
+    expect(find.text('Bo'), findsOneWidget);
+    final remove = find.widgetWithText(TextButton, 'Remove');
+    expect(remove, findsOneWidget);
+
+    // Removed by someone else while the first dialog is open.
+    await t.ensureVisible(remove);
+    await t.tap(remove);
+    await t.pumpAndSettle();
+    expect(find.text('Remove Bo\'s phone?'), findsOneWidget);
+    f.others.clear();
+    f.changed();
+    await t.pumpAndSettle();
+    expect(find.text('Remove Bo\'s phone?'), findsNothing);
+    expect(find.text('Already gone.'), findsOneWidget);
+    expect(find.text('Bo'), findsNothing);
+
+    // And while the code is being typed.
+    f.others.add(const PhoneRecord(number: 3, paired: true, name: 'Cy'));
+    f.changed();
+    await t.pumpAndSettle();
+    await t.tap(find.widgetWithText(TextButton, 'Remove'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Show the code'));
+    await t.pumpAndSettle();
+    expect(find.text('The code on the node'), findsOneWidget);
+    f.others.clear();
+    f.changed();
+    await t.pumpAndSettle();
+    expect(find.text('The code on the node'), findsNothing);
+    expect(find.text('Already gone.'), findsOneWidget);
+
+    await t.pumpWidget(const SizedBox());
+    await app.session.disconnect();
+    await t.pump();
+    app.disposeWithNode();
+  });
+
   testWidgets('a full node: Settings says it takes no more pairings', (
     t,
   ) async {

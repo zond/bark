@@ -724,6 +724,88 @@ void main() {
     });
   });
 
+  test('another phone\'s pairing, home and removal reach the list while '
+      'linked; a status that changes no phone reads none', () {
+    run((async, p, node) {
+      final s = p.session;
+      var reads = 0;
+      node.onPhonesRead = () => reads++;
+      List<int> numbers() => [for (final r in s.phones!) r.number];
+      expect(numbers(), [1]);
+      expect(s.node!.room, maxPhones - 1);
+
+      node.others.add(const PhoneRecord(number: 2, paired: true, name: 'Bo'));
+      node.changed();
+      async.flushMicrotasks();
+      expect(numbers(), [1, 2]);
+      expect(s.phones![1].name, 'Bo');
+      expect(s.node!.room, maxPhones - 2);
+      expect(s.nodeHome!.set, isFalse);
+
+      node.others[0] = const PhoneRecord(
+        number: 2,
+        paired: true,
+        home: true,
+        name: 'Bo',
+      );
+      node.changed();
+      async.flushMicrotasks();
+      expect(s.phones![1].home, isTrue);
+      expect(s.nodeHome!.set, isTrue);
+
+      node.others.clear();
+      node.changed();
+      async.flushMicrotasks();
+      expect(numbers(), [1]);
+      expect(s.node!.room, maxPhones - 1);
+
+      reads = 0;
+      node.walkTo(Position.fromDegrees(50.46, 30.52));
+      async.flushMicrotasks();
+      expect(reads, 0);
+    });
+  });
+
+  test('a change between two pages of the list is read again whole', () {
+    run((async, p, node) {
+      final s = p.session;
+      String name(int n) => String.fromCharCodes(List.filled(nameMax, 64 + n));
+      node.others.addAll([
+        for (var n = 2; n <= maxPhones; n++)
+          PhoneRecord(number: n, paired: true, name: name(n)),
+      ]);
+      node.changed();
+      async.flushMicrotasks();
+      List<int> numbers(List<PhoneRecord> rs) => [for (final r in rs) r.number];
+      expect(numbers(s.phones!), [1, 2, 3, 4, 5, 6, 7, 8]);
+
+      // Seen by the app: every list it shows.
+      final shown = <List<int>>[];
+      List<PhoneRecord>? last = s.phones;
+      s.addListener(() {
+        final rs = s.phones;
+        if (rs != null && !identical(rs, last)) shown.add(numbers(rs));
+        last = rs;
+      });
+      // Another phone removes 2 as the app reads the first page, after a
+      // change the app is told of: the second page is of the new list.
+      var pages = 0;
+      node.onPhonesRead = () {
+        if (++pages != 1) return;
+        node.others.removeAt(0);
+        node.changed();
+      };
+      node.others[6] = PhoneRecord(number: 8, paired: true, name: name(9));
+      node.changed();
+      async.flushMicrotasks();
+      expect(shown, [
+        [1, 3, 4, 5, 6, 7, 8],
+      ]);
+      expect(s.phones!.last.name, name(9));
+      expect(pages, greaterThan(2));
+    });
+  });
+
   /// Attaches `node`, its link the owner's or a `guest`'s; whether the
   /// session took it.
   bool? attached(
