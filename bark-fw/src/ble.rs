@@ -662,8 +662,8 @@ fn notify_one(slot: usize, n: Notify) {
 }
 
 /// The battery step the status is notified at: 1 % of a cell's charge
-/// between 20 % and full, from the open-circuit voltages the core's
-/// levels use (`BatteryLevels::DESIGN`, `BATTERY_FULL_MV`), rounded up.
+/// between 20 % and full on the cell's curve (`BatteryLevels::DESIGN`,
+/// `BATTERY_FULL_MV`), on average, rounded up.
 const BATTERY_STEP_MV: u16 = (bark_proto::node::BATTERY_FULL_MV
     - bark_proto::BatteryLevels::DESIGN.low_mv)
     .div_ceil(100 - 20);

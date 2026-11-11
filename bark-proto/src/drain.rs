@@ -2,15 +2,10 @@
 //! estimate of the drain for each way the node runs on battery.
 //!
 //! The board has no fuel gauge: the level is read off the cell's voltage
-//! through a coarse straight-line mapping ([`battery_percent`]), and a
-//! lithium cell's voltage is flat over most of its charge. So a drop seen
-//! over minutes is noise, and samples are long ([`SAMPLE`]) and averaged
-//! over days ([`TIME_CONSTANT`]).
-//!
-//! The estimate is in the mapping's percent, not the cell's: between 30
-//! and 50 % one percent of charge reads as about 0.4, near full as about
-//! 1.6. The mapping is exact at 20, 30 and 100 %, so over a discharge the
-//! errors cancel, and the time constant spans that.
+//! through the cell's curve ([`battery_percent`]), within a few percent,
+//! and a step of the level is three to six of the converter's. So a drop
+//! seen over minutes is noise, and samples are long ([`SAMPLE`]) and
+//! averaged over days ([`TIME_CONSTANT`]).
 //!
 //! [`battery_percent`]: crate::node::battery_percent
 
@@ -18,8 +13,12 @@ use crate::gps::GPS_STANDBY_UA;
 use crate::node::BATTERY_LOW_PERCENT;
 use crate::time::Duration;
 
-/// The cell, mAh (LILYGO T-Echo README).
-pub const CELL_MAH: u32 = 850;
+/// The cell's charge, mAh, in which the level's percent are: what the
+/// T-Echo's 850 mAh cell gave from full to the board's stop, 21.7 h at
+/// the 35.4 mA the currents below and the GPS's add up to
+/// (`docs/discharge-2026-11-11.md`). Measured in these currents, it
+/// takes in what they leave out in proportion.
+pub const CELL_MAH: u32 = 767;
 
 /// The battery divider's constant drain, µA (`bark-fw/src/board.rs`).
 const DIVIDER_UA: u32 = 12;
@@ -42,7 +41,7 @@ pub const RELAY_UA: u32 = RELAY_RADIO_UA + DIVIDER_UA + GPS_STANDBY_UA as u32;
 /// "Beats").
 pub const SLEEPY_UA: u32 = SLEEPY_RADIO_UA + DIVIDER_UA + GPS_STANDBY_UA as u32;
 
-/// Percent of the cell an hour at `ua` µA: 100 % / (850 mAh / the current).
+/// Percent of the cell an hour at `ua` µA: 100 % / (767 mAh / the current).
 pub const fn percent_per_hour(ua: u32) -> f32 {
     ua as f32 * 100.0 / (CELL_MAH as f32 * 1000.0)
 }
@@ -58,8 +57,8 @@ pub enum Running {
 }
 
 impl Running {
-    /// The drain the currents say, percent an hour: 0.7544 for a relay,
-    /// 0.0696 for a sleepy node. The microcontroller is not counted; the
+    /// The drain the currents say, percent an hour: 0.836 for a relay,
+    /// 0.0772 for a sleepy node. The microcontroller is not counted; the
     /// readings correct for it.
     pub const fn seed(self) -> f32 {
         match self {
@@ -69,26 +68,26 @@ impl Running {
     }
 }
 
-/// The smallest drop the mapping shows, percent.
+/// The smallest drop the level shows, percent.
 const STEP_PERCENT: f32 = 1.0;
 
 /// How long a sample runs at least: until a sleepy node, the slowest
-/// drain, has drained one step of the mapping, 1 % / 0.0696 % an hour =
-/// 14.4 h, rounded up. A step is about 5.7 mV of the cell between 30 % and
-/// full, three of the converter's 1.76 mV steps (`bark-fw/src/battery.rs`),
-/// so a finer mapping would show noise.
+/// drain, has drained one step of the level, 1 % / 0.0772 % an hour =
+/// 13.0 h, rounded up. A step is 6 to 10 mV of the cell between full and
+/// 30 %, three to six of the converter's 1.76 mV steps
+/// (`bark-fw/src/battery.rs`), so a finer level would show noise.
 pub const SAMPLE: Duration = {
     let hours = STEP_PERCENT / Running::Sleepy.seed();
     Duration::from_secs((hours as u64 + 1) * 3600)
 };
 
-const _: () = assert!(SAMPLE.as_micros() == 15 * 3600 * 1_000_000);
+const _: () = assert!(SAMPLE.as_micros() == 13 * 3600 * 1_000_000);
 
-/// The estimate's time constant: how long a relay at its seed takes to
-/// drain the mapping's straight segment from full to 30 %, 70 % / 0.7544 %
-/// an hour = 92.8 h. A shorter one would follow the bends of the curve
-/// against the segment; over it, a sleepy node's samples, one step each
-/// give or take one, average over about twelve, to about 12 %.
+/// The estimate's time constant: how long a relay at its seed takes from
+/// full to 30 %, 70 % / 0.836 % an hour = 83.7 h, so that it averages
+/// over the curve's errors, which change sign along it. Over it, a sleepy
+/// node's samples, one step each give or take one, average over about
+/// thirteen, to about 12 %.
 pub const TIME_CONSTANT: Duration = {
     let segment = 100.0 - 30.0;
     Duration::from_secs((segment / Running::Relay.seed() * 3600.0) as u64)
@@ -144,7 +143,7 @@ pub struct Drain {
     steps: [i16; 2],
     phase: Phase,
     /// Since when the readings have been at or below the low level, where
-    /// the mapping shows no level; 0 for none.
+    /// the level is not shown; 0 for none.
     low_since_s: u32,
 }
 
@@ -187,8 +186,8 @@ impl Drain {
     }
 
     /// The readings say nothing for a while: the load changed, the cell
-    /// was charging, or the scale changed. The cell's voltage settles an
-    /// hour after a change of load, as AN4189's readings rest.
+    /// was charging, or the scale changed. The cell's voltage settles
+    /// within the hour a full cell rests before it calibrates.
     pub fn interrupt(&mut self, now_s: u32) {
         let rest_s = crate::node::BATTERY_REST.as_micros() / 1_000_000;
         self.phase = Phase::Quiet {
@@ -299,11 +298,11 @@ mod tests {
 
     #[test]
     fn the_derived_numbers() {
-        assert!((Running::Relay.seed() - 0.7544).abs() < 1e-4);
-        assert!((Running::Sleepy.seed() - 0.06965).abs() < 1e-4);
-        assert_eq!(SAMPLE, Duration::from_secs(15 * 3600));
+        assert!((Running::Relay.seed() - 0.8360).abs() < 1e-4);
+        assert!((Running::Sleepy.seed() - 0.07718).abs() < 1e-4);
+        assert_eq!(SAMPLE, Duration::from_secs(13 * 3600));
         let tau_h = TIME_CONSTANT.as_micros() as f32 / 3.6e9;
-        assert!((tau_h - 92.8).abs() < 0.1, "{tau_h}");
+        assert!((tau_h - 83.7).abs() < 0.1, "{tau_h}");
     }
 
     /// A cell drained at `true_rate` percent an hour from full, read once
@@ -369,7 +368,7 @@ mod tests {
         let mut d = Drain::NEW;
         let h = |n: u32| n * 3600;
         assert_eq!(d.read(Some(90), Some(Running::Relay), 0), None);
-        assert_eq!(d.read(Some(80), Some(Running::Relay), h(14)), None);
+        assert_eq!(d.read(Some(80), Some(Running::Relay), h(12)), None);
         assert_eq!(d.read(Some(70), Some(Running::Sleepy), h(15)), None);
         assert_eq!(d.read(Some(70), Some(Running::Sleepy), h(15) + 3599), None);
         assert_eq!(
@@ -377,8 +376,8 @@ mod tests {
             None,
             "starts"
         );
-        let step = d.read(Some(69), Some(Running::Sleepy), h(31)).unwrap();
-        assert!((step.measured - 1.0 / 15.0).abs() < 1e-6);
+        let step = d.read(Some(69), Some(Running::Sleepy), h(29)).unwrap();
+        assert!((step.measured - 1.0 / 13.0).abs() < 1e-6);
         assert_eq!(d.rate(Running::Relay), Running::Relay.seed());
     }
 
@@ -390,8 +389,8 @@ mod tests {
         let hours = |t: Option<Duration>| t.unwrap().as_micros() as f32 / 3.6e9;
         let full = hours(d.left(Some(100), true, 0));
         assert!((full - 80.0 / relay).abs() < 0.01, "{full}");
-        // 106 h: 4 days.
-        assert!((full / 24.0 - 4.42).abs() < 0.01, "{full}");
+        // 96 h: the line says 3 days, rounded down.
+        assert!((full / 24.0 - 3.99).abs() < 0.01, "{full}");
         assert_eq!(d.left(Some(BATTERY_LOW_PERCENT), true, 0), None);
     }
 
@@ -404,8 +403,8 @@ mod tests {
         let d = Drain::NEW;
         let full = hours(d.left(Some(100), false, 0));
         assert!((full - 100.0 / sleepy).abs() < 0.01, "{full}");
-        // 1436 h: 59 days.
-        assert!((full / 24.0 - 59.8).abs() < 0.1, "{full}");
+        // 1296 h: 54 days.
+        assert!((full / 24.0 - 54.0).abs() < 0.1, "{full}");
         let mut d = Drain::NEW;
         d.read(None, Some(Running::Sleepy), 3600);
         let low = hours(d.left(None, false, 3600 + 10 * 3600));
@@ -418,7 +417,7 @@ mod tests {
     fn a_learned_drain_is_kept() {
         let mut d = Drain::NEW;
         assert_eq!(d.kept(), None);
-        d.learn(Running::Sleepy, 0.2, 15 * 3600);
+        d.learn(Running::Sleepy, 0.2, 13 * 3600);
         let kept = d.kept().unwrap();
         assert_eq!(kept[0], 0);
         let back = Drain::from_kept(Some(kept));
@@ -428,7 +427,8 @@ mod tests {
     }
 
     #[test]
-    fn the_mapping_has_the_low_level() {
-        assert_eq!(battery_percent(3742), Some(BATTERY_LOW_PERCENT));
+    fn the_level_has_the_low_level() {
+        let low = crate::node::BatteryLevels::DESIGN.low_mv;
+        assert_eq!(battery_percent(low + 1), Some(BATTERY_LOW_PERCENT));
     }
 }

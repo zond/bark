@@ -5,6 +5,7 @@
 
 mod common;
 
+use bark_proto::node::BATTERY_FULL_MV;
 use bark_proto::{AppCommand, BatteryLevels, Config, Position, Relay, Trace};
 use common::{secs, Harness};
 
@@ -216,8 +217,13 @@ fn rested(seed: u64) -> Harness<Relay> {
     h
 }
 
+/// What a board that reads 2.9 % low reads for a calibrated `mv`.
+fn low_board(mv: u16) -> u16 {
+    (u32::from(mv) * 971 / 1000) as u16
+}
+
 /// A full cell's first reading after its rest scales the readings: a
-/// board that reads 2.9 % low is read 4177 mV there, and the levels apply
+/// board that reads 2.9 % low is read as full there, and the levels apply
 /// to its scaled readings; a reading within the rest calibrates nothing.
 /// The scale is stored, and a relay rebooted with it reads alike.
 #[test]
@@ -229,23 +235,25 @@ fn a_rested_full_cell_calibrates_the_readings() {
     battery(&mut h, r, 3900);
     assert_eq!(h.nodes[r].stored.and_then(|s| s.battery_scale), None);
     h.run_for(secs(1801));
-    battery(&mut h, r, 4056);
+    battery(&mut h, r, low_board(BATTERY_FULL_MV));
     h.run_for(secs(1));
     let scale = h.nodes[r].stored.and_then(|s| s.battery_scale);
     assert!(scale.is_some_and(|s| s > 33_000), "{scale:?}");
-    // 3700 mV read is 3810 mV scaled: above the low level.
-    battery(&mut h, r, 3700);
+    // Below the low level as read, above it scaled.
+    let above = low_board(LEVELS.low_mv) + 15;
+    assert!(above < LEVELS.low_mv);
+    battery(&mut h, r, above);
     h.run_for(secs(60));
     assert!(!h.nodes[r].core.sleepy() && !h.nodes[r].core.leaving());
     // Kept across a reboot.
     let stored = h.nodes[r].stored.expect("kept");
     reboot_on_battery(&mut h, r, stored, 72);
     h.run_for(secs(400));
-    battery(&mut h, r, 3700);
+    battery(&mut h, r, above);
     h.run_for(secs(60));
     assert!(!h.nodes[r].core.sleepy(), "scaled after the reboot");
-    // 3630 mV read is 3738 mV scaled: low.
-    battery(&mut h, r, 3630);
+    // Low, scaled.
+    battery(&mut h, r, low_board(LEVELS.low_mv) - 10);
     assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
 }
 
@@ -256,35 +264,33 @@ fn a_calibration_beyond_the_gain_error_is_not_taken() {
     let r = 0;
     let mut h = rested(81);
     h.run_for(secs(3601));
-    // Scale 1.071: a cell that was not full.
+    // Scale 1.058: a cell that was not full.
     battery(&mut h, r, 3900);
     h.run_for(secs(1));
     assert_eq!(h.nodes[r].stored.and_then(|s| s.battery_scale), None);
-    battery(&mut h, r, 3700);
+    // Low as read, though not if scaled by 1.058.
+    battery(&mut h, r, LEVELS.low_mv - 50);
     assert!(h.run_until(h.now + secs(60), |h| h.nodes[r].core.sleepy()));
 }
 
-/// The calibrated reading, in millivolts, of `percent` on the core's
-/// mapping between 30 % and full, as a board that reads 2.9 % low reads
-/// it.
+/// The reading of `percent` on the cell's curve, as a board that reads
+/// 2.9 % low reads it.
 fn reading(percent: f32) -> u16 {
-    let (high, full) = (f32::from(LEVELS.high_mv), 4177.0);
-    let mv = high + (percent - 30.0) * (full - high) / 70.0;
-    (mv * 4056.0 / 4177.0) as u16
+    low_board(bark_proto::node::cell_mv(percent.round() as u8))
 }
 
 /// A fixed relay on battery whose cell drains faster than its seed says
-/// learns from its readings: after the quiet hour and a sample of 15 h,
+/// learns from its readings: after the quiet hour and a sample of 13 h,
 /// its estimate moves toward the drain by the weight of a sample, it
 /// says so and keeps it, and its time left is the time to the low level,
 /// where it turns sleepy. A reboot keeps what it learned.
 #[test]
 fn a_relay_on_battery_learns_its_drain() {
-    use bark_proto::drain::{Running, TIME_CONSTANT};
+    use bark_proto::drain::{Running, SAMPLE, TIME_CONSTANT};
     let r = 0;
     let mut h = rested(91);
     h.run_for(secs(3601));
-    battery(&mut h, r, 4056);
+    battery(&mut h, r, low_board(BATTERY_FULL_MV));
     let seed = Running::Relay.seed();
     let truth = 1.0;
     let start = h.now;
@@ -296,10 +302,15 @@ fn a_relay_on_battery_learns_its_drain() {
     }
     h.run_for(secs(1));
     let hours = h.now.since(start).as_micros() as f32 / 3.6e9;
-    assert!((16.0..16.5).contains(&hours), "a sample after {hours} h");
+    let sample_h = SAMPLE.as_micros() as f32 / 3.6e9;
+    // The quiet hour, the sample, and up to a reading's 10 minutes.
+    assert!(
+        (1.0 + sample_h..1.0 + sample_h + 0.5).contains(&hours),
+        "a sample after {hours} h"
+    );
     let [relay, sleepy] = h.nodes[r].core.battery_drains();
     let tau_h = TIME_CONSTANT.as_micros() as f32 / 3.6e9;
-    let weight = 1.0 - (-15.0 / tau_h).exp();
+    let weight = 1.0 - (-sample_h / tau_h).exp();
     let want = seed + weight * (truth - seed);
     assert!((relay - want).abs() < 0.02, "{relay} for {want}");
     assert_eq!(sleepy, Running::Sleepy.seed());
@@ -309,7 +320,7 @@ fn a_relay_on_battery_learns_its_drain() {
         .filter(|(_, t)| matches!(t, Trace::Drain { sleepy: false, .. }))
         .count();
     assert_eq!(said, 1);
-    // The time left, from the last reading's level on the mapping.
+    // The time left, from the last reading's level on the curve.
     let now_level =
         bark_proto::node::battery_percent(h.nodes[r].core.battery_millivolts(reading(level)));
     let left = h.nodes[r].core.battery_left(h.now).unwrap();

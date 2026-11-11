@@ -137,9 +137,11 @@ per_node = true
 
 [battery]
 on = true
-# The T-Echo's cell and charger (LILYGO T-Echo README: 850 mAh, charge
-# current 500 mA fixed).
-capacity_mah = 850.0
+# The T-Echo's cell, 850 mAh nominal, as the core counts its charge: 767
+# mAh in the modelled currents (`bark_proto::drain::CELL_MAH`,
+# docs/discharge-2026-11-11.md); the charger's 500 mA (LILYGO T-Echo
+# README).
+capacity_mah = 767.0
 charge_ma = 500.0
 # Assumed: a cell holds 80 to 100 % of its nominal capacity, as cells
 # age; a node on USB is full or nearly, as a charger tops it up; people
