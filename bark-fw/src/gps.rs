@@ -53,11 +53,29 @@ const READ: usize = 1024;
 
 /// What the node last asked of the GPS.
 static WANT: Signal<CriticalSectionRawMutex, Gps> = Signal::new();
-/// The last fix that passed the receiver's checks, until the node takes it.
-static FIX: Mutex<CriticalSectionRawMutex, Cell<Option<Position>>> = Mutex::new(Cell::new(None));
-/// The receiver lost its fix since the node last took one, until the
-/// node takes this.
-static LOST: Mutex<CriticalSectionRawMutex, Cell<bool>> = Mutex::new(Cell::new(false));
+/// What the receiver has for the node, until the node takes it.
+#[derive(Clone, Copy)]
+struct News {
+    /// The last fix that passed the receiver's checks.
+    fix: Option<Position>,
+    /// The receiver lost its fix since the node last took one.
+    lost: bool,
+}
+
+static NEWS: Mutex<CriticalSectionRawMutex, Cell<News>> = Mutex::new(Cell::new(News {
+    fix: None,
+    lost: false,
+}));
+
+/// Change the news, under one lock.
+fn news<R>(f: impl FnOnce(&mut News) -> R) -> R {
+    NEWS.lock(|c| {
+        let mut n = c.get();
+        let r = f(&mut n);
+        c.set(n);
+        r
+    })
+}
 /// The receiver runs, its WAKEUP line high, for the discharge log
 /// (`discharge.rs`): it draws some 29 mA then (spec "Sleepy nodes").
 static AWAKE: AtomicBool = AtomicBool::new(false);
@@ -77,13 +95,13 @@ pub fn want(gps: Gps) {
 
 /// The node's side: the fix waiting, if any.
 pub fn take_fix() -> Option<Position> {
-    FIX.lock(Cell::take)
+    news(|n| n.fix.take())
 }
 
 /// The node's side: whether the receiver lost its fix since it last
 /// asked. It hands this before the fix waiting, which came after.
 pub fn take_lost() -> bool {
-    LOST.lock(|l| l.replace(false))
+    news(|n| core::mem::take(&mut n.lost))
 }
 
 /// Whether the receiver runs now.
@@ -94,7 +112,7 @@ pub fn awake() -> bool {
 /// The node's side: whether anything its wake was raised for waits,
 /// so that a signal whose fix was taken wakes no one.
 pub fn waiting() -> bool {
-    FIX.lock(|x| x.get().is_some()) || LOST.lock(Cell::get)
+    news(|n| n.fix.is_some() || n.lost)
 }
 
 /// What the task takes.
@@ -221,7 +239,7 @@ pub async fn run(mut p: Parts) -> ! {
 /// far fixes (spec "Position").
 fn lose(state: State) {
     if state == State::Fixed && !LOAD_ONLY {
-        LOST.lock(|l| l.set(true));
+        news(|n| n.lost = true);
         crate::node::WAKE.gps_has_news();
     }
 }
@@ -311,7 +329,7 @@ fn fixed(f: Fix, state: State) -> State {
         note("fix");
     }
     if !LOAD_ONLY {
-        FIX.lock(|x| x.set(Some(position)));
+        news(|n| n.fix = Some(position));
         crate::node::WAKE.gps_has_news();
     }
     State::Fixed
