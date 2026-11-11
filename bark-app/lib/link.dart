@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 1;
+const int linkVersion = 2;
 
 /// The oldest node link version this app still serves (spec "Phone link",
 /// Versions): its own, as no node of another is kept (roadmap D188).
@@ -273,7 +273,7 @@ class NodeInfo {
 
 /// Status, read and notify.
 class Status {
-  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1;
+  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1;
   final bool ready;
   final bool externalPower;
   final bool sleepy;
@@ -297,6 +297,10 @@ class Status {
   /// The phone's messages in the node's ring not yet confirmed.
   final int inbox;
 
+  /// Moves, wrapping, whenever what a Phones read lists changes, so the app
+  /// reads Phones again; 0 on a guest's link (spec "Phone link", Status).
+  final int phones;
+
   const Status({
     this.ready = false,
     this.externalPower = false,
@@ -313,6 +317,7 @@ class Status {
     this.inbox = 0,
     this.heard = 0,
     this.installing = 0,
+    this.phones = 0,
   });
 
   Status copyWith({
@@ -331,6 +336,7 @@ class Status {
     int? inbox,
     int? heard,
     int? installing,
+    int? phones,
   }) => Status(
     ready: ready ?? this.ready,
     externalPower: externalPower ?? this.externalPower,
@@ -347,6 +353,7 @@ class Status {
     inbox: inbox ?? this.inbox,
     heard: heard ?? this.heard,
     installing: installing ?? this.installing,
+    phones: phones ?? this.phones,
   );
 
   int get _flags => [
@@ -369,6 +376,7 @@ class Status {
     ..._be16(bootLeftS),
     ..._be16(installing),
     inbox,
+    phones,
   ]);
 
   static Status decode(List<int> b) {
@@ -391,6 +399,7 @@ class Status {
       bootLeftS: _u16(b, at + 4),
       installing: _u16(b, at + 6),
       inbox: b[at + 8],
+      phones: b[at + 9],
     );
   }
 }

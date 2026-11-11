@@ -5,9 +5,9 @@
 //! flash by the store (`store.rs`) after each change.
 //!
 //! Every change goes through [`with`], which then hands the store what
-//! changed, the mailbox each person as their record says them, and the
-//! screen its phone line, so that the three never disagree for longer
-//! than the call.
+//! changed, the mailbox each person as their record says them, the
+//! screen its phone line, and the phone link what Phones lists, so that
+//! none disagrees for longer than the call.
 
 use core::cell::RefCell;
 
@@ -38,8 +38,8 @@ pub fn read<R>(f: impl FnOnce(&Phones) -> R) -> R {
     PHONES.lock(|p| f(&p.borrow()))
 }
 
-/// Change the records; what changed is written to flash, and the mailbox
-/// and the screen follow.
+/// Change the records; what changed is written to flash, and the mailbox,
+/// the screen and the linked phones follow.
 pub fn with<R>(f: impl FnOnce(&mut Phones) -> R) -> R {
     let r = PHONES.lock(|p| f(&mut p.borrow_mut()));
     changed();
@@ -52,11 +52,13 @@ pub fn take_dirty() -> bark_link::phones::Dirty {
     PHONES.lock(|p| p.borrow_mut().take_dirty())
 }
 
-/// Hand the store, the mailbox and the screen what the records say now.
+/// Hand the store, the mailbox, the screen and the phone link what the
+/// records say now.
 fn changed() {
     crate::store::keep_phones();
     to_mailbox();
     crate::display::phone(line());
+    crate::ble::phones_moved();
 }
 
 /// Hand the mailbox each person as their record says them; at its

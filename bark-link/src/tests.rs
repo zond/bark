@@ -25,14 +25,14 @@ proptest! {
     }
 
     #[test]
-    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8) {
+    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8, phones: u8) {
         let bit = |b: u8| flags & (1 << b) != 0;
         let placed = bit(5);
         let s = Status {
             ready: bit(0), external_power: bit(1), sleepy: bit(2), carried: bit(3),
             map_point: bit(4), placed, booting: bit(6), anchorless: bit(7),
             address: if placed { address } else { Position::default() },
-            battery_mv, relays, heard, boot_left_s, installing, inbox,
+            battery_mv, relays, heard, boot_left_s, installing, inbox, phones,
         };
         let b = s.encode();
         prop_assert_eq!(b[0], flags);
@@ -143,11 +143,12 @@ fn vectors() {
         inbox: 2,
         heard: 5,
         installing: 0x0118,
+        phones: 7,
         ..Status::default()
     };
     assert_eq!(
         status.encode(),
-        [0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2]
+        [0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2, 7]
     );
 
     let given = GivenBack {
@@ -163,7 +164,7 @@ fn vectors() {
         image: 7,
         room: 3,
     };
-    assert_eq!(node.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    assert_eq!(node.encode(), [2, 2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -398,7 +399,7 @@ fn versions_serve_each_other_when_each_meets_the_other_s_oldest() {
 fn every_value_fits_its_pdu() {
     assert_eq!(value_room(ATT_MTU), 244);
     assert_eq!(value_room(DEFAULT_ATT_MTU), 20);
-    assert_eq!(Status::LEN, 17);
+    assert_eq!(Status::LEN, 18);
     assert_eq!(Node::LEN, 13);
     assert_eq!(home::Home::LEN, 8);
 }
@@ -431,14 +432,14 @@ fn recipient_and_public_are_taken_whole() {
     // The tag, the versions and the person's name; a guest's, no name.
     let named = Recipient {
         tag: 0xab,
-        version: 1,
-        oldest: 1,
+        version: 2,
+        oldest: 2,
         name: phones::Name::new("Åsa".as_bytes()).unwrap(),
     };
     assert!(named.compatible());
     let mut b = [0; Recipient::MAX_LEN];
     let n = named.encode(&mut b);
-    assert_eq!(&b[..n], &[0xab, 1, 1, 0xc3, 0x85, b's', b'a']);
+    assert_eq!(&b[..n], &[0xab, 2, 2, 0xc3, 0x85, b's', b'a']);
     assert_eq!(Recipient::decode(&b[..n]), Ok(named));
     assert_eq!(
         Recipient::decode(&b[..3]).map(|r| r.name),

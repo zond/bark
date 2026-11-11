@@ -472,7 +472,19 @@ class FakeNode implements NodeLink {
       address: _mapPoint ?? _fix,
       inbox: g == null ? _inbox.length : 0,
       installing: (installing ?? 0) & 0xffff,
+      phones: g == null ? _phonesNow : 0,
     );
+  }
+
+  /// Status's `phones`, which moves whenever what Phones lists changes.
+  int _phones = 0;
+  String? _listed;
+
+  int get _phonesNow {
+    final l = records.map((r) => hex(r.encode())).join();
+    if (_listed != null && l != _listed) _phones = (_phones + 1) & 0xff;
+    _listed = l;
+    return _phones;
   }
 
   static int _ceilS(Duration d) => d <= Duration.zero
@@ -716,6 +728,7 @@ class FakeNode implements NodeLink {
     if (held(key) != held(homeKey)) {
       homeKey = key == null ? null : Uint8List.fromList(key);
       homeKeyChanges++;
+      _notify();
     }
   });
 
@@ -1037,6 +1050,10 @@ class FakeNode implements NodeLink {
 
   /// As many whole records from the place written as fit one value, as
   /// the node reads them.
+  /// For a test: runs after each read of Phones is answered, as another
+  /// phone may change the records between two reads.
+  void Function()? onPhonesRead;
+
   @override
   Future<PhonesPage> readPhones() => _answer(() {
     final rs = records;
@@ -1052,6 +1069,7 @@ class FakeNode implements NodeLink {
       out.add(rs[i]);
       len += need;
     }
+    onPhonesRead?.call();
     return PhonesPage(next, out);
   });
 
@@ -1084,6 +1102,8 @@ class FakeNode implements NodeLink {
     shownCode = null;
     _codeAt = null;
     if (!taken) throw const AttException(AttError.refused);
+    // The others are told once the records are written.
+    scheduleMicrotask(_notify);
     if (r.mine) {
       if (home) homeKey = null;
       if (bond) {

@@ -14,7 +14,7 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// The link version this crate speaks, in [`Node::version`]. Every change
 /// to the attribute table takes a new one: the node tells a bonded phone of
 /// a change by the version it last saw (spec "Versions").
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 
 /// The oldest link version whose apps this node serves, in
 /// [`Node::oldest`] (spec "Versions").
@@ -279,11 +279,14 @@ pub struct Status {
     pub installing: u16,
     /// The phone's messages in the node's ring not yet confirmed.
     pub inbox: u8,
+    /// Moves, wrapping, whenever what a Phones read lists changes; 0 on a
+    /// guest's link (spec "Phone link", Status).
+    pub phones: u8,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1;
+    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1 + 1;
     const AT_ADDRESS: usize = 1;
     const AT_BATTERY: usize = Self::AT_ADDRESS + POS;
     const AT_RELAYS: usize = Self::AT_BATTERY + 2;
@@ -291,6 +294,7 @@ impl Status {
     const AT_BOOT_LEFT: usize = Self::AT_HEARD + 1;
     const AT_INSTALLING: usize = Self::AT_BOOT_LEFT + 2;
     const AT_INBOX: usize = Self::AT_INSTALLING + 2;
+    const AT_PHONES: usize = Self::AT_INBOX + 1;
 
     /// Every flag clear and every count zero.
     pub const EMPTY: Status = Status {
@@ -309,6 +313,7 @@ impl Status {
         boot_left_s: 0,
         installing: 0,
         inbox: 0,
+        phones: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -340,6 +345,7 @@ impl Status {
         b[Self::AT_BOOT_LEFT..Self::AT_INSTALLING].copy_from_slice(&self.boot_left_s.to_be_bytes());
         b[Self::AT_INSTALLING..Self::AT_INBOX].copy_from_slice(&self.installing.to_be_bytes());
         b[Self::AT_INBOX] = self.inbox;
+        b[Self::AT_PHONES] = self.phones;
         b
     }
 
@@ -365,6 +371,7 @@ impl Status {
             boot_left_s: u16_at(b, Self::AT_BOOT_LEFT),
             installing: u16_at(b, Self::AT_INSTALLING),
             inbox: b[Self::AT_INBOX],
+            phones: b[Self::AT_PHONES],
         })
     }
 }

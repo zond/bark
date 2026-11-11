@@ -399,7 +399,14 @@ to forget it in Bluetooth settings now, with the same button.
 
 **Phones at the node.** On an owner's link, Settings shows under This
 node the node's phones, read from Phones page by page at each
-connection and after each removal (spec "Phone link", Phones): "Phones
+connection, after each removal and whenever Status's `phones` moves,
+as another phone pairs, leaves or changes there (spec "Phone link",
+Status, Phones). One read runs at a time; one asked for meanwhile makes
+it read again, and a read during which `phones` moved is not shown but
+read again, so the list is never made of the pages of two. With the
+list it reads Node and Home again, for the node's room and whether it
+is anyone's home. A removal's dialog whose phone leaves the list while
+it is open closes and says "Already gone." "Phones
 paired with this node", whose info button says that a node keeps up to
 eight phones, that anyone at it can pair by the code it shows and that
 every paired phone can change its settings, so a phone not known or
@@ -599,7 +606,7 @@ Whenever Status counts messages in the inbox, it reads the oldest,
 stores it, writes its message ID back so the node forgets it, and
 repeats.
 
-**Versions.** The app speaks link version 1 and serves nodes of that
+**Versions.** The app speaks link version 2 and serves nodes of that
 version, `oldestNode` (roadmap D188). The node says in Node the oldest
 app version it serves. The app reads Node first and goes on only when
 each side's version is at least the other's oldest (spec "Phone link",
@@ -1104,7 +1111,7 @@ a phone (Trying it).
    sleepy ones counted, or "Hears no other node yet: texts wait here";
    and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
-3. **Debug** shows link version 1, the node's clock (from its GPS if it
+3. **Debug** shows link version 2, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
@@ -1158,9 +1165,10 @@ a phone (Trying it).
     first phone stays connected and stays paired. On each phone,
     **Settings**, **This node** lists both names under "Phones paired
     with this node", its own marked "This phone, linked now" and
-    the other "Linked now". Make the node the first phone's home: the
+    the other "Linked now"; on the first, open all along, the second's
+    row comes as its pairing ends, with no new connection. Make the node the first phone's home: the
     first phone's row shows under "Phones with a home here" too, on both
-    phones once they read the list again (connect again). On the first
+    phones at once, the second linked all along. On the first
     phone, **Remove** on the second's row under "Phones paired with this
     node", **Show the code**: the node's screen shows `REMOVE` and six
     digits. Type a wrong code: "Not removed", and the log shows `ble:
