@@ -181,17 +181,20 @@ class NodeSection extends StatelessWidget {
   );
 
   /// How a paired node stands, in words. A paired node the search hears
-  /// it connects to, so one not connected while it looks is out of reach;
-  /// while the phone is on another node the search stops and cannot tell.
+  /// it connects to, so one not connected while it looks is out of reach,
+  /// unless it passes the node over for its version; while the phone is on
+  /// another node the search stops and cannot tell.
   String _pairedState(String n, {required bool home, required bool on}) {
-    final lost = app.nodes[n]?.lost ?? false;
+    final r = app.nodes[n];
     return capital(
       [
         if (home) 'your home',
         if (on)
           'connected'
-        else if (lost)
+        else if (r?.lost ?? false)
           'no longer yours'
+        else if (r?.unserved ?? false)
+          'needs an update. Tap to try again'
         else if (app.searchOn)
           'not in reach'
         else if (app.session.stopped)
@@ -212,6 +215,7 @@ class NodeSection extends StatelessWidget {
           text: [
             if (app.connectedTo(n.deviceId)) 'Connected',
             if (n.public) 'public',
+            if (app.nodes[n.name]?.unserved ?? false) 'needs an update',
             signalWord(n.rssi),
           ].join(', '),
           children: [

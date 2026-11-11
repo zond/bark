@@ -537,6 +537,20 @@ String connectionHelp(AppModel app) {
       '\n\n${lost.join(', ')} are no longer yours: they no longer know this '
           'phone.',
   };
+  final unserved = [
+    for (final r in app.nodes.records)
+      if (r.unserved) shownName(r.name),
+  ];
+  final unservedLine = switch (unserved) {
+    [] => '',
+    [final n] =>
+      '\n\n$n needs an update to work with this app, so the phone does not '
+          'use it. Tap it in Settings to try again.',
+    _ =>
+      '\n\n${unserved.join(', ')} need an update to work with this app, so '
+          'the phone does not use them. Tap one in Settings to try again.',
+  };
+  final others = '$lostLine$unservedLine';
   final install = app.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
@@ -555,7 +569,7 @@ String connectionHelp(AppModel app) {
   if (app.tappedGuest) {
     return 'Someone else\'s public node, which you chose. It serves one '
         'guest at a time and ends a guest\'s link after 30 seconds; then the '
-        'phone chooses a node itself.$lostLine';
+        'phone chooses a node itself.$others';
   }
   if (app.nodeLine != null) {
     final why = app.ownWeak
@@ -567,23 +581,23 @@ String connectionHelp(AppModel app) {
         : 'No node of yours is near, so the phone uses this public node, '
               'someone else\'s.';
     return '$why As a guest it visits about once a minute, and at once when '
-        'you send. Replies to texts sent from here come here.$lostLine';
+        'you send. Replies to texts sent from here come here.$others';
   }
   if (lookingLine(app) != null) {
     if (!app.bluetoothOn) {
       return 'Bluetooth is off. Texts wait on the phone until it is on and a '
-          'node is in reach.$lostLine';
+          'node is in reach.$others';
     }
     if (app.searchFor == null) {
       return 'No node of yours to use, so the phone looks every 15 seconds '
-          'for a public node to use as a guest.$lostLine';
+          'for a public node to use as a guest.$others';
     }
     return 'The phone looks every 15 seconds for your paired nodes, your '
         'home first. After 30 seconds without one, it uses a public node '
-        'as a guest meanwhile.$lostLine';
+        'as a guest meanwhile.$others';
   }
   return 'The phone is not looking: you stopped it, or it may not use '
-      'Bluetooth yet. Tap a node in Settings to connect.$lostLine';
+      'Bluetooth yet. Tap a node in Settings to connect.$others';
 }
 
 /// An info button that opens `body` under `title`, for whoever asks.

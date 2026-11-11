@@ -1499,6 +1499,45 @@ void main() {
     app.disposeWithNode();
   });
 
+  testWidgets('a node passed over for its version: its rows in Settings say '
+      'it needs an update, and stay tappable', (t) async {
+    final app = await model(t);
+    app.fakeNode = FakeNode(
+      now: DateTime.now,
+      sodium: sodium,
+      app: app.me.identity,
+    )..oldest = linkVersion + 1;
+    await app.connectFake();
+    expect(app.session.connected, isFalse);
+    expect(app.nodes[nodeName(FakeNode.id)]!.unserved, isTrue);
+    const other = 'bark-0ce400000002';
+    app.nodes.of(other).unserved = true;
+    app.found['0c:e4'] = FoundNode('0c:e4', other, -60);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    await t.pump();
+    expect(
+      find.text('ID FA4E00000001 needs a newer app. Update the app.'),
+      findsOneWidget,
+    );
+    final row = find.widgetWithText(
+      ListTile,
+      'Needs an update. Tap to try again',
+    );
+    expect(row, findsOneWidget);
+    expect(t.widget<ListTile>(row).onTap, isNotNull);
+    final found = find.widgetWithText(ListTile, 'ID 0CE400000002');
+    expect(
+      find.descendant(
+        of: found,
+        matching: find.textContaining('public, needs an update'),
+      ),
+      findsOneWidget,
+    );
+    expect(t.widget<ListTile>(found).onTap, isNotNull);
+    await t.pumpWidget(const SizedBox());
+    app.disposeWithNode();
+  });
+
   testWidgets('the owner unpairs, after the dialog says what follows', (
     t,
   ) async {
