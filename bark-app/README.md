@@ -252,7 +252,15 @@ is a prototype for the bench, not the app people will carry.
   (spec "Phone link", Neighbours), dashed while the node avoids it,
   demoted or banned. A legend says the bands in dB and the icons: a
   relay is a tower; a sleepy node a battery; a carried one a walker; each in its link's colour;
-  the node itself is a target. Tapping one shows the contact's name if
+  the node itself is a target. Nodes too close on the screen to tap
+  apart, their 48 dp tap targets (Material's least) overlapping, share
+  one marker with their count, which the legend explains. It is drawn
+  as the first in this order: this node, then relays, then sleepy
+  nodes. A tap on it lists them in that order, a row each with the name
+  and the kind (`relay`, `sleepy`, `carried`), and a tap on a row opens
+  that node's details as a tap on its own marker does. Zooming in
+  separates nodes that are near but not at one place. Tapping a node's
+  marker shows the contact's name if
   the node is a contact's home or the node they last used, its ID, and
   then one row a fact in plain words, none of its screen's, an icon and
   a short label on the left and the value on the right, always in this
@@ -289,7 +297,9 @@ is a prototype for the bench, not the app people will carry.
   has not answered within 2 s is asked again, a round at a time, up to
   three asks while the map is open (spec "Neighbour status"). The
   node is drawn at its own position, not its address, so a sleepy node
-  is not drawn on its anchor; a node without a place has its
+  is not drawn on its anchor; a sleepy neighbour with an anchor is drawn
+  at its address, the anchor's position, which its heartbeats carry, so
+  it shares its anchor's marker; a node without a place has its
   neighbours drawn with no lines. Tiles come from the network and are
   kept on the phone for a year, so an area seen once draws again
   without internet; without either, the markers and lines are drawn on
@@ -1109,7 +1119,8 @@ on the bubble's lower edge, the backup words, a contact from a pasted or a scann
 card, my card, the debug screen, the fetch button, the choice of where
 a text goes, a long text's parts, the bars for a newer release against
 a fake fetch, and the map, its markers, lines,
-legend and a neighbour's details, over tiles that cannot be had. The Android side, the service and
+legend and a neighbour's details, nodes at one place under one
+marker that lists them, over tiles that cannot be had. The Android side, the service and
 the boot receiver, cannot run on the host; it is kept small and tried on
 a phone (Trying it).
 
@@ -1145,7 +1156,9 @@ a phone (Trying it).
    shows its screen's role within a second or, asked again, a few;
    the node's log says `ble: ask` for each ask, `status of` for each
    answer, and `StatusGivenUp` for an ask or answer given up on a busy
-   channel, which tells it from one lost on the air.
+   channel, which tells it from one lost on the air. A sleepy node with
+   an anchor shares the anchor's marker, which shows a "2"; a tap lists
+   both, and a tap on the sleepy one opens its details.
 5. With a second node and a second phone, make one phone's node its
    home (step 9 below; without one the card is temporary, and texts
    to it wait at the node it names), then each phone scans the other's card from **My card**,
