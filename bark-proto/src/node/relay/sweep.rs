@@ -5,7 +5,7 @@
 //! the quietest channel by the threshold for the dwell is left, after a
 //! random wait, for the quietest.
 
-use super::{Job, Node, Stage};
+use super::{Node, Stage};
 use crate::event::Action;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::busy::percent;
@@ -15,12 +15,16 @@ use crate::wire::Packet;
 /// The busy sweep (spec "Busy estimate"): one RSSI reading at a time, channels in
 /// turn, spread over the sweep interval.
 pub(super) struct Sweep {
-    pub(super) next_at: Instant,
+    next_at: Instant,
     /// The channel the next reading takes.
-    pub(super) channel: Channel,
+    channel: Channel,
     /// The last home reading, held until any reception it fell in has
     /// ended and shown whether the energy it read was this relay's own.
-    pub(super) pending: Option<HomeReading>,
+    pending: Option<HomeReading>,
+    /// The move rule (spec "Channel moves"): since when the home's excess
+    /// has lasted, and when to move.
+    excess_since: Option<Instant>,
+    move_at: Option<Instant>,
 }
 
 impl Sweep {
@@ -30,18 +34,122 @@ impl Sweep {
             next_at: Instant::ZERO,
             channel,
             pending: None,
+            excess_since: None,
+            move_at: None,
+        }
+    }
+
+    /// When the move rule moves the home, if it does.
+    pub(super) fn move_at(&self) -> Option<Instant> {
+        self.move_at
+    }
+
+    /// The move rule starts over.
+    pub(super) fn clear_move(&mut self) {
+        self.excess_since = None;
+        self.move_at = None;
+    }
+
+    /// A round of readings ended at `now`, the home's excess over the
+    /// quietest channel above the threshold if `excess`: once it has
+    /// lasted `dwell`, the home moves after a random `wait`.
+    pub(super) fn move_rule(
+        &mut self,
+        excess: bool,
+        dwell: Duration,
+        wait: impl FnOnce() -> Duration,
+        now: Instant,
+    ) {
+        if !excess {
+            self.clear_move();
+            return;
+        }
+        let since = *self.excess_since.get_or_insert(now);
+        if self.move_at.is_none() && now.since(since) >= dwell {
+            self.move_at = Some(now + wait());
+        }
+    }
+
+    /// When the next reading is due.
+    pub(super) fn next_at(&self) -> Instant {
+        self.next_at
+    }
+
+    /// The next reading is due at `now`.
+    pub(super) fn restart(&mut self, now: Instant) {
+        self.next_at = now;
+    }
+
+    /// The home channel moved: what was heard on the old says nothing of
+    /// the new.
+    pub(super) fn forget_home(&mut self) {
+        self.pending = None;
+    }
+
+    /// A reading starts, the next a `step` later: the channel it reads.
+    pub(super) fn start(&mut self, step: Duration) -> Channel {
+        self.next_at += step;
+        self.channel
+    }
+
+    /// A reading of `channel` at `now` came back `dbm`, `home` the home
+    /// channel: the reading that now counts for the busy estimate, if
+    /// any. A reading of the home channel is held for one sweep interval,
+    /// longer than any packet it can fall in, and then counts as a reading
+    /// of any other channel does, unless energy that would follow this
+    /// relay was on the air when it was taken (spec "Busy estimate").
+    pub(super) fn sampled(
+        &mut self,
+        channel: Channel,
+        dbm: i16,
+        home: Channel,
+        step: Duration,
+        now: Instant,
+    ) -> Option<(Channel, i16)> {
+        let counts = if channel == home {
+            // A reading that fell in this relay's own packet says nothing
+            // of what would stay behind, and is not taken.
+            let held = self
+                .pending
+                .take()
+                .and_then(|p| p.dbm.map(|d| (p.channel, d)));
+            self.pending = Some(HomeReading {
+                channel,
+                at: now,
+                dbm: Some(dbm),
+            });
+            held
+        } else {
+            Some((channel, dbm))
+        };
+        self.channel = channel.next();
+        // A reading held up by receptions (core-interface rule 8) or by
+        // a hand-over must not leave a backlog to take back to back.
+        if self.next_at <= now {
+            self.next_at = now + step;
+        }
+        counts
+    }
+
+    /// A reception that follows this relay to any channel, of `airtime`,
+    /// ended at `now`: a home reading taken during it is set aside.
+    pub(super) fn set_aside(&mut self, airtime: Duration, now: Instant) {
+        if let Some(p) = &mut self.pending {
+            if now.since(p.at) <= airtime {
+                p.dbm = None;
+            }
         }
     }
 }
 
 /// A reading of the home channel awaiting [`Sweep::pending`]'s verdict.
 #[derive(Clone, Copy)]
-pub(super) struct HomeReading {
-    pub(super) channel: Channel,
-    pub(super) at: Instant,
+struct HomeReading {
+    channel: Channel,
+    at: Instant,
     /// `None` once a packet addressed to this relay turned out to be on
     /// the air when it was taken.
-    pub(super) dbm: Option<i16>,
+    dbm: Option<i16>,
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
@@ -63,7 +171,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn sweep_due(&self, now: Instant) -> bool {
-        self.sweeping() && now >= self.radio.sweep.next_at
+        self.sweeping() && now >= self.radio.sweep_at()
     }
 
     /// Whether the node sweeps the channels: a relay, and a sleepy node
@@ -81,44 +189,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn start_sweep(&mut self, emit: &mut dyn FnMut(Action)) -> bool {
-        self.radio.sweep.next_at += self.sweep_step();
-        self.radio
-            .excursion
-            .read(Job::Sweep, self.radio.sweep.channel, emit);
+        let step = self.sweep_step();
+        self.radio.start_sweep(step, emit);
         true
     }
 
-    /// A reading of the home channel is held for one sweep interval, longer
-    /// than any packet it can fall in, and then counts as a reading of any
-    /// other channel does, unless energy that would follow this relay
-    /// was on the air when it was taken (spec "Busy estimate").
+    /// A reading of the sweep came back (`Sweep::sampled`).
     pub(super) fn sweep_sample(&mut self, channel: Channel, dbm: i16, now: Instant) {
-        if channel == self.home {
-            // A reading that fell in this relay's own packet says nothing
-            // of what would stay behind, and is not taken.
-            if let Some((c, dbm)) = self
-                .radio
-                .sweep
-                .pending
-                .take()
-                .and_then(|p| p.dbm.map(|d| (p.channel, d)))
-            {
-                self.radio.busy.sample(c, dbm);
-            }
-            self.radio.sweep.pending = Some(HomeReading {
-                channel,
-                at: now,
-                dbm: Some(dbm),
-            });
-        } else {
-            self.radio.busy.sample(channel, dbm);
-        }
-        self.radio.sweep.channel = channel.next();
-        // A reading held up by receptions (core-interface rule 8) or by
-        // a hand-over must not leave a backlog to take back to back.
-        if self.radio.sweep.next_at <= now {
-            self.radio.sweep.next_at = now + self.sweep_step();
-        }
+        let step = self.sweep_step();
+        self.radio.sweep_sample(channel, dbm, self.home, step, now);
         self.neighbours.expire(now);
         if channel.index() + 1 < CHANNELS {
             return;
@@ -132,23 +211,22 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// `busy[home] − min busy` above the move threshold (spec "Channel moves").
     pub(super) fn excess(&self) -> bool {
         let min = Channel::all()
-            .map(|c| self.radio.busy.fraction(c))
+            .map(|c| self.radio.busy().fraction(c))
             .min()
             .unwrap_or(0);
-        self.radio.busy.fraction(self.home).saturating_sub(min)
+        self.radio.busy().fraction(self.home).saturating_sub(min)
             > percent(self.config.move_threshold_percent)
     }
 
     pub(super) fn move_rule(&mut self, now: Instant) {
-        if !self.excess() {
-            self.timers.clear_move();
-            return;
-        }
-        let since = *self.timers.excess_since.get_or_insert(now);
-        if self.timers.move_at.is_none() && now.since(since) >= self.config.move_dwell {
-            self.timers.move_at =
-                Some(now + self.rng.duration(Duration::ZERO, self.config.move_wait_max));
-        }
+        let excess = self.excess();
+        let (dwell, wait_max) = (self.config.move_dwell, self.config.move_wait_max);
+        self.radio.move_rule(
+            excess,
+            dwell,
+            || self.rng.duration(Duration::ZERO, wait_max),
+            now,
+        );
     }
 
     /// Set aside a home reading taken while a reception that follows this
@@ -170,10 +248,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // that sweeps has the shortest.
         let len = bytes.len().min(u8::MAX as usize) as u8;
         let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
-        if let Some(p) = &mut self.radio.sweep.pending {
-            if now.since(p.at) <= airtime {
-                p.dbm = None;
-            }
-        }
+        self.radio.set_aside_home_reading(airtime, now);
     }
 }

@@ -17,11 +17,13 @@
 //! helper streams to it only while it has heard that within
 //! [`LEASE_ROTATIONS`] of its rotations.
 
+use super::radio::Radio;
 use super::{Job, Node, Stage};
 use crate::event::{Action, Frame, SlotPiece, Trace};
 use crate::geo::Point;
 use crate::ids::NodeId;
 use crate::node::{heartbeat_interval, heartbeat_lag, mac};
+use crate::node::{Config, Rng};
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::status::Gathering;
 use crate::tables::budget::REPLY_RESERVE;
@@ -201,33 +203,59 @@ struct Need {
     sleepy: u8,
 }
 
-impl<const H: usize, const Q: usize> Node<H, Q> {
+/// What the update reads of the rest of the node.
+#[derive(Clone, Copy)]
+pub(super) struct View<'a> {
+    /// The neighbour table, with each neighbour's section.
+    pub(super) neighbours: &'a Neighbours,
+    pub(super) config: &'a Config,
+    /// This node's home channel and ID.
+    pub(super) home: Channel,
+    pub(super) id: NodeId,
+    /// It streams: a relay past its first rotation.
+    pub(super) spreads: bool,
+    pub(super) sleepy: bool,
+    /// Its send queue is empty.
+    pub(super) idle: bool,
+}
+
+/// The [`View`] of `node`, borrowing only the fields it reads, so that
+/// the spread can be changed beside it.
+macro_rules! view {
+    ($node:expr) => {
+        View {
+            neighbours: &$node.neighbours,
+            config: &$node.config,
+            home: $node.home,
+            id: $node.id,
+            spreads: $node.stage == Stage::Running && !$node.sleepy(),
+            sleepy: $node.sleepy(),
+            idle: $node.queue.is_empty(),
+        }
+    };
+}
+
+impl Spread {
     /// The image this node holds whole, as its driver last said.
-    pub fn image(&self) -> Option<Image> {
-        self.spread.own
+    pub(super) fn image(&self) -> Option<Image> {
+        self.own
     }
 
     /// The image it gathers and the first block it lacks, if any.
-    pub fn gathering(&self) -> Option<(Image, u8)> {
-        self.spread.gather.map(|g| (g.image, g.block))
+    pub(super) fn gathering(&self) -> Option<(Image, u8)> {
+        self.gather.map(|g| (g.image, g.block))
     }
 
-    /// Whether the node streams now: a relay past its first rotation.
-    fn spreads(&self) -> bool {
-        self.stage == Stage::Running && !self.sleepy()
-    }
-
-    /// What its section says: the version it runs, from its build, else
-    /// the image it holds, and the newest image it holds or gathers with
-    /// the blocks of it it holds from the first. A node that knows neither
-    /// tells none.
-    fn section(&self) -> Option<Section> {
-        let s = &self.spread;
-        let runs = match self.config.version {
-            0 => s.own.map_or(0, |o| o.version),
+    /// What its section says: the version it runs, `version` from its
+    /// build, else the image it holds, and the newest image it holds or
+    /// gathers with the blocks of it it holds from the first. A node that
+    /// knows neither tells none.
+    fn section(&self, version: u32) -> Option<Section> {
+        let runs = match version {
+            0 => self.own.map_or(0, |o| o.version),
             v => v,
         };
-        let (image, complete, have) = match (s.gather, s.own) {
+        let (image, complete, have) = match (self.gather, self.own) {
             (Some(g), _) => (Some(g.image), g.block, Self::have(&g)),
             (None, Some(o)) => (Some(o), o.blocks, 0),
             (None, None) if runs == 0 => return None,
@@ -253,46 +281,44 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// How far it is in gathering an image, as its status tells
     /// (spec "Neighbour status").
     pub(super) fn gathering_status(&self) -> Gathering {
-        self.spread
-            .gather
-            .map_or(Gathering::default(), |g| Gathering {
-                version: g.image.version,
-                blocks: g.image.blocks,
-                complete: g.block,
-                have: Self::have(&g),
-            })
+        self.gather.map_or(Gathering::default(), |g| Gathering {
+            version: g.image.version,
+            blocks: g.image.blocks,
+            complete: g.block,
+            have: Self::have(&g),
+        })
     }
 
     /// The image it streams and whether it holds block `b` of it: the one
     /// it gathers once it holds a block of it, else the one it holds
     /// whole.
     fn streams(&self) -> Option<Image> {
-        let s = &self.spread;
-        s.gather.filter(|g| g.done != 0).map(|g| g.image).or(s.own)
+        self.gather
+            .filter(|g| g.done != 0)
+            .map(|g| g.image)
+            .or(self.own)
     }
 
     fn holds_block(&self, b: u8) -> bool {
-        let s = &self.spread;
-        match s.gather.filter(|g| g.done != 0) {
+        match self.gather.filter(|g| g.done != 0) {
             Some(g) => g.holds(b),
-            None => s.own.is_some_and(|o| b < o.blocks),
+            None => self.own.is_some_and(|o| b < o.blocks),
         }
     }
 
     /// What its section tells that starts a rotation of it when it
     /// changes; the pieces of the next block may be stale, which the
     /// loss margin covers.
-    fn told_now(&self) -> Option<Told> {
-        self.section()
+    fn told_now(&self, version: u32) -> Option<Told> {
+        self.section(version)
             .map(|t| (t.runs, t.image.map(|i| i.version), t.complete))
     }
 
     /// Whether a heartbeat now starts a rotation of its section: what it
     /// tells changed, boot among the changes, the hour's is due, or a
     /// neighbour that lags is answered.
-    fn rotation_due(&self, now: Instant) -> bool {
-        let s = &self.spread;
-        self.told_now() != s.told || now >= s.section_at || s.answer
+    fn rotation_due(&self, version: u32, now: Instant) -> bool {
+        self.told_now(version) != self.told || now >= self.section_at || self.answer
     }
 
     /// The section a heartbeat sent on `channel` at `now` carries, if any:
@@ -300,51 +326,60 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// answer starts, so that every channel hears it, a heartbeat skipped
     /// for a busy channel standing over to that channel's next; and while
     /// it gathers, on the home channel of its helper every rotation.
-    pub(super) fn heartbeat_section(&self, now: Instant, channel: Channel) -> Option<Section> {
-        let due = self.rotation_due(now)
-            || self.spread.section_to & bit(channel) != 0
-            || self.restates_on(now) == Some(channel);
-        self.section().filter(|_| due)
+    pub(super) fn heartbeat_section(
+        &self,
+        v: &View<'_>,
+        now: Instant,
+        channel: Channel,
+    ) -> Option<Section> {
+        let version = v.config.version;
+        let due = self.rotation_due(version, now)
+            || self.section_to & bit(channel) != 0
+            || self.restates_on(v, now) == Some(channel);
+        self.section(version).filter(|_| due)
     }
 
     /// A heartbeat with the section went on `channel`: a rotation of them
     /// starts now if one is due. A sleepy node's rotation is its one beat,
     /// which its anchor hears.
-    pub(super) fn section_sent(&mut self, now: Instant, channel: Channel) {
-        if self.rotation_due(now) {
-            let told = self.told_now();
-            let s = &mut self.spread;
-            s.told = told;
-            s.section_at = now + SECTION_EVERY;
-            s.section_to = ALL_CHANNELS;
-            s.rotation_at = Some(now);
-            s.answer = false;
+    pub(super) fn section_sent(
+        &mut self,
+        version: u32,
+        sleepy: bool,
+        now: Instant,
+        channel: Channel,
+    ) {
+        if self.rotation_due(version, now) {
+            self.told = self.told_now(version);
+            self.section_at = now + SECTION_EVERY;
+            self.section_to = ALL_CHANNELS;
+            self.rotation_at = Some(now);
+            self.answer = false;
         }
-        self.spread.section_to &= match self.sleepy() {
+        self.section_to &= match sleepy {
             true => 0,
             false => !bit(channel),
         };
     }
 
     /// Its own rotation of heartbeats, one on each channel.
-    fn rotation(&self) -> Duration {
-        heartbeat_interval(self.id, &self.config).mul(u64::from(CHANNELS))
+    fn rotation(v: &View<'_>) -> Duration {
+        heartbeat_interval(v.id, v.config).mul(u64::from(CHANNELS))
     }
 
     /// Where a node that gathers says so again each rotation: on the home
     /// channel of the helper it last took a piece from, or before its
     /// first piece of the best holder it hears; a sleepy node on its
     /// anchor's, where all its beats go.
-    fn restates_on(&self, now: Instant) -> Option<Channel> {
-        let g = self.spread.gather.filter(|g| g.block < g.image.blocks)?;
-        if self.sleepy() {
-            return Some(self.home);
+    fn restates_on(&self, v: &View<'_>, now: Instant) -> Option<Channel> {
+        let g = self.gather.filter(|g| g.block < g.image.blocks)?;
+        if v.sleepy {
+            return Some(v.home);
         }
         let helper = self
-            .spread
             .helper
-            .and_then(|id| self.neighbours.get(id))
-            .or_else(|| self.holder_of(g.block, now))?;
+            .and_then(|id| v.neighbours.get(id))
+            .or_else(|| self.holder_of(v, g.block, now))?;
         Some(helper.home)
     }
 
@@ -352,39 +387,41 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// gathers to it, by the helpers' own rule: a relay at home on its
     /// channel that holds the block, else the best holder elsewhere, most
     /// blocks from the first, then the lowest ID.
-    fn holder_of(&self, b: u8, now: Instant) -> Option<&Neighbour> {
-        let image = self.spread.gather?.image;
-        self.neighbours
+    fn holder_of<'a>(&self, v: &View<'a>, b: u8, now: Instant) -> Option<&'a Neighbour> {
+        let image = self.gather?.image;
+        v.neighbours
             .live(now)
             .map(|(_, m)| m)
-            .filter(|m| !m.sleepy && self.complete_of(m, image) > b)
+            .filter(|m| !m.sleepy && Self::complete_of(v, m, image) > b)
             .max_by_key(|m| {
                 (
-                    m.home == self.home,
-                    self.complete_of(m, image),
+                    m.home == v.home,
+                    Self::complete_of(v, m, image),
                     core::cmp::Reverse(m.id.0),
                 )
             })
     }
 
     /// `AppCommand::Holds`: its section tells it within a rotation.
-    pub(super) fn holds_image(&mut self, image: Image, now: Instant) {
-        if self.spread.own == Some(image) {
+    pub(super) fn holds_image(&mut self, image: Image, rng: &mut Rng, now: Instant) {
+        if self.own == Some(image) {
             return;
         }
-        self.random_starts();
-        let s = &mut self.spread;
-        s.own = Some(image);
-        if s.gather.is_some_and(|g| g.image.version <= image.version) {
-            s.gather = None;
+        self.random_starts(rng);
+        self.own = Some(image);
+        if self
+            .gather
+            .is_some_and(|g| g.image.version <= image.version)
+        {
+            self.gather = None;
         }
-        s.section_at = now;
+        self.section_at = now;
     }
 
     /// `AppCommand::Gather`: the driver's policy took `image`; the node
     /// gathers it, holding the blocks before `from` already, and a newer
     /// image it is told to gather replaces the one it gathered.
-    pub(super) fn gather(&mut self, image: Image, from: u8, now: Instant) {
+    pub(super) fn gather(&mut self, image: Image, from: u8, rng: &mut Rng, now: Instant) {
         if usize::from(image.blocks) > MAX_BLOCKS {
             return;
         }
@@ -397,117 +434,109 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         for b in 0..from.min(image.blocks) {
             g.decoded(b, true);
         }
-        self.random_starts();
-        let s = &mut self.spread;
-        s.gather = Some(g);
-        s.section_at = now;
+        self.random_starts(rng);
+        self.gather = Some(g);
+        self.section_at = now;
     }
 
     /// Each block's pieces from a random start, so that two holders of it
     /// seldom send the same, and every sweep from the first block.
-    fn random_starts(&mut self) {
-        let s = &mut self.spread;
-        s.cur = [u8::MAX; CHANNELS as usize];
-        s.sent_cur = [0; CHANNELS as usize];
-        s.target = [0; CHANNELS as usize];
+    fn random_starts(&mut self, rng: &mut Rng) {
+        self.cur = [u8::MAX; CHANNELS as usize];
+        self.sent_cur = [0; CHANNELS as usize];
+        self.target = [0; CHANNELS as usize];
         for i in 0..MAX_BLOCKS {
-            self.spread.index[i] = self.rng.range(0, PIECES as u64 - 1) as u8;
+            self.index[i] = rng.range(0, PIECES as u64 - 1) as u8;
         }
     }
 
     /// `AppCommand::Block`: a block decoded, or failed its hash.
     pub(super) fn block_done(&mut self, index: u8, ok: bool) {
-        if let Some(g) = self.spread.gather.as_mut() {
+        if let Some(g) = self.gather.as_mut() {
             g.decoded(index, ok);
         }
     }
 
-    /// A heartbeat of `from` carried `section`: the neighbour table keeps
-    /// it, and a newer image than this node runs or gathers is offered to
-    /// the driver's policy, once. A neighbour that names nothing as new as
-    /// what this relay streams is answered with a rotation of its section,
-    /// at most one a rotation, so that it learns of the image within one.
+    /// A heartbeat of `from`, whose section the neighbour table now keeps,
+    /// carried `section`: a newer image than this node runs or gathers is
+    /// offered to the driver's policy, once. A neighbour that names
+    /// nothing as new as what this relay streams is answered with a
+    /// rotation of its section, at most one a rotation, so that it learns
+    /// of the image within one.
     pub(super) fn section_heard(
         &mut self,
-        from: NodeId,
+        v: &View<'_>,
         section: Section,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        self.neighbours.section_heard(from, section, now);
         let told = section.image.map_or(0, |i| i.version).max(section.runs);
         let lags = self
             .streams()
-            .is_some_and(|i| self.spreads() && told < i.version);
+            .is_some_and(|i| v.spreads && told < i.version);
         let rotated = self
-            .spread
             .rotation_at
-            .is_some_and(|t| now < t + self.rotation());
+            .is_some_and(|t| now < t + Self::rotation(v));
         if lags && !rotated {
-            self.spread.answer = true;
+            self.answer = true;
         }
         let Some(image) = section.image else {
             return;
         };
-        let s = &self.spread;
-        let newest = s
+        let newest = self
             .gather
             .map(|g| g.image.version)
-            .max(s.own.map(|o| o.version))
+            .max(self.own.map(|o| o.version))
             .unwrap_or(0);
-        if s.offered == Some(image.version) {
+        if self.offered == Some(image.version) {
             return;
         }
         if image.version <= newest {
             return;
         }
-        let s = &mut self.spread;
         if usize::from(image.blocks) > MAX_BLOCKS {
             return;
         }
-        s.offered = Some(image.version);
+        self.offered = Some(image.version);
         emit(Action::Offered(image));
     }
 
     /// Its slot heartbeat went on its home channel: a relay whose sleepy
     /// nodes there gather what it holds sends them the next piece of its
     /// stream at once, while they listen.
-    pub(super) fn slot_heartbeat(&mut self, now: Instant) {
-        let home = self.needs(now)[usize::from(self.home.index())];
+    pub(super) fn slot_heartbeat(&mut self, v: &View<'_>, now: Instant) {
+        let home = self.needs(v, now)[usize::from(v.home.index())];
         if home.sleepy > 0 {
-            self.spread.slot_open = Some(now + SLOT_START);
+            self.slot_open = Some(now + SLOT_START);
             // A wait for a pace that had nothing to send ends: this frame
             // is its own chance, and the bucket is asked again.
-            self.spread.ready_at = self.spread.ready_at.min(now);
+            self.ready_at = self.ready_at.min(now);
         }
     }
 
-    /// A sleepy node heard its anchor's slot heartbeat: it listens for the
-    /// piece after it while it gathers and its anchor holds a block it
-    /// lacks.
-    pub(super) fn anchor_slot_heard(&mut self, now: Instant) {
-        let Some(g) = self.spread.gather else {
-            return;
+    /// A sleepy node heard its anchor's slot heartbeat, the anchor `n`:
+    /// whether it listens for the piece after it, as it does while it
+    /// gathers and its anchor holds a block it lacks.
+    pub(super) fn helped_by(&self, neighbours: &Neighbours, anchor: Option<&Neighbour>) -> bool {
+        let Some(g) = self.gather else {
+            return false;
         };
-        let anchor = self.anchor().and_then(|a| self.neighbours.get(a.id));
-        let helps = anchor
-            .and_then(|n| self.neighbours.section(n))
+        anchor
+            .and_then(|n| neighbours.section(n))
             .and_then(|u| u.image.map(|i| (i, u.complete)))
-            .is_some_and(|(i, complete)| i.version == g.image.version && complete > g.block);
-        if helps {
-            self.timers.awake_until = self.timers.awake_until.max(now + SLOT_LISTEN);
-        }
+            .is_some_and(|(i, complete)| i.version == g.image.version && complete > g.block)
     }
 
     /// A heartbeat was heard: a piece that ends within [`SLOT_LISTEN`]
     /// is its sender's piece after the slot.
     pub(super) fn beat_heard(&mut self, now: Instant) {
-        self.spread.beat_heard = now;
+        self.beat_heard = now;
     }
 
     /// A piece heard on the home channel.
     pub(super) fn update_heard(
         &mut self,
+        v: &View<'_>,
         u: Update<'_>,
         now: Instant,
         emit: &mut dyn FnMut(Action),
@@ -521,20 +550,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // Another node sends here: it shares the channel's pace, unless
         // this is the piece after a slot heartbeat just heard, which keeps
         // no pace.
-        if now.since(self.spread.beat_heard) > SLOT_LISTEN {
-            let o = &mut self.spread.others;
+        if now.since(self.beat_heard) > SLOT_LISTEN {
+            let o = &mut self.others;
             o.rotate_right(1);
             o[0] = now;
         }
         if usize::from(index) >= PIECES {
             return;
         }
-        let Some(g) = self
-            .spread
-            .gather
-            .as_mut()
-            .filter(|g| g.image.version == version)
-        else {
+        let Some(g) = self.gather.as_mut().filter(|g| g.image.version == version) else {
             return;
         };
         if !g.take(block, index) {
@@ -547,13 +571,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         piece.bytes.copy_from_slice(bytes);
         emit(Action::StorePiece(piece));
-        self.spread.helper = self.holder_of(block, now).map(|m| m.id);
+        self.helper = self.holder_of(v, block, now).map(|m| m.id);
     }
 
     /// The blocks from the first of the image it streams that `m` holds,
     /// by its section.
-    fn complete_of(&self, m: &Neighbour, image: Image) -> u8 {
-        self.neighbours
+    fn complete_of(v: &View<'_>, m: &Neighbour, image: Image) -> u8 {
+        v.neighbours
             .section(m)
             .filter(|u| u.image.is_some_and(|i| i.version == image.version))
             .map_or(0, |u| u.complete)
@@ -564,21 +588,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// home there, holds more than `n` and is no farther from `n` is a
     /// better holder, with more blocks from the first, then a lower ID
     /// (spec "Updates over the mesh").
-    fn streams_to(&self, n: &Neighbour, image: Image, now: Instant) -> bool {
-        if n.home == self.home {
+    fn streams_to(&self, v: &View<'_>, n: &Neighbour, image: Image, now: Instant) -> bool {
+        if n.home == v.home {
             return true;
         }
-        let Some(u) = self.neighbours.section(n) else {
+        let Some(u) = v.neighbours.section(n) else {
             return false;
         };
-        let mine = self.section().map_or(0, |s| s.complete);
+        let mine = self.section(v.config.version).map_or(0, |s| s.complete);
         let far = n.local.distance2(Point::default());
-        !self.neighbours.live(now).any(|(_, m)| {
-            let k = self.complete_of(m, image);
+        !v.neighbours.live(now).any(|(_, m)| {
+            let k = Self::complete_of(v, m, image);
             !m.sleepy
                 && m.home != n.home
                 && k > u.complete
-                && (k > mine || k == mine && m.id.0 < self.id.0)
+                && (k > mine || k == mine && m.id.0 < v.id.0)
                 && m.local.distance2(n.local) <= far
         })
     }
@@ -589,33 +613,31 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// fell silent, moved away or completed then stops within that time,
     /// and one whose restatement was lost once goes on
     /// (spec "Updates over the mesh").
-    fn gatherer(&self, n: &Neighbour, image: Image, now: Instant) -> Option<Section> {
+    fn gatherer(v: &View<'_>, n: &Neighbour, image: Image, now: Instant) -> Option<Section> {
         let rotation = match n.sleepy {
-            true => beat_period(self.config.delivery_ttl),
-            false => heartbeat_interval(n.id, &self.config).mul(u64::from(CHANNELS)),
+            true => beat_period(v.config.delivery_ttl),
+            false => heartbeat_interval(n.id, v.config).mul(u64::from(CHANNELS)),
         };
-        let lease = rotation.mul(LEASE_ROTATIONS) + heartbeat_lag(&self.config);
+        let lease = rotation.mul(LEASE_ROTATIONS) + heartbeat_lag(v.config);
         let at = Neighbours::section_at(n)?;
         if now > at + lease {
             return None;
         }
-        self.neighbours
-            .section(n)
-            .filter(|u| u.gathers(image.version))
+        v.neighbours.section(n).filter(|u| u.gathers(image.version))
     }
 
     /// What each channel needs of what this node streams, from the
     /// sections of the neighbours it hears there.
-    fn needs(&self, now: Instant) -> [Need; CHANNELS as usize] {
+    fn needs(&self, v: &View<'_>, now: Instant) -> [Need; CHANNELS as usize] {
         let mut need = [Need::default(); CHANNELS as usize];
         let Some(image) = self.streams() else {
             return need;
         };
-        for (_, n) in self.neighbours.live(now) {
-            let Some(u) = self.gatherer(n, image, now) else {
+        for (_, n) in v.neighbours.live(now) {
+            let Some(u) = Self::gatherer(v, n, image, now) else {
                 continue;
             };
-            if !self.streams_to(n, image, now) {
+            if !self.streams_to(v, n, image, now) {
                 continue;
             }
             let lacks = |b: u8| b > u.complete || u.have < image.pieces(b);
@@ -640,8 +662,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The channels it streams on: its home, then those whose neighbours
     /// lack the most of what it holds, at most [`SERVED_CHANNELS`].
-    fn stream_channels(&self, now: Instant) -> [Option<(Channel, Need)>; SERVED_CHANNELS] {
-        let need = self.needs(now);
+    fn stream_channels(
+        &self,
+        v: &View<'_>,
+        now: Instant,
+    ) -> [Option<(Channel, Need)>; SERVED_CHANNELS] {
+        let need = self.needs(v, now);
         let mut out = [None; SERVED_CHANNELS];
         for c in Channel::all() {
             let n = need[usize::from(c.index())];
@@ -650,7 +676,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             let better = |o: &Option<(Channel, Need)>| match o {
                 None => true,
-                Some((oc, on)) => (c == self.home, n.count) > (*oc == self.home, on.count),
+                Some((oc, on)) => (c == v.home, n.count) > (*oc == v.home, on.count),
             };
             if let Some(i) = out.iter().position(better) {
                 out[i..].rotate_right(1);
@@ -663,15 +689,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The pieces of block `b` the neighbour on channel `c` furthest
     /// behind on it lacks, by their sections: all of the block for one
     /// that lacks an earlier block, what it lacks of it for one at it.
-    fn deficit(&self, c: Channel, b: u8, now: Instant) -> u8 {
+    fn deficit(&self, v: &View<'_>, c: Channel, b: u8, now: Instant) -> u8 {
         let Some(image) = self.streams() else {
             return 0;
         };
         let k = image.pieces(b);
-        self.neighbours
+        v.neighbours
             .live(now)
-            .filter(|(_, n)| n.home == c && self.streams_to(n, image, now))
-            .filter_map(|(_, n)| self.gatherer(n, image, now))
+            .filter(|(_, n)| n.home == c && self.streams_to(v, n, image, now))
+            .filter_map(|(_, n)| Self::gatherer(v, n, image, now))
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
                 core::cmp::Ordering::Equal => k.saturating_sub(u.have),
@@ -685,17 +711,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// is at until it has sent what the neighbour furthest behind on it
     /// lacks and the loss margin, then the next block it holds that a
     /// neighbour there lacks, in order, and from the first again.
-    fn stream_block(&self, c: Channel, now: Instant) -> Option<u8> {
+    fn stream_block(&self, v: &View<'_>, c: Channel, now: Instant) -> Option<u8> {
         let image = self.streams()?;
         let blocks = image.blocks;
-        let s = &self.spread;
         let i = usize::from(c.index());
-        let cur = s.cur[i];
-        let wanted = |b: u8| self.holds_block(b) && self.deficit(c, b, now) > 0;
-        if s.sent_cur[i] < s.target[i] && wanted(cur) {
+        let cur = self.cur[i];
+        let wanted = |b: u8| self.holds_block(b) && self.deficit(v, c, b, now) > 0;
+        if self.sent_cur[i] < self.target[i] && wanted(cur) {
             return Some(cur);
         }
-        if let Some(b) = self.tail(c, now) {
+        if let Some(b) = self.tail(v, c, now) {
             return Some(b);
         }
         (cur.saturating_add(1)..blocks)
@@ -708,39 +733,37 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// it, at the pace, until the neighbour's section shows it complete or
     /// its lease ends, so that a quota cut short by lost pieces never
     /// leaves the channel silent (spec "Updates over the mesh").
-    fn tail(&self, c: Channel, now: Instant) -> Option<u8> {
+    fn tail(&self, v: &View<'_>, c: Channel, now: Instant) -> Option<u8> {
         let image = self.streams()?;
-        let s = &self.spread;
         let i = usize::from(c.index());
-        let cur = s.cur[i];
-        if cur == u8::MAX || s.sent_cur[i] < s.target[i] {
+        let cur = self.cur[i];
+        if cur == u8::MAX || self.sent_cur[i] < self.target[i] {
             return None;
         }
         let lowest =
-            (0..image.blocks).find(|&b| self.holds_block(b) && self.deficit(c, b, now) > 0)?;
+            (0..image.blocks).find(|&b| self.holds_block(b) && self.deficit(v, c, b, now) > 0)?;
         (lowest == cur).then_some(cur)
     }
 
     /// Whether the channel's pace lets a piece go on `c` at `t`, and if not,
     /// when it will (spec "Updates over the mesh"): one a [`GAP`] or a
     /// [`PACE`] on each channel, on at most [`SERVED_CHANNELS`] in one pace.
-    fn pace_allows(&self, c: Channel, t: Instant) -> Instant {
-        let s = &self.spread;
+    fn pace_allows(&self, v: &View<'_>, c: Channel, t: Instant) -> Instant {
         let mut at = t;
-        for (d, x) in s.sent.iter().flatten() {
+        for (d, x) in self.sent.iter().flatten() {
             if *d == c {
                 // On its home channel it hears the others that send there,
                 // and takes its share: one piece in k + 1 paces when k
                 // others sent since its last.
-                let k = if c == self.home {
-                    s.others.iter().filter(|&&o| o > *x).count() as u64
+                let k = if c == v.home {
+                    self.others.iter().filter(|&&o| o > *x).count() as u64
                 } else {
                     0
                 };
                 // The pace is a floor: with no other sender heard there
                 // since its last piece and nothing else to send, the next
                 // goes a gap after it.
-                let alone = k == 0 && self.queue.is_empty() && self.tail(c, t).is_none();
+                let alone = k == 0 && v.idle && self.tail(v, c, t).is_none();
                 at = at.max(if alone {
                     *x + GAP
                 } else {
@@ -750,7 +773,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let mut ends = [Instant::ZERO; SERVED_CHANNELS];
         let mut n = 0;
-        for (d, x) in s.sent.iter().flatten() {
+        for (d, x) in self.sent.iter().flatten() {
             if *d != c && *x + PACE > at {
                 ends[n] = *x + PACE;
                 n += 1;
@@ -766,70 +789,69 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The channel of the next piece and when the pace lets it go. The
     /// piece right after the slot heartbeat keeps no pace; a stream only
     /// sleepy nodes need goes only then.
-    fn next_out(&self, now: Instant) -> Option<(Channel, Instant)> {
-        let s = &self.spread;
-        let home = self.home;
-        self.stream_channels(now)
+    fn next_out(&self, v: &View<'_>, now: Instant) -> Option<(Channel, Instant)> {
+        let home = v.home;
+        self.stream_channels(v, now)
             .into_iter()
             .flatten()
-            .filter_map(|(c, need)| match s.slot_open {
+            .filter_map(|(c, need)| match self.slot_open {
                 // The piece after the slot heartbeat keeps no pace.
                 Some(_) if c == home => Some((c, now)),
                 None if c == home && need.sleepy == need.count => None,
-                _ => Some((c, self.pace_allows(c, now))),
+                _ => Some((c, self.pace_allows(v, c, now))),
             })
             .min_by_key(|x| x.1)
     }
 
     /// When a piece next may go.
-    fn update_due_at(&self, now: Instant) -> Option<Instant> {
-        if !self.spreads() {
+    fn due_at(&self, v: &View<'_>, now: Instant) -> Option<Instant> {
+        if !v.spreads {
             return None;
         }
-        if let Some(c) = self.spread.current {
-            return Some(self.spread.ready_at.max(self.pace_allows(c, now)));
+        if let Some(c) = self.current {
+            return Some(self.ready_at.max(self.pace_allows(v, c, now)));
         }
-        if let Some(t) = self.spread.slot_open {
+        if let Some(t) = self.slot_open {
             // The frame after the slot goes at once or not at all.
-            return Some(t.max(self.spread.ready_at));
+            return Some(t.max(self.ready_at));
         }
-        self.next_out(now).map(|(_, t)| t.max(self.spread.ready_at))
+        self.next_out(v, now).map(|(_, t)| t.max(self.ready_at))
     }
 
     /// When the update job is next ready of its own accord: a time past
     /// is now. Asked with no time, it may name a time at which
-    /// [`Node::start_update`] then finds nothing; that one sets
-    /// `ready_at` past the moment, so the node does not wake again for it.
-    pub(super) fn update_ready_at(&self) -> Option<Instant> {
-        self.update_due_at(Instant::ZERO)
+    /// [`Spread::start`] then finds nothing; that one sets `ready_at` past
+    /// the moment, so the node does not wake again for it.
+    pub(super) fn ready_at(&self, v: &View<'_>) -> Option<Instant> {
+        self.due_at(v, Instant::ZERO)
     }
 
     /// Whether a piece has waited behind [`PASS`] frames of the send
     /// queue, or is the frame after a slot heartbeat, and goes before the
     /// next.
-    pub(super) fn update_first(&self) -> bool {
-        self.spread.passed >= PASS || self.spread.slot_open.is_some()
+    pub(super) fn first(&self) -> bool {
+        self.passed >= PASS || self.slot_open.is_some()
     }
 
     /// A frame of the send queue went: it passed a piece that was due.
-    pub(super) fn update_passed(&mut self, now: Instant) {
-        if self.update_due_at(now).is_some_and(|t| t <= now) {
-            self.spread.passed = self.spread.passed.saturating_add(1);
+    pub(super) fn passed(&mut self, v: &View<'_>, now: Instant) {
+        if self.due_at(v, now).is_some_and(|t| t <= now) {
+            self.passed = self.passed.saturating_add(1);
         }
     }
 
     /// The piece frame for channel `c`, as it goes now, and its block.
-    fn update_frame(&self, c: Channel, now: Instant) -> Option<(Frame, u8)> {
-        self.stream_channels(now)
+    fn frame(&self, v: &View<'_>, c: Channel, now: Instant) -> Option<(Frame, u8)> {
+        self.stream_channels(v, now)
             .into_iter()
             .flatten()
             .find(|(d, _)| *d == c)?;
-        let block = self.stream_block(c, now)?;
+        let block = self.stream_block(v, c, now)?;
         let image = self.streams()?;
         let packet = Update::Piece {
             version: image.version,
             block,
-            index: self.spread.index[usize::from(block)],
+            index: self.index[usize::from(block)],
             bytes: &[0; PIECE_BYTES],
         };
         Some((
@@ -840,100 +862,105 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Start the next piece that is due: its check of the channel, once
     /// the bucket holds it with the reply reserve left, as a forward must
-    /// (spec "Duty cycle cap").
-    pub(super) fn start_update(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        if self.spread.slot_open.is_some_and(|t| now > t) {
+    /// (spec "Duty cycle cap"); whether it took the radio.
+    pub(super) fn start(
+        &mut self,
+        v: &View<'_>,
+        radio: &mut Radio,
+        rng: &mut Rng,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) -> bool {
+        if self.slot_open.is_some_and(|t| now > t) {
             // The frame after the slot heartbeat could not start at once.
             self.slot_end(SlotPiece::Late, emit);
         }
-        if !self.spreads() || now < self.spread.ready_at {
-            if now < self.spread.ready_at {
+        if !v.spreads || now < self.ready_at {
+            if now < self.ready_at {
                 self.slot_end(SlotPiece::Late, emit);
             }
             return false;
         }
-        if self.spread.current.is_none() {
-            let next = self.next_out(now);
-            if self.spread.slot_open.is_some() {
+        if self.current.is_none() {
+            let next = self.next_out(v, now);
+            if self.slot_open.is_some() {
                 match next {
-                    Some((c, t)) if t <= now && c != self.home => {
+                    Some((c, t)) if t <= now && c != v.home => {
                         self.slot_end(SlotPiece::OtherChannel, emit)
                     }
                     Some((_, t)) if t <= now => {}
                     _ => {
-                        let why = self.slot_held(now);
+                        let why = self.slot_held(v, now);
                         self.slot_end(why, emit);
                     }
                 }
             }
             let Some((c, _)) = next.filter(|o| o.1 <= now) else {
-                self.spread.slot_open = None;
+                self.slot_open = None;
                 // Nothing goes now: not before the next that may, or a
                 // pace on, when the neighbours' sections may need more.
-                self.spread.ready_at = next.map_or(now + PACE, |o| o.1);
+                self.ready_at = next.map_or(now + PACE, |o| o.1);
                 return false;
             };
-            self.spread.current = Some(c);
+            self.current = Some(c);
         }
-        let Some(c) = self.spread.current else {
+        let Some(c) = self.current else {
             return false;
         };
-        let Some((f, _)) = self.update_frame(c, now) else {
-            self.spread.current = None;
-            self.spread.ready_at = now + PACE;
+        let Some((f, _)) = self.frame(v, c, now) else {
+            self.current = None;
+            self.ready_at = now + PACE;
             return false;
         };
         let airtime = mac::airtime(&f);
-        if !self.affordable(airtime, now) {
+        if !affordable(radio, airtime, now) {
             self.slot_end(SlotPiece::Bucket, emit);
             // Two holders the bucket holds alike would wait out the same
             // refill and send together: each waits a random time more,
             // within two frames, as after a piece.
-            let jitter = self.rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
-            self.spread.ready_at = self
-                .radio
-                .budget
+            let jitter = rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
+            self.ready_at = radio
+                .budget()
                 .allowed_at(airtime, REPLY_RESERVE, now)
                 .map_or(now + PACE, |t| t + jitter);
             return false;
         }
-        self.radio.excursion.check(Job::Update, c, emit);
+        radio.check(Job::Update, c, emit);
         true
     }
 
     /// The piece due after the slot heartbeat went or was given up: say
     /// what became of it.
     fn slot_end(&mut self, why: SlotPiece, emit: &mut dyn FnMut(Action)) {
-        if self.spread.slot_open.take().is_some() {
+        if self.slot_open.take().is_some() {
             emit(Action::Trace(Trace::SlotPiece(why)));
         }
     }
 
     /// A piece went on `c` at `now` in its pace: in place of this
     /// channel's entry of the last two, or of the oldest.
-    fn paced(s: &mut Spread, c: Channel, now: Instant) {
-        let slot = s
+    fn paced(&mut self, c: Channel, now: Instant) {
+        let slot = self
             .sent
             .iter()
             .position(|e| e.is_none_or(|(d, _)| d == c))
             .unwrap_or_else(|| {
-                let oldest = s.sent.iter().flatten().map(|e| e.1).min();
-                s.sent
+                let oldest = self.sent.iter().flatten().map(|e| e.1).min();
+                self.sent
                     .iter()
                     .position(|e| e.map(|e| e.1) == oldest)
                     .unwrap_or(0)
             });
-        s.sent[slot] = Some((c, now));
+        self.sent[slot] = Some((c, now));
     }
 
     /// What of the pace holds the piece on the home channel at `now`.
-    fn slot_held(&self, now: Instant) -> SlotPiece {
-        let s = &self.spread;
-        let last = s.sent.iter().flatten().find(|(d, _)| *d == self.home);
+    fn slot_held(&self, v: &View<'_>, now: Instant) -> SlotPiece {
+        let last = self.sent.iter().flatten().find(|(d, _)| *d == v.home);
         match last {
             Some((_, x)) if *x + PACE > now => SlotPiece::OwnPace,
             Some((_, x)) => {
-                let k = s.others.iter().filter(|&&o| o > *x).count() as u64;
+                let k = self.others.iter().filter(|&&o| o > *x).count() as u64;
                 if *x + PACE.mul(k + 1) > now {
                     SlotPiece::SharedPace
                 } else {
@@ -945,77 +972,197 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The check of the piece's channel completed.
-    pub(super) fn update_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let Some(c) = self.spread.current else {
+    pub(super) fn check(
+        &mut self,
+        v: &View<'_>,
+        radio: &mut Radio,
+        rng: &mut Rng,
+        busy: bool,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
+        let Some(c) = self.current else {
             return;
         };
         if busy {
-            self.spread.busy_checks += 1;
+            self.busy_checks += 1;
             // After the slot heartbeat the sleepy nodes listen only now.
-            let slot = self.spread.slot_open.is_some();
+            let slot = self.slot_open.is_some();
             self.slot_end(SlotPiece::ChannelBusy, emit);
             if slot {
-                self.spread.current = None;
-                self.spread.busy_checks = 0;
-            } else if self.spread.busy_checks >= self.config.lbt_attempts {
+                self.current = None;
+                self.busy_checks = 0;
+            } else if self.busy_checks >= v.config.lbt_attempts {
                 // As a heartbeat is skipped: the piece waits its pace.
-                self.update_sent(c, None, false, now);
+                self.sent_piece(rng, c, None, false, now);
             } else {
-                self.spread.ready_at = now
-                    + self
-                        .rng
-                        .duration(Duration::ZERO, self.config.lbt_backoff_max);
+                self.ready_at = now + rng.duration(Duration::ZERO, v.config.lbt_backoff_max);
             }
             return;
         }
-        let Some((f, block)) = self.update_frame(c, now) else {
-            self.spread.current = None;
+        let Some((f, block)) = self.frame(v, c, now) else {
+            self.current = None;
             return;
         };
         let airtime = mac::airtime(&f);
-        if !self.affordable(airtime, now) {
+        if !affordable(radio, airtime, now) {
             // An owed reply spent the bucket since the check began.
-            self.spread.ready_at = now;
+            self.ready_at = now;
             return;
         }
-        let deficit = self.deficit(c, block, now);
-        self.radio.budget.record(airtime, now);
-        let slot = self.spread.slot_open.is_some();
+        let deficit = self.deficit(v, c, block, now);
+        let slot = self.slot_open.is_some();
         self.slot_end(SlotPiece::Sent, emit);
-        self.update_sent(c, Some((block, deficit)), slot, now);
-        self.radio.excursion.serve(Job::Update, f, emit);
+        self.sent_piece(rng, c, Some((block, deficit)), slot, now);
+        radio.serve(Job::Update, f, now, emit);
     }
 
     /// The piece went, or gave the channel up: the pace starts again,
     /// unless it was the piece after the slot heartbeat, which keeps none,
     /// and the stream moves on.
-    fn update_sent(&mut self, c: Channel, block: Option<(u8, u8)>, after_slot: bool, now: Instant) {
+    fn sent_piece(
+        &mut self,
+        rng: &mut Rng,
+        c: Channel,
+        block: Option<(u8, u8)>,
+        after_slot: bool,
+        now: Instant,
+    ) {
         // Two senders that start a pace together part by more than a frame,
         // and then hear each other, a quarter of the time each pace.
-        let jitter = self.rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
-        let s = &mut self.spread;
-        s.current = None;
-        s.busy_checks = 0;
-        s.slot_open = None;
+        let jitter = rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
+        self.current = None;
+        self.busy_checks = 0;
+        self.slot_open = None;
         if !after_slot {
-            s.passed = 0;
-            Self::paced(s, c, now + jitter);
+            self.passed = 0;
+            self.paced(c, now + jitter);
         }
         if let Some((b, deficit)) = block {
-            let at = &mut s.index[usize::from(b)];
+            let at = &mut self.index[usize::from(b)];
             *at = ((usize::from(*at) + 1) % PIECES) as u8;
             let i = usize::from(c.index());
-            if s.cur[i] == b {
+            if self.cur[i] == b {
                 // Within the quota, or past it in the block's tail.
-                s.sent_cur[i] = s.sent_cur[i].saturating_add(1);
+                self.sent_cur[i] = self.sent_cur[i].saturating_add(1);
             } else {
                 // A new block of the sweep: what the neighbour furthest
                 // behind on it lacks, and the margin for loss.
-                s.cur[i] = b;
-                s.sent_cur[i] = 1;
-                s.target[i] = sweep_pieces(deficit);
+                self.cur[i] = b;
+                self.sent_cur[i] = 1;
+                self.target[i] = sweep_pieces(deficit);
             }
         }
+    }
+}
+
+/// Whether a piece of `airtime` may go now: it must leave the reply
+/// reserve, as a forward must (spec "Duty cycle cap").
+fn affordable(radio: &Radio, airtime: Duration, now: Instant) -> bool {
+    radio
+        .budget()
+        .would_allow_keeping(airtime, REPLY_RESERVE, now)
+}
+
+impl<const H: usize, const Q: usize> Node<H, Q> {
+    /// The image this node holds whole, as its driver last said.
+    pub fn image(&self) -> Option<Image> {
+        self.spread.image()
+    }
+
+    /// The image it gathers and the first block it lacks, if any.
+    pub fn gathering(&self) -> Option<(Image, u8)> {
+        self.spread.gathering()
+    }
+
+    /// The section a heartbeat sent on `channel` at `now` carries, if any
+    /// ([`Spread::heartbeat_section`]).
+    pub(super) fn heartbeat_section(&self, now: Instant, channel: Channel) -> Option<Section> {
+        self.spread.heartbeat_section(&view!(self), now, channel)
+    }
+
+    /// A heartbeat with the section went on `channel`.
+    pub(super) fn section_sent(&mut self, now: Instant, channel: Channel) {
+        let sleepy = self.sleepy();
+        self.spread
+            .section_sent(self.config.version, sleepy, now, channel);
+    }
+
+    /// `AppCommand::Holds`.
+    pub(super) fn holds_image(&mut self, image: Image, now: Instant) {
+        self.spread.holds_image(image, &mut self.rng, now);
+    }
+
+    /// `AppCommand::Gather`.
+    pub(super) fn gather(&mut self, image: Image, from: u8, now: Instant) {
+        self.spread.gather(image, from, &mut self.rng, now);
+    }
+
+    /// A heartbeat of `from` carried `section`: the neighbour table keeps
+    /// it, and the spread hears it ([`Spread::section_heard`]).
+    pub(super) fn section_heard(
+        &mut self,
+        from: NodeId,
+        section: Section,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
+        self.neighbours.section_heard(from, section, now);
+        let v = view!(self);
+        self.spread.section_heard(&v, section, now, emit);
+    }
+
+    /// Its slot heartbeat went on its home channel
+    /// ([`Spread::slot_heartbeat`]).
+    pub(super) fn slot_heartbeat(&mut self, now: Instant) {
+        let v = view!(self);
+        self.spread.slot_heartbeat(&v, now);
+    }
+
+    /// A sleepy node heard its anchor's slot heartbeat: it listens for the
+    /// piece after it while it gathers and its anchor holds a block it
+    /// lacks.
+    pub(super) fn anchor_slot_heard(&mut self, now: Instant) {
+        let anchor = self.anchor().and_then(|a| self.neighbours.get(a.id));
+        if self.spread.helped_by(&self.neighbours, anchor) {
+            self.listen.awake_until_at_least(now + SLOT_LISTEN);
+        }
+    }
+
+    /// A piece heard on the home channel.
+    pub(super) fn update_heard(
+        &mut self,
+        u: Update<'_>,
+        now: Instant,
+        emit: &mut dyn FnMut(Action),
+    ) {
+        let v = view!(self);
+        self.spread.update_heard(&v, u, now, emit);
+    }
+
+    /// When the update job is next ready of its own accord.
+    pub(super) fn update_ready_at(&self) -> Option<Instant> {
+        self.spread.ready_at(&view!(self))
+    }
+
+    /// A frame of the send queue went: it passed a piece that was due.
+    pub(super) fn update_passed(&mut self, now: Instant) {
+        let v = view!(self);
+        self.spread.passed(&v, now);
+    }
+
+    /// Start the next piece that is due ([`Spread::start`]).
+    pub(super) fn start_update(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
+        let v = view!(self);
+        self.spread
+            .start(&v, &mut self.radio, &mut self.rng, now, emit)
+    }
+
+    /// The check of the piece's channel completed ([`Spread::check`]).
+    pub(super) fn update_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let v = view!(self);
+        self.spread
+            .check(&v, &mut self.radio, &mut self.rng, busy, now, emit);
     }
 }
 
@@ -1036,7 +1183,7 @@ mod tests {
         let x = Instant::ZERO + Duration::from_secs(100);
         r.spread.sent[0] = Some((c, x));
         assert_eq!(
-            r.pace_allows(c, x),
+            r.spread.pace_allows(&view!(r), c, x),
             x + GAP,
             "idle and alone: after the gap"
         );
@@ -1051,11 +1198,15 @@ mod tests {
                 crate::tables::send_queue::Kind::Forward,
             ))
             .unwrap();
-        assert_eq!(r.pace_allows(c, x), x + PACE, "busy: the pace");
+        assert_eq!(
+            r.spread.pace_allows(&view!(r), c, x),
+            x + PACE,
+            "busy: the pace"
+        );
         r.queue.clear();
         r.spread.others[0] = x + Duration::from_secs(1);
         assert_eq!(
-            r.pace_allows(c, x),
+            r.spread.pace_allows(&view!(r), c, x),
             x + PACE.mul(2),
             "another heard: shared"
         );
@@ -1111,7 +1262,7 @@ mod tests {
         };
         beat(&mut r, now);
         r.neighbours.section_heard(hb.id, section, now);
-        let lacking = |r: &crate::Relay, t: Instant| r.needs(t)[5].count;
+        let lacking = |r: &crate::Relay, t: Instant| r.spread.needs(&view!(r), t)[5].count;
         let lease = crate::node::heartbeat_interval(hb.id, &r.config)
             .mul(2 * u64::from(crate::radio::CHANNELS))
             + crate::node::heartbeat_lag(&r.config);

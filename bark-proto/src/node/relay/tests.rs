@@ -507,9 +507,8 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     };
     let frame = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
     let need = mac::airtime(&frame) + REPLY_RESERVE - short;
-    r.radio
-        .budget
-        .record(r.radio.budget.available(now) - need, now);
+    let spend = r.radio.budget().available(now) - need;
+    r.radio.budget_mut().record(spend, now);
     let id = MsgId::of(dst, node, b"later");
     let mut record = crate::tables::records::Record::new(id, None, 0, now);
     record.set_arrived();
@@ -522,7 +521,7 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     assert!(r.queue.is_empty(), "taken with a spent bucket");
     let fits = r
         .radio
-        .budget
+        .budget()
         .allowed_at(mac::airtime(&frame), REPLY_RESERVE, now)
         .unwrap();
     assert_eq!(r.next_wakeup(), Some(fits));
@@ -613,9 +612,8 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     // forwards as well.
     let need = mac::airtime(&frame) + REPLY_RESERVE + Duration::from_millis(1);
     assert!(need < queued);
-    r.radio
-        .budget
-        .record(r.radio.budget.available(now) - need, now);
+    let spend = r.radio.budget().available(now) - need;
+    r.radio.budget_mut().record(spend, now);
     let id = MsgId::of(dst, node, b"ahead");
     let mut record = crate::tables::records::Record::new(id, None, 0, now);
     record.set_arrived();
@@ -744,7 +742,7 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
         !actions.iter().any(|x| matches!(x, Action::Transmit(_))),
         "the radio is held: {actions:?}"
     );
-    assert!(r.radio.replies.pending());
+    assert!(r.radio.replies().pending());
 
     now += Duration::from_millis(1);
     actions.clear();
@@ -861,7 +859,7 @@ fn the_application_waits_for_room() {
     let mut r = Relay::new(config, 1);
     let mut now = Instant::ZERO;
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
-    r.radio.budget.record(DEPTH, now);
+    r.radio.budget_mut().record(DEPTH, now);
     r.handle(Event::Wakeup, now, &mut |_| {});
     assert!(!r.accepts_send(now));
     let ready = r.next_wakeup().expect("a wakeup for the application");
@@ -893,8 +891,8 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     now = Instant::ZERO + Duration::from_secs(10);
     // Room for replies, not for a full frame on top of the reserve.
-    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
-    r.radio.budget.record(spend, now);
+    let spend = r.radio.budget().available(now) - Duration::from_millis(300);
+    r.radio.budget_mut().record(spend, now);
     let far = Position {
         lat: r.config.position.lat + 100_000,
         ..r.config.position
@@ -972,8 +970,8 @@ fn a_waiting_message_keeps_its_record() {
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     now = Instant::ZERO + Duration::from_secs(10);
     // Room for replies only: what is taken waits in a hop place.
-    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
-    r.radio.budget.record(spend, now);
+    let spend = r.radio.budget().available(now) - Duration::from_millis(300);
+    r.radio.budget_mut().record(spend, now);
     let far = Position {
         lat: r.config.position.lat + 100_000,
         ..r.config.position
@@ -1767,8 +1765,8 @@ fn a_message_waits_whatever_its_age() {
         offer_dropped(&mut r, &mut now, far, 1, 2),
         (Some(0), None, None)
     );
-    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
-    r.radio.budget.record(spend, now);
+    let spend = r.radio.budget().available(now) - Duration::from_millis(300);
+    r.radio.budget_mut().record(spend, now);
     // A count higher than the first's passes the gate (spec "Receiving DATA").
     assert_eq!(
         offer_dropped(&mut r, &mut now, far, 2, 3),
@@ -1795,8 +1793,8 @@ fn a_message_waits_whatever_its_age() {
 fn a_packet_in_the_network_is_taken_whatever_the_bans() {
     let (mut r, mut now, far) = with_every_neighbour_banned();
     assert_eq!(offer_data(&mut r, &mut now, far, 1, 2), (Some(0), None));
-    let spend = r.radio.budget.available(now) - Duration::from_millis(300);
-    r.radio.budget.record(spend, now);
+    let spend = r.radio.budget().available(now) - Duration::from_millis(300);
+    r.radio.budget_mut().record(spend, now);
     // A count higher than the first's passes the gate (spec "Receiving DATA").
     assert_eq!(offer_data(&mut r, &mut now, far, 2, 3), (Some(3), None));
 }
@@ -2391,7 +2389,7 @@ fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
         r.next_wakeup().unwrap() <= from,
         "awake when the window opens"
     );
-    let floor = r.radio.busy.noise_floor_dbm() as f32;
+    let floor = r.radio.busy().noise_floor_dbm() as f32;
     // The weight the last reading at the floor had, from what it moved.
     let weight = |before: f32, after: f32| 2.0 * (after - before) / (floor - before);
 
@@ -3031,7 +3029,7 @@ fn a_busy_channel_does_not_hold_a_sleepy_node_back() {
         for i in 0..20 {
             for c in Channel::all() {
                 let loud = c.index() == 7 && i % 10 == 0;
-                r.radio.busy.sample(c, if loud { -60 } else { -125 });
+                r.radio.busy_mut().sample(c, if loud { -60 } else { -125 });
             }
         }
     };
@@ -3045,8 +3043,8 @@ fn a_busy_channel_does_not_hold_a_sleepy_node_back() {
 #[test]
 fn a_spent_bucket_leaves_a_sleepy_node_to_its_anchor() {
     let spend = |r: &mut Relay, now: Instant| {
-        let spend = r.radio.budget.available(now) - Duration::from_millis(1_000);
-        r.radio.budget.record(spend, now);
+        let spend = r.radio.budget().available(now) - Duration::from_millis(1_000);
+        r.radio.budget_mut().record(spend, now);
     };
     let (_, _, _, d, _, sent) = handing_between_with(Peer::Sleepy, true, spend);
     assert_eq!(data_preambles(&sent), [(d, MIN_PREAMBLE_SYMBOLS)]);
@@ -3374,7 +3372,7 @@ fn neighbour_counts_tell_heard_strong_and_proven() {
     let mut now = Instant::ZERO;
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     let me = r.config.position;
-    let margin = Neighbours::margin_dbm(r.radio.busy.noise_floor_dbm());
+    let margin = Neighbours::margin_dbm(r.radio.busy().noise_floor_dbm());
     let mut ids = Vec::new();
     for (k, rssi) in [
         (1, margin as i16 + 10),

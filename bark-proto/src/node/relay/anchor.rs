@@ -74,7 +74,6 @@ use crate::ids::NodeId;
 use crate::node::{heartbeat_interval, heartbeat_lag};
 use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::anchorless_beat_period;
-use crate::tables::heard::beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours, BEATS};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::HEARTBEAT_LEN;
@@ -100,6 +99,99 @@ pub(super) fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
 }
 
+/// What a node that sleeps listens for, and until when (module
+/// documentation): the deadlines of its anchor and its windows.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Listen {
+    /// When the rotation a node that sleeps listens to check its anchor
+    /// ends, while it does (spec "Relay choice").
+    rescan_ends: Option<Instant>,
+    /// Until when a sleepy node that has just taken its first anchor
+    /// listens, a worst-case rotation, to take the strongest node it heard
+    /// at its end (spec "Relay choice").
+    choosing: Option<Instant>,
+    /// When a node that sleeps expects its anchor's next heartbeat on its
+    /// channel, and from when it expected the last.
+    watch_at: Option<Instant>,
+    watch_base: Instant,
+    /// Until when a sleepy node listens after its beat or a message it
+    /// took (spec "Delivery").
+    awake_until: Instant,
+    /// When the window it listens in ends, while it is awake.
+    window_ends: Option<Instant>,
+    /// Until when the driver was told the radio may receive duty-cycled.
+    sniff_until: Option<Instant>,
+}
+
+impl Listen {
+    /// Listening for nothing.
+    pub(super) const UNSET: Listen = Listen {
+        rescan_ends: None,
+        choosing: None,
+        watch_at: None,
+        watch_base: Instant::ZERO,
+        awake_until: Instant::ZERO,
+        window_ends: None,
+        sniff_until: None,
+    };
+
+    /// When it next needs the core: the end of a check of its anchor, of
+    /// its first choice, or of the window it listens in. Its anchor's
+    /// heartbeat is watched for in that window.
+    pub(super) fn next_wakeup(&self) -> Option<Instant> {
+        [self.rescan_ends, self.choosing, self.window_ends]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// When the check of its anchor that ends at `now` or before ends.
+    pub(super) fn check_due(&self, now: Instant) -> Option<Instant> {
+        self.rescan_ends.filter(|&t| now >= t)
+    }
+
+    /// Whether its first choice of anchor is due at `now`.
+    pub(super) fn choice_due(&self, now: Instant) -> bool {
+        self.choosing.is_some_and(|t| now >= t)
+    }
+
+    /// It listens until `t` (spec "Delivery").
+    pub(super) fn awake_until(&mut self, t: Instant) {
+        self.awake_until = t;
+    }
+
+    /// It listens until `t` at least.
+    pub(super) fn awake_until_at_least(&mut self, t: Instant) {
+        self.awake_until = self.awake_until.max(t);
+    }
+
+    /// Whether it watches for its anchor's heartbeat, and when it comes if
+    /// in its slot.
+    pub(super) fn watching(&self) -> bool {
+        self.watch_at.is_some()
+    }
+
+    pub(super) fn watch_at(&self) -> Option<Instant> {
+        self.watch_at
+    }
+
+    /// The core used the radio: a duty-cycled receive the driver was told
+    /// of has ended (`docs/core-interface.md` §3 rule 10).
+    pub(super) fn radio_used(&mut self) {
+        self.sniff_until = None;
+    }
+
+    /// It listens for nothing: no window, no watch for its anchor's
+    /// heartbeat, no choice or check under way.
+    pub(super) fn forget(&mut self) {
+        self.awake_until = Instant::ZERO;
+        self.choosing = None;
+        self.rescan_ends = None;
+        self.watch_at = None;
+        self.window_ends = None;
+    }
+}
+
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// How often a sleepy node without an anchor beats, at most (spec
     /// "Sleepy nodes alone").
@@ -111,13 +203,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// documentation). Only a node with an anchor has windows: one
     /// without is sent to with the long preamble whenever.
     pub(super) fn may_sniff(&self, now: Instant) -> bool {
-        let window = self.anchored_sleepy() && now < self.timers.awake_until;
+        let window = self.anchored_sleepy() && now < self.listen.awake_until;
         self.sleepy()
             && !self.config.sleepy_listens
             && self.stage == Stage::Running
             && !window
-            && self.timers.choosing.is_none()
-            && self.timers.rescan_ends.is_none()
+            && self.listen.choosing.is_none()
+            && self.listen.rescan_ends.is_none()
             && self.radio_free()
             && !self
                 .watch()
@@ -127,7 +219,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When a sleepy node next needs its radio of its own accord: its
     /// next beat, or the next offer of a message it waits to send.
     pub(super) fn radio_due(&self) -> Instant {
-        let beat = self.radio.beacon.next_at.max(self.radio.beacon.ready_at);
+        let beat = self.radio.beacon.due_at();
         let due = self.forwarding.wake.map_or(beat, |t| t.min(beat));
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
@@ -143,8 +235,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// expected later by the drift when its slot was as early as the
     /// drift allowed. It may come later by the drift, and by that lag.
     pub(super) fn watch(&self) -> Option<(Instant, Instant)> {
-        let at = self.timers.watch_at?;
-        let drift = drift(at.since(self.timers.watch_base));
+        let at = self.listen.watch_at?;
+        let drift = drift(at.since(self.listen.watch_base));
         let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
         Some((
             at - drift.mul(3),
@@ -160,26 +252,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn watch_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let keeps = self.anchored_sleepy()
             && !self.config.sleepy_listens
-            && self.timers.rescan_ends.is_none();
+            && self.listen.rescan_ends.is_none();
         let Some(a) = self.anchor().filter(|_| keeps) else {
-            self.timers.watch_at = None;
+            self.listen.watch_at = None;
             return;
         };
         let interval = heartbeat_interval(a.id, &self.config);
-        if self.timers.watch_at.is_none() {
+        if self.listen.watch_at.is_none() {
             self.set_misses(0);
             match self.neighbours.by_id(a.id) {
                 // Its last heartbeat heard was of its burst, in no slot
                 // (spec "Heartbeat"): it watches from the next it hears,
                 // awake while it chooses, and else listening a rotation.
                 Some((_, n)) if n.anchorless => {
-                    if self.timers.choosing.is_none() {
+                    if self.listen.choosing.is_none() {
                         self.check_anchor(now, emit);
                     }
                 }
                 Some((_, n)) => {
-                    self.timers.watch_base = n.beat_at;
-                    self.timers.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
+                    self.listen.watch_base = n.beat_at;
+                    self.listen.watch_at = Some(Neighbours::next_beat(n, interval, self.home));
                 }
                 None => {}
             }
@@ -193,12 +285,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let (misses, dark) = self.sleep().map_or((0, false), |s| (s.misses, s.dark));
             self.set_misses(misses.saturating_add(1));
             if misses.saturating_add(1) >= 2 && !dark {
-                self.timers.watch_at = None;
+                self.listen.watch_at = None;
                 self.check_anchor(now, emit);
                 return;
             }
-            self.timers.watch_at = self
-                .timers
+            self.listen.watch_at = self
+                .listen
                 .watch_at
                 .map(|t| t + interval.mul(CHANNELS as u64));
         }
@@ -212,7 +304,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A heartbeat of the anchor outside its slots was heard: the anchor
     /// is alive, and the time its next is expected stays as it was.
     pub(super) fn anchor_alive(&mut self) {
-        if self.timers.rescan_ends.is_some() && self.anchor_holds_mail() {
+        if self.listen.rescan_ends.is_some() && self.anchor_holds_mail() {
             self.anchored();
         }
         self.set_misses(0);
@@ -235,14 +327,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     pub(super) fn anchor_heard(&mut self, now: Instant) {
         let Some(a) = self.anchor() else { return };
-        if self.timers.rescan_ends.is_some() && self.anchor_holds_mail() {
+        if self.listen.rescan_ends.is_some() && self.anchor_holds_mail() {
             // Heard while checking: it is there (spec "Relay choice").
             self.anchored();
         }
         self.set_misses(0);
-        let base = match (self.timers.watch_at, self.watch()) {
+        let base = match (self.listen.watch_at, self.watch()) {
             (Some(at), Some((from, to))) if now >= from && now < to => {
-                now.min(at + drift(at.since(self.timers.watch_base)))
+                now.min(at + drift(at.since(self.listen.watch_base)))
             }
             _ => now,
         };
@@ -252,27 +344,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 beat_at: base,
                 ..*n
             };
-            self.timers.watch_base = base;
-            self.timers.watch_at = Some(Neighbours::next_beat(&n, interval, self.home));
+            self.listen.watch_base = base;
+            self.listen.watch_at = Some(Neighbours::next_beat(&n, interval, self.home));
         }
     }
 
     /// Tell the driver the radio may receive duty-cycled, if it may and
     /// has not been told.
     pub(super) fn sniff(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        if self.timers.sniff_until.is_some_and(|t| t > now) {
+        if self.listen.sniff_until.is_some_and(|t| t > now) {
             return;
         }
         // The ends of the windows it listens in, and the start of the next
         // for its anchor's heartbeat, need the core, to say so.
-        self.timers.window_ends = None;
+        self.listen.window_ends = None;
         if self.anchored_sleepy() {
             let ahead = |t: Option<Instant>| t.filter(|&t| t > now);
             let watch = self.watch();
-            self.timers.window_ends = earlier(
+            self.listen.window_ends = earlier(
                 earlier(
-                    ahead(Some(self.timers.awake_until)),
-                    ahead(self.timers.choosing),
+                    ahead(Some(self.listen.awake_until)),
+                    ahead(self.listen.choosing),
                 ),
                 earlier(ahead(watch.map(|w| w.0)), ahead(watch.map(|w| w.1))),
             );
@@ -282,7 +374,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let until = self.radio_due();
         if until > now {
-            self.timers.sniff_until = Some(until);
+            self.listen.sniff_until = Some(until);
             emit(Action::Sniff(until));
         }
     }
@@ -290,25 +382,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// This node has answered a DATA addressed to it: it listens one
     /// hand-over for the next (spec "Delivery").
     pub(super) fn took(&mut self, now: Instant) {
-        self.timers.awake_until = now + self.heard.params().linger;
-    }
-
-    /// The time to a sleepy node's next beat: a random half to one beat
-    /// period, the anchorless one without an anchor. A relay heartbeats on its fixed interval instead
-    /// (`heartbeat_done`).
-    pub(super) fn beat_interval(&mut self) -> Duration {
-        if self.radio.beacon.quick > 0 {
-            self.radio.beacon.quick -= 1;
-            return self
-                .rng
-                .duration(self.config.heartbeat_min, self.config.heartbeat_max);
-        }
-        let period = if self.anchored_sleepy() {
-            beat_period(self.config.delivery_ttl)
-        } else {
-            self.anchorless_period()
-        };
-        self.rng.duration(period.div(2), period)
+        self.listen.awake_until = now + self.heard.params().linger;
     }
 
     /// Choose or keep a sleepy node's anchor among the live neighbours
@@ -337,18 +411,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // The choice after the first anchor is made when its time comes,
         // whether or not the anchor is still in the table: left for later,
         // its time would wake the node at once, again and again.
-        let chosen = self.timers.choosing.is_some_and(|t| now >= t);
+        let chosen = self.listen.choosing.is_some_and(|t| now >= t);
         if chosen {
-            self.timers.choosing = None;
+            self.listen.choosing = None;
         }
         if current.is_some_and(|a| !a.holds_mail()) {
             // It holds mail no more, carried or sleepy: another, at once
             // if one is live, else the one a rotation's listen finds.
             let to = strongest(None, 0);
-            if to.is_none() && self.timers.rescan_ends.is_some() {
+            if to.is_none() && self.listen.rescan_ends.is_some() {
                 return false;
             }
-            if self.timers.rescan_ends.is_none() && current.is_some_and(|a| a.carried) {
+            if self.listen.rescan_ends.is_none() && current.is_some_and(|a| a.carried) {
                 emit(Action::Trace(Trace::AnchorCarried));
             }
             match to {
@@ -379,14 +453,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // heartbeat: each beats at a random time within a heartbeat
                 // interval (spec "Beats").
                 let soon = now + self.rng.duration(Duration::ZERO, self.config.heartbeat_max);
-                self.radio.beacon.next_at = self.radio.beacon.next_at.min(soon);
+                self.radio.beacon.beat_by(soon);
             }
         }
         let Some(to) = to else {
             return false;
         };
         if first && !self.config.sleepy_listens {
-            self.timers.choosing = Some(now + self.config.boot_listen);
+            self.listen.choosing = Some(now + self.config.boot_listen);
         }
         self.take_anchor(&to, now, emit);
         true
@@ -406,22 +480,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.config.home_override.is_none() {
             self.retune(to.home, emit);
         }
-        if self.timers.sniff_until.is_some() {
+        if self.listen.sniff_until.is_some() {
             // It receives duty-cycled no longer, and listens now to choose.
             emit(Action::Listen(self.home));
         }
         // Heard at once and again soon by the new holder.
-        self.radio.beacon.next_at = now;
-        self.radio.beacon.quick = 1;
+        self.radio.beacon.beat(now, 1);
         self.anchored();
-        self.gps_anchor(now, emit);
+        self.gps.anchored(self.motion.placed(), now, emit);
     }
 
     /// The anchor was chosen or confirmed: a node that sleeps keeps it
     /// whether or not it hears it (module documentation).
     pub(super) fn anchored(&mut self) {
-        self.timers.rescan_ends = None;
-        self.timers.watch_at = None;
+        self.listen.rescan_ends = None;
+        self.listen.watch_at = None;
         let keep = self.anchored_sleepy() && !self.config.sleepy_listens;
         self.neighbours
             .pin(self.anchor().filter(|_| keep).map(|a| a.id));
@@ -444,9 +517,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn leave_anchor(&mut self, now: Instant) {
         self.set_anchor(None);
         self.anchored();
-        self.gps_due();
-        self.radio.beacon.next_at = now;
-        self.radio.beacon.quick = 0;
+        self.gps.due(self.sleepy());
+        self.radio.beacon.beat(now, 0);
     }
 
     /// Listen a worst-case rotation, from `now`, to check the anchor of a
@@ -454,11 +526,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn check_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if !self.anchored_sleepy()
             || self.config.sleepy_listens
-            || self.timers.rescan_ends.is_some()
+            || self.listen.rescan_ends.is_some()
         {
             return;
         }
-        self.timers.rescan_ends = Some(now + self.config.boot_listen);
+        self.listen.rescan_ends = Some(now + self.config.boot_listen);
         emit(Action::Trace(Trace::AnchorCheck));
     }
 

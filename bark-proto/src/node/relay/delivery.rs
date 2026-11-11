@@ -124,7 +124,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+            Some(_) => return Err(self.radio.budget().allowed_at(airtime, REPLY_RESERVE, now)),
         }
         let _ = self.queue.push(out);
         Ok(())
@@ -162,7 +162,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// ends (`feed_due`).
     pub(super) fn feed(&mut self, retry: bool, now: Instant) {
         self.forwarding.feed_due = false;
-        self.timers.feed_at = None;
+        self.forwarding.feed_at = None;
         if self.sleepy() {
             // What it held waits to be handed on (`relay/power.rs`).
             return;
@@ -181,14 +181,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .any(|q| q.node == node && !q.waits());
             if first && !q.waits() {
                 if let Err(at) = self.try_deliver(node, retry, now) {
-                    self.timers.feed_at = at;
+                    self.forwarding.feed_at = at;
                     return;
                 }
             }
             i += 1;
         }
         if let Err(at) = self.feed_direct(now) {
-            self.timers.feed_at = at;
+            self.forwarding.feed_at = at;
         }
     }
 
@@ -196,7 +196,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// would.
     pub(super) fn deliver_now(&mut self, node: NodeId, now: Instant) {
         if let Err(Some(at)) = self.try_deliver(node, false, now) {
-            self.timers.feed_at = Some(self.timers.feed_at.map_or(at, |t| t.min(at)));
+            self.forwarding.feed_at = Some(self.forwarding.feed_at.map_or(at, |t| t.min(at)));
         }
     }
 
@@ -261,7 +261,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match self.no_room_to_deliver(airtime, now) {
             None => {}
             Some(DropReason::SendQueueFull) => return Err(None),
-            Some(_) => return Err(self.radio.budget.allowed_at(airtime, REPLY_RESERVE, now)),
+            Some(_) => return Err(self.radio.budget().allowed_at(airtime, REPLY_RESERVE, now)),
         }
         if let Some(e) = self.delivery.iter_mut().find(|e| e.msg_id == q.msg_id) {
             e.flushed |= q.relay_home.is_none();
@@ -327,16 +327,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // Its wakeup at a waited-for neighbour's expiry is spent.
             self.neighbours.expire(now);
         }
-        if self.config.sleepy_listens && now >= self.timers.delivery_retry_at {
-            self.timers.delivery_retry_at = now + self.config.delivery_retry;
+        if self.config.sleepy_listens && now >= self.forwarding.delivery_retry_at {
+            self.forwarding.delivery_retry_at = now + self.config.delivery_retry;
             self.feed(true, now);
         }
     }
 
-    /// When delivery next needs the core, but for `Timers::feed_at`.
+    /// When delivery next needs the core: the feed's bucket, the retry,
+    /// a place for the application's message set aside, and the expiries
+    /// of the heard table and of the neighbours waited for.
     pub(super) fn delivery_wakeup(&self) -> Option<Instant> {
         let retry = (self.config.sleepy_listens && !self.delivery.is_empty())
-            .then_some(self.timers.delivery_retry_at);
+            .then_some(self.forwarding.delivery_retry_at);
         // A message of its own waits for a place (`release_held`).
         let held = self
             .queue
@@ -353,7 +355,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .filter_map(|q| self.neighbours.expiry_of(q.waits_for))
             .min();
         earlier(
-            earlier(retry, gone),
+            earlier(earlier(self.forwarding.feed_at, retry), gone),
             earlier(self.heard.next_expiry(), held),
         )
     }
