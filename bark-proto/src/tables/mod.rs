@@ -139,9 +139,9 @@ pub(crate) mod sizes {
         assert!(size_of::<busy::BusyEstimator>() <= 512);
     }
 
-    /// A send-queue entry: its frame and bookkeeping, 296 B, and the
+    /// A send-queue entry: its message and bookkeeping, 288 B, and the
     /// neighbours it goes round, one bit per neighbour-table slot, 8 B.
-    const OUTGOING: usize = 304;
+    const OUTGOING: usize = 296;
 
     /// The bytes of every table, each checked to be what its entries take
     /// and a few words of bookkeeping.

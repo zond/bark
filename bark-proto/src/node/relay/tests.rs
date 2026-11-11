@@ -595,7 +595,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
         queued = queued + mac::airtime(&frame);
         let out = Outgoing {
             not_before: now + hour,
-            ..Outgoing::new(frame, Kind::Forward)
+            ..Outgoing::of(&d, r.home, MIN_PREAMBLE_SYMBOLS, Kind::Forward)
         };
         r.queue.push(out).unwrap();
     }
@@ -931,7 +931,7 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
         let place = r
             .queue
             .iter()
-            .find(|o| o.msg_id() == Some(d.msg_id()))
+            .find(|o| o.msg_id() == d.msg_id())
             .map(|o| o.place);
         (place, refused)
     };
@@ -1007,7 +1007,7 @@ fn a_waiting_message_keeps_its_record() {
         d.msg_id()
     };
     let waiting = offer(&mut r, &mut now, 1, 2);
-    assert!(r.queue.iter().any(|o| o.msg_id() == Some(waiting)));
+    assert!(r.queue.iter().any(|o| o.msg_id() == waiting));
     // Every other record newer.
     let later = now + Duration::from_secs(1);
     for i in 1..RECORDS as u32 {
@@ -1106,8 +1106,9 @@ fn waiting_entries_keep_arrival_order_through_bans() {
         let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
         r.records.put(at, Record::new(d.msg_id(), parent, 1, now));
-        let f = mac::frame(&Packet::Data(d), home, MIN_PREAMBLE_SYMBOLS);
-        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        r.queue
+            .push(Outgoing::of(&d, home, MIN_PREAMBLE_SYMBOLS, Kind::Forward))
+            .unwrap();
         ids.push(d.msg_id());
     }
     // B refuses the first `refusals` offers, then takes everything.
@@ -1155,7 +1156,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
         r.handle(event, now, &mut |a| pending.push(a));
         if offers.len() == refusals {
             // Every ban has ended and recurred: the queue is as it came.
-            let queued: Vec<_> = r.queue.iter().filter_map(|o| o.msg_id()).collect();
+            let queued: Vec<_> = r.queue.iter().map(|o| o.msg_id()).collect();
             assert_eq!(queued, ids, "arrival order");
         }
     }
@@ -1245,8 +1246,14 @@ fn a_message_that_waited_keeps_its_turn() {
         let at = r.record_place().unwrap();
         r.records
             .put(at, Record::new(data.msg_id(), parent, 1, now));
-        let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
-        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        r.queue
+            .push(Outgoing::of(
+                &data,
+                home,
+                MIN_PREAMBLE_SYMBOLS,
+                Kind::Forward,
+            ))
+            .unwrap();
         ids.push(data.msg_id());
     }
     // D's ban ends while K is handed over.
@@ -1366,8 +1373,14 @@ fn the_offer_keeps_the_mark() {
     let parent = Some((name(7), Channel::new(6).unwrap()));
     r.records
         .put(at, Record::new(data.msg_id(), parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     r.neighbours
         .refused(id_of(d_pos), now + Duration::from_millis(1));
     r.handle(Event::Wakeup, now, &mut |_| {});
@@ -1449,8 +1462,14 @@ fn an_answer_to_another_sender_is_not_ours() {
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
     r.records.put(at, Record::new(id, parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
 
     // Run until the offer to D has gone out.
     let mut pending = Vec::new();
@@ -1588,8 +1607,14 @@ fn a_neighbour_that_answers_stays_live() {
         let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
         r.records.put(at, Record::new(id, parent, 1, *now));
-        let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
-        r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+        r.queue
+            .push(Outgoing::of(
+                &data,
+                home,
+                MIN_PREAMBLE_SYMBOLS,
+                Kind::Forward,
+            ))
+            .unwrap();
         let until = *now + Duration::from_millis(100);
         let mut pending = Vec::new();
         r.handle(Event::Wakeup, *now, &mut |a| pending.push(a));
@@ -1726,7 +1751,7 @@ fn offer_dropped(
     let place = r
         .queue
         .iter()
-        .find(|o| o.msg_id() == Some(d.msg_id()))
+        .find(|o| o.msg_id() == d.msg_id())
         .map(|o| o.place);
     (place, refused, dropped)
 }
@@ -1806,8 +1831,14 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
     r.records.put(at, Record::new(id, parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     // A copy with a higher count arrived since it was queued.
     r.records.get_mut(id).unwrap().received(name(8), 6, now);
 
@@ -1893,7 +1924,7 @@ fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
                 _ => None,
             })
             .collect();
-        let held = r.queue.iter().filter(|o| o.msg_id() == Some(d.msg_id()));
+        let held = r.queue.iter().filter(|o| o.msg_id() == d.msg_id());
         (acks, held.count())
     };
     let taken = |acks: &[crate::wire::Ack]| acks.len() == 1 && !acks[0].refused;
@@ -1936,8 +1967,14 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
     r.records.put(at, Record::new(id, parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     let mut pending = Vec::new();
     r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
     let until = now + Duration::from_millis(50);
@@ -2056,8 +2093,14 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
     r.records.put(at, Record::new(id, parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
     assert_eq!(data_to(&sent), [(id_of(d_pos), 2)], "D first");
     (r, now, id, d_pos, e_pos)
@@ -2181,8 +2224,14 @@ fn a_return_answered_seen_is_dropped() {
     let at = r.record_place().unwrap();
     r.records
         .put(at, Record::new(id, Some((parent, home)), 1, now));
-    let f = mac::frame(&Packet::Data(data), home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Return)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Return,
+        ))
+        .unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
     assert_eq!(data_to(&sent), [(parent, 2)]);
     let seen = Ack {
@@ -2753,12 +2802,7 @@ fn refusals_at_the_gate_are_told_a_line() {
         );
     }
     // A ban on the way on longer than the line is told instead.
-    let to = r.in_flight().map(|o| {
-        let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
-            unreachable!()
-        };
-        d.dst_hop
-    });
+    let to = r.in_flight().map(|o| o.to);
     let to = to.expect("the first is being handed over");
     let ban = service.mul(20);
     r.neighbours.refused(to, now + ban);
@@ -2858,8 +2902,14 @@ fn handing_between_with(
     let place = r.record_place().unwrap();
     r.records.put(place, Record::new(id, parent, 1, now));
     prep(&mut r, now);
-    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
     (r, now, id, id_of(d_pos), id_of(e_pos), sent)
 }
@@ -3080,8 +3130,14 @@ fn owner_with(c_live: bool) -> (Option<NodeId>, bool) {
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let place = r.record_place().unwrap();
     r.records.put(place, Record::new(id, parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     let mut seen = Vec::new();
     let mut woken = Vec::new();
     r.handle(Event::Wakeup, now, &mut |a| woken.push(a));
@@ -3360,7 +3416,7 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
     use crate::ids::MsgId;
     use crate::tables::delivery::Queued;
     use crate::tables::send_queue::{Kind, Outgoing, SEND_QUEUE};
-    use crate::wire::{Data, Packet};
+    use crate::wire::Data;
     let hour = Duration::from_secs(3600);
     let config = Config {
         boot_listen: Duration::from_secs(1),
@@ -3396,8 +3452,14 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
             hops: 1,
             payload: &payload,
         };
-        let frame = mac::frame(&Packet::Data(d), r.home, MIN_PREAMBLE_SYMBOLS);
-        r.queue.push(Outgoing::new(frame, Kind::Forward)).unwrap();
+        r.queue
+            .push(Outgoing::of(
+                &d,
+                r.home,
+                MIN_PREAMBLE_SYMBOLS,
+                Kind::Forward,
+            ))
+            .unwrap();
     }
     r.mode = Mode::Sleepy(Sleep::new(false));
     let mut traces = Vec::new();
@@ -3414,10 +3476,9 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
     assert!(r.delivery.is_empty());
     let out = r.queue.iter().last().unwrap();
     assert_eq!(
-        (out.kind, out.place, out.msg_id()),
-        (Kind::Forward, 0, Some(id))
+        (out.kind, out.place, out.msg_id(), out.hops),
+        (Kind::Forward, 0, id, 1)
     );
-    assert!(matches!(Packet::decode(out.frame.payload()), Ok(Packet::Data(d)) if d.hops == 1));
     let record = r.records.get(id).unwrap();
     assert!(!record.arrived() && record.parent().is_none());
     assert!(traces.contains(&Trace::HandedOn { msg_id: id }));
@@ -3738,8 +3799,14 @@ fn first_hop_among(
     let parent = Some((name(7), Channel::new(2).unwrap()));
     let place = r.record_place().unwrap();
     r.records.put(place, Record::new(id, parent, 1, now));
-    let f = mac::frame(&Packet::Data(data), r.home, MIN_PREAMBLE_SYMBOLS);
-    r.queue.push(Outgoing::new(f, Kind::Forward)).unwrap();
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
     let sent = until_sent(&mut r, &mut now, Vec::new());
     let to = data_to(&sent)[0].0;
     (r, now, to)

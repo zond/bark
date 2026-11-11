@@ -8,14 +8,13 @@
 
 use super::Node;
 use crate::ids::{MsgId, NodeId};
-use crate::node::mac;
 use crate::position::Position;
 use crate::radio::Channel;
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::records::Record;
-use crate::tables::send_queue::SEND_QUEUE;
+use crate::tables::send_queue::{Message, SEND_QUEUE};
 use crate::time::{Duration, Instant};
-use crate::wire::Packet;
+use crate::wire::MAX_PAYLOAD;
 
 /// A message the node holds, as a driver keeps it across a reboot: what
 /// [`MsgId::of`] is taken of, so that it is the same message after, and
@@ -120,11 +119,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .queue
             .iter()
             .filter(|o| !o.kind.delivers())
-            .filter_map(move |o| {
-                let Ok(Packet::Data(d)) = Packet::decode(o.frame.payload()) else {
-                    return None;
-                };
-                let id = d.msg_id();
+            .map(move |o| {
+                let id = o.msg_id();
                 let record = self.records.get(id);
                 let at = match self.own.id == Some(id) {
                     true => HeldAt::Own,
@@ -133,16 +129,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                         place: o.place,
                     },
                 };
-                Some(Held {
+                Held {
                     msg_id: id,
-                    dst_pos: d.dst_pos,
-                    dst_id: d.dst_id,
-                    payload: d.payload,
-                    // The frame carries the count received plus one until
-                    // its hand-over stamps it (`relay/forward.rs`).
-                    hops: record.map_or(d.hops.saturating_sub(1), Record::highest_hops),
+                    dst_pos: o.message.dst_pos,
+                    dst_id: o.message.dst_id,
+                    payload: o.message.payload(),
+                    // It carries the count received plus one until its
+                    // hand-over stamps it (`relay/forward.rs`).
+                    hops: record.map_or(o.hops.saturating_sub(1), Record::highest_hops),
                     at,
-                })
+                }
             });
         fn held(q: &Queued, at: HeldAt) -> Held<'_> {
             Held {
@@ -199,15 +195,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match m.at {
             HeldAt::Own => false,
             HeldAt::Forward { parent, place } => {
-                let frame = self.onward(m.dst_pos, m.dst_id, m.payload, m.hops);
+                if m.payload.len() > MAX_PAYLOAD {
+                    return false;
+                }
+                let out = self.onward(Message::new(m.dst_pos, m.dst_id, m.payload), m.hops);
                 let free = match place {
                     0 => self.queue.regular() < SEND_QUEUE,
                     k => self.queue.iter().all(|o| o.place != k),
                 };
-                let air = mac::airtime(&frame);
                 let place = match free {
                     true => place,
-                    false => match self.admit(air, Duration::ZERO, m.hops, false, now) {
+                    false => match self.admit(out.airtime(), Duration::ZERO, m.hops, false, now) {
                         Ok(k) => k,
                         Err(_) => return false,
                     },
@@ -220,7 +218,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     };
                     self.records.put(at, Record::new(id, parent, m.hops, now));
                 }
-                self.push_forward(frame, place, now)
+                self.push_forward(out, place, now)
             }
             HeldAt::Delivery {
                 waits_for,

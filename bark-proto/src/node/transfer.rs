@@ -4,10 +4,10 @@
 //! each, taking, refusing or seen.
 //!
 //! A hand-over lives in its send-queue place ([`Outgoing`]): where it is,
-//! its transmissions so far and, in its frame, its receiver, which the ACK
-//! it expects names. What the radio side keeps of the one in flight is
-//! [`Flight`]. The node owns the radio (`mac.rs`), the frame and the
-//! duty-cycle budget, starts each excursion and reports its completion
+//! its transmissions so far and its receiver, which the ACK it expects
+//! names. What the radio side keeps of the one in flight is [`Flight`].
+//! The node owns the radio (`mac.rs`), encodes the frame when it goes and
+//! keeps the duty-cycle budget, starts each excursion and reports its completion
 //! here.
 //!
 //! # A hand-over
@@ -39,15 +39,14 @@
 //! counts: the receiver has the frame. Whether it takes or refuses the
 //! frame, the role decides what follows (D27).
 
-use crate::event::Frame;
 use crate::ids::{MsgId, NodeId};
 use crate::node::Rng;
 use crate::radio::Channel;
 use crate::tables::fixed::FixedVec;
-use crate::tables::send_queue::{Outgoing, State, Wait};
+use crate::tables::send_queue::{Message, Outgoing, State, Wait};
 use crate::tables::{retry_window, LBT_GIVE_UP};
 use crate::time::{Duration, Instant};
-use crate::wire::{Ack, Packet};
+use crate::wire::{Ack, Data};
 
 /// How many hand-overs the node has in flight at most: one, so that the
 /// radio listens at home for the ACK of the frame it sent, and the
@@ -119,13 +118,9 @@ pub(crate) fn expect(msg_id: crate::ids::MsgId, from: NodeId, me: NodeId) -> Ack
 }
 
 impl Outgoing {
-    /// The ACK that takes this place's frame from `me`: the message and
-    /// the receiver are in the frame.
-    pub(crate) fn expect(&self, me: NodeId) -> Option<Ack> {
-        match Packet::decode(self.frame.payload()) {
-            Ok(Packet::Data(d)) => Some(expect(d.msg_id(), d.dst_hop, me)),
-            _ => None,
-        }
+    /// The ACK by which this place's receiver takes its message from `me`.
+    pub(crate) fn expect(&self, me: NodeId) -> Ack {
+        expect(self.msg_id(), self.to, me)
     }
 
     /// Whether the frame has been on air at least once in this hand-over.
@@ -136,7 +131,7 @@ impl Outgoing {
     /// Whether `ack` answers this place's hand-over, taking, refusing or
     /// having seen a frame that has been sent.
     pub(crate) fn answered_by(&self, ack: Ack, me: NodeId) -> bool {
-        self.in_flight() && self.transmitted() && self.expect(me).is_some_and(|e| ack.answers(&e))
+        self.in_flight() && self.transmitted() && ack.answers(&self.expect(me))
     }
 }
 
@@ -335,6 +330,45 @@ impl From<Ack> for Reply {
     }
 }
 
+/// A DATA a reply takes, acted on once the reply has gone out, where the
+/// take is final (spec "The ACK").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Take {
+    /// Its message.
+    pub(crate) message: Message,
+    /// Its sender.
+    pub(crate) from: NodeId,
+    /// Its sender's home channel.
+    pub(crate) home: Channel,
+    /// Its count.
+    pub(crate) hops: u8,
+}
+
+impl Take {
+    /// What `d` gives to take.
+    pub(crate) fn of(d: &Data<'_>) -> Take {
+        Take {
+            message: Message::of(d),
+            from: d.src_hop,
+            home: d.sender_home,
+            hops: d.hops,
+        }
+    }
+
+    /// The DATA as it came to `me`.
+    pub(crate) fn data(&self, me: NodeId) -> Data<'_> {
+        Data {
+            sender_home: self.home,
+            dst_hop: me,
+            src_hop: self.from,
+            dst_pos: self.message.dst_pos,
+            dst_id: self.message.dst_id,
+            hops: self.hops,
+            payload: self.message.payload(),
+        }
+    }
+}
+
 /// A reply this node owes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Owed {
@@ -345,9 +379,8 @@ pub(crate) struct Owed {
     deadline: Instant,
     /// When it was owed; a reply is ready at once (spec "The ACK").
     ready: Instant,
-    /// The DATA the reply takes, to be acted on once the reply has gone
-    /// out, where the take is final (spec "The ACK").
-    takes: Option<Frame>,
+    /// The DATA the reply takes.
+    takes: Option<Take>,
 }
 
 impl Owed {
@@ -451,7 +484,7 @@ impl Replies {
         channel: Channel,
         deadline: Instant,
         renews: bool,
-        takes: Option<Frame>,
+        takes: Option<Take>,
         sending: bool,
         now: Instant,
     ) {
@@ -543,7 +576,7 @@ impl Replies {
     /// The reply being sent left the antenna. Returns whether the node
     /// listens on for the next DATA, and the DATA the reply took, to act
     /// on now.
-    pub(crate) fn sent(&mut self) -> (bool, Option<Frame>) {
+    pub(crate) fn sent(&mut self) -> (bool, Option<Take>) {
         let takes = if self.pending() {
             self.owed.remove(0).takes
         } else {
@@ -577,40 +610,30 @@ mod tests {
         }
     }
 
-    /// A place whose frame is a DATA of message `id` to the receiver
-    /// `ack(id).from`, and the flight: a hand-over to drive.
+    /// A place whose message is `id`, to the receiver `ack(id).from`,
+    /// and the flight: a hand-over to drive.
     fn place(id: u32) -> (Outgoing, Flight) {
-        use crate::event::{Frame, MAX_FRAME};
         use crate::position::Position;
         use crate::radio::MIN_PREAMBLE_SYMBOLS;
         use crate::tables::send_queue::Kind;
-        use crate::wire::Data;
-        let d = Data {
-            sender_home: Channel::new(3).unwrap(),
-            dst_hop: ack(id).from,
-            src_hop: ack(id).to,
-            dst_pos: Position { lat: 0, lon: 0 },
-            dst_id: NodeId([5; 6]),
-            hops: 1,
-            payload: &[id as u8],
-        };
-        let mut bytes = [0; MAX_FRAME];
-        let len = Packet::Data(d).encode(&mut bytes).unwrap() as u8;
-        let frame = Frame {
-            channel: d.sender_home,
-            preamble_symbols: MIN_PREAMBLE_SYMBOLS,
-            len,
-            bytes,
-        };
-        (Outgoing::new(frame, Kind::Forward), Flight::NONE)
+        let message = Message::new(Position { lat: 0, lon: 0 }, NodeId([5; 6]), &[id as u8]);
+        let out = Outgoing::new(
+            message,
+            1,
+            ack(id).from,
+            Channel::new(3).unwrap(),
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        );
+        (out, Flight::NONE)
     }
 
     /// The expected ACK names the message and the receiver of the frame
     /// (roadmap D15).
     fn names(id: u32) -> Ack {
         let (out, _) = place(id);
-        let e = out.expect(ack(id).to).unwrap();
-        assert_eq!(e.msg_id, out.msg_id().unwrap());
+        let e = out.expect(ack(id).to);
+        assert_eq!(e.msg_id, out.msg_id());
         assert_eq!((e.from, e.to), (ack(id).from, ack(id).to));
         e
     }
@@ -857,19 +880,25 @@ mod tests {
     fn a_take_waits_for_its_reply() {
         let ch = Channel::new(3).unwrap();
         let (out, _) = place(9);
+        let take = Take {
+            message: out.message,
+            from: ack(9).from,
+            home: out.channel,
+            hops: out.hops,
+        };
         let mut a = Replies::new();
-        a.owe(ack(9), ch, at(100), false, Some(out.frame), false, at(0));
+        a.owe(ack(9), ch, at(100), false, Some(take), false, at(0));
         assert_eq!(a.untaken(), None);
         a.due(at(0)).unwrap();
-        assert_eq!(a.sent(), (false, Some(out.frame)), "sent: act on it");
+        assert_eq!(a.sent(), (false, Some(take)), "sent: act on it");
         assert_eq!(a.untaken(), None);
         // Not sent by the deadline: the DATA is not taken.
-        a.owe(ack(9), ch, at(200), false, Some(out.frame), false, at(100));
+        a.owe(ack(9), ch, at(200), false, Some(take), false, at(100));
         assert_eq!(a.due(at(200)), None);
         assert_eq!(a.untaken(), Some(MsgId(9)));
         assert_eq!(a.untaken(), None, "reported once");
         // Lapsed unsent, and abandoned for budget, alike.
-        a.owe(ack(9), ch, at(300), false, Some(out.frame), false, at(250));
+        a.owe(ack(9), ch, at(300), false, Some(take), false, at(250));
         assert!(!a.can_owe(ack(10), ch, false, at(299)));
         assert_eq!(a.untaken(), None);
         assert!(
@@ -877,7 +906,7 @@ mod tests {
             "lapsed: the place is free"
         );
         assert_eq!(a.untaken(), Some(MsgId(9)));
-        a.owe(ack(9), ch, at(400), false, Some(out.frame), false, at(350));
+        a.owe(ack(9), ch, at(400), false, Some(take), false, at(350));
         a.abandon();
         assert_eq!(a.untaken(), Some(MsgId(9)));
         // A refusal takes nothing to leave.

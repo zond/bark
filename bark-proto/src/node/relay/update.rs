@@ -1024,7 +1024,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 mod tests {
     use super::*;
     use crate::node::Config;
-    use crate::tables::send_queue::Outgoing;
+    use crate::tables::send_queue::{Message, Outgoing};
 
     /// The pace is a floor: alone on a channel and with nothing else to
     /// send, the next piece may go after the gap; with a frame of the send
@@ -1041,19 +1041,14 @@ mod tests {
             x + GAP,
             "idle and alone: after the gap"
         );
-        let frame = mac::frame(
-            &Packet::Update(Update::Piece {
-                version: 1,
-                block: 0,
-                index: 0,
-                bytes: &[0; PIECE_BYTES],
-            }),
-            c,
-            MIN_PREAMBLE_SYMBOLS,
-        );
+        let message = Message::new(Default::default(), NodeId::NONE, &[]);
         r.queue
             .push(Outgoing::new(
-                frame,
+                message,
+                1,
+                NodeId::NONE,
+                c,
+                MIN_PREAMBLE_SYMBOLS,
                 crate::tables::send_queue::Kind::Forward,
             ))
             .unwrap();
