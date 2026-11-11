@@ -244,6 +244,9 @@ mixin _Connect on _AppCore {
   }) async {
     _phase(Linking.connecting);
     pairAgain = null;
+    // The person's tap tries a node the search passes over; a refusal
+    // marks it again.
+    if (_tapHeld) nodes.of(name).unserved = false;
     try {
       await session.setStopped(false);
       // The phone leaves a node that drains by its own choice: the link's

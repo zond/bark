@@ -18,6 +18,11 @@ NodeRecord lost(String n) => NodeRecord(n)
   ..paired = true
   ..lost = true;
 NodeRecord kept(String n) => NodeRecord(n)..bondKept = true;
+
+/// A node that refused the phone over the link version, paired or not.
+NodeRecord unserved(String n, {bool isPaired = false}) => NodeRecord(n)
+  ..paired = isPaired
+  ..unserved = true;
 NodeRecord read(String n, Duration ago) =>
     NodeRecord(n)..ringReadAt = t0.subtract(ago);
 
@@ -167,7 +172,7 @@ void main() {
         'a',
       );
       expect(
-        chooseNode([n('kept', -86), n('a', -95)], kept: {'kept'})?.name,
+        chooseNode([n('kept', -86), n('a', -95)], passed: {'kept'})?.name,
         'a',
       );
       // Heard without an RSSI: ranked as the weakest.
@@ -221,10 +226,20 @@ void main() {
       expect(chooseNode([n('c', -40, public: false)]), isNull);
     });
 
-    test('never a node whose bond Android keeps', () {
+    test('never a node passed over, of any kind', () {
       final heard = [n('old', -40), n('a', -80)];
-      expect(chooseNode(heard, kept: {'old'})?.name, 'a');
-      expect(chooseNode([n('old', -40)], kept: {'old'}), isNull);
+      expect(chooseNode(heard, passed: {'old'})?.name, 'a');
+      expect(chooseNode([n('old', -40)], passed: {'old'}), isNull);
+      // Nor one paired with, nor with none usable.
+      expect(
+        chooseNode(
+          [n('home', -40, public: false), n('a', -95)],
+          home: 'home',
+          paired: {'home'},
+          passed: {'home'},
+        )?.name,
+        'a',
+      );
     });
   });
 
@@ -289,6 +304,16 @@ void main() {
       'a home not paired with is no stop',
       at(home: 'home', nodes: [paired('a'), paired('b')], scanNever: true),
       'Listen(all)',
+    ),
+    (
+      'a home passed over for its version is no stop; the one other '
+          'paired node is',
+      at(
+        home: 'home',
+        nodes: [unserved('home', isPaired: true), paired('mine')],
+        scanNever: true,
+      ),
+      'Listen(mine)',
     ),
     ('within a round of the last scan: the rest of it', at(), 'Wait(10 s)'),
     (
@@ -414,6 +439,36 @@ void main() {
       'Wait(10 s)',
     ),
     (
+      'the home passed over for its version, another paired node heard: '
+          'that node',
+      at(
+        home: 'home',
+        nodes: [unserved('home', isPaired: true), paired('mine')],
+        heard: [h('home', -50, public: false), h('mine', -80, public: false)],
+      ),
+      'Connect(mine)',
+    ),
+    (
+      'the only paired node passed over for its version, a public node '
+          'heard: an errand there at once, no round of waiting',
+      at(
+        nodes: [unserved('mine', isPaired: true)],
+        heard: [h('mine', -50), h('cafe', -80)],
+      ),
+      'Errand(cafe)',
+    ),
+    (
+      'the strongest public node passed over for its version: the weaker '
+          'one',
+      at(nodes: [unserved('a')], heard: [h('a', -40), h('b', -70)]),
+      'Errand(b)',
+    ),
+    (
+      'only a node passed over for its version heard: nothing',
+      at(nodes: [unserved('a')], heard: [h('a', -40)]),
+      'Wait(10 s)',
+    ),
+    (
       'a public node read 30 s ago, nothing to send: not yet',
       at(
         nodes: [read('cafe', const Duration(seconds: 30))],
@@ -483,6 +538,17 @@ void main() {
       'Connect(home)',
     ),
     (
+      'back, and passed over for its version: given up at once, before '
+          'the round',
+      at(
+        home: 'home',
+        nodes: [unserved('home', isPaired: true), paired('mine')],
+        awaited: swapping,
+        scanNever: true,
+      ),
+      'GiveUp(home)',
+    ),
+    (
       'missed in the first round after its swap too: given up',
       at(
         home: 'home',
@@ -537,6 +603,16 @@ void main() {
       ),
       'Wait(55 s)',
     ),
+    (
+      'the home passed over for its version: no scan for it, and no move',
+      at(
+        home: 'home',
+        nodes: [unserved('home', isPaired: true), paired('mine')],
+        link: (node: 'mine', guest: false, byTap: false),
+        heard: [h('home', -60, public: false)],
+      ),
+      'Idle',
+    ),
   ]);
 
   group('what a round leaves', () {
@@ -544,6 +620,12 @@ void main() {
         'while one swaps in its image', () {
       expect(countsMiss(at(nodes: [paired('mine')])), isTrue);
       expect(countsMiss(at()), isFalse);
+      // Paired nodes all passed over for their version are no paired
+      // nodes to miss.
+      expect(
+        countsMiss(at(nodes: [unserved('mine', isPaired: true)])),
+        isFalse,
+      );
       expect(
         countsMiss(
           at(
@@ -576,6 +658,16 @@ void main() {
       );
       expect(
         ownPassedOver(at(nodes: [paired('mine')], heard: [h('cafe', -50)])),
+        isFalse,
+      );
+      // One passed over for its version was not heard too weakly.
+      expect(
+        ownPassedOver(
+          at(
+            nodes: [unserved('mine', isPaired: true)],
+            heard: [h('mine', -50, public: false), h('cafe', -50)],
+          ),
+        ),
         isFalse,
       );
     });

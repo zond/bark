@@ -55,9 +55,10 @@ mixin _Search on _AppCore {
   }
 
   /// The paired node the search looks for first: the home when the phone
-  /// is paired with it, else the one connected last.
+  /// is paired with it, else the one connected last; of those it may use
+  /// ([NodeRecord.usable]).
   String? get firstPaired {
-    final p = pairedNodes;
+    final p = nodes.usable;
     final h = homeName;
     return h != null && p.contains(h) ? h : p.lastOrNull;
   }
@@ -288,8 +289,9 @@ mixin _Search on _AppCore {
   String? get lookingFor => lookingNow ? firstPaired : null;
 
   /// The paired nodes are out of reach: [ownGone] rounds in a row have
-  /// reached none, and the phone uses public nodes as a guest meanwhile.
-  bool get ownAway => pairedNodes.isNotEmpty && _missed >= ownGone;
+  /// reached none the search may use, and the phone uses public nodes as a
+  /// guest meanwhile.
+  bool get ownAway => nodes.usable.isNotEmpty && _missed >= ownGone;
 
   /// The public node the phone uses as a guest, between its errands too:
   /// the node of the last, while the search runs; or the node of a guest's

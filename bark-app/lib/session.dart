@@ -526,12 +526,11 @@ class Session extends ChangeNotifier {
       rethrow;
     }
     if (!servesEachOther(n)) {
-      await link.close();
       note(
         'Node: ${nodeName(n.id)}, link version ${n.version}, oldest '
         '${n.oldest}; this app $linkVersion, oldest $oldestNode',
       );
-      _tell(notServedLine(n), about: nodeName(n.id));
+      await _notServed(link, n);
       return false;
     }
     node = n;
@@ -540,6 +539,7 @@ class Session extends ChangeNotifier {
     guestRead = false;
     final about = notice?.about;
     if (about == null || about == nodeName(n.id)) notice = null;
+    nodes.of(nodeName(n.id)).unserved = false;
     note(
       'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}'
       '${nodeNewer ? ', newer than this app\'s $linkVersion' : ''}'
@@ -655,13 +655,21 @@ class Session extends ChangeNotifier {
         note('Recipient: $e');
         return true;
       }
-      await link.close();
-      _tell(notServedLine(n), about: nodeName(n.id));
+      await _notServed(link, n);
       return false;
     } catch (e) {
       note('Recipient: $e');
     }
     return true;
+  }
+
+  /// Closes `link` to `n`, which and this app do not serve each other,
+  /// says so, and marks the node passed over ([NodeRecord.unserved]).
+  Future<void> _notServed(NodeLink link, NodeInfo n) async {
+    await link.close();
+    final name = nodeName(n.id);
+    nodes.of(name).unserved = true;
+    _tell(notServedLine(n), about: name);
   }
 
   Future<void> _readPublic(NodeLink link) async {

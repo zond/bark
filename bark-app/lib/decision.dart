@@ -60,9 +60,8 @@ FoundNode? _strongest(Iterable<FoundNode> nodes) {
 /// The node to use of those `heard`, in this order: the `home` when it is
 /// one of the `paired` nodes, as it serves the person whole and keeps
 /// their mail; else the paired node heard strongest; else the public node
-/// heard strongest, never one of `kept`, whose bond Android keeps though
-/// the node is not the phone's, as a link encrypted with it the node ends
-/// (spec "Phone link", Public); else none.
+/// heard strongest; else none. Never one of `passed`, of any kind
+/// ([Situation.passed]).
 ///
 /// The order holds among the nodes heard at a signal a link holds at
 /// ([FoundNode.usable]): a node heard weak is passed over for one further
@@ -80,7 +79,7 @@ FoundNode? chooseNode(
   Iterable<FoundNode> heard, {
   String? home,
   Set<String> paired = const {},
-  Set<String> kept = const {},
+  Set<String> passed = const {},
   String? on,
 }) {
   int place(String name) => name == home && paired.contains(name)
@@ -90,7 +89,7 @@ FoundNode? chooseNode(
       : 2;
   // A node the phone may use at all, whatever its signal.
   bool may(FoundNode n) =>
-      paired.contains(n.name) || (n.public && !kept.contains(n.name));
+      !passed.contains(n.name) && (paired.contains(n.name) || n.public);
   final good = heard.where((n) => n.usable && may(n));
   final own = good.where((n) => paired.contains(n.name));
   final FoundNode? n;
@@ -182,16 +181,23 @@ class Situation {
     this.heard,
   }) : nodes = {for (final r in nodes) r.name: r};
 
-  /// The paired nodes that still hold the phone's bond.
+  /// The paired nodes the search may use: they still hold the phone's
+  /// bond, and they and the app serve each other as far as it knows
+  /// ([NodeRecord.usable]). A paired node that does not is as one out of
+  /// reach: the phone goes on to another, or to a public node, at once.
   late final Set<String> own = {
     for (final r in nodes.values)
-      if (r.own) r.name,
+      if (r.usable) r.name,
   };
 
-  /// The nodes whose bond Android keeps though they are not the phone's.
-  late final Set<String> kept = {
+  /// The nodes the phone does not use: those whose bond Android keeps
+  /// though they are not the phone's, as a link encrypted with it the
+  /// node ends (spec "Phone link", Public), and those that refused it over
+  /// the link version ([NodeRecord.unserved]), as they would again every
+  /// round.
+  late final Set<String> passed = {
     for (final r in nodes.values)
-      if (r.bondKept) r.name,
+      if (r.bondKept || r.unserved) r.name,
   };
 }
 
@@ -232,10 +238,12 @@ Mode modeOf(Situation s) {
 /// Whether the phone still waits for the node [Situation.awaited]: through
 /// [swapAway] and the first round after it, while the search looks for
 /// that node alone. The second of the [ownGone] rounds that call it out of
-/// reach is an ordinary round (roadmap D182, D202).
+/// reach is an ordinary round (roadmap D182, D202). Not once the node,
+/// back, refused the phone over the link version: it is in reach, and of
+/// no use.
 bool waitsForInstall(Situation s) {
   final a = s.awaited;
-  if (a == null) return false;
+  if (a == null || s.passed.contains(a.node)) return false;
   return s.now.difference(a.gone) < swapAway || s.missed < ownGone - 1;
 }
 
@@ -253,7 +261,7 @@ bool countsMiss(Situation s) {
 bool ownPassedOver(Situation s) {
   final heard = s.heard ?? const [];
   if (!heard.any((h) => s.own.contains(h.name))) return false;
-  final n = chooseNode(heard, home: s.home, paired: s.own, kept: s.kept);
+  final n = chooseNode(heard, home: s.home, paired: s.own, passed: s.passed);
   return n == null || !s.own.contains(n.name);
 }
 
@@ -311,8 +319,9 @@ final class MoveHome extends Decision {
   String toString() => 'MoveHome(${node.name})';
 }
 
-/// The wait for the installing node `node` is over: it is out of reach as
-/// any node, and the round goes on as an ordinary one.
+/// The wait for the installing node `node` is over ([waitsForInstall]):
+/// it is out of reach, or back and passed over, as any node, and the
+/// round goes on as an ordinary one.
 final class GiveUp extends Decision {
   final String node;
   const GiveUp(this.node);
@@ -350,7 +359,7 @@ Decision _lookAround(Situation s) {
     heard,
     home: s.home,
     paired: s.own,
-    kept: s.kept,
+    passed: s.passed,
     on: s.link!.node,
   );
   if (n == null || s.busy) return _next(s, lookAround, home);
@@ -363,18 +372,15 @@ Decision _lookAround(Situation s) {
 /// node alone.
 Decision _round(Situation s) {
   if (s.link != null) return const Idle();
-  final waits = waitsForInstall(s);
-  final heard = s.heard;
-  if (heard == null) {
-    return _next(s, lookRound, waits ? s.awaited!.node : _stopAt(s));
-  }
   final awaited = s.awaited;
-  if (awaited != null && !waits) return GiveUp(awaited.node);
+  if (awaited != null && !waitsForInstall(s)) return GiveUp(awaited.node);
+  final heard = s.heard;
+  if (heard == null) return _next(s, lookRound, awaited?.node ?? _stopAt(s));
   if (awaited != null) {
     final n = heard.where((h) => h.name == awaited.node).firstOrNull;
     return n != null ? Connect(n) : _next(s, lookRound, null);
   }
-  final n = chooseNode(heard, home: s.home, paired: s.own, kept: s.kept);
+  final n = chooseNode(heard, home: s.home, paired: s.own, passed: s.passed);
   if (n == null) return _next(s, lookRound, null);
   if (s.own.contains(n.name)) return Connect(n);
   // This round counts as a miss of the paired nodes, as it takes none.

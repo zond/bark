@@ -883,13 +883,16 @@ void main() {
       expect(attached(async, s, node), isFalse);
       expect(s.connected, isFalse);
       expect(s.notice?.text, contains('Update'));
+      // Passed over by the search, as for a refusal by Node.
+      expect(s.nodes[nodeName(node.nodeId)]!.unserved, isTrue);
       node.dispose();
       s.dispose();
     });
   });
 
   test('a node the app does not serve is named in a notice that stays on '
-      'another node, until dismissed or that node is linked', () {
+      'another node, until dismissed or that node is linked; its record '
+      'says so meanwhile', () {
     fakeAsync((async) {
       final s = session();
       final home = fake(linkVersion);
@@ -898,8 +901,19 @@ void main() {
             ..version = linkVersion + 2
             ..oldest = linkVersion + 1;
       const said = 'ID 0CE400000002 needs a newer app. Update the app.';
+      final name = nodeName(OtherNode.otherId);
       expect(attached(async, s, other), isFalse);
       expect(s.notice?.text, said);
+      expect(s.nodes[name]!.unserved, isTrue);
+      // Held for this run alone: an updated app tries afresh.
+      s.nodes[name]!.paired = true;
+      expect(s.nodes.toJson().singleWhere((j) => j['name'] == name), {
+        'name': name,
+        'paired': true,
+        'lost': false,
+        'ringAfter': 0,
+      });
+      s.nodes[name]!.paired = false;
       // The search takes the phone back to its home.
       expect(attached(async, s, home), isTrue);
       expect(s.notice?.text, said);
@@ -915,6 +929,7 @@ void main() {
         ..oldest = linkVersion;
       expect(attached(async, s, other), isTrue);
       expect(s.notice, isNull);
+      expect(s.nodes[name]!.unserved, isFalse);
       home.dispose();
       other.dispose();
       s.dispose();

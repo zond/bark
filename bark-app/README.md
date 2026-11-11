@@ -190,14 +190,18 @@ is a prototype for the bench, not the app people will carry.
     which only ends the link, is not taken for Unpair; then **Scan** and
     the nodes found. Each found node says its signal as strong, at
     −70 dBm or above, fair, or weak, below −85 dBm, a choice, with the
-    number in small print, and "public" for a public node; a scan that
+    number in small print, "public" for a public node, and "needs an
+    update" for one the search passes over for its version (Versions,
+    below); a scan that
     has found nothing after about 10 s, or was stopped, says "No node
     found nearby" and "Switch one on, or come closer". A tap on a
     public node the phone is not paired with uses it as a guest; its
     **Pair** pairs with it (A guest's home, below). Under "Paired
     with" each paired node, the home first, says "Your home",
-    "connected", "not in reach" while the search looks, "Not looking.
-    Tap to connect" once the person has stopped the search, or "No
+    "connected", "not in reach" while the search looks, "Needs an
+    update. Tap to try again" for one passed over for its version,
+    "Not looking. Tap to connect" once the person has stopped the
+    search, or "No
     longer yours", with **Pair again** while the app has heard it in
     the last 30 s and **Forget** (Unpairing, below); a tap on that row
     opens a few sentences on what happened and what each does. A tap on
@@ -613,9 +617,18 @@ each side's version is at least the other's oldest (spec "Phone link",
 Versions; roadmap D177); otherwise it closes the link and says which
 node and which side to update: "ID 275C1AB9BAC7 needs a newer app.
 Update the app.", or "ID 275C1AB9BAC7 needs newer firmware. Update the
-node." The search may take the phone to another node at once, so the
-notice stays there until the person dismisses it or the phone links to
-that node. To a node it serves, the app then writes Recipient with the
+node." The node would refuse the phone every round, so the search then
+passes it over, as a node whose bond Android keeps: no round, errand or
+move to the home takes it. A paired node so refused counts as none, so
+the phone goes on at once to another paired node; with none in reach,
+to a public node after the two rounds as before, and with no other
+paired node, from the next round. Settings' row of the node, among the
+paired nodes or in a scan, says "Needs an update", and a tap on it tries
+it again; so does the app started again, as this is not kept. A link to
+the node ends it. The phone is by then on another node, so the notice
+stays there until the person dismisses it or the phone links to that
+node, and as the node is not tried again it does not come back by
+itself. To a node it serves, the app then writes Recipient with the
 tag, its own link version and `oldestNode`, and the person's name from
 their card on an owner's link,
 cut to 32 bytes at a character's end; a guest writes no name, as the
@@ -851,7 +864,9 @@ node, so texts written
 meanwhile wait on the phone. The second round is an ordinary one,
 which uses a public node if it misses the node too, about 85 s after
 the link ended. A node the person taps connects at once, and their
-link to another paired node ends the wait (`waitsForInstall`). A link
+link to another paired node ends the wait (`waitsForInstall`). A node
+that comes back on a version that it and the app do not serve ends the
+wait at once, and is passed over (Versions, above). A link
 the phone itself closes while the node drains, as when it moves to the
 home, is no reboot, and nothing is waited for. Back on version N, the
 line adds ", updated to version N" for a minute (`updatedShown`). A
@@ -1067,7 +1082,8 @@ Tap to connect" with the search stopped, Disconnect below the list;
 use a node of a newer link version that still serves the app, as its
 owner and as a guest, with the quiet line, and close one that does not,
 by its Node or by its answer to Recipient, or one older than the app
-serves, saying which side to update; write the name and the versions
+serves, saying which side to update, and pass it over until a tap or a
+link to it; write the name and the versions
 to Recipient; list a node's
 phones in two lists with their names and days, remove another's with
 the code its screen shows, and offer a new code after a wrong one; say
@@ -1309,3 +1325,16 @@ a phone (Trying it).
     is the phone's again. **Pair** on its row in the scan does the same.
     A pairing that fails, a code typed wrong or cancelled, or a node
     switched off before the code, ends in a dialog that says why.
+20. A node of a later link version that does not serve the app (roadmap
+    D208). Two paired nodes, A the home and B, and a
+    public node C. Flash A with a build whose `bark-link` `VERSION` and
+    `OLDEST` are 2, not committed. With A and B in reach the first
+    screen says "ID … needs a newer app. Update the app.", A's ID, and
+    within a round the phone is on B, as its owner; the log has one
+    `Found …, connecting` for A and no more, and no scan while on B.
+    **Settings** says of A "Your home, needs an update. Tap to try
+    again". Dismiss the notice: it does not come back. A tap on A's row
+    tries once, and the notice comes back. Switch B off: after two rounds,
+    30 s, the phone is on C as a guest. Restart the app: A is
+    tried once again. Flash A back to version 1 and tap its row: the
+    phone links to it, and the search takes it again.

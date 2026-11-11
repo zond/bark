@@ -11,7 +11,8 @@
 // once Android's bond with any node the app does not count as its own
 // is removed as it is heard, but not one whose bond Android keeps until
 // the bond is forgotten, nor any other node while a paired node is away
-// for its install; and
+// for its install, nor a node that refused the phone over its link
+// version, until a tap tries it or a link to it is made; and
 // the owner's unpairing, after which Android forgets its bond too; and
 // Pair, which removes a bond Android holds first and tries nothing where
 // Android keeps it, Pair again on a lost node heard lately, a link the
@@ -708,6 +709,81 @@ void main() {
         async.elapse(lookRound * 2);
         expect(app.ownAway, isTrue);
         expect(ble.connects.last, strong);
+      });
+    });
+
+    test('the only paired node does not serve this app: refused once, then '
+        'errands at a public node from the next round, and it is not tried '
+        'again', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        ble.nodes[paired]!
+          ..version = oldestNode - 1
+          ..oldest = oldestNode - 1;
+        async.elapse(round);
+        expect(ble.connects, [paired]);
+        expect(
+          app.session.notice?.text,
+          'ID FA4E00000001 needs newer firmware. Update the node.',
+        );
+        async.elapse(lookRound);
+        expect(ble.connects, [paired, strong]);
+        expect(app.guestNode, nodeName(strongId));
+        expect(connectionHelp(app), contains('needs an update'));
+        app.session.dismissNotice();
+        async.elapse(const Duration(minutes: 3));
+        expect(ble.connects.where((d) => d == paired), hasLength(1));
+        expect(ble.connects.last, strong);
+        expect(app.session.notice, isNull);
+      });
+    });
+
+    test('the strongest public node does not serve this app: refused once, '
+        'then errands at the weaker one', () {
+      run((async, app, ble) {
+        ble.nodes[strong]!
+          ..version = linkVersion + 2
+          ..oldest = linkVersion + 1;
+        async.elapse(round);
+        expect(ble.connects, [strong]);
+        expect(app.session.notice?.text, contains('ID 0CE400000004'));
+        async.elapse(lookRound);
+        expect(ble.connects, [strong, weak]);
+        async.elapse(const Duration(minutes: 2));
+        expect(ble.connects.where((d) => d == strong), hasLength(1));
+        expect(ble.connects.last, weak);
+        // A tap tries it again.
+        app.connectGuest(FoundNode(strong, nodeName(strongId), -50));
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.connects.where((d) => d == strong), hasLength(2));
+        expect(app.nodes[nodeName(strongId)]!.unserved, isTrue);
+      });
+    });
+
+    test('a paired node back from its install on a version that does not '
+        'serve this app: the wait ends at once, and a public node is used', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        async.elapse(round);
+        final node = ble.nodes[paired]!;
+        node.gathered(24);
+        async.flushMicrotasks();
+        ble.inReach.remove(paired);
+        node.install();
+        ble.drop(paired);
+        node
+          ..version = linkVersion + 2
+          ..oldest = linkVersion + 1;
+        async.elapse(swapAway);
+        ble.inReach.add(paired);
+        async.elapse(lookRound);
+        expect(ble.connects, [paired, paired]);
+        expect(app.installingLine, isNull);
+        expect([
+          for (final l in app.session.log) l.text,
+        ], contains(contains('back from its install, but')));
+        async.elapse(lookRound);
+        expect(ble.connects, [paired, paired, strong]);
+        async.elapse(const Duration(minutes: 2));
+        expect(ble.connects.where((d) => d == paired), hasLength(2));
       });
     });
 
@@ -1667,6 +1743,78 @@ void main() {
         final after = ble.scans;
         async.elapse(const Duration(minutes: 5));
         expect(ble.scans, after);
+      });
+    });
+
+    test('a home that does not serve this app: refused once, then passed '
+        'over for the other paired node, with no scan for it; a tap tries '
+        'again, and once it serves, it is used again', () {
+      run((async, app, ble) {
+        final h = ble.nodes[home]!
+          ..version = linkVersion + 2
+          ..oldest = linkVersion + 1;
+        final name = nodeName(FakeNode.id);
+        const said = 'ID FA4E00000001 needs a newer app. Update the app.';
+        async.elapse(round);
+        expect(ble.connects, [home]);
+        expect(app.session.notice?.text, said);
+        expect(app.nodes[name]!.unserved, isTrue);
+        // The next round takes the other paired node, as its owner.
+        async.elapse(lookRound);
+        expect(ble.connects, [home, near]);
+        expect((app.linkDevice, app.session.guest), (near, false));
+        expect(app.session.notice?.text, said);
+        expect(app.movesHome, isFalse);
+        // No look-around for a home it would not move to, and no retry.
+        app.session.dismissNotice();
+        final scans = ble.scans;
+        async.elapse(const Duration(minutes: 5));
+        expect(ble.scans, scans);
+        expect(ble.connects, [home, near]);
+        expect(app.session.notice, isNull);
+        // The person's tap tries it, and is refused again.
+        app.connectPaired(name);
+        async.elapse(const Duration(seconds: 1));
+        expect(app.session.notice?.text, said);
+        expect(app.nodes[name]!.unserved, isTrue);
+        // The tap closed the link to the other node; the search goes back
+        // to it at once, not to the home.
+        expect(ble.connects, [home, near, home, near]);
+        expect(app.linkDevice, near);
+        // Updated, a tap links to it, and the search uses it again.
+        h
+          ..version = linkVersion
+          ..oldest = linkVersion;
+        app.connectPaired(name);
+        async.elapse(const Duration(seconds: 1));
+        expect((app.linkDevice, app.session.guest), (home, false));
+        expect(app.nodes[name]!.unserved, isFalse);
+        expect(app.session.notice?.text, isNot(said));
+        ble.drop(home);
+        async.elapse(round);
+        expect(ble.connects.last, home);
+        expect(app.linkDevice, home);
+      });
+    });
+
+    test('a home that does not serve this app, the other paired node out '
+        'of reach: a public node after the ordinary two rounds', () {
+      run((async, app, ble) {
+        ble.nodes[home]!
+          ..version = linkVersion + 2
+          ..oldest = linkVersion + 1;
+        ble.inReach.remove(near);
+        async.elapse(round);
+        expect(ble.connects, [home]);
+        expect(
+          connectionLine(app),
+          'Not connected. Looking for ID 0CE400000006; texts wait on the phone',
+        );
+        async.elapse(lookRound);
+        expect(app.ownAway, isTrue);
+        expect(ble.connects, [home, strong]);
+        expect(app.guestNode, nodeName(strongId));
+        expect(connectionHelp(app), contains('needs an update'));
       });
     });
 

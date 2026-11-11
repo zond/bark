@@ -49,6 +49,13 @@ class NodeRecord {
   /// forgets it in the phone's Bluetooth settings ([BondKept]).
   bool bondKept = false;
 
+  /// The node refused the phone over the link version, or the app refused
+  /// it (spec "Phone link", Versions): the search passes it over, as it
+  /// would refuse every round, until the phone links to it or the person
+  /// taps it. Not kept past the app's run, so that an updated app tries
+  /// afresh.
+  bool unserved = false;
+
   /// Android forgot, with the bond it removed, what kind of address the
   /// node has, and connects to it only once a scan has heard it again
   /// ([seen]).
@@ -62,6 +69,9 @@ class NodeRecord {
   /// Paired, and the node still holds the phone's bond: the phone is its
   /// owner.
   bool get own => paired && !lost;
+
+  /// Its own, and the search may use it: not [unserved].
+  bool get usable => own && !unserved;
 
   /// What of it outlives the app's run.
   bool get _kept => paired || ringAfter != 0;
@@ -109,6 +119,12 @@ class NodeStore {
   Set<String> get own => {
     for (final r in _all.values)
       if (r.own) r.name,
+  };
+
+  /// The paired nodes the search may use ([NodeRecord.usable]).
+  Set<String> get usable => {
+    for (final r in _all.values)
+      if (r.usable) r.name,
   };
 
   /// The public node the phone uses as a guest between the search's
