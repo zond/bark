@@ -31,10 +31,10 @@ fn shown(state: State) -> Schedule {
     s
 }
 
-/// A schedule showing the lines of `state`, touched at `at`.
+/// A schedule showing the lines of `state`, pressed at `at`.
 fn lines(state: State, at: u64) -> Schedule {
     let mut s = shown(state);
-    s.touched(&state, at);
+    s.pressed(&state, at);
     assert_eq!(s.due(&state, at), Some(at));
     s.drawn(Face::Lines, state);
     s
@@ -72,10 +72,10 @@ fn the_code_waits_for_nothing_else() {
     assert_eq!(shown(battery()).due(&battery(), u64::MAX / 2), None);
 }
 
-/// A touch shows the lines at once, for `LINES_MS`, then the code again;
-/// a second touch brings the code back sooner.
+/// A press shows the lines at once, for `LINES_MS`, then the code again;
+/// a second press brings the code back sooner.
 #[test]
-fn a_touch_shows_the_lines_for_a_while() {
+fn a_press_shows_the_lines_for_a_while() {
     let mut s = lines(battery(), 10_000);
     assert_eq!(s.face(&battery(), 10_000 + LINES_MS - 1), Face::Lines);
     assert_eq!(s.due(&battery(), 12_000), Some(10_000 + LINES_MS));
@@ -84,14 +84,14 @@ fn a_touch_shows_the_lines_for_a_while() {
     assert_eq!(s.due(&battery(), back), Some(back));
     s.drawn(Face::Code, battery());
     assert_eq!(s.due(&battery(), back + 1), None);
-    // Touched again while the lines show.
+    // Pressed again while the lines show.
     let mut s = lines(battery(), 10_000);
-    s.touched(&battery(), 15_000);
+    s.pressed(&battery(), 15_000);
     assert_eq!(s.face(&battery(), 15_000), Face::Code);
     assert_eq!(s.due(&battery(), 15_000), Some(15_000));
     s.drawn(Face::Code, battery());
-    // And the next touch shows the lines again.
-    s.touched(&battery(), 20_000);
+    // And the next press shows the lines again.
+    s.pressed(&battery(), 20_000);
     assert_eq!(s.due(&battery(), 20_000), Some(20_000));
 }
 
@@ -128,9 +128,9 @@ fn the_lines_keep_the_urgent_changes() {
 }
 
 /// A pairing code turns the screen to the lines at once, from either
-/// picture, and keeps them while it shows, past the touch's 30 s; a new
+/// picture, and keeps them while it shows, past the press's 30 s; a new
 /// code is drawn at once; when the pairing ends the screen goes back to
-/// the code at once, or stays on the lines a touch asked for, and the end
+/// the code at once, or stays on the lines a press asked for, and the end
 /// is drawn one refresh after it.
 #[test]
 fn a_pairing_code_shows_the_lines() {
@@ -147,15 +147,15 @@ fn a_pairing_code_shows_the_lines() {
         let late = 1_000 + 2 * LINES_MS;
         assert_eq!(s.face(&code(7), late), Face::Lines);
         assert_eq!(s.due(&code(7), late), None);
-        // A touch does not take the code away from the person typing it.
-        s.touched(&code(7), late);
+        // A press does not take the code away from the person typing it.
+        s.pressed(&code(7), late);
         assert_eq!(s.face(&code(7), late), Face::Lines);
         assert_eq!(s.face(&paired, late + 1), Face::Code);
         assert_eq!(s.due(&paired, late + 1), Some(late + 1));
     }
     let mut s = lines(battery(), 1_000);
     s.drawn(Face::Lines, code(7));
-    assert_eq!(s.face(&paired, 2_000), Face::Lines, "the touch's 30 s");
+    assert_eq!(s.face(&paired, 2_000), Face::Lines, "the press's 30 s");
     assert_eq!(s.due(&paired, 2_000), Some(2_000 + REFRESH_MS));
 }
 

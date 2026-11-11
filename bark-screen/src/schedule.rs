@@ -10,7 +10,7 @@ use crate::{role, Battery, Face, Phone, State};
 /// `board::Eink`); changes within one are drawn together.
 pub const REFRESH_MS: u64 = 2_000;
 
-/// How long a touch shows the lines: a choice, long enough to read ten
+/// How long a press shows the lines: a choice, long enough to read ten
 /// lines of two or three words, some 25 words, which at a reading pace of
 /// about four words a second take under 10 s, three times over; short
 /// enough that the next person to pass finds the code again.
@@ -20,7 +20,7 @@ pub const LINES_MS: u64 = 30_000;
 /// the lines: the header, the phone's line (a pairing code is typed while
 /// the phone waits, spec "Pairing"), or the power (a node taken off USB
 /// runs on its cell). The counts, the uptime and the battery's level wait
-/// for the next touch.
+/// for the next press.
 pub fn urgent(shown: &State, now: &State) -> bool {
     role(shown) != role(now)
         || shown.starting != now.starting
@@ -51,8 +51,8 @@ pub struct Schedule {
     /// Since when the state has differed from the picture in a way a
     /// person acts on.
     urgent_since: Option<u64>,
-    /// When a touch last asked for the lines.
-    touched: Option<u64>,
+    /// When a press last asked for the lines.
+    pressed: Option<u64>,
     /// A person flipped the role: the lines are drawn at once, whatever
     /// shows.
     flipped: bool,
@@ -63,15 +63,15 @@ impl Schedule {
         Schedule {
             shown: None,
             urgent_since: None,
-            touched: None,
+            pressed: None,
             flipped: false,
         }
     }
 
-    /// The pad was touched at `now`, the node's state being `state`: the
-    /// lines, or the code if the lines show.
-    pub fn touched(&mut self, state: &State, now: u64) {
-        self.touched = match self.face(state, now) {
+    /// The button was pressed briefly at `now`, the node's state being
+    /// `state`: the lines, or the code if the lines show.
+    pub fn pressed(&mut self, state: &State, now: u64) {
+        self.pressed = match self.face(state, now) {
             Face::Code => Some(now),
             Face::Lines => None,
         };
@@ -79,19 +79,19 @@ impl Schedule {
 
     /// A person flipped the role at `now`: the lines, to show it.
     pub fn lines(&mut self, now: u64) {
-        self.touched = Some(now);
+        self.pressed = Some(now);
         self.flipped = true;
     }
 
     /// The picture the screen is to show at `now`: the lines while a
     /// pairing or a removal code shows, since the person typing it stands
     /// at the node and may want the rest, else the code but for a while
-    /// after a touch.
+    /// after a press.
     pub fn face(&self, state: &State, now: u64) -> Face {
         if pairing(state).is_some() {
             return Face::Lines;
         }
-        match self.touched {
+        match self.pressed {
             Some(t) if now < t + LINES_MS => Face::Lines,
             _ => Face::Code,
         }
@@ -105,7 +105,7 @@ impl Schedule {
         let Some((shown_face, shown)) = self.shown else {
             return Some(now);
         };
-        // A person touched the pad, or one is to type a new code into the
+        // A person pressed the button, or one is to type a new code into the
         // waiting phone, or was just refused a pairing: none waits.
         if self.flipped
             || shown_face != face
@@ -126,7 +126,7 @@ impl Schedule {
         };
         let urgent = self.urgent_since.map(|since| since + REFRESH_MS);
         let back = match face {
-            Face::Lines => self.touched.map(|t| t + LINES_MS).filter(|&t| t > now),
+            Face::Lines => self.pressed.map(|t| t + LINES_MS).filter(|&t| t > now),
             Face::Code => None,
         };
         urgent.into_iter().chain(back).min()

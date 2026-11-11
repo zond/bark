@@ -268,7 +268,6 @@ async fn main(spawner: Spawner) {
             eink: board.eink,
             green: board.leds.green,
             user: board.buttons.user,
-            touch: board.buttons.touch,
         };
         start_node(spawner, clocks, chip, parts, battery, hex);
     }
@@ -549,7 +548,6 @@ struct NodeBoard {
     eink: board::Eink,
     green: embassy_nrf::Peri<'static, peripherals::P1_01>,
     user: embassy_nrf::Peri<'static, peripherals::P1_10>,
-    touch: embassy_nrf::Peri<'static, peripherals::P0_11>,
 }
 
 /// The node: every long-lived part a task of its own, so that none passes
@@ -557,7 +555,7 @@ struct NodeBoard {
 /// order: the LED and the MPSL; the flashes; the phone link, the update
 /// over the mesh and the trial; the stored state read; the mailbox's
 /// writes; the core built; the store, the GPS, the radio and the core;
-/// the screen and the person's inputs.
+/// the screen and the button.
 #[cfg(not(feature = "console"))]
 fn start_node(
     spawner: Spawner,
@@ -609,7 +607,6 @@ fn start_node(
     };
     spawner.spawn(screen(board.eink, chip.twispi1, fixed).expect("spawned once"));
     spawner.spawn(user_button(board.user).expect("spawned once"));
-    spawner.spawn(touch_pad(board.touch).expect("spawned once"));
 }
 
 /// The node's flash: the stored state through the MPSL's timeslots
@@ -872,13 +869,6 @@ async fn screen(
 #[embassy_executor::task]
 async fn user_button(pin: embassy_nrf::Peri<'static, peripherals::P1_10>) {
     button::run(pin).await
-}
-
-/// The touch pad (`button.rs`).
-#[cfg(not(feature = "console"))]
-#[embassy_executor::task]
-async fn touch_pad(pin: embassy_nrf::Peri<'static, peripherals::P0_11>) {
-    button::pad(pin).await
 }
 
 /// Blink half-period: 1 Hz means 500 ms on, 500 ms off.
