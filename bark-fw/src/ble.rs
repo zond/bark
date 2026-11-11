@@ -2109,22 +2109,101 @@ fn keys_of(b: &BondInformation) -> Keys {
 /// Log an ATT request from the phone, the written bytes only by count, so
 /// that the bench sees each step of a connection.
 fn log_request(att: &AttClient<'_>) {
-    match att {
-        AttClient::Request(AttReq::Write { handle, data })
-        | AttClient::Command(AttCmd::Write { handle, data }) => {
-            log::info!("ble: att write handle={} len={}", handle, data.len())
+    log::info!("ble: att {}", AttLine(att));
+}
+
+/// An ATT request, each field by itself: the PDUs' derived `Debug` cost
+/// 1.2 KB of flash.
+struct AttLine<'a, 'd>(&'a AttClient<'d>);
+
+impl core::fmt::Display for AttLine<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            AttClient::Request(AttReq::Write { handle, data })
+            | AttClient::Command(AttCmd::Write { handle, data }) => {
+                write!(f, "write handle={} len={}", handle, data.len())
+            }
+            AttClient::Request(AttReq::PrepareWrite {
+                handle,
+                offset,
+                value,
+            }) => write!(
+                f,
+                "prepare write handle={} offset={} len={}",
+                handle,
+                offset,
+                value.len()
+            ),
+            AttClient::Request(AttReq::Read { handle }) => write!(f, "read handle={}", handle),
+            AttClient::Request(AttReq::ReadBlob { handle, offset }) => {
+                write!(f, "read blob handle={} offset={}", handle, offset)
+            }
+            AttClient::Request(AttReq::ReadMultiple { handles }) => {
+                write!(f, "read multiple handles={}", handles.len() / 2)
+            }
+            AttClient::Request(AttReq::ReadByGroupType {
+                start,
+                end,
+                group_type: uuid,
+            }) => write!(
+                f,
+                "read by group type start={} end={} type={}",
+                start,
+                end,
+                UuidHex(uuid)
+            ),
+            AttClient::Request(AttReq::ReadByType {
+                start,
+                end,
+                attribute_type: uuid,
+            }) => write!(
+                f,
+                "read by type start={} end={} type={}",
+                start,
+                end,
+                UuidHex(uuid)
+            ),
+            AttClient::Request(AttReq::FindInformation {
+                start_handle,
+                end_handle,
+            }) => write!(
+                f,
+                "find information start={} end={}",
+                start_handle, end_handle
+            ),
+            AttClient::Request(AttReq::FindByTypeValue {
+                start_handle,
+                end_handle,
+                att_type,
+                att_value,
+            }) => write!(
+                f,
+                "find by type value start={} end={} type={:04x} len={}",
+                start_handle,
+                end_handle,
+                att_type,
+                att_value.len()
+            ),
+            AttClient::Request(AttReq::ExchangeMtu { mtu }) => write!(f, "exchange mtu={}", mtu),
+            AttClient::Request(AttReq::ExecuteWrite { flags }) => {
+                write!(f, "execute write flags={}", flags)
+            }
+            AttClient::Confirmation(_) => f.write_str("confirmation"),
         }
-        AttClient::Request(AttReq::PrepareWrite {
-            handle,
-            offset,
-            value,
-        }) => log::info!(
-            "ble: att prepare write handle={} offset={} len={}",
-            handle,
-            offset,
-            value.len()
-        ),
-        other => log::info!("ble: att {:?}", other),
+    }
+}
+
+/// A UUID as hex digits, most significant first, as the specification
+/// writes them.
+struct UuidHex<'a>(&'a Uuid);
+
+impl core::fmt::Display for UuidHex<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0
+            .as_raw()
+            .iter()
+            .rev()
+            .try_for_each(|b| write!(f, "{:02x}", b))
     }
 }
 
