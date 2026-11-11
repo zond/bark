@@ -848,7 +848,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         while self.radio.idle() {
             self.prepare(now, emit);
-            let jobs = if self.update_first() {
+            let jobs = if self.spread.first() {
                 JOBS_UPDATE_FIRST
             } else {
                 JOBS
@@ -947,7 +947,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         match decoded {
             Ok(Packet::Heartbeat(hb)) => {
-                self.beat_heard(now);
+                self.spread.beat_heard(now);
                 self.heard(hb, rssi, now, emit);
                 if let Some(section) = crate::wire::decode_section(bytes) {
                     self.section_heard(hb.id, section, now, emit);
@@ -998,7 +998,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::NoFix => self.motion.no_fix(),
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
-            AppCommand::Block { index, ok } => self.block_done(index, ok),
+            AppCommand::Block { index, ok } => self.spread.block_done(index, ok),
             AppCommand::Ask { neighbour } => self.ask(neighbour, now),
             AppCommand::Drain(on) => self.drain(on, now),
             AppCommand::SetPosition { position } => {
