@@ -2787,7 +2787,7 @@ and goes again.
 
 ## Screen and buttons
 
-A node has a 200 × 200 e-paper screen, a touch pad and a button
+A node has a 200 × 200 e-paper screen, a user button and a reset button
 (`bark-fw/src/board.rs`). What the screen shows and when it is drawn are
 the firmware's (`bark-fw/README.md`, Display); the protocol needs this of
 it:
@@ -2803,7 +2803,7 @@ it:
   pairing or the removal ends or is abandoned, a removal's at most 30 s.
 - Held 3 s, the user button flips the role ([nodes](#nodes)) the moment
   the 3 s have passed, while it is still held; a shorter press flips the
-  picture, as a touch of the pad does. The reset button only resets the
+  picture between the code and the node's state. The reset button only resets the
   chip, and the node boots the image it ran. The screen says nothing of a
   forced role.
 

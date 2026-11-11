@@ -145,7 +145,7 @@ Phase 2:
   it began and swapped in at a quiet moment (2026-11-09).
 - On the bench since 2026-11-09, with what each is to show in the bench
   list: the neighbour status and its retries (roadmap D157, D158,
-  D161), the code on the screen, the touch pad and the button (D160),
+  D161), the code on the screen and the button (D160, D206),
   an image gathered over the mesh that hears no one (D159), and whole
   log lines.
 
@@ -967,8 +967,8 @@ python3 -m venv .venv
 .venv/bin/python bark-screen/scripts/qr.py check
 ```
 
-A touch of the pad (P0.11, `src/button.rs`) shows the node's state for
-30 s, or until the next touch, then the code again; a pairing code
+A brief press of the user button (P1.10, `src/button.rs`) shows the node's
+state for 30 s, or until the next press, then the code again; a pairing code
 shows the lines by itself for as long as it shows
 (spec "Screen and buttons"). The state is built
 from what its core says after each step (`src/node.rs`, `screen`) by
@@ -1018,66 +1018,51 @@ straight. At or below 20 % it says `LOW`: the curve falls steeply there,
 and a fixed relay turns sleepy.
 
 *Why the uptime.* A picture stays on the glass when the node stops.
-The lines are drawn at the touch that asks for them, so their uptime is
-of that moment; a touch that brings no lines within a few seconds means
+The lines are drawn at the press that asks for them, so their uptime is
+of that moment; a press that brings no lines within a few seconds means
 the node is not running.
 
 *When it redraws.* At boot, the code, once the node's loop has run (at
-most 5 s). After that, a change of picture, a touch or the 30 s ending,
+most 5 s). After that, a change of picture, a press or the 30 s ending,
 and a new pairing code are drawn at once, since a person stands at the
 node for each (spec "Phone link", Pairing); a pairing code turns the
 screen to the lines, and the pairing's end back to the code unless a
-touch's 30 s still run. On the code nothing else changes. While the
+press's 30 s still run. On the code nothing else changes. While the
 lines show, a change a person acts on is drawn one refresh after it,
 2 s (the board's label): the header (the role, or `STARTING`
 ending), the rest of the phone's line, and the power, USB or battery.
 Changes within those 2 s, such as the power and the role of a sleepy
 node when the cable goes in, are drawn in one picture, and a change
 undone within them is not drawn. The neighbour counts and the battery's
-level wait for the next touch. Nothing else is drawn. Each picture is
+level wait for the next press. Nothing else is drawn. Each picture is
 drawn to its end before the next is considered, so none starts while a
 refresh runs. `bark_screen::schedule` decides, tested on the host.
 
-*The buttons.* Held 3 s, the user button (P1.10, `src/button.rs`)
+*The buttons.* Held 3 s, the user button
 flips the role (spec "Nodes", "Screen and buttons") at the moment the
 3 s have passed, while still held; once the core has taken it, within
 milliseconds, the lines are drawn at once with the new role. The
 release does nothing. A shorter press, let go before the 3 s, flips the
-picture as a touch of the pad does, debounced as the pad, 40 ms: the
-bench found a board whose pad gives no edge. A press of the reset button resets
+picture, debounced 40 ms. A press of the reset button resets
 the chip into the image it ran; a double tap within half a second
 enters the bootloader instead (Flash, above), which the screen does not
 say. The lines label both at their left edge, in 1-pixel text on the
 margin nearer each, after an arrow pointing at the button: `REBOOT`
 at the top, and at the bottom the role a hold would give, `SLEEP (3s)`
-or `WAKE (3s)`. The screen says nothing of a forced role. The ten lines
+or `WAKE (3s)`. The screen says nothing of a forced role. The board's touch pad is
+not used: it read differently from board to board, and on one not at
+all (roadmap D206). The ten lines
 start 10 px down to make room.
-
-*The pad.* A TTP223-BA6 touch sensor on the chip's own supply drives
-P0.11 both ways, low at rest and high while touched as wired, with no
-limit on how long it reports a touch (`docs/touch-pad-2026-11-10.md`).
-The bench found pins resting high on two boards and unmoving on a
-third, so the firmware learns the resting level (`bark_screen::pad`,
-tested on the host). It reads nothing for the first second, while the
-sensor calibrates, then reads the pin with the pull up and then down: a
-pin that follows the pull has nothing driving it, and the pad is taken
-as dead; else the level it holds is its rest, read with no pull from
-then on. A change from rest that lasts 40 ms to 10 s is a touch,
-counted once the pin has been back for 40 ms; a change that lasts
-longer becomes the rest. The log says `pad: rests low`, `pad: rests
-high` or `pad: follows the pull, nothing drives it: taken as dead` at
-boot, then `pad: touched` and `pad: held 10 s, rests
-high now`; an open build logs every edge (`pad: edge, high`).
 
 The cost on battery: a full refresh holds BUSY high for 2 s (the
 board's label). The panel's current during a refresh is not in the
 repository's notes, nor its datasheet; taking 10 mA, an assumption to
 be replaced by a measurement with `scripts/measure.md`, a refresh is
 20 mAs, 5.6 µAh, of the 850 mAh cell (spec "Hardware") one part in
-150 000. The screen draws when a person acts, two pictures a touch, and
-for a pairing; twenty touches a day cost 40 × 5.6 µAh = 224 µAh a day,
+150 000. The screen draws when a person acts, two pictures a press, and
+for a pairing; twenty presses a day cost 40 × 5.6 µAh = 224 µAh a day,
 0.009 mA on average, under 1.5 % of a sleepy node's 0.65 mA
-(`docs/battery-role-2026-10-25.md`). A node nobody touches draws its
+(`docs/battery-role-2026-10-25.md`). A node whose button nobody presses draws its
 code once at boot and then nothing. On USB the energy is the charger's.
 Between refreshes the controller is in deep sleep, holding the picture
 and drawing nothing measurable; each refresh wakes it with a hardware
@@ -1357,7 +1342,7 @@ task of its own, spawned by the main task, which sets up the chip, the
 board, USB and the log, spawns, and ends: the USB device, the log, the
 bootloader touch, the watchdog, the LED and crystal, the MPSL, the
 phone link, the radio and the core on it, the store, the mailbox's
-flash writes, the update over the mesh, the GPS, the screen, the user button and the touch pad. A task's future lies in its own static storage, and the
+flash writes, the update over the mesh, the GPS, the screen and the user button. A task's future lies in its own static storage, and the
 executor polls one task at a time, so the stack needs only the deepest
 task's poll and the interrupts above it, not the sum of everything
 joined into one future. Futures stay what a task waits on for a while,
