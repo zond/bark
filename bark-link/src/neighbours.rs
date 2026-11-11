@@ -1,18 +1,10 @@
-//! Neighbours: the characteristic by which the app reads the node's
-//! neighbour table (spec "Neighbour table"), for a map of the node and the
-//! links around it, `28bc000a-…` ([`crate::uuid::NEIGHBOURS`]).
+//! Neighbours ([`crate::uuid::NEIGHBOURS`]): the app reads the node's
+//! neighbour table in pages, for a map (spec "The neighbour map").
 //!
 //! | | value | bytes |
 //! |---|---|---|
 //! | write | the slot to read from | 1 |
 //! | read | [`Header`], then up to [`PER_PAGE`] [`Neighbour`]s | 10 + 18 n |
-//!
-//! The table holds up to 64 neighbours, more than one value holds, so the
-//! app reads it in pages: it writes a slot, reads the live neighbours from
-//! that slot on, as many as fit, and writes the slot the page names next,
-//! until that is 0. A neighbour keeps its slot while it stays in the
-//! table, so one that leaves between two reads moves no other, and the
-//! pages skip none that stay.
 
 use bark_proto::radio::{
     full_frame_rssi_above_noise_db, full_frame_rssi_through_db, FADE_DEPTH_DB,
@@ -38,8 +30,8 @@ pub struct Header {
     /// The node's noise floor, dBm (spec "Busy estimate"), against which
     /// a link's margin is read ([`quality`]).
     pub floor_dbm: i8,
-    /// The node's own position (spec "Position"), which for a sleepy node
-    /// is not its address; zero while it has no place.
+    /// The node's own position, which for a sleepy node is not its
+    /// address; zero while it has none.
     pub own: Position,
 }
 
@@ -48,11 +40,10 @@ pub struct Header {
 pub struct Neighbour {
     /// Its ID.
     pub id: NodeId,
-    /// Its position, from its heartbeat.
+    /// Its position.
     pub position: Position,
-    /// The averaged RSSI of its link, in tenths of a dBm
-    /// (spec "Neighbour table"): finer than the radio's 0.5 dB step, so
-    /// that the app reads the margin as the node does.
+    /// The averaged RSSI of its link, in tenths of a dBm: finer than the
+    /// radio's 0.5 dB step, so the app reads the margin as the node does.
     pub rssi_ddbm: i16,
     /// Whole seconds since it was last heard, at most `u16::MAX`.
     pub age_s: u16,
@@ -64,8 +55,7 @@ pub struct Neighbour {
     pub demoted: bool,
     /// It is banned (spec "Bans").
     pub banned: bool,
-    /// It is this sleepy node's anchor, the relay it sends through and
-    /// receives from (spec "Relay choice").
+    /// It is this sleepy node's anchor (spec "Relay choice").
     pub anchor: bool,
     /// It is carried (spec "Nodes").
     pub carried: bool,
@@ -81,9 +71,8 @@ pub struct Neighbour {
 pub const HEADER: usize = 1 + 1 + POS + 1;
 /// Where the header says the bytes of each neighbour.
 const AT_ENTRY: usize = HEADER - 1;
-/// Bytes of one neighbour in this version: ID, position, RSSI, age and
-/// flags. A later version may append fields to each; the header says how
-/// long each is.
+/// Bytes of one neighbour in this version; a later version may append
+/// fields, so the header says how long each is.
 pub const ENTRY: usize = ID + POS + 2 + 2 + 1;
 /// Neighbours in one page: as many as fit one PDU at the node's MTU.
 pub const PER_PAGE: usize = (crate::value_room(crate::ATT_MTU) - HEADER) / ENTRY;
@@ -173,15 +162,13 @@ pub fn decode(b: &[u8]) -> Result<(Header, impl Iterator<Item = Neighbour> + '_)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Quality {
     /// Below the margin the node asks of a next hop
-    /// (spec "Neighbour table"): a frame is lost more than one time in a
-    /// hundred in a fade of one standard deviation, and the node sends
-    /// through it only when no other is left.
+    /// (spec "Neighbour table"): it sends through it only when no other is
+    /// left.
     Fragile,
     /// A frame gets through a fade of one standard deviation, not of two.
     Fair,
-    /// A frame gets through a fade of two standard deviations, which comes
-    /// one time in 44, the convention of the switching margin
-    /// (spec "Relay choice").
+    /// A frame gets through a fade of two standard deviations, the
+    /// switching margin's convention (spec "Relay choice").
     Good,
 }
 

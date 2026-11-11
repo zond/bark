@@ -1,7 +1,6 @@
-//! Update and Image: the characteristics by which the app stages a new
-//! firmware image on its node and asks for the swap (spec "Phone link",
-//! Updates; `bark-fw/README.md`, "Updates"), `28bc000b-…` and
-//! `28bc000c-…` ([`crate::uuid::UPDATE`], [`crate::uuid::IMAGE`]).
+//! Update and Image ([`crate::uuid::UPDATE`], [`crate::uuid::IMAGE`]): the
+//! app stages a new firmware image on its node and asks for the swap
+//! (spec "Updates from the phone").
 //!
 //! | | value | bytes |
 //! |---|---|---|
@@ -9,11 +8,8 @@
 //! | Update, read | [`Progress`]: state, refusal, bytes held, version, hash | 42 |
 //! | Image, write | the image's offset, then its bytes from there | 5–244 |
 //!
-//! The app writes the image's bytes in order, each piece as long as one
-//! write carries, without a response, and reads Update after every few
-//! as the flow control: the node takes a piece only at the count it
-//! holds, so a piece lost, or a connection lost, is sent again from what
-//! the read says.
+//! The node takes a piece only at the count it holds, so the app's read of
+//! Update is the flow control and the point to resend from.
 
 use crate::Malformed;
 
@@ -40,7 +36,7 @@ impl<'a> Command<'a> {
     const COMMIT: u8 = 1;
     const REBOOT: u8 = 2;
     /// Bytes in the longest value, a begin: longer than one write at the
-    /// node's MTU, so a long write (spec "Phone link", MTU).
+    /// node's MTU, so a long write (spec "The service").
     pub const MAX_LEN: usize = 1 + HEADER_LEN;
 
     /// The value, into `b`; returns its length.
@@ -151,21 +147,19 @@ pub enum Refusal {
     /// The bytes held do not hash to the header's hash; they are
     /// forgotten.
     Hash = 5,
-    /// On battery at or below the low level
-    /// (spec "Implementation notes"); the image stays staged, to commit
-    /// on external power.
+    /// On battery at or below the low level; the image stays staged, to
+    /// commit on external power (spec "Implementation notes").
     Battery = 6,
     /// The flash failed; what was staged is forgotten.
     Flash = 7,
-    /// No signature in the header verifies under a key the node holds
-    /// (`bark-fw/README.md`, "Updates").
+    /// No signature in the header verifies under a key the node holds.
     Signature = 8,
 }
 
 /// Update, read: where the update stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Progress {
-    /// The state.
+    /// Where the update stands.
     pub state: State,
     /// Why the last begin, commit or reboot was refused, until the next
     /// is taken.
