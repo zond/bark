@@ -709,9 +709,26 @@ pub fn new<
     controller: C,
     resources: &'resources mut HostResources<P, CONNS, CHANNELS, ADV_SETS, BONDS>,
 ) -> StackBuilder<'resources, C, P> {
-    let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = resources
-        .connections
-        .write(RefCell::new([const { ConnectionStorage::new() }; CONNS]));
+    // Set up where it lies: as a value, the array passes through the
+    // caller's stack, twice, 1 KB a connection.
+    //
+    // rustc checks that a constant's value is valid for its type, so this
+    // fails to build once zero bytes are not a `ConnectionStorage`.
+    let _: ManuallyDrop<ConnectionStorage<P::Packet>> =
+        const { ManuallyDrop::new(unsafe { MaybeUninit::zeroed().assume_init() }) };
+    let connections: &'resources RefCell<[ConnectionStorage<P::Packet>]> = {
+        let cell = resources.connections.as_mut_ptr();
+        // SAFETY: zero bytes are a `RefCell` not borrowed of valid
+        // `ConnectionStorage`s (above); each is then written over, without
+        // dropping what was there, as `write` writes over the whole.
+        unsafe {
+            cell.write_bytes(0, 1);
+            for c in (*cell).get_mut().iter_mut() {
+                core::ptr::write(c, ConnectionStorage::new());
+            }
+            &*cell
+        }
+    };
 
     let channels: &'resources RefCell<[ChannelStorage<P::Packet>]> = resources
         .channels
