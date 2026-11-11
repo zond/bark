@@ -333,17 +333,17 @@ static CHANGED: embassy_sync::signal::Signal<
     (),
 > = embassy_sync::signal::Signal::new();
 
-/// A person at the node: true asks for the lines, false is a touch of
-/// the pad, which flips the picture.
+/// A person at the node: true asks for the lines, false is a brief
+/// press of the button, which flips the picture.
 #[cfg(not(feature = "console"))]
 static PERSON: embassy_sync::signal::Signal<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
     bool,
 > = embassy_sync::signal::Signal::new();
 
-/// The pad's side (`button.rs`): a touch.
+/// The button's side (`button.rs`): a brief press.
 #[cfg(not(feature = "console"))]
-pub fn touched() {
+pub fn pressed() {
     PERSON.signal(false);
 }
 
@@ -441,8 +441,8 @@ pub fn publish(state: State) {
 const FIRST_STATE: Duration = Duration::from_secs(5);
 
 /// Draw the node's screen at boot, and again as `bark_screen::schedule`
-/// says: the code, the lines for a while after a touch of the pad
-/// ([`touched`]) or a long press of the button ([`lines`]), a new
+/// says: the code, the lines for a while after a brief press of the
+/// button ([`pressed`]) or a long press ([`lines`]), a new
 /// pairing code at once, and a change a person acts on in the picture
 /// shown about one refresh after it. Each picture is drawn to its end
 /// before the next is considered, so none starts while a refresh runs.
@@ -484,7 +484,7 @@ pub async fn run(
             {
                 match lines {
                     true => schedule.lines(Instant::now().as_millis()),
-                    false => schedule.touched(&state, Instant::now().as_millis()),
+                    false => schedule.pressed(&state, Instant::now().as_millis()),
                 }
             }
             continue;

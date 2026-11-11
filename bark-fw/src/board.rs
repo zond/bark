@@ -26,10 +26,9 @@
 #![allow(dead_code)]
 
 use embassy_nrf::peripherals::{
-    P0_02, P0_03, P0_04, P0_05, P0_07, P0_11, P0_12, P0_13, P0_14, P0_16, P0_17, P0_18, P0_19,
-    P0_20, P0_21, P0_22, P0_23, P0_24, P0_25, P0_26, P0_27, P0_28, P0_29, P0_30, P0_31, P1_01,
-    P1_02, P1_03, P1_04, P1_05, P1_06, P1_08, P1_09, P1_10, P1_11, P1_12, P1_13, P1_14, P1_15,
-    USBD,
+    P0_02, P0_03, P0_04, P0_05, P0_07, P0_12, P0_13, P0_14, P0_16, P0_17, P0_18, P0_19, P0_20,
+    P0_21, P0_22, P0_23, P0_24, P0_25, P0_26, P0_27, P0_28, P0_29, P0_30, P0_31, P1_01, P1_02,
+    P1_03, P1_04, P1_05, P1_06, P1_08, P1_09, P1_10, P1_11, P1_12, P1_13, P1_14, P1_15, USBD,
 };
 use embassy_nrf::Peri;
 #[cfg(doc)]
@@ -124,8 +123,9 @@ pub struct Buttons {
     /// and reads as nothing. Which state the shipped UICR is in is
     /// unverified; this firmware does not change it (see `Cargo.toml`).
     pub reset: Peri<'static, P0_18>,
-    /// Capacitive touch pad, P0.11.
-    pub touch: Peri<'static, P0_11>,
+    // The capacitive touch pad's sensor drives P0.11. Not used, so the pin
+    // stays in its reset state: the pad was dead on one bench board and read
+    // differently on the others (roadmap D206).
 }
 
 /// LEDs. Polarity unverified: this firmware assumes active low (cathode on
@@ -244,7 +244,6 @@ macro_rules! take_board {
             buttons: $crate::board::Buttons {
                 user: $p.P1_10,
                 reset: $p.P0_18,
-                touch: $p.P0_11,
             },
             leds: $crate::board::Leds {
                 red: $p.P1_03,

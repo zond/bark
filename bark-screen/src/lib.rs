@@ -7,7 +7,6 @@
 
 use core::fmt::{self, Write};
 
-pub mod pad;
 pub mod qr;
 pub mod schedule;
 
@@ -543,7 +542,7 @@ pub fn role(state: &State) -> &'static str {
 }
 
 /// Which picture the screen shows: the code, the default, or the lines a
-/// touch asks for (`schedule`).
+/// press of the button asks for (`schedule`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Face {
     #[default]
