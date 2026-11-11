@@ -1,32 +1,12 @@
-//! The node's mailbox, an application on the node beside the phone link
-//! (spec "Mailbox"). It reads what the core delivers to the node's
-//! application (`AppEvent::Message`, the payload from `Core::inbox`),
-//! offers replies as `AppCommand::Send` while `accepts_send` holds, and
-//! takes a reply back on `AppEvent::GivenBack`; it changes nothing in the
-//! core, and the simulator can run it on a [`Ring`] in RAM.
+//! The node's mailbox (spec "Mailbox"), an application beside the phone
+//! link: it reads what the core delivers to the node's application, offers
+//! replies as `AppCommand::Send` while `accepts_send` holds and takes back
+//! a reply on `AppEvent::GivenBack`. It changes nothing in the core, and
+//! the simulator runs it on a [`Ring`] in RAM.
 //!
-//! Every node keeps every payload but a fetch in its ring, numbered, for
-//! the people paired with it, its [`Person`]s, up to [`PEOPLE`], and for
-//! its guests, each by the recipient tag the payload carries
-//! (spec "Phone link", Receiving, Public). A slot's mark is a bit for each person, set
-//! as the item is written for those whose tag it carries: the item is
-//! theirs and not yet sent to them. A person's phone reads their items
-//! after the last it confirmed; a guest reads its own by tag after a
-//! number it keeps itself ([`Mailbox::for_tag`]).
-//!
-//! The node holds the people's mailbox keys and cannot open their mail. A
-//! fetch opens under one person's key, and the node answers it once: the
-//! newest batch of that person's items whose bit is set, newest first,
-//! each sealed again under the key with the count of those still unsent
-//! after the batch (`seal::seal_reply`), or one reply that says nothing
-//! is new (`seal::seal_nothing_new`). An item handed over for a reply, or
-//! confirmed by the person's phone, has the person's bit cleared and
-//! stays in the ring. An item that arrives later waits for the next
-//! fetch. The rounds of several people take the core's send slot in turn.
-//!
-//! What a person's record keeps, the key, the last fetch and the last
-//! item confirmed, the node keeps with the record (`bark-link`
-//! `phones`), not here: the mailbox says when they change.
+//! What a person's record keeps (the key, the last fetch, the last item
+//! confirmed) lives with the record (`bark-link` `phones`), not here: the
+//! mailbox says when they change.
 
 use core::cell::Cell;
 
@@ -283,10 +263,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// The oldest of person `i`'s items their phone has not confirmed: its
-    /// number, the message ID it arrived with and its length in `out`.
-    /// The phone reads the ring from where it last confirmed; the ring
-    /// keeps every item for fetches either way (spec "Phone link",
-    /// Receiving).
+    /// number, the message ID it arrived with and its length in `out`
+    /// (spec "Receiving").
     pub fn unread(&self, i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usize)> {
         let (n, _) = self.unread_of(i).first?;
         self.read_item(n, out).map(|(id, l)| (n, id, l))
@@ -363,9 +341,8 @@ impl<R: Ring> Mailbox<R> {
 
     /// The oldest item after `after` whose recipient tag is `tag`: its
     /// number, the message ID it arrived with and its length in `out`. A
-    /// guest reads its mail so, keeping `after` itself, and reading takes
-    /// nothing from the ring. A number above the newest is from before
-    /// the ring began again, erased or on another board, and reads as 0.
+    /// guest reads its mail so, keeping `after` itself. A number above the
+    /// newest is from before the ring began again and reads as 0.
     pub fn for_tag(
         &self,
         tag: u8,
@@ -383,11 +360,9 @@ impl<R: Ring> Mailbox<R> {
             })
     }
 
-    /// Person `i`'s phone has item `n`, and every one of theirs before
-    /// it: it counts as sent to them, so that no fetch of theirs sends it
-    /// again. The phone confirms the oldest it has not,
-    /// [`Mailbox::unread`]. Whether their last confirmed moved, for their
-    /// record to keep.
+    /// Person `i`'s phone has item `n` and every one of theirs before it,
+    /// so no fetch of theirs sends them. Whether their last confirmed
+    /// moved, for their record to keep.
     pub fn confirm_read(&mut self, i: usize, n: u32) -> bool {
         let Some(p) = self.people[i].as_mut() else {
             return false;
@@ -533,7 +508,7 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// A fetch: taken by the first person whose key opens it, if it is
-    /// later than the last they took (spec "Mailbox", The fetch).
+    /// later than the last they took (spec "Mailbox").
     fn fetch(&mut self, payload: &[u8]) -> Arrival {
         let opened = (0..PEOPLE).find_map(|i| {
             let key = self.people[i]?.key?;
@@ -592,10 +567,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// The next reply to hand the core, sealed into `out`, if one is due;
-    /// call it while `accepts_send` holds, and send what it gives. Its
-    /// item has its person's bit cleared as it is handed over. A round with
-    /// no item to send gets one reply that says nothing is new. The rounds
-    /// of several people take turns.
+    /// call it while `accepts_send` holds, and send what it gives. The
+    /// rounds of several people take turns.
     pub fn next(&mut self, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         for k in 1..=PEOPLE {
             let i = (self.turn + k) % PEOPLE;

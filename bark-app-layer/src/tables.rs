@@ -1,11 +1,10 @@
 //! What a node keeps of its tables across a reboot into a new image (spec
-//! "Updates over the mesh", the install; roadmap D180): the entries its
-//! core gives ([`bark_proto::Node::remembered`]), its neighbours and then
-//! its message records, each in the core's encoding, behind a header.
+//! "Updates over the mesh"): the entries its core gives
+//! ([`bark_proto::Node::remembered`]), neighbours then message records, in
+//! the core's encoding, behind a header.
 //!
-//! The header is written last, once every entry is: it says how many
-//! there are, how long the writing took, and a check of them, so that a
-//! write a power cut stopped, or an erased region, keeps nothing.
+//! The header is written last and holds a check of the entries, so a write
+//! a power cut stopped, or an erased region, keeps nothing.
 
 use bark_proto::tables::neighbours::{KEPT_LEN as NEIGHBOUR_LEN, NEIGHBOURS};
 use bark_proto::tables::records::{KEPT_LEN as RECORD_LEN, RECORDS};
@@ -32,7 +31,7 @@ pub struct Header {
     pub neighbours: u16,
     /// Records, after them.
     pub records: u16,
-    /// From when the core gave the tables to the header's write, µs: time
+    /// µs from when the core gave the tables to the header's write: time
     /// away the core is told of after the reboot.
     pub written_us: u32,
     check: [u8; CHECK_LEN],

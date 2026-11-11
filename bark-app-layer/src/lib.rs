@@ -3,12 +3,11 @@
 //! `docs/app-layer-2026-11-05.md`). One codec for the node, the
 //! simulator and the vectors the app's tests read (`vectors.json`).
 //!
-//! The cryptography is libsodium's constructions, here through
-//! RustCrypto's implementations of them, which make the same bytes:
+//! The cryptography makes the same bytes as libsodium, which the app uses:
 //! `crypto_box` between identities, the sealed box for a first message,
-//! `crypto_secretbox` between a person and their mailbox, and the
-//! BLAKE2b key derivation. Nothing allocates and nothing draws random
-//! numbers: callers hand in every nonce and ephemeral key.
+//! `crypto_secretbox` between a person and their mailbox, and the BLAKE2b
+//! key derivation. Nothing allocates and nothing draws random numbers:
+//! callers hand in every nonce and ephemeral key.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -33,8 +32,8 @@ mod vectors;
 
 use bark_proto::{NodeId, Position};
 
-/// The format's version, the high four bits of a payload's first byte:
-/// 2 since the recipient tag (spec "Phone link", The payload).
+/// The format's version, the high four bits of a payload's first byte
+/// (spec "The payload").
 pub const VERSION: u8 = 2;
 
 /// The longest payload the network carries (spec "Packet formats").
