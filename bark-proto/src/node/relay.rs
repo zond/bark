@@ -250,7 +250,7 @@ pub struct Node<const H: usize, const Q: usize> {
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A relay until its power says otherwise, unless it has no room for
-    /// a relay's mail (`relay/power.rs`): then sleepy at `at`.
+    /// a relay's mail (`relay/power.rs`): then sleepy, with no anchor yet.
     const fn mode_at_boot() -> Mode {
         if Self::can_relay() {
             Mode::Relay(Power::External)

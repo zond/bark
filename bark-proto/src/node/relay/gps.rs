@@ -439,7 +439,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the driver is to run the GPS all the time now
-    /// ([`Gps::tracks`]).
+    /// (spec "Position", a relay's GPS).
     pub fn gps_tracks(&self) -> bool {
         self.gps.tracks(&self.gps_situation())
     }

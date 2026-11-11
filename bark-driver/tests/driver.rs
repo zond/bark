@@ -789,8 +789,9 @@ fn a_transmit_goes_out_and_completes() {
 }
 
 /// A check asked for while a packet is arriving waits for it to end, the
-/// frame reaches the core first, and the check runs after (core-interface
-/// spec "Regulatory limits" rule 8).
+/// frame reaches the core first, and the check runs after
+/// (`docs/core-interface.md`, "Radio": the driver may hold a check while a
+/// reception is in progress).
 #[test]
 fn a_check_waits_for_the_packet_in_progress() {
     let world = World::default();
