@@ -126,6 +126,7 @@ pub fn unread(i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usiz
 /// external flash.
 #[embassy_executor::task]
 pub async fn run() -> ! {
+    let mut marks = Marks::default();
     loop {
         WRITE.wait().await;
         while let Some(op) = with(|m| m.ring().op()).flatten() {
@@ -143,7 +144,7 @@ pub async fn run() -> ! {
                         log::error!("mailbox: ring {:?}", e);
                     }
                     if let Some(before) = before {
-                        check_mark(at, before, op.data()[0]);
+                        marks.check(at, before, op.data()[0]);
                     }
                 }
             }
@@ -163,42 +164,50 @@ fn read_byte(at: u32) -> u8 {
     b[0]
 }
 
-/// Whether a mark's program, a byte programmed again over one written
-/// before with bits clear, left the AND of the two, as the marks need: a
-/// slot's mark takes a program for each of the eight records' bits
-/// between erases (spec "Mailbox", The ring). The chip's datasheet is not
-/// in the repository to say whether it allows that, so the bench reads it
-/// here: the first mark that reads back right is logged once, and the
-/// wrong ones with their count.
-fn check_mark(at: u32, before: u8, cleared: u8) {
-    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
-    static RIGHT: AtomicBool = AtomicBool::new(false);
-    static WRONG: AtomicU32 = AtomicU32::new(0);
-    let want = before & cleared;
-    let got = read_byte(at);
-    if got == want {
-        if !RIGHT.swap(true, Relaxed) {
-            log::info!(
-                "mailbox: a mark programmed over {:#04x} read back {:#04x}, as it should",
+/// What the marks read back so far: one that read right, and how many
+/// read wrong.
+#[derive(Default)]
+struct Marks {
+    right: bool,
+    wrong: u32,
+}
+
+impl Marks {
+    /// Whether a mark's program, a byte programmed again over one written
+    /// before with bits clear, left the AND of the two, as the marks need:
+    /// a slot's mark takes a program for each of the eight records' bits
+    /// between erases (spec "Mailbox", The ring). The chip's datasheet is
+    /// not in the repository to say whether it allows that, so the bench
+    /// reads it here: the first mark that reads back right is logged once,
+    /// and the wrong ones with their count.
+    fn check(&mut self, at: u32, before: u8, cleared: u8) {
+        let want = before & cleared;
+        let got = read_byte(at);
+        if got == want {
+            if !core::mem::replace(&mut self.right, true) {
+                log::info!(
+                    "mailbox: a mark programmed over {:#04x} read back {:#04x}, as it should",
+                    before,
+                    got
+                );
+            }
+            return;
+        }
+        // Logged at the first, and at each power of two after, so that the log
+        // shows how often without a line a mark.
+        self.wrong = self.wrong.wrapping_add(1);
+        let wrong = self.wrong;
+        if wrong.is_power_of_two() {
+            log::error!(
+                "mailbox: a mark at {:#x} programmed {:#04x} over {:#04x} read back {:#04x}, not {:#04x}: \
+the flash does not take a byte programmed again ({} so far)",
+                at,
+                cleared,
                 before,
-                got
+                got,
+                want,
+                wrong
             );
         }
-        return;
-    }
-    // Logged at the first, and at each power of two after, so that the log
-    // shows how often without a line a mark.
-    let wrong = WRONG.fetch_add(1, Relaxed) + 1;
-    if wrong.is_power_of_two() {
-        log::error!(
-            "mailbox: a mark at {:#x} programmed {:#04x} over {:#04x} read back {:#04x}, not {:#04x}: \
-the flash does not take a byte programmed again ({} so far)",
-            at,
-            cleared,
-            before,
-            got,
-            want,
-            wrong
-        );
     }
 }
