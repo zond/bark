@@ -110,7 +110,7 @@ mixin _Installs on _AppCore {
   }
 
   /// The search gives up waiting for the node that installs: it is out of
-  /// reach as any node ([waitsForInstall]).
+  /// reach as any node, or back and passed over ([waitsForInstall]).
   @override
   void _giveUp(String node) {
     final i = install!;
@@ -121,7 +121,12 @@ mixin _Installs on _AppCore {
       givenUp: true,
       back: null,
     );
-    session.note('$node not back from its install: out of reach');
+    session.note(
+      nodes[node]?.unserved ?? false
+          ? '$node back from its install, but it and this app do not serve '
+                'each other: passed over'
+          : '$node not back from its install: out of reach',
+    );
   }
 
   /// The line while a paired node is away to install a version; null
