@@ -54,31 +54,38 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(not(feature = "console"))]
 use embassy_sync::signal::Signal;
 
-/// The state and the offset to keep next, the latest of each, and that
-/// the phones changed.
+/// What the store's task is to write next: the core's state and the
+/// offset, the latest of each, and that the phones changed.
 #[cfg(not(feature = "console"))]
-static STORED: Signal<CriticalSectionRawMutex, Stored> = Signal::new();
+struct ToWrite {
+    stored: Signal<CriticalSectionRawMutex, Stored>,
+    offset: Signal<CriticalSectionRawMutex, i16>,
+    phones: Signal<CriticalSectionRawMutex, ()>,
+}
+
 #[cfg(not(feature = "console"))]
-static OFFSET: Signal<CriticalSectionRawMutex, i16> = Signal::new();
-#[cfg(not(feature = "console"))]
-static PHONES: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static TO_WRITE: ToWrite = ToWrite {
+    stored: Signal::new(),
+    offset: Signal::new(),
+    phones: Signal::new(),
+};
 
 #[cfg(not(feature = "console"))]
 /// The node's side: keep `stored`, in place of the state kept before.
 pub fn keep(stored: Stored) {
-    STORED.signal(stored);
+    TO_WRITE.stored.signal(stored);
 }
 
 #[cfg(not(feature = "console"))]
 /// The node's side: keep the UTC offset, in place of the one kept before.
 pub fn keep_offset(offset_min: i16) {
-    OFFSET.signal(offset_min);
+    TO_WRITE.offset.signal(offset_min);
 }
 
 #[cfg(not(feature = "console"))]
 /// The phones' side (`phones.rs`): keep what changed in their records.
 pub fn keep_phones() {
-    PHONES.signal(());
+    TO_WRITE.phones.signal(());
 }
 
 #[cfg(not(feature = "console"))]
@@ -86,7 +93,8 @@ pub fn keep_phones() {
 #[embassy_executor::task]
 pub async fn run(mut flash: Flash) -> ! {
     loop {
-        match select3(STORED.wait(), OFFSET.wait(), PHONES.wait()).await {
+        let w = &TO_WRITE;
+        match select3(w.stored.wait(), w.offset.wait(), w.phones.wait()).await {
             Either3::First(stored) => flash.keep(&stored).await,
             Either3::Second(offset_min) => flash.keep_offset(offset_min).await,
             Either3::Third(()) => flash.keep_phones().await,
