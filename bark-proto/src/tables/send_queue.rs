@@ -156,7 +156,7 @@ pub enum Wait {
     Retry,
 }
 
-/// A message as a node holds it: what its ID is taken of (roadmap D15).
+/// A message as a node holds it: what its ID is taken of (spec "Packet formats").
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Message {
     /// Its destination's position.
