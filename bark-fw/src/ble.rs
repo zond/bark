@@ -1512,17 +1512,22 @@ impl Serving<'_, '_, '_> {
         NOTIFY[self.slot].reset();
         refresh(self.slot, self.server, self.conn, self.update);
         let ends = embassy_time::Instant::now() + GUEST_LINK;
+        // The link was asked to close: its end takes a moment to come, and
+        // the time that is up must not wake the loop again meanwhile.
+        let mut closing = false;
         loop {
             // A guest's link, on a public node, ends at `ends`: neither a
             // paired phone's nor one that pairs.
             let pairing = LINK.lock(|l| l.borrow().phones[self.slot].pairing);
-            let guest = link::guest(public(), pairing, owner(self.conn).is_some());
+            let guest = link::guest(public(), pairing, owner(self.conn).is_some()) && !closing;
             if guest && embassy_time::Instant::now() >= ends {
                 log::info!("ble: the guest in slot {} closed after its time", self.slot);
                 self.conn.raw().disconnect();
+                closing = true;
             }
             let turn_ends = LINK.lock(|l| l.borrow().turn.ends());
-            let next = link::wake_at(turn_ends.map(crate::clock::embassy), guest.then_some(ends));
+            let waits = guest && !closing;
+            let next = link::wake_at(turn_ends.map(crate::clock::embassy), waits.then_some(ends));
             let turn = async {
                 match next {
                     Some(t) => embassy_time::Timer::at(t).await,
