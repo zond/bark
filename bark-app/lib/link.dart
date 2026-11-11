@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 /// The link version this app speaks.
-const int linkVersion = 2;
+const int linkVersion = 1;
 
 /// The oldest node link version this app still serves (spec "Phone link",
 /// Versions): its own, as no node of another is kept (roadmap D188).

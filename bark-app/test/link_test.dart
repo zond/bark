@@ -128,7 +128,7 @@ void main() {
 
   test('node', () {
     final n = NodeInfo(to, 7, room: 3);
-    expect(n.encode(), [2, 2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    expect(n.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
     // What a later version appends after room is ignored.
     final d = NodeInfo.decode([2, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 0, 0xaa]);
     expect([d.version, d.oldest, d.image, d.room], [2, 1, 7, 0]);

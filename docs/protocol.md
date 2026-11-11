@@ -2473,7 +2473,7 @@ the other's oldest: only the newer side can know what a later version
 changed. When they do not, the node answers Recipient's write with the
 ATT error 0x82, incompatible, and ends the link, and the app, which reads
 Node first, tells the person which side to update (roadmap D177). This
-specification is link version 2, and each side's oldest is its own
+specification is link version 1, and each side's oldest is its own
 version: nothing older is kept (roadmap D188).
 
 A later version may add characteristics and append fields to the values

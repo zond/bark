@@ -164,7 +164,7 @@ fn vectors() {
         image: 7,
         room: 3,
     };
-    assert_eq!(node.encode(), [2, 2, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
+    assert_eq!(node.encode(), [1, 1, 1, 2, 3, 4, 5, 6, 0, 0, 0, 7, 3]);
 
     // 2026-11-05 12:35:19 UTC, at UTC+01:00 and UTC−03:30.
     let clock = Clock {
@@ -432,14 +432,14 @@ fn recipient_and_public_are_taken_whole() {
     // The tag, the versions and the person's name; a guest's, no name.
     let named = Recipient {
         tag: 0xab,
-        version: 2,
-        oldest: 2,
+        version: 1,
+        oldest: 1,
         name: phones::Name::new("Åsa".as_bytes()).unwrap(),
     };
     assert!(named.compatible());
     let mut b = [0; Recipient::MAX_LEN];
     let n = named.encode(&mut b);
-    assert_eq!(&b[..n], &[0xab, 2, 2, 0xc3, 0x85, b's', b'a']);
+    assert_eq!(&b[..n], &[0xab, 1, 1, 0xc3, 0x85, b's', b'a']);
     assert_eq!(Recipient::decode(&b[..n]), Ok(named));
     assert_eq!(
         Recipient::decode(&b[..3]).map(|r| r.name),

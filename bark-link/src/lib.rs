@@ -14,7 +14,7 @@ use bark_proto::{Instant, MsgId, NodeId, Position};
 /// The link version this crate speaks, in [`Node::version`]. Every change
 /// to the attribute table takes a new one: the node tells a bonded phone of
 /// a change by the version it last saw (spec "Versions").
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 1;
 
 /// The oldest link version whose apps this node serves, in
 /// [`Node::oldest`] (spec "Versions").

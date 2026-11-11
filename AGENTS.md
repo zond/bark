@@ -34,6 +34,19 @@ expressed in the core, it does not go in the firmware either.
 
 The protocol core does not allocate and has no external routing dependency.
 
+## Versions before the first deployment
+
+Until a node or an app build goes to someone outside the project, the numbers that promise
+compatibility stay at 1: the format of packets on the air, and the phone link's version and
+`oldest`. Nobody speaks an older form, and every board and phone is updated together.
+
+The numbers that order builds keep counting: the firmware image's version, which nodes act
+on and which names one build only, and the app's build number. So do the layouts of stored
+data, on the phone and on the node, and a change to the link's attribute table, which a
+bonded phone keeps a copy of: there a device meets what it kept itself.
+
+The version rule is tested on purpose, by a build that claims a later version (roadmap D208).
+
 ## Writing
 
 Describe mechanisms in their own terms. Never name other projects as the origin of code or

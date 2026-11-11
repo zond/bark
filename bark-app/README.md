@@ -606,7 +606,7 @@ Whenever Status counts messages in the inbox, it reads the oldest,
 stores it, writes its message ID back so the node forgets it, and
 repeats.
 
-**Versions.** The app speaks link version 2 and serves nodes of that
+**Versions.** The app speaks link version 1 and serves nodes of that
 version, `oldestNode` (roadmap D188). The node says in Node the oldest
 app version it serves. The app reads Node first and goes on only when
 each side's version is at least the other's oldest (spec "Phone link",
@@ -1111,7 +1111,7 @@ a phone (Trying it).
    sleepy ones counted, or "Hears no other node yet: texts wait here";
    and
    the node's screen, `PHONE UNPAIRED` before, `PHONE PUBLIC`.
-3. **Debug** shows link version 2, the node's clock (from its GPS if it
+3. **Debug** shows link version 1, the node's clock (from its GPS if it
    has a fix, else from the phone, with the phone's offset) and, on a node
    fresh from boot, the
    first rotation counting down from 3:15 (a relay) or 6:30 (a sleepy
