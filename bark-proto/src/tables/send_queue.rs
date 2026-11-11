@@ -585,14 +585,6 @@ impl SendQueue {
         }
     }
 
-    /// When the earliest waiting entry is due.
-    pub fn earliest_due(&self) -> Option<Instant> {
-        self.iter()
-            .filter(|o| !o.held())
-            .map(|o| o.not_before)
-            .min()
-    }
-
     /// Queued entries, in the order they arrived.
     pub fn iter(&self) -> impl Iterator<Item = &Outgoing> {
         self.entries.as_slice().iter()
@@ -792,7 +784,6 @@ mod tests {
             o.not_before = t(due);
             q.push(o).unwrap();
         }
-        assert_eq!(q.earliest_due(), Some(t(0)));
         assert_eq!(q.next_due_all(t(5)), Some(2));
         assert_eq!(q.next_due_all(t(10)), Some(1));
         q.select(1);
