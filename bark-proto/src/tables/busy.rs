@@ -1,44 +1,19 @@
 //! Per-channel busy estimate (spec "Busy estimate"), in integer arithmetic.
 //!
-//! # Busy fraction
-//!
-//! Each channel keeps `busy[c]`, the moving average of a busy indicator
-//! sampled once per sweep: 1 if the RSSI exceeds the noise floor by
-//! `busy_threshold_db` (spec "Busy estimate": 6 dB), else 0. Values are fixed point with
-//! [`ONE`] = 2²⁴ meaning "always busy". The average is an EMA with
-//! coefficient `1 / busy_ema_inverse` (spec "Busy estimate": 1/138, thirty minutes at
-//! one sample of a channel every 13 s), except that its first `busy_ema_inverse` samples
-//! use `1/n` for the `n`th sample: a plain running mean, so a node that has
-//! just booted has an unbiased estimate after its one-rotation listen
-//! (spec "Channel at boot") instead of one dragged towards an arbitrary start value. The
-//! integer division truncates, which biases the estimate by less than
-//! `busy_ema_inverse / ONE` (8.2 × 10⁻⁶ at 1/138).
-//!
-//! The home estimate counts only what would stay on the channel if the
-//! node moved (spec "Busy estimate", roadmap D24). Packets addressed to the node, and the
-//! ACKs of its own hand-overs, would follow it to its new channel, so
-//! counting them would make a busy relay flee its own traffic. A home
-//! reading taken while one of them was on the air is therefore not taken;
-//! any other is the same indicator as a reading of another channel, so
-//! that the home channel and the channels it is compared with are measured
-//! alike (roadmap D55). The relay decides which readings are its own
+//! `busy[c]` is fixed point with [`ONE`] meaning "always busy". Its
+//! first `busy_ema_inverse` samples use `1/n` for the `n`th, a plain
+//! running mean, so a node just booted has an unbiased estimate after its
+//! one-rotation listen (spec "Channel at boot") rather than one dragged
+//! towards a start value. Integer division biases it by less than
+//! `busy_ema_inverse / ONE` (8.2 × 10⁻⁶ at 1/138). Which home readings are
+//! the node's own traffic and set aside is the relay's call
 //! (`node/relay.rs`).
 //!
-//! # Noise floor
-//!
-//! Spec "Busy estimate" says: a low percentile of RSSI readings over the first rotation,
-//! recalibrated slowly; the method is open item O11. Here: every sample,
-//! from every channel, goes into a histogram of 1 dB bins, and the floor
-//! is its 10th percentile. The receiver's noise is the same on all 13
-//! channels (1.6 MHz of one front end), so pooling them is sound, and a
-//! 10th percentile is right as long as a tenth of the samples hit a quiet
-//! channel. If nine-tenths of all readings on all channels are signals,
-//! the floor rises to the signals and every channel looks idle; carrier
-//! sense keeps real load far below that (≈35 % usable, spec "Capacity and sizing"). When the histogram holds two busy windows of samples
-//! (2 × 13 × `busy_ema_inverse`), every bin is halved, so the floor tracks
-//! drift on the busy estimate's own time scale. Until the first sample the
-//! floor is the design's nominal −118 dBm (spec "Physical layer"). The 10th percentile and the
-//! 1 dB bins are first choices for O11, to be checked on the bench.
+//! The noise floor pools every channel, which is sound because the
+//! receiver's noise is the same on all 13 (1.6 MHz of one front end). Its
+//! 10th percentile fails only if nine-tenths of all readings are signals;
+//! carrier sense keeps load far below that (spec "Capacity and sizing").
+//! The percentile and the 1 dB bins are first choices for open item O11.
 
 use crate::node::Config;
 use crate::radio::{Channel, CHANNELS};
@@ -73,9 +48,8 @@ pub struct NoiseFloor {
     bins: [u32; HIST_BINS],
     total: u32,
     halve_at: u32,
-    /// The bin the percentile falls in, and the samples in the bins below
-    /// it. The floor is read on every event, so it is kept as samples
-    /// come rather than counted out of the histogram at each read.
+    /// The bin the percentile falls in, and the samples below it: kept as
+    /// samples come, since the floor is read on every event.
     floor: usize,
     below: u32,
 }
@@ -229,7 +203,6 @@ mod tests {
         assert_eq!(b.fraction(ch(0)), ONE / 10, "running mean of 1 in 10");
         assert_eq!(b.fraction(ch(1)), 0);
         // Long after: an always-busy channel converges to ONE within the bias.
-        // The other channels are swept too and stay quiet, holding the floor.
         for _ in 0..10_000 {
             b.sample(ch(2), -60);
             for c in 3..CHANNELS {

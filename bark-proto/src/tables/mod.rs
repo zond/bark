@@ -1,6 +1,5 @@
 //! Bounded state the protocol core keeps. Every container has a capacity
-//! fixed by the design and lives inline, so nothing here allocates
-//! (roadmap D8).
+//! fixed by the design and lives inline, so nothing here allocates.
 
 pub(crate) mod fixed;
 
@@ -23,25 +22,18 @@ use crate::wire::ACK_LEN;
 /// up and waits a retry wait (spec "Hand-over" step 2).
 pub const LBT_GIVE_UP: Duration = Duration::from_millis(500);
 
-/// How long a sender listens for the ACK of a frame it sent: the ACK's
-/// airtime, the receiver's retunes and turnarounds, and a reply it owes
-/// already, which goes first (spec "Hand-over" step 5).
+/// How long a sender listens for its ACK (spec "Hand-over" step 5).
 pub const ACK_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Transmissions of one hand-over before it has failed (spec "Hand-over"
 /// step 6).
 pub const HOP_ATTEMPTS: u8 = 3;
 
-/// Failed hand-overs in a row, with no answer to this relay between,
-/// that demote a neighbour (spec "Neighbour table", Demotion): it then
-/// ranks behind the others and a message waiting for it goes elsewhere,
-/// or a return is dropped (spec "Hand-over" step 6). Between them the
-/// message waits out the neighbour's ban, 1.58 s and then 3.16 s
-/// (`budget::hold`), so the third offer comes 4.74 s after the first
-/// failure, later than the 2.41 s in which the bucket refills the replies
-/// a sender's retries cost (`budget::RETRY_REPLIES`): a receiver silent
-/// for want of reply budget has them back for the third offer, while two
-/// would demote it, and let the message go, before it could answer.
+/// Failed hand-overs in a row, with no answer between, that demote a
+/// neighbour (spec "Neighbour table", "Hand-over" step 6). Three, not two:
+/// the third offer comes 4.74 s after the first failure, after the 2.41 s
+/// in which a receiver silent for want of reply budget refills it
+/// (`budget::RETRY_REPLIES`).
 pub const DEMOTE_AFTER_FAILURES: u8 = 3;
 
 /// The longest one hand-over attempt takes: listen-before-talk until it
@@ -55,25 +47,17 @@ pub const fn attempt_span(ack_timeout: Duration) -> Duration {
     )
 }
 
-/// The time one hand-over holds its receiver: a full frame and its ACK,
-/// 138.56 + 16.96 = 155.52 ms (spec "Retry wait").
-///
-/// It is the unit of the wait before a retry. Two senders that cannot hear
-/// each other and have collided at one receiver both miss the ACK and
-/// retry at random times in `[0, W]`. Their frames miss each other only if
-/// the starts are more than this apart, the first frame and the ACK that
-/// answers it, so they come apart with probability `(1 − unit / W)²`:
-/// never at `W` = one unit, 1/4 at two, 9/16 at four, for full frames.
-/// Hence [`retry_window`] starts at two units and doubles (roadmap D22).
+/// The time one hand-over holds its receiver, the unit of the wait before
+/// a retry: a full frame and its ACK, 138.56 + 16.96 = 155.52 ms
+/// (spec "Retry wait").
 pub const RETRY_BACKOFF: Duration = Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
         + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros(),
 );
 
 /// The window of the random wait before the retry that follows `attempts`
-/// transmissions: `2^attempts × unit`, 311 ms and then 622 ms with the
-/// design's three attempts and [`RETRY_BACKOFF`]. Doubling also spreads
-/// out more than two senders, where a fixed window would not.
+/// transmissions: `2^attempts × unit`, 311 ms and then 622 ms with
+/// [`RETRY_BACKOFF`] (spec "Retry wait").
 pub const fn retry_window(unit: Duration, attempts: u8) -> Duration {
     let factor = match 1u64.checked_shl(attempts as u32) {
         Some(f) => f,
@@ -94,11 +78,9 @@ pub const fn retry_waits(unit: Duration, hop_attempts: u8) -> Duration {
     Duration::from_micros(total)
 }
 
-/// How long an upstream sender spends retrying a hand-over after its
-/// first attempt, when every attempt goes unanswered: the retries, each
-/// waiting the longest before it ([`retry_waits`]) and for the channel,
-/// carrying a full frame and waiting out the ACK timeout. 2.41 s with the
-/// design's [`ACK_TIMEOUT`] and [`HOP_ATTEMPTS`] (spec "Hand-over").
+/// The longest a sender spends retrying a hand-over after its first
+/// attempt when none is answered: 2.41 s with [`ACK_TIMEOUT`] and
+/// [`HOP_ATTEMPTS`] (spec "Hand-over").
 pub const fn retrying_span(
     ack_timeout: Duration,
     hop_attempts: u8,
@@ -119,16 +101,13 @@ pub(crate) mod sizes {
 
     #[test]
     fn table_sizes() {
-        // Per-entry sizes the capacities multiply.
         assert_eq!(size_of::<Option<neighbours::Neighbour>>(), 128);
         assert_eq!(size_of::<heard::HeardNode>(), 32);
         assert_eq!(size_of::<delivery::Queued>(), 264);
         assert_eq!(size_of::<records::Record>(), 40);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), OUTGOING);
-        // The send queue's regular room follows from the duty bucket, its
-        // hop places from the hop count (spec "Send queue"), and the delivery queue's
-        // places from a full heard table over one TTL (spec "Delivery queue").
+        // (spec "Send queue", "Delivery queue")
         assert_eq!(send_queue::SEND_QUEUE, 39);
         assert_eq!(send_queue::HOP_PLACES, 254);
         assert_eq!(send_queue::HOP_SLOTS, 64);
@@ -143,8 +122,8 @@ pub(crate) mod sizes {
     /// neighbours it goes round, one bit per neighbour-table slot, 8 B.
     const OUTGOING: usize = 296;
 
-    /// The bytes of every table, each checked to be what its entries take
-    /// and a few words of bookkeeping.
+    /// The bytes of every table, each checked to be its entries and a few
+    /// words of bookkeeping.
     pub(crate) fn tables() -> usize {
         let tables = [
             (
