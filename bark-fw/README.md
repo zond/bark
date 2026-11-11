@@ -203,7 +203,8 @@ Verified on the host:
   the oldest home on a node nobody is paired with; a home joining the one
   its person's earlier phone left; a removal of what a record holds; eight
   records in two reads of Phones; a removal code taken once, within 30 s
-  (2026-11-10, roadmap D168).
+  (2026-11-10, roadmap D168); `listed` moving at each write that changes
+  what Phones lists and at no other (2026-11-11, roadmap D207).
 - The ring for eight records (`cargo test -p bark-app-layer`,
   `mailbox`, `flash_ring`): a bit of the mark for each record, one
   person's reading and fetching clearing their own; each record's inbox by
@@ -1264,6 +1265,12 @@ as a pairing's is; a write of 2 with a record's number, the parts and
 that code removes them, within the 30 s and on one try (`bark_link::
 phones::Code`), the removed bond's phone's link closed and the bond
 gone from the host. Node's `room` says how many more phones may pair.
+Each change to what Phones lists, made by any writer of the records
+through `phones::with` or by a paired phone's link coming or going, moves
+Status's `phones` and notifies Status to every linked phone still paired,
+once the records are written (`phones_moved` in `src/ble.rs`), so a
+phone's list follows another's pairing, removal, home and name without
+connecting again.
 
 The log says `ble: link 3 in slot 1` as a link comes, `ble: recipient
 5a slot 1 record Some(1) name 5 bytes` as a phone writes its tag, `ble:

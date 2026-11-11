@@ -2214,7 +2214,7 @@ and its characteristics in the order of this table:
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
-| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) | 17 |
+| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) | 18 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
 | | | write | msg_id(4) | 4 |
@@ -2283,6 +2283,7 @@ a connection:
 | boot_left | seconds left of its first rotation, rounded up; 0 once it is over |
 | installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none. The node ends its phones' links for the minute a swap takes, and the app waits for it (roadmap D182) |
 | inbox | the phone's messages not yet confirmed ([receiving](#receiving)) |
+| phones | a count, wrapping, that moves at each change to what Phones lists for this phone ([phones](#phones)): a phone paired, removed or unpaired, a home set or cleared, a name or tag written, a phone's link up or down, its day; 0 on a guest's link. The node tells its linked owners once the records are written; at a change, the app reads Phones again |
 
 ### Sending
 
@@ -2472,7 +2473,7 @@ the other's oldest: only the newer side can know what a later version
 changed. When they do not, the node answers Recipient's write with the
 ATT error 0x82, incompatible, and ends the link, and the app, which reads
 Node first, tells the person which side to update (roadmap D177). This
-specification is link version 1, and each side's oldest is its own
+specification is link version 2, and each side's oldest is its own
 version: nothing older is kept (roadmap D188).
 
 A later version may add characteristics and append fields to the values
@@ -2562,11 +2563,13 @@ removes one without that record's phone. The app writes 0 and a slot, 0
 first, and a read gives the records in that slot and after it, as many
 whole ones as fit, and the slot to write next, 0 once the read reached
 the last; eight records take two reads at most. The slot read from is 0
-at each connection. Each record gives its number, its flags, the day its
-phone was last linked, counted from 1 on 2026-01-01 UTC, the first day of
-`sent` ([the payload](#the-payload)), 0 when the node had no time at any
-of its links, the person's recipient tag at the node, and their name, as
-long as its length byte says. The node writes a record again when its
+at each connection. The pages are one list only while Status's `phones`
+holds still: the app reads Status after the last page, and reads every
+page again if `phones` moved since before the first. Each record gives
+its number, its flags, the day its phone was last linked, counted from 1
+on 2026-01-01 UTC, the first day of `sent` ([the payload](#the-payload)),
+0 when the node had no time at any of its links, the person's recipient
+tag at the node, and their name, as long as its length byte says. The node writes a record again when its
 phone's day changes, at most once a day, to spare the flash.
 
 | flags | |

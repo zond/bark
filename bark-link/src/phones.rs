@@ -410,6 +410,7 @@ impl Load {
             private: s.private,
             next: s.next.max(1),
             dirty: Dirty::default(),
+            listed: 0,
         };
         p.private &= p.paired() > 0;
         p
@@ -483,6 +484,8 @@ pub struct Phones {
     /// The number the next record takes.
     next: u16,
     dirty: Dirty,
+    /// Moves at each change to what [`Phones::page`] lists of the records.
+    listed: u8,
 }
 
 impl Phones {
@@ -496,6 +499,7 @@ impl Phones {
             progress: 0,
             settings: false,
         },
+        listed: 0,
     };
 
     /// The record at `i`.
@@ -556,6 +560,18 @@ impl Phones {
         self.dirty.records |= 1 << i;
     }
 
+    /// What a Phones read lists changed.
+    fn relisted(&mut self) {
+        self.listed = self.listed.wrapping_add(1);
+    }
+
+    /// Moves, wrapping, at each change to what [`Phones::page`] lists but
+    /// which phones are linked, which the link knows (spec "Phone link",
+    /// Status).
+    pub fn listed(&self) -> u8 {
+        self.listed
+    }
+
     /// Take a phone's authenticated pairing that bonds, the ring's newest
     /// item being `newest` (spec "Pairing").
     pub fn pair(&mut self, keys: Keys, newest: u32) -> Result<Paired, Full> {
@@ -578,6 +594,7 @@ impl Phones {
         let number = self.number();
         self.records[i] = Some(Record::new(number, keys, newest));
         self.touch(i);
+        self.relisted();
         Ok(how)
     }
 
@@ -600,6 +617,7 @@ impl Phones {
                 r.tag = Some(tag);
                 r.name = name;
                 self.touch(i);
+                self.relisted();
             }
         }
     }
@@ -613,6 +631,7 @@ impl Phones {
         {
             r.day = day;
             self.touch(i);
+            self.relisted();
         }
     }
 
@@ -652,6 +671,9 @@ impl Phones {
         let bond = r.bond.take();
         self.touch(i);
         self.free_if_empty(i);
+        if bond.is_some() {
+            self.relisted();
+        }
         bond
     }
 
@@ -665,9 +687,13 @@ impl Phones {
             return i;
         };
         if r.key != key {
+            let home = r.key.is_some() != key.is_some();
             r.key = key;
             r.last_fetch = 0;
             self.touch(i);
+            if home {
+                self.relisted();
+            }
         }
         let Some(k) = key else {
             return i;
@@ -686,6 +712,7 @@ impl Phones {
         home.day = phone.day.max(home.day);
         self.touch(i);
         self.touch(j);
+        self.relisted();
         j
     }
 
@@ -717,6 +744,7 @@ impl Phones {
         }
         self.touch(i);
         self.free_if_empty(i);
+        self.relisted();
         Some(Removed { index: i, bond })
     }
 
@@ -1311,6 +1339,77 @@ mod tests {
         );
         // An empty node lists nothing.
         assert_eq!(Phones::EMPTY.page(0, None, 0, &mut [0u8; MAX_LEN]), 1);
+    }
+
+    /// Every read of Phones, place 0 first, as one run of bytes.
+    fn every_page(p: &Phones) -> std::vec::Vec<u8> {
+        let mut all = std::vec::Vec::new();
+        let mut from = 0;
+        loop {
+            let mut out = [0u8; MAX_LEN];
+            let len = p.page(from, None, 0, &mut out);
+            all.extend_from_slice(&out[1..len]);
+            from = out[0];
+            if from == 0 {
+                return all;
+            }
+        }
+    }
+
+    /// `listed` moves at each write that changes what Phones lists, and at
+    /// no other (spec "Phone link", Status).
+    #[test]
+    fn listed_moves_with_what_phones_lists() {
+        fn step(p: &mut Phones, what: &str, lists: bool, write: impl Fn(&mut Phones)) {
+            let (bytes, listed) = (every_page(p), p.listed());
+            write(p);
+            assert_eq!(every_page(p) != bytes, lists, "{what}: the list");
+            assert_eq!(p.listed() != listed, lists, "{what}: listed");
+        }
+        let mut p = Phones::EMPTY;
+        let bo = Name::new(b"Bo").unwrap();
+        step(&mut p, "pair", true, |p| {
+            assert!(p.pair(keys(1), 0).is_ok())
+        });
+        step(&mut p, "a second", true, |p| {
+            assert!(p.pair(keys(2), 0).is_ok())
+        });
+        step(&mut p, "again", false, |p| {
+            assert!(p.pair(keys(2), 0).is_ok())
+        });
+        step(&mut p, "keys", false, |p| {
+            p.set_keys(0, Keys { seen: 1, ..keys(1) })
+        });
+        step(&mut p, "tag", true, |p| p.set_recipient(1, 4, Name::EMPTY));
+        step(&mut p, "same tag", false, |p| {
+            p.set_recipient(1, 4, Name::EMPTY)
+        });
+        step(&mut p, "name", true, |p| p.set_recipient(1, 4, bo));
+        step(&mut p, "day", true, |p| p.linked(1, 300));
+        step(&mut p, "same day", false, |p| p.linked(1, 300));
+        step(&mut p, "progress", false, |p| p.progress(1, 9, 9));
+        step(&mut p, "private", false, |p| p.set_private(true));
+        step(&mut p, "home", true, |p| {
+            assert_eq!(p.set_home(1, Some([7; 32])), 1)
+        });
+        step(&mut p, "new key", false, |p| {
+            assert_eq!(p.set_home(1, Some([8; 32])), 1)
+        });
+        step(&mut p, "unpair", true, |p| assert!(p.unpair(1).is_some()));
+        step(&mut p, "join", true, |p| {
+            assert_eq!(p.set_home(0, Some([8; 32])), 1)
+        });
+        step(&mut p, "no home", true, |p| {
+            assert_eq!(p.set_home(1, None), 1)
+        });
+        let number = p.get(1).unwrap().number;
+        let bond = Parts {
+            bond: true,
+            home: false,
+        };
+        step(&mut p, "remove", true, |p| {
+            assert!(p.remove(number, bond).is_some())
+        });
     }
 
     #[test]

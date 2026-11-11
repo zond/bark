@@ -528,6 +528,11 @@ pub struct State {
     /// The removal code on the screen, if one is (spec "Phone link",
     /// Phones).
     removal: Option<bark_link::phones::Code>,
+    /// What Phones lists as last followed: the records' `listed` and the
+    /// places whose phones are linked ([`phones_moved`]).
+    listed: (u8, u8),
+    /// Status's `phones`, moved at each change of `listed`.
+    phones_told: u8,
 }
 
 impl State {
@@ -547,6 +552,13 @@ impl State {
     /// its phone's identity.
     fn slots_of(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
         (0..LINKS).filter(move |&s| self.phones[s].live && self.phones[s].record == Some(i))
+    }
+
+    /// A bit for each record whose phone is linked now.
+    fn linked(&self) -> u8 {
+        (0..LINKS)
+            .filter_map(|s| self.phones[s].record.filter(|_| self.phones[s].live))
+            .fold(0u8, |m, i| m | 1 << i)
     }
 }
 
@@ -595,6 +607,8 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     told_counts: [0; RECORDS],
     flags: None,
     removal: None,
+    listed: (0, 0),
+    phones_told: 0,
 }));
 
 /// The node's answer to the request: taken, or not.
@@ -891,18 +905,19 @@ fn now() -> Instant {
 }
 
 /// The status as the phone in `slot` reads it now: ready in its turn
-/// alone, and its count its own person's items not confirmed, none for a
-/// guest. It moves no turn: whatever moves it tells every phone
-/// ([`turn_moved`], [`publish`]).
+/// alone, its count its own person's items not confirmed, and `phones`,
+/// both none for a guest. It moves no turn: whatever moves it tells every
+/// phone ([`turn_moved`], [`publish`]).
 fn status_now(slot: usize) -> Status {
     LINK.lock(|l| {
         let l = l.borrow();
         let now = now();
-        let inbox = l.phones[slot].record.map_or(0, |i| l.counts[i]);
+        let record = l.phones[slot].record;
         Status {
             ready: l.status.ready && l.turn.holder() == Some(slot),
             boot_left_s: l.boot_ends.map_or(0, |e| seconds_left(now, e)),
-            inbox,
+            inbox: record.map_or(0, |i| l.counts[i]),
+            phones: record.map_or(0, |_| l.phones_told),
             ..l.status
         }
     })
@@ -1139,6 +1154,7 @@ async fn slot(
             l.phones[i] = Peer { link, ..Peer::NONE };
             l.turn.ended(i);
         });
+        phones_moved();
         // A message waiting for this guest alone is now nobody's, and its
         // turn passes on.
         crate::node::WAKE.mailbox_changed();
@@ -1217,6 +1233,42 @@ fn records_changed() {
         close_guests: was && !public,
         ..Notify::default()
     });
+}
+
+/// What Phones lists may have changed: the records, as `with` changed
+/// them (`phones.rs`), or which of their phones are linked. If it did,
+/// Status's `phones` moves and every phone still paired whose link is up
+/// is told; a guest is told nothing (spec "Phone link", Status).
+pub fn phones_moved() {
+    let (listed, bonded) = crate::phones::read(|p| {
+        let bonded = (0..RECORDS)
+            .filter(|&i| p.get(i).is_some_and(|r| r.bond.is_some()))
+            .fold(0u8, |m, i| m | 1 << i);
+        (p.listed(), bonded)
+    });
+    let to = LINK.lock(|l| {
+        let mut l = l.borrow_mut();
+        let now = (listed, l.linked());
+        if l.listed == now {
+            return 0;
+        }
+        l.listed = now;
+        l.phones_told = l.phones_told.wrapping_add(1);
+        let owners = (0..LINKS).filter(|&s| {
+            let p = &l.phones[s];
+            p.live && p.record.is_some_and(|i| bonded & (1 << i) != 0)
+        });
+        owners.fold(0u16, |m, s| m | 1 << s)
+    });
+    for slot in (0..LINKS).filter(|&s| to & (1 << s) != 0) {
+        notify_one(
+            slot,
+            Notify {
+                status: true,
+                ..Notify::default()
+            },
+        );
+    }
 }
 
 /// The host holds the records' bonds and no other: one a pairing added
@@ -1630,6 +1682,7 @@ impl Serving<'_, '_, '_> {
                     p.record = owner(conn);
                     p.pairing = false;
                 });
+                phones_moved();
                 linked(conn);
             }
             GattConnectionEvent::PairingFailed(e) => {
@@ -1652,6 +1705,7 @@ impl Serving<'_, '_, '_> {
             GattConnectionEvent::Encrypted { security_level, .. } => {
                 log::info!("ble: encrypted {:?}", security_level);
                 LINK.lock(|l| l.borrow_mut().phones[slot].record = owner(conn));
+                phones_moved();
                 linked(conn);
                 return true;
             }
@@ -2094,6 +2148,7 @@ fn refresh(
         l.phones[slot].record = record;
         l.phones[slot].refuses = refuses;
     });
+    phones_moved();
     if let Err(e) = conn.raw().set_refuses_pairing(refuses) {
         log::error!("ble: refusing pairing {}", HostError(&e));
     }
@@ -2398,10 +2453,7 @@ fn phones_now(
 ) -> heapless::Vec<u8, { bark_link::phones::MAX_LEN }> {
     let (from, linked) = LINK.lock(|l| {
         let l = l.borrow();
-        let linked = (0..LINKS)
-            .filter_map(|s| l.phones[s].record.filter(|_| l.phones[s].live))
-            .fold(0u8, |m, i| m | 1 << i);
-        (l.phones[slot].phones_from, linked)
+        (l.phones[slot].phones_from, l.linked())
     });
     let mut b = [0u8; bark_link::phones::MAX_LEN];
     let n = crate::phones::read(|p| p.page(from, record, linked, &mut b));

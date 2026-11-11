@@ -455,6 +455,8 @@ fn status(core: &Role, now: Instant, battery_mv: u16, installing: Option<u32>) -
         heard: core.neighbour_counts(now).heard,
         // Its low 16 bits, which wrap after 65 535 releases.
         installing: installing.map_or(0, |v| v as u16),
+        // Each link's own, as its phone reads it (`ble.rs`).
+        phones: 0,
     }
 }
 
