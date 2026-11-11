@@ -20,20 +20,15 @@ use std::fmt::Write;
 /// Latency percentiles in milliseconds.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Latency {
-    /// Median.
     pub p50_ms: f64,
-    /// 90th percentile.
     pub p90_ms: f64,
-    /// 99th percentile.
     pub p99_ms: f64,
-    /// Maximum.
     pub max_ms: f64,
 }
 
 /// Application-level summary.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AppSummary {
-    /// Messages originated.
     pub originated: u64,
     /// How long applications waited for their core to take a message.
     pub offers: Offers,
@@ -41,7 +36,6 @@ pub struct AppSummary {
     pub delivered: u64,
     /// `delivered / originated`, 0 if nothing was originated.
     pub delivery_ratio: f64,
-    /// Duplicate deliveries.
     pub duplicates: u64,
     /// Deliveries to the wrong node.
     pub misdelivered: u64,
@@ -76,8 +70,8 @@ pub struct AppSummary {
     pub phases: Vec<PhaseSummary>,
 }
 
-/// The pushback applications felt (core-interface §4): each holds one
-/// message and hands it over when its core takes one.
+/// The pushback applications felt (`docs/core-interface.md`
+/// "Application"): each holds one message until its core takes it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Offers {
     /// Messages the core did not take the moment they were due, those
@@ -98,11 +92,9 @@ pub struct Offers {
 pub struct PhaseSummary {
     /// Which phase: `"before settle"`, `"settled"` or `"after removal"`.
     pub phase: String,
-    /// Start, seconds.
     pub from_s: f64,
     /// End (exclusive), seconds.
     pub to_s: f64,
-    /// Messages originated in the phase.
     pub originated: u64,
     /// Of those, delivered.
     pub delivered: u64,
@@ -126,13 +118,10 @@ pub struct PhaseSummary {
 /// Per-channel summary.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ChannelSummary {
-    /// Channel index.
     pub channel: u8,
     /// Reception outcomes on this channel.
     pub rx: RxCounts,
-    /// Frames sent on this channel.
     pub tx_frames: u64,
-    /// Airtime on this channel, seconds.
     pub airtime_s: f64,
     /// The same airtime by packet type.
     pub airtime_by_type: TypeAirtime,
@@ -143,7 +132,6 @@ pub struct ChannelSummary {
 /// One observer's busy fractions.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ObserverSummary {
-    /// Node label.
     pub node: String,
     /// Busy fraction per channel over the run.
     pub busy_fraction: Vec<f64>,
@@ -154,7 +142,6 @@ pub struct ObserverSummary {
 pub struct NodeSummary {
     /// Index.
     pub id: u32,
-    /// Label.
     pub label: String,
     /// Metres east of the origin.
     pub x: f64,
@@ -174,7 +161,6 @@ pub struct NodeSummary {
     /// Whether it rides in a vehicle (`walk.rs`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub vehicle: bool,
-    /// Counters.
     #[serde(flatten)]
     pub m: NodeMetrics,
     /// Airtime as a fraction of the run (the duty-cycle cap is 0.10).
@@ -201,24 +187,19 @@ pub struct ReturnsSummary {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SleepSummary {
     /// Listening time per sleepy node and hour, seconds: the time its
-    /// radio did not receive duty-cycled, mean, median and 90th percentile over the
-    /// sleepy nodes.
+    /// radio did not receive duty-cycled; mean, median and 90th percentile.
     pub listen_s_per_h: [f64; 3],
-    /// Of that time, the time it received duty-cycled (`Action::Sniff`),
-    /// less what it spent receiving a frame it caught, which counts as
-    /// listening: mean, median and 90th percentile, seconds an hour.
+    /// The time it received duty-cycled (`Action::Sniff`) less frames it
+    /// caught, which count as listening; as `listen_s_per_h`.
     pub sniff_s_per_h: [f64; 3],
-    /// The radio's mean current per sleepy node after the settle time,
-    /// mA: listening at `sniff::RX_CURRENT_UA`, receiving duty-cycled at
-    /// `sniff::SNIFF_CURRENT_NA`, transmitting at `sniff::TX_CURRENT_UA`;
-    /// mean, median and 90th percentile over the sleepy nodes.
+    /// The radio's mean current per sleepy node, mA, at the currents of
+    /// `bark_proto::sniff`; mean, median and 90th percentile.
     pub current_ma: [f64; 3],
     /// The mean of each part of `current_ma`: listening, receiving
     /// duty-cycled, transmitting.
     pub current_parts_ma: [f64; 3],
-    /// The GPS's mean current per sleepy node after the settle time, mA:
-    /// its searches at `gps::GPS_CURRENT_UA`, and standby between them at
-    /// `gps::GPS_STANDBY_UA`; mean, median and 90th percentile.
+    /// The GPS's mean current per sleepy node, mA, searching and in
+    /// standby (`bark_proto::gps`); mean, median and 90th percentile.
     pub gps_ma: [f64; 3],
     /// GPS searches per sleepy node and hour.
     pub gps_searches_per_h: f64,
@@ -229,7 +210,6 @@ pub struct SleepSummary {
     /// Spells without an anchor past the first rotation, all and those that
     /// began after the first scripted removal (`Sim::anchorless_spells`).
     pub anchorless_spells: [(u64, u64, Option<f64>, Option<f64>); 2],
-    /// The counters.
     #[serde(flatten)]
     pub m: SleepMetrics,
     /// Sleepy nodes whose anchor the scenario removed or restarted, ones
@@ -255,8 +235,7 @@ pub struct RelayGpsSummary {
     /// Relay-hours on USB and on battery.
     pub hours: [f64; 2],
     /// The receiver's mean current over that time, on USB and on
-    /// battery, mA: running at `gps::GPS_CURRENT_UA`, in standby at
-    /// `gps::GPS_STANDBY_UA`.
+    /// battery, mA, running and in standby (`bark_proto::gps`).
     pub gps_ma: [f64; 2],
     /// Searches a relay started, per relay-hour, and the share that found
     /// a fix.
@@ -267,8 +246,7 @@ pub struct RelayGpsSummary {
     /// relays: every one a search for nothing.
     pub still_searches_per_h: f64,
     /// The radio's mean current of the nodes that were relays all the
-    /// time, mA: listening at `sniff::RX_CURRENT_UA`, transmitting at
-    /// `sniff::TX_CURRENT_UA`.
+    /// time, mA, at the currents of `bark_proto::sniff`.
     pub radio_ma: f64,
 }
 
@@ -288,28 +266,20 @@ pub struct StoreWrites {
 /// The run summary.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Summary {
-    /// Scenario name.
     pub scenario: String,
-    /// Run seed.
     pub seed: u64,
-    /// Simulated seconds.
     pub duration_s: f64,
-    /// Relays.
     pub relays: u32,
-    /// Leaves.
     pub leaves: u32,
     /// Link table.
     pub links: BuildStats,
     /// Events processed; a core timer counts when it fires, not when
     /// replaced.
     pub events: u64,
-    /// Application level.
     pub app: AppSummary,
     /// Reception outcomes, all channels.
     pub rx: RxCounts,
-    /// Frames transmitted.
     pub tx_frames: u64,
-    /// Total airtime, seconds.
     pub airtime_s: f64,
     /// Largest per-node airtime fraction.
     pub max_airtime_fraction: f64,
@@ -366,9 +336,7 @@ pub struct Summary {
     /// Frames addressed to a node that is not sleepy, by fate
     /// (`metrics::Addressed`).
     pub addressed: crate::metrics::Addressed,
-    /// Per channel.
     pub channels: Vec<ChannelSummary>,
-    /// Per observer.
     pub observers: Vec<ObserverSummary>,
     /// Per node, if requested.
     pub nodes: Option<Vec<NodeSummary>>,
@@ -1346,12 +1314,10 @@ fn hop_places_none(h: &HopPlaceRefusals) -> bool {
     h.refusals == 0
 }
 
-/// Seen ACKs over a run (spec "The ACK", roadmap D90): transmitted, and
-/// acted on by the sender they answered. Fewer acted on than sent means
+/// Seen ACKs over a run (spec "The ACK"). Fewer acted on than sent means
 /// some were lost and answered again.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct SeenAcks {
-    /// Seen ACKs transmitted.
     pub sent: u64,
     /// Seen ACKs their sender acted on.
     pub acted: u64,
@@ -1363,8 +1329,8 @@ impl SeenAcks {
     }
 }
 
-/// Messages held on a neighbour after a failed hand-over (spec
-/// "Hand-over" step 6, roadmap D102; `metrics::Holds`).
+/// Messages held on a neighbour after a failed hand-over
+/// (spec "Hand-over"; `metrics::Holds`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct HoldsSummary {
     /// Hand-overs taken, by the failed hand-overs to the same neighbour
@@ -1390,11 +1356,8 @@ pub struct HoldsSummary {
 pub struct Held {
     /// Holds that ended.
     pub count: u64,
-    /// Median, milliseconds.
     pub p50_ms: f64,
-    /// 90th percentile.
     pub p90_ms: f64,
-    /// Longest.
     pub max_ms: f64,
     /// All of them together, seconds.
     pub total_s: f64,

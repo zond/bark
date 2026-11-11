@@ -1,21 +1,14 @@
 //! The reboot into an image gathered over the mesh, as the firmware's
-//! driver does it (spec "Updates over the mesh", the install; roadmap
-//! D170; `bark-fw/src/node.rs`, `carry.rs`): once a node's image is whole
-//! and staged it drains while `bark_image::policy::drains` says so, and
-//! after each event checks `policy::quiet`; at the quiet moment it keeps
-//! what its core still holds (`Relay::held`) in the slots the firmware
-//! writes to its external flash (`bark_app_layer::carry`) and its tables
-//! as the firmware writes them (`bark_app_layer::tables`, roadmap D180),
-//! goes off the air for the swap, and comes back with a new core that
-//! takes its tables back, aged by the swap, and puts back each kept
-//! message where it was (roadmap D201); the application's own message,
-//! if it held one, it offers again first.
+//! driver does it (spec "Updates over the mesh"; `bark-fw/src/node.rs`,
+//! `carry.rs`): a staged node drains as `bark_image::policy` says, and at
+//! the quiet moment keeps what its core holds and its tables in the
+//! firmware's flash formats (`bark_app_layer::carry`, `tables`), goes off
+//! the air for the swap, and boots a new core that takes them back.
 //!
-//! The image becomes whole either when the update's pieces make it so
-//! (`update.rs`, with `[update]`) or at a time drawn for each node
-//! (`scenario::Installs`), without the pieces. The simulator has no phone
-//! links and its mailboxes write at once, so the moment's links are none
-//! and nothing is written.
+//! The image becomes whole from the update's pieces (`update.rs`, with
+//! `[update]`) or at a time drawn per node (`scenario::Installs`). The
+//! simulator has no phone links and its mailboxes write at once, so the
+//! moment never waits on links or writing.
 
 use crate::rng::{stream_seed, Purpose, Stream};
 use crate::sim::{secs, Ev, Sim};
@@ -194,9 +187,8 @@ fn take_back(core: &mut Relay, written: &[u8], now: Instant) -> ([usize; 2], Opt
 }
 
 impl Sim {
-    /// Draw which nodes install and when each one's image becomes whole
-    /// (`scenario::Installs`); with an update, nodes install as they
-    /// gather it whatever is drawn.
+    /// Draw which nodes install and when (`scenario::Installs`); with an
+    /// update, nodes also install as they gather it.
     pub(crate) fn install_setup(&mut self, sc: &crate::Scenario) -> Result<(), String> {
         let n = self.node_count();
         if sc.update.is_none() && sc.install.is_none() {
@@ -267,8 +259,7 @@ impl Sim {
         }
     }
 
-    /// Whether a swap may start on `node`'s power: on USB, or on a
-    /// battery above the low level (roadmap D143); without cells in the
+    /// Whether a swap may start on `node`'s power; without cells in the
     /// run, a battery is taken to allow it.
     fn swap_allowed(&self, node: u32) -> bool {
         let levels = self.relays[node as usize]
@@ -562,10 +553,7 @@ impl Sim {
         Some(out)
     }
 
-    /// Per node that installed, one row: node, relay, staged, drained
-    /// from, rebooted, back (s), messages kept and of them those for its
-    /// sleepy nodes and itself, refusals for draining, and the neighbour
-    /// entries and records kept and taken back.
+    /// The installs as CSV, one row per node that installed.
     pub fn install_csv(&self) -> Option<String> {
         let m = self.install.as_ref()?;
         let s = |t: Option<Instant>| {

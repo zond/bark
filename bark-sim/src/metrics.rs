@@ -1,12 +1,9 @@
 //! Counters, per node and per channel, with drop reasons as first-class data.
 //!
-//! Reception accounting: every time a transmission on channel `c` reaches a
-//! node whose resting channel is `c` (it would have heard the packet had
-//! nothing gone wrong), that is a *candidate*, and each candidate ends in
-//! exactly one outcome: delivered, lost to noise, lost capture, lost to
-//! interference, truncated, deaf for a stated reason, or half duplex. Nodes
-//! resting on other channels are not candidates: a packet sent elsewhere is
-//! not a loss.
+//! A transmission on channel `c` reaching a node resting on `c` is a
+//! *candidate* reception, and each candidate ends in exactly one
+//! [`Outcome`]. Nodes resting elsewhere are not candidates: a packet sent
+//! on another channel is not a loss.
 
 use crate::phy::Deaf;
 use bark_proto::radio::CHANNELS;
@@ -74,7 +71,6 @@ impl DeafCounts {
         }
     }
 
-    /// Total.
     pub fn total(&self) -> u64 {
         self.retune + self.cad + self.rssi + self.tx + self.corrupt + self.absent + self.sniff
     }
@@ -93,23 +89,15 @@ impl DeafCounts {
 /// Reception counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RxCounts {
-    /// Candidate receptions.
     pub candidates: u64,
-    /// Delivered.
     pub delivered: u64,
-    /// Below sensitivity.
     pub below_sensitivity: u64,
-    /// Lost capture.
     pub lost_capture: u64,
-    /// Lost to a later packet arriving past the preamble.
     pub lost_to_later: u64,
-    /// SINR failures, all.
     pub sinr_fail: u64,
     /// Of `sinr_fail`, those where adjacent-channel leakage dominated.
     pub sinr_fail_adjacent: u64,
-    /// Transmitter removed mid-packet.
     pub truncated: u64,
-    /// Receiver deaf, by reason.
     pub deaf: DeafCounts,
     /// Receiver transmitting.
     pub half_duplex: u64,
@@ -150,7 +138,6 @@ impl RxCounts {
             + self.half_duplex
     }
 
-    /// Add another counter set.
     pub fn merge(&mut self, o: &RxCounts) {
         self.candidates += o.candidates;
         self.delivered += o.delivered;
@@ -190,13 +177,9 @@ pub struct GpsCounts {
 /// Per-node counters.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct NodeMetrics {
-    /// Receptions at this node.
     pub rx: RxCounts,
-    /// Frames transmitted.
     pub tx_frames: u64,
-    /// Time on air, µs.
     pub airtime_us: u64,
-    /// The same time on air by packet type.
     pub airtime_by_type: TypeAirtime,
     /// CAD excursions.
     pub cad: u64,
@@ -222,9 +205,7 @@ pub struct NodeMetrics {
     pub originated: u64,
     /// `AppEvent::Message` at this node.
     pub messages_in: u64,
-    /// Messages this node dropped, by reason.
     pub drops: DropCounts,
-    /// What the core reported in its traces.
     pub core: CoreCounts,
     /// For a sleepy node: its GPS searches after the settle time
     /// (`gps.rs`).
@@ -241,11 +222,12 @@ pub struct NodeMetrics {
 pub struct CoreCounts {
     /// Home channel moves after the boot choice (spec "Channel moves").
     pub home_moves: u64,
-    /// Heartbeats skipped because every listen-before-talk check was busy (spec "Heartbeat").
+    /// Heartbeats skipped because every listen-before-talk check was busy
+    /// (spec "Heartbeat").
     pub heartbeats_skipped: u64,
     /// Heartbeats the bucket held back (spec "Duty cycle cap").
     pub heartbeats_deferred: u64,
-    /// DATA packets this relay refused, by what it lacked (spec "Receiving DATA").
+    /// DATA this relay refused, by what it lacked (spec "Receiving DATA").
     pub refused: DropCounts,
     /// Refusals this node received, each a ban on the refuser (spec "Bans").
     pub turned_away: u64,
@@ -256,11 +238,11 @@ pub struct CoreCounts {
     pub fresh_refused: u64,
     /// Hand-overs the bucket held back (spec "Duty cycle cap").
     pub handovers_deferred: u64,
-    /// Listen-before-talk give-ups on a receiver's channel (spec
-    /// "Hand-over" step 2).
+    /// Listen-before-talk give-ups on a receiver's channel
+    /// (spec "Hand-over" step 2).
     pub lbt_gave_up: u64,
     /// The waits those give-ups caused before the hand-over listened
-    /// again, in microseconds.
+    /// again.
     pub busy_wait_us: u64,
     /// Neighbours demoted (spec "Neighbour table").
     pub demoted: u64,
@@ -269,16 +251,16 @@ pub struct CoreCounts {
     pub anchor_checks: u64,
     /// Messages a sleepy node took from this node as their holder.
     pub delivered: u64,
-    /// Messages a neighbour took: sent on (spec "Next hop") or returned to the
-    /// parent (spec "Return to parent").
+    /// Messages a neighbour took: sent on or returned to the parent
+    /// (spec "Next hop", "Return to parent").
     pub handed_over: u64,
     /// Of those, returned to the parent (spec "Return to parent").
     pub returned: u64,
     /// Of the forwards, the first hand-over at the message's origin, count 1
     /// (spec "Hop count").
     pub originated_out: u64,
-    /// Hand-overs to a neighbour whose every attempt went unanswered (spec
-    /// "Hand-over" step 6).
+    /// Hand-overs to a neighbour whose every attempt went unanswered
+    /// (spec "Hand-over" step 6).
     pub failed: u64,
     /// Of those, whose receiver had the message by then, most likely
     /// because only its ACKs were lost.
@@ -291,8 +273,8 @@ pub struct CoreCounts {
     /// on its own, the split the storm is made of.
     pub moved_on_taken: u64,
     /// Copies of a message answered that were not retransmissions and
-    /// came from no neighbour this node had handed the message to (spec
-    /// "Receiving DATA" cases 4 to 6): a split's second copy, or the
+    /// came from no neighbour this node had handed the message to
+    /// (spec "Receiving DATA" cases 4 to 6): a split's second copy, or the
     /// search coming back by another way.
     pub copies: u64,
     /// Of those, merged with a copy held here (case 4).
@@ -320,19 +302,18 @@ pub struct CoreCounts {
 }
 
 /// What became of frames addressed to one node that is not sleepy, by
-/// what that node was doing when the frame started: `[kind][fate]`. Kinds:
-/// DATA from a node that is not sleepy, an ACK from one, DATA from a
-/// sleepy node, and a sleepy node's beat at its anchor. Fates: received; lost although the receiver was listening
-/// and free; lost while it was receiving another frame; lost while it was
-/// deaf on the channel (checking, transmitting, retuning); lost while it
-/// was on another channel.
+/// what that node was doing when the frame started: `[kind][fate]`.
+/// Kinds: DATA from a relay, an ACK from one, DATA from a sleepy node, a
+/// sleepy node's beat at its anchor. Fates: received; lost although the
+/// receiver was listening and free; lost while it received another frame;
+/// lost while it was deaf on the channel (checking, transmitting,
+/// retuning); lost while it was on another channel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Addressed {
-    /// Counts.
     pub counts: [[u64; 5]; 4],
     /// Of `counts`, the frames during which a sleepy node's heartbeat was
-    /// on the air at the receiver: the hidden-terminal question of a
-    /// presence frame sent at a time the sender chose (roadmap D41).
+    /// on the air at the receiver: a presence frame sent at a time its
+    /// sender chose is a hidden-terminal risk.
     pub with_beat: [[u64; 5]; 4],
     /// The same for the heartbeat of a node that is not sleepy.
     pub with_heartbeat: [[u64; 5]; 4],
@@ -369,12 +350,12 @@ pub struct Addressed {
     pub refusal_by_hops: [[u64; 8]; 4],
 }
 
-/// Refusals of a relay's DATA for want of room (spec "Receiving DATA"), and whether the
-/// refusing relay then had a free hop place at a count the refused sender
-/// would have sent another of its queued messages to it with: whether a
-/// refusal that named the lowest count it would take could have let the
-/// sender offer that message instead. Waiting is from each refusal to the
-/// refused message's next DATA from that sender.
+/// Refusals of a relay's DATA for want of room (spec "Receiving DATA"),
+/// and whether the refuser then had a free hop place at a count another
+/// of the sender's queued messages for it had: whether naming the lowest
+/// count it would take could have let the sender offer that one instead.
+/// Waiting is from each refusal to the refused message's next DATA from
+/// that sender.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct HopPlaceRefusals {
     /// Refusals of a relay's DATA for its bucket or a full room.
@@ -382,18 +363,15 @@ pub struct HopPlaceRefusals {
     /// Of those, with a hop place free for another message the sender held
     /// for the refuser.
     pub with_place: u64,
-    /// Waiting after the refusals, µs.
     pub wait_us: u64,
     /// Of that, after those with a hop place free.
     pub wait_with_place_us: u64,
 }
 
-/// DATA a relay received for a message it once kept a record of and no
-/// longer does: the record made way for another (spec "Message records",
-/// roadmap D31), and the relay takes the message for new.
+/// DATA a relay received for a message whose record had made way for
+/// another (spec "Message records"), so the relay takes it for new.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RecordsLost {
-    /// Such packets.
     pub packets: u64,
     /// The tag of each such packet's message.
     pub tags: Vec<u32>,
@@ -410,18 +388,14 @@ pub struct LeafSums {
     pub holding: u64,
     /// Sleepy nodes whose application waits to hand one over.
     pub waiting: u64,
-    /// Frames sent.
     pub tx_frames: u64,
-    /// Airtime by type, µs.
     pub airtime_by_type: TypeAirtime,
     /// Anchor changes.
     pub relay_changes: u64,
-    /// Messages received.
     pub messages_in: u64,
 }
 
 impl LeafSums {
-    /// Add one leaf.
     pub fn add(
         &mut self,
         m: &NodeMetrics,
@@ -468,28 +442,21 @@ pub struct LoadStats {
     pub cap_episodes: u64,
     /// The longest such run, samples.
     pub longest_cap: u64,
-    /// The run in progress, samples.
     #[serde(skip)]
     pub cap_run: u64,
-    /// Bucket content summed over samples, µs.
+    /// Bucket content, then each queue's and table's length: largest, and
+    /// summed over samples.
     pub bucket_sum_us: u64,
-    /// Largest send queue.
     pub send_queue_max: u64,
-    /// Send queue summed over samples.
     pub send_queue_sum: u64,
-    /// Largest delivery queue.
     pub delivery_max: u64,
-    /// Delivery queue summed over samples.
     pub delivery_sum: u64,
-    /// Largest neighbour table.
     pub neighbours_max: u64,
-    /// Neighbour table summed over samples.
     pub neighbours_sum: u64,
     /// Samples with the neighbour table full.
     pub neighbours_full: u64,
-    /// Largest heard table.
+    /// The heard table.
     pub leaves_max: u64,
-    /// Heard table summed over samples.
     pub leaves_sum: u64,
 }
 
@@ -534,9 +501,9 @@ impl LoadStats {
     }
 }
 
-/// Why a node dropped a message: the core's own reasons, reported in
-/// `Trace::Dropped`. The protocol sends no failure notice (roadmap D10),
-/// so a lost message is only visible where it died.
+/// Why a node dropped a message, as `Trace::Dropped` reports it. The
+/// protocol sends no failure notice, so a loss is visible only where it
+/// happened.
 pub use bark_proto::DropReason;
 
 /// Drop counters by reason.
@@ -552,7 +519,8 @@ pub struct DropCounts {
     pub send_queue_full: u64,
     /// The duty-cycle budget (spec "Duty cycle cap").
     pub budget: u64,
-    /// Fresh work refused while every way on was banned (spec "Receiving DATA").
+    /// Fresh work refused while every way on was banned
+    /// (spec "Receiving DATA").
     pub banned: u64,
     /// Refused while another message here went to the same next hop
     /// (spec "Receiving DATA"); left out where none was.
@@ -574,11 +542,11 @@ pub struct DropCounts {
     /// wait (spec "A sleepy node's own message").
     pub pushback: u64,
     /// Received and not taken because the ACK that takes it could not go
-    /// out (spec "The ACK", roadmap D93); left out where none was.
+    /// out (spec "The ACK"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     pub unanswered: u64,
-    /// Refused while the node drained for a reboot into a new image (spec
-    /// "Send queue"); left out where none was.
+    /// Refused while the node drained for a reboot into a new image
+    /// (spec "Send queue"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
     pub draining: u64,
 }
@@ -590,7 +558,6 @@ pub(crate) fn is_zero(n: &u64) -> bool {
 }
 
 impl DropCounts {
-    /// Count one drop.
     pub fn add(&mut self, r: DropReason) {
         let c = match r {
             DropReason::NoRoute => &mut self.no_route,
@@ -667,7 +634,6 @@ impl DropCounts {
         out
     }
 
-    /// Total.
     pub fn total(&self) -> u64 {
         self.fields().iter().map(|&(_, n)| n).sum::<u64>()
     }
@@ -676,13 +642,9 @@ impl DropCounts {
 /// Per-channel counters.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ChannelMetrics {
-    /// Receptions on this channel.
     pub rx: RxCounts,
-    /// Frames transmitted on this channel.
     pub tx_frames: u64,
-    /// Time on air on this channel, µs.
     pub airtime_us: u64,
-    /// The same time on air by packet type.
     pub airtime_by_type: TypeAirtime,
 }
 
@@ -702,9 +664,7 @@ pub struct TypeAirtime {
     /// HEARTBEAT of a relay answering a sleepy node without an anchor,
     /// with the long preamble.
     pub answer_us: u64,
-    /// ACK.
     pub ack_us: u64,
-    /// DATA.
     pub data_us: u64,
     /// Of `data_us`, DATA with the long preamble, to a sleepy node
     /// receiving duty-cycled.
@@ -748,9 +708,9 @@ impl TypeAirtime {
 }
 
 /// Application-level counters, matched through a tag the traffic model
-/// writes into each payload (the core never looks inside a payload).
-/// End-to-end delivery is known only by observing `AppEvent::Message` at
-/// the destination; nothing in the protocol reports it back.
+/// writes into each payload. Delivery is known only from
+/// `AppEvent::Message` at the destination: the protocol reports nothing
+/// back.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AppMetrics {
     /// Messages the traffic model had for a core to send.
@@ -758,7 +718,6 @@ pub struct AppMetrics {
     /// Of those, ones the core did not take the moment they were due, so
     /// the application waited (`Core::accepts_send`).
     pub waited: u64,
-    /// The longest such wait, µs.
     pub longest_wait_us: u64,
     /// Messages the traffic model did not send because its application
     /// still waited with the previous one.
@@ -769,12 +728,13 @@ pub struct AppMetrics {
     pub duplicates: u64,
     /// Messages that reached a node other than their destination.
     pub misdelivered: u64,
-    /// Messages whose 32-bit ID an earlier message already had (spec
-    /// "Packet formats"): the simulator follows a message by its ID, so
-    /// the earlier one's fate may be told as the later one's.
+    /// Messages whose 32-bit ID an earlier message already had
+    /// (spec "Packet formats"): the simulator follows a message by its ID,
+    /// so the earlier one's fate may be told as the later one's.
     pub shared_ids: u64,
     /// Messages the traffic model did not send because their destination
-    /// leaf had never attached, so no sender could know its address (spec "Addresses").
+    /// leaf had never attached, so no sender could know its address
+    /// (spec "Addresses").
     pub unaddressed: u64,
     /// Drops reported by cores, by reason (events, not messages: two
     /// copies of one message may be dropped in two places).
@@ -790,11 +750,8 @@ pub struct AppMetrics {
 /// (`Trace::Answer`), and of everything.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct BootAirtime {
-    /// The first rotation's heartbeats.
     pub burst_us: [u64; 2],
-    /// Answers.
     pub answer_us: [u64; 2],
-    /// Everything.
     pub all_us: [u64; 2],
 }
 
@@ -815,8 +772,8 @@ impl BootAirtime {
 }
 
 /// The start of a run in which the heartbeats of nodes switched on
-/// together are followed (`Metrics::boot_heartbeats`): a minute, the
-/// first rotation's quick heartbeats and their answers (roadmap D73).
+/// together are followed (`Metrics::boot_heartbeats`): a minute covers the
+/// first rotation's quick heartbeats and their answers.
 pub const BOOT_MINUTE: bark_proto::Duration = bark_proto::Duration::from_secs(60);
 
 /// Heartbeats of nodes that are not sleepy, after the settle time, at the
@@ -824,15 +781,15 @@ pub const BOOT_MINUTE: bark_proto::Duration = bark_proto::Duration::from_secs(60
 /// lost with another heartbeat on the air there.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct HeartbeatFates {
-    /// Receivers alive, in reach, awake, resting on the heartbeat's channel, and
-    /// reached above sensitivity on average.
+    /// Receivers alive, in reach, awake, resting on the heartbeat's
+    /// channel, and reached above sensitivity on average.
     pub candidates: u64,
     /// Of those, ones that received it.
     pub received: u64,
     /// Of the others, ones with another heartbeat on the air there.
     pub lost_with_heartbeat: u64,
-    /// Of the others, by why: to another frame, by capture, by a later
-    /// frame or by symbol errors; to a receiver that was deaf, retuning, checking, sending or
+    /// Of the others, by why: to another frame (capture, a later frame or
+    /// symbol errors); to a receiver deaf, retuning, checking, sending or
     /// locked to another frame's garbage; and below sensitivity.
     pub lost_collided: u64,
     /// See `lost_collided`.
@@ -848,10 +805,9 @@ pub struct SleepMetrics {
     /// DATA addressed to a sleepy node: received, sent while it could not
     /// hear it, lost otherwise.
     pub to_sleepy: [u64; 3],
-    /// DATA sent to a sleepy node that could not hear it: receiving
-    /// duty-cycled, and the frame's preamble short. By its
-    /// anchor, and by any other node; and how long it had been so, under
-    /// 5 s or more.
+    /// DATA sent to a sleepy node receiving duty-cycled with a short
+    /// preamble: by its anchor, and by any other node; and whether it had
+    /// been so under 5 s or longer.
     pub to_deaf: [[u64; 2]; 2],
     /// DATA with the long preamble to a sleepy node with an anchor that
     /// is the message's destination: frames and their airtime, µs; from
@@ -863,7 +819,6 @@ pub struct SleepMetrics {
     /// the node's anchor while the node was in reach, by its anchor while
     /// it was dark, by a node that was no longer its anchor.
     pub queue_expired: [u64; 3],
-    /// Minutes sampled.
     pub samples: u64,
     /// Summed over the samples, sleepy nodes with an anchor; of those,
     /// ones on another channel than their anchor's home, and ones their
@@ -931,9 +886,9 @@ pub enum FirstTry {
 /// The number of [`FirstTry`] cases.
 pub const FIRST_TRIES: usize = 9;
 
-/// How soon the network learns that a dark sleepy node is back (spec
-/// "Delivery queue"): from the moment it is in reach again to the first
-/// beat of it its anchor, or any node if it has none, receives.
+/// How soon the network learns that a dark sleepy node is back
+/// (spec "Delivery queue"): from the moment it is in reach again to the
+/// first beat of it its anchor, or any node if it has none, receives.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct LeafReturns {
     /// Leaves that came back into reach.
@@ -946,21 +901,18 @@ pub struct LeafReturns {
     pub latencies_us: Vec<u64>,
 }
 
-/// Busy-time tracker for one observer node: the fraction of time the
-/// in-channel power at the node (with adjacent leakage after rejection)
-/// exceeds the noise floor by the protocol's busy threshold. This is the
-/// ground truth the core's sampled busy estimate approximates.
+/// Busy-time tracker for one observer node: the time the in-channel
+/// power there, adjacent leakage included, exceeds the noise floor by the
+/// busy threshold. The ground truth the core's sampled estimate
+/// approximates.
 #[derive(Clone, Debug, Default)]
 pub struct Observer {
-    /// Node index.
     pub node: u32,
-    /// Busy now, per channel.
     pub busy: [bool; NCH],
-    /// Since when, per channel, µs.
+    /// Since when `busy` holds, µs.
     pub since: [u64; NCH],
-    /// Accumulated busy time, µs.
     pub total_us: [u64; NCH],
-    /// Accumulated busy time at the last sample, µs.
+    /// `total_us` at the last sample.
     pub at_sample_us: [u64; NCH],
 }
 
@@ -991,28 +943,25 @@ impl Observer {
 /// One row of the time series.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SampleRow {
-    /// End of the interval, seconds.
+    /// End of the interval.
     pub t_s: f64,
-    /// Channel.
     pub channel: u8,
-    /// Mean busy fraction over observers during the interval.
+    /// Mean over observers.
     pub busy_fraction: f64,
-    /// Frames started on this channel during the interval.
+    /// In the interval, on this channel.
     pub tx_frames: u64,
-    /// Receptions delivered on this channel during the interval.
+    /// See `tx_frames`.
     pub delivered: u64,
-    /// Messages originated so far.
+    /// So far, end to end.
     pub app_originated: u64,
-    /// Messages delivered end to end so far.
+    /// See `app_originated`.
     pub app_delivered: u64,
 }
 
 /// Two nodes the scenario forced to share an ID (`scenario::SharedIds`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Pair {
-    /// What they are.
     pub kind: crate::scenario::PairKind,
-    /// Whether they hear each other.
     pub reach: crate::scenario::PairReach,
     /// The two nodes; `b` took `a`'s ID.
     pub a: u32,
@@ -1025,15 +974,13 @@ pub struct Pair {
 }
 
 /// Counts for the research models that are off by default
-/// (`docs/simulator-design.md` §3.8).
+/// (`docs/simulator-design.md`, "Research models").
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Research {
-    /// The forced pairs.
     pub pairs: Vec<Pair>,
     /// Messages that reached the application of a node with their
     /// destination's ID that is not their destination.
     pub to_twin: u64,
-    /// The groups that go dark together.
     pub groups: Vec<Group>,
     /// Once a minute after the settle time, walkers (0) and riders (1)
     /// with an anchor: by what they do, moving or at a stop for less than
@@ -1061,19 +1008,18 @@ pub struct Research {
     /// absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tables: Option<Tables>,
-    /// What the nodes that move do (roadmap D70); absent where none had
-    /// a far fix, left an anchor for the flag, or delivered to its node
-    /// whether or not the node was in a window.
+    /// What the nodes that move do; absent where none had a far fix, left
+    /// an anchor for the flag, or delivered to its node whether or not the
+    /// node was in a window.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub carried: Option<Carried>,
-    /// What the nodes whose power switches do (roadmap D71); absent
-    /// without `[power]`.
+    /// What the nodes whose power switches do; absent without `[power]`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub power: Option<PowerMetrics>,
 }
 
-/// What the nodes whose power switches do (`Research::power`, roadmap
-/// D71). Times in seconds.
+/// What the nodes whose power switches do (`Research::power`). Times in
+/// seconds.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct PowerMetrics {
     /// The nodes whose power switches: the node, whether it was placed as
@@ -1091,14 +1037,12 @@ pub struct PowerMetrics {
     /// Graces that ended after the settle time.
     pub graces: u64,
     /// Relays that left after the settle time for being carried on
-    /// battery, with no grace (roadmap D152).
+    /// battery, with no grace.
     pub carried: u64,
-    /// The texts a relay held when it left, at the end of its grace or
-    /// carried on battery, after the settle time, by how they went first:
-    /// by the flush, at a beat of their node in its window or outside it,
-    /// to their node as a relay, handed on toward their address at the
-    /// turn to sleepy (roadmap D152), dropped by the node that held them,
-    /// none of these.
+    /// The texts a relay held when it left after the settle time, by how
+    /// they went first: by the flush, at their node's beat in or outside
+    /// its window, to their node as a relay, handed on toward their
+    /// address at the turn to sleepy, dropped by their holder, none.
     pub held: [u64; 6],
     /// Heartbeats for a change of flags or map point after the settle
     /// time: how many, and their airtime.
@@ -1108,8 +1052,7 @@ pub struct PowerMetrics {
     pub anchors_left: u64,
 }
 
-/// What the nodes that move do (`Research::carried`, roadmap D70). Times
-/// in seconds.
+/// What the nodes that move do (`Research::carried`). Times in seconds.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Carried {
     /// Every first far fix of a run: when, the relay, and whether it walks.
@@ -1140,7 +1083,7 @@ pub struct Carried {
     /// See `flush`.
     pub to_relay: (u64, f64),
     /// Heartbeats flagged sleepy and carried after the settle time: how
-    /// many, and their airtime (roadmap D72).
+    /// many, and their airtime.
     pub beats: (u64, f64),
     /// Heartbeats for a change sent by sleepy nodes whose carried flag
     /// changed, after the settle time: how many, and their airtime.
@@ -1175,9 +1118,8 @@ pub struct Tables {
     /// those with margin.
     pub sectors: [[u64; SECTORS]; 2],
     /// Every five minutes, of the sleepy nodes with an anchor that do not
-    /// walk or ride: how many,
-    /// whose anchor is the strongest relay they hear (base link above
-    /// sensitivity, before fading), and whose strongest is in their
+    /// walk or ride: how many, whose anchor is the strongest relay they
+    /// hear (base link, before fading), and whose strongest is in their
     /// neighbour table.
     pub anchors: (u64, u64, u64),
     /// Of the same, how far the anchor's base link is below the strongest
@@ -1187,7 +1129,7 @@ pub struct Tables {
     /// neighbour tables, and how many of those with margin.
     pub known_by: Vec<(u32, u32)>,
     /// Over the samples of `relays`, the entries that are relays with
-    /// margin by their distance, in bins of [`REACH_BIN_M`], the last for all farther.
+    /// margin by distance, in bins of [`REACH_BIN_M`], the last for farther.
     pub margin_by_distance: [u64; REACH_BINS],
     /// DATA from a relay to a relay after the settle time: `[margin][bin]`
     /// by whether the sender keeps the receiver with margin and by the
@@ -1235,7 +1177,6 @@ pub struct Group {
     pub from_s: f64,
     /// See `from_s`.
     pub to_s: f64,
-    /// Its nodes.
     pub members: Vec<u32>,
 }
 
@@ -1244,9 +1185,7 @@ pub struct Group {
 pub struct Metrics {
     /// Per node, indexed like the simulator's nodes.
     pub nodes: Vec<NodeMetrics>,
-    /// Per channel.
     pub channels: [ChannelMetrics; NCH],
-    /// Application level.
     pub app: AppMetrics,
     /// Dark leaves coming back.
     pub returns: LeafReturns,
@@ -1255,7 +1194,7 @@ pub struct Metrics {
     /// Heartbeats at their receivers, after the settle time.
     pub heartbeats: HeartbeatFates,
     /// The same in the run's first [`BOOT_MINUTE`], before the settle
-    /// time: what nodes switched on together meet (roadmap D73).
+    /// time: what nodes switched on together meet.
     pub boot_heartbeats: HeartbeatFates,
     /// Airtime of the first rotation's heartbeats and of the answers to
     /// nodes that know no relay.
@@ -1279,19 +1218,17 @@ pub struct Metrics {
     /// What pushback costs: silences, flaps, demoted neighbours that
     /// answer again.
     pub pressure: Pressure,
-    /// Busy-time observers.
     pub observers: Vec<Observer>,
-    /// Time series.
+    /// The time series.
     pub samples: Vec<SampleRow>,
     /// Events processed; a core timer counts when it fires, not when
     /// replaced.
     pub events: u64,
-    /// The research models.
     pub research: Research,
     last_sample: SampleMark,
 }
 
-/// Counters of what pushback costs, for counting only (roadmap D106).
+/// Counters of what pushback costs, for counting only.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Pressure {
     /// DATA addressed to a node that it did not answer for want of reply
@@ -1368,11 +1305,10 @@ impl Pressure {
 }
 
 /// What holding a message on a neighbour after a failed hand-over does
-/// (spec "Hand-over" step 6, roadmap D102). A hold starts at a node's
-/// first failed hand-over of a message to a neighbour and ends when a
-/// hand-over to that neighbour is taken, the message moves on at the
-/// neighbour's last failure, the neighbour refuses it or answers seen, or
-/// the message is dropped.
+/// (spec "Hand-over" step 6). A hold starts at a node's first failed
+/// hand-over of a message to a neighbour and ends when a hand-over to it
+/// is taken, the message moves on at its last failure, it refuses or
+/// answers seen, or the message is dropped.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Holds {
     /// Hand-overs taken, by the failed hand-overs to the same neighbour
@@ -1388,8 +1324,7 @@ pub struct Holds {
     pub ended_seen: u64,
     /// Holds ended by the message being dropped, its time gone.
     pub ended_dropped: u64,
-    /// How long each hold lasted, from its first failure to its end,
-    /// microseconds.
+    /// How long each hold lasted, from its first failure to its end.
     #[serde(skip)]
     pub held_us: Vec<u64>,
 }
@@ -1423,7 +1358,6 @@ struct SampleMark {
 }
 
 impl Metrics {
-    /// Counters for `n` nodes.
     pub fn new(n: usize) -> Metrics {
         Metrics {
             nodes: vec![NodeMetrics::default(); n],

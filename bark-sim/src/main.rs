@@ -1,11 +1,7 @@
-//! Scenario runner: `bark-sim SCENARIO.toml [--seed N] [--duration-s S]
-//! [--json FILE] [--csv FILE] [--messages FILE] [--trace FILE] [--links FILE]
-//! [--series FILE] [--message-minutes FILE] [--battery FILE] [--update FILE] [--installs FILE] [--tables] [--margin FILE]`. Prints a short table; writes the JSON summary, the CSV
-//! time series, the per-message CSV, the per-node event trace, the links
-//! between relays and the per-minute series of every relay when asked;
-//! `--tables` adds what the neighbour tables hold to the JSON summary;
-//! `--margin` writes, per DATA to a relay after the settle time, what its
-//! sender knew of the receiver and what the link was (`margin.rs`).
+//! Scenario runner (flags in `USAGE`). Prints a short table and writes
+//! each output file asked for: the JSON summary, CSV series, per-message
+//! CSV, event trace, relay links, per-relay minute series, and with
+//! `--margin` what each DATA's sender knew of its receiver (`margin.rs`).
 
 use bark_sim::{Scenario, Sim};
 use std::path::PathBuf;

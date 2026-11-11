@@ -2,17 +2,11 @@
 //! `bark_proto::gps`), and a relay's receiver, which runs while its core
 //! says it tracks (`Node::gps_tracks`) and in its searches.
 //!
-//! A search runs from the core's `Locate` until the first fix the driver
-//! hands or the end the core gave; a `Locate` at or before now ends it,
-//! as a sleepy node's does when it takes an anchor (roadmap D91). A node
-//! under the sky gets its fix after
-//! a hot start if it had one within the time the satellites' orbits serve,
-//! else after a cold start; a node that hears no sky gets none and runs to
-//! the end. Under the sky are the nodes placed outdoors or on a roof, the
-//! walkers while they walk, and of the others indoors the share
-//! `[gps] no_sky` leaves, drawn once per node. The time each search runs
-//! after the settle time is counted, at the receiver's current, and a
-//! relay's time on USB and on battery with the time its receiver ran.
+//! A node under the sky gets a hot start if its last fix is within the
+//! orbit data's validity, else a cold start; one that hears no sky runs to
+//! the end the core gave. Under the sky are nodes outdoors or on a roof,
+//! walkers while they walk, and the share of the rest that `[gps] no_sky`
+//! leaves, drawn once per node.
 
 use crate::links::Site;
 use crate::rng::{Purpose, Stream};
