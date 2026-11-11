@@ -1,9 +1,5 @@
-//! The heartbeat (spec "Heartbeat"): a relay's on its fixed interval, a
-//! channel a slot, with the first rotation's burst; a sleepy node's beat
-//! on its home; the announcement on the old channel after a move; a
-//! relay's answer to an anchorless node; and the one after a change of
-//! flags. What a heartbeat heard does to the tables and to a sleepy
-//! node's anchor is here too.
+//! The heartbeat (spec "Heartbeat"), sent in its kinds ([`Beat`]), and what
+//! a heartbeat heard does to the tables and to a sleepy node's anchor.
 
 use super::anchor::drift;
 use super::{Job, Node, Stage};
@@ -17,8 +13,7 @@ use crate::tables::neighbours::{Neighbour, Neighbours, NEIGHBOURS};
 use crate::time::{Duration, Instant};
 use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
 
-/// The rotating heartbeat (spec "Heartbeat") and the one-off announcement on the
-/// old channel after a move (spec "Channel moves").
+/// The heartbeat job's state.
 pub(super) struct Beacon {
     next_at: Instant,
     /// Not before this: a listen-before-talk backoff or a budget deferral.
@@ -26,29 +21,23 @@ pub(super) struct Beacon {
     rotation: Channel,
     /// The old home, to announce the new one on, after a move.
     announce: Option<Channel>,
-    /// The heartbeat in progress: its channel, and which it is.
     current: Option<(Channel, Beat)>,
     busy_checks: u8,
     /// A sleepy node's beats still to come at the heartbeat interval after
     /// a change of anchor.
     quick: u8,
-    /// Of a sleepy node with an anchor, the channels its anchorless
-    /// neighbours listen on, as a mask, taken when its beat came due (spec
-    /// "Beats"), and those of them still to beat on with the long preamble
-    /// before the beat itself goes.
+    /// A sleepy node's anchorless neighbours' channels, as a mask taken
+    /// when its beat came due, and those still to beat on before the beat
+    /// itself goes (spec "Beats").
     reach_all: Option<u16>,
     reach_left: u16,
-    /// A heartbeat owed for a change of flags or of the map point
-    /// (`changed`): the home channel when it changed.
+    /// A heartbeat owed for a change (`changed`): the home channel then.
     change: Option<Channel>,
-    /// Of the first rotation's slots, the ones still to go a
-    /// [`burst_gap`] apart (spec "Heartbeat").
+    /// The first rotation's slots still to go a [`burst_gap`] apart.
     burst: u8,
 }
 
 impl Beacon {
-    /// Before the first heartbeat: its rotation from `rotation`, due at
-    /// once.
     pub(super) const fn new(rotation: Channel) -> Beacon {
         Beacon {
             next_at: Instant::ZERO,
@@ -72,32 +61,26 @@ impl Beacon {
         self.quick = quick;
     }
 
-    /// The next heartbeat of its own accord at `at`.
     pub(super) fn next_at(&mut self, at: Instant) {
         self.next_at = at;
     }
 
-    /// The next heartbeat by `at` at the latest.
     pub(super) fn beat_by(&mut self, at: Instant) {
         self.next_at = self.next_at.min(at);
     }
 
-    /// Of the slots from the next, `burst` go a burst gap apart.
     pub(super) fn burst(&mut self, burst: u8) {
         self.burst = burst;
     }
 
-    /// The home moved from `old`: the new is announced there.
     pub(super) fn moved_from(&mut self, old: Channel) {
         self.announce = Some(old);
     }
 
-    /// Whether a heartbeat is under way.
     pub(super) fn under_way(&self) -> bool {
         self.current.is_some()
     }
 
-    /// When the next heartbeat of its own accord may go.
     pub(super) fn due_at(&self) -> Instant {
         self.next_at.max(self.ready_at)
     }
@@ -110,7 +93,6 @@ impl Beacon {
         self.reach_left = 0;
     }
 
-    /// No heartbeat is owed for a change.
     pub(super) fn no_change(&mut self) {
         self.change = None;
     }
@@ -119,8 +101,8 @@ impl Beacon {
 /// Which heartbeat the beacon sends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Beat {
-    /// The one of its slot: on the rotation's channel, or a sleeping
-    /// node's beat on its home.
+    /// The one of its slot: on the rotation's channel, or a sleepy node's
+    /// beat on its home.
     Slot,
     /// The one after a move, on the old channel (spec "Channel moves").
     Announce,
@@ -135,10 +117,9 @@ pub(super) enum Beat {
     Change,
 }
 
-/// How long a heartbeat heard was on the air: an anchorless sleepy node's
-/// beat with the long preamble, any other as if with the shortest. A relay's
-/// answer to an anchorless node also has the long one, but cannot be told
-/// from its other heartbeats.
+/// How long a heartbeat heard was on the air. A relay's answer to an
+/// anchorless node also has the long preamble, but cannot be told from its
+/// other heartbeats.
 fn heartbeat_airtime(hb: &Heartbeat) -> Duration {
     let preamble = if hb.anchorless && hb.sleepy {
         LONG_PREAMBLE_SYMBOLS
@@ -148,20 +129,17 @@ fn heartbeat_airtime(hb: &Heartbeat) -> Duration {
     time_on_air(HEARTBEAT_LEN as u8, preamble)
 }
 
-/// The bit of channel `c` in a mask of channels.
 fn channel_bit(c: Channel) -> u16 {
     1 << c.index()
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// Whether the node heartbeats now: from its boot, but a sleepy node
-    /// only once it has an anchor or its first rotation has ended, since
-    /// every answer to a sleepy node would carry the long preamble
-    /// (spec "Channel at boot", roadmap D73).
+    /// Whether the node heartbeats now. A sleepy node waits for an anchor
+    /// or the end of its first rotation, since every answer to it would
+    /// carry the long preamble (spec "Channel at boot").
     pub(super) fn heartbeats(&self) -> bool {
-        // A heartbeat says where the node is, and a node with no place
-        // knows its neighbours' positions only to the short form's period
-        // (spec "Position", roadmap D83).
+        // A heartbeat carries only the short position, which a node with
+        // no place cannot give (spec "Position").
         if !self.motion.placed() {
             return false;
         }
@@ -172,8 +150,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// When the heartbeat job is next ready of its own accord, once the
-    /// radio is free.
     pub(super) fn heartbeat_ready_at(&self) -> Instant {
         let b = &self.radio.beacon;
         let pending = b.announce.is_some() || b.current.is_some() || b.change.is_some();
@@ -187,9 +163,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         due.max(b.ready_at)
     }
 
-    /// The time to a sleepy node's next beat: a random half to one beat
-    /// period, the anchorless one without an anchor. A relay heartbeats on its fixed interval instead
-    /// (`heartbeat_done`).
+    /// The time to a sleepy node's next beat (spec "Beats").
     pub(super) fn beat_interval(&mut self) -> Duration {
         if self.radio.beacon.quick > 0 {
             self.radio.beacon.quick -= 1;
@@ -216,14 +190,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 || self.answer_due().is_some_and(|(_, _, at)| now >= at))
     }
 
-    /// The node's flags or its map point changed: it heartbeats on its
-    /// home channel at once, outside its slots, so that the neighbours
-    /// there address it anew now and not a rotation later, and an old
-    /// anchor learns to hand over its mail (spec "Heartbeat"). One
-    /// heartbeat for any number of changes before it goes, sleepy or not
-    /// (roadmap D72). A position that changes with each fix, a carried
-    /// node's or an anchorless one's, is not announced: its slots or
-    /// beats carry it (roadmap D71).
+    /// The node's flags or its map point changed: one heartbeat on its home
+    /// channel at once, for any number of changes before it goes
+    /// (spec "Heartbeat").
     pub(super) fn changed(&mut self) {
         if self.stage == Stage::Running {
             self.radio.beacon.change.get_or_insert(self.home);
@@ -237,8 +206,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         span.div_ceil(self.config.fade_retry.as_micros().max(1)) as u8
     }
 
-    /// The next answer a relay owes a neighbour that knows no relay, if
-    /// any: its ID, the channel it listens on, and when.
+    /// The next answer a relay owes a neighbour that knows no relay: its
+    /// ID, the channel it listens on, and when.
     pub(super) fn answer_due(&self) -> Option<(NodeId, Channel, Instant)> {
         // Nobody anchors to a node that holds no mail. A node in its first
         // rotation is heard by its burst instead (spec "Heartbeat").
@@ -249,13 +218,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .answer_due(self.config.fade_retry, self.answers())
     }
 
-    /// The heartbeat in progress. It carries the home at the moment it is
-    /// sent, so a move during its backoff still announces the new channel,
-    /// and the node's address, a sleepy node's anchor's position while it
-    /// has one. A sleepy node with an anchor beats on its home; a sleepy node
-    /// without an anchor, a relay answering one, and a sleepy node's beat
-    /// on its anchorless neighbours' channels, its home among them, send
-    /// with the long preamble.
+    /// The heartbeat in progress. Built when sent, so a move during its
+    /// backoff still announces the new channel.
     pub(super) fn heartbeat_frame(&self) -> Frame {
         let (channel, beat) = self
             .radio
@@ -302,9 +266,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         mac::frame(&Packet::Heartbeat(hb), channel, preamble)
     }
 
-    /// The heartbeat in progress as it goes at `now`: with the update's
-    /// section after its first 13 bytes when it carries one (spec
-    /// "Updates over the mesh").
+    /// The heartbeat in progress, with the update's section when it carries
+    /// one (spec "Updates over the mesh").
     pub(super) fn heartbeat_frame_at(&self, now: Instant) -> Frame {
         let mut f = self.heartbeat_frame();
         if let Some(section) = self.heartbeat_section(now, f.channel) {
@@ -317,13 +280,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         f
     }
 
-    /// Check the budget before the channel: there is no point listening for
-    /// a slot the budget will not let us use. Nothing else transmits
-    /// between this check and the transmission, and the bucket only fills
-    /// meanwhile, so the budget cannot have shrunk by then. The
-    /// announcement after a move goes first, then the heartbeat of the
-    /// slot, after a sleepy node's copies of it on its anchorless
-    /// neighbours' channels, then an answer.
+    /// Check the budget before the channel: nothing else transmits between
+    /// this check and the transmission, and the bucket only fills meanwhile.
     pub(super) fn start_heartbeat(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if self.radio.beacon.current.is_none() {
             if now >= self.radio.beacon.next_at && self.radio.beacon.reach_all.is_none() {
@@ -346,9 +304,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 _ => return false,
             };
             if let Some((_, Beat::Answer(_))) = self.radio.beacon.current {
-                // Every relay that heard the heartbeat answers it: each at
-                // a random time within a backoff, so that they do not all
-                // check the channel and send in the same instant.
+                // Every relay that heard the heartbeat answers it: spread
+                // them so they do not all check the channel at once.
                 let wait = self
                     .rng
                     .duration(Duration::ZERO, self.config.lbt_backoff_max);
@@ -372,12 +329,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         true
     }
 
-    /// The channels the anchorless neighbours of a sleepy node with an
-    /// anchor listen on at `now`, as a mask: each of its beats goes on
-    /// each of them too, with the long preamble, once it has heard the
-    /// neighbour anchorless in two consecutive rotations of its beats
-    /// (spec "Beats"). One heard so once may be switching on, and anchor
-    /// within minutes.
+    /// The channels a sleepy node with an anchor also beats on, as a mask:
+    /// its anchorless neighbours' (spec "Beats").
     pub(super) fn reach_channels(&self, now: Instant) -> u16 {
         if !self.anchored_sleepy() {
             return 0;
@@ -424,10 +377,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.send(Job::Heartbeat, f, now, emit);
     }
 
-    /// The heartbeat went out, or was skipped (spec "Heartbeat"). On a fixed
-    /// interval a skipped one gives up its channel for the rotation, so
-    /// that the next comes where and when its neighbours expect it; a
-    /// sleeping node's beat, always on its home, has no rotation to keep.
+    /// The heartbeat went out, or was skipped (spec "Heartbeat").
     pub(super) fn heartbeat_done(&mut self, now: Instant, sent: bool) {
         self.radio.beacon.busy_checks = 0;
         let home = self.home;
@@ -474,10 +424,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.radio.beacon.rotation = self.radio.beacon.rotation.next();
             self.radio.beacon.next_at = now + self.beat_interval();
         } else {
-            // On its fixed interval, a channel a slot whether or not the
-            // heartbeat went, so that a neighbour that heard one knows when
-            // the next comes to its channel (spec "Heartbeat"); in its first
-            // rotation, a burst gap apart.
+            // A channel a slot whether or not the heartbeat went, so that a
+            // neighbour that heard one knows when the next comes to its
+            // channel.
             let mut next = self.radio.beacon.next_at + self.slot_gap();
             self.radio.beacon.rotation = self.radio.beacon.rotation.next();
             while next <= now {
@@ -492,8 +441,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The time from the slot that has just gone to the next: a burst gap
-    /// while the first rotation's slots last, then the node's interval
+    /// The time from the slot that has just gone to the next
     /// (spec "Heartbeat").
     pub(super) fn slot_gap(&mut self) -> Duration {
         self.radio.beacon.burst = self.radio.beacon.burst.saturating_sub(1);
@@ -504,13 +452,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A heartbeat. Every heartbeat fills the neighbour table, a sleepy
-    /// node's marked sleepy (spec "Neighbour table"). At a node that is not
-    /// sleepy, the beat of a sleepy node with an anchor fills the heard
-    /// table too: the node listens now, and gets what is held for it; one
-    /// without an anchor has no window to deliver in
-    /// (spec "Sleepy nodes alone"). A sleepy node's anchor follows the
-    /// heartbeats of nodes that are not sleepy (spec "Relay choice").
+    /// A heartbeat heard (spec "Neighbour table", "Delivery",
+    /// "Relay choice").
     pub(super) fn heard(
         &mut self,
         hb: Heartbeat,
@@ -542,15 +485,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // When it started: a heartbeat's slot is its start, give or take
         // the listen-before-talk.
         let started = now - heartbeat_airtime(&hb);
-        // A heartbeat of the anchor that a sleeping node hears before its
-        // watch opens is not in a slot: an answer to a node without an
-        // anchor, or the one after a move (spec "Relay choice"). It shows the
-        // anchor alive but says nothing of its slots.
+        // A heartbeat of the anchor heard before the watch opens is in no
+        // slot: it shows the anchor alive and moves nothing
+        // (spec "Relay choice").
         let off_slot = self.anchor().is_some_and(|a| a.id == hb.id)
             && self.listen.watching()
             && self.watch().is_some_and(|(from, _)| started < from);
-        // A relay's burst goes a burst gap a heartbeat: none of it is in a
-        // slot, and its slots start anew (spec "Heartbeat").
+        // A relay's burst is in no slot, and its slots start anew
+        // (spec "Heartbeat").
         let burst = hb.anchorless && !hb.sleepy;
         if burst {
             self.neighbours.burst_heard(hb.id);
@@ -613,18 +555,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Whether the node listens all the time: not sleepy. Only such a
-    /// node can tell a heartbeat that did not come from one it slept
-    /// through.
+    /// Whether the node listens all the time: only such a node can tell a
+    /// heartbeat that did not come from one it slept through.
     fn listens(&self) -> bool {
         !self.sleepy() && self.stage != Stage::Off
     }
 
-    /// The window in which the next heartbeat of `n` is due on this
-    /// node's channel, if its slots are known (spec "Heartbeat"): its
-    /// slot, less what the last one heard may have waited behind its own
-    /// slot ([`heartbeat_lag`]) and the clocks' drift since, to its slot
-    /// plus that wait, that drift and the heartbeat's airtime.
+    /// The window in which the next heartbeat of `n` is due on this node's
+    /// channel, if its slots are known (spec "Heartbeat").
     pub(super) fn slot_window(&self, n: &Neighbour) -> Option<(Instant, Instant)> {
         if !n.slotted || !n.relay() || n.anchorless {
             return None;
@@ -652,13 +590,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .min()
     }
 
-    /// Count the heartbeats due on this channel (spec "Heartbeat"): a
-    /// window that has opened by `now` notes how long the radio has been
-    /// away in all; one that has closed enters a reading at the floor,
-    /// weighted by the share of the window the radio listened through,
-    /// and passes to the next rotation. Asked before an event is applied,
-    /// so that a frame or an excursion ending now counts as away until
-    /// now.
+    /// Count the heartbeats due on this channel that did not come
+    /// (spec "Heartbeat"). Asked before an event is applied, so that a
+    /// frame or an excursion ending now counts as away until now.
     pub(super) fn count_missed_heartbeats(&mut self, now: Instant) {
         if !self.listens() {
             return;

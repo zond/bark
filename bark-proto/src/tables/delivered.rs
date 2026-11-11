@@ -2,20 +2,16 @@
 //! from any neighbour, is ACKed and not delivered again (spec "Owner",
 //! "Delivery queue").
 //!
-//! [`DELIVERED`] entries with no lifetime: when full, a new one takes the
-//! place of the least recently active, the one delivered or last offered
-//! again longest ago, as message records do (`records.rs`, roadmap D31).
-//! The size is the delivery queue's, [`DELIVERY_QUEUE`]: what a relay
-//! delivers in one delivery TTL for a full heard table, 256 sleepy nodes (`heard.rs`)
-//! at ≈23 texts a day each (spec "Capacity and sizing", the network at capacity), 41. Above that
-//! a late copy of one forgotten is delivered twice, which the app, whose
-//! payloads are unique (spec "Phone link"), can recognise.
+//! Entries have no lifetime: when full, a new one replaces the least
+//! recently active, as message records do. The size is the delivery
+//! queue's: above it a late copy of a forgotten one is delivered twice,
+//! which the app, whose payloads are unique, can recognise.
 
 use crate::ids::MsgId;
 use crate::tables::delivery::DELIVERY_QUEUE;
 use crate::time::Instant;
 
-/// Capacity; see the module documentation.
+/// Capacity, [`DELIVERY_QUEUE`] (spec "Delivery queue").
 pub const DELIVERED: usize = DELIVERY_QUEUE;
 
 const _: () = assert!(DELIVERED == 41);
@@ -23,7 +19,7 @@ const _: () = assert!(DELIVERED == 41);
 /// The delivered window.
 #[derive(Clone)]
 pub struct Delivered {
-    /// Each ID with when it was last active.
+    /// Each ID with when it was last delivered or offered.
     entries: [(MsgId, Instant); DELIVERED],
     len: usize,
 }

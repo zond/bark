@@ -1,11 +1,9 @@
-//! The signatures in a header, and the check the running firmware makes
-//! of them before it stages an image (`bark-fw/README.md`, "Updates").
+//! The signatures in a header, and the check the firmware makes of them
+//! before it stages an image.
 //!
-//! A signature covers the header's first [`SIGNED_LEN`] bytes: the magic,
-//! the format, the version, the length and the image's SHA-256. The hash
-//! stands for the image, which the firmware hashes anyway, so the
-//! signature is checked against 48 bytes and not the image's 388 KB,
-//! and before a byte of the image has come.
+//! A signature covers the header's first [`SIGNED_LEN`] bytes, which hold
+//! the image's SHA-256, so it is checked before a byte of the image has
+//! come.
 
 #[cfg(feature = "verify")]
 use ed25519_compact::{PublicKey, Signature};
@@ -33,9 +31,9 @@ pub const NONE: u8 = 0;
 
 const _: () = assert!(SIGNED_LEN + SLOTS * SLOT_LEN <= HEADER_LEN);
 
-/// A public key and the byte that names it in a slot. [`NONE`] marks no
-/// key. Laid out as 33 bytes, the byte first, so that the build scripts
-/// read a firmware's keys from its image.
+/// A public key and the byte that names it in a slot. Laid out as 33
+/// bytes, the byte first, so that the build scripts read a firmware's keys
+/// from its image.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Key {
@@ -60,8 +58,7 @@ pub enum SignatureError {
     Unsigned,
     /// No slot names a key this firmware holds.
     UnknownKey,
-    /// A slot names a key this firmware holds, and its signature does not
-    /// verify under it.
+    /// A slot names a held key, and its signature does not verify under it.
     Bad,
 }
 
@@ -257,7 +254,7 @@ mod tests {
         assert_eq!(verify(&h, &built(true)), Err(SignatureError::Bad));
     }
 
-    /// Roadmap D154: a node of any build takes the project's release.
+    /// A node of any build takes the project's release.
     #[test]
     fn a_release_is_taken_by_an_open_build_and_a_protected_one() {
         assert_eq!(verify(&release_signed(), &built(true)), Ok(1));

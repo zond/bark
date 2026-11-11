@@ -26,18 +26,14 @@ const NOBODY: NodeId = NodeId([9; 6]);
 
 #[test]
 fn sizes() {
-    // docs/core-interface.md §6: the tables, and around them the medium
-    // access, the hand-over, one owed reply and one held message in
-    // under 1 KiB, and what the node keeps across a reboot, handed
-    // back and last kept.
+    // docs/core-interface.md §6: the node outside its tables in under
+    // 1 KiB, beside what it keeps across a reboot.
     let relay = core::mem::size_of::<Relay>();
     let tables = crate::tables::sizes::tables();
     let kept = 2 * core::mem::size_of::<Option<Stored>>();
-    // What it keeps of the images spreading
-    // (spec "Updates over the mesh"): small beside the tables, most of it
-    // a bit for each piece of each of the 48 blocks an image can have.
+    // Most of the spread is a bit for each piece of each of the 48 blocks
+    // an image can have.
     let spread = core::mem::size_of::<update::Spread>();
-    // And what it learns of its battery's drain (`drain.rs`).
     let drain = core::mem::size_of::<crate::drain::Drain>();
     std::println!(
         "Relay {relay} B, tables {tables} B, kept {kept} B, spread {spread} B, drain {drain} B"
@@ -47,9 +43,8 @@ fn sizes() {
     assert!(relay <= tables + 1024 + kept + spread + drain, "{relay}");
     // It fits the board's RAM: 255 KiB for the application
     // (bark-image/src/layout.rs), less the firmware's other static memory,
-    // the BLE stack, Embassy and the USB log, 29 896 B as measured
-    // (docs/phone-link-2026-11-05.md, "Does it fit"), and the call
-    // stack, estimated at 16 KiB (spec "Implementation notes").
+    // 29 896 B as measured (docs/phone-link-2026-11-05.md, "Does it fit"),
+    // and the call stack, estimated at 16 KiB (spec "Implementation notes").
     let ram = 255 * 1024 - 29_896 - 16 * 1024;
     assert!(relay <= ram, "{relay} of {ram}");
     // A node built only to be sleepy spends nothing on the heard table
@@ -84,8 +79,7 @@ fn a_sleepy_node_without_the_mailbox_is_a_sleepy_relay() {
 }
 
 /// A sleepy node fills its neighbour table from the beats it hears,
-/// marked sleepy, and keeps no heard table (spec "Neighbour table",
-/// "Heard table").
+/// marked sleepy, and keeps no heard table.
 #[test]
 fn a_sleepy_node_keeps_no_heard_table() {
     let config = Config {
@@ -132,8 +126,8 @@ fn a_sleepy_node_keeps_no_heard_table() {
 /// (spec "Updates over the mesh", the install).
 #[test]
 fn the_first_frame_heard_is_told_once() {
-    // How long a gathered image may wait for it: three worst-case
-    // rotations and a heartbeat's lateness (spec "Heartbeat").
+    // Three worst-case rotations and a heartbeat's lateness
+    // (spec "Heartbeat").
     assert_eq!(
         crate::update::heard_within(&Config::default()),
         Duration::from_micros(3 * 13 * 15_000_000 + 872_800)
@@ -188,8 +182,7 @@ fn the_first_frame_heard_is_told_once() {
 }
 
 /// A sleepy node holds mail for nobody: a message for another node at
-/// its own position is not its to deliver, and waits to go on (spec
-/// "Sleepy nodes", "Owner").
+/// its own position waits to go on (spec "Sleepy nodes", "Owner").
 #[test]
 fn a_sleepy_node_owns_no_other_node_s_message() {
     let config = Config {
@@ -217,9 +210,8 @@ fn a_sleepy_node_owns_no_other_node_s_message() {
 }
 
 /// The record of a message the node holds is not kept across a reboot:
-/// the node offers the message again as its own and new, and the record
-/// would make that offer a repeat (spec "Updates over the mesh", the
-/// install).
+/// the node offers the message again as new, which the record would
+/// make a repeat.
 #[test]
 fn the_record_of_a_message_held_is_not_remembered() {
     let config = Config {
@@ -246,9 +238,8 @@ fn the_record_of_a_message_held_is_not_remembered() {
     assert!(!r.remembered(now).any(|k| matches!(k, Kept::Record(_))));
 }
 
-/// Boot `r` on battery, as its driver reports at boot
-/// (`docs/core-interface.md` §4): sleepy. Returns the excursions it
-/// asked for, for [`drive_from`].
+/// Boot `r` on battery, as its driver reports at boot: sleepy. Returns
+/// the excursions it asked for, for [`drive_from`].
 fn on_battery<const H: usize, const Q: usize>(r: &mut Node<H, Q>) -> Vec<Action> {
     let mut pending = Vec::new();
     let mut keep = |a: Action| {
@@ -345,11 +336,8 @@ fn drive_all<const H: usize, const Q: usize>(
 }
 
 /// A sleepy node whose anchor is not in its table when the rotation of
-/// its first choice ends makes the choice at its time and does not
-/// wake at once again. Before D58 a sleepy node beating with the
-/// anchor's ID removed the entry; now the entry is pinned, so the test
-/// forgets it by hand to keep the invariant: a timer that is due is
-/// cleared.
+/// its first choice ends makes the choice at its time and does not wake
+/// at once again. The entry is pinned, so the test forgets it by hand.
 #[test]
 fn the_first_choice_ends_without_the_anchor() {
     use crate::wire::Heartbeat;
@@ -392,9 +380,8 @@ fn the_first_choice_ends_without_the_anchor() {
     s.neighbours.pin(None);
     s.neighbours.forget(anchor);
     assert!(s.neighbours().all(|n| n.id != anchor));
-    // Run it, completing its radio actions at once, for as many
-    // events as a minute takes it; stuck, it would spend them all at
-    // the end of the choice.
+    // As many events as a minute takes; stuck, it would spend them all
+    // at the end of the choice.
     let mut now = at(2000);
     let mut pending: Vec<Action> = Vec::new();
     for _ in 0..10_000 {
@@ -466,10 +453,9 @@ fn a_reset_relay_is_a_new_one() {
 }
 
 /// A node whose bucket is nearly spent holds one message for a sleepy
-/// node that has just beaten, and nothing else happens: it wakes when
-/// its bucket will fit the DATA with the reply reserve, within the
-/// node's window, and sends it then. The node never answers, and its message
-/// waits for its next beat (`relay/delivery.rs`).
+/// node that has just beaten: it wakes when its bucket will fit the DATA
+/// with the reply reserve, within the window, and sends it then. Unanswered,
+/// the message waits for the next beat.
 #[test]
 fn a_delivery_waits_for_the_bucket_within_the_window() {
     use crate::ids::MsgId;
@@ -548,11 +534,9 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     assert_eq!(r.delivery.len(), 1, "it waits for the next beat");
 }
 
-/// A DATA to a sleepy node goes ahead of everything in the send queue
-/// (spec "Delivery"), so it needs only its own frame and the reply
-/// reserve in the bucket, not the airtime of the forwards it goes ahead
-/// of: a holder at its cap whose queued forwards outweigh its bucket
-/// still delivers in the window (spec "Delivery queue", roadmap D55).
+/// A DATA to a sleepy node goes ahead of everything in the send queue,
+/// so a holder at its cap whose queued forwards outweigh its bucket still
+/// delivers in the window (spec "Delivery queue").
 #[test]
 fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     use crate::ids::MsgId;
@@ -636,10 +620,9 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
 }
 
 /// Two packets arrive within one reply time, while a reading of the
-/// sweep holds the radio (core-interface §3 rule 8). The second finds
-/// the one owed-reply place holding the first one's ACK: it is neither
-/// taken nor refused, and gets no answer. Its sender's retry, after the
-/// first ACK is gone, is taken (roadmap D29 rule 4).
+/// sweep holds the radio (core-interface §3 rule 8). The second finds the
+/// one owed-reply place taken: it gets no answer, and its sender's retry,
+/// after the first ACK is gone, is taken.
 #[test]
 fn a_packet_that_cannot_be_answered_is_not_taken() {
     use crate::event::AppEvent;
@@ -789,13 +772,12 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     assert!(delivered(&got, &b));
 }
 
-/// The application may send only while the relay can take a message
-/// (roadmap D29 rule 6): not while it boots, not while it holds one of
-/// the application's, and not while its bucket cannot hold a full
-/// frame on top of what it has queued; then the relay wakes when it
-/// can. A send offered anyway is ignored. A message for a sleepy node
-/// this relay holds for that finds the delivery queue full is held
-/// until it has a place.
+/// The application may send only while the relay can take a message:
+/// not while it boots, not while it holds one of the application's, and
+/// not while its bucket cannot hold a full frame on top of what is queued;
+/// then the relay wakes when it can. A send offered anyway is ignored. A
+/// message for a held-for sleepy node that finds the delivery queue full
+/// is held until it has a place.
 #[test]
 fn the_application_waits_for_room() {
     use crate::ids::NodeId;
@@ -813,7 +795,7 @@ fn the_application_waits_for_room() {
     let mut r = Relay::new(config, 1);
     let mut now = Instant::ZERO;
     r.handle(Event::Wakeup, now, &mut |_| {});
-    // From its boot (roadmap D73).
+    // From its boot.
     assert!(r.accepts_send(now), "booting");
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     assert!(r.accepts_send(now));
@@ -868,11 +850,10 @@ fn the_application_waits_for_room() {
     assert!(r.accepts_send(ready));
 }
 
-/// With the regular room closed by the bucket, a packet that has come
-/// two hops takes hop place 2, then 1, whatever the bucket holds; a
-/// sleepy node's own, or a third from two hops out, is refused. A place frees
-/// when its frame leaves (roadmap D31). The relay has no neighbours, so
-/// each packet, from a sender of its own, would go back its own way.
+/// With the regular room closed by the bucket, a packet that has come two
+/// hops takes hop place 2, then 1; a sleepy node's own, or a third from two
+/// hops out, is refused. A place frees when its frame leaves. With no
+/// neighbours, each packet would go back its own way.
 #[test]
 fn a_packet_that_has_travelled_takes_a_hop_place() {
     use crate::event::DropReason;
@@ -949,8 +930,7 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
 }
 
 /// A full record table gives up the least recently active record of a
-/// message this relay does not hold: a message waiting in the send
-/// queue keeps its record however old (spec "Message records", roadmap D31).
+/// message this relay does not hold (spec "Message records").
 #[test]
 fn a_waiting_message_keeps_its_record() {
     use crate::ids::MsgId;
@@ -1031,10 +1011,8 @@ fn a_waiting_message_keeps_its_record() {
 }
 
 /// Entries waiting for one busy neighbour keep their arrival order
-/// through bans that end and recur, and of equals the oldest is
-/// offered first each time (roadmap D31 rule 4). Choosing an entry
-/// used to move it to the front, which reversed the waiting entries
-/// at every ban and left the oldest waiting for minutes.
+/// through bans that end and recur, and of equals the oldest is offered
+/// first each time.
 #[test]
 fn waiting_entries_keep_arrival_order_through_bans() {
     use crate::ids::MsgId;
@@ -1169,11 +1147,11 @@ fn waiting_entries_keep_arrival_order_through_bans() {
     assert!(r.queue.is_empty());
 }
 
-/// A message that has waited for a ban goes ahead of those that have
-/// not, the most travelled first, for as long as it is queued (spec
-/// "Overload waits"). A, far travelled, waits for D's ban behind K and M,
-/// which go to E; when D's ban ends A goes ahead of M, D refuses it, and
-/// A goes round D to E, still ahead of M, which has waited for nothing.
+/// A message that has waited for a ban goes ahead of those that have not,
+/// the most travelled first, for as long as it is queued
+/// (spec "Overload waits"). A waits for D's ban behind K and M, which go to
+/// E; when the ban ends A goes ahead of M, D refuses it, and A goes round D
+/// to E, still ahead of M.
 #[test]
 fn a_message_that_waited_keeps_its_turn() {
     use crate::ids::MsgId;
@@ -1390,12 +1368,9 @@ fn the_offer_keeps_the_mark() {
 }
 
 /// Two relays offer one message to the same neighbour D at once, as a
-/// retry after a lost ACK and a return can (roadmap D32). D's answers
-/// to the other sender, C, taking or refusing, neither end this
-/// relay's hand-over nor ban D here; only D's answer to this relay
-/// does. When an ACK named only the message and D, D's ACK to C ended
-/// this hand-over too, and the message, which D had not taken from
-/// this relay, was lost.
+/// retry after a lost ACK and a return can. D's answers to the other
+/// sender, C, neither end this relay's hand-over nor ban D here; only D's
+/// answer to this relay does.
 #[test]
 fn an_answer_to_another_sender_is_not_ours() {
     use crate::tables::records::Record;
@@ -1527,11 +1502,9 @@ fn an_answer_to_another_sender_is_not_ours() {
     )));
 }
 
-/// A neighbour whose heartbeats this relay stops hearing, but which
-/// answers its hand-overs, taking or refusing them, is alive and stays
-/// in the table past the 390 s a heartbeat alone keeps it (spec "Neighbour table", "The ACK").
-/// Without this, a relay whose only neighbour's heartbeats were lost
-/// for a few rotations dropped it while it was carrying every message.
+/// A neighbour whose heartbeats stop being heard but which answers
+/// hand-overs stays in the table past the 390 s a heartbeat alone keeps it
+/// (spec "Neighbour table", "The ACK").
 #[test]
 fn a_neighbour_that_answers_stays_live() {
     use crate::tables::records::Record;
@@ -1739,7 +1712,7 @@ fn offer_dropped(
         Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) => pending.push(a),
         _ => {}
     });
-    // The take, and a drop at the take, come with the ACK (roadmap D93).
+    // The take, and a drop at the take, come with the ACK.
     let until = *now + Duration::from_millis(100);
     for t in drive_traces(r, now, until, pending) {
         if let Trace::Dropped { reason, .. } = t {
@@ -1754,9 +1727,9 @@ fn offer_dropped(
     (place, refused, dropped)
 }
 
-/// No message ends by age on its way (spec "Overload waits", roadmap
-/// D106): packets wait for their neighbours' bans, in the regular room
-/// or a hop place, as long as the bans last.
+/// No message ends by age on its way (spec "Overload waits"): packets
+/// wait for their neighbours' bans, in the regular room or a hop place,
+/// as long as the bans last.
 #[test]
 fn a_message_waits_whatever_its_age() {
     let (mut r, start, far) = with_every_neighbour_banned();
@@ -1787,8 +1760,8 @@ fn a_message_waits_whatever_its_age() {
 
 /// A packet already in the network is taken under the same bans, into
 /// the regular room and, with the bucket spent, a hop place: the hop
-/// places' argument against gridlock needs every such packet to move
-/// on (spec "Overload waits", roadmap D31, D34).
+/// places' argument against gridlock needs every such packet to move on
+/// (spec "Overload waits").
 #[test]
 fn a_packet_in_the_network_is_taken_whatever_the_bans() {
     let (mut r, mut now, far) = with_every_neighbour_banned();
@@ -1800,10 +1773,9 @@ fn a_packet_in_the_network_is_taken_whatever_the_bans() {
 }
 
 /// A hand-over carries the record's highest count plus one, stamped at
-/// its first transmission and repeated by its retries; readdressed
-/// after a failure it carries the count of its new first transmission;
-/// one that succeeds raises the highest to its count (spec "Hop count", roadmap
-/// D35). Stamped when queued, the frame would carry 2 throughout.
+/// its first transmission and repeated by its retries; readdressed after a
+/// failure it carries its new first transmission's count; one that
+/// succeeds raises the highest to its count (spec "Hop count").
 #[test]
 fn a_hand_over_stamps_its_count_at_its_first_transmission() {
     use crate::tables::records::Record;
@@ -1888,9 +1860,9 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
 }
 
 /// A retransmission, the same sender and count again, is ACKed and not
-/// taken; so is another copy while this relay holds one (spec "Receiving DATA" cases
-/// 3 and 4, roadmap D35). Here the relay holds the message, waiting
-/// for its banned neighbours.
+/// taken; so is another copy while this relay holds one
+/// (spec "Receiving DATA"). Here the relay holds the message, waiting for
+/// its banned neighbours.
 #[test]
 fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
     use crate::wire::Data;
@@ -1937,9 +1909,9 @@ fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
     assert!(taken(&acks) && held == 1, "another copy too, while held");
 }
 
-/// Once the relay a message is addressed to has taken it from this
-/// one, the message has arrived: a later copy is only ACKed, wherever
-/// it comes from (spec "Receiving DATA" case 1, roadmap D35).
+/// Once the relay a message is addressed to has taken it from this one,
+/// a later copy is only ACKed, wherever it comes from
+/// (spec "Receiving DATA").
 #[test]
 fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
     use crate::tables::records::Record;
@@ -2025,7 +1997,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
 }
 
 /// The relay's own application waits while every neighbour is banned,
-/// and the relay wakes when the first ban ends (roadmap D34).
+/// and the relay wakes when the first ban ends.
 #[test]
 fn the_application_waits_while_every_neighbour_is_banned() {
     let (mut r, now, _) = with_every_neighbour_banned();
@@ -2150,11 +2122,10 @@ fn data_to(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u8)> {
         .collect()
 }
 
-/// A seen ACK tries its sender and sends the forward on at once (spec
-/// "The ACK", "Hand-over", roadmap D90). D answers that it has seen the
-/// message: the relay marks D tried, spends the count D recorded, bans
-/// nothing and counts no failure, and its next frame goes to E with the
-/// next count, as it would after D returned the message.
+/// A seen ACK tries its sender and sends the forward on at once
+/// (spec "The ACK", "Hand-over"): D is marked tried, its recorded count
+/// spent, nothing banned and no failure counted, and the next frame goes
+/// to E with the next count.
 #[test]
 fn a_seen_ack_tries_the_neighbour_and_sends_on() {
     use crate::wire::Ack;
@@ -2198,7 +2169,7 @@ fn a_seen_ack_tries_the_neighbour_and_sends_on() {
 
 /// A return answered seen ends the message: the parent has gone on
 /// without this copy, and a return has nowhere else to go
-/// (spec "Return to parent", roadmap D90).
+/// (spec "Return to parent").
 #[test]
 fn a_return_answered_seen_is_dropped() {
     use crate::event::DropReason;
@@ -2262,9 +2233,8 @@ fn a_return_answered_seen_is_dropped() {
     assert!(r.holding().next().is_none());
 }
 
-/// A node, sleepy or not, that receives a DATA for itself answers it
-/// at once and hands it to its application when the ACK has gone out,
-/// not before (roadmap D93).
+/// A node, sleepy or not, that receives a DATA for itself answers it at
+/// once and hands it to its application when the ACK has gone out.
 #[test]
 fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
     use crate::event::AppEvent;
@@ -2326,12 +2296,10 @@ fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
     }
 }
 
-/// A neighbour's heartbeat due on this channel and not heard is a
-/// reading at the floor, with the weight of the share of its window the
-/// radio listened through: nearly a whole reading on a quiet channel,
-/// less by the share a frame received in the window took; and one heard
-/// in its window is a reading of itself and no miss (spec "Heartbeat",
-/// "Neighbour table").
+/// A neighbour's heartbeat due on this channel and not heard is a reading
+/// at the floor, weighted by the share of its window the radio listened
+/// through; one heard in its window is a reading of itself and no miss
+/// (spec "Heartbeat", "Neighbour table").
 #[test]
 fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
     use crate::node::heartbeat_interval;
@@ -2453,10 +2421,9 @@ fn heartbeat_airtime_half() -> Duration {
     time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).div(2)
 }
 
-/// Any answer to this relay lifts a demotion (spec "Neighbour table",
-/// roadmap D106): a refusal from the neighbour, or a DATA it addresses to
-/// this relay. A DATA it addresses to another node, or a heartbeat, does
-/// not: neither says it hears us.
+/// Any answer to this relay lifts a demotion (spec "Neighbour table"): a
+/// refusal, or a DATA addressed to this relay. A DATA to another node, or
+/// a heartbeat, does not: neither says it hears us.
 #[test]
 fn an_answer_to_this_relay_lifts_a_demotion() {
     use crate::wire::{Ack, Data};
@@ -2524,8 +2491,7 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
 }
 
 /// A refused forward goes round the refuser for the wait it told, to the
-/// next candidate at once, not after the ban (spec "Bans", "Next hop",
-/// roadmap D110).
+/// next candidate at once (spec "Bans", "Next hop").
 #[test]
 fn a_refused_forward_goes_round_the_refuser() {
     use crate::tables::budget::BAN;
@@ -2554,10 +2520,9 @@ fn a_refused_forward_goes_round_the_refuser() {
     assert!(first < refused_at + BAN, "at once: {first:?}");
 }
 
-/// Routing is a view (spec "Next hop", "Send queue"): a message waiting
-/// for its banned next hop keeps nothing of that choice, so a neighbour
-/// heard meanwhile that ranks before it takes the message at once, before
-/// the ban ends (roadmap D106).
+/// Routing is a view (spec "Next hop", "Send queue"): a neighbour heard
+/// while a message waits for its banned next hop, and ranking before it,
+/// takes the message at once.
 #[test]
 fn a_message_waiting_for_a_ban_goes_to_a_better_newcomer_at_once() {
     let (mut r, mut now, far) = with_every_neighbour_banned();
@@ -2596,9 +2561,8 @@ fn a_message_waiting_for_a_ban_goes_to_a_better_newcomer_at_once() {
 }
 
 /// The application's message passes the same gate as a sleepy node's own
-/// (spec "Receiving DATA"): with messages queued for its way on that take
-/// longer than a hop's budget to go, the relay gives it back with a wait
-/// of at least a ban, and takes none meanwhile (roadmap D106).
+/// (spec "Receiving DATA"): behind messages that take longer than a hop's
+/// budget to go, the relay gives it back with a wait of at least a ban.
 #[test]
 fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
     use crate::event::AppEvent;
@@ -2632,10 +2596,10 @@ fn the_application_s_message_is_given_back_while_its_way_on_is_taken() {
 }
 
 /// The gate of the send queue (spec "Send queue"): a message that would
-/// wait here longer than a hop's budget behind the messages queued for
-/// the same next hop, with no higher count, is refused, told no less than
-/// the rest of that neighbour's ban; one with a higher count, or for
-/// another next hop, is taken (roadmap D106).
+/// wait longer than a hop's budget behind the messages for the same next
+/// hop, with no higher count, is refused, told no less than the rest of
+/// that neighbour's ban; one with a higher count, or for another next
+/// hop, is taken.
 #[test]
 fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
     use crate::event::DropReason;
@@ -2726,11 +2690,8 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
 }
 
 /// Senders refused at the gate stand in the way's line (spec "Bans"):
-/// with the queue for the next hop a service time past the budget, the
-/// first refused is told that service time, until its place is within
-/// the budget, and each next one a service time more than the one before;
-/// the waits are never shorter than the rest of the neighbour's ban
-/// (roadmap D106).
+/// each next one refused is told a service time more than the one before,
+/// never less than the rest of the neighbour's ban.
 #[test]
 fn refusals_at_the_gate_are_told_a_line() {
     use crate::event::DropReason;
@@ -3813,8 +3774,7 @@ fn first_hop_among(
 /// A neighbour about to leave the air is gone round where another is
 /// left, and still taken where it is the only one, the message's
 /// destination or the owner of its position; it is neither banned nor
-/// demoted for it
-/// (spec "Next hop", roadmap D181).
+/// demoted for it (spec "Next hop").
 #[test]
 fn a_leaving_neighbour_is_gone_round_while_another_is_left() {
     let me = Config::default().position;
@@ -3857,8 +3817,8 @@ fn a_leaving_neighbour_is_gone_round_while_another_is_left() {
 }
 
 /// Its heartbeats say it is leaving the air while it drains for a reboot
-/// and while it flushes to turn sleepy, and no longer once the drain opens
-/// again (spec "Packet formats", roadmap D181).
+/// and while it flushes to turn sleepy, and no longer once the drain
+/// opens again (spec "Packet formats").
 #[test]
 fn a_node_s_heartbeat_says_it_is_leaving() {
     let mut r = Relay::new(Config::default(), 1);

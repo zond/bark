@@ -1,51 +1,19 @@
-//! The send queue (spec "Send queue"): packets waiting for their hand-over, the
-//! one being handed over included, in the order they arrived.
+//! The send queue (spec "Send queue"): packets waiting for their
+//! hand-over, the one being handed over included, in the order they
+//! arrived, in the regular room or a hop place.
 //!
-//! **Regular room.** A relay takes a packet into it only if the airtime of
-//! everything queued, that packet included, fits in its duty bucket as it
-//! stands (spec "Receiving DATA", roadmap D29). Its length follows: the bucket's depth,
-//! 6 s, over the time of one full frame and its ACK, `138.56 + 16.96 =
-//! 155.52 ms`: ⌈38.6⌉ = 39. Each packet taken also costs the ACK that
-//! takes it, so from a full bucket with the reply reserve left in at most
-//! 33 full frames fit, and for full frames the bucket binds first. Short
-//! frames fill the 39 places first: 39 hand-overs of them still go out
-//! in a few seconds.
+//! The hop places keep the network from locking up while nothing is
+//! dropped for want of room: take the highest-numbered place held
+//! anywhere, `k`. Its message sends `k + 1` or more, and place `k + 1` is
+//! free everywhere, so its next hop can take it, unless the count is at
+//! the cap, where the message ends. By induction downwards, every message
+//! held moves. That holds while fewer than [`HOP_SLOTS`] places are held.
 //!
-//! **Hop places.** Beyond the regular room there is one place for each
-//! hop count. A packet received with count `h` that the regular room
-//! refuses takes the highest free place numbered `h` or lower, whatever
-//! the bucket holds; the bucket still decides when it is sent. A packet
-//! from the node's own application, count 0, has none, so
-//! overload pushes back where messages enter (roadmap D31). The places
-//! keep the network from locking up while nothing is dropped for want of
-//! room: take the highest-numbered place held anywhere, `k`. Its message
-//! has made at least `k` hops and sends `k + 1` or more, and place `k + 1`
-//! is free everywhere, so its next hop can take it, unless the count is at
-//! the cap, where the message ends (spec "Hop count"). By induction downwards, every
-//! message held moves. That holds while fewer than [`HOP_SLOTS`] places are
-//! held, which packets of count `c` or less, holding at most `c` places,
-//! cannot reach below count 64; with all held the relay refuses, and a
-//! stall is bounded by the gate's budget and the return to the parent
-//! (roadmap D155).
-//!
-//! Each entry is a message, what kind of hand-over it is, which decides
-//! what happens when the hand-over fails (spec "Hand-over"), and where
-//! its hand-over is ([`State`], `node/transfer.rs`). Where a forward
-//! goes is not kept: the relay routes every entry each time it may send,
-//! and tells [`SendQueue::next_due`] which may go now; an entry whose
-//! next hop is banned waits in its place until the ban ends (spec
-//! "Overload waits", "Send queue"). The next hand-over goes to a DATA to a sleepy node
-//! if one is due, since its node listens only briefly (spec "Delivery");
-//! else to the first entry that is due, except that one that has waited,
-//! for a ban or a wait of its own, goes ahead of those that have not, the
-//! most travelled first, for as long as it is queued: a message that has
-//! waited travels a loaded way, where the next relay's gate lets a higher
-//! count in and refuses a lower one once the way's wait passes the
-//! budget, banning the neighbour again (roadmap D114). Choosing an entry
-//! does not move it: the hand-over refers to it where it stands, so of
-//! equals the one that arrived first is offered first, however often they
-//! wait (roadmap D31 rule 4). One set aside for the delivery queue keeps
-//! its place and is never due.
+//! Where a forward goes is not kept: the relay routes every entry each
+//! time it may send, and tells [`SendQueue::next_due`] which may go now.
+//! Choosing an entry does not move it: the hand-over refers to it where
+//! it stands, so of equals the one that arrived first is offered first,
+//! however often they wait.
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
@@ -61,7 +29,8 @@ use crate::wire::{Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
 const HAND_OVER_US: u64 = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
     + time_on_air(ACK_LEN as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
 
-/// Queue length for a bucket of `depth`; see the module documentation.
+/// Queue length for a bucket of `depth`: the depth over a full frame and
+/// its ACK, ⌈6 s / 155.52 ms⌉ = 39 for the design's (spec "Send queue").
 pub const fn queue_for(depth: Duration) -> usize {
     depth.as_micros().div_ceil(HAND_OVER_US) as usize
 }
@@ -71,49 +40,40 @@ pub const SEND_QUEUE: usize = queue_for(DEPTH);
 
 const _: () = assert!(SEND_QUEUE == 39);
 
-/// The longest a relay lets a message wait here for its next hop, by the
-/// queue ahead of it for that hop, before it refuses it, unless its count
-/// is higher than every one of theirs (spec "Send queue"). Above the
-/// longest wait the city has at the design's rate, 20 to 30 s, and six
-/// times its 99.9th percentile, 5 s, so that it refuses only a hop slower
-/// than normal (roadmap D106).
+/// The gate's budget, the longest a relay lets a message wait here for
+/// its next hop (spec "Send queue"): above the simulated city's longest
+/// wait at the design rate, 20 to 30 s, so it refuses only a slow hop.
 pub const HOP_WAIT: Duration = Duration::from_secs(30);
 
 /// Hop places: one for each count a packet can be received with and still
 /// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
 pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
 
-/// Hop places held at once: the queue's room beyond the regular room
-/// (spec "Send queue", roadmap D155). The simulated city at the design
-/// rate held at most 3 at once, the district none at once and twice that
-/// rate; holding 64 needs packets of count 64 or more, since packets of
-/// count `c` or less hold at most `c` places.
+/// Hop places held at once (spec "Send queue"). The simulated city at the
+/// design rate held at most 3 at once; holding 64 needs packets of count
+/// 64 or more.
 pub const HOP_SLOTS: usize = 64;
 
 /// What a queued message is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// A message to send on. Where it goes, a neighbour or its parent, is
-    /// chosen from the state as it is when its hand-over starts (spec
-    /// "Next hop"); nothing of an earlier choice is kept.
+    /// A message to send on, routed when its hand-over starts
+    /// (spec "Next hop").
     Forward,
-    /// A forward whose hand-over goes back to the parent, from its start
-    /// to its end (spec "Return to parent"): dropped if it fails once the
-    /// parent is demoted or gone, else a forward again.
+    /// A forward whose hand-over goes back to the parent
+    /// (spec "Return to parent").
     Return,
-    /// A DATA to a sleepy node this node holds a message for (spec "Delivery"); left in the delivery queue
-    /// if it fails.
+    /// A DATA to a sleepy node in its window (spec "Delivery"); left in
+    /// the delivery queue if it fails.
     Deliver,
     /// A DATA from the delivery queue to its node whether or not it is in
-    /// a window: once with the long preamble after a far fix, or with the
-    /// ordinary one to a node heard as one that is not sleepy (spec
-    /// "Delivery"). Left in the delivery queue if it fails.
+    /// a window: with the long preamble, or to a node heard as not sleepy
+    /// (spec "Delivery"). Left in the delivery queue if it fails.
     Direct,
 }
 
 impl Kind {
-    /// Whether it carries a message from the delivery queue to its node,
-    /// which goes ahead of the rest (spec "Delivery").
+    /// Whether it carries a message from the delivery queue to its node.
     pub fn delivers(self) -> bool {
         matches!(self, Kind::Deliver | Kind::Direct)
     }
@@ -156,7 +116,8 @@ pub enum Wait {
     Retry,
 }
 
-/// A message as a node holds it: what its ID is taken of (spec "Packet formats").
+/// A message as a node holds it: what its ID is taken of
+/// (spec "Packet formats").
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Message {
     /// Its destination's position.
@@ -235,7 +196,7 @@ pub struct Outgoing {
     pub kind: Kind,
     /// Where its hand-over is.
     pub state: State,
-    /// Not handed over before this: it waits for a ban to end.
+    /// Not handed over before this.
     pub not_before: Instant,
     /// Transmissions that went unanswered: of the hand-over under way,
     /// and of a return or a DATA to a sleepy node kept while it waits; a
@@ -251,9 +212,8 @@ pub struct Outgoing {
     /// hint, checked against the ID before it is used.
     pub record: u16,
     /// The neighbour-table slot, plus one, of where it was last routed;
-    /// 0 before it was. With `since`, how long it has waited for that
-    /// neighbour, a sample of the neighbour's service time when it takes
-    /// it (spec "Neighbour table").
+    /// 0 before it was. With `since`, a sample of that neighbour's service
+    /// time when it takes it (spec "Neighbour table").
     pub toward: u8,
     /// When it began to wait for that neighbour here: when it was queued,
     /// or routed to another than before.
@@ -473,9 +433,8 @@ impl SendQueue {
             .fold(Duration::ZERO, |a, b| a + b)
     }
 
-    /// Queue `out` last. Admission (spec "Receiving DATA") keeps the regular room and the
-    /// hop places within bounds, so only a caller that skipped it finds the
-    /// queue full.
+    /// Queue `out` last. Admission (spec "Receiving DATA") keeps the queue
+    /// within bounds, so only a caller that skipped it finds it full.
     pub fn push(&mut self, out: Outgoing) -> Result<(), Full> {
         self.entries.push(out).map_err(|_| Full)
     }
@@ -526,9 +485,7 @@ impl SendQueue {
     }
 
     /// The entry the next hand-over goes to, of those `sendable` says may
-    /// go now: a DATA to a sleepy node that is due, the first; else of
-    /// those that have waited since they were queued and are due, the most
-    /// travelled, the earliest of equals; else the first that is due.
+    /// go now (spec "Send queue", choosing what to send).
     pub fn next_due(
         &self,
         now: Instant,

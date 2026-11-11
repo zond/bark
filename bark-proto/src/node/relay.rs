@@ -1,37 +1,17 @@
-//! The node: medium access, forwarding and delivery to the sleepy nodes
-//! it hears. Every node is a `Relay`, sleepy or not by its power
-//! (`relay/power.rs`, spec "Sleepy nodes").
+//! The node and its loop: one event applied, the deadlines fired, the
+//! radio's jobs scheduled. Every node is a `Relay`, sleepy or not by its
+//! power (spec "Nodes", "Sleepy nodes").
 //!
-//! This file holds the node and its loop: one event applied, the
-//! deadlines fired, the radio's jobs scheduled. The first rotation and
-//! the home channel are in `relay/boot.rs`
-//! (spec "Home channel selection"), the busy sweep and the move rule in
-//! `relay/sweep.rs` (spec "Busy estimate", "Channel moves"), the
-//! heartbeat in `relay/heartbeat.rs` (spec "Heartbeat"), a sleepy node's
-//! anchor, beat and duty-cycled receive in `relay/anchor.rs`
-//! (spec "Sleepy nodes"), routing and the per-hop transfer in
-//! `relay/forward.rs` (spec "Forwarding"), delivery to sleepy nodes in
-//! `relay/delivery.rs`, the node's role by its power in
-//! `relay/power.rs`, whether it moves in `relay/motion.rs` and its GPS
-//! in `relay/gps.rs`.
+//! The parts live in `relay/`: `boot.rs` (spec "Home channel selection"),
+//! `sweep.rs` (spec "Busy estimate", "Channel moves"), `heartbeat.rs`
+//! (spec "Heartbeat"), `anchor.rs` (spec "Sleepy nodes"), `forward.rs`
+//! (spec "Forwarding"), `delivery.rs`, `power.rs`, `motion.rs`, `gps.rs`.
 //!
-//! # Radio discipline
-//!
-//! Each use of the radio is a job: the reply (an ACK, taking or refusing)
-//! this node owes, the heartbeat, the hand-over of one entry of the send
-//! queue, and the sweep. Each is one excursion of the one shape
-//! (`mac::Excursion`): a check of a channel and, if it is clear, a
-//! transmission, or one reading; the job continues from the completion
-//! event. The node keeps at most one excursion outstanding
-//! (`docs/core-interface.md` §3 rule 1). When the radio is free it starts
-//! the first job that is ready, in that order: an owed reply is worth
-//! nothing once its sender stops waiting, 100 ms after the frame (spec
-//! "The ACK"). The hand-over alone lets an owed reply in before it
-//! transmits, since its frame can take 139 ms on air.
-//! While a hand-over waits for its ACK, only an owed reply uses the radio:
-//! the heartbeat and the sweep would take the node off its home channel,
-//! where the ACK arrives (spec "Hand-over"). Jobs that are not ready say when
-//! they will be, and the earliest of those is `next_wakeup`.
+//! Each use of the radio is a job, one excursion at a time
+//! (`mac::Excursion`, `docs/core-interface.md` §3 rule 1). When the radio
+//! is free the first ready job in `JOBS` starts. While a hand-over waits
+//! for its ACK only an owed reply uses the radio: the others could take the
+//! node off its home channel, where the ACK arrives.
 
 mod anchor;
 mod battery;
@@ -79,8 +59,7 @@ use crate::time::{earlier, Duration, Instant};
 use crate::wire::Packet;
 use motion::Motion;
 
-/// A use of the radio: what owns the outstanding excursion, and what the
-/// scheduler starts (module documentation).
+/// A use of the radio: what owns the outstanding excursion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Job {
     Sweep,
@@ -93,10 +72,8 @@ enum Job {
 
 /// The jobs in the order the scheduler serves them: an owed reply is
 /// worth nothing once its sender stops waiting; the heartbeat keeps its
-/// slot; a hand-over; a neighbour's status asked or told, which a person
-/// waits for, after the texts (`relay/status.rs`); the sweep's reading;
-/// an update frame last, unless it has waited behind enough hand-overs
-/// (`relay/update.rs`).
+/// slot; a status, which a person waits for, after the texts; an update
+/// last, unless it has waited behind enough hand-overs (`relay/update.rs`).
 const JOBS: [Job; 6] = [
     Job::Reply,
     Job::Heartbeat,
@@ -126,15 +103,11 @@ pub struct Anchor {
     pub position: Position,
 }
 
-/// What the node is by its power (spec "Nodes", `relay/power.rs`), and
-/// what each needs. The heartbeat's flags are read off it
-/// (`heartbeat_frame`).
+/// What the node is by its power (spec "Nodes"); the heartbeat's flags are
+/// read off it.
 #[derive(Clone, Copy, Debug)]
 enum Mode {
-    /// Not sleepy: it holds mail and heartbeats on its slots.
     Relay(Power),
-    /// Sleepy: it holds mail for nobody, beats to its anchor and
-    /// receives duty-cycled between its windows (`relay/anchor.rs`).
     Sleepy(Sleep),
 }
 
@@ -160,8 +133,8 @@ struct Sleep {
     /// The rotations since it last heard its anchor's heartbeat where it
     /// expected it.
     misses: u8,
-    /// Its last check heard nothing at all: it is out of reach, and checks
-    /// again only once it hears something.
+    /// Its last check heard nothing at all: out of reach, it checks again
+    /// only once it hears something.
     dark: bool,
 }
 
@@ -197,9 +170,9 @@ pub struct Load {
     pub send_queue: usize,
     /// Messages waiting for a sleepy node (spec "Delivery queue").
     pub delivery_queue: usize,
-    /// Heard table entries, expired ones not yet removed included.
+    /// Heard table entries, expired ones included.
     pub heard: usize,
-    /// Neighbour table entries, expired ones not yet removed included (spec "Neighbour table").
+    /// Neighbour table entries, expired ones included.
     pub neighbours: usize,
     /// Of `send_queue`, the frames in hop places (spec "Send queue").
     pub hop_places: usize,
@@ -232,54 +205,39 @@ pub struct NeighbourCounts {
     pub both_ways: u8,
 }
 
-/// A node built only to be sleepy: no heard table and no delivery queue,
-/// which a sleepy node does not keep (spec "Sleepy nodes"), so that a
-/// driver of a node that never switches to a relay does not spend their
-/// memory; it stays sleepy whatever its power (`relay/power.rs`). A
-/// [`Relay`] on battery behaves the same and keeps them empty. The board
-/// runs a [`Relay`], since its node turns a relay on USB.
+/// A node built only to be sleepy, without the memory of a heard table and
+/// delivery queue; it stays sleepy whatever its power. A [`Relay`] on
+/// battery behaves the same and keeps them empty.
 pub type SleepyNode = Node<0, 0>;
 
 /// The node, with room for `H` sleepy nodes heard and `Q` messages for
 /// them (`docs/core-interface.md` §6).
 ///
-/// Laid out as declared: what an event reads first, in its parts, the
-/// tables after, each with its few fields before its items, so that an
-/// event touches few pages of memory. A simulator holds tens of thousands
-/// of nodes, and in a city-sized run the pages it touches, not its
-/// instructions, set its speed.
+/// Laid out as declared, what an event reads first and the tables after,
+/// so an event touches few memory pages: in a city-sized simulation the
+/// pages touched, not the instructions, set the speed.
 #[repr(C)]
 pub struct Node<const H: usize, const Q: usize> {
     stage: Stage,
     mode: Mode,
-    /// What it knows of its battery (`relay/power.rs`).
     battery: Battery,
     config: Config,
-    /// The first rotation (`relay/boot.rs`).
     boot: Boot,
-    /// What a sleepy node listens for, and until when (`relay/anchor.rs`).
     listen: Listen,
     radio: Radio,
-    /// What forwarding keeps beside the send queue (`relay/forward.rs`).
     forwarding: Forwarding,
-    /// The application's message (`relay/forward.rs`).
     own: OwnMessage,
-    /// The images spreading over the mesh (`relay/update.rs`).
     spread: Spread,
-    /// Whether it is fixed or carried (`relay/motion.rs`).
     motion: Motion,
-    /// A sleepy node's searches for a fix (`relay/gps.rs`).
     gps: gps::Gps,
-    /// What the node last told its driver to keep across a reboot, or
-    /// was handed back at boot (`store.rs`).
+    /// What the node last told its driver to keep across a reboot, or was
+    /// handed back at boot.
     stored: Option<Stored>,
-    /// This node's ID: `config.node_id`, or drawn from the seed.
     id: NodeId,
     home: Channel,
     plane: LocalPlane,
     rng: Rng,
     delivered: Delivered,
-    /// The sleepy nodes heard, for delivery.
     heard: Heard<H>,
     delivery: DeliveryQueue<Q>,
     /// The messages for its own application, until the application
@@ -301,11 +259,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A relay with empty tables and the default configuration, not set
-    /// up: built at compile time, so that a driver can keep a relay in a
-    /// static and set it up in place with [`Relay::reset`]. A relay is
-    /// 150 KiB, and [`Relay::new`] needs about as much again on the stack
-    /// (`docs/core-interface.md` §6).
+    /// A relay with empty tables, not set up, built at compile time so a
+    /// driver can keep it in a static and set it up in place with
+    /// [`Relay::reset`]: a relay is 150 KiB, and [`Relay::new`] needs as much
+    /// again on the stack (`docs/core-interface.md` §6).
     pub const UNSET: Self = {
         let config = Config::DEFAULT;
         let channel = match Channel::new(0) {
@@ -368,9 +325,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .unwrap_or_else(|| random_channel(&mut rng));
         let rotation = random_channel(&mut rng);
         // Every field by name, so that a new one cannot be left out. The
-        // large tables are emptied where they lie: built and assigned,
-        // each would pass through the stack, and together they made the
-        // deepest frame the firmware had (`bark-fw/README.md`).
+        // large tables are emptied in place: built and assigned, each would
+        // pass through the stack (`bark-fw/README.md`).
         let Node {
             config: c,
             boot,
@@ -448,12 +404,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.id
     }
 
-    /// The position in this node's address (spec "Addresses"): its own, or
-    /// for a sleepy node its anchor's while it has one. It is the position
-    /// the node works by: it beats it, centres its plane on it and
-    /// rebuilds the short positions it hears near it (spec "Beats").
-    /// `Config::position` stays its own place, kept for when it is a
-    /// relay again (`relay/motion.rs`).
+    /// The position in this node's address and the one it works by (spec
+    /// "Addresses", "Beats"): its own, or a sleepy node's anchor's.
+    /// `Config::position` stays its own place, for when it relays again.
     pub fn address(&self) -> Position {
         self.anchor().map_or(self.config.position, |a| a.position)
     }
@@ -485,8 +438,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether this node is a sleepy node without an anchor, past its boot
-    /// listen: it beats with the anchorless bit and the long preamble, and
-    /// has no window (spec "Sleepy nodes alone").
+    /// listen (spec "Sleepy nodes alone").
     pub fn anchorless(&self) -> bool {
         self.sleep().is_some_and(|s| s.anchor.is_none()) && self.stage == Stage::Running
     }
@@ -543,16 +495,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.busy()
     }
 
-    /// The messages waiting in the delivery queue for their nodes (spec
-    /// "Delivery queue"). For a driver to sample; reading it changes
-    /// nothing.
+    /// The messages waiting in the delivery queue for their nodes.
     pub fn delivery_queue(&self) -> impl Iterator<Item = (MsgId, NodeId)> + '_ {
         self.delivery.iter().map(|q| (q.msg_id, q.node))
     }
 
-    /// The messages this relay holds: queued to send, or waiting for
-    /// their sleepy node. A driver uses it to tell a message still in the
-    /// network from one lost without a trace.
+    /// The messages this relay holds, queued to send or for a sleepy node:
+    /// to tell a message still in the network from one lost.
     pub fn holding(&self) -> impl Iterator<Item = MsgId> + '_ {
         self.queue
             .iter()
@@ -560,33 +509,28 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .chain(self.delivery.iter().map(|q| q.msg_id))
     }
 
-    /// Whether this relay has a record of message `id`: it has received
-    /// or originated it (spec "Message records"). For a driver to sample;
-    /// reading it changes nothing.
+    /// Whether this relay has a record of message `id`
+    /// (spec "Message records").
     pub fn knows(&self, id: MsgId) -> bool {
         self.records.get(id).is_some()
     }
 
-    /// How many records this relay keeps, and, once the table is full,
-    /// how long its least recently active record has been idle at `now`:
-    /// about how long a record lasts here (spec "Message records"). For a
-    /// driver to sample; reading it changes nothing.
+    /// How many records this relay keeps, and, once the table is full, how
+    /// long its least recently active one has been idle: about how long a
+    /// record lasts here (spec "Message records").
     pub fn records(&self, now: Instant) -> (usize, Option<Duration>) {
         let idle = self.records.least_recent().map(|t| now.since(t));
         (self.records.len(), idle)
     }
 
-    /// The lowest count a packet from a relay may carry to be taken into
-    /// a hop place now, if any is free (spec "Send queue"). For a driver to sample;
-    /// reading it changes nothing.
+    /// The lowest count a packet may carry to be taken into a free hop
+    /// place now (spec "Send queue").
     pub fn lowest_free_hop_place(&self) -> Option<u8> {
         self.queue.lowest_free_place()
     }
 
-    /// The highest count this relay would send, of the forwards in its
-    /// send queue that could go to the neighbour `to`: live, not handed the
-    /// message, not its parent (spec "Next hop", "Hop count"). For a driver
-    /// to sample; reading it changes nothing.
+    /// The highest count this relay would send to the neighbour `to`, of
+    /// the forwards that could go to it (spec "Next hop", "Hop count").
     pub fn highest_count_for(&self, to: NodeId, now: Instant) -> Option<u8> {
         let (slot, n) = self.neighbours.by_id(to)?;
         if self.neighbours.is_expired(n, now) {
@@ -602,30 +546,24 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the hand-over under way takes a message from the delivery
-    /// queue to its node whether or not the node is in a window: the
-    /// flush after a far fix, or to a node heard as a relay
-    /// (`relay/delivery.rs`). For a driver to sample; reading it changes
-    /// nothing.
+    /// queue to its node whether or not it is in a window
+    /// (`relay/delivery.rs`).
     pub fn sending_direct(&self) -> bool {
         self.in_flight().is_some_and(|o| o.kind == Kind::Direct)
     }
 
-    /// Whether a hand-over is under way: begun and not yet answered or
-    /// given up, waits for a backoff, a retry or the bucket included. For
-    /// a driver to sample; reading it changes nothing.
+    /// Whether a hand-over is under way, its waits included.
     pub fn handing_over(&self) -> bool {
         !self.handover_idle()
     }
 
-    /// The send queue's entries in its regular room and in hop places,
-    /// for a driver to sample cheaply (spec "Send queue").
+    /// The send queue's entries in its regular room and in hop places.
     pub fn queue_use(&self) -> (usize, usize) {
         let places = self.queue.iter().filter(|o| o.place > 0).count();
         (self.queue.len() - places, places)
     }
 
-    /// How loaded the relay is at `now`, for a driver to sample. Reading
-    /// it changes nothing.
+    /// How loaded the relay is at `now`.
     pub fn load(&self, now: Instant) -> Load {
         Load {
             bucket: self.radio.budget().available(now),
@@ -653,11 +591,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// What the node keeps across a reboot now (`store.rs`). A carried
-    /// node's place changes with each fix, and a carried sleepy node's
-    /// anchor and home as it goes: it keeps the place it stood when last
-    /// fixed, a sleepy one the home it had then, and no anchor, since one
-    /// that boots where it has gone chooses afresh.
+    /// What the node keeps across a reboot now. A carried node keeps the
+    /// place and, if sleepy, the home it had when last fixed, and no anchor:
+    /// one that boots elsewhere chooses afresh.
     fn to_keep(&self) -> Stored {
         let (battery_scale, drain) = self.battery.kept();
         let carried = self.motion.carried();
@@ -671,8 +607,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             carried,
             map_point: kept.map_or(self.motion.map_point(), |s| s.map_point),
             anchor: self.anchor().filter(|_| !carried),
-            // Kept only where it is read (`relay/power.rs`), so that a node
-            // without battery levels writes no more than before.
+            // Kept only where it is read, so a node without battery levels
+            // writes no more often.
             relay: !self.sleepy() && self.config.battery.is_some(),
             battery_scale,
             drain,
@@ -692,10 +628,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Fire what is due at `now`: the first rotation's end, the check of
-    /// the anchor, the first choice, the anchor's heartbeat and the move
-    /// rule, then the power's, the GPS's, the forwarding's and the
-    /// delivery's deadlines, in that order.
+    /// Fire what is due at `now`.
     fn fire(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.boot.due(now) {
             self.finish_boot(now, emit);
@@ -727,11 +660,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.delivery_timers(now);
     }
 
-    /// When the core next needs a wakeup: the earliest of what each part
-    /// that keeps a deadline says, in [`Node::fire`]'s order, of when the
-    /// application may send again, of the next heartbeat window to count
-    /// (`count_missed_heartbeats`), and of when a job is next ready for
-    /// the radio.
+    /// When the core next needs a wakeup: the earliest deadline of any part
+    /// or job.
     fn due_at(&self) -> Option<Instant> {
         let jobs = JOBS.iter().filter_map(|&job| self.ready_at(job));
         [
@@ -750,10 +680,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         .min()
     }
 
-    /// Serve the radio: feed the send queue, then start the first job that
-    /// is ready, in [`JOBS`]'s order, until one has taken the radio or
-    /// none is ready. A job that was ready but needed no excursion lets
-    /// the next be tried.
+    /// Serve the radio: feed the send queue, then start ready jobs in order
+    /// until one takes the radio. A job that needed no excursion lets the
+    /// next be tried.
     fn schedule(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.release_held(now, emit);
         self.release(now, emit);
@@ -773,9 +702,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Start `job` if it is ready. The heartbeat and the sweep would take
-    /// the node off its home channel, where the ACK of a hand-over
-    /// arrives, so neither starts while one is awaited.
+    /// Start `job` if it is ready; none but the reply and the hand-over
+    /// while an ACK is awaited.
     fn start_job(&mut self, job: Job, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         match job {
             Job::Reply => self.start_reply(now, emit),
@@ -789,10 +717,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// When `job` is next ready of its own accord, if it will be. Jobs
-    /// that need the radio free say so only while it is: its completion
-    /// event wakes the core otherwise. The hand-over's ACK wait counts
-    /// even while an owed reply holds the radio.
+    /// When `job` is next ready of its own accord. Jobs that need the radio
+    /// free say so only while it is: its completion event wakes the core
+    /// otherwise. The ACK wait counts even while an owed reply holds the
+    /// radio.
     fn ready_at(&self, job: Job) -> Option<Instant> {
         let free = self.radio.idle();
         match job {
@@ -840,10 +768,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             s.misses = 0;
         }
         let decoded = Packet::decode(bytes);
-        // A frame that decodes proves this image's radio settings and
-        // frame format work with another node's
-        // (spec "Updates over the mesh", the install); a piece names no
-        // sender, but no node hears its own.
+        // A decoded frame proves this image works with another node's
+        // (spec "Updates over the mesh"); a piece names no sender, but no
+        // node hears its own.
         if decoded.as_ref().is_ok_and(|p| p.sender() != Some(self.id)) && self.radio.first_heard() {
             emit(Action::App(crate::AppEvent::Heard));
         }
@@ -871,8 +798,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
             Ok(Packet::Status(f)) => self.status_heard(f, now, emit),
             Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
-                // It chose this node as its next hop, from heartbeats it
-                // heard, and sends on this channel now: it hears us
+                // It chose this node from heartbeats it heard: it hears us
                 // (spec "Neighbour table").
                 self.answer_from(d.src_hop, now, emit);
                 self.data(d, now, emit)

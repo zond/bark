@@ -1,10 +1,9 @@
 //! The driver's side of an update spreading over the mesh, without bytes
-//! (spec "Updates over the mesh", `docs/core-interface.md` §4): the policy
-//! takes every image offered, a piece kept is counted, and a block
-//! decodes once the node has been handed as many distinct pieces as the
-//! block is made of. What the run measures: when each node came to hold
-//! the image, and every ten minutes how many hold it, the channels' busy
-//! share as the relays estimate it, and the update's airtime.
+//! (spec "Updates over the mesh", `docs/core-interface.md` "Application"):
+//! a block decodes once the node has been handed as many distinct pieces
+//! as the block is made of. The run measures when each node came to hold
+//! the image, and per sample how many hold it, the relays' busy estimates
+//! and the update's airtime.
 
 use bark_proto::update::{Image, Piece, BLOCK_PIECES};
 use bark_proto::wire::PIECE_BYTES;
@@ -14,11 +13,11 @@ use std::fmt::Write;
 /// How often a row of the series is taken.
 pub const SAMPLE_US: u64 = 600_000_000;
 
-/// The pieces each block of an image of `bytes` bytes is made of: block 0
-/// the block table, the image's name and 8 bytes of each block's hash, its
-/// own last, one piece up to 26 blocks, two up to 48
-/// (spec "Updates over the mesh"); then the image in blocks
-/// of [`BLOCK_PIECES`] pieces, the last one shorter.
+/// The pieces each block of an image of `bytes` bytes is made of
+/// (spec "Updates over the mesh"): block 0 the block table, the image's
+/// name and 8 bytes of each block's hash, its own last, one piece up to 26
+/// blocks, two up to 48; then the image in blocks of [`BLOCK_PIECES`]
+/// pieces, the last shorter.
 pub fn blocks(bytes: u32) -> Vec<usize> {
     let pieces = (bytes as usize).div_ceil(PIECE_BYTES);
     let full = pieces / BLOCK_PIECES;
@@ -205,9 +204,8 @@ impl UpdateRun {
     }
 
     /// Whether a frame of `node` at `now` is the one right after its slot
-    /// heartbeat: within the heartbeat's airtime with its section, 22.08
-    /// ms, and the piece's check and start, under 5 ms, with a margin, 40
-    /// ms from the heartbeat's start.
+    /// heartbeat: 40 ms from its start covers the heartbeat with its
+    /// section, 22.08 ms, and the piece's check and start, under 5 ms.
     pub fn after_home_beat(&self, node: u32, now: Instant) -> bool {
         self.home_beats
             .get(&node)

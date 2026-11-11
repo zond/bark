@@ -1,19 +1,15 @@
 //! Scenarios: a TOML file format and the builder API behind it.
 //!
-//! The file format is the stable interface (roadmap Q6): scenarios are
-//! shared and diffed as files, and tests build the same [`Scenario`] value
-//! in Rust with the builder methods. `scenarios/s1-line.toml` is an example
-//! of every common section.
+//! The file format is the stable interface: scenarios are shared and
+//! diffed as files, and tests build the same [`Scenario`] with the builder
+//! methods. `scenarios/s1-line.toml` shows every common section.
 //!
-//! Nodes are named or addressed by role and index: `"relay:3"` is the
-//! fourth relay placed, `"leaf:0"` the first leaf, across all placements in
-//! file order. A name given to a point node can be used anywhere a node is
-//! referenced.
+//! Nodes are referenced by a point node's name or by role and index:
+//! `"relay:3"` is the fourth relay placed, `"leaf:0"` the first leaf,
+//! across all placements in file order.
 //!
-//! A leaf is a sleepy node (spec "Sleepy nodes"): the files, the rate
-//! `per_leaf_per_hour` and the metrics keep the name the format was made
-//! with, and the simulator's code says sleepy node where it means the
-//! protocol's thing.
+//! A leaf is a sleepy node (spec "Sleepy nodes"): the file format and the
+//! metrics keep the older name; the simulator's code says sleepy node.
 
 use crate::geo::{Origin, Xy};
 use crate::links::{LinkParams, Site};
@@ -39,14 +35,10 @@ pub enum RoleSpec {
 pub enum Placement {
     /// One node.
     Point {
-        /// Optional unique name.
         #[serde(default)]
         name: Option<String>,
-        /// Role.
         role: RoleSpec,
-        /// Metres east.
         x: f64,
-        /// Metres north.
         y: f64,
         /// Indoor (adds the link model's indoor loss at this end).
         #[serde(default)]
@@ -58,7 +50,6 @@ pub enum Placement {
     /// A square lattice over a rectangle, each point jittered uniformly by
     /// up to `jitter_m` in x and y.
     Lattice {
-        /// Role.
         role: RoleSpec,
         /// South-west corner, metres east.
         #[serde(default)]
@@ -66,25 +57,18 @@ pub enum Placement {
         /// South-west corner, metres north.
         #[serde(default)]
         y0: f64,
-        /// Width in metres.
         width_m: f64,
-        /// Height in metres.
         height_m: f64,
-        /// Lattice spacing in metres.
         spacing_m: f64,
-        /// Jitter in metres.
         #[serde(default)]
         jitter_m: f64,
-        /// Indoor.
         #[serde(default)]
         indoor: bool,
-        /// On a roof.
         #[serde(default)]
         rooftop: bool,
     },
     /// Uniformly random over a rectangle, `round(per_km2 × area)` nodes.
     Density {
-        /// Role.
         role: RoleSpec,
         /// South-west corner, metres east.
         #[serde(default)]
@@ -92,22 +76,16 @@ pub enum Placement {
         /// South-west corner, metres north.
         #[serde(default)]
         y0: f64,
-        /// Width in metres.
         width_m: f64,
-        /// Height in metres.
         height_m: f64,
-        /// Nodes per square kilometre.
         per_km2: f64,
-        /// Indoor.
         #[serde(default)]
         indoor: bool,
-        /// On a roof.
         #[serde(default)]
         rooftop: bool,
-        /// Of leaves, the share that are relays, as a person's node is
-        /// while it is on USB power: drawn apart from the positions, so
-        /// that the people stand where they would with none. They stay
-        /// people: they send and receive texts and may walk.
+        /// Of leaves, the share that are relays, as a person's node on USB
+        /// is. Drawn apart from the positions, so the people stand where
+        /// they would with none; they stay people who text and may walk.
         #[serde(default)]
         relay_share: f64,
     },
@@ -202,9 +180,7 @@ pub struct InterfererSpec {
     pub x: f64,
     /// Metres north.
     pub y: f64,
-    /// Channel index.
     pub channel: u8,
-    /// Transmit power in dBm.
     pub power_dbm: f64,
     /// Whether CAD detects it (LoRa-like modulation).
     #[serde(default)]
@@ -214,8 +190,7 @@ pub struct InterfererSpec {
     /// Mean off period, seconds; 0 means always on.
     #[serde(default)]
     pub mean_off_s: f64,
-    /// Silent until then, seconds: a transmitter that appears among
-    /// nodes that have settled.
+    /// Silent until then, seconds: one that appears among settled nodes.
     #[serde(default)]
     pub from_s: f64,
 }
@@ -240,27 +215,21 @@ pub enum Destination {
 pub enum TrafficSpec {
     /// One message from `from` to `to` every `interval_s`.
     Periodic {
-        /// Origin node.
         from: String,
-        /// Destination node.
         to: String,
-        /// Interval, seconds.
         interval_s: f64,
         /// First message, seconds; defaults to one interval.
         #[serde(default)]
         start_s: Option<f64>,
-        /// Payload bytes.
         payload_bytes: u8,
     },
     /// Every leaf originates messages as a Poisson process.
     Poisson {
         /// Mean messages per leaf per hour.
         per_leaf_per_hour: f64,
-        /// Smallest payload, bytes.
         payload_min: u8,
-        /// Largest payload, bytes (uniform in between).
+        /// Payload bytes are uniform between the two.
         payload_max: u8,
-        /// Destination distribution.
         destination: Destination,
     },
 }
@@ -271,9 +240,7 @@ pub enum TrafficSpec {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Availability {
-    /// Mean available period, seconds.
     pub mean_available_s: f64,
-    /// Mean dark period, seconds.
     pub mean_dark_s: f64,
 }
 
@@ -304,7 +271,7 @@ pub enum ScriptAction {
     /// until it, and then boots, as a relay planted during the run does.
     Start,
     /// As `restart`, with the node's stored state erased: a fresh board
-    /// in its place (roadmap D73).
+    /// in its place.
     Wipe,
 }
 
@@ -312,11 +279,8 @@ pub enum ScriptAction {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptedEvent {
-    /// When, seconds.
     pub at_s: f64,
-    /// Which node.
     pub node: String,
-    /// What.
     pub action: ScriptAction,
     /// Channel for listen, transmit, lbt and rssi.
     #[serde(default)]
@@ -486,15 +450,13 @@ impl Default for Movement {
 }
 
 /// People's nodes whose power switches between USB and battery, and with
-/// it their role (spec "Nodes", roadmap D71). The simulator reports
-/// each change to the node's core. A node that does not switch keeps the
-/// power its placement gives it: a relay on USB, a sleepy node on battery.
+/// it their role (spec "Nodes", `power.rs`). A node that does not switch
+/// keeps its placement's power: a relay on USB, a sleepy node on battery.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Power {
     /// The share of the people's nodes that neither walk nor ride whose
-    /// power switches at random, from the power its placement gives it;
-    /// 0 for none.
+    /// power switches at random; 0 for none.
     pub fraction: f64,
     /// Mean time on USB, seconds; exponential.
     pub usb_s: f64,
@@ -522,9 +484,8 @@ impl Default for Power {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Battery {
-    /// Model the batteries at all.
     pub on: bool,
-    /// The nominal capacity, mAh.
+    /// The nominal capacity.
     pub capacity_mah: f64,
     /// Each cell's capacity as a share of the nominal, drawn uniformly
     /// between the two.
@@ -537,7 +498,7 @@ pub struct Battery {
     /// Each node's converter reads off by a factor drawn uniformly within
     /// 1 ± this, until its core calibrates its readings.
     pub gain_error: f64,
-    /// The charging current on USB, mA.
+    /// The charging current on USB.
     pub charge_ma: f64,
     /// The board's current besides the radio, µA, of a relay and of a
     /// sleepy node.
@@ -640,7 +601,6 @@ pub struct GpsFault {
     pub kind: FaultKind,
     /// Sleepy nodes, or relays.
     pub sleepy: bool,
-    /// How many nodes.
     pub count: u32,
     /// From when, seconds.
     pub at_s: f64,
@@ -673,22 +633,18 @@ pub struct Gps {
     pub relays_every_s: f64,
     /// The error of a fix of a node that is not sleepy, metres: on each
     /// axis a Gauss-Markov process of this standard deviation and
-    /// `error_correlation_s`, around where the node is. 0 for none. A
-    /// research model of a receiver's wander: the L76K gives 2 m CEP
-    /// under open sky (its specification), and nothing is measured for a
-    /// windowsill.
+    /// `error_correlation_s`; 0 for none. A research model: the L76K's
+    /// specification gives 2 m CEP under open sky, and nothing is measured
+    /// for a windowsill.
     pub error_m: f64,
     /// See `error_m`, seconds.
     pub error_correlation_s: f64,
     /// The share of the sleepy nodes placed indoors, and of the walkers at
-    /// their stops, whose GPS hears no sky there: every search of theirs
-    /// indoors runs to its limit and finds nothing. Each node is drawn
-    /// once from the run's seed. Every scenario places its sleepy nodes
-    /// indoors behind a wall of 14.4 dB at 433 MHz, more at the GPS's
-    /// 1575 MHz, with the floors above between them and the sky, and the
-    /// L76K acquires only 18 dB below the open-sky level (Table 2 of its
-    /// hardware design): so by default none hears it
-    /// (`docs/gps-schedule-2026-10-25.md`).
+    /// their stops, whose GPS hears no sky there, drawn once per node. The
+    /// default is all: indoors is a wall of 14.4 dB at 433 MHz, more at
+    /// 1575 MHz, and floors above, while the L76K acquires only 18 dB below
+    /// the open-sky level (Table 2 of its hardware design;
+    /// `docs/gps-schedule-2026-10-25.md`).
     pub no_sky: f64,
 }
 
@@ -705,8 +661,8 @@ impl Default for Gps {
     }
 }
 
-/// A firmware image that spreads over the mesh from one relay (spec
-/// "Updates over the mesh"). The simulator's driver side keeps no bytes:
+/// A firmware image that spreads over the mesh from one relay
+/// (spec "Updates over the mesh"). The simulator's driver side keeps no bytes:
 /// a block decodes when the node has been handed as many distinct pieces
 /// as it is made of.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -715,11 +671,9 @@ pub struct UpdateSpec {
     /// When the relay is given the image, seconds; `None` for the time the
     /// run has settled ([`Scenario::settled_s`]).
     pub at_s: Option<f64>,
-    /// The image's length in bytes as it travels, packed behind its
-    /// 256-byte header (`bark-image`, `pieces.rs`): the node image built
-    /// from main `ea1141f` on 2026-11-08 (`cargo build --release` in
-    /// `bark-fw/`, as `bark-fw/README.md`, "Build and package"), 420 552 B,
-    /// and the header, 420 808 B.
+    /// The image's length in bytes as it travels, behind its 256-byte
+    /// header (`bark-image`, `pieces.rs`): by default the node image built
+    /// from `ea1141f` on 2026-11-08, 420 552 B, plus the header.
     pub image_bytes: u32,
     /// The relay given the image: the one placed as a relay nearest the
     /// centre of the nodes, or the named node.
@@ -736,11 +690,9 @@ impl Default for UpdateSpec {
     }
 }
 
-/// Nodes whose image, gathered over the mesh, becomes whole at a time of
-/// each one's own, without the pieces: each stages it then and reboots
-/// into it as the firmware does (`install.rs`;
-/// spec "Updates over the mesh", the install). For runs too short for the gathering itself,
-/// which takes the district's relays 13 to 15 hours at the design rate
+/// Nodes whose image becomes whole at a drawn time, without the pieces,
+/// and which then reboot into it (`install.rs`). For runs too short for
+/// the gathering itself, which takes the district's relays 13 to 15 hours
 /// (`docs/mesh-update-2026-11-07.md`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -748,11 +700,9 @@ pub struct Installs {
     /// When the first image may become whole, seconds; `None` for the
     /// time the run has settled ([`Scenario::settled_s`]).
     pub from_s: Option<f64>,
-    /// The window after it within which each node's image becomes whole,
-    /// at a time drawn uniformly from the run's seed, seconds.
+    /// The window after it, seconds, over which the times are uniform.
     pub over_s: f64,
-    /// The share of the nodes that install, each chosen from the run's
-    /// seed.
+    /// The share of the nodes that install.
     pub share: f64,
 }
 
@@ -772,7 +722,6 @@ impl Default for Installs {
 pub struct Scenario {
     /// Name, carried into the summary.
     pub name: String,
-    /// Run seed.
     pub seed: u64,
     /// Simulated duration, seconds.
     pub duration_s: f64,
@@ -803,36 +752,26 @@ pub struct Scenario {
     /// scheduled times; `None` for none. With [`Scenario::update`] each
     /// node also reboots into the image once it has gathered it whole.
     pub install: Option<Installs>,
-    /// How long a node takes to settle after it is switched on, seconds:
-    /// the run has settled this long after the last switch-on
-    /// ([`Scenario::settled_s`]), and messages originated before then are
-    /// summarised apart, so start-up losses do not mask the steady state.
-    /// 0 for no start-up phase.
+    /// How long a node takes to settle after it is switched on, seconds
+    /// ([`Scenario::settled_s`]). Messages originated before the run has
+    /// settled are summarised apart, so start-up losses do not mask the
+    /// steady state.
     pub settle_s: f64,
-    /// Origin of the local grid.
     pub origin: Origin,
-    /// Radio parameters.
     pub radio: RadioParams,
-    /// Link generator.
     pub links: LinkParams,
-    /// Protocol parameter overrides.
     pub protocol: ProtocolOverrides,
-    /// Node placements, in order.
     pub nodes: Vec<Placement>,
-    /// Foreign interferers.
     pub interferers: Vec<InterfererSpec>,
-    /// Traffic sources.
     pub traffic: Vec<TrafficSpec>,
     /// Leaf availability process; `None` keeps every leaf available.
     pub availability: Option<Availability>,
-    /// Scripted events.
     pub events: Vec<ScriptedEvent>,
-    /// Metrics options.
     pub metrics: MetricsParams,
     /// Nodes held on one home channel.
     pub homes: Vec<HomeSpec>,
-    /// Nodes that are a person's home and keep a mailbox (spec
-    /// "Mailbox"), as node references; each person's key is
+    /// Nodes that are a person's home and keep a mailbox
+    /// (spec "Mailbox"), as node references; each person's key is
     /// `Sim::mailbox_key` and their tag at their home `Sim::mailbox_tag`.
     pub mailboxes: Vec<String>,
 }
@@ -878,15 +817,10 @@ impl Default for Scenario {
 /// A placed node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacedNode {
-    /// Name, if given.
     pub name: Option<String>,
-    /// Role.
     pub role: RoleSpec,
-    /// Position.
     pub xy: Xy,
-    /// Indoor.
     pub indoor: bool,
-    /// On a roof.
     pub rooftop: bool,
     /// A person's node: a leaf, or a relay placed as a leaf
     /// (`relay_share`). People send and receive texts and may walk.
@@ -905,12 +839,10 @@ impl PlacedNode {
 }
 
 impl Scenario {
-    /// Parse TOML.
     pub fn from_toml(s: &str) -> Result<Scenario, String> {
         toml::from_str(s).map_err(|e| e.to_string())
     }
 
-    /// Read and parse a TOML file.
     pub fn load(path: &std::path::Path) -> Result<Scenario, String> {
         let s = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Scenario::from_toml(&s).map_err(|e| format!("{}: {e}", path.display()))

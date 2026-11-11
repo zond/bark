@@ -1,8 +1,8 @@
 //! Radio-model tests, driven by scripted driver-level actions so they hold
 //! whatever the protocol cores do. Sleepy nodes (placed as leaves) are
 //! used throughout, kept in a first rotation of a day: there a sleepy node
-//! that hears no relay never transmits, and with the sweep slowed to one reading a day it does
-//! not leave its channel either.
+//! that hears no relay never transmits, and with the sweep slowed to one
+//! reading a day it does not leave its channel either.
 
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::Instant;
@@ -84,7 +84,6 @@ fn single_packet_airtime_matches_datasheet_formula() {
                 at: Instant::from_micros(done)
             }]
         );
-        // R heard it.
         assert_eq!(rx(&sim, 2).delivered, 1);
     }
 }
@@ -284,7 +283,7 @@ fn reception_aborted_by_an_excursion_is_counted_deaf() {
 
 #[test]
 fn rssi_on_the_resting_channel_keeps_receiving() {
-    // docs/core-interface.md §3 rule 7: not an excursion.
+    // docs/core-interface.md, "Radio", rule 7: not an excursion.
     let sc = trio(-90.0, -200.0).script_tx(1.0, "T1", 3, 40, 12).script(
         1.005,
         "R",
@@ -351,7 +350,8 @@ fn below_sensitivity_is_counted_and_still_interferes() {
 #[test]
 fn lbt_sees_lora_above_sensitivity_and_rssi_sums_power() {
     let p = RadioParams::default();
-    // T1 transmits on 5 at -100 dBm; R does CAD and later RSSI on 5 while it is on air.
+    // T1 transmits on 5 at -100 dBm; R does CAD and later RSSI on 5 while
+    // it is on air.
     let sc = trio(-100.0, -200.0)
         .script_tx(1.0, "T1", 5, 100, 12)
         .script(1.002, "R", ScriptAction::Lbt, Some(5))
@@ -559,12 +559,10 @@ fn a_weak_packet_frees_the_receiver_and_a_late_loss_deafens_it() {
 #[test]
 fn a_sniffing_receiver_takes_long_preambles_and_misses_most_short_ones() {
     use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS, SNIFF_CYCLE, SNIFF_RX};
-    // Frames half a second apart and a part of a cycle more, spread by a
-    // hash of their index, so that their starts fall evenly over the
-    // cycle: the radio starts its cycle again after each frame it takes,
-    // so a train at a fixed step, or one spread by a low-discrepancy
-    // sequence, falls in step with it, and some step of the sequence
-    // lands the frame after a caught one in a window again.
+    // Frames half a second apart plus a part of a cycle drawn by a hash
+    // of their index, so that their starts fall evenly over the cycle:
+    // the radio restarts its cycle after each frame it takes, so a fixed
+    // step or a low-discrepancy spread falls in step with it.
     let step = 0.5;
     let (short, long) = (2000, 50);
     let mut sc = trio(-100.0, -130.0).script(0.5, "R", ScriptAction::Sniff, None);

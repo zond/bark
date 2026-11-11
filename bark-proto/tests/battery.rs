@@ -1,8 +1,7 @@
-//! A fixed relay on battery relays until its battery is low (spec
-//! "Nodes", `relay/power.rs`): the low level turns it sleepy, the high
-//! level or external power makes it a relay again, a carried relay on
-//! battery has no grace, and a fixed relay that reboots on battery relays
-//! on.
+//! A fixed relay on battery relays until its battery is low (spec "Nodes",
+//! `relay/power.rs`): the low level turns it sleepy, the high level or
+//! external power makes it a relay again, a carried relay on battery has no
+//! grace, and a fixed relay that reboots on battery relays on.
 
 mod common;
 
@@ -114,7 +113,7 @@ fn a_reading_on_external_power_is_not_taken() {
 
 /// A relay on battery that turns carried leaves at once whatever its
 /// battery, within its grace or past it: its owner's node is not to run
-/// flat relaying in a pocket (roadmap D152).
+/// flat relaying in a pocket.
 #[test]
 fn a_relay_carried_on_battery_leaves_at_once() {
     for within in [true, false] {
@@ -278,8 +277,7 @@ fn reading(percent: f32) -> u16 {
 /// learns from its readings: after the quiet hour and a sample of 15 h,
 /// its estimate moves toward the drain by the weight of a sample, it
 /// says so and keeps it, and its time left is the time to the low level,
-/// where it turns sleepy. A reboot keeps what it
-/// learned.
+/// where it turns sleepy. A reboot keeps what it learned.
 #[test]
 fn a_relay_on_battery_learns_its_drain() {
     use bark_proto::drain::{Running, TIME_CONSTANT};

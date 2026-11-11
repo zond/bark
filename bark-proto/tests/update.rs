@@ -1,6 +1,6 @@
-//! Firmware images spreading over the mesh
-//! (spec "Updates over the mesh"), driven through real frames on the test medium, with a driver
-//! side that keeps no bytes.
+//! Firmware images spreading over the mesh (spec "Updates over the mesh"),
+//! driven through real frames on the test medium, with a driver side that
+//! keeps no bytes.
 
 mod common;
 
@@ -362,9 +362,9 @@ fn a_block_that_fails_its_hash_is_gathered_again_and_not_served() {
     }));
 }
 
-/// A sleepy node gathers from its anchor: its beats say what it lacks, the anchor sends
-/// after its slot heartbeat on its home channel, and the node listens for
-/// that frame (spec "Updates over the mesh").
+/// A sleepy node gathers from its anchor: its beats say what it lacks, the
+/// anchor sends after its slot heartbeat on its home channel, and the node
+/// listens for that frame (spec "Updates over the mesh").
 #[test]
 fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
     let boot = Config::default().boot_listen;
@@ -643,7 +643,7 @@ fn a_holder_answers_a_lagging_neighbour_once_a_rotation() {
 
 /// A gatherer at home on channel 5 that hears only a holder at home on 3,
 /// which hears another holder at home on 5 out of the gatherer's reach:
-/// the holder on 3 streams to it on 5 (roadmap D196), and does so as well
+/// the holder on 3 streams to it on 5, and does so as well
 /// where the gatherer hears the holder on 5 too, since no relay leaves a
 /// gatherer to another (spec "Updates over the mesh").
 #[test]

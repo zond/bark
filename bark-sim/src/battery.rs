@@ -1,22 +1,13 @@
 //! Each node's battery, and the grid's outages that take USB power away
 //! (`scenario::Battery`, spec "Nodes").
 //!
-//! A cell holds its share of the nominal capacity, drawn per node, and
-//! starts at a charge drawn from its placement's power: on USB or on
-//! battery. On USB it charges at the charger's current less the load; on
-//! battery it discharges at the radio's currents for the time the node's
-//! radio listened, received duty-cycled and transmitted (the currents of
-//! `bark_proto::sniff`, as the sleepy nodes' current in the summary), the
-//! GPS while it runs, for the searches a sleepy node asks for and while a
-//! relay's runs (`gps.rs`), and a current for the rest of the board by
-//! its role. The time is the radio's after the
-//! settle time, which the metrics count, so outages begin after it.
-//!
-//! An outage takes USB power from every node on it when it begins and
-//! gives it back when it ends. On battery the driver reads the cell's
-//! open-circuit voltage at its charge, off by the node's converter's gain
-//! error, once a minute, and reports it to the core (`AppCommand::Battery`),
-//! which calibrates it.
+//! On USB a cell charges at the charger's current less the load; on
+//! battery it drains at the radio's currents of `bark_proto::sniff` for
+//! the time the metrics counted in each radio state, the GPS's while it
+//! runs (`gps.rs`), and a board current by role. The metrics count from
+//! the settle time, so outages must begin after it. Once a minute the
+//! driver reports a node on battery its cell's open-circuit voltage, off
+//! by its converter's gain error (`AppCommand::Battery`).
 
 use crate::metrics::NodeMetrics;
 use crate::rng::{Purpose, Stream};
@@ -51,8 +42,7 @@ struct Cell {
     capacity: f64,
     /// Its charge at the last reading, mAh.
     charge: f64,
-    /// The charge its radio and its GPS had drawn by the last
-    /// reading, µA·µs.
+    /// What its radio and GPS had drawn by the last reading, µA·µs.
     drawn: f64,
     /// Its reading's gain: 1 for a true reading.
     gain: f64,
@@ -72,12 +62,9 @@ pub(crate) struct BatteryModel {
     turns: [u64; 2],
 }
 
-/// The series' columns (`Sim::battery_row`): the nodes on USB; the
-/// relays, those leaving and those on battery; the sleepy nodes and those
-/// without an anchor; the charge, as a share of the cell, of the nodes
-/// placed as relays and of the people's nodes, those placed as leaves;
-/// the cells that ever ran flat; the turns to sleepy and to relay; and
-/// the airtime so far by kind (`metrics::TypeAirtime`), s.
+/// The series' columns (`Sim::battery_row`). Charges are shares of the
+/// cell, by placement: relays and people's nodes; airtimes are by kind
+/// (`metrics::TypeAirtime`), s.
 const HEADER: &str = "t_s,usb,relays,leaving,relays_on_battery,sleepy,anchorless,\
 relay_charge_mean,relay_charge_min,people_charge_mean,people_charge_p10,people_charge_min,\
 flat,to_sleepy,to_relay,heartbeat_s,beat_s,reach_s,anchorless_s,answer_s,ack_s,data_s,long_data_s\n";

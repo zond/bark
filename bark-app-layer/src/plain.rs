@@ -1,18 +1,5 @@
 //! Inside a boxed message or an introduction: a header, then records
-//! (spec "Phone link").
-//!
-//! | field | bytes | |
-//! |---|---|---|
-//! | flags | 1 | bit 0: an address follows; bit 1: the sender's identity is the greater of the two |
-//! | sent | 4 | the sender's clock, seconds since 2026-01-01 00:00 UTC |
-//! | address | 0 or 13 | the address of the node the sender writes from |
-//!
-//! | record | bytes | |
-//! |---|---|---|
-//! | text | 1 + rest | type 1 (UTF-8) or 2 (windows-1251); last |
-//! | text part | 1 + 1 + rest | type 5 (UTF-8) or 6 (windows-1251), the part's number and the parts' count less one in the high and low four bits; last |
-//! | reaction | 1 + 4 + rest | type 3, the `sent` of the text it answers, one emoji in UTF-8 of at most [`MAX_REACTION`] bytes; last |
-//! | card | 1 + 1 + 38 to 100 | type 4, the card's length, its bytes |
+//! (spec "The payload").
 
 use unicode_segmentation::UnicodeSegmentation;
 

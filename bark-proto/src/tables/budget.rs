@@ -1,73 +1,24 @@
-//! The duty-cycle budget (spec "Regulatory limits", "Duty cycle cap"): a token bucket that keeps a
-//! node within [`DUTY_CYCLE_PERCENT`] of every [`DUTY_CYCLE_WINDOW`], and
-//! no single transmission longer than [`MAX_TRANSMISSION`].
+//! The duty-cycle budget (spec "Regulatory limits", "Duty cycle cap"): a
+//! token bucket that keeps a node within [`DUTY_CYCLE_PERCENT`] of every
+//! [`DUTY_CYCLE_WINDOW`], and no single transmission longer than
+//! [`MAX_TRANSMISSION`]; its reserves; and the bans and told waits that
+//! follow from its refill (spec "Bans").
 //!
-//! # The bucket
-//!
-//! The bucket holds at most [`DEPTH`] of airtime, one minute at the 10 %
-//! cap, 6 s, and fills at the rate `r = (B − DEPTH) / W`, with `B` the
-//! [`BUDGET`] of 360 s and `W` the one-hour window: 354 s an hour, 9.83 %.
-//! A transmission may start only if the bucket holds its airtime, which it
-//! then takes out.
-//!
-//! **Legality.** Take any interval `[T − L, T]`. If no transmission
-//! straddles its start, everything on the air in it started in it and was
-//! taken from the bucket: at most what the bucket held at `T − L`, at most
-//! `DEPTH`, plus what flowed in meanwhile, `r·L`. If one transmission of
-//! airtime `a` started at `s < T − L` and runs into the interval, count
-//! from `s` instead: the bucket held at most `DEPTH − a` after it, so what
-//! started in `(s, T]` is at most `DEPTH − a + r·(T − s)`, and the
-//! straddler adds `s + a − (T − L)` inside the interval; the sum is
-//! `DEPTH + L − (1 − r)·(T − s)`, at most `DEPTH + r·L` since
-//! `T − s > L`. A transmission running past `T` only lowers the count. So
-//! any interval of length `L` holds at most `DEPTH + r·L` on air, and any
-//! hour at most `DEPTH + r·W = B`: 10 %, the limit of ERC/REC 70-03
-//! Annex 1 band g1, which that recommendation measures over one hour.
-//! The rate is below 10 % by `DEPTH / W` exactly so that the allowance
-//! for a burst cannot carry an hour over the limit.
-//!
-//! **Silence.** A node that has emptied its bucket may send a transmission
-//! of airtime `a` after `a / r`: 1.4 s for a full frame, never more than
-//! `DEPTH / r`, 61 s.
-//!
-//! # Heartbeat reserve
-//!
-//! A relay out of budget stops forwarding but keeps sending heartbeats
-//! (spec "Duty cycle cap"), so everything but a heartbeat leaves [`HEARTBEAT_RESERVE`] in
-//! the bucket: one heartbeat's airtime, 14.40 ms. That suffices while
-//! heartbeats are at least the reserve's refill time, 14.40 ms / r = 146 ms,
-//! apart (spec "Heartbeat": at least 5 s): a heartbeat finds the reserve, takes
-//! it, and the bucket refills it before the next, since nothing else may
-//! spend below it.
-//!
-//! # Reply reserve
-//!
-//! Below [`REPLY_RESERVE`] a relay takes no new work: it answers every
-//! packet offered to it with an ACK that refuses, or the ACK of a copy it
-//! already has, and sends nothing else but heartbeats (spec "Receiving DATA", "Duty cycle cap",
-//! roadmap D27, D32). So forwarding and the ACKs that accept work leave
-//! the reply reserve in the bucket, and replies leave the heartbeat
-//! reserve.
-//!
-//! The reserve lets a relay at its cap answer every DATA it receives for
-//! as long as the longest ban, [`LONGEST_BAN`], the bucket's whole
-//! refill, 61.0 s, rather than fall silent (spec "Duty cycle cap"). A
-//! relay receives at most one DATA per full frame and its ACK, 155.52 ms,
-//! and sends a heartbeat at most every [`HEARTBEAT_EVERY`], 5 s (spec
-//! "Heartbeat"). In 61.0 s that is ⌈61.0 / 5⌉ = 13 heartbeats, 187.2 ms,
-//! and in the rest ⌊(61.0 s − 187.2 ms) / 155.52 ms⌋ = 391 refusals,
-//! 6631.4 ms, against a refill of exactly the bucket's depth, 6 s: short
-//! by 818.6 ms, ⌈818.6 / 16.96⌉ = [`REPLIES`] = 49 ACKs. With the
-//! heartbeat reserve on top the reserve is 845.4 ms.
-//!
-//! # Ban
-//!
-//! A relay refuses a packet to send on when the packet's frame and the ACK
-//! that takes it do not fit in its bucket on top of what it has queued
-//! (spec "Receiving DATA", roadmap D29). The sender bans it for at least [`BAN`], the time the
-//! bucket takes to refill a full frame and its ACK, 138.56 + 16.96 =
-//! 155.52 ms at 9.83 %: 1.58 s: by then the bucket has refilled what the
-//! refusal lacked, unless the relay has spent it on what it already held.
+//! **Legality.** The bucket holds at most [`DEPTH`] and fills at
+//! `r = (B − DEPTH) / W`, with `B` the [`BUDGET`] and `W` the window. Take
+//! any interval `[T − L, T]`. If no transmission straddles its start,
+//! everything on the air in it started in it and was taken from the
+//! bucket: at most what the bucket held at `T − L`, at most `DEPTH`, plus
+//! what flowed in meanwhile, `r·L`. If one transmission of airtime `a`
+//! started at `s < T − L` and runs into the interval, count from `s`
+//! instead: the bucket held at most `DEPTH − a` after it, so what started
+//! in `(s, T]` is at most `DEPTH − a + r·(T − s)`, and the straddler adds
+//! `s + a − (T − L)` inside the interval; the sum is
+//! `DEPTH + L − (1 − r)·(T − s)`, at most `DEPTH + r·L` since `T − s > L`.
+//! A transmission running past `T` only lowers the count. So any interval
+//! of length `L` holds at most `DEPTH + r·L` on air, and any hour at most
+//! `DEPTH + r·W = B`: 10 %, the limit of ERC/REC 70-03 Annex 1 band g1,
+//! measured over one hour.
 
 use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, DUTY_CYCLE_PERCENT, DUTY_CYCLE_WINDOW, MIN_PREAMBLE_SYMBOLS};
@@ -79,9 +30,8 @@ use crate::wire::{ACK_LEN, AUX_MASK, HEARTBEAT_LEN};
 pub const BUDGET: Duration =
     Duration::from_micros(DUTY_CYCLE_WINDOW.as_micros() * DUTY_CYCLE_PERCENT as u64 / 100);
 
-/// The most airtime the bucket holds: one minute at the cap, 6 s, about
-/// 39 full frames and their ACKs; the send queue's length follows from it
-/// (spec "Send queue").
+/// The most airtime the bucket holds: one minute at the cap, 6 s (spec
+/// "Duty cycle cap").
 pub const DEPTH: Duration = Duration::from_micros(BUDGET.as_micros() / 60);
 
 /// Longest single transmission (spec "Regulatory limits": 1 s; SF5 frames are ≤140 ms).
@@ -109,8 +59,8 @@ const RATE_DEN: u64 = DUTY_CYCLE_WINDOW.as_micros() / G;
 const _: () = assert!(RATE_NUM == 59 && RATE_DEN == 600);
 const _: () = assert!(MAX_TRANSMISSION.as_micros() <= DEPTH.as_micros());
 
-/// Airtime a relay keeps in the bucket for its heartbeats; see the module
-/// documentation.
+/// Airtime everything but a heartbeat leaves in the bucket: one
+/// heartbeat's, 14.40 ms (spec "Duty cycle cap").
 pub const HEARTBEAT_RESERVE: Duration = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
 
 /// Airtime of an ACK, taken or refused, 16.96 ms.
@@ -122,8 +72,7 @@ const fn refilled(d: Duration) -> Duration {
 }
 
 /// The most a node may have on air in any interval of length `span`,
-/// `DEPTH + r·span`: what a full bucket holds at its start and what flows
-/// in meanwhile; see the module documentation.
+/// `DEPTH + r·span` (proof in the module documentation).
 pub const fn most_on_air(span: Duration) -> Duration {
     Duration::from_micros(DEPTH.as_micros() + refilled(span).as_micros())
 }
@@ -142,8 +91,7 @@ pub const HEARTBEAT_EVERY: Duration = Duration::from_secs(5);
 
 /// Refusals the reply reserve holds: what a relay at its cap spends on
 /// answering a DATA every frame-and-ACK time, and on its heartbeats,
-/// beyond its refill, over [`LONGEST_BAN`]; see the module
-/// documentation.
+/// beyond its refill, over [`LONGEST_BAN`]: 49 (spec "Duty cycle cap").
 pub const REPLIES: u64 = {
     let span = LONGEST_BAN.as_micros();
     let beats = span.div_ceil(HEARTBEAT_EVERY.as_micros());
@@ -157,20 +105,18 @@ pub const REPLIES: u64 = {
 };
 
 /// Replies the bucket refills while a sender retries a hand-over that
-/// goes unanswered, 2.41 s (spec "Hand-over"): 13 of 16.96 ms. A receiver
-/// silent for want of reply budget answers again once it has refilled
-/// what the retries cost it (`tables::DEMOTE_AFTER_FAILURES`).
+/// goes unanswered, 2.41 s: 13 of 16.96 ms (`tables::DEMOTE_AFTER_FAILURES`).
 pub const RETRY_REPLIES: u64 = refilled(retrying_span(ACK_TIMEOUT, HOP_ATTEMPTS, RETRY_BACKOFF))
     .as_micros()
     / ACK_AIRTIME.as_micros();
 
-/// Airtime below which a relay takes no new work; see the module
-/// documentation.
+/// Airtime below which a relay takes no new work, [`REPLIES`] and a
+/// heartbeat: 845.4 ms (spec "Duty cycle cap", "Receiving DATA").
 pub const REPLY_RESERVE: Duration =
     Duration::from_micros(REPLIES * ACK_AIRTIME.as_micros() + HEARTBEAT_RESERVE.as_micros());
 
-/// The shortest ban, and the unit of the wait a refusal tells (spec
-/// "Bans"); see the module documentation.
+/// The shortest ban, and the unit of the wait a refusal tells: the refill
+/// of a full frame and its ACK, 155.52 ms at 9.83 %, 1.58 s (spec "Bans").
 pub const BAN: Duration = refill_time(Duration::from_micros(
     time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros() + ACK_AIRTIME.as_micros(),
 ));
@@ -178,11 +124,8 @@ pub const BAN: Duration = refill_time(Duration::from_micros(
 const _: () = assert!(REPLIES == 49 && RETRY_REPLIES == 13);
 
 /// How long a sender holds a message after the `refusals`-th refusal in a
-/// row before offering it again (spec "Bans"): one [`BAN`] after the
-/// first, doubling after each further one, up to the refill of the whole
-/// bucket, 61 s, the longest anything waits for a bucket. Offered once a
-/// ban, a full frame every 1.58 s would be a 9 % probe on the refuser's
-/// channel and spend the holder's bucket as fast as it refills.
+/// row before offering it again: one [`BAN`], doubling up to
+/// [`LONGEST_BAN`] (spec "Bans").
 pub const fn hold(refusals: u8) -> Duration {
     let cap = LONGEST_BAN.as_micros();
     let doublings = refusals.saturating_sub(1);
@@ -199,13 +142,9 @@ pub const fn hold(refusals: u8) -> Duration {
 /// below it (spec "Bans").
 const STEP_PARTS: u64 = 8;
 
-/// How many bans the ACK's wait code `v` means, 1 to [`AUX_MASK`] (spec
-/// "Bans"): `v` itself up to 8, and above, each code an eighth more than
-/// the one below, rounded down, and at least one ban more, so codes 1 to
-/// 16 are 1 to 16 bans. A wait is told to within an eighth: a sender
-/// told a wait rounded up comes back at most an eighth late, and the 63
-/// codes reach 3384 bans, 89 min, more than an hour, which steps of a
-/// ninth, 44 min, would not.
+/// How many bans the ACK's wait code `v` means (spec "Bans"). Steps of an
+/// eighth reach 3384 bans, 89 min, more than an hour; a ninth would reach
+/// only 44 min.
 const TOLD_BANS: [u64; AUX_MASK as usize + 1] = {
     let mut t = [0; AUX_MASK as usize + 1];
     let mut v = 1;
@@ -230,15 +169,12 @@ pub fn told(code: u8) -> Duration {
     BAN.mul(TOLD_BANS[code.clamp(1, AUX_MASK) as usize])
 }
 
-/// The longest wait a refusal tells: code 63, 3384 bans, 89 min, what
-/// `aux` holds (spec "Bans").
+/// The longest wait a refusal tells: code 63, 3384 bans, 89 min.
 pub const LONGEST_TOLD: Duration = BAN.mul(TOLD_BANS[AUX_MASK as usize]);
 
 /// The code of the longest told wait no longer than `wait`, so that a
 /// wait passed on from relay to relay only shrinks; at least 1, since 0
-/// in an ACK means taken, and at most [`AUX_MASK`]. A longer wait is told
-/// as the longest, and its sender may come back early and be refused
-/// again.
+/// in an ACK means taken.
 pub fn wait_units(wait: Duration) -> u8 {
     let bans = wait.as_micros() / BAN.as_micros();
     let below = TOLD_BANS.iter().rposition(|&b| b <= bans).unwrap_or(1);
@@ -246,8 +182,7 @@ pub fn wait_units(wait: Duration) -> u8 {
 }
 
 /// The shortest told wait no shorter than `wait`, so that a sender given a
-/// place never comes back before it; at least a ban, and at most
-/// [`LONGEST_TOLD`].
+/// place never comes back before it; at most [`LONGEST_TOLD`].
 pub fn told_up(wait: Duration) -> Duration {
     let bans = wait.as_micros().div_ceil(BAN.as_micros());
     let code = TOLD_BANS
@@ -513,7 +448,7 @@ mod tests {
         );
         assert!(b.would_allow(reserve, t), "a heartbeat still goes");
         b.record(reserve, t);
-        // It is back well before the next heartbeat (spec "Heartbeat": 5 s at the least).
+        // Back well before the next heartbeat, 5 s at the least.
         let back = b.allowed_at(ms(0), reserve, t).unwrap();
         assert!(back.since(t) < ms(121), "{:?}", back.since(t));
     }
@@ -613,10 +548,8 @@ mod tests {
 
         #[test]
         fn never_exceeds_the_cap(steps in proptest::collection::vec((gap(), 1u64..=1_000_000), 1..10_000)) {
-            // Demand well above the cap (mostly sub-second gaps, airtimes up to
-            // 1 s) with occasional long silences; every transmission the
-            // budget allows is sent. No hour holds more than 10 %, and no
-            // interval more than the bucket plus the rate.
+            // Demand well above the cap with occasional long silences: no
+            // hour holds more than 10 %, no interval more than the bound.
             let mut b = Budget::new();
             let mut txs = Vec::new();
             let mut t = 0;

@@ -1,11 +1,5 @@
-//! Every key of an identity comes from one 128-bit seed, which the person
-//! backs up as 12 words (`docs/app-layer-2026-11-05.md`, "Keys"):
-//!
-//! ```text
-//! master   = crypto_generichash(seed, 32)                         BLAKE2b-256
-//! identity = crypto_box_seed_keypair(crypto_kdf_derive_from_key(master, 1, "bark-key"))
-//! mailbox  = crypto_kdf_derive_from_key(master, 2, "bark-mbx")
-//! ```
+//! Every key of an identity from one 128-bit seed, and the seed's backup
+//! as 12 words (spec "The payload").
 
 use blake2::digest::consts::U32;
 use blake2::digest::{Mac, Update, VariableOutput};

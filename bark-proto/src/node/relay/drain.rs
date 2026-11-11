@@ -1,10 +1,6 @@
 //! The drain before a reboot into a new image (spec "Send queue",
-//! "Updates over the mesh", the install): the node takes no message, so
-//! that what it holds goes on to its neighbours and its sleepy nodes, and
-//! the driver reboots once it holds nothing or the bound has passed. What
-//! it still holds then, the driver keeps across the reboot ([`Node::held`])
-//! and puts back where it was ([`Node::put_back`]), so that the node
-//! carries on with it as if it had not been away.
+//! "Updates over the mesh"), and what the driver keeps across the reboot
+//! ([`Node::held`]) and puts back ([`Node::put_back`]).
 
 use super::Node;
 use crate::ids::{MsgId, NodeId};
@@ -17,8 +13,8 @@ use crate::time::{Duration, Instant};
 use crate::wire::MAX_PAYLOAD;
 
 /// A message the node holds, as a driver keeps it across a reboot: what
-/// [`MsgId::of`] is taken of, so that it is the same message after, and
-/// where it was.
+/// [`MsgId::of`] is taken of, so it is the same message after, and where it
+/// was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Held<'a> {
     /// Its ID.
@@ -29,9 +25,7 @@ pub struct Held<'a> {
     pub dst_id: NodeId,
     /// Its payload.
     pub payload: &'a [u8],
-    /// The count it goes on from (spec "Hop count"): a forward's highest
-    /// received or sent here, or the count a message waiting in a queue
-    /// arrived with.
+    /// The count it goes on from (spec "Hop count").
     pub hops: u8,
     /// Where it was.
     pub at: HeldAt,
@@ -41,14 +35,12 @@ pub struct Held<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeldAt {
     /// The application's own message, not yet taken by a first hop: the
-    /// driver offers it again as the application's, which may be given
-    /// it back (spec "A sleepy node's own message").
+    /// driver offers it again as the application's.
     Own,
     /// A forward or a return in the send queue.
     Forward {
-        /// The neighbour it came from and its home channel then, which a
-        /// return goes to (spec "Return to parent"); `None` where the
-        /// search began here.
+        /// The neighbour it came from and its home channel then (spec
+        /// "Return to parent"); `None` where the search began here.
         parent: Option<(NodeId, Channel)>,
         /// The send-queue place it held; 0 the regular room.
         place: u8,
@@ -86,20 +78,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.forwarding.drain_from_s != u32::MAX
     }
 
-    /// Whether it is about to leave the air, for a reboot or to turn
-    /// sleepy: its heartbeats say so, and its neighbours rely on it only
-    /// where nothing else is left (spec "Packet formats", "Next hop").
+    /// Whether it is about to leave the air, for a reboot or to turn sleepy
+    /// (spec "Packet formats", "Next hop").
     pub fn leaving_air(&self) -> bool {
         self.draining() || self.leaving()
     }
 
-    /// Whether the node, draining, may reboot at `now`: it holds nothing
-    /// a reset would lose, in its send queue, its delivery queue, its
-    /// inbox or a reply that takes a message, or it has drained for the
-    /// delivery TTL from the whole second it began, the wait the delivery
-    /// queue gives a node that sleeps or is dark, by when every message
-    /// in it has waited that long for its node (spec "Delivery queue")
-    /// and a forward has had twenty hops' budgets (spec "Send queue").
+    /// Whether the node, draining, may reboot at `now`: it holds nothing a
+    /// reset would lose, or it has drained for the delivery TTL, by when
+    /// every queued message has waited that long for its node (spec
+    /// "Delivery queue", "Send queue").
     pub fn drained(&self, now: Instant) -> bool {
         if !self.draining() {
             return false;
@@ -167,15 +155,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         queued.chain(delivery).chain(inbox)
     }
 
-    /// Put back a message [`Node::held`] gave, taken `ago` before `now`,
-    /// after the reset and after the tables kept with it
-    /// ([`Node::remember`]), before the first event: whether it was. A
-    /// forward goes back into the send queue at the place it held, with
-    /// its record if the table kept it, else one made from what `m` keeps;
-    /// a message in a queue goes back into it, aged by `ago`, as the
-    /// tables are. The application's own is not put back: the driver
-    /// offers it again as the application's (spec "Updates over the mesh",
-    /// the install).
+    /// Put back a message [`Node::held`] gave, taken `ago` before `now`;
+    /// call after [`Node::remember`] and before the first event. Returns
+    /// whether it was put back; the application's own never is, as the
+    /// driver offers it again.
     pub fn put_back(&mut self, m: &Held<'_>, ago: Duration, now: Instant) -> bool {
         let id = m.msg_id;
         let queued = |age: Duration| {
@@ -256,10 +239,9 @@ mod tests {
         Instant::ZERO + Duration::from_secs(s)
     }
 
-    /// A message queued for a sleepy node at 1 000 s and kept at 1 100 s,
-    /// put back 59 s after on a clock that reads 5 000 s, has been queued
-    /// 159 s: it turns stale 441 s later, at the delivery TTL from its
-    /// queueing, and makes way for a newer one then and not before.
+    /// A message queued 100 s before it was kept and put back 59 s later
+    /// has been queued 159 s: it turns stale at the delivery TTL from its
+    /// queueing, and not before.
     #[test]
     fn a_queued_message_put_back_expires_on_time() {
         let config = Config::default();

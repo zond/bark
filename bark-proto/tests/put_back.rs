@@ -1,8 +1,8 @@
 //! What a node holds at its reboot into a new image is put back where it
-//! was, and the node carries on with it as if it had not been away (spec
-//! "Updates over the mesh", the install; roadmap D201): a forward keeps
-//! its count and its parent, the application's own message stays its own,
-//! and a copy from the parent after the reboot is known by its record.
+//! was, and the node carries on with it as if it had not been away
+//! (spec "Updates over the mesh", the install): a forward keeps its count
+//! and its parent, the application's own message stays its own, and a copy
+//! from the parent after the reboot is known by its record.
 
 mod common;
 

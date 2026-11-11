@@ -1,6 +1,5 @@
-//! Home: the characteristic by which the app makes its node a person's
-//! home and reads its mailbox (spec "Mailbox"), `28bc0009-…`
-//! ([`crate::uuid::HOME`]).
+//! Home ([`crate::uuid::HOME`]): the app makes its node a person's home
+//! and reads its mailbox (spec "Settings", "Mailbox").
 //!
 //! | | value | bytes |
 //! |---|---|---|
@@ -8,8 +7,7 @@
 //! | read | 1 if anyone's home, else 0; 1 if the reading phone's person's home, else 0; the oldest item's number (3); the newest's (3) | 8 |
 //!
 //! The numbers are 0 while the mailbox holds nothing. A write sets or
-//! clears the writing phone's person's key alone (spec "Phone link",
-//! Home).
+//! clears the writing phone's person's key alone.
 
 use crate::Malformed;
 
@@ -88,8 +86,7 @@ impl Home {
         b
     }
 
-    /// The value the node wrote; bytes a later version appends are
-    /// ignored.
+    /// Read a value, ignoring what a later version appends.
     pub fn decode(b: &[u8]) -> Result<Home, Malformed> {
         if b.len() < Self::LEN {
             return Err(Malformed::Length);

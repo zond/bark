@@ -1,15 +1,5 @@
-//! The payload's four forms (spec "Phone link"). The
-//! first byte, in the clear, is the format: the version in the high four
-//! bits, the form in the low four. The second, in the clear too, is the
-//! recipient tag, by which a public node hands the payload to the phone
-//! it is for ([`recipient`]).
-//!
-//! | form | after the format byte and the recipient tag |
-//! |---|---|
-//! | 0, boxed | nonce (24), `crypto_box_easy`: tag (16), ciphertext |
-//! | 1, introduction | `crypto_box_seal`: ephemeral key (32), tag (16), ciphertext |
-//! | 2, fetch | nonce (24), `crypto_secretbox_easy`: tag (16), ciphertext |
-//! | 3, from the mailbox | `crypto_secretbox_easy`: tag (16), ciphertext of the item's number (3), the items still unsent (2) and the item, or of nothing; nonce derived, not sent |
+//! The payload's four forms, their format byte and the recipient tag
+//! (spec "The payload").
 
 use blake2::digest::consts::{U16, U24};
 use blake2::digest::Mac;
@@ -64,9 +54,7 @@ pub const RECIPIENT_AT: usize = 1;
 /// Bytes before a form's own: the format byte and the recipient tag.
 pub const HEAD_LEN: usize = RECIPIENT_AT + 1;
 
-/// The recipient tag of `identity` at the node `node`: the first byte of
-/// `crypto_generichash` of the node ID to 16 bytes, its shortest output,
-/// keyed with the identity (spec "Phone link", Recipient tag, says why).
+/// The recipient tag of `identity` at the node `node` (spec "The payload").
 pub fn recipient(identity: &Identity, node: NodeId) -> u8 {
     let mut mac =
         <Blake2bMac<U16> as Mac>::new_from_slice(&identity.0).expect("a 32-byte key is BLAKE2b's");
@@ -329,18 +317,16 @@ fn secretbox(key: &[u8; KEY_LEN]) -> XSalsa20Poly1305 {
     XSalsa20Poly1305::new(key.into())
 }
 
-/// The most items a fetch is answered with, its batch, so the most places
-/// a requester tries: within the 33 full frames a relay's full bucket
-/// sends with the reply reserve left (spec "Send queue"), so that a batch passes each relay on its way without waiting for
-/// its bucket to refill (spec "Mailbox", The answer).
+/// The most items a fetch is answered with, so the most places a requester
+/// tries: under the 33 full frames a relay's full bucket sends with the
+/// reply reserve left, so a batch never waits for a refill
+/// (spec "Send queue", "Mailbox").
 pub const MAX_REPLIES: u32 = 32;
 
-/// A reply's nonce: the fetch's `sent` (the round), the reply's place in
-/// it, then zeros. Never sent; unique under the mailbox key as long as
-/// rounds rise, and apart from the phones' random fetch nonces. Place 0
-/// says nothing is new; an item's place is its rank in the order the
-/// round sends them, from 1, so the same item has the same place
-/// whenever it is sent again in its round.
+/// A reply's nonce: the round (the fetch's `sent`), the place, then zeros.
+/// Never sent; unique under the mailbox key while rounds rise. Place 0
+/// says nothing is new; an item keeps its place when its round sends it
+/// again.
 pub fn reply_nonce(round: u32, place: u32) -> [u8; NONCE_LEN] {
     let mut n = [0u8; NONCE_LEN];
     n[..4].copy_from_slice(&round.to_be_bytes());

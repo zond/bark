@@ -1,24 +1,22 @@
-//! What the core knows of firmware images spreading over the mesh (spec
-//! "Updates over the mesh"): how an image is named, the pieces it travels
-//! in, and the pace its frames keep. The node's side is in
-//! `node/relay/update.rs`; the frames are in `wire.rs`. The pieces' bytes,
-//! the code that makes them, the flash they wait in and the signature
-//! check are the driver's (`docs/core-interface.md` §4).
+//! Firmware images spreading over the mesh (spec "Updates over the mesh"):
+//! how an image is named, its pieces, and the pace of its frames. The
+//! node's side is in `node/relay/update.rs`, the frames in `wire.rs`. The
+//! pieces' bytes, their coding, flash and signature check are the driver's
+//! (`docs/core-interface.md`).
 
 use crate::event::MAX_FRAME;
 use crate::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget;
 use crate::time::Duration;
 
-/// An image as a heartbeat's section describes it
-/// (spec "Updates over the mesh"). A version names one image, so the mesh
-/// names an image by its version; block 0 carries its whole name.
+/// An image as a heartbeat's section describes it. A version names one
+/// image; block 0 carries its whole name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
     /// The signed version number.
     pub version: u32,
-    /// Blocks the image travels in, block 0 the block table: 2 to 255 on
-    /// the wire, and a node takes at most [`MAX_BLOCKS`].
+    /// Blocks the image travels in, block 0 the block table; a node takes
+    /// at most [`MAX_BLOCKS`].
     pub blocks: u8,
     /// Pieces in the last block, 1 to [`BLOCK_PIECES`]: with `blocks`, the
     /// pieces of every block ([`Image::pieces`]).
@@ -28,10 +26,8 @@ pub struct Image {
 }
 
 impl Image {
-    /// The distinct pieces that give back block `b`, 0 past the last: the
-    /// table's, the image's name and 8 bytes of each block's hash, its own
-    /// last, in pieces of [`crate::wire::PIECE_BYTES`]; [`BLOCK_PIECES`];
-    /// and the last block's (spec "Updates over the mesh").
+    /// The distinct pieces that give back block `b`, 0 past the last. The
+    /// table holds the 32-byte name and 8 bytes of each block's hash.
     pub fn pieces(&self, b: u8) -> u8 {
         match b {
             0 => (32 + 8 * usize::from(self.blocks)).div_ceil(crate::wire::PIECE_BYTES) as u8,
@@ -42,16 +38,14 @@ impl Image {
     }
 }
 
-/// Coded pieces a whole block is made of: any this many distinct pieces
-/// of a block give it back (spec "Updates over the mesh").
+/// Any this many distinct pieces of a block give it back.
 pub const BLOCK_PIECES: usize = 64;
 
 /// Pieces a block can be sent as, indices 0 to 254: the code works in a
 /// field of 256 elements, one of which is not a piece.
 pub const PIECES: usize = 255;
 
-/// What a node's heartbeat says of its images, in a section after its
-/// first 13 bytes (spec "Updates over the mesh", "Packet formats").
+/// What a node's heartbeat says of its images (spec "Packet formats").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Section {
     /// The version of the image it runs, 0 for none known.
@@ -73,18 +67,15 @@ impl Section {
     }
 }
 
-/// The most blocks an image the mesh carries has, the table's among
-/// them: the lanes the firmware keeps pieces in, one a block
-/// (`bark-image`, `pieces.rs`, `MAX_BLOCKS`; roadmap D151).
+/// The most blocks an image has, the table's among them: the lanes the
+/// firmware keeps pieces in (`bark-image`, `pieces.rs`, `MAX_BLOCKS`).
 pub const MAX_BLOCKS: usize = 48;
 
 /// The airtime of a full frame, a piece's, 138.6 ms.
 pub const FULL_FRAME: Duration = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS);
 
 /// The pace: a full frame's airtime a hundred times over, 1 % of a
-/// channel. A node sends its pieces on a channel at most this often when
-/// it shares the channel or has other frames to send, and otherwise at
-/// most every [`GAP`] (spec "Updates over the mesh").
+/// channel.
 pub const PACE: Duration = FULL_FRAME.mul(100);
 
 /// The fastest the duty cap lets a holder send pieces: one a refill of a
@@ -93,23 +84,18 @@ pub const FASTEST: Duration = budget::refill_time(FULL_FRAME);
 
 const _: () = assert!(FASTEST.as_micros() / 10_000 == 140);
 
-/// The share of a channel one holder's pieces may take at most when it
-/// sends faster than the pace, as an inverse: a piece's full frame in
-/// every this many, 3.3 %. In the district it kept the relays' channels
-/// at 2.0 % busy in the update's first hours, clear of the 3 to 4 % where
-/// the network collapses (spec "Updates over the mesh").
+/// The most of a channel one holder's pieces take faster than the pace,
+/// as an inverse: 1 in 30, 3.3 %. In the district it kept channels 2.0 %
+/// busy, clear of the 3 to 4 % where the network collapses.
 pub const GAP_FRAMES: u64 = 30;
 
-/// The least time between a node's pieces on a channel: a full frame
-/// [`GAP_FRAMES`] times over, 4.16 s, so that one holder takes at most
-/// 3.3 % of an idle channel, against the pace's 1 %.
+/// The least time between a node's pieces on a channel, 4.16 s.
 pub const GAP: Duration = FULL_FRAME.mul(GAP_FRAMES);
 
 /// How many frames of the send queue may go before an update frame that
 /// is due: the full frames the bucket refills in one [`PACE`], 9.83,
-/// rounded, less the update frame itself. A node at its cap then sends an
-/// update frame about once a pace, as an idle one does
-/// (spec "Updates over the mesh").
+/// rounded, less the update frame itself, so a node at its cap sends one
+/// about once a pace, as an idle one does.
 pub const PASS: u8 = {
     let refilled = budget::most_on_air(PACE).as_micros() - budget::DEPTH.as_micros();
     let full = FULL_FRAME.as_micros();
@@ -118,32 +104,24 @@ pub const PASS: u8 = {
 
 const _: () = assert!(PASS == 9);
 
-/// Channels a node sends update frames on within one [`PACE`]: a node is
-/// deaf on its home channel while it sends elsewhere
-/// (spec "Updates over the mesh").
+/// Channels a node sends update frames on within one [`PACE`]: it is
+/// deaf on its home channel while it sends elsewhere.
 pub const SERVED_CHANNELS: usize = 2;
 
 /// How often a node's heartbeats carry its section when nothing makes
-/// them carry it every time: for one rotation of its heartbeats, so on
-/// each channel, once an hour (spec "Updates over the mesh").
+/// them carry it every time: one rotation an hour, so once on each channel.
 pub const SECTION_EVERY: Duration = Duration::from_secs(3600);
 
 /// How many of a gatherer's rotations of heartbeats a helper streams to it
-/// after it last heard its section. The gatherer says it once a rotation
-/// where its helper hears it, so two ride out one restatement lost or
-/// skipped for a busy channel, and a stream to a gatherer that fell
-/// silent, moved away or completed stops within two
-/// (spec "Updates over the mesh").
+/// after it last heard its section, said once a rotation: two ride out
+/// one lost, and a stream to a gatherer that went stops within two.
 pub const LEASE_ROTATIONS: u64 = 2;
 
 /// How many worst-case rotations of heartbeats an image gathered over the
-/// mesh listens for a node before it gives itself up
-/// (spec "Updates over the mesh", the install). Every neighbour's
-/// heartbeat reaches the node's home channel once a rotation; a listening
-/// receiver loses about one in ten (spec "Channel at boot"), so two
-/// rotations miss a lone neighbour one time in a hundred, and the third,
-/// the margin, one time in a thousand: a revert gives the image up for
-/// good.
+/// mesh listens for a node before it gives itself up. A listening receiver
+/// loses about one heartbeat in ten (spec "Channel at boot"), so three
+/// miss a lone neighbour one time in a thousand: a revert gives the image
+/// up for good.
 pub const HEARD_ROTATIONS: u64 = 3;
 
 /// How long an image gathered over the mesh may run without hearing a
@@ -169,9 +147,8 @@ pub const fn heard_within(config: &crate::Config) -> Duration {
 pub const SECTION_LEN: usize = 13;
 
 /// The share of pieces a relay that lacked them missed, in percent: 20.5
-/// in the district at the design rate, seed 1, over the first 6 hours
-/// of an update (`docs/mesh-update-2026-11-07.md`, "Heartbeat sections
-/// and a sweep"). A helper sends a block's pieces over 1 less this share.
+/// in the district at the design rate, seed 1, over an update's first 6 h
+/// (`docs/mesh-update-2026-11-07.md`).
 pub const PIECE_LOSS_PERCENT: u64 = 20;
 
 /// The pieces a helper sends of a block that a neighbour lacks `lacks`

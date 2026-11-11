@@ -1,8 +1,8 @@
-//! A node that moves (spec "Position", roadmap D70): a fixed
-//! node keeps its position until a run of far fixes makes it carried; a
-//! carried node takes each fix, flags its heartbeats, owns nothing by
-//! position, and nobody anchors to it; the first far fix flushes the
-//! delivery queue; mail for a node heard as a relay goes to it directly.
+//! A node that moves (spec "Position"): a fixed node keeps its position
+//! until a run of far fixes makes it carried; a carried node takes each
+//! fix, flags its heartbeats, owns nothing by position, and nobody anchors
+//! to it; the first far fix flushes the delivery queue; mail for a node
+//! heard as a relay goes to it directly.
 
 mod common;
 
@@ -183,8 +183,8 @@ fn a_loss_of_fix_pauses_the_run() {
     assert_eq!(traced(&h, r, Trace::FarFix), 1, "one run");
 }
 
-/// A still board's fixes at a window, a real excursion from the bench of
-/// 2026-11-06 (`tests/data/wander-2026-11-06.csv`): measured from one of
+/// A still board's fixes at a window, a real excursion
+/// (`tests/data/wander-2026-11-06.csv`): measured from one of
 /// its own fixes, they stay beyond 150 m for over 72 s, but within the
 /// carried radius, so the node stays fixed.
 #[test]

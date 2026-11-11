@@ -1,42 +1,17 @@
 //! Reception model (docs/simulator-design.md §3.3), as power over intervals.
 //!
-//! Every node keeps the list of signals currently on the air at it: packets
-//! from its stored transmitters and interferer bursts, each with channel,
-//! power and end time. A transmission touches only its transmitter's stored
-//! link row, when it reaches the air and when it leaves it.
+//! Every node keeps the signals on the air at it: packets from its stored
+//! transmitters and interferer bursts, each with channel, power and end
+//! time. A transmission touches only its transmitter's stored link row,
+//! when it reaches the air and when it leaves it.
 //!
-//! A node listening on channel `c`, with no excursion in progress:
-//!
-//! 1. **Lock.** With no lock, the receiver locks to a packet on `c` that
-//!    arrives. A second packet on `c` that arrives during the locked
-//!    packet's preamble steals the lock if it is stronger by the capture
-//!    threshold; otherwise it is lost to capture. One that arrives after
-//!    the preamble is lost to capture however strong, and takes the
-//!    locked packet with it unless weaker by the harmless level
-//!    (docs/bench-capture-2026-11-03.md).
-//! 2. **Survival.** While locked, every symbol may be lost, at a hazard
-//!    the error curve gives from the signal against noise and the
-//!    interference on the air (co-channel, plus ±1 and ±2 channels after
-//!    rejection). A frame of ours on the channel weaker by the harmless
-//!    level is no interference at all: on the bench it cost the held one
-//!    nothing over a whole overlap. On the channel the curve still charges
-//!    interferer bursts, and frames less weaker that were on the air at
-//!    lock or arrived during the preamble, a case the bench has not
-//!    measured. Interference changes only when a signal starts or ends,
-//!    so the hazard is constant between those moments and is summed over
-//!    them. The packet is lost when the summed hazard reaches a budget
-//!    drawn at lock from the exponential distribution, which loses it with
-//!    the probability that not every symbol survives.
-//! 3. **Loss.** A packet lost before its header has ended frees the
-//!    receiver to search for a preamble again: a weak packet costs it a
-//!    few symbols. One lost later leaves it deaf, demodulating garbage,
-//!    until the packet's end, the length its header gave.
-//! 4. **Delivery.** A locked packet that reaches its end is delivered as
-//!    `Event::Received`, CRC assumed perfect.
-//!
-//! The hazard is summed lazily: whenever a node's lock is looked at, it is
-//! first brought up to the present (`settle`), and a loss found then is
-//! dated to when the budget ran out.
+//! Interference changes only when a signal starts or ends, so a locked
+//! packet's hazard is constant between those moments and summed over them.
+//! The packet is lost when the sum reaches a budget drawn at lock from the
+//! exponential distribution, which loses it with the probability that not
+//! every symbol survives. The sum is lazy: whenever a node's lock is looked
+//! at, it is first brought up to the present (`settle`), and a loss found
+//! then is dated to when the budget ran out.
 
 use crate::metrics::{FirstTry, Outcome, BOOT_MINUTE};
 use crate::phy::{self, Deaf, Loss};
@@ -950,7 +925,8 @@ impl Sim {
     }
 
     /// Bring `b`'s lock up to now, and if its packet has been lost, count
-    /// it and free or deafen the receiver (module doc, step 3).
+    /// it and free or deafen the receiver (docs/simulator-design.md §3.3,
+    /// Loss).
     pub(crate) fn settle(&mut self, b: u32) {
         let now = self.now;
         let st = &mut self.nodes[b as usize];

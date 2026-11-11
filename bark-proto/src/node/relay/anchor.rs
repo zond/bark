@@ -1,72 +1,11 @@
-//! A sleepy node's anchor, beat and duty-cycled receive
-//! (spec "Sleepy nodes").
+//! A sleepy node's anchor, beat and duty-cycled receive (spec
+//! "Sleepy nodes", "Relay choice", "Beats", "Sleepy nodes alone",
+//! "Delivery").
 //!
-//! # Home and beat
-//!
-//! It takes as its anchor the first node it hears that is neither sleepy
-//! nor carried, at once, and listens on the anchor's home channel; its
-//! address is the anchor's position and its own ID (spec "Addresses").
-//! The anchor's position is the position it works by while it has one
-//! ([`Node::address`]): it beats it, centres its plane on it and rebuilds
-//! the short positions it hears near it, and it takes no GPS fix and runs
-//! no search (`relay/gps.rs`, `relay/motion.rs`). Hearing the anchor's
-//! heartbeat each rotation says it is within reach of a fixed relay,
-//! which is all its address needs; what its own fixes bought it, the
-//! carried flag and a check of the anchor after a move, nothing reads
-//! while it sleeps, and the anchor missed twice checks it a rotation or
-//! two later (spec "Beats", roadmap D91).
-//! It stays awake for a worst-case rotation after that and then takes the
-//! strongest node it heard, without a margin; after that it moves only to
-//! one heard over two heartbeats and [`SWITCH_MARGIN_DB`] stronger (spec
-//! "Relay choice"). It leaves an anchor whose heartbeat turns carried or
-//! sleepy, for another or, with none, into anchorless mode.
-//! Back from the dark, it keeps its anchor. It
-//! follows its anchor to a new home channel at the anchor's next heartbeat
-//! it hears, and beats there within a heartbeat interval; it does not move
-//! by the busy estimate.
-//!
-//! With an anchor it heartbeats on its home channel only, with the sleepy
-//! bit, each beat a random half to one beat period after the last
-//! (`tables::heard::beat_period`, 300 s): at most a period apart, so that
-//! two beats missed are a delivery TTL; spread, so that two nodes that met
-//! once do not meet again. After it chooses or
-//! changes its anchor it beats at once and once more within a heartbeat
-//! interval, so that one lost beat does not hide it from its new holder for
-//! a period. It sweeps the channels only while it boots: receiving
-//! duty-cycled it could not.
-//!
-//! Between its windows it receives duty-cycled, anchor or not, so any node
-//! can reach it with the long preamble (`crate::sniff`). It holds mail for
-//! nobody: it keeps no heard table and no delivery queue
-//! ([`SleepyNode`]), owns only messages addressed to its ID, and forwards
-//! what it is given at once (spec "Sleepy nodes"). Its neighbours keep it
-//! as a last resort (spec "Next hop"); where its neighbour table holds
-//! anchorless nodes it sends each beat on each of their channels too,
-//! with the long preamble, so that they learn where it listens (spec
-//! "Beats").
-//!
-//! Without an anchor it is anchorless ([`Node::anchorless`], spec
-//! "Sleepy nodes alone"): it has no window, so every frame to it carries
-//! the long preamble. It beats with the anchorless bit and the long
-//! preamble, each beat a random half to one anchorless beat period, 46.2 s,
-//! after the last, on the next channel each time, so that a relay on any
-//! channel hears it within a rotation; nobody takes it as an anchor, since
-//! it leaves the mode at the first relay it hears. A relay answers each
-//! such beat it hears with a heartbeat on the node's channel with the long
-//! preamble, at once and a fade later, which the node takes as the first
-//! relay heard. Its home is the quietest channel at the end of its boot
-//! listen, kept.
-//!
-//! # Duty-cycled receive (`docs/core-interface.md` §3 rule 10)
-//!
-//! A sleepy node tells its driver the radio may receive duty-cycled
-//! ([`Action::Sniff`]) whenever it has nothing under way and is neither
-//! in a window, after its beat or a message it took (spec "Delivery"),
-//! nor listening for its anchor's heartbeat or to choose or check its
-//! anchor (spec "Relay choice"), until it next needs the radio, for its
-//! next beat or the next offer of a message it waits to send, unless the
-//! core starts an excursion sooner. With [`Config::sleepy_listens`], a
-//! research switch, it never does.
+//! The radio may receive duty-cycled (`docs/core-interface.md` §3 rule 10)
+//! whenever the node has nothing under way and is neither in a window nor
+//! listening to watch, choose or check its anchor, until it next needs the
+//! radio. With [`Config::sleepy_listens`], a research switch, it never does.
 
 use super::{Anchor, Node, Stage};
 use crate::event::{Action, Trace};
@@ -78,19 +17,14 @@ use crate::tables::neighbours::{Neighbour, Neighbours, BEATS};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::HEARTBEAT_LEN;
 
-/// How much stronger, in the averaged RSSI of the neighbour table, another
-/// node must be to take a sleepy node from its anchor
-/// (spec "Relay choice"): two standard deviations of the difference of two means of
-/// two heartbeats each under the scenarios' 4 dB fading.
-/// The table's average lets each new frame count half, which varies less
-/// than a mean of two (σ²/3 against σ²/2), so 8 dB is a little more than
-/// two standard deviations here.
+/// How much stronger, in averaged RSSI, another node must be to take a
+/// sleepy node from its anchor: two standard deviations of the difference
+/// of two-heartbeat means under 4 dB fading (spec "Relay choice").
 pub const SWITCH_MARGIN_DB: f32 = 8.0;
 
-/// The most a node's clock may run fast or slow, parts per million: the
-/// tolerance of a common 32.768 kHz watch crystal, which the board's
-/// low-frequency clock runs from (nRF52840 product specification, LFXO).
-/// To be measured on the boards.
+/// The most a node's clock may run fast or slow, ppm: a common 32.768 kHz
+/// watch crystal's tolerance, which the low-frequency clock runs from
+/// (nRF52840 product specification, LFXO). To be measured on the boards.
 pub const CLOCK_DRIFT_PPM: u64 = 50;
 
 /// How far two clocks, each off by up to [`CLOCK_DRIFT_PPM`], drift apart
@@ -99,32 +33,25 @@ pub(super) fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
 }
 
-/// What a node that sleeps listens for, and until when (module
-/// documentation): the deadlines of its anchor and its windows.
+/// The deadlines of a sleepy node's anchor and its windows.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Listen {
-    /// When the rotation a node that sleeps listens to check its anchor
-    /// ends, while it does (spec "Relay choice").
+    /// When the rotation that checks the anchor ends (spec "Relay choice").
     rescan_ends: Option<Instant>,
-    /// Until when a sleepy node that has just taken its first anchor
-    /// listens, a worst-case rotation, to take the strongest node it heard
-    /// at its end (spec "Relay choice").
+    /// When the first choice of anchor is made (spec "Relay choice").
     choosing: Option<Instant>,
-    /// When a node that sleeps expects its anchor's next heartbeat on its
-    /// channel, and from when it expected the last.
+    /// When the anchor's next heartbeat is expected on this channel, and
+    /// from when it expected the last.
     watch_at: Option<Instant>,
     watch_base: Instant,
-    /// Until when a sleepy node listens after its beat or a message it
-    /// took (spec "Delivery").
+    /// Until when it listens after its beat or a message it took.
     awake_until: Instant,
-    /// When the window it listens in ends, while it is awake.
     window_ends: Option<Instant>,
     /// Until when the driver was told the radio may receive duty-cycled.
     sniff_until: Option<Instant>,
 }
 
 impl Listen {
-    /// Listening for nothing.
     pub(super) const UNSET: Listen = Listen {
         rescan_ends: None,
         choosing: None,
@@ -135,9 +62,8 @@ impl Listen {
         sniff_until: None,
     };
 
-    /// When it next needs the core: the end of a check of its anchor, of
-    /// its first choice, or of the window it listens in. Its anchor's
-    /// heartbeat is watched for in that window.
+    /// The anchor's heartbeat is watched for in a window, so the window's
+    /// end covers it.
     pub(super) fn next_wakeup(&self) -> Option<Instant> {
         [self.rescan_ends, self.choosing, self.window_ends]
             .into_iter()
@@ -145,28 +71,23 @@ impl Listen {
             .min()
     }
 
-    /// When the check of its anchor that ends at `now` or before ends.
+    /// The end of a check of the anchor that is due at `now`.
     pub(super) fn check_due(&self, now: Instant) -> Option<Instant> {
         self.rescan_ends.filter(|&t| now >= t)
     }
 
-    /// Whether its first choice of anchor is due at `now`.
     pub(super) fn choice_due(&self, now: Instant) -> bool {
         self.choosing.is_some_and(|t| now >= t)
     }
 
-    /// It listens until `t` (spec "Delivery").
     pub(super) fn awake_until(&mut self, t: Instant) {
         self.awake_until = t;
     }
 
-    /// It listens until `t` at least.
     pub(super) fn awake_until_at_least(&mut self, t: Instant) {
         self.awake_until = self.awake_until.max(t);
     }
 
-    /// Whether it watches for its anchor's heartbeat, and when it comes if
-    /// in its slot.
     pub(super) fn watching(&self) -> bool {
         self.watch_at.is_some()
     }
@@ -175,14 +96,12 @@ impl Listen {
         self.watch_at
     }
 
-    /// The core used the radio: a duty-cycled receive the driver was told
-    /// of has ended (`docs/core-interface.md` §3 rule 10).
+    /// The core used the radio, which ends a duty-cycled receive
+    /// (`docs/core-interface.md` §3 rule 10).
     pub(super) fn radio_used(&mut self) {
         self.sniff_until = None;
     }
 
-    /// It listens for nothing: no window, no watch for its anchor's
-    /// heartbeat, no choice or check under way.
     pub(super) fn forget(&mut self) {
         self.awake_until = Instant::ZERO;
         self.choosing = None;
@@ -199,9 +118,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         anchorless_beat_period(self.config.delivery_ttl)
     }
 
-    /// Whether the radio may receive duty-cycled at `now` (module
-    /// documentation). Only a node with an anchor has windows: one
-    /// without is sent to with the long preamble whenever.
+    /// Whether the radio may receive duty-cycled at `now`. Only a node with
+    /// an anchor has windows: one without is always sent the long preamble.
     pub(super) fn may_sniff(&self, now: Instant) -> bool {
         let window = self.anchored_sleepy() && now < self.listen.awake_until;
         self.sleepy()
@@ -224,16 +142,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
 
-    /// When a node that sleeps listens for its anchor's next heartbeat on
-    /// its channel, if it does (module documentation): from as early as it
-    /// can come to as late as it can. `watch_at` is when it comes if it
-    /// starts in its slot, from the time expected of the last one heard
-    /// (`anchor_heard`). It comes earlier by as much as the two clocks
-    /// drift apart, [`CLOCK_DRIFT_PPM`] each, since; and by twice as much
-    /// again, since the last one may have been late by what keeps a
-    /// heartbeat behind its slot ([`heartbeat_lag`]) and moved the time
-    /// expected later by the drift when its slot was as early as the
-    /// drift allowed. It may come later by the drift, and by that lag.
+    /// When a sleepy node listens for its anchor's next heartbeat: from as
+    /// early as it can come to as late (spec "Relay choice", asleep).
     pub(super) fn watch(&self) -> Option<(Instant, Instant)> {
         let at = self.listen.watch_at?;
         let drift = drift(at.since(self.listen.watch_base));
@@ -244,11 +154,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         ))
     }
 
-    /// Follow the anchor's heartbeat: a node that sleeps expects it on its
-    /// channel a rotation of the anchor's interval after the last
-    /// (module documentation); once two rotations have passed without it,
-    /// the anchor is gone, and the node listens a rotation to choose again
-    /// (spec "Relay choice").
+    /// Follow the anchor's heartbeat, expected a rotation after the last;
+    /// two missed start a check of the anchor (spec "Relay choice").
     pub(super) fn watch_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         let keeps = self.anchored_sleepy()
             && !self.config.sleepy_listens
@@ -296,11 +203,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The anchor's heartbeat that started at `now` was heard: it is alive, and its next
-    /// comes to this node's channel when the rotation brings it there. A
-    /// heartbeat may come late behind its slot, never early, so the time
-    /// expected is kept from the earliest heard, moved later only by as
-    /// much as the clocks may drift apart.
     /// A heartbeat of the anchor outside its slots was heard: the anchor
     /// is alive, and the time its next is expected stays as it was.
     pub(super) fn anchor_alive(&mut self) {
@@ -316,15 +218,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Whether the anchor's last heartbeat had neither the carried nor
-    /// the sleepy flag: a check does not keep it otherwise
-    /// (spec "Relay choice").
+    /// Whether the anchor's last heartbeat had neither the carried nor the
+    /// sleepy flag; a check keeps it only then (spec "Relay choice").
     pub(super) fn anchor_holds_mail(&self) -> bool {
         self.anchor()
             .and_then(|a| self.neighbours.get(a.id))
             .is_none_or(|n| n.holds_mail())
     }
 
+    /// The anchor's heartbeat that started at `now` was heard. A heartbeat
+    /// may come late behind its slot, never early, so the time expected is
+    /// kept from the earliest heard, moved later only by the clocks' drift.
     pub(super) fn anchor_heard(&mut self, now: Instant) {
         let Some(a) = self.anchor() else { return };
         if self.listen.rescan_ends.is_some() && self.anchor_holds_mail() {
@@ -355,8 +259,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.listen.sniff_until.is_some_and(|t| t > now) {
             return;
         }
-        // The ends of the windows it listens in, and the start of the next
-        // for its anchor's heartbeat, need the core, to say so.
+        // The ends of the windows, and the start of the next watch for the
+        // anchor's heartbeat, need the core.
         self.listen.window_ends = None;
         if self.anchored_sleepy() {
             let ahead = |t: Option<Instant>| t.filter(|&t| t > now);
@@ -385,9 +289,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.listen.awake_until = now + self.heard.params().linger;
     }
 
-    /// Choose or keep a sleepy node's anchor among the live neighbours
-    /// that are not sleepy, and follow its home channel. Returns whether
-    /// the anchor changed.
+    /// Choose or keep a sleepy node's anchor, and follow its home channel
+    /// (spec "Relay choice"). Returns whether the anchor changed.
     pub(super) fn reconsider_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if !self.sleepy() || self.stage != Stage::Running {
             return false;
@@ -397,8 +300,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .and_then(|a| self.neighbours.live(now).find(|(_, n)| n.id == a.id))
             .map(|(_, n)| *n);
         // Any node that is neither sleepy nor carried can hold a sleepy
-        // node's messages: without an anchor it takes the first it hears
-        // (spec "Relay choice").
+        // node's messages.
         let strongest = |except: Option<NodeId>, beats: u8| {
             self.neighbours
                 .live(now)
@@ -416,8 +318,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.listen.choosing = None;
         }
         if current.is_some_and(|a| !a.holds_mail()) {
-            // It holds mail no more, carried or sleepy: another, at once
-            // if one is live, else the one a rotation's listen finds.
+            // It holds mail no more: another at once if one is live, else
+            // the one a rotation's listen finds.
             let to = strongest(None, 0);
             if to.is_none() && self.listen.rescan_ends.is_some() {
                 return false;
@@ -434,9 +336,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let to = match current {
             None => strongest(None, 0),
-            // A rotation after its first anchor, by when every node in range
-            // has visited its channel, and while few can have its address:
-            // the strongest heard, without the margin.
+            // The first choice: without the margin, as few can have its
+            // address yet.
             Some(a) if chosen => strongest(Some(a.id), 0).filter(|b| b.rssi > a.rssi),
             Some(a) => strongest(Some(a.id), BEATS).filter(|b| b.rssi >= a.rssi + SWITCH_MARGIN_DB),
         };
@@ -450,8 +351,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.retune(a.home, emit);
                 // Its holder learns the new channel only from a beat there,
                 // and every node of the anchor follows on the same
-                // heartbeat: each beats at a random time within a heartbeat
-                // interval (spec "Beats").
+                // heartbeat: spread the beats (spec "Beats").
                 let soon = now + self.rng.duration(Duration::ZERO, self.config.heartbeat_max);
                 self.radio.beacon.beat_by(soon);
             }
@@ -490,8 +390,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.gps.anchored(self.motion.placed(), now, emit);
     }
 
-    /// The anchor was chosen or confirmed: a node that sleeps keeps it
-    /// whether or not it hears it (module documentation).
+    /// The anchor was chosen or confirmed: a sleepy node keeps its entry
+    /// whatever its age (spec "Relay choice").
     pub(super) fn anchored(&mut self) {
         self.listen.rescan_ends = None;
         self.listen.watch_at = None;
@@ -521,8 +421,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.beacon.beat(now, 0);
     }
 
-    /// Listen a worst-case rotation, from `now`, to check the anchor of a
-    /// node that sleeps (module documentation).
+    /// Listen a worst-case rotation to check the anchor
+    /// (spec "Relay choice").
     pub(super) fn check_anchor(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if !self.anchored_sleepy()
             || self.config.sleepy_listens
@@ -534,9 +434,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::Trace(Trace::AnchorCheck));
     }
 
-    /// The rotation that began at `since` is over, the anchor not heard in
-    /// it: take the strongest node heard that is not sleepy, or keep the
-    /// anchor if none was (spec "Relay choice").
+    /// The check that began at `since` is over (spec "Relay choice").
     pub(super) fn anchor_checked(
         &mut self,
         since: Instant,
@@ -565,9 +463,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(b) => self.take_anchor(&b, now, emit),
             // Its anchor moves or sleeps, and no other holds mail here.
             None if anchor.is_some_and(gone) => self.leave_anchor(now),
-            // Nothing at all heard: the node is out of reach, in a pocket or
-            // a basement, not its anchor gone; it keeps it, and checks again
-            // only once it hears anything again.
+            // Nothing at all heard: the node is in a pocket or a basement,
+            // not its anchor gone; it checks again once it hears anything.
             None => {
                 self.anchored();
                 if let Some(s) = self.sleep_mut() {

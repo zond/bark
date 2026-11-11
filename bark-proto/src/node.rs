@@ -1,11 +1,9 @@
 //! The protocol core: configuration, the node, and the `Core` trait that
 //! the driver programs against.
 //!
-//! There is one node, [`Relay`], in `node/relay.rs` and `node/relay/`,
-//! sleepy or a relay by its power (spec "Nodes", "Sleepy nodes",
-//! roadmap D46, D71). It uses the
-//! radio discipline of `node/mac.rs` and the per-hop transfer of
-//! `node/transfer.rs`.
+//! The one node type, [`Relay`], is in `node/relay.rs` and `node/relay/`
+//! (spec "Nodes", "Sleepy nodes"); the radio discipline is in `node/mac.rs`,
+//! the per-hop transfer in `node/transfer.rs`.
 
 use crate::event::{Action, Event, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
@@ -26,120 +24,98 @@ pub use relay::{
 };
 
 /// Protocol parameters. Defaults are the design's values; the simulator
-/// sweeps them (roadmap Phase 1 milestone 5).
+/// sweeps them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
     /// Own position.
     pub position: Position,
-    /// Whether `position` is the node's place: set when it was built or
-    /// placed, as on a bench board or in the simulator. Without it, and
-    /// without a stored place of a fixed node, the node has none until its
-    /// first accepted fix or a map point (spec "Position", roadmap D83,
-    /// D133).
+    /// Whether `position` is the node's place, as on a bench board or in the
+    /// simulator. Without it, and without a stored place, the node has none
+    /// until its first accepted fix or a map point (spec "Position").
     pub placed: bool,
-    /// The node's ID: on the board from the chip's hardware ID, in the
-    /// simulator one per node. A node given [`NodeId::NONE`] draws one from
-    /// its seed.
+    /// The node's ID; a node given [`NodeId::NONE`] draws one from its seed.
     pub node_id: NodeId,
-    /// Research switch: holders send to a sleepy node whenever they hold a
-    /// message for it, as if it listened all the time, instead of only
-    /// while it listens after a beat. The simulator's sleepy nodes listen
-    /// all the time; this separates what sending on the beat costs from
-    /// the rest. Off in the design.
+    /// Research switch, off in the design: holders send to a sleepy node
+    /// whenever they hold a message for it, as if it listened all the time,
+    /// to separate what sending on the beat costs.
     pub sleepy_listens: bool,
     /// Transmit power in dBm, at most `radio::MAX_ERP_DBM` minus antenna gain.
     pub tx_power_dbm: i8,
-    /// Heartbeat interval bounds: each node's fixed interval lies in between
-    /// ([`heartbeat_interval`], spec "Heartbeat": 5–15 s).
+    /// Heartbeat interval bounds ([`heartbeat_interval`], spec "Heartbeat").
     pub heartbeat_min: Duration,
     /// See `heartbeat_min`.
     pub heartbeat_max: Duration,
-    /// Per-hop ACK timeout (spec "Hand-over": 100 ms; `tables::ACK_TIMEOUT`).
+    /// Per-hop ACK timeout (spec "Hand-over").
     pub ack_timeout: Duration,
     /// Per-hop transmit attempts before giving up on a neighbour (spec
-    /// "Hand-over": 3; `tables::HOP_ATTEMPTS`).
+    /// "Hand-over").
     pub hop_attempts: u8,
     /// Longest random wait of a hand-over after a busy listen-before-talk
-    /// check (spec "Hand-over": 0–50 ms).
+    /// check (spec "Hand-over").
     pub hop_backoff_max: Duration,
     /// Unit of the random wait before a retry after a missing ACK: retry
-    /// `k` waits up to `2^k` units (spec "Retry wait": a full frame and its ACK,
-    /// 155.52 ms; `tables::RETRY_BACKOFF`).
+    /// `k` waits up to `2^k` units (spec "Retry wait").
     pub retry_backoff: Duration,
     /// Failed hand-overs in a row before a neighbour is demoted (spec
-    /// "Neighbour table": 3; `tables::DEMOTE_AFTER_FAILURES`).
+    /// "Neighbour table").
     pub demote_after_failures: u8,
-    /// Neighbour expiry in heartbeat rotations (spec "Neighbour table": 3, ≈400 s).
+    /// Neighbour expiry in heartbeat rotations (spec "Neighbour table").
     pub neighbour_expiry_rotations: u8,
-    /// Rotations a demotion lasts without an ACK (spec "Neighbour table": 3, 390 s).
+    /// Rotations a demotion lasts without an ACK (spec "Neighbour table").
     pub demotion_rotations: u8,
-    /// How long a sleepy node's own message waits before it is routed
-    /// again while the node has no live neighbour, and after its anchor did
-    /// not answer (spec "A sleepy node's own message": 60 s, the length of
-    /// a fade).
+    /// How long a sleepy node's own message waits before it is routed again
+    /// when it has no live neighbour or its anchor did not answer
+    /// (spec "A sleepy node's own message": the length of a fade).
     pub fade_retry: Duration,
-    /// The delivery TTL: the delivery queue's stale age and the least the
-    /// network keeps a node's mail (spec "Sleepy nodes": 10 min).
+    /// The delivery queue's stale age and the least the network keeps a
+    /// node's mail (spec "Sleepy nodes").
     pub delivery_ttl: Duration,
-    /// Interval of the delivery retry for queued messages to a sleepy node
-    /// that listens all the time (`sleepy_listens`), besides the retry on
-    /// each of its beats: 60 s, for that research switch only.
+    /// Delivery retry interval under `sleepy_listens`, besides the retry on
+    /// each beat; for that research switch only.
     pub delivery_retry: Duration,
-    /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate": 1/138).
+    /// Busy-estimate EMA coefficient as 1/N (spec "Busy estimate").
     pub busy_ema_inverse: u16,
-    /// Interval between 13-channel RSSI sweeps (spec "Busy estimate": 13 s).
+    /// Interval between 13-channel RSSI sweeps (spec "Busy estimate").
     pub sweep_interval: Duration,
-    /// Busy threshold above noise floor in dB (spec "Busy estimate": 6).
+    /// Busy threshold above noise floor in dB (spec "Busy estimate").
     pub busy_threshold_db: u8,
-    /// Move if `busy[home] − min(busy)` exceeds this for `move_dwell` (spec "Channel moves": 0.05, 10 min).
+    /// Move if `busy[home] − min(busy)` exceeds this for `move_dwell` (spec "Channel moves").
     pub move_threshold_percent: u8,
     /// See `move_threshold_percent`.
     pub move_dwell: Duration,
-    /// Maximum random wait before moving (spec "Channel moves": 5 min).
+    /// Maximum random wait before moving (spec "Channel moves").
     pub move_wait_max: Duration,
     /// Heartbeat listen-before-talk checks before the heartbeat is skipped,
-    /// with a random 0–`lbt_backoff_max` wait after each busy one
-    /// (spec "Heartbeat": "up to three checks ... if every check is busy, skip").
+    /// with a random 0–`lbt_backoff_max` wait after each busy one (spec
+    /// "Heartbeat").
     pub lbt_attempts: u8,
     /// See `lbt_attempts`.
     pub lbt_backoff_max: Duration,
-    /// A node's first rotation: it chooses its home at the end, by when
-    /// every relay in range has been heard, unless it has a stored one;
-    /// a sleepy node that has heard no relay in two is anchorless (spec
-    /// "Channel at boot": the worst-case rotation, 13 × 15 s = 195 s).
+    /// A node's first rotation, by whose end every relay in range has been
+    /// heard (spec "Channel at boot": 13 × 15 s = 195 s).
     pub boot_listen: Duration,
-    /// What the node stored before its last reboot, from its driver
-    /// (`store.rs`, spec "Implementation notes"); `None` for a fresh board.
+    /// What the node stored before its last reboot
+    /// (spec "Implementation notes"); `None` for a fresh board.
     pub stored: Option<Stored>,
-    /// Fixed home channel for bench work instead of the measured choice
-    /// (spec "Channel at boot"). The move rule is off while it is set.
+    /// Fixed home channel for bench work; the move rule is off while set.
     pub home_override: Option<Channel>,
-    /// How long the fixes of a carried node must stay within
-    /// [`CARRY_RADIUS_M`] of one place before it is fixed again
-    /// (spec "Position": 4 h, the longer of the two measured,
-    /// roadmap D70). Long, so that a node that stops for a while does not
-    /// take mail it would strand when it moves on.
+    /// How long a carried node's fixes must stay within [`CARRY_RADIUS_M`]
+    /// of one place before it is fixed again (spec "Position"). Long, so a
+    /// node that stops a while does not take mail it would strand.
     pub fixed_after: Duration,
-    /// How long a fixed relay whose external power has gone keeps
-    /// relaying, holding and owning, before it flushes its delivery queue
-    /// and turns sleepy (spec "Sleepy nodes", roadmap D71); a carried one
-    /// has none (roadmap D152). Listening draws
-    /// [`crate::sniff::RX_CURRENT_UA`], 5.8 mA, so an hour of it is 0.68 %
-    /// of the board's 850 mAh battery (spec "Hardware"); a shorter grace
-    /// would turn a node sleepy at every brief unplug. A fixed relay that
-    /// relays on past it (roadmap D81) rests its GPS from then (roadmap
-    /// D82).
+    /// How long a fixed relay that lost external power keeps relaying
+    /// before it turns sleepy (spec "Sleepy nodes"). An hour of listening at
+    /// [`crate::sniff::RX_CURRENT_UA`] is 0.68 % of the 850 mAh battery
+    /// (spec "Hardware"); a shorter grace would turn a node sleepy at every
+    /// brief unplug.
     pub grace: Duration,
-    /// The battery levels between which a fixed relay on battery relays
-    /// past its grace, its readings calibrated (`relay/power.rs`, spec
-    /// "Sleepy nodes"). `None` for a driver that reports no
-    /// battery, as the simulator's scenarios without batteries: a fixed
-    /// relay then turns sleepy at its grace's end, since it would
-    /// otherwise relay until its battery browns out.
+    /// The battery levels between which a fixed relay relays past its grace
+    /// (spec "Sleepy nodes"). `None` for a driver that reports no battery:
+    /// the relay then turns sleepy at its grace's end rather than relay
+    /// until it browns out.
     pub battery: Option<BatteryLevels>,
-    /// The version of the firmware image the node runs, which its status
-    /// tells (spec "Neighbour status"): the firmware's from its build, 0 where
-    /// none is known, as in the simulator.
+    /// The firmware image version its status tells
+    /// (spec "Neighbour status"); 0 where none is known.
     pub version: u32,
 }
 
@@ -166,10 +142,8 @@ impl BatteryLevels {
     };
 
     /// Whether a node may start swapping in a new image (spec
-    /// "Implementation notes"): on external power always, on battery only
-    /// above the low level. `millivolts` is a reading as the levels compare
-    /// it, calibrated once there is a calibration; 0, no reading yet, is
-    /// below it.
+    /// "Implementation notes"). `millivolts` is a calibrated reading; 0, no
+    /// reading yet, is below the low level.
     pub fn swap_allowed(self, external_power: bool, millivolts: u16) -> bool {
         external_power || millivolts > self.low_mv
     }
@@ -184,14 +158,10 @@ pub const BATTERY_FULL_MV: u16 = 4177;
 /// `low_mv` on Maxim AN4189's curve.
 pub const BATTERY_LOW_PERCENT: u8 = 20;
 
-/// About how much of a cell's charge is left at `mv`, a calibrated reading
-/// in millivolts, in percent; `None` at or below 20 %, the low level, where
-/// the curve falls steeply and the node turns sleepy. Between the three
-/// open-circuit voltages known here, 20 %, 30 % and full
-/// ([`BatteryLevels::DESIGN`], [`BATTERY_FULL_MV`]), it is read off the
-/// straight line between them: a coarse guess between 30 % and full,
-/// where a cell's curve is not straight, for a person to see roughly what
-/// is left, and used by no rule.
+/// About how much charge is left at `mv`, a calibrated reading, in percent;
+/// `None` at or below the low level. Interpolated linearly between the known
+/// points ([`BatteryLevels::DESIGN`], [`BATTERY_FULL_MV`]): coarse above
+/// 30 %, for a person to read, and used by no rule.
 pub fn battery_percent(mv: u16) -> Option<u8> {
     let BatteryLevels { low_mv, high_mv } = BatteryLevels::DESIGN;
     if mv <= low_mv {
@@ -239,31 +209,24 @@ impl Default for Config {
     }
 }
 
-/// The heartbeat intervals a node can have: 256, one ID byte's worth, over
-/// the range of spec "Heartbeat", 39.06 ms apart (spec "Heartbeat"). Two
-/// nodes whose intervals differ by at least two heartbeats' airtime,
-/// 2 × 14.40 ms, slide past each other by more than an overlap at every
-/// heartbeat, so that two heartbeats of theirs meet at most once in a row;
-/// 10 s / 28.80 ms = 347 intervals would do, and the largest power of two
-/// below it is 256.
+/// The heartbeat intervals a node can have, one ID byte's worth (spec
+/// "Heartbeat"). Intervals at least two heartbeats' airtime apart
+/// (2 × 14.40 ms) meet at most once in a row; 10 s / 28.80 ms = 347 would
+/// do, and the largest power of two below it is 256.
 pub const INTERVALS: u64 = 256;
 
-/// Node `id`'s heartbeat interval: fixed, from the last byte of its ID,
-/// one of [`INTERVALS`] steps over `heartbeat_min` to `heartbeat_max`
-/// (spec "Heartbeat"). A neighbour that hears one heartbeat of it knows
-/// when the next comes to its channel.
+/// Node `id`'s fixed heartbeat interval, from the last byte of its ID (spec
+/// "Heartbeat"), so a neighbour that hears one knows when the next comes.
 pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
     let min = config.heartbeat_min.as_micros();
     let span = config.heartbeat_max.as_micros().saturating_sub(min);
     Duration::from_micros(min + span * id.last() as u64 / INTERVALS)
 }
 
-/// The longest a heartbeat waits behind its slot: a hand-over attempt it
-/// may find under way, a full frame with the long preamble, to a sleepy
-/// node, and the ACK timeout, 472.8 ms, which is longer than
-/// a reception its check waits for, and two listen-before-talk backoffs
-/// before its last check, 400 ms (spec "Heartbeat", "Hand-over"):
-/// 872.8 ms.
+/// The longest a heartbeat waits behind its slot (spec "Heartbeat",
+/// "Hand-over"): a hand-over attempt under way, a full long-preamble frame
+/// and the ACK timeout, 472.8 ms (longer than any reception its check waits
+/// for), plus two listen-before-talk backoffs, 400 ms: 872.8 ms.
 pub const fn heartbeat_lag(config: &Config) -> Duration {
     let attempt = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS).as_micros()
         + config.ack_timeout.as_micros();
@@ -273,11 +236,9 @@ pub const fn heartbeat_lag(config: &Config) -> Duration {
 }
 
 /// How far apart a node's heartbeats go in its first rotation (spec
-/// "Heartbeat"): as long as the answers to one can take to arrive, so
-/// that the next says whether one did. An answer goes within a
-/// listen-before-talk backoff of the heartbeat, then waits behind its
-/// slot as any heartbeat may, [`heartbeat_lag`], and is on the air for a
-/// heartbeat's airtime: 200 + 872.8 + 14.4 ms = 1087.2 ms.
+/// "Heartbeat"): as long as an answer can take, so the next says whether
+/// one came. A backoff, [`heartbeat_lag`] and a heartbeat's airtime:
+/// 200 + 872.8 + 14.4 ms = 1087.2 ms.
 pub const fn burst_gap(config: &Config) -> Duration {
     let airtime = time_on_air(HEARTBEAT_LEN as u8, crate::radio::MIN_PREAMBLE_SYMBOLS);
     Duration::from_micros(
@@ -287,11 +248,9 @@ pub const fn burst_gap(config: &Config) -> Duration {
     )
 }
 
-/// A relay within this distance of a destination that is not its own
-/// position, with no live, undemoted neighbour closer, owns it
-/// (spec "Owner"): 50 m is what spec "Position" allows between two GPS fixes of a relay that
-/// has not moved, so the addressed relay and this one are, for the radio,
-/// in the same place.
+/// A relay within this distance of a destination, with no live, undemoted
+/// neighbour closer, owns it (spec "Owner"): what spec "Position" allows
+/// between two fixes of a relay that has not moved.
 pub const OWNER_RADIUS_M: f32 = 50.0;
 
 /// A common walking speed, metres a second: the comfortable gait of
@@ -303,23 +262,17 @@ pub const WALKING_SPEED_M_S: f32 = 1.4;
 /// default output rate (L76K hardware design and specification).
 pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
 
-/// How far a fixed node's fix must lie from the place it stands to count
-/// towards making it carried (spec "Position"): beyond the farthest a
-/// still board's fixes wander. At a window on 2026-11-06 three still
-/// boards' fixes stayed up to 199 m from one of their own fixes for 72 s,
-/// and no two of them lay more than 218 m apart
-/// (`docs/gps-bench-2026-11-06.md`); five owner allowances clear both. A
-/// place is one fix, so the radius must hold the wander's whole width,
-/// not its distance from a mean.
+/// How far a fixed node's fix must lie from its place to count towards
+/// making it carried (spec "Position"): beyond a still board's wander, at
+/// most 218 m measured (`docs/gps-bench-2026-11-06.md`). A place is one fix,
+/// so the radius must hold the wander's whole width, not its distance from
+/// a mean.
 pub const CARRY_RADIUS_M: f32 = 5.0 * OWNER_RADIUS_M;
 
-/// How long a fixed node's fixes must all be farther than
-/// [`CARRY_RADIUS_M`] from the place it stands before it is carried
-/// (spec "Position"): as long as a walker takes to cross the whole width
-/// of the owner allowance, 2 × 50 m at [`WALKING_SPEED_M_S`], 71.4 s, in
-/// whole fixes of [`FIX_INTERVAL`]: 72 far fixes in a row. A still node's
-/// stray fix comes back within the radius; a walker keeps going, and is
-/// carried an owner area beyond it.
+/// How long a fixed node's fixes must all lie beyond [`CARRY_RADIUS_M`]
+/// before it is carried (spec "Position"): a walker crossing the owner
+/// allowance, 2 × 50 m at [`WALKING_SPEED_M_S`], in whole fixes: 72 s.
+/// A still node's stray fix comes back within the radius.
 pub const CARRY_AFTER: Duration = {
     let walk_us = (2.0 * OWNER_RADIUS_M / WALKING_SPEED_M_S * 1e6) as u64;
     let fix_us = FIX_INTERVAL.as_micros();
@@ -332,8 +285,7 @@ const _: () = assert!(CARRY_AFTER.as_micros() == 72_000_000);
 const HEARTBEAT_MAX: Duration = Duration::from_secs(15);
 
 /// One channel read a second, so each channel every 13 s: a reading of
-/// another channel deafens the node for 1.9 ms (spec "Busy estimate",
-/// roadmap D86, D88).
+/// another channel deafens the node for 1.9 ms (spec "Busy estimate").
 const SWEEP_INTERVAL: Duration = Duration::from_secs(CHANNELS as u64);
 
 /// The busy estimate's window (spec "Busy estimate": 30 minutes), as the
@@ -396,25 +348,21 @@ pub trait Core {
     /// every `handle` call; the driver re-reads it after each call.
     fn next_wakeup(&self) -> Option<Instant>;
 
-    /// Whether the core would take an `AppCommand::Send` at `now`. The
-    /// driver offers its application's message only while this holds, and
-    /// asks again after every `handle` call; until then the application
-    /// waits, which is how a busy network pushes back on its user. A
-    /// `Send` offered while this is false is a driver bug, and the core
-    /// ignores it (`docs/core-interface.md` §4).
+    /// Whether the core would take an `AppCommand::Send` at `now`; until it
+    /// does the application waits, which is how a busy network pushes back
+    /// on its user. A `Send` offered while false is ignored
+    /// (`docs/core-interface.md` §4).
     fn accepts_send(&self, now: Instant) -> bool;
 
-    /// The oldest message in the inbox, the messages for this node's
-    /// application that it has not confirmed yet: its ID and payload
-    /// (`docs/core-interface.md` §4). The driver reads it after an
-    /// `AppEvent::Message` and whenever its application asks.
+    /// The oldest unconfirmed message for this node's application: its ID
+    /// and payload (`docs/core-interface.md` §4).
     fn inbox(&self) -> Option<(MsgId, &[u8])>;
 
     /// Messages in the inbox.
     fn inbox_len(&self) -> usize;
 
     /// The application has the oldest message, `msg_id`, and the node may
-    /// forget it. Another ID changes nothing, and the answer is false.
+    /// forget it; another ID changes nothing and returns false.
     fn confirm(&mut self, msg_id: MsgId) -> bool;
 
     /// Whether the GPS is to run all the time now; the driver re-reads it

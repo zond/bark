@@ -1,13 +1,11 @@
 //! People's nodes whose power switches between USB and battery, and with
-//! it their role (`scenario::Power`, spec "Nodes", roadmap D71).
+//! it their role (`scenario::Power`, spec "Nodes").
 //!
-//! A node that switches at random stays on USB and on battery for
-//! exponential times of the scenario's means, from the power its
-//! placement gives it. A walker's node, with `walkers`, is on battery
-//! while it walks and on USB at its stops; walkers start at a stop. Each
-//! change is reported to the node's core (`AppCommand::Power`), or, before
-//! it boots, at its boot. A node on USB does not go dark: a pocket or a
-//! basement is where a node on battery goes.
+//! A node that switches at random holds each state for an exponential
+//! time of the scenario's mean. With `walkers`, a walker's node is on
+//! battery while it walks and on USB at its stops, where walkers start.
+//! A node on USB does not go dark: a pocket or a basement is where a node
+//! on battery goes.
 
 use crate::metrics::PowerMetrics;
 use crate::rng::{Purpose, Stream};
@@ -26,9 +24,8 @@ pub(crate) struct PowerModel {
     switches: Vec<bool>,
     /// Switching node by its ID's key.
     index: HashMap<u64, u32>,
-    /// The texts held at a turn to leaving after the settle time: the
-    /// node that held them, and their fate so far, an index of
-    /// `PowerMetrics::held`.
+    /// Texts held at a turn to leaving after the settle time: their
+    /// holder and fate so far, an index of `PowerMetrics::held`.
     held: HashMap<u32, (u32, Option<usize>)>,
     /// Per node, the anchor it had after its last event.
     anchors: Vec<Option<NodeId>>,
@@ -101,8 +98,7 @@ impl Sim {
         self.power.as_ref()?.index.get(&key(id)).copied()
     }
 
-    /// A node that switches at random changes its power, and draws when
-    /// it changes next.
+    /// A random switcher changes its power and draws its next change.
     pub(crate) fn power_toggle(&mut self, node: u32) {
         let external = !self.external[node as usize];
         let Some(m) = self.power.as_mut() else { return };

@@ -1,19 +1,14 @@
-//! The node's phones: a record for each person paired with it, at most
-//! [`RECORDS`] (spec "Phone link", Pairing, Phones; roadmap D168), as the
-//! node keeps them, decides on them and stores them in flash, and the
-//! Phones characteristic's values, `28bc0011-…` ([`crate::uuid::PHONES`]).
+//! The node's phones: its records, how it decides on them and stores them
+//! in flash, and the Phones characteristic's values (spec "Pairing",
+//! "Phones").
 //!
-//! The store's page (`bark-fw/src/store.rs`) is a log of 32-byte slots,
-//! the last entry of each kind the one that holds. Three kinds are the
-//! phones', each starting with its kind's byte:
+//! The store's page (`bark-fw/src/store.rs`) is a log of 32-byte slots, the
+//! last entry of each kind the one that holds. The phones' kinds:
 //!
-//! - a **record**, [`RECORD_TAG`], four slots: everything a record
-//!   holds, or that its place is free ([`Record::encode`]);
-//! - **progress**, [`PROGRESS_TAG`], one slot: what changes with each
-//!   message read or fetched, the last confirmed and the last fetch, so
-//!   that those writes cost a slot and not four ([`Progress`]);
-//! - the **settings**, [`SETTINGS_TAG`], one slot: whether the node is
-//!   private, and the next record's number ([`Settings`]).
+//! - a **record** ([`Record::encode`]), four slots, or that its place is free;
+//! - **progress** ([`Progress`]), one slot: what changes with each message
+//!   read or fetched, so those writes cost a slot and not four;
+//! - the **settings** ([`Settings`]), one slot.
 //!
 //! Each ends in a check over the rest: the flash writes a word at a time in
 //! address order, so an entry cut short by a power cut leaves its last
@@ -23,10 +18,10 @@ use crate::home::KEY_LEN;
 use crate::Malformed;
 
 /// Records a node keeps: a bit for each in a slot's mark, which is a byte
-/// (spec "Mailbox", The ring).
+/// (spec "Mailbox").
 pub const RECORDS: usize = 8;
 /// Bytes of a person's name at most, as their card has it
-/// (spec "Phone link", The payload, the card's display name).
+/// (spec "The payload").
 pub const NAME_MAX: usize = 32;
 
 /// The first byte of a record entry.
@@ -55,7 +50,7 @@ pub struct Keys {
     /// §2.3.5.6.5).
     pub ltk: [u8; 16],
     /// The link version whose attribute table the phone last saw, 0 for
-    /// none known (spec "Phone link", Changes to the table).
+    /// none known (spec "Versions").
     pub seen: u8,
     /// The phone's subscription to Service Changed, which a bonded
     /// client's is kept across connections (Vol 3 Part G §3.3.3.3).
@@ -122,12 +117,12 @@ pub struct Record {
     /// The newest item in the ring when the record was made: its bits in
     /// the marks of items up to this one were left by a record freed
     /// before, and count for nothing; its phone still reads those with
-    /// its tag (spec "Mailbox", The ring).
+    /// its tag (spec "Mailbox").
     pub from: u32,
     /// The number of the last of their items the phone confirmed.
     pub read: u32,
-    /// The `sent` of the last fetch the record took (spec "Mailbox", The
-    /// fetch); 0 before any, and again once the key changes.
+    /// The `sent` of the last fetch the record took (spec "Mailbox"); 0
+    /// before any, and again once the key changes.
     pub last_fetch: u32,
     /// The day the phone was last linked, from 1 on 2026-01-01 UTC; 0 when
     /// the node had no time at any of its links.
@@ -334,8 +329,7 @@ impl Progress {
 /// The settings entry: the node's own, one for all its phones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// The node's owners have made it private (spec "Phone link",
-    /// Public).
+    /// The node's owners have made it private (spec "Public nodes").
     pub private: bool,
     /// The number the next record takes.
     pub next: u16,
@@ -456,11 +450,11 @@ impl Paired {
 }
 
 /// Every record is in use and a phone is paired: the pairing is refused
-/// (spec "Phone link", Pairing).
+/// (spec "Pairing").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Full;
 
-/// What a removal asks for (spec "Phone link", Phones).
+/// What a removal asks for (spec "Phones").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Parts {
     /// The bond.
@@ -518,8 +512,7 @@ impl Phones {
             .count()
     }
 
-    /// Whether the node serves guests: unless its owners made it private,
-    /// and always while nobody is paired (spec "Phone link", Public).
+    /// Whether the node serves guests (spec "Public nodes").
     pub fn public(&self) -> bool {
         !self.private
     }
@@ -564,7 +557,7 @@ impl Phones {
     }
 
     /// Take a phone's authenticated pairing that bonds, the ring's newest
-    /// item being `newest` (spec "Phone link", Pairing).
+    /// item being `newest` (spec "Pairing").
     pub fn pair(&mut self, keys: Keys, newest: u32) -> Result<Paired, Full> {
         if let Some(i) = self.with_phone(keys.kind, &keys.addr) {
             let r = self.records[i].as_mut().expect("it holds the bond");
@@ -589,7 +582,7 @@ impl Phones {
     }
 
     /// The record at `i` with its bond's keys changed, as the phone's view
-    /// of the table changed (spec "Phone link", Changes to the table).
+    /// of the table changed (spec "Versions").
     pub fn set_keys(&mut self, i: usize, keys: Keys) {
         if let Some(r) = self.records[i].as_mut() {
             if r.bond != Some(keys) {
@@ -648,13 +641,12 @@ impl Phones {
         if self.records[i].is_some_and(|r| !r.holds()) {
             self.records[i] = None;
         }
-        // The last bond gone, the node is one nobody has paired with:
-        // public.
+        // With the last bond gone the node is public.
         self.set_private(self.private);
     }
 
-    /// The phone at `i` unpairs: its bond goes, its home stays (spec
-    /// "Phone link", Public).
+    /// The phone at `i` unpairs: its bond goes, its home stays
+    /// (spec "Public nodes").
     pub fn unpair(&mut self, i: usize) -> Option<Keys> {
         let r = self.records[i].as_mut()?;
         let bond = r.bond.take();
@@ -663,13 +655,11 @@ impl Phones {
         bond
     }
 
-    /// The phone at `i` writes Home: its person's key, or none; the place
-    /// that holds the phone's record after it. A record holding the same
-    /// key and no bond was this person's home, left by a phone that
-    /// unpaired: it takes this phone's bond, name and tag and keeps its
-    /// own place, whose bits in the ring's marks are the person's
-    /// unfetched mail, and the phone's place is freed (spec "Phone link",
-    /// Home).
+    /// The phone at `i` writes Home: its person's key, or none; returns the
+    /// place that holds the phone's record after it. A home left by this
+    /// person's earlier phone takes this phone's bond and keeps its place,
+    /// whose bits in the ring's marks are their unfetched mail
+    /// (spec "Settings").
     pub fn set_home(&mut self, i: usize, key: Option<[u8; KEY_LEN]>) -> usize {
         let Some(r) = self.records[i].as_mut() else {
             return i;
@@ -711,9 +701,9 @@ impl Phones {
         (!lacks).then_some(i)
     }
 
-    /// Remove `parts` of the record numbered `number` (spec "Phone link",
-    /// Phones): `None` when no record has the number or it does not hold a
-    /// part asked for.
+    /// Remove `parts` of the record numbered `number` (spec "Phones"):
+    /// `None` when no record has the number or it does not hold a part
+    /// asked for.
     pub fn remove(&mut self, number: u16, parts: Parts) -> Option<Removed> {
         let i = self.holding(number, parts)?;
         let r = self.records[i].as_mut().expect("found");
@@ -753,10 +743,9 @@ impl Phones {
         })
     }
 
-    /// Phones, read: the records from place `from` on, as many whole ones
-    /// as fit in `out`, after the place to write next, 0 once the last is
-    /// in; `reader` is the reading phone's place and `linked` a bit for
-    /// each place whose phone is linked now. Its length.
+    /// Phones, read, into `out`; returns its length. `reader` is the
+    /// reading phone's place and `linked` a bit for each place whose phone
+    /// is linked now.
     pub fn page(&self, from: u8, reader: Option<usize>, linked: u8, out: &mut [u8]) -> usize {
         let mut len = 1;
         out[0] = 0;
@@ -850,7 +839,7 @@ pub fn decode_page<'a>(
     Ok((next, n))
 }
 
-/// Phones, written (spec "Phone link", Phones).
+/// Phones, written (spec "Phones").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PhonesWrite {
     /// Read from this place on.
@@ -931,9 +920,8 @@ impl PhonesWrite {
     }
 }
 
-/// How long a removal code is taken after it is drawn: the time a pairing
-/// gives its person to type a code, the Security Manager's timeout
-/// (Bluetooth Core Vol 3 Part H §3.4).
+/// How long a removal code is taken after it is drawn: the Security
+/// Manager's timeout for a pairing step (Bluetooth Core Vol 3 Part H §3.4).
 pub const CODE_MS: u64 = 30_000;
 
 /// A removal code on the screen, and when it was drawn.

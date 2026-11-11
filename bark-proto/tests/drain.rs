@@ -234,8 +234,7 @@ fn a_message_held_past_the_bound_is_put_back_after_the_reboot() {
 
 /// While a relay drains, its neighbour hears from its heartbeats that it
 /// is leaving the air; once the drain opens again, its next heartbeat
-/// says it no longer is (spec "Packet formats", "Neighbour table",
-/// roadmap D181).
+/// says it no longer is (spec "Packet formats", "Neighbour table").
 #[test]
 fn a_neighbour_hears_a_draining_relay_leaving() {
     let (s, m) = (0, 1);
@@ -331,7 +330,7 @@ fn for_a_draining_node(dark: bool) -> (Harness<Relay>, MsgId, [usize; 4]) {
 /// A message that can end only at a node that drains waits at the
 /// neighbour that holds it, and is not passed round among the node's
 /// neighbours; once the node is back from its swap it is delivered
-/// (spec "Delivery queue", roadmap D186).
+/// (spec "Delivery queue").
 #[test]
 fn a_message_for_a_draining_node_waits_at_its_neighbour_until_it_is_back() {
     for dark in [false, true] {
@@ -367,7 +366,7 @@ fn a_message_for_a_draining_node_waits_at_its_neighbour_until_it_is_back() {
 /// A message that waits for a node still leaving past the delivery TTL
 /// is stale, as any in the delivery queue: it stays until a message
 /// arriving at the full queue needs its place, and is then dropped for
-/// its age, the queue's own end (spec "Delivery queue", roadmap D186).
+/// its age, the queue's own end (spec "Delivery queue").
 #[test]
 fn a_message_that_waits_past_the_ttl_goes_as_a_stale_one() {
     let (mut h, id, [s, n, m, _]) = for_a_draining_node(false);
@@ -413,7 +412,7 @@ fn a_message_that_waits_past_the_ttl_goes_as_a_stale_one() {
 /// hold for it: here L holds a message for N, which drains, and then
 /// drains itself. Once N is back from its swap, L hands the message on
 /// and has drained well within its bound (spec "Delivery queue",
-/// "Updates over the mesh", roadmap D170, D186).
+/// "Updates over the mesh").
 #[test]
 fn two_neighbours_draining_in_turn_do_not_hold_each_other_up() {
     let (n, l, b) = (0, 1, 2);

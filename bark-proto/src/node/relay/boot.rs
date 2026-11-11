@@ -1,8 +1,5 @@
-//! The first rotation and the home channel (spec "Channel at boot",
-//! "Home channel selection", roadmap D73): a node heartbeats from its
-//! boot on its stored home or a random channel, learns its neighbours for
-//! a worst-case rotation, and then chooses its home among the quietest
-//! channels, or, sleepy, the anchor it has heard.
+//! The first rotation after boot and the choice of home channel (spec
+//! "Channel at boot", "Home channel selection").
 
 use super::motion::Motion;
 use super::{Anchor, NeighbourCounts, Node, Stage};
@@ -27,47 +24,38 @@ pub(super) struct Boot {
 }
 
 impl Boot {
-    /// Not begun.
     pub(super) const UNSET: Boot = Boot {
         from: Instant::ZERO,
         ends: None,
     };
 
-    /// When the first rotation began.
     pub(super) fn from(&self) -> Instant {
         self.from
     }
 
-    /// When it ends, while it runs.
     pub(super) fn ends(&self) -> Option<Instant> {
         self.ends
     }
 
-    /// It ends at `ends`.
     pub(super) fn ends_at(&mut self, ends: Instant) {
         self.ends = Some(ends);
     }
 
-    /// It is over.
     pub(super) fn over(&mut self) {
         self.ends = None;
     }
 
-    /// When it next needs the core: its end.
     pub(super) fn next_wakeup(&self) -> Option<Instant> {
         self.ends
     }
 
-    /// Whether its end is due at `now`.
     pub(super) fn due(&self, now: Instant) -> bool {
         self.ends.is_some_and(|t| now >= t)
     }
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// Boot: the first rotation begins (spec "Channel at boot"). The node
-    /// heartbeats from its first slot, on its stored home or a random
-    /// channel, and takes traffic from the first neighbour it hears.
+    /// Boot: the first rotation begins (spec "Channel at boot").
     pub(super) fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.boot.from = now;
         let ends = self.boot_end(now);
@@ -86,8 +74,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let interval = heartbeat_interval(self.id, &self.config);
         let at = now + self.rng.duration(Duration::ZERO, interval);
         self.radio.beacon.next_at(at);
-        // A sleepy node does not burst: it heartbeats once it has an anchor
-        // or its first rotation has ended, and its beats keep no slots.
+        // A sleepy node does not burst: it beats once it has an anchor or its first
+        // rotation has ended.
         self.radio
             .beacon
             .burst(if self.sleepy() { 0 } else { CHANNELS });
@@ -109,10 +97,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         n.min(u8::MAX as usize) as u8
     }
 
-    /// Its live neighbours, for a person to see (`bark-screen`): those
-    /// heard, those heard with margin, likely to hear this node too but
-    /// not proven, since a heartbeat is one way, and those that have taken
-    /// a message from it, proven to hear it (spec "Neighbour table").
+    /// Its live neighbours counted for the screen: heard, heard with
+    /// margin (likely, not proven, to hear this node: a heartbeat is one
+    /// way), and proven both ways by a message taken (spec "Neighbour table").
     pub fn neighbour_counts(&self, now: Instant) -> NeighbourCounts {
         let floor = self.radio.busy().noise_floor_dbm();
         let mut c = NeighbourCounts::default();
@@ -128,10 +115,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         c
     }
 
-    /// End of the first rotation (spec "Channel at boot"): a node without
-    /// a stored home chooses one, which for a relay is a move like any
-    /// other (spec "Channel moves"); a sleepy node takes the anchor it has
-    /// heard, or is anchorless.
+    /// End of the first rotation (spec "Channel at boot", "Channel moves").
     pub(super) fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
         self.boot.over();
@@ -166,8 +150,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the home channel is among the quietest, tied within 0.01
-    /// (spec "Channel at boot"): a node keeps it then, since a move costs
-    /// the neighbours that know it a rotation of a stale channel.
+    /// (spec "Channel at boot"): a move costs the neighbours that know the
+    /// old channel a rotation.
     pub(super) fn home_is_quietest(&self) -> bool {
         let min = Channel::all()
             .map(|c| self.radio.busy().fraction(c))
@@ -176,10 +160,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.busy().fraction(self.home) <= min.saturating_add(percent(1))
     }
 
-    /// A sleepy node handed back its anchor at boot (`store.rs`) takes it
-    /// at once and beats to it, and listens a rotation for its heartbeat,
-    /// as when it checks its anchor (spec "Relay choice"): it keeps it at
-    /// the first, and takes the strongest relay heard if it hears none.
+    /// A sleepy node takes back its stored anchor at boot and checks it as
+    /// usual (spec "Relay choice").
     pub(super) fn resume_anchor(&mut self, a: Anchor, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
         self.boot.over();

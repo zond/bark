@@ -1,22 +1,6 @@
-//! The card: what people exchange so that each can reach the other
-//! (spec "Phone link"). It carries the person's home node's address when
-//! they have one, and the address of the node their phone is linked to,
-//! or was last, with when it was last linked to it, where to reach them
-//! now; a card without a home is temporary (roadmap D162).
-//!
-//! | field | bytes |
-//! |---|---|
-//! | version, 3 | 1 |
-//! | flags | 1: bit 0, a home address follows; bit 1, the node's address follows; the others zero |
-//! | identity | 32 |
-//! | when the home was set or cleared, as `sent` | 4 |
-//! | home address | 0 or 13 |
-//! | the node's address | 0 or 13 |
-//! | when the phone was last linked to it, as `sent` | 0 or 4 |
-//! | display name, UTF-8 | 0 to 32 |
-//!
-//! As text, in a QR code or pasted: `BARK:` and the bytes in base32
-//! (RFC 4648 §6) without padding, all in the QR code's alphanumeric set.
+//! The card people exchange so that each can reach the other, its bytes
+//! and its `BARK:` text (spec "The payload"). The base32 text (RFC 4648 §6)
+//! stays in the QR code's alphanumeric set.
 
 use crate::{be, Address, Error, Identity};
 
@@ -43,9 +27,7 @@ pub struct Card<'a> {
 pub struct Linked {
     /// The node's address.
     pub address: Address,
-    /// When the phone was last linked to it, as `sent`: seconds since
-    /// 2026-01-01 00:00 UTC, as the card's time, which 4 bytes hold for
-    /// 136 years.
+    /// When the phone was last linked to it, as `sent`.
     pub at: u32,
 }
 

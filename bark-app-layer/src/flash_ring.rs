@@ -1,15 +1,12 @@
-//! The mailbox's [`Ring`] in a region of NOR flash: the ring's pages
-//! (spec "Mailbox"; `bark-image/src/layout.rs`), which may lie on a chip
-//! anyone with a clip can read, as its items are sealed to the phone.
-//! The people's mailbox keys are kept with their records inside the
-//! chip (`bark-link` `phones`).
+//! The mailbox's [`Ring`] in a region of NOR flash (spec "Mailbox";
+//! `bark-image/src/layout.rs`). Its items are sealed to the phone, so the
+//! ring may lie on a chip anyone with a clip can read; the mailbox keys
+//! stay inside the chip (`bark-link` `phones`).
 //!
-//! The flash is read when the mailbox asks, but written later: a write
-//! or an erase is queued as an [`Op`], read back through the queue until
-//! it is done, and done by the driver when it can, which on the node is
-//! between the radio's events (`bark-fw/src/mailbox.rs`). The mailbox
-//! never waits on a write. A slot cut short by a power cut fails the
-//! mailbox's own check and holds no item.
+//! Writes and erases are queued as [`Op`]s for the driver, which on the
+//! node does them between the radio's events (`bark-fw/src/mailbox.rs`);
+//! reads see through the queue, so the mailbox never waits on a write. A
+//! slot a power cut tore fails the mailbox's own check.
 
 use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN};
 
@@ -18,11 +15,9 @@ use crate::mailbox::{Ring, SLOTS_PER_PAGE, SLOT_LEN};
 /// alike.
 pub const PAGE_LEN: u32 = 4096;
 
-/// Ops queued at most. A step of the node queues at most four: a
-/// message's erase and write, a confirmation's mark and a reply's; the
-/// driver does them as soon as the step ends, and the node confirms the
-/// next message to the core only once they are done, so a few more than
-/// that is room.
+/// Ops queued at most. A step of the node queues at most four (a message's
+/// erase and write, a confirmation's mark and a reply's), and the driver
+/// drains them before the next step, so six is room.
 pub const OPS: usize = 6;
 
 /// A region's flash, read when asked; offsets from its start.

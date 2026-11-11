@@ -1,18 +1,11 @@
-//! What the node reads from its GNSS receiver: the NMEA 0183 sentences
-//! GGA, GSA, GSV and RMC, and of them only what the node uses (spec
-//! "Position"): whether there is a fix, the satellites in it and their
-//! carrier-to-noise densities (C/N0), the position, and the UTC date and
-//! time; and for the bench, the fix's dilution of precision and mode.
+//! What the node reads from its GNSS receiver (spec "Position"): of the
+//! NMEA 0183 sentences GGA, GSA, GSV and RMC, the fix, its satellites and
+//! their C/N0, the position and UTC; for the bench, dilution and mode.
 //!
-//! [`Nmea`] takes the receiver's bytes as they come and gives a [`Fix`]
-//! at each RMC sentence, the one that carries the date. The receiver
-//! sends each second's sentences together, so the satellites a fix used
-//! (GSA), their C/N0 (GSV) and their count (GGA) are those of the last
-//! group of each before it, of this second or the one before. A sentence
-//! whose checksum fails is ignored. Nothing is allocated.
-//!
-//! The receiver sends the sentences it is told to: [`OUTPUT`] asks for
-//! these four and no others.
+//! [`Nmea`] takes the receiver's bytes as they come and gives a [`Fix`] at
+//! each RMC, the sentence with the date. A second's sentences come
+//! together, so a fix's GSA, GSV and GGA are the last group of each before
+//! it, of this second or the one before. Nothing is allocated.
 
 use bark_proto::Position;
 
@@ -24,37 +17,32 @@ const LINE: usize = 82;
 /// GSA).
 const GSA_SLOTS: usize = 12;
 
-/// Satellites the node keeps of those used: the GSA sentences of four
-/// systems, GPS, GLONASS, Galileo and BeiDou, the most the receiver
-/// reports.
+/// Satellites kept of those used: GSA sentences of four systems, the most
+/// the receiver reports.
 const USED: usize = 4 * GSA_SLOTS;
 
-/// Satellites in view the node keeps the C/N0 of: as many as it keeps in
-/// use, since only those are looked up.
+/// Satellites in view kept: as many as in use, since only those are looked
+/// up.
 const IN_VIEW: usize = USED;
 
-/// The command that sets the receiver's sentences, each second: GGA,
-/// GSA, GSV and RMC, and not GLL, VTG, ZDA or the antenna's TXT (Quectel
-/// L76K&L26K GNSS Protocol Specification V1.2, 2021-12-16, PCAS03). The
-/// receiver may have been told another set before; this one is told at
-/// each start. The others would only fill the line: at 9600 bps it
-/// carries 960 bytes a second, and the default set of GPS and BeiDou with
-/// 28 satellites in view, the specification's example, is about 930.
+/// The command that sets the receiver's sentences each second to GGA, GSA,
+/// GSV and RMC (Quectel L76K&L26K GNSS Protocol Specification V1.2,
+/// PCAS03), sent at each start. The default set with 28 satellites in view,
+/// the specification's example, is about 930 of the 960 bytes a second
+/// 9600 bps carries.
 pub const OUTPUT: &[u8] = b"$PCAS03,1,0,1,1,1,0,0,0,0,0,,,0,0*02\r\n";
 
 /// Sentence addresses kept for the bench, the kinds the receiver sent.
 const ADDRESSES: usize = 8;
 
-/// GSA and GSV sentences kept as they came, for the bench: one per
-/// talker and kind, and of a combined talker's GSA one per system, so a
-/// receiver of GPS, GLONASS and BeiDou fills six. A parser may keep none
-/// ([`Nmea`]'s `KEPT`), 736 bytes less.
+/// GSA and GSV sentences kept as they came, for the bench: one per talker
+/// and kind, and per system for a combined talker's GSA, so three systems
+/// fill six. `KEPT` may be zero, 736 bytes less.
 pub const RAW: usize = 8;
 
-/// The C/N0 band of a real sky, dB-Hz: open item O18 of the spec, a
-/// bench number. Until it is measured the band is the receiver's whole
-/// scale, 0 to 99 dB-Hz (NMEA 0183, GSV), and no fix is dropped by it;
-/// the node logs the C/N0 of each fix's satellites for the bench.
+/// The C/N0 band of a real sky, dB-Hz (spec "Open items", O18). Until it
+/// is measured it is the whole GSV scale, 0 to 99 (NMEA 0183), and drops no
+/// fix.
 pub const CN0_BAND: core::ops::RangeInclusive<u8> = 0..=99;
 
 /// A satellite: its system (the talker's, [`system`]) and its number.
@@ -64,9 +52,9 @@ struct Sat {
     prn: u8,
 }
 
-/// QZSS's satellite numbers. The L76K reports QZSS under GPS's talker in
-/// GSV and as system 5 in GSA (L76K&L26K GNSS Protocol Specification
-/// V1.2, Tables 2 and 16), so its number names its system.
+/// QZSS's satellite numbers: the L76K reports QZSS under GPS's talker in
+/// GSV and as system 5 in GSA (L76K&L26K GNSS Protocol Specification V1.2,
+/// Tables 2 and 16), so the number names the system.
 const QZSS: core::ops::RangeInclusive<u32> = 193..=197;
 
 impl Sat {
@@ -94,8 +82,7 @@ pub struct Cn0 {
     pub mean: u8,
     /// The highest, dB-Hz; 0 with none.
     pub max: u8,
-    /// Satellites the GSA sentences name as used: with `count`, where a
-    /// lookup fails.
+    /// Satellites the GSA sentences name as used.
     pub listed: u8,
     /// Satellites the GSV sentences report a C/N0 for.
     pub in_view: u8,
@@ -123,10 +110,8 @@ pub struct Fix {
     /// RMC's mode: `A` autonomous, `D` differential, `E` estimated (dead
     /// reckoning), `N` none (NMEA 0183 4.10); 0 if not given.
     pub mode: u8,
-    /// RMC's speed over ground, which the receiver measures from the
-    /// satellites' Doppler shift, in cm/s, rounded from its hundredths of
-    /// a knot (0.51 cm/s each): the unit of the spec's walker, 150 cm/s
-    /// at a brisk pace. For the bench (spec O16).
+    /// RMC's speed over ground in cm/s, rounded from hundredths of a knot.
+    /// For the bench (spec "Open items", O16).
     pub speed_cm_s: Option<u16>,
     /// RMC's course over ground, degrees from true north, in tenths.
     pub course_tenths: Option<u16>,
@@ -150,9 +135,8 @@ pub struct Nmea<const KEPT: usize = RAW> {
     n_seen: usize,
     satellites: u8,
     hdop_tenths: u16,
-    /// The last GSA and GSV sentences, as they came, for the bench: the
-    /// sentence's address and, for a GSA, its system field's first byte;
-    /// the line; its length.
+    /// The last GSA and GSV sentences, for the bench: the address and, for
+    /// a GSA, its system field's first byte; the line; its length.
     raw: [([u8; 6], [u8; LINE], usize); KEPT],
     /// The addresses of the sentences taken, in the order first seen.
     addresses: [[u8; 5]; ADDRESSES],
@@ -588,11 +572,9 @@ mod tests {
         assert_eq!(again[0].cn0, f.cn0);
     }
 
-    /// The L76K's default sentences of one second, verbatim with their
-    /// checksums from the examples of the L76K&L26K GNSS Protocol
-    /// Specification V1.2 (2021-12-16), §2.2, in the order of PCAS03's
-    /// fields. The examples are not of one second (ZDA's time differs),
-    /// but each is what the receiver sends.
+    /// The L76K's default sentences, verbatim from the examples of the
+    /// L76K&L26K GNSS Protocol Specification V1.2, §2.2, in PCAS03's order.
+    /// Not all of one second (ZDA's time differs), but each is real.
     const L76K_SECOND: &str = "\
 $GNGGA,071556.000,3149.29103,N,11706.92916,E,1,21,0.7,75.7,M,-5.0,M,,*69\r\n\
 $GNGLL,3149.29103,N,11706.92916,E,071556.000,A,A*45\r\n\

@@ -1,21 +1,16 @@
-//! How long a node's battery lasts (spec "Sleepy nodes", roadmap D169):
-//! a running estimate of the drain, percent of the cell an hour, for each
-//! way the node runs on battery, seeded with what the currents say and
-//! corrected by what the readings show.
+//! How long a node's battery lasts (spec "Sleepy nodes"): a running
+//! estimate of the drain for each way the node runs on battery.
 //!
-//! The board has no fuel gauge. The level is read off the cell's voltage
-//! with the core's coarse mapping ([`battery_percent`]), in whole percent,
-//! a straight line between three points of a typical cell's curve; and a
+//! The board has no fuel gauge: the level is read off the cell's voltage
+//! through a coarse straight-line mapping ([`battery_percent`]), and a
 //! lithium cell's voltage is flat over most of its charge. So a drop seen
-//! over minutes is noise: a sample runs until even a sleepy node has
-//! drained a step of the mapping ([`SAMPLE`]), and the estimate averages
-//! samples over days ([`TIME_CONSTANT`]).
+//! over minutes is noise, and samples are long ([`SAMPLE`]) and averaged
+//! over days ([`TIME_CONSTANT`]).
 //!
-//! What it learns is in the mapping's percent, not the cell's: where the
-//! true curve is flatter than the straight line, between 30 and 50 %, a
-//! drop of one percent of charge reads as about 0.4 of the mapping's, and
-//! near full as about 1.6. The mapping is exact at 20, 30 and 100 %, so
-//! over a discharge the errors cancel, and the time constant spans that.
+//! The estimate is in the mapping's percent, not the cell's: between 30
+//! and 50 % one percent of charge reads as about 0.4, near full as about
+//! 1.6. The mapping is exact at 20, 30 and 100 %, so over a discharge the
+//! errors cancel, and the time constant spans that.
 //!
 //! [`battery_percent`]: crate::node::battery_percent
 
@@ -34,18 +29,17 @@ const DIVIDER_UA: u32 = 12;
 /// settled hour (`docs/battery-role-2026-10-25.md`, Currents).
 const RELAY_RADIO_UA: u32 = 6_380;
 
-/// A sleepy node's radio with an anchor at the design rate, µA: 0.56 mA
-/// in the simulator (spec "Delivery", roadmap D92).
+/// A sleepy node's radio with an anchor at the design rate, µA, as
+/// measured in the simulator (spec "Delivery").
 const SLEEPY_RADIO_UA: u32 = 560;
 
-/// What a relay on battery draws with its GPS at rest, µA: its radio, the
-/// divider and the GPS in standby. Its GPS tracks on battery only for the
-/// grace and after a far fix (spec "Position"), and its searches add at
-/// most 0.2 mA, within the spread of relays' loads.
+/// What a relay on battery draws with its GPS at rest, µA. Its rare
+/// tracking (spec "Position") and searches add at most 0.2 mA, within the
+/// spread of relays' loads.
 pub const RELAY_UA: u32 = RELAY_RADIO_UA + DIVIDER_UA + GPS_STANDBY_UA as u32;
 
-/// What a sleepy node draws, µA: its radio, the divider and the GPS in
-/// standby, as a sleepy node's GPS is with an anchor (spec "Beats").
+/// What a sleepy node with an anchor draws, µA, its GPS in standby (spec
+/// "Beats").
 pub const SLEEPY_UA: u32 = SLEEPY_RADIO_UA + DIVIDER_UA + GPS_STANDBY_UA as u32;
 
 /// Percent of the cell an hour at `ua` µA: 100 % / (850 mAh / the current).
@@ -65,8 +59,8 @@ pub enum Running {
 
 impl Running {
     /// The drain the currents say, percent an hour: 0.7544 for a relay,
-    /// 0.0696 for a sleepy node. The microcontroller is not counted
-    /// (roadmap D92); the readings correct for it.
+    /// 0.0696 for a sleepy node. The microcontroller is not counted; the
+    /// readings correct for it.
     pub const fn seed(self) -> f32 {
         match self {
             Running::Relay => percent_per_hour(RELAY_UA),
@@ -80,10 +74,9 @@ const STEP_PERCENT: f32 = 1.0;
 
 /// How long a sample runs at least: until a sleepy node, the slowest
 /// drain, has drained one step of the mapping, 1 % / 0.0696 % an hour =
-/// 14.4 h, in whole hours. A shorter sample of a sleepy node would most
-/// often see no step at all. A step is about 5.7 mV of the cell between
-/// 30 % and full, three of the converter's 1.76 mV steps
-/// (`bark-fw/src/battery.rs`), so a finer mapping would show noise.
+/// 14.4 h, rounded up. A step is about 5.7 mV of the cell between 30 % and
+/// full, three of the converter's 1.76 mV steps (`bark-fw/src/battery.rs`),
+/// so a finer mapping would show noise.
 pub const SAMPLE: Duration = {
     let hours = STEP_PERCENT / Running::Sleepy.seed();
     Duration::from_secs((hours as u64 + 1) * 3600)
@@ -93,10 +86,9 @@ const _: () = assert!(SAMPLE.as_micros() == 15 * 3600 * 1_000_000);
 
 /// The estimate's time constant: how long a relay at its seed takes to
 /// drain the mapping's straight segment from full to 30 %, 70 % / 0.7544 %
-/// an hour = 92.8 h, 3.9 days. The segment's slope is off the curve's by
-/// 0.4 to 1.6 times along it, so a shorter one would follow those bends;
-/// over it, a sleepy node's samples, one step each give or take one, are
-/// averaged over about twelve, to about 12 %.
+/// an hour = 92.8 h. A shorter one would follow the bends of the curve
+/// against the segment; over it, a sleepy node's samples, one step each
+/// give or take one, average over about twelve, to about 12 %.
 pub const TIME_CONSTANT: Duration = {
     let segment = 100.0 - 30.0;
     Duration::from_secs((segment / Running::Relay.seed() * 3600.0) as u64)
@@ -143,8 +135,8 @@ enum Phase {
 }
 
 /// The estimate (module documentation). Times are whole seconds of the
-/// node's clock, as in `relay/power.rs`, and its size counts beside the
-/// node's tables (`docs/core-interface.md` §6).
+/// node's clock, as in `relay/power.rs`; its size counts beside the node's
+/// tables (`docs/core-interface.md`, "Memory").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Drain {
     /// Each [`Running`]'s learned drain, as steps from its seed, 2^(k /
@@ -315,9 +307,8 @@ mod tests {
     }
 
     /// A cell drained at `true_rate` percent an hour from full, read once
-    /// a minute through the mapping's whole percent, as the core reads
-    /// it, and charged for three hours whenever it reaches the low level;
-    /// the estimate after `at` hours and after `hours`.
+    /// a minute, charged for three hours at the low level; the estimate
+    /// after `at` hours and after `hours`.
     fn discharge(running: Running, true_rate: f32, at: u32, hours: u32) -> (f32, f32) {
         let mut d = Drain::NEW;
         let mut rate = d.rate(running);
@@ -344,10 +335,9 @@ mod tests {
         (rate_at, rate)
     }
 
-    /// A board that draws other than the seed says: the estimate starts at
-    /// the seed and closes on the true drain as a moving average of its
-    /// time constant, about 63 % of the way within one, all but 5 %
-    /// within three.
+    /// The estimate closes on a true drain other than the seed as a moving
+    /// average: about 63 % of the way within one time constant, all but
+    /// 5 % within three.
     #[test]
     fn the_estimate_converges_from_the_seed() {
         let tau_h = (TIME_CONSTANT.as_micros() / 3_600_000_000) as u32;

@@ -1,17 +1,11 @@
 //! What the T-Echo firmware and its loader must agree on: the flash
-//! layout ([`layout`]), the external flash's driver (`ext_flash`), the
-//! header a staged image travels with ([`Header`]) and the record of it
-//! the loader checks ([`record`]) and the signatures the firmware checks
-//! (`sign`); the firmware's choice of read-out
-//! protection ([`protect`]), here to be tested on the host; and the start
-//! of the 32.768 kHz clock the loader's watchdog holds (`lfclk`); and the
-//! code an update's blocks travel in over the mesh ([`code`]), the
-//! store of the pieces a node gathers on its external flash (`pieces`),
-//! what the firmware decides of such an image ([`policy`]), and the
-//! images it gave up (`given_up`); and the battery's discharge log
-//! ([`discharge`]).
-//! `docs/mesh-update-2026-10-25.md` is the design; `bark-fw/README.md`,
-//! "Updates", how it is used.
+//! [`layout`], the external flash driver (`ext_flash`), the [`Header`] a
+//! staged image travels with, the loader's [`record`] of it, signatures
+//! (`sign`), read-out [`protect`]ion, the 32.768 kHz clock start
+//! (`lfclk`), the [`code`] of update blocks, the store of gathered pieces
+//! (`pieces`), the update [`policy`], images given up (`given_up`) and the
+//! battery's [`discharge`] log (spec "Updates over the mesh").
+//! `docs/mesh-update-2026-10-25.md` is the design.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -39,19 +33,15 @@ pub mod record;
 pub mod sign;
 
 /// Seconds a new image has to confirm itself before the watchdog resets
-/// the node and the loader swaps the previous image back: the 10 minutes
-/// of the note ("Revert"), within which an image gathered over the mesh
-/// must hear a node, three worst-case rotations of heartbeats and a
-/// heartbeat's lateness, 585.9 s (`bark_proto::update::heard_within`;
-/// spec "Updates over the mesh", the install). The loader is the part
-/// that is not updated, so it gives the longest time the confirmation
-/// needs, and the watchdog, fed only once the image has confirmed
-/// itself, ends a trial whose image hangs or never checks its time.
+/// the node and the loader swaps the previous image back: above the
+/// 585.9 s a mesh image may need to hear a node
+/// (`bark_proto::update::heard_within`; spec "Updates over the mesh").
+/// The loader is never updated, so it holds the longest bound any image
+/// needs.
 pub const TRIAL_SECONDS: u32 = 600;
 
-/// Bytes of a header: 48 of fields, then three signatures, each an
-/// Ed25519 signature of 64 bytes (RFC 8032) with a byte naming the key
-/// (`sign`; the note, "Keys" and "Frames").
+/// Bytes of a header: 48 of fields, three slots of a key byte and a
+/// 64-byte Ed25519 signature (RFC 8032), and 13 zero bytes.
 pub const HEADER_LEN: usize = 256;
 
 /// The first bytes of every header.

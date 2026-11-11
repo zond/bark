@@ -1,51 +1,32 @@
-//! The code an update's blocks travel in over the mesh
-//! (`docs/mesh-update-2026-10-25.md`, "The code"; roadmap D149): a
-//! Reed-Solomon code over GF(2⁸) in evaluation form. A block of `n` data
-//! pieces, `n` at most [`DATA`], is the polynomial of degree below `n`
-//! whose value at point `i` is data piece `i`, a byte position at a time;
-//! coded piece `k`, `k` below [`CODED`], is its value at point `k`. So
-//! pieces `0..n` are the data themselves, and any `n` distinct pieces give
-//! the block back, by Lagrange interpolation through their points. Point
-//! `k` is the field element whose byte is `k`.
+//! The code an update's blocks travel in (spec "Updates over the mesh"):
+//! Reed-Solomon over GF(2⁸) in evaluation form. A block of `n` data pieces
+//! is the polynomial of degree below `n` whose value at point `i` is data
+//! piece `i`, a byte position at a time; coded piece `k` is its value at
+//! point `k`. So pieces `0..n` are the data themselves, and any `n`
+//! distinct pieces give the block back by Lagrange interpolation.
 //!
-//! A holder makes a piece with an [`Encoder`], fed the data pieces one at
-//! a time as it reads them from flash ([`encode_piece`] when they are in
-//! RAM). A gatherer that holds `n` pieces gets each data piece back as a
-//! sum of them, each times a factor from [`Points`] ([`decode`] when they
-//! are in RAM; `crate::pieces` reads them from flash).
+//! [`Encoder`] and [`Points`] take pieces one at a time, as they are read
+//! from flash; [`encode_piece`] and [`decode`] take them in RAM.
 //!
-//! **Cost.** Everything is a multiply-add of a piece by a field element,
-//! [`mul_add`], 247 table look-ups. Making a coded piece above the data
-//! takes `n` of them, 15 808 look-ups for a whole block, and `n²` additions
-//! of logarithms for its factors. Giving back a data piece the gatherer
-//! lacks takes `n` multiply-adds; a block of 64 none of whose data pieces
-//! came takes 64 × 64 × 247 = 1 011 712 look-ups, and `n²` additions for
-//! the factors once. On the nRF52840 at 64 MHz a look-up is the loop of
-//! [`mul_add`] as built for it: eleven instructions, four of them loads,
-//! about 14 cycles (Cortex-M4 Technical Reference Manual, instruction
-//! timings: a load 2 cycles, 1 when it follows another; a taken branch 2
-//! or more). So a coded piece costs about 3.5 ms, and a whole block given
-//! back from none of its data pieces about 220 ms, done a piece of input
-//! at a time (`crate::pieces`), 0.43 ms for each eight data pieces given
-//! back. Not measured on the chip.
+//! **Cost.** Everything is [`mul_add`], 247 table look-ups, about 14
+//! cycles each at 64 MHz (Cortex-M4 Technical Reference Manual,
+//! instruction timings). A coded piece takes `n` of them, about 3.5 ms; a
+//! block of 64 given back from none of its data pieces 64 × 64, about
+//! 220 ms. Not measured on the chip.
 
-/// Bytes of a piece: what a piece frame carries, a full frame's 255 less
-/// its 8-byte header (`docs/mesh-update-2026-10-25.md`, "Frames").
+/// Bytes of a piece: a full frame's 255 less its 8-byte header.
 pub const PIECE: usize = 247;
 
-/// Data pieces of a whole block (`docs/mesh-update-2026-10-25.md`, "The
-/// code").
+/// Data pieces of a whole block.
 pub const DATA: usize = 64;
 
-/// Coded pieces a block can be sent as, indices 0 to 254: an index a
-/// byte, one value spare for "none" (`docs/mesh-update-2026-10-25.md`,
-/// "The code").
+/// Coded pieces a block can be sent as: an index a byte, one value spare
+/// for "none".
 pub const CODED: usize = 255;
 
 /// The field's polynomial, x⁸ + x⁴ + x³ + x² + 1: primitive (Lin and
-/// Costello, "Error Control Coding", table of primitive polynomials), so
-/// that the powers of x are every non-zero element, which the tables
-/// need; the test `x_generates_the_field` checks it.
+/// Costello, "Error Control Coding"), so the powers of x are every
+/// non-zero element, which the tables need.
 const POLY: u16 = 0x11D;
 
 /// Non-zero elements: the powers of x repeat after this many.
@@ -129,15 +110,13 @@ pub enum CodeError {
     Duplicate(u8),
 }
 
-/// Up to [`DATA`] distinct points with the values of a polynomial of
-/// degree below their count: the factors that give its value anywhere
-/// from theirs.
+/// Up to [`DATA`] distinct points of a polynomial of degree below their
+/// count: the factors that give its value anywhere from theirs.
 ///
-/// Through points `x_j`, the value at `x` is the sum over `j` of the value
-/// at `x_j` times `L_j(x) = P(x) / ((x − x_j) w_j)`, where `P(x)` is the
-/// product of `x − x_m` over every point and `w_j` that of `x_j − x_m`
-/// over every other; in this field subtraction is addition, XOR. The
-/// `w_j` are kept as logarithms, `n²` additions once.
+/// The value at `x` is the sum over `j` of the value at `x_j` times
+/// `L_j(x) = P(x) / ((x − x_j) w_j)`, `P(x)` the product of `x − x_m` over
+/// every point and `w_j` that of `x_j − x_m` over every other; subtraction
+/// is XOR. The `w_j` are kept as logarithms.
 #[derive(Clone, Debug)]
 pub struct Points {
     x: [u8; DATA],
@@ -233,9 +212,8 @@ impl Points {
     }
 }
 
-/// Coded piece `k` of a block of `n` data pieces, made from the data
-/// pieces fed to it in any order, so that a holder reads them from flash
-/// one at a time.
+/// Coded piece `k` of a block of `n` data pieces, from the data pieces
+/// fed to it one at a time in any order.
 pub struct Encoder {
     points: Points,
     at: At,

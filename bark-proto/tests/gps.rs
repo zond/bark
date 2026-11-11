@@ -1,4 +1,4 @@
-//! When a sleepy node runs its GPS (spec "Beats", roadmap D80, D91):
+//! When a sleepy node runs its GPS (spec "Beats"):
 //! only while it has no anchor, a minute at most, and not for eight
 //! hours after a search that found nothing.
 
@@ -119,8 +119,8 @@ fn a_search_under_way_ends_at_an_anchor() {
     assert!(h.run_until(at(1000), |h| !searches(h, 1, Instant::ZERO).is_empty()));
     let (started, until) = searches(&h, 1, Instant::ZERO)[0];
     assert_eq!(until, started + SEARCH_LIMIT);
-    // The relay's answer to its beat reaches it, a heartbeat of the
-    // relay's with the long preamble on its channel (spec "Sleepy nodes alone"),
+    // The relay's answer to its beat reaches it, a heartbeat of the relay's
+    // with the long preamble on its channel (spec "Sleepy nodes alone"),
     // put on the air here since the relay hears its beat only once a
     // rotation: it anchors, and the search ends there.
     h.lose = None;

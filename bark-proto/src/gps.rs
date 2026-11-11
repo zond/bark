@@ -1,22 +1,16 @@
 //! The board's GPS receiver, a Quectel L76K, and when a node runs it
-//! (spec "Position", "Beats"; `docs/gps-schedule-2026-10-25.md`,
-//! `docs/relay-gps-2026-10-26.md`).
+//! (spec "Position", "Beats").
 //!
 //! The figures are the L76K Hardware Design V1.0 (Quectel, 2021-10-20),
 //! Table 2 (page 11), at room temperature with every satellite at
-//! −130 dBm, about the open-sky level. A sleepy node runs a search only
-//! when its core asks for one ([`crate::Action::Locate`]), while it has
-//! no anchor (spec "Beats", roadmap D80, D91); a relay's runs while its
-//! core says so (`Node::gps_tracks`), and searches as a sleepy node's
-//! when it rests (roadmap D82).
+//! −130 dBm, about the open-sky level.
 
 use crate::time::Duration;
 
 /// How far a fix may lie from the nearest relay the node knows before it
-/// is dropped as unreliable, metres: the hearing radius, 3 km, rooftop
-/// to rooftop (spec "Physical layer", "Position"; roadmap D74). No relay
-/// a node hears is farther, so a fix beyond it from every one is not
-/// where the node is.
+/// is dropped as unreliable, metres: the hearing radius, 3 km rooftop to
+/// rooftop (spec "Physical layer", "Position"). No relay a node hears is
+/// farther.
 pub const HEARING_RADIUS_M: f32 = 3000.0;
 
 /// The receiver's current while it acquires or tracks, µA: 29 mA in
@@ -32,9 +26,8 @@ pub const GPS_STANDBY_UA: u64 = 20;
 pub const HOT_START: Duration = Duration::from_secs(2);
 
 /// The time to a first fix of a cold start, without them: 30 s (Table 2).
-/// It is the time to read a satellite's orbit, which its signal repeats
-/// every 30 s (IS-GPS-200, §20.3.2: a frame of five 6 s subframes, the
-/// orbit in the first three).
+/// The orbit repeats every 30 s (IS-GPS-200, §20.3.2: a frame of five 6 s
+/// subframes).
 pub const COLD_START: Duration = Duration::from_secs(30);
 
 /// How long a satellite's broadcast orbit serves for a hot start: the
@@ -42,24 +35,20 @@ pub const COLD_START: Duration = Duration::from_secs(30);
 /// §20.3.3.4.3.1, the fit interval). Older, the receiver reads it afresh.
 pub const ORBIT_VALID: Duration = Duration::from_secs(4 * 3600);
 
-/// How long a search may run before it is given up: two of the 30 s
-/// frames that carry the orbits, so that a cold start under the open sky
-/// survives one frame lost to a bit error. A search that has found
-/// nothing by then is most likely indoors, below the −148 dBm the L76K
-/// needs to acquire (Table 2), where a longer one finds nothing either.
+/// How long a search may run before it is given up: two 30 s orbit
+/// frames, so a cold start survives one frame lost to a bit error. Past
+/// that the node is most likely indoors, below the −148 dBm the L76K
+/// needs to acquire (Table 2).
 pub const SEARCH_LIMIT: Duration = COLD_START.mul(2);
 
 /// How long a sleepy node runs no search after one that found nothing:
-/// 9 h. A search that finds nothing costs [`SEARCH_LIMIT`] at
-/// [`GPS_CURRENT_UA`], 0.48 mAh; once in 9 h that is 0.054 mA, within a
-/// tenth of a sleepy node's 0.56 mA (spec "Delivery"), for a node that
-/// never sees the sky: 8.6 h is the least that keeps it, rounded up to
-/// the hour (roadmap D80, D112).
+/// [`SEARCH_LIMIT`] at [`GPS_CURRENT_UA`] is 0.48 mAh, and once in 9 h,
+/// 0.054 mA, keeps a node that never sees the sky within a tenth of
+/// [`SLEEPY_CURRENT_UA`]; 8.6 h is the least, rounded up to the hour.
 pub const BACKOFF: Duration = Duration::from_secs(9 * 3600);
 
-/// A sleepy node's mean current with an anchor, µA, as measured in S4
-/// (spec "Delivery", roadmap D92), which [`BACKOFF`] keeps the GPS within
-/// a tenth of.
+/// A sleepy node's mean current with an anchor, µA, as measured in the
+/// simulator (spec "Delivery").
 pub const SLEEPY_CURRENT_UA: u64 = 560;
 
 #[cfg(test)]
@@ -71,7 +60,7 @@ mod tests {
         let search_uas = GPS_CURRENT_UA * SEARCH_LIMIT.as_micros() / 1_000_000;
         let mean_ua = search_uas as f64 / (BACKOFF.as_micros() as f64 / 1e6);
         assert!(mean_ua <= SLEEPY_CURRENT_UA as f64 / 10.0, "{mean_ua}");
-        // And not much less: 8.6 h is the least that keeps it.
+        // 8.6 h is the least that keeps it.
         let least_s = search_uas as f64 / (SLEEPY_CURRENT_UA as f64 / 10.0);
         assert!((least_s / 3600.0 - 8.6).abs() < 0.05, "{least_s}");
     }
