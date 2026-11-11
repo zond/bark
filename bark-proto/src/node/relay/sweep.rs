@@ -21,6 +21,10 @@ pub(super) struct Sweep {
     /// The last home reading, held until any reception it fell in has
     /// ended and shown whether the energy it read was this relay's own.
     pending: Option<HomeReading>,
+    /// The move rule (spec "Channel moves"): since when the home's excess
+    /// has lasted, and when to move.
+    excess_since: Option<Instant>,
+    move_at: Option<Instant>,
 }
 
 impl Sweep {
@@ -30,6 +34,39 @@ impl Sweep {
             next_at: Instant::ZERO,
             channel,
             pending: None,
+            excess_since: None,
+            move_at: None,
+        }
+    }
+
+    /// When the move rule moves the home, if it does.
+    pub(super) fn move_at(&self) -> Option<Instant> {
+        self.move_at
+    }
+
+    /// The move rule starts over.
+    pub(super) fn clear_move(&mut self) {
+        self.excess_since = None;
+        self.move_at = None;
+    }
+
+    /// A round of readings ended at `now`, the home's excess over the
+    /// quietest channel above the threshold if `excess`: once it has
+    /// lasted `dwell`, the home moves after a random `wait`.
+    pub(super) fn move_rule(
+        &mut self,
+        excess: bool,
+        dwell: Duration,
+        wait: impl FnOnce() -> Duration,
+        now: Instant,
+    ) {
+        if !excess {
+            self.clear_move();
+            return;
+        }
+        let since = *self.excess_since.get_or_insert(now);
+        if self.move_at.is_none() && now.since(since) >= dwell {
+            self.move_at = Some(now + wait());
         }
     }
 
@@ -182,15 +219,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn move_rule(&mut self, now: Instant) {
-        if !self.excess() {
-            self.timers.clear_move();
-            return;
-        }
-        let since = *self.timers.excess_since.get_or_insert(now);
-        if self.timers.move_at.is_none() && now.since(since) >= self.config.move_dwell {
-            self.timers.move_at =
-                Some(now + self.rng.duration(Duration::ZERO, self.config.move_wait_max));
-        }
+        let excess = self.excess();
+        let (dwell, wait_max) = (self.config.move_dwell, self.config.move_wait_max);
+        self.radio.move_rule(
+            excess,
+            dwell,
+            || self.rng.duration(Duration::ZERO, wait_max),
+            now,
+        );
     }
 
     /// Set aside a home reading taken while a reception that follows this

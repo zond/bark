@@ -456,7 +456,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // A sleepy node's heartbeat on its anchor's channel is a
                 // beat to whoever hears it: its window follows.
                 if sent && self.anchored_sleepy() && channel == self.home {
-                    self.timers.awake_until = now + self.heard.params().awake;
+                    self.listen.awake_until(now + self.heard.params().awake);
                 }
                 return;
             }
@@ -466,7 +466,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.beacon.reach_all = None;
         if sent && self.anchored_sleepy() {
             // The window after its beat (spec "Delivery").
-            self.timers.awake_until = now + self.heard.params().awake;
+            self.listen.awake_until(now + self.heard.params().awake);
         }
         if self.sleepy() && !self.booting() {
             // Without an anchor, the next channel each beat whether or not
@@ -547,7 +547,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // anchor, or the one after a move (spec "Relay choice"). It shows the
         // anchor alive but says nothing of its slots.
         let off_slot = self.anchor().is_some_and(|a| a.id == hb.id)
-            && self.timers.watch_at.is_some()
+            && self.listen.watching()
             && self.watch().is_some_and(|(from, _)| started < from);
         // A relay's burst goes a burst gap a heartbeat: none of it is in a
         // slot, and its slots start anew (spec "Heartbeat").
@@ -560,7 +560,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(slot) = heard.new_occupant() {
             self.records.slot_reoccupied(slot);
             self.queue.slot_reoccupied(slot);
-            if let (Some(ends), false) = (self.timers.boot_ends, hb.sleepy) {
+            if let (Some(ends), false) = (self.boot.ends(), hb.sleepy) {
                 // A relay learned in the first rotation: the application
                 // shows it, and its own message waits no longer.
                 emit(Action::App(AppEvent::Boot {
@@ -592,7 +592,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.reconsider_anchor(now, emit);
         if self.anchor().is_some_and(|a| a.id == hb.id) {
-            if let (Some(at), Some((from, to))) = (self.timers.watch_at, self.watch()) {
+            if let (Some(at), Some((from, to))) = (self.listen.watch_at(), self.watch()) {
                 if started >= from && started < to {
                     let offset = started.as_micros() as i64 - at.as_micros() as i64;
                     emit(Action::Trace(Trace::AnchorWatch {

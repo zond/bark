@@ -151,8 +151,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 (false, _) if sleepy => Mode::Relay(Power::Battery(now)),
                 (false, _) => Mode::Relay(Power::External),
             };
-            let ends = self.boot_end(self.timers.boot_from);
-            self.timers.boot_ends = Some(ends);
+            let ends = self.boot_end(self.boot.from());
+            self.boot.ends_at(ends);
             let anchor = self.config.stored.and_then(|s| s.anchor);
             if let Some(a) = anchor.filter(|_| sleepy && self.anchor().is_none()) {
                 self.resume_anchor(a, now, emit);
@@ -279,6 +279,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some(since + self.config.delivery_ttl)
     }
 
+    /// When the role next needs the core: the grace's end, or the
+    /// flush's.
+    pub(super) fn power_wakeup(&self) -> Option<Instant> {
+        crate::time::earlier(self.grace_ends(), self.flush_ends())
+    }
+
     /// The grace's end, a low battery, a carried relay on battery, and the
     /// turn to sleepy once the flush is done; a node turned sleepy by its
     /// battery relays again at the high level (module documentation).
@@ -379,7 +385,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 ..h
             });
         }
-        self.timers.clear_move();
+        self.radio.clear_move();
         self.radio.beacon.sleepy();
         self.unwatch();
         emit(Action::Trace(Trace::Role { sleepy: true }));
@@ -402,14 +408,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Forget whatever a sleepy node listens for: its windows, the watch
     /// for its anchor's heartbeat, a choice or a check under way.
     fn unwatch(&mut self) {
-        self.timers.awake_until = Instant::ZERO;
-        self.timers.choosing = None;
-        self.timers.rescan_ends = None;
-        self.timers.watch_at = None;
+        self.listen.forget();
         if let Some(s) = self.sleep_mut() {
             s.misses = 0;
             s.dark = false;
         }
-        self.timers.window_ends = None;
     }
 }

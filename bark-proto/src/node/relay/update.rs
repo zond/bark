@@ -1125,7 +1125,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn anchor_slot_heard(&mut self, now: Instant) {
         let anchor = self.anchor().and_then(|a| self.neighbours.get(a.id));
         if self.spread.helped_by(&self.neighbours, anchor) {
-            self.timers.awake_until = self.timers.awake_until.max(now + SLOT_LISTEN);
+            self.listen.awake_until_at_least(now + SLOT_LISTEN);
         }
     }
 

@@ -18,15 +18,61 @@ pub(super) fn random_channel(rng: &mut Rng) -> Channel {
     Channel::new(rng.range(0, CHANNELS as u64 - 1) as u8).unwrap_or(fallback)
 }
 
+/// The node's first rotation (spec "Channel at boot"): when it began, and
+/// when it ends while it runs.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Boot {
+    from: Instant,
+    ends: Option<Instant>,
+}
+
+impl Boot {
+    /// Not begun.
+    pub(super) const UNSET: Boot = Boot {
+        from: Instant::ZERO,
+        ends: None,
+    };
+
+    /// When the first rotation began.
+    pub(super) fn from(&self) -> Instant {
+        self.from
+    }
+
+    /// When it ends, while it runs.
+    pub(super) fn ends(&self) -> Option<Instant> {
+        self.ends
+    }
+
+    /// It ends at `ends`.
+    pub(super) fn ends_at(&mut self, ends: Instant) {
+        self.ends = Some(ends);
+    }
+
+    /// It is over.
+    pub(super) fn over(&mut self) {
+        self.ends = None;
+    }
+
+    /// When it next needs the core: its end.
+    pub(super) fn next_wakeup(&self) -> Option<Instant> {
+        self.ends
+    }
+
+    /// Whether its end is due at `now`.
+    pub(super) fn due(&self, now: Instant) -> bool {
+        self.ends.is_some_and(|t| now >= t)
+    }
+}
+
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Boot: the first rotation begins (spec "Channel at boot"). The node
     /// heartbeats from its first slot, on its stored home or a random
     /// channel, and takes traffic from the first neighbour it hears.
     pub(super) fn start(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.timers.boot_from = now;
+        self.boot.from = now;
         let ends = self.boot_end(now);
         self.stage = Stage::Booting;
-        self.timers.boot_ends = Some(ends);
+        self.boot.ends_at(ends);
         self.radio.restart_sweep(now);
         // One with no place is carried at none: its first fix is its
         // place, fixed (`relay/motion.rs`).
@@ -88,7 +134,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// heard, or is anchorless.
     pub(super) fn finish_boot(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
-        self.timers.boot_ends = None;
+        self.boot.over();
         emit(Action::App(AppEvent::Boot {
             relays: self.relays_known(now),
             ends: None,
@@ -136,7 +182,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the first, and takes the strongest relay heard if it hears none.
     pub(super) fn resume_anchor(&mut self, a: Anchor, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.stage = Stage::Running;
-        self.timers.boot_ends = None;
+        self.boot.over();
         emit(Action::App(AppEvent::Boot {
             relays: 0,
             ends: None,

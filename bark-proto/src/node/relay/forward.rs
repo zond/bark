@@ -297,6 +297,16 @@ pub(super) struct Forwarding {
     /// When the send queue was last looked at with nothing to send: the
     /// earliest end of a wait or a ban that held an entry back.
     pub(super) wake: Option<Instant>,
+    /// When the bucket will fit the DATA to a sleepy node the send queue
+    /// last had no room for, as a hand-over the bucket cannot fit yet is
+    /// deferred (`relay/delivery.rs`).
+    pub(super) feed_at: Option<Instant>,
+    /// When queued deliveries are next retried, every 60 s, under the
+    /// `sleepy_listens` research switch.
+    pub(super) delivery_retry_at: Instant,
+    /// When the bucket will have refilled what the senders it refused
+    /// were told to come back for (spec "Bans").
+    pub(super) promised: Instant,
 }
 
 impl Forwarding {
@@ -305,6 +315,9 @@ impl Forwarding {
         feed_due: false,
         drain_from_s: u32::MAX,
         wake: None,
+        feed_at: None,
+        delivery_retry_at: Instant::ZERO,
+        promised: Instant::ZERO,
     };
 }
 
@@ -316,12 +329,20 @@ pub(super) struct OwnMessage {
     /// Refusals in a row by banned neighbours: each doubles the hold
     /// before it is offered again (`budget::hold`).
     pub(super) refusals: u8,
+    /// Before this the application is not offered a send: the wait the
+    /// last refusal of its message asked for
+    /// (spec "A sleepy node's own message").
+    pub(super) retry_at: Instant,
+    /// When the bucket lets the application send, if only it is missing.
+    pub(super) app_ready_at: Option<Instant>,
 }
 
 impl OwnMessage {
     pub(super) const NONE: OwnMessage = OwnMessage {
         id: None,
         refusals: 0,
+        retry_at: Instant::ZERO,
+        app_ready_at: None,
     };
 }
 
@@ -419,8 +440,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         // Only the room is a line; a wait for the way on passes on as it
         // is, so it cannot grow around a loop of relays.
-        let slot = self.timers.promised.max(now + room);
-        self.timers.promised = slot + BAN;
+        let slot = self.forwarding.promised.max(now + room);
+        self.forwarding.promised = slot + BAN;
         slot.since(now).max(pushback)
     }
 
@@ -1533,7 +1554,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.id.is_none()
             && !self.draining()
-            && now >= self.timers.retry_at
+            && now >= self.own.retry_at
             && self
                 .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
                 .is_none()
@@ -1552,7 +1573,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .budget()
             .allowed_at(Duration::ZERO, need, now)
             .filter(|&t| t > now);
-        let retry = Some(self.timers.retry_at).filter(|&t| t > now);
+        let retry = Some(self.own.retry_at).filter(|&t| t > now);
         [bucket, self.bans_end(now), retry]
             .into_iter()
             .flatten()
@@ -1562,10 +1583,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The application's message is now `own`; a new one, or none, has
     /// been refused no time yet.
     fn set_own(&mut self, own: Option<MsgId>) {
-        self.own = OwnMessage {
-            id: own,
-            refusals: 0,
-        };
+        self.own.id = own;
+        self.own.refusals = 0;
     }
 
     /// Deliver the message set aside once the delivery queue has a place.
@@ -1682,11 +1701,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .line_wait(to, Some(gate), pushback, now, emit)
                     .unwrap_or(pushback)
                     .max(BAN);
-                self.timers.retry_at = now + wait;
+                self.own.retry_at = now + wait;
                 self.drop_msg(id, DropReason::Pushback, emit);
                 emit(Action::App(AppEvent::GivenBack {
                     msg_id: id,
-                    retry_at: self.timers.retry_at,
+                    retry_at: self.own.retry_at,
                 }));
                 return;
             }
@@ -1883,7 +1902,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// routed again every fade (spec "A sleepy node's own message",
     /// "Sleepy nodes").
     fn origin_waits(&self, record: &Record, id: MsgId, now: Instant) -> Option<Instant> {
-        if let Some(ends) = self.timers.boot_ends {
+        if let Some(ends) = self.boot.ends() {
             if self.own.id == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
                 return Some(ends);
             }
@@ -2277,12 +2296,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Refusal::GivenBack => {
                 self.queue.take_current();
                 self.forwarding.feed_due = true;
-                self.timers.retry_at = now + wait;
+                self.own.retry_at = now + wait;
                 self.records.forget(msg_id);
                 self.drop_msg(msg_id, DropReason::Pushback, emit);
                 emit(Action::App(AppEvent::GivenBack {
                     msg_id,
-                    retry_at: self.timers.retry_at,
+                    retry_at: self.own.retry_at,
                 }));
             }
             // Stays, to be routed again when its turn comes, round the

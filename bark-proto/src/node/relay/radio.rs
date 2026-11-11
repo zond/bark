@@ -167,6 +167,32 @@ impl Radio {
         self.sweep.set_aside(airtime, now);
     }
 
+    /// When the move rule moves the home, if it does.
+    pub(super) fn move_at(&self) -> Option<Instant> {
+        self.sweep.move_at()
+    }
+
+    /// Whether the move rule's wait is over at `now`.
+    pub(super) fn move_due(&self, now: Instant) -> bool {
+        self.sweep.move_at().is_some_and(|t| now >= t)
+    }
+
+    /// The move rule starts over.
+    pub(super) fn clear_move(&mut self) {
+        self.sweep.clear_move();
+    }
+
+    /// A round of readings ended ([`Sweep::move_rule`]).
+    pub(super) fn move_rule(
+        &mut self,
+        excess: bool,
+        dwell: Duration,
+        wait: impl FnOnce() -> Duration,
+        now: Instant,
+    ) {
+        self.sweep.move_rule(excess, dwell, wait, now);
+    }
+
     // --- Away from listening ---
 
     /// How long the radio has been away in all up to `until`, at most
