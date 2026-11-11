@@ -1,24 +1,13 @@
-//! Distances in a local tangent plane centred on this node (spec "Positions on the wire").
-//!
-//! Routing compares distances; it never needs global coordinates. Each node
-//! builds one [`LocalPlane`] from its own position and maps every position
-//! it handles to metres east and north of itself:
-//!
-//! ```text
-//! north = Δlat · R
-//! east  = Δlon · R · cos(lat_self)
-//! ```
-//!
-//! with `R` the mean Earth radius of [`crate::position::UNIT_M`] and
-//! `cos(lat_self)` computed once, when the plane is built. A conversion is
-//! two integer subtractions and two `f32` multiplications.
+//! Distances in a flat plane centred on this node
+//! (spec "Positions on the wire"), with `R` the mean Earth radius of
+//! [`crate::position::UNIT_M`].
 //!
 //! # Accuracy
 //!
-//! `north` is the exact meridian arc. `east` uses the cosine of the plane's
-//! own latitude for every point, so a point `Δφ` radians north or south of
-//! the centre has its east offset off by a relative `≈ tan(lat_self) · Δφ`.
-//! Measured against the haversine distance at 50.45° N (the tests):
+//! `east` uses the cosine of the plane's own latitude for every point, so
+//! a point `Δφ` radians north or south of the centre has its east offset
+//! off by a relative `≈ tan(lat_self) · Δφ`. Against the haversine
+//! distance at 50.45° N (the tests):
 //!
 //! | radius from centre | centre to point | point to point |
 //! |---|---|---|
@@ -27,21 +16,16 @@
 //! | 100 km | 0.37 % | 1.9 % |
 //! | 300 km | 1.1 % | 5.9 % |
 //!
-//! So the 0.1 % holds for a city-sized neighbourhood, the 5 km of spec
-//! "Positions on the wire", not out to hundreds of km; a hop is never more than a few km,
-//! and for a distant destination the error is a smooth distortion that
-//! changes only near-tied greedy choices.
+//! A hop is never more than a few km, and for a distant destination the
+//! error is a smooth distortion that changes only near-tied choices.
 //!
 //! # Far away
 //!
 //! Longitude differences wrap to `[-180°, 180°)`, so the antimeridian is not
-//! a cliff. Every point maps to `|north| ≤ π R ≈ 20 015 km` and
-//! `|east| ≤ π R cos(lat_self)`: finite, never NaN, and monotone in the
-//! angular offsets, but not a distance on the sphere. The antipode of the
-//! centre lands at the edge of that box, about 20 000 km away; beyond a few
-//! hundred km the numbers are an ordering hint, nothing more. At a pole
-//! `cos(lat_self)` is zero and every east offset collapses; there are no
-//! relays there.
+//! a cliff. Every point maps to `|north| ≤ π R` and `|east| ≤ π R
+//! cos(lat_self)`: finite, never NaN, monotone in the angular offsets, but
+//! beyond a few hundred km an ordering hint, not a distance. At a pole
+//! every east offset collapses; there are no relays there.
 
 use crate::position::{Position, UNIT_DEG, UNIT_M};
 
@@ -82,9 +66,7 @@ pub struct LocalPlane {
 }
 
 impl LocalPlane {
-    /// The plane at latitude and longitude 0, where a longitude count is as
-    /// long as a latitude count: what [`LocalPlane::new`] gives there, as a
-    /// constant.
+    /// [`LocalPlane::new`] at latitude and longitude 0, as a constant.
     pub const ORIGIN: LocalPlane = LocalPlane {
         centre: Position { lat: 0, lon: 0 },
         north_per_count: UNIT_M as f32,
@@ -218,7 +200,7 @@ mod tests {
                 worst_from_centre(d)
             );
         }
-        // Two points anywhere within 2.5 km of the centre, so up to 5 km apart.
+        // Points up to 5 km apart.
         for d in [500.0, 1_000.0, 2_500.0] {
             assert!(worst_between(d) < 0.001, "ring {d} m: {}", worst_between(d));
         }

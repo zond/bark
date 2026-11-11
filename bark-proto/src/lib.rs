@@ -4,8 +4,7 @@
 //! [`Event`]s stamped with the current [`Instant`] and collects the
 //! [`Action`]s it emits. The core never blocks, never sleeps, never allocates
 //! and never touches a radio; everything it needs from the world arrives as
-//! an event. See `docs/core-interface.md` for the contract a driver must
-//! honour, and `docs/roadmap.md` for the design decisions behind it.
+//! an event. `docs/core-interface.md` is the contract a driver must honour.
 
 #![no_std]
 #![forbid(unsafe_code)]

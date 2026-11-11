@@ -1,30 +1,10 @@
-//! Encoding and decoding of every packet in spec "Packet formats".
+//! Encoding and decoding of every packet in spec "Packet formats". The
+//! choices the spec leaves open are listed in `docs/core-interface.md`,
+//! "Wire-format choices made here".
 //!
-//! The first byte of every packet is its kind and that kind's one small
-//! field (roadmap D76, D77, D90):
-//!
-//! ```text
-//! 1 0 0 0 c c c c   HEARTBEAT: home channel cccc
-//! 0 0 a a a a a a   DATA: aux, the sender's home channel
-//! s 1 w w w w w w   ACK: s, the seen flag; w, the wait
-//! ```
-//!
-//! The second is the format version (roadmap D77): in a heartbeat the
-//! newest format the sender speaks, in DATA and the ACK the format of the
-//! frame. This code speaks format [`FORMAT`] only, so it sends 1 and
-//! rejects a DATA or ACK of any other; the heartbeat's layout never
-//! changes, so it reads every heartbeat and keeps the sender's format.
-//! A heartbeat's third byte holds its flags; a receiver ignores the bits
-//! it does not know, which later formats may define.
-//!
-//! Every node has a 6-byte [`NodeId`], and fields that only name a node
-//! (DATA `dst_hop` and `src_hop`, ACK `from` and `to`) carry it. DATA
-//! `dst_pos` locates a place and is the 7-byte form of
-//! [`Position::encode`]; the heartbeat carries the sender's position in the
-//! 4-byte short form of [`ShortName`], which the receiver rebuilds from its
-//! own (spec "Positions on the wire", roadmap D14). DATA carries no message
-//! ID: every node computes [`Data::msg_id`] (D15). Search state lives in
-//! the nodes, not the packet (D16). Lengths, in bytes:
+//! This code speaks format [`FORMAT`] only: it rejects a DATA or ACK of any
+//! other, and reads every heartbeat, whose first [`HEARTBEAT_LEN`] bytes
+//! never change, keeping the sender's format. Lengths, in bytes:
 //!
 //! ```text
 //! HEARTBEAT  first format flags id pos                            = 13
@@ -37,53 +17,6 @@
 //! STATUS     first format to from flags battery heard strong
 //!            proven version gathers blocks complete have          = 30
 //! ```
-//!
-//! DATA's `aux` 13 to 63, above every home channel, names a frame from
-//! node to node, one value a kind: plain, one hop, not routed and not
-//! acknowledged unless its kind says so. 15 is the update's piece (spec
-//! "Updates over the mesh"), 16 and 17 a neighbour's status asked and
-//! told (spec "Neighbour status"); 13, 14 and 18 to 63 are reserved, and a node
-//! rejects them. A heartbeat may carry an update section after its first
-//! 13 bytes, which a node that knows none ignores. Such a frame keeps the first
-//! two bytes and lays out the rest for its kind: none of them has a hop,
-//! a destination or a count, and the piece needs every byte.
-//!
-//! An ACK answers every offer, taken, refused or seen: its first byte says
-//! which. A refusal is for this hop only (spec "Receiving DATA"); the
-//! network still sends no failure notices (D10). A seen answer takes
-//! nothing: the answering relay has the message's record and no copy of
-//! it, and the sender goes on to its next candidate (spec "The ACK",
-//! D90). An ACK names the message, the node answering and the node
-//! answered, so that a sender takes only the answer to its own offer,
-//! however many others offer the same message to the same node (D32).
-//!
-//! Choices the spec leaves open, fixed here and listed in
-//! `docs/core-interface.md` §7:
-//!
-//! - Short positions and message IDs are big-endian; a node ID is six
-//!   opaque bytes in order.
-//! - The payload is at most [`MAX_PAYLOAD`] = 227 bytes, what a frame holds
-//!   after the DATA header.
-//! - ACK `to` names the sender of what is answered, the DATA's `src_hop`.
-//! - ACK `aux` is 0 when the offer is taken and, when it is refused, the
-//!   code of the wait the refuser asks for, 1 to 63: 1 to 16 bans one ban
-//!   apart, then each an eighth longer, up to 89 min (`tables/budget.rs`
-//!   `told`).
-//!   The wait needs no byte of its own, so every ACK has one length and
-//!   one airtime. The seen flag is the top bit, where a heartbeat has its
-//!   kind, so the kind `11` that was free is the seen ACK; a seen ACK's
-//!   wait is 0, and one with a wait is rejected.
-//! - DATA `aux` is the sender's home channel, 0 to 12; its two high bits
-//!   are zero, and a DATA with either set is rejected.
-//! - The heartbeat's flags are bit 0 sleepy, bit 1 anchorless, bit 2
-//!   carried, bit 3 map point and bit 4 leaving, each with or without the
-//!   others.
-//! - A heartbeat byte whose channel is 15, which no node sends, starts the
-//!   firmware's bench frames ([`BENCH_FIRST`]); nodes reject it as a
-//!   channel outside the plan.
-//! - An ACK with trailing bytes is malformed, not padded. A heartbeat is
-//!   read from its first [`HEARTBEAT_LEN`] bytes, and what follows is
-//!   ignored, so that a later format may append fields.
 
 use crate::event::MAX_FRAME;
 use crate::ids::{MsgId, NodeId};
@@ -93,8 +26,7 @@ use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::status::{Battery, Status};
 use crate::update::{Image, Section, SECTION_LEN};
 
-/// The wire format this code speaks, and so sends and reads (spec
-/// "Packet formats", roadmap D77).
+/// The wire format this code speaks, and so sends and reads.
 pub const FORMAT: u8 = 1;
 
 // Field widths.
@@ -114,8 +46,8 @@ const ANSWER_BIT: u8 = 0x40;
 const HEARTBEAT_BIT: u8 = 0x80;
 // In an ACK, the top bit is the seen flag (spec "The ACK").
 const SEEN_BIT: u8 = HEARTBEAT_BIT;
-/// The bits of `aux`, below the kind bits (spec "Packet formats"): the
-/// code of the longest wait an ACK asks for.
+/// The bits of `aux`, below the kind bits: the code of the longest wait
+/// an ACK asks for.
 pub const AUX_MASK: u8 = 0x3f;
 // A heartbeat's channel, below two bits that are zero.
 const CHANNEL_MASK: u8 = 0x0f;
@@ -130,7 +62,7 @@ const BENCH_CHANNEL: u8 = CHANNEL_MASK;
 const _: () = assert!(Channel::new(BENCH_CHANNEL).is_none());
 
 /// The first byte of a firmware bench frame: a heartbeat byte on channel
-/// 15, which no node sends and every node rejects (spec "Packet formats").
+/// 15, which no node sends and every node rejects.
 pub const BENCH_FIRST: u8 = HEARTBEAT_BIT | BENCH_CHANNEL;
 
 // The second byte, the format version.
@@ -207,7 +139,7 @@ const STATUS_BLOCKS: usize = STATUS_GATHERS + VERSION_LEN;
 const STATUS_COMPLETE: usize = STATUS_BLOCKS + 1;
 const STATUS_HAVE: usize = STATUS_COMPLETE + 1;
 /// Bytes of the status itself, after whom and from whom: what the phone
-/// link passes on as it is (spec "Phone link", Ask).
+/// link passes on as it is (spec "Phone link").
 pub const STATUS_LEN: usize = STATUS_HAVE + 1 - ASK_LEN;
 /// A status told's length (spec "Neighbour status").
 pub const STATUS_FRAME_LEN: usize = ASK_LEN + STATUS_LEN;
@@ -255,26 +187,21 @@ const _: () = assert!(
 /// HEARTBEAT (spec "Heartbeat").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heartbeat {
-    /// Sleepy (0x1): reach the sender cheaply in its window after its
-    /// beat, or at any time with the long preamble; it holds mail for
-    /// nobody. Clear, it listens all the time.
+    /// Sleepy (spec "Nodes").
     pub sleepy: bool,
-    /// Anchorless (0x2): the sender knows no node
-    /// that holds mail, one neither sleepy nor carried; such a node that
-    /// hears it answers.
+    /// Anchorless: the sender knows no node that holds mail
+    /// (spec "Sleepy nodes alone").
     pub anchorless: bool,
-    /// Carried (0x4): the sender moves. It takes
-    /// each GPS fix and holds mail for nobody, so nobody anchors to it.
+    /// Carried: the sender moves (spec "Nodes").
     pub carried: bool,
     /// The sender's home channel.
     pub home: Channel,
     /// The newest wire format the sender speaks: its capability.
     pub format: u8,
-    /// The sender's position is a map point a person set in the app, not
-    /// a GPS fix (spec "Position").
+    /// The sender's position is a map point, not a GPS fix (spec
+    /// "Position").
     pub map_point: bool,
-    /// Leaving (0x10): the sender is about to leave the air, so do not
-    /// rely on it (spec "Packet formats").
+    /// Leaving: the sender is about to leave the air.
     pub leaving: bool,
     /// The sender.
     pub id: NodeId,
@@ -284,8 +211,8 @@ pub struct Heartbeat {
 }
 
 impl Heartbeat {
-    /// The sender's position, rebuilt by a receiver at `near`:
-    /// unambiguous among everything a node hears ([`Position::from_short`]).
+    /// The sender's position, rebuilt by a receiver at `near`
+    /// ([`Position::from_short`]).
     pub fn position(&self, near: Position) -> Position {
         Position::from_short(self.short, near)
     }
@@ -303,18 +230,15 @@ pub struct Ack {
     /// The offer is refused (spec "Receiving DATA"): `from` does not take it.
     pub refused: bool,
     /// For a refusal, the code of the wait the refuser asks for, 1 to
-    /// [`AUX_MASK`] (spec "Bans", `tables/budget.rs` `told`); 0 in an ACK
-    /// that takes or has seen.
+    /// [`AUX_MASK`] (`tables/budget.rs` `told`); else 0.
     pub wait: u8,
-    /// Seen, not taken (spec "Receiving DATA" case 6): `from` has the
-    /// message's record and no copy of it, and `to` goes on to its next
-    /// candidate. Never with `refused`.
+    /// Seen, not taken (spec "The ACK"). Never with `refused`.
     pub seen: bool,
 }
 
 impl Ack {
     /// Whether this answers the same offer as `other`: the same message
-    /// between the same two nodes, taken or refused (roadmap D32).
+    /// between the same two nodes, so a sender takes only its own answer.
     pub fn answers(&self, other: &Ack) -> bool {
         self.msg_id == other.msg_id && self.from == other.from && self.to == other.to
     }
@@ -323,8 +247,7 @@ impl Ack {
 /// DATA (spec "Forwarding", "Packet formats").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Data<'a> {
-    /// The sender's home channel, where the ACK and anything sent straight
-    /// back go (`aux`).
+    /// The sender's home channel, where the ACK goes (`aux`).
     pub sender_home: Channel,
     /// The node this transmission is addressed to.
     pub dst_hop: NodeId,
@@ -341,7 +264,7 @@ pub struct Data<'a> {
 }
 
 impl Data<'_> {
-    /// The message's ID (roadmap D15), the same on every hop.
+    /// The message's ID, the same on every hop.
     pub fn msg_id(&self) -> MsgId {
         MsgId::of(self.dst_pos, self.dst_id, self.payload)
     }
@@ -350,8 +273,7 @@ impl Data<'_> {
 /// An update frame (spec "Updates over the mesh").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Update<'a> {
-    /// One coded piece of block `block` of the image of version
-    /// `version`: a version names one image.
+    /// One coded piece of a block of an image.
     Piece {
         /// The image's version.
         version: u32,
@@ -831,7 +753,7 @@ mod tests {
 
     extern crate std;
 
-    /// Encode, check the length against the table above, decode, compare.
+    /// Encode, check the length, decode, compare.
     fn round_trip(p: &Packet<'_>) {
         let mut buf = [0; MAX_FRAME];
         let len = p.encode(&mut buf).unwrap();
@@ -1013,8 +935,8 @@ mod tests {
         }
     }
 
-    /// What a status's battery byte says (spec "Neighbour status"), and that the
-    /// flag bits no format defines are ignored.
+    /// What a status's battery byte says, and that the flag bits no format
+    /// defines are ignored.
     #[test]
     fn a_status_battery_byte() {
         let read = |flags: u8, battery: u8| {

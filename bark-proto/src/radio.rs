@@ -1,13 +1,12 @@
-//! The physical layer as the core sees it: channel plan and modulation
-//! constants from spec "Physical layer" and "Channel plan". Everything here is a number the radio
-//! or the regulator fixes, not a tunable.
+//! The physical layer as the core sees it (spec "Physical layer",
+//! "Channel plan"): numbers the radio or the regulator fixes, not tunables.
 
 use crate::time::Duration;
 
 /// Number of channels in the plan (spec "Channel plan").
 pub const CHANNELS: u8 = 13;
 
-/// Centre frequency of channel 0 in Hz (spec "Channel plan": f_k = 433.170 MHz + k × 125 kHz).
+/// Centre frequency of channel 0 in Hz (spec "Channel plan").
 pub const CHANNEL_0_HZ: u32 = 433_170_000;
 
 /// Channel spacing in Hz, equal to the signal bandwidth.
@@ -27,10 +26,8 @@ pub const SYMBOL_TIME: Duration =
     Duration::from_micros((1u64 << SPREADING_FACTOR) * 1_000_000 / BANDWIDTH_HZ as u64);
 
 /// How long after the receiver starts on a channel its RSSI reading is
-/// right: four symbol periods. The reading climbs a step a symbol period
-/// and a strong signal reads as a fixed value until then
-/// (docs/bench-2026-10-30.md, "The night alone, and two boards the next
-/// morning"; spec "Busy estimate").
+/// right: four symbol periods, as the reading climbs a step a symbol
+/// period (measured, docs/bench-2026-10-30.md; spec "Busy estimate").
 pub const RSSI_SETTLE: Duration = SYMBOL_TIME.mul(4);
 
 /// Minimum preamble the SX126x accepts at SF5 and SF6 (datasheet §6.1.4:
@@ -132,16 +129,14 @@ pub const fn time_on_air(payload_len: u8, preamble_symbols: u16) -> Duration {
 pub const DEMOD_SNR_DB: f32 = -2.5;
 
 /// How far above sensitivity a 255-byte frame must be received to be lost
-/// no more than 1 % of the time, the datasheet's own standard (§3.5). A
-/// packet arrives only if every symbol does, and longer packets have more
-/// symbols; the symbol error rate is that of noncoherent detection of 32
-/// orthogonal signals, anchored at the datasheet's 64-byte point
+/// no more than 1 % of the time (datasheet §3.5): every symbol must
+/// arrive, at the symbol error rate of noncoherent detection of 32
+/// orthogonal signals anchored at the datasheet's 64-byte point
 /// (`docs/reception-research-2026-10-15.md`). Derived in the tests below.
 pub const FULL_FRAME_ABOVE_SENSITIVITY_DB: f32 = 0.43;
 
 /// The fade a link must ride out: the standard deviation of fading over
-/// time and channel in the scenarios, 4 dB (`docs/roadmap.md` D38). Not
-/// measured; to be replaced by the bench and field measurements of Phase 2.
+/// time and channel in the scenarios, 4 dB (roadmap D38). Not measured.
 pub const FADE_DEPTH_DB: f32 = 4.0;
 
 /// The packet RSSI, in dB above the noise floor, at which a frame of full

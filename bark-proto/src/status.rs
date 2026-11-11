@@ -1,7 +1,6 @@
-//! What a node says of itself when a neighbour asks (spec "Neighbour status"): what
-//! its screen shows, for a person looking at a map of the nodes around
-//! theirs. The frames are in `wire.rs`; the node's side, the asking and
-//! the answering, in `node/relay/status.rs`.
+//! What a node says of itself when a neighbour asks
+//! (spec "Neighbour status"). The frames are in `wire.rs`; asking and
+//! answering in `node/relay/status.rs`.
 
 use crate::node::NeighbourCounts;
 
