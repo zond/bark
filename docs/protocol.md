@@ -63,7 +63,7 @@ sleeps in a pocket.
   it is not sleepy. A sleepy node beats rarely instead of heartbeating,
   listens only in a window after each beat, receives duty-cycled
   between, forwards what it is given at once, anchors to a fixed relay
-  and keeps no mailbox.
+  and keeps no PO box.
 - **Carried**: its GPS says it moves ([position](#position)). A map point
   set in the app makes it not carried at once. A carried node, and a
   sleepy node without an anchor, takes each fix as its position, so its
@@ -107,7 +107,7 @@ in, not a kind of node.
 | **beat** | a sleepy node's heartbeat ([beats](#beats)) |
 | **window** | the seconds after a beat, or after a message a sleepy node takes, in which it listens ([delivery](#delivery)) |
 | **holder** | a relay that holds a message for a sleepy node and hears its beat; most often its anchor |
-| **mailbox** | a relay's heard table and delivery queue: the sleepy nodes it hears and the messages it holds for them |
+| **PO box** | a relay's heard table and delivery queue: the sleepy nodes it hears, and the messages it holds for them until they listen |
 | **long preamble** | a preamble that reaches a node receiving duty-cycled at any time; used only where nothing else reaches ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)) |
 | **dark** | a sleepy node out of reach for minutes: a pocket, a basement, the metro |
 | **delivery TTL** | 600 s: the network keeps what it holds for a node at least this long |
@@ -1599,12 +1599,12 @@ after ([delivery](#delivery)), and between its windows receives
 duty-cycled
 ([duty-cycled receive and the long preamble](#duty-cycled-receive-and-the-long-preamble)).
 
-A sleepy node holds mail for nobody: the mailbox is a relay's
+A sleepy node holds mail for nobody: the PO box is a relay's
 ([heard table](#heard-table), [delivery queue](#delivery-queue)). It
 keeps the neighbour table and the send queue, and forwards what it is
 given at once, with the long preamble to a sleepy neighbour and the short
 one to any other; everything else it does as any node. A carried relay
-keeps its mailbox but takes no new mail into it.
+keeps its PO box but takes no new mail into it.
 
 For a node that has gone dark the network keeps, for the delivery TTL,
 the node in its holder's table and the messages waiting for it, which

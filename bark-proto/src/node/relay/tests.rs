@@ -50,18 +50,18 @@ fn sizes() {
     // A node built only to be sleepy spends nothing on the heard table
     // and the delivery queue (spec "Sleepy nodes").
     let sleepy = core::mem::size_of::<SleepyNode>();
-    let mailbox = core::mem::size_of::<Heard>() + core::mem::size_of::<DeliveryQueue>();
-    std::println!("SleepyNode {sleepy} B, mailbox {mailbox} B");
+    let po_box = core::mem::size_of::<Heard>() + core::mem::size_of::<DeliveryQueue>();
+    std::println!("SleepyNode {sleepy} B, PO box {po_box} B");
     assert!(
-        sleepy + mailbox <= relay + 64,
-        "{sleepy} + {mailbox} of {relay}"
+        sleepy + po_box <= relay + 64,
+        "{sleepy} + {po_box} of {relay}"
     );
 }
 
-/// A sleepy node built without the mailbox does what a full one set
+/// A sleepy node built without the PO box does what a full one set
 /// up sleepy does.
 #[test]
-fn a_sleepy_node_without_the_mailbox_is_a_sleepy_relay() {
+fn a_sleepy_node_without_the_po_box_is_a_sleepy_relay() {
     let config = Config {
         boot_listen: Duration::from_secs(1),
         ..Config::default()
