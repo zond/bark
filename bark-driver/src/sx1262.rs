@@ -11,7 +11,7 @@
 //!
 //! "DS" is the SX1261/2 datasheet, Rev 1.2 (June 2019).
 
-use core::fmt::Debug;
+use core::fmt::Display;
 
 use bark_proto::radio::{time_on_air, Channel, RSSI_SETTLE, SYMBOL_TIME};
 use bark_proto::sniff::{periods, LONG_PREAMBLE_SYMBOLS};
@@ -121,8 +121,9 @@ pub const RX_PACKET: (u16, u8) = (LONG_PREAMBLE_SYMBOLS, MAX_FRAME as u8);
 /// The chip, one command at a time. Every method sends one command and
 /// waits for BUSY to fall, unless its comment says more.
 pub trait Chip {
-    /// A failure of the bus, a pin wait or an interrupt wait.
-    type Error: Debug;
+    /// A failure of the bus, a pin wait or an interrupt wait; `Display`
+    /// for the log, as [`crate::Radio::Error`].
+    type Error: Display;
 
     /// Pulse NRESET and wait until the chip takes commands: STDBY_RC,
     /// everything it held lost (DS §9.1).
@@ -233,6 +234,17 @@ pub enum Error<E> {
     /// A receive that did not start, cold either: the status byte after
     /// the cold start.
     NotStarted(u8),
+}
+
+/// The text `Debug` writes.
+impl<E: Display> Display for Error<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Error::Chip(e) => write!(f, "Chip({e})"),
+            Error::NotDone(flags) => write!(f, "NotDone({flags})"),
+            Error::NotStarted(status) => write!(f, "NotStarted({status})"),
+        }
+    }
 }
 
 impl<E> From<E> for Error<E> {
@@ -2049,6 +2061,17 @@ mod tests {
             &take(&cmds)[..4],
             &[Cmd::Wake, Cmd::Standby(false), Cmd::Errors, Cmd::Configure]
         );
+    }
+
+    #[test]
+    fn an_error_is_displayed_as_debug_writes_it() {
+        for e in [
+            Error::Chip("SPI"),
+            Error::NotDone(0x40),
+            Error::NotStarted(0x2a),
+        ] {
+            assert_eq!(std::format!("{e}"), std::format!("{e:?}").replace('"', ""));
+        }
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub mod sx1262;
 pub mod tcxo;
 pub mod utc;
 
-use core::fmt::Debug;
+use core::fmt::Display;
 use core::future::pending;
 
 use bark_proto::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS, RSSI_SETTLE};
@@ -129,8 +129,9 @@ pub const fn node_id_of_hex(hex: &str) -> NodeId {
 
 /// The half-duplex LoRa radio at bark's modulation (spec "Physical layer").
 pub trait Radio {
-    /// A failure of the radio or its bus.
-    type Error: Debug;
+    /// A failure of the radio or its bus. `Display`, not `Debug`, for the
+    /// log: the derived form of an error enum costs flash.
+    type Error: Display;
 
     /// A node whose frames the driver drops; only a bench build has one
     /// ([`BENCH_DEAF_TO`]). They still keep the radio busy and show in its
@@ -1013,7 +1014,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// Note a radio failure; the radio's state is unknown, so it is set
     /// listening again from scratch.
     fn failed(&mut self, e: R::Error) -> R::Error {
-        log::warn!("radio: {:?}", e);
+        log::warn!("radio: {}", e);
         self.stats.radio_errors += 1;
         self.deaf();
         e

@@ -6,6 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::convert::Infallible;
 use std::future::{poll_fn, Future};
 use std::pin::pin;
 use std::rc::Rc;
@@ -225,9 +226,9 @@ impl FakeRadio {
 }
 
 impl Radio for FakeRadio {
-    type Error = ();
+    type Error = Infallible;
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), ()> {
+    async fn listen(&mut self, channel: Channel) -> Result<(), Infallible> {
         self.world.op(Op::Listen(channel));
         self.rx(channel, false);
         Ok(())
@@ -235,13 +236,13 @@ impl Radio for FakeRadio {
 
     // Hears every frame: which ones a cycle catches is the chip's affair
     // (`bark_proto::sniff::detects`); the driver's is to keep it running.
-    async fn sniff(&mut self, channel: Channel) -> Result<(), ()> {
+    async fn sniff(&mut self, channel: Channel) -> Result<(), Infallible> {
         self.world.op(Op::Sniff(channel));
         self.rx(channel, true);
         Ok(())
     }
 
-    async fn wait(&mut self) -> Result<(), ()> {
+    async fn wait(&mut self) -> Result<(), Infallible> {
         poll_fn(|_| match self.poll_air() {
             true => Poll::Ready(Ok(())),
             false => Poll::Pending,
@@ -249,7 +250,7 @@ impl Radio for FakeRadio {
         .await
     }
 
-    async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, ()> {
+    async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, Infallible> {
         let mut w = self.world.0.borrow_mut();
         if let Some((_, bytes)) = w.ready.take() {
             buf[..bytes.len()].copy_from_slice(&bytes);
@@ -265,14 +266,14 @@ impl Radio for FakeRadio {
         Ok(Heard::Nothing)
     }
 
-    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), ()> {
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Infallible> {
         self.world.op(Op::Lbt(channel));
         self.deaf();
         self.world.sleep(self.world.now() + CAD_TIME).await;
         Ok((self.cad_busy, climb(CAD_TIME)))
     }
 
-    async fn rssi(&mut self) -> Result<i16, ()> {
+    async fn rssi(&mut self) -> Result<i16, Infallible> {
         let (ch, since) = {
             let w = self.world.0.borrow();
             (w.listening.expect("listening"), w.listening_since)
@@ -281,7 +282,7 @@ impl Radio for FakeRadio {
         Ok(climb(self.world.now().since(since)))
     }
 
-    async fn transmit(&mut self, frame: &Frame, _dbm: i8) -> Result<(), ()> {
+    async fn transmit(&mut self, frame: &Frame, _dbm: i8) -> Result<(), Infallible> {
         self.world.op(Op::Transmit(*frame));
         self.deaf();
         let airtime = time_on_air(frame.len, frame.preamble_symbols);
@@ -447,7 +448,7 @@ fn driver<C: Core>(core: C, world: &World, early: Duration) -> TestDriver<C> {
 }
 
 /// One step, moving the clock whenever the step waits.
-fn step<C: Core, R: Radio<Error = ()>>(d: &mut TestDriver<C, R>, world: &World) {
+fn step<C: Core, R: Radio<Error = Infallible>>(d: &mut TestDriver<C, R>, world: &World) {
     let mut fut = pin!(d.step());
     loop {
         match poll_once(fut.as_mut()) {
@@ -457,7 +458,7 @@ fn step<C: Core, R: Radio<Error = ()>>(d: &mut TestDriver<C, R>, world: &World) 
     }
 }
 
-fn run_until<C: Core, R: Radio<Error = ()>>(
+fn run_until<C: Core, R: Radio<Error = Infallible>>(
     d: &mut TestDriver<C, R>,
     world: &World,
     until: Instant,
@@ -639,34 +640,34 @@ const DEAF: NodeId = NodeId([0xba, 0xe6, 0xe6, 0xcb, 0xf4, 0xf5]);
 struct DeafRadio(FakeRadio);
 
 impl Radio for DeafRadio {
-    type Error = ();
+    type Error = Infallible;
     const DEAF_TO: Option<NodeId> = Some(DEAF);
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), ()> {
+    async fn listen(&mut self, channel: Channel) -> Result<(), Infallible> {
         self.0.listen(channel).await
     }
 
-    async fn sniff(&mut self, channel: Channel) -> Result<(), ()> {
+    async fn sniff(&mut self, channel: Channel) -> Result<(), Infallible> {
         self.0.sniff(channel).await
     }
 
-    async fn wait(&mut self) -> Result<(), ()> {
+    async fn wait(&mut self) -> Result<(), Infallible> {
         self.0.wait().await
     }
 
-    async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, ()> {
+    async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, Infallible> {
         self.0.service(buf).await
     }
 
-    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), ()> {
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Infallible> {
         self.0.lbt(channel).await
     }
 
-    async fn rssi(&mut self) -> Result<i16, ()> {
+    async fn rssi(&mut self) -> Result<i16, Infallible> {
         self.0.rssi().await
     }
 
-    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), ()> {
+    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Infallible> {
         self.0.transmit(frame, dbm).await
     }
 }

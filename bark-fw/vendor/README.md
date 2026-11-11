@@ -30,6 +30,11 @@ library does not offer (roadmap D20). Changes from the upstream revision:
   changes (`bark-driver/src/sx1262.rs`, roadmap D88). They add to the crate and change
   nothing in it.
 
+- `src/mod_params.rs`: `RadioError` implements `Display`, the text its `Debug`
+  writes, which the firmware's log uses: the derived `Debug` and the formatter's
+  tuple builder it alone needed cost 380 B more of flash. It adds to the crate
+  and changes nothing in it.
+
 To move to a newer upstream revision: replace the directory with that revision's
 `lora-phy`, reapply the changes listed here, and review the upstream diff as for
 any driver update.
