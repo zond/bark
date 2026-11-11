@@ -141,6 +141,14 @@ jobs:
           python3 -I scripts/uf2.py --stack target/thumbv7em-none-eabihf/release/bark-fw
         working-directory: bark-fw
 
+      # The image's flash, the blocks an update over the mesh sends it in
+      # and its static RAM, so that growth shows when it happens; past the
+      # budget, under the 48 blocks the update carries, it fails
+      # (scripts/image.py, BUDGET_BLOCKS).
+      - name: the image's size, node
+        run: python3 -I scripts/image.py size target/thumbv7em-none-eabihf/release/bark-fw
+        working-directory: bark-fw
+
   # release.yml runs analyze and test too, before it builds an APK.
   app:
     name: App (format, analyze, test)

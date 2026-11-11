@@ -155,9 +155,9 @@ Verified on the host:
   each build, plain, with `--features console` and with `BARK_OPEN=1`.
 - The ELF's first loadable byte (the vector table) is at `0x06000`, the
   initial stack pointer is `0x20040000`. The open node image is
-  532 916 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
-  of the 929 792 B slot, and uses 197 312 B of RAM before the stack
-  (`.data` and `.bss`), which leaves the stack 63 800 B (2026-11-10,
+  530 784 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
+  of the 929 792 B slot, and uses 196 120 B of RAM before the stack
+  (`.data` and `.bss`), which leaves the stack 64 976 B (2026-11-11,
   `size -A`, `scripts/uf2.py --stack`). The relay,
   95 536 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. The
@@ -374,6 +374,14 @@ and one codegen unit, which keeps the open node image under three
 fifths of its slot (Verified and unverified, above;
 `docs/flash-2026-11-06.md` measures the options). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
+
+`scripts/image.py size` prints the image's flash, the blocks the update
+over the mesh sends it in, the table's among them, and its static RAM,
+and fails past a budget of 40 blocks, under the 48 the update carries
+(`BUDGET_BLOCKS` in the script says why and what to do when it is
+reached); CI runs it on the release build. On 2026-11-11 the node image
+is 530 736 B of flash, 35 blocks, with 196 144 B of static RAM; it was
+340 992 B on 2026-11-06.
 
 The same line counts what the radio heard since boot: `frames` passed
 their CRC, and `failed` began and gave no frame, split into
@@ -1384,10 +1392,10 @@ confirmation takes.
 
 | release, open | data + bss | stack |
 |---|---|---|
-| node image | 197 312 B | 63 800 B |
-| console | 18 264 B | 242 840 B |
+| node image | 196 120 B | 64 976 B |
+| console | 18 080 B | 243 024 B |
 
-(2026-11-10, `size -A`, `uf2.py --stack`.)
+(2026-11-11, `size -A`, `uf2.py --stack`.)
 
 ## Radio power
 
