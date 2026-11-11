@@ -313,7 +313,7 @@ impl Flash {
             .erase(STORE.start, STORE.end())
             .await;
         if let Err(e) = erased {
-            log::error!("store: erase failed: {:?}", e);
+            log::error!("store: erase failed: {}", Failed(e));
             return;
         }
         self.next = 0;
@@ -339,7 +339,24 @@ impl Flash {
         self.next += (record.len() / RECORD_LEN) as u32;
         let written = self.flash.lock().await.write(at, record).await;
         if let Err(e) = written {
-            log::error!("store: write failed: {:?}", e);
+            log::error!("store: write failed: {}", Failed(e));
+        }
+    }
+}
+
+/// A flash operation's failure, the MPSL's error as its nRF errno,
+/// negated: its `Debug` names every errno, 0.8 KB of flash for a line
+/// that should never print.
+#[cfg(not(feature = "console"))]
+struct Failed(nrf_mpsl::FlashError);
+
+#[cfg(not(feature = "console"))]
+impl core::fmt::Display for Failed {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            nrf_mpsl::FlashError::Mpsl(e) => write!(f, "mpsl {}", i32::from(e)),
+            nrf_mpsl::FlashError::OutOfBounds => f.write_str("out of bounds"),
+            nrf_mpsl::FlashError::Unaligned => f.write_str("unaligned"),
         }
     }
 }

@@ -429,7 +429,9 @@ pub(crate) struct InnerTable<'d, const MAX: usize> {
 impl<'d, const MAX: usize> InnerTable<'d, MAX> {
     fn push(&mut self, attribute: Attribute<'d>) -> u16 {
         let handle = self.next_handle();
-        self.attributes.push(attribute).unwrap();
+        if self.attributes.push(attribute).is_err() {
+            panic!("the attribute table is full");
+        }
         handle
     }
 

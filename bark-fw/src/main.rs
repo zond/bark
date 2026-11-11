@@ -517,7 +517,7 @@ async fn run_console(
             }
             // Without a radio there is nothing to measure; USB and the
             // log keep running so the error can be read.
-            Err(e) => log::error!("radio init failed: {:?}", e),
+            Err(e) => log::error!("radio init failed: {}", e),
         }
     };
     let picture = boot_picture(hex);
@@ -852,7 +852,7 @@ async fn node_radio(n: NodeRadio) {
         // read, and the phone link still comes up, so the node can be found,
         // with the phones' records but without the ring.
         Err(e) => {
-            log::error!("radio init failed: {:?}", e);
+            log::error!("radio init failed: {}", e);
             mailbox::open();
             ble::MAY_START.signal(());
         }

@@ -421,7 +421,7 @@ impl Nonce {
         let mut b = [0; core::mem::size_of::<u128>()];
         rng.fill_bytes(b.as_mut_slice());
         let n = u128::from_ne_bytes(b);
-        assert_ne!(n, 0);
+        assert!(n != 0, "a zero nonce");
         Self(n)
     }
 

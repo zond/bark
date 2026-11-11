@@ -30,6 +30,11 @@ library does not offer (roadmap D20). Changes from the upstream revision:
   changes (`bark-driver/src/sx1262.rs`, roadmap D88). They add to the crate and change
   nothing in it.
 
+- `src/mod_params.rs`: `RadioError` implements `Display`, the text its `Debug`
+  writes, which the firmware's log uses: the derived `Debug` and the formatter's
+  tuple builder it alone needed cost 380 B more of flash. It adds to the crate
+  and changes nothing in it.
+
 To move to a newer upstream revision: replace the directory with that revision's
 `lora-phy`, reapply the changes listed here, and review the upstream diff as for
 any driver update.
@@ -86,6 +91,14 @@ without the `central` feature, 6 KB the image has no room for
   §3.5.5), before any key is made, and the application gets `PairingFailed`. A
   node with every phone record in use refuses so (roadmap D168). A test in
   `pairing/peripheral.rs` sends such a request.
+- `src/fmt.rs`, `src/gatt.rs`, `src/attribute.rs` and
+  `src/security_manager/crypto.rs`: a panic names what failed and its place
+  but not the value: `unwrap!`'s message leaves out the error, the three
+  `unreachable!` for a PDU that is not the client's leave out the PDU, the
+  attribute table's `push` panics without the attribute, and the nonce's
+  check is `assert!` rather than `assert_ne!`. Each value's `Debug` was the
+  only use of the ATT PDUs', the attribute's, the UUID's and `u128`'s
+  formatting: 3 820 B of flash less.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
   central's side, so they run only with `central`.
 

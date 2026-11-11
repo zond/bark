@@ -2908,9 +2908,10 @@ a block, or as many as it has, give it back (a Reed-Solomon code over
 GF(2⁸), the firmware's, `code.rs`). Blocks decode as they complete and
 fail alone. An image has at most 48 blocks, the table's among them, one
 for each lane the firmware keeps pieces in: 47 blocks of packed image,
-743 KB, which `bark-fw/scripts/image.py pack` refuses to pass. Today's
-node image, 478 704 bytes (main `9b693a0`, 2026-11-09), packs to
-478 960 bytes, 1 940 pieces in 31 blocks; with its two-piece table, 32 blocks.
+743 KB, which `bark-fw/scripts/image.py pack` refuses to pass. The
+node image of 2026-11-11, 530 736 bytes (release build of `f600f8c`),
+packs to 530 992 bytes, 2 150 pieces in 34 blocks; with its two-piece
+table, 35 blocks.
 
 Every block is checked against its entry in the table and block 1's
 header against the name the table begins with, so a piece of another

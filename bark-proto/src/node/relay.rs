@@ -682,7 +682,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Serve the radio: feed the send queue, then start ready jobs in order
     /// until one takes the radio. A job that needed no excursion lets the
-    /// next be tried.
+    /// next be tried. Not inlined: in `handle` it took 0.9 KB more of the
+    /// node image's flash, and no measurable time.
+    #[inline(never)]
     fn schedule(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         self.release_held(now, emit);
         self.release(now, emit);

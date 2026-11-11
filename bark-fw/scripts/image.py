@@ -12,6 +12,7 @@ next boot (bark-fw/README.md, "Updates").
     scripts/image.py sign bark-fw.img signing.pem --key-id 1   # or --elf ELF
     scripts/image.py check bark-fw.img running-bark-fw.elf
     scripts/image.py stage bark-fw.img /dev/ttyACM0 [--running ELF] [--reboot]
+    scripts/image.py size target/thumbv7em-none-eabihf/release/bark-fw
 
 An image is the 256-byte header of bark-image/src/lib.rs (magic "bark",
 format 1, version, length, SHA-256 of the image, three signature slots)
@@ -70,6 +71,12 @@ def bench_key_id() -> int:
 # 47 blocks cannot travel over the mesh.
 MESH_BLOCKS = 48
 BLOCK_BYTES = 64 * 247
+# The blocks `size` lets an image reach, under MESH_BLOCKS so that growth
+# is seen while there is room to act: 8 blocks, 126 KB, before the limit.
+# Reached, find where the bytes went before raising it, as
+# docs/flash-2026-11-06.md did; past MESH_BLOCKS the update cannot carry
+# the image, and the lanes' room is fixed once boards are in the field.
+BUDGET_BLOCKS = 40
 
 # Bytes the console's `chunk` takes at once (bark_image::boot::CHUNK).
 CHUNK = 256
@@ -85,11 +92,22 @@ def header(version: int, image: bytes) -> bytes:
     return h + bytes(HEADER_LEN - len(h))
 
 
+def flash_image(elf: bytes, syms: dict[str, int]) -> tuple[bytes, int]:
+    """The flash image from the firmware's slot, and where it starts."""
+    start, end = uf2.region(syms, "__bootloader_active")
+    return uf2.flash_image(uf2.load_segments(elf), start, end, "firmware"), start
+
+
+def mesh_blocks(packed: int) -> int:
+    """The blocks the update over the mesh sends a packed image of
+    `packed` bytes in, the table's among them."""
+    return 1 + -(-packed // BLOCK_BYTES)
+
+
 def pack(elf: bytes) -> tuple[bytes, int]:
     """The image file and its version."""
     syms = uf2.symbols(elf)
-    start, end = uf2.region(syms, "__bootloader_active")
-    image = uf2.flash_image(uf2.load_segments(elf), start, end, "firmware")
+    image, start = flash_image(elf, syms)
     at = syms.get("BARK_IMAGE_VERSION")
     if at is None or not start <= at < start + len(image) - 4:
         sys.exit("the ELF has no BARK_IMAGE_VERSION in its image")
@@ -98,7 +116,7 @@ def pack(elf: bytes) -> tuple[bytes, int]:
         # Staged only above the running version, 0 never is.
         sys.exit("the ELF was built without BARK_IMAGE_VERSION: version 0 cannot be staged")
     packed = header(version, image) + image
-    blocks = 1 + -(-len(packed) // BLOCK_BYTES)
+    blocks = mesh_blocks(len(packed))
     if blocks > MESH_BLOCKS:
         sys.exit(
             f"the image packs to {len(packed)} bytes, {blocks} blocks with the table: "
@@ -106,6 +124,21 @@ def pack(elf: bytes) -> tuple[bytes, int]:
             "(bark-image/src/pieces.rs, MAX_BLOCKS)"
         )
     return packed, version
+
+
+def size(elf: bytes) -> int:
+    """Print the image's flash, its blocks over the mesh and its static
+    RAM; 1 if the blocks pass BUDGET_BLOCKS."""
+    syms = uf2.symbols(elf)
+    image, _ = flash_image(elf, syms)
+    blocks = mesh_blocks(HEADER_LEN + len(image))
+    print(f"flash:      {len(image)} bytes")
+    print(f"blocks:     {blocks} over the mesh, the budget {BUDGET_BLOCKS}, the limit {MESH_BLOCKS}")
+    print(f"static RAM: {syms['__sheap'] - syms['__sdata']} bytes")
+    if blocks > BUDGET_BLOCKS:
+        print(f"over the budget of {BUDGET_BLOCKS} blocks: see BUDGET_BLOCKS in {__file__}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def ed25519():
@@ -304,6 +337,8 @@ def main() -> int:
     s.add_argument("port", help="the serial port, /dev/ttyACM0 or the like")
     s.add_argument("--running", metavar="ELF", help="check first against the ELF of the firmware the board runs")
     s.add_argument("--reboot", action="store_true", help="reboot once it is committed")
+    z = sub.add_parser("size", help="the image's flash, blocks over the mesh and static RAM, against the budget")
+    z.add_argument("elf")
     args = ap.parse_args()
     if args.command == "keygen":
         return keygen(args.key)
@@ -312,6 +347,9 @@ def main() -> int:
     if args.command == "check":
         print(accepted_by(args.image, args.elf))
         return 0
+    if args.command == "size":
+        with open(args.elf, "rb") as f:
+            return size(f.read())
     if args.command == "pack":
         with open(args.elf, "rb") as f:
             out, version = pack(f.read())

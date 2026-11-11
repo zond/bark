@@ -38,6 +38,41 @@ pub enum RadioError {
     RngUnsupported,
 }
 
+/// The text `Debug` writes, without the formatter's tuple builders.
+impl core::fmt::Display for RadioError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name = match self {
+            RadioError::OpError(n) => return write!(f, "OpError({n})"),
+            RadioError::InvalidBaseAddress(a, b) => return write!(f, "InvalidBaseAddress({a}, {b})"),
+            RadioError::PayloadSizeUnexpected(n) => return write!(f, "PayloadSizeUnexpected({n})"),
+            RadioError::PayloadSizeMismatch(a, b) => return write!(f, "PayloadSizeMismatch({a}, {b})"),
+            RadioError::SPI => "SPI",
+            RadioError::Reset => "Reset",
+            RadioError::RfSwitchRx => "RfSwitchRx",
+            RadioError::RfSwitchTx => "RfSwitchTx",
+            RadioError::Busy => "Busy",
+            RadioError::Irq => "Irq",
+            RadioError::DIO1 => "DIO1",
+            RadioError::InvalidConfiguration => "InvalidConfiguration",
+            RadioError::InvalidRadioMode => "InvalidRadioMode",
+            RadioError::InvalidSyncWord => "InvalidSyncWord",
+            RadioError::UnavailableSpreadingFactor => "UnavailableSpreadingFactor",
+            RadioError::UnavailableBandwidth => "UnavailableBandwidth",
+            RadioError::InvalidBandwidthForFrequency => "InvalidBandwidthForFrequency",
+            RadioError::InvalidSF6ExplicitHeaderRequest => "InvalidSF6ExplicitHeaderRequest",
+            RadioError::InvalidOutputPowerForFrequency => "InvalidOutputPowerForFrequency",
+            RadioError::TransmitTimeout => "TransmitTimeout",
+            RadioError::ReceiveTimeout => "ReceiveTimeout",
+            RadioError::CrcError => "CrcError",
+            RadioError::HeaderError => "HeaderError",
+            RadioError::DutyCycleUnsupported => "DutyCycleUnsupported",
+            RadioError::TimedSingleRxUnsupported => "TimedSingleRxUnsupported",
+            RadioError::RngUnsupported => "RngUnsupported",
+        };
+        f.write_str(name)
+    }
+}
+
 /// Received signal strength in units of 0.25 dBm.
 ///
 /// Holds what the chip reports without rounding: 0.5 dB steps on sx126x and lr1110, 1 dB steps
