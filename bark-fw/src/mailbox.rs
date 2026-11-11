@@ -60,12 +60,6 @@ static HOME_CELL: static_cell::StaticCell<Home> = static_cell::StaticCell::new()
 /// Raised when the mailbox has queued a write.
 static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Raised when the queued writes are done, and when a phone's home or
-/// records change: the node then confirms what was kept, and publishes
-/// the change. A reply due needs no signal: the driver offers before every
-/// wait.
-pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
 /// Open the mailbox as it was before the reboot, once at boot, after
 /// `ext_flash::init`, with its people from their records: every slot of
 /// the ring is read, and the time it takes is logged, the external
@@ -158,7 +152,7 @@ pub async fn run() -> ! {
         if let Some(lost) = with(|m| m.ring().lost()).filter(|&l| l > 0) {
             log::error!("mailbox: {} writes lost", lost);
         }
-        FOR_CORE.signal(());
+        crate::node::WAKE.mailbox_changed();
     }
 }
 

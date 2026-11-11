@@ -593,8 +593,6 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     flags: None,
 }));
 
-/// Raised when a request waits for the node.
-pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// The node's answer to the request: taken, or not.
 static ANSWER: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 /// One request at a time goes to the node, from whichever link.
@@ -863,7 +861,7 @@ async fn ask(from: From, request: Request) -> bool {
     let _one = ASKING.lock().await;
     ANSWER.reset();
     LINK.lock(|l| l.borrow_mut().request = Some((from, request)));
-    FOR_CORE.signal(());
+    crate::node::WAKE.link_asks();
     match embassy_time::with_timeout(ANSWER_WAIT, ANSWER.wait()).await {
         Ok(answer) => answer,
         Err(_) => {
@@ -1139,7 +1137,7 @@ async fn slot(
         });
         // A message waiting for this guest alone is now nobody's, and its
         // turn passes on.
-        crate::mailbox::FOR_CORE.signal(());
+        crate::node::WAKE.mailbox_changed();
         ADVERTISE.signal(());
         ENDED.signal(());
         turn_moved();
@@ -1209,7 +1207,7 @@ fn records_changed() {
         core::mem::replace(&mut l.public, public)
     });
     ADVERTISE.signal(());
-    crate::mailbox::FOR_CORE.signal(());
+    crate::node::WAKE.mailbox_changed();
     notify(Notify {
         status: true,
         close_guests: was && !public,
@@ -2428,7 +2426,7 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
         // are told, this one of its person's count.
         records_changed();
     }
-    crate::mailbox::FOR_CORE.signal(());
+    crate::node::WAKE.mailbox_changed();
     log::info!(
         "ble: home of record {} {}",
         now,

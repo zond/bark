@@ -17,8 +17,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_nrf::gpio::{Input, Pull};
 use embassy_nrf::peripherals::{P0_11, P1_10};
 use embassy_nrf::Peri;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::signal::Signal;
 use embassy_time::{with_timeout, Duration, Timer};
 
 /// How long the button is held to flip the role: a choice, thirty
@@ -35,8 +33,6 @@ const TAKEN_POLLS: u32 = 20;
 
 /// A long press waits for the core (`node.rs`, `LinkApp::request`).
 static FORCE: AtomicBool = AtomicBool::new(false);
-/// Wakes the core's application for a long press.
-pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Whether the button asked to flip the role since the last call.
 pub fn take_force() -> bool {
@@ -69,7 +65,7 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
         } else {
             log::info!("button: held {} s, flipping the role", LONG_PRESS.as_secs());
             FORCE.store(true, Ordering::Relaxed);
-            FOR_CORE.signal(());
+            crate::node::WAKE.button_held();
             // The core takes it at its next step, within milliseconds;
             // the lines are drawn once it has, so that they show the
             // role it took, while the button is still held.

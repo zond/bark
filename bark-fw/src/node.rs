@@ -19,6 +19,8 @@ use bark_fw_logic::install::{Install, Seen};
 use bark_link::Status;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 
 use crate::battery::Battery;
@@ -34,6 +36,59 @@ const REPORT_EVERY: Duration = Duration::from_secs(10);
 /// After a radio failure, how long to wait before trying again, so that a
 /// radio that stays broken logs once a second instead of filling the log.
 const RETRY_PAUSE: Duration = Duration::from_secs(1);
+
+/// What wakes the node's loop for its application ([`LinkApp::ready`]):
+/// a signal for each part that tells it something, raised by that part
+/// alone, so that the loop looks only at what the signal stands for.
+pub struct Wake {
+    power: Signal<CriticalSectionRawMutex, ()>,
+    link: Signal<CriticalSectionRawMutex, ()>,
+    gps: Signal<CriticalSectionRawMutex, ()>,
+    mailbox: Signal<CriticalSectionRawMutex, ()>,
+    button: Signal<CriticalSectionRawMutex, ()>,
+}
+
+impl Wake {
+    const fn new() -> Wake {
+        Wake {
+            power: Signal::new(),
+            link: Signal::new(),
+            gps: Signal::new(),
+            mailbox: Signal::new(),
+            button: Signal::new(),
+        }
+    }
+
+    /// USB power came or went (`power.rs`).
+    pub fn power_changed(&self) {
+        self.power.signal(());
+    }
+
+    /// A phone's request waits (`ble.rs`).
+    pub fn link_asks(&self) {
+        self.link.signal(());
+    }
+
+    /// A fix, or its loss, waits (`gps.rs`).
+    pub fn gps_has_news(&self) {
+        self.gps.signal(());
+    }
+
+    /// The mailbox's queued writes are done, or a phone's home, the
+    /// records or the links changed: the loop confirms what was kept and
+    /// publishes the change. A reply due needs no wake: the driver offers
+    /// before every wait.
+    pub fn mailbox_changed(&self) {
+        self.mailbox.signal(());
+    }
+
+    /// The button asks to flip the role (`button.rs`).
+    pub fn button_held(&self) {
+        self.button.signal(());
+    }
+}
+
+pub static WAKE: Wake = Wake::new();
 
 /// The node's application: the phone link (`ble.rs`), which offers the
 /// phone's messages and requests and reads what the core tells it; the
@@ -73,14 +128,15 @@ impl App for LinkApp<'_> {
     async fn ready(&mut self, offer: bool) -> Ready {
         use embassy_futures::select::{select6, Either6};
         loop {
-            let fix = crate::gps::FOR_CORE.wait();
+            let w = &WAKE;
+            let fix = w.gps.wait();
             let new = match select6(
-                crate::power::FOR_CORE.wait(),
-                crate::ble::FOR_CORE.wait(),
+                w.power.wait(),
+                w.link.wait(),
                 fix,
-                crate::mailbox::FOR_CORE.wait(),
+                w.mailbox.wait(),
                 crate::update::mesh::ready(),
-                crate::button::FOR_CORE.wait(),
+                w.button.wait(),
             )
             .await
             {

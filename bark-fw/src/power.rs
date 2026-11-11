@@ -27,10 +27,8 @@ pub fn reported() -> bool {
     usb() && option_env!("BARK_ON_BATTERY") != Some("1")
 }
 
-/// Raised at every USB power event, one for each waiter: the driver's
-/// application and the LED.
-pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-/// See [`FOR_CORE`].
+/// Raised at every USB power event for the LED; the node's loop has its
+/// own (`node::WAKE`).
 pub static FOR_LED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The CLOCK_POWER interrupt, beside the USB driver's handler.
@@ -38,7 +36,8 @@ pub struct InterruptHandler;
 
 impl Handler<CLOCK_POWER> for InterruptHandler {
     unsafe fn on_interrupt() {
-        FOR_CORE.signal(());
+        #[cfg(not(feature = "console"))]
+        crate::node::WAKE.power_changed();
         FOR_LED.signal(());
     }
 }

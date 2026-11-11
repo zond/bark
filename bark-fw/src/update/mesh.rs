@@ -63,7 +63,7 @@ struct Running {
 /// What the core is to be told: read by the driver's application
 /// (`node.rs`). A block decoded is never dropped, or the core would wait
 /// for it for ever, so the task waits for room.
-static FOR_CORE: Channel<CriticalSectionRawMutex, Request, 4> = Channel::new();
+static REQUESTS: Channel<CriticalSectionRawMutex, Request, 4> = Channel::new();
 
 /// The newest image a neighbour's section offered.
 static OFFERED: Signal<CriticalSectionRawMutex, Image> = Signal::new();
@@ -132,12 +132,12 @@ impl core::fmt::Display for Phase {
 
 /// Resolves when a request for the core waits.
 pub async fn ready() {
-    FOR_CORE.ready_to_receive().await
+    REQUESTS.ready_to_receive().await
 }
 
 /// The next request for the core.
 pub fn request() -> Option<Request> {
-    FOR_CORE.try_receive().ok()
+    REQUESTS.try_receive().ok()
 }
 
 /// A neighbour's image newer than this node's (`Action::Offered`).
@@ -212,7 +212,7 @@ const _: () = assert!(
 /// Ask the core to drain, or to take messages again, through the
 /// requests, which wakes the driver's step; whether the ask went in.
 pub fn ask_drain(want: bool) -> bool {
-    let sent = FOR_CORE.try_send(Request::Drain(want)).is_ok();
+    let sent = REQUESTS.try_send(Request::Drain(want)).is_ok();
     if sent {
         match want {
             true => log::info!("update: draining for the reboot: the node takes no message"),
@@ -470,7 +470,7 @@ const KEEP_FAILING: u8 = 2;
 
 /// Tell the core, waiting for room.
 async fn tell(r: Request) {
-    FOR_CORE.send(r).await;
+    REQUESTS.send(r).await;
 }
 
 async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> ! {

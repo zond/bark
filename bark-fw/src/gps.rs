@@ -61,8 +61,6 @@ static LOST: Mutex<CriticalSectionRawMutex, Cell<bool>> = Mutex::new(Cell::new(f
 /// The receiver runs, its WAKEUP line high, for the discharge log
 /// (`discharge.rs`): it draws some 29 mA then (spec "Sleepy nodes").
 static AWAKE: AtomicBool = AtomicBool::new(false);
-/// Raised when a fix, or its loss, waits for the node.
-pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// A discharge bench build's receiver tracks from boot on, whatever the
 /// node asks, as the steady load that empties the cell in a day, and
@@ -93,7 +91,7 @@ pub fn awake() -> bool {
     AWAKE.load(Ordering::Relaxed)
 }
 
-/// The node's side: whether anything [`FOR_CORE`] was raised for waits,
+/// The node's side: whether anything its wake was raised for waits,
 /// so that a signal whose fix was taken wakes no one.
 pub fn waiting() -> bool {
     FIX.lock(|x| x.get().is_some()) || LOST.lock(Cell::get)
@@ -224,7 +222,7 @@ pub async fn run(mut p: Parts) -> ! {
 fn lose(state: State) {
     if state == State::Fixed && !LOAD_ONLY {
         LOST.lock(|l| l.set(true));
-        FOR_CORE.signal(());
+        crate::node::WAKE.gps_has_news();
     }
 }
 
@@ -314,7 +312,7 @@ fn fixed(f: Fix, state: State) -> State {
     }
     if !LOAD_ONLY {
         FIX.lock(|x| x.set(Some(position)));
-        FOR_CORE.signal(());
+        crate::node::WAKE.gps_has_news();
     }
     State::Fixed
 }
