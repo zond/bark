@@ -1,20 +1,18 @@
 //! The board's external SPI NOR flash, a Zetta ZD25WQ16B
 //! (`docs/external-flash-2026-11-06.md`), as the loader and the firmware
-//! both drive it: SPI mode 0 on four pins, one data line each way
-//! ([`BitBang`]), and the few commands a staged image and the mailbox's
-//! ring need ([`Chip`]).
+//! drive it: SPI mode 0 in software ([`BitBang`]) and the few commands
+//! they need ([`Chip`]).
 //!
 //! The chip sleeps in deep power-down between uses, 0.5 µA against 12 µA
-//! in standby (datasheet Table 4-2, IDPD and ISB): every use wakes it and
-//! puts it back, but a program or an erase keeps it awake until it ends,
-//! since the chip ignores deep power-down while it writes.
+//! in standby (datasheet Table 4-2, IDPD and ISB); a program or an erase
+//! keeps it awake until it ends, since the chip ignores deep power-down
+//! while it writes.
 //!
-//! The pins are driven by software, not by an SPIM: so every input of the
-//! chip stays at a rail between uses, which deep power-down's current
-//! needs, the same code runs in the loader and the firmware with no
-//! peripheral or interrupt to share, and the loop's few megahertz are
-//! close to the 8 MHz of SPIM0 to SPIM2 (nRF52840 Product Specification,
-//! SPIM); SPIM3's 32 MHz comes with an erratum on its transmit buffer.
+//! Software, not an SPIM, drives the pins: every input stays at a rail
+//! between uses, which deep power-down's current needs; loader and firmware
+//! share no peripheral or interrupt; and the loop's few megahertz are close
+//! to SPIM0-2's 8 MHz (nRF52840 Product Specification, SPIM), while SPIM3's
+//! 32 MHz comes with an erratum on its transmit buffer.
 
 use core::convert::Infallible;
 
@@ -53,10 +51,10 @@ const RELEASE: u8 = 0xAB;
 const WIP: u8 = 0x01;
 
 /// The switched rail that feeds the chip, from its enable to the chip's
-/// supply: no source gives the ramp; 10 ms is far beyond a load switch's
-/// typical sub-millisecond one and costs nothing once per boot
-/// (`docs/external-flash-2026-11-06.md`, "The supply"). The radio waits
-/// it too.
+/// supply: no source gives the ramp, so 10 ms, far beyond a load switch's
+/// typical sub-millisecond one, once per boot
+/// (`docs/external-flash-2026-11-06.md`, "The supply"). The radio waits it
+/// too.
 pub const RAIL_SETTLE_US: u32 = 10_000;
 
 /// From the supply's minimum to the first command, tVSL (datasheet 4.5,
@@ -190,11 +188,10 @@ impl<B: Bus> Chip<B> {
     }
 
     /// Check that the chip is there and put it in deep power-down; its
-    /// status register, whose block-protect bits, if any is set, make it
-    /// ignore programs and erases. Call once its supply has been up for
-    /// [`RAIL_SETTLE_US`]. A chip powered up comes up in standby, one woken
-    /// by a reset of the processor alone may still be in deep power-down:
-    /// Release wakes either.
+    /// status register, whose block-protect bits make it ignore programs
+    /// and erases. Call once its supply has been up for [`RAIL_SETTLE_US`].
+    /// After a reset of the processor alone the chip may still be in deep
+    /// power-down; Release wakes it from that or standby.
     pub fn init(&mut self) -> Result<u8, Error> {
         self.bus.delay_us(VSL_US);
         self.wake();

@@ -1,22 +1,10 @@
-//! The pieces of an image a node gathers over the mesh (roadmap D149,
-//! D151; `docs/mesh-update-2026-10-25.md`, "The code"), kept on the
+//! The pieces of an image a node gathers over the mesh, kept on the
 //! external flash until their block decodes, and the decoded image,
-//! written into the staged slot as the phone's staging writes it
-//! (`crate::boot::Stager`).
+//! written into the staged slot as `crate::boot::Stager` writes it (spec
+//! "Updates over the mesh"; `docs/mesh-update-2026-10-25.md`).
 //!
-//! **What is gathered.** The image as packed: its 256-byte header, then
-//! the bytes of the firmware's slot (`bark-fw/README.md`, "Updates"), in
-//! blocks of [`DATA`] pieces of [`PIECE`] bytes, the last block shorter
-//! and its last piece padded. Block 0 is the block table: the image's name,
-//! then the first 8 bytes of the SHA-256 of each other block's pieces, then
-//! the first 8 of the SHA-256 of all that, its own, padded with zeros to
-//! whole pieces. The name is the SHA-256 of the
-//! header's first [`SIGNED_LEN`] bytes, the part its signatures cover
-//! (`crate::sign`): the same image signed again with another key keeps
-//! its name, so the mesh sees one image, whichever of its signatures a
-//! holder has. The mesh names it by its version, as a version names one
-//! image, in a heartbeat and in every piece; the store takes the whole
-//! name from block 0.
+//! The image's name is the SHA-256 of the header's first [`SIGNED_LEN`]
+//! bytes, so an image signed again with another key keeps its name.
 //!
 //! **Where it goes**, in [`PIECES`]' 193 sectors:
 //!
@@ -25,71 +13,42 @@
 //! | 0, the head | the image gathered and its check; a byte for each block, cleared once it is decoded and written; the block table; the header |
 //! | 1 to 192 | [`LANES`], 48, lanes of four sectors, 64 slots: block `b`'s pieces in lane `b` |
 //!
-//! A node takes the pieces of every block it lacks, whichever comes, since
-//! a holder streams all the blocks it holds in turn (roadmap D151), so an
-//! image has at most [`MAX_BLOCKS`], 48, the table's among them; a lane is
-//! freed by erasing its own four sectors. A slot is one page program of 256
-//! bytes: the piece, its block, its index, and a CRC-32 (ISO-HDLC, as in
-//! IEEE 802.3) of those 249 bytes; the last three bytes stay erased. A slot
-//! cut short by a power cut is neither erased nor passes its check, and
-//! holds nothing; slots are written in order, so the first after the last
-//! that is not erased is the next to write. The decoded image goes into
-//! [`DFU`] from its start, the header aside into the head, so the staged
-//! slot holds what the loader swaps in.
+//! A slot is one page program of 256 bytes: the piece, its block, its
+//! index and a CRC-32 of those 249 bytes. A slot cut short by a power cut
+//! is neither erased nor passes its check, and holds nothing; slots are
+//! written in order, so the first after the last not erased is the next.
+//! The decoded image goes into [`DFU`] from its start, the header also
+//! into the head.
 //!
-//! **How a block is decoded.** When a lane holds as many pieces as its
-//! block has, its slots are read for the pieces to use, one a step, and
-//! the block is decoded twice, two data pieces at a time, each two from
-//! one read of each piece the lane holds ([`crate::code`]).
-//! The first time it is checked: every block must hash to its entry in
-//! the table, the table's own at its end, and block 1, which begins with the header, have a
-//! header whose signed bytes hash to the name block 0 gave; its
-//! signatures are checked once the image is whole. So a piece of another
-//! build under the same version can spoil a block, the table among them,
-//! but is never installed. A block
-//! that fails is erased from its lane and gathered again
-//! ([`Poll::Failed`]). The second time it is written, and its byte in the
-//! head cleared ([`Poll::Decoded`]); then its lane is erased. Nothing
-//! that failed is ever written, so every byte written is the one that
-//! belongs there, and a write done again after a power cut writes the
-//! same bytes. A block of 64 none of whose data pieces came reads its 64
-//! slots, then 4 096 pieces, 32 groups of 64 twice over, and does about 2
-//! million multiply-adds of a byte; at the bus's 2 088 ms for 256 KiB read
-//! (`docs/roadmap.md`, "The external flash's bus"), 2 ms a piece, and the
-//! code's 14 cycles a byte, about 8.3 s of reads and 0.4 s of sums, in
-//! steps of one piece read and its sums, 0.11 ms; a block takes at least
-//! the 80 pieces of a holder's quota a gap of 4.16 s apart, 5.5 minutes, to
-//! gather (spec "Updates over the mesh"), so the decode is under 3 % of
-//! that.
+//! **Decoding.** A lane with as many pieces as its block has is decoded
+//! twice, two data pieces at a time from one read of each piece
+//! ([`crate::code`]). The first pass checks the block against the table
+//! (and block 1's header against the name); a block that fails is erased
+//! and gathered again ([`Poll::Failed`]). The second pass writes it. So
+//! every byte written is the one that belongs there, and a write done
+//! again after a power cut writes the same bytes. A block none of whose
+//! data pieces came reads 4 096 pieces at 2 ms each over the bus
+//! (`docs/roadmap.md`, "The external flash's bus"), about 8.3 s, and does
+//! 0.4 s of sums, in steps of 0.11 ms: under 3 % of the 5.5 minutes its
+//! 80 pieces take to arrive a gap apart.
 //!
-//! **What a reset keeps.** The head: the image, which blocks are done, the
-//! table and the header; the decoded blocks in [`DFU`]; and every slot
-//! written whole. [`Store::open`] reads the head, and [`Store::poll`] then
-//! reads every slot, one a step, and erases any lane that holds what is
-//! not wanted: a block done, a block in another block's lane, or one
-//! whose slots cut short leave too few for its pieces. Lost and gathered again: the
-//! pieces queued and not yet written, a decode under way, done again from
-//! the slots, and an erase under way, done again.
+//! **What a reset keeps**: the head, the decoded blocks in [`DFU`], and
+//! every slot written whole. [`Store::open`] reads the head and
+//! [`Store::poll`] then reads every slot, erasing any lane that holds a
+//! block done, a block in another's lane, or too few whole slots. Lost and
+//! done again: pieces queued in RAM, a decode and an erase under way.
 //!
 //! **Pacing.** [`Store::poll`] does one step: it starts a program or an
-//! erase and returns, finds at its next call whether the chip is done, or
-//! reads one slot and adds it into the sums. The firmware calls it between
-//! radio events until it says [`Poll::Idle`]. Pieces handed to
-//! [`Store::offer`] wait in RAM until a step writes them, before any other
-//! work. The firmware must not stage from the phone while a gathering's
-//! image is in [`DFU`], nor begin one while a swap is asked for or the
-//! running image is on trial ([`crate::boot::swap_requested`]): both
-//! write the same slot. Once the image is whole, the header's signature
-//! and the image's hash are checked and the record written for the loader
-//! as for an image from the phone; that is the firmware's, not this
-//! module's.
+//! erase, sees whether the chip is done, or reads one slot. The firmware
+//! calls it between radio events until [`Poll::Idle`]. It must not stage
+//! from the phone while a gathering's image is in [`DFU`], nor gather while
+//! a swap is asked for or the image is on trial
+//! ([`crate::boot::swap_requested`]): both write the same slot. Checking
+//! the signature and recording the image for the loader is the firmware's.
 //!
-//! **RAM.** 3 928 B in the node image (`llvm-nm`, 2026-11-08): the two
-//! data pieces of the group decoded, 494 B; the pieces used and their
-//! slots, 128 B, and their factors; two slots queued, 516 B; the table,
-//! two pieces, 494 B; each lane's set of the pieces it holds, a bit an
-//! index, 32 B, 1.5 KiB for the 48. Two data pieces at a time and not
-//! eight keep 1.5 KB for the stack, for 6 s more of reads a block.
+//! **RAM.** 3 928 B in the node image (`llvm-nm`, 2026-11-08), 1.5 KiB of
+//! it the lanes' sets of pieces held. Decoding two data pieces at a time,
+//! not eight, keeps 1.5 KB for the stack for 6 s more of reads a block.
 
 use core::cmp::min;
 
@@ -146,8 +105,7 @@ impl<B: Bus> Flash for Chip<B> {
 pub const SLOT: u32 = PROGRAM_PAGE;
 
 /// Blocks whose pieces a node keeps at once: every block of the image,
-/// one lane each, since a holder streams every block it holds and a node
-/// keeps every piece of every block it lacks (roadmap D151).
+/// since a node keeps every piece of every block it lacks.
 pub const LANES: usize = crate::layout::external::PIECE_LANES as usize;
 
 const SLOTS_PER_SECTOR: usize = (SECTOR / SLOT) as usize;
@@ -199,9 +157,9 @@ const TABLE_AT: u32 = SLOT;
 const HEADER_AT: u32 = 4 * SLOT;
 
 /// Pieces waiting in RAM to be written: one arrives at most every 4.16 s
-/// from a holder, the update's gap (roadmap D156), and is written in
-/// 1.3 ms ([`ext_flash::PROGRAM_TYP_US`]) before any other step, so two
-/// are room for two holders' pieces at once.
+/// from a holder, the update's gap, and is written in 1.3 ms
+/// ([`ext_flash::PROGRAM_TYP_US`]) before any other step, so two are room
+/// for two holders' pieces at once.
 const QUEUE: usize = 2;
 
 /// Data pieces decoded at once: 494 bytes of RAM, and the lane read 32
@@ -237,17 +195,16 @@ fn crc32(bytes: &[u8]) -> u32 {
     !c
 }
 
-/// An image to gather, as a neighbour's heartbeat describes it: by its
-/// version, which names one image; block 0 carries its whole name.
+/// An image to gather, as a neighbour's heartbeat describes it; block 0
+/// carries its whole name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Image {
     /// Its blocks, the table among them.
     pub blocks: u8,
     /// The pieces of its last block.
     pub last: u8,
-    /// Its version, which names it, and the key the section named, kept
-    /// so that after a reset the node says what it gathers before block 1
-    /// brings the header.
+    /// Its version and the key the section named, kept so that after a
+    /// reset the node says what it gathers before block 1 brings the header.
     pub version: u32,
     /// See `version`.
     pub key: u8,

@@ -1,7 +1,6 @@
-//! What the firmware decides of an image spreading over the mesh (spec
-//! "Updates over the mesh"; `bark-fw/README.md`, "Updates"): whether it
-//! gathers an image a neighbour holds, and when it may reboot into one it
-//! gathered. Pure, so that the host tests them.
+//! What the firmware decides of an image spreading over the mesh: whether
+//! it gathers one, and when it may reboot into one it gathered (spec
+//! "Updates over the mesh"). Pure, so that the host tests it.
 
 use crate::sign::{Key, NONE, SLOTS};
 
@@ -19,11 +18,9 @@ pub struct Offer {
     pub slot_taken: bool,
 }
 
-/// Whether the node gathers the image: above the version it runs, signed
-/// by a key it holds, and while nothing else holds the staged slot. The
-/// key is the section's word, checked against the header's signatures
-/// once the image is whole; a node gathers nothing that says it was
-/// signed by a key it cannot check.
+/// Whether the node gathers the image: above the version it runs, said to
+/// be signed by a key it holds, and while the phone does not hold the
+/// staged slot. The signature itself is checked once the image is whole.
 pub fn takes(offer: Offer, keys: &[Key; SLOTS]) -> bool {
     offer.version > offer.running
         && offer.key != NONE
@@ -37,39 +34,32 @@ pub fn takes(offer: Offer, keys: &[Key; SLOTS]) -> bool {
 pub struct Moment {
     /// What its phones' links are doing.
     pub links: Links,
-    /// It drains and may reboot: its core holds nothing a reset would
-    /// lose, or has drained for the bound, and what it holds then is
-    /// kept across the reboot (`bark_proto::Relay::drained`).
+    /// Its core holds nothing a reset would lose, or has drained for the
+    /// bound (`bark_proto::Relay::drained`).
     pub drained: bool,
     /// Its mailbox writes to its flash.
     pub writing: bool,
     /// The phone's update is under way.
     pub phone_update: bool,
     /// A swap may start on its power: on USB, or on a battery above the
-    /// low level (roadmap D143).
+    /// low level.
     pub swap_allowed: bool,
-    /// How long it has waited, ms, draining with its core drained, for
-    /// its mailbox and its phones ([`WRITE_WAIT_MS`],
-    /// [`EXCHANGE_WAIT_MS`]).
+    /// How long it has waited for its mailbox and its phones since its
+    /// core drained, ms.
     pub waited_ms: u64,
 }
 
 /// The longest the reboot waits for the mailbox's writes once the core
 /// has drained, ms: the six ops its queue holds
-/// (`bark_app_layer::flash_ring::OPS`), each at the external flash's
-/// longest, a sector erase's 12 ms (`ext_flash::ERASE_MAX_US`). What a
-/// reset then cuts is a mark of the ring, as every item the core held is
-/// written or kept across the reboot, so at worst an item is sent or
-/// shown once more.
+/// (`bark_app_layer::flash_ring::OPS`), each a sector erase's 12 ms
+/// (`ext_flash::ERASE_MAX_US`).
 pub const WRITE_WAIT_MS: u64 = 6 * 12;
 
 /// The longest the reboot waits for an exchange with a phone half done
-/// once the core has drained, ms: the ATT transaction's timeout and the
-/// Security Manager's, 30 s each (Bluetooth Core Vol 3 Part F §3.3.3,
-/// Part H §3.4), after which the phone has given up the write or the
-/// pairing. A phone that writes without pause would otherwise hold the
-/// reboot back for good; cut off, it makes the exchange again after the
-/// reboot.
+/// once the core has drained, ms: the ATT and Security Manager timeouts,
+/// 30 s each (Bluetooth Core Vol 3 Part F §3.3.3, Part H §3.4). Without a
+/// bound a phone that writes without pause would hold the reboot back for
+/// good.
 pub const EXCHANGE_WAIT_MS: u64 = 30_000;
 
 /// What the node's phone links are doing.
@@ -77,32 +67,22 @@ pub const EXCHANGE_WAIT_MS: u64 = 30_000;
 pub enum Links {
     /// No phone is linked.
     None,
-    /// Linked phones wait for the node, or it for them: nothing is
-    /// half done.
+    /// Linked, and nothing is half done.
     Idle,
     /// A transfer is mid-way on one: a request written and not yet
     /// answered, a notification not yet sent, or a pairing.
     MidWay,
 }
 
-/// Whether the node drains for the reboot, taking no message so that its
-/// queues empty (roadmap D170): while a swap may start on its power and
-/// no phone's update is under way. Otherwise it would refuse traffic for
-/// as long as its battery is low or the phone's update runs, for a
-/// reboot that cannot come; it takes messages again then.
+/// Whether the node drains for the reboot, taking no message: only while
+/// a swap can come (spec "Updates over the mesh").
 pub fn drains(m: Moment) -> bool {
     m.swap_allowed && !m.phone_update
 }
 
-/// Whether the node reboots into the staged image now: drained, its
-/// mailbox's writes done, no transfer with a phone mid-way, which would
-/// be cut, and as long as it drains; the writes and a transfer are
-/// waited for within their bounds ([`WRITE_WAIT_MS`],
-/// [`EXCHANGE_WAIT_MS`]). A phone's standing link does not hold
-/// it back (roadmap D170): the node ends it, and the app looks for its
-/// node and connects again once it is back, so the person sees it out of
-/// reach for the minute a swap takes; held back by it, a home node whose
-/// owner is at home would never install.
+/// Whether the node reboots into the staged image now
+/// (spec "Updates over the mesh"). A standing link does not hold it back:
+/// else a home node whose owner is at home would never install.
 pub fn quiet(m: Moment) -> bool {
     drains(m)
         && m.drained

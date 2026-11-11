@@ -1,15 +1,14 @@
-//! Read-out protection: what the firmware does at boot so that the debug
-//! port can or cannot read the chip (roadmap D138). The register writes
-//! are the firmware's (`bark-fw/src/protect.rs`); the choice is here, so
-//! that it is tested on the host.
+//! Read-out protection: which writes the firmware makes at boot so that
+//! the debug port can or cannot read the chip. The register writes are in
+//! `bark-fw/src/protect.rs`; the choice is here, to be tested on the host.
 //!
 //! nRF52840 Product Specification, "Access port protection": on build
-//! codes D and earlier the debug port is open unless `UICR.APPROTECT` is
-//! `Enabled`; on build codes F and later it is closed after every reset
-//! unless `UICR.APPROTECT` is `HwDisabled` and the firmware writes
-//! `SwDisable` to `APPROTECT.DISABLE`. Either way a UICR write takes
-//! effect at the next reset (NVMC), and only `CTRL-AP ERASEALL`, which
-//! erases the flash, UICR and RAM, clears `Enabled`.
+//! codes D and earlier the port is open unless `UICR.APPROTECT` is
+//! `Enabled`; on F and later it is closed after every reset unless
+//! `UICR.APPROTECT` is `HwDisabled` and the firmware writes `SwDisable` to
+//! `APPROTECT.DISABLE`. A UICR write takes effect at the next reset
+//! (NVMC), and only `CTRL-AP ERASEALL`, erasing flash, UICR and RAM,
+//! clears `Enabled`.
 
 /// `UICR.APPROTECT`'s values (Product Specification, UICR, `PALL`).
 pub mod uicr {
@@ -46,10 +45,9 @@ pub enum Chip {
 }
 
 impl Chip {
-    /// The build code's letter from `FICR.INFO.VARIANT`, which holds two
-    /// letters of the variant and two characters of the build code in
-    /// ASCII, `AAF0` read as one big-endian word (Product Specification,
-    /// FICR): the letter is its third byte.
+    /// The build code's letter from `FICR.INFO.VARIANT`: ASCII such as
+    /// `AAF0` as one big-endian word, the letter its third byte (Product
+    /// Specification, FICR).
     pub fn build_code(variant: u32) -> u8 {
         (variant >> 8) as u8
     }
@@ -80,13 +78,10 @@ pub struct Steps {
 
 /// What a build does on a chip.
 ///
-/// A protected build programs `Enabled` on both chips, as the
-/// Specification advises for build code F with `FORCEPROTECT`: there the
-/// port stays closed whatever a later image or the board's bootloader
-/// writes to `DISABLE`, and on both chips only an erase of the whole chip
-/// opens it again. An open build on build code F programs `HwDisabled`
-/// and opens the port at every boot; on build code D an erased UICR is
-/// already open.
+/// A protected build programs `Enabled` on both chips, with
+/// `FORCEPROTECT` on F as the Specification advises, so that no later
+/// image or bootloader writing `DISABLE` reopens it; only an erase of the
+/// whole chip does. On D an erased UICR is already open.
 pub fn steps(build: Build, chip: Chip) -> Steps {
     match (build, chip) {
         (Build::Protected, Chip::Hardware) => Steps {
@@ -112,10 +107,9 @@ pub fn steps(build: Build, chip: Chip) -> Steps {
     }
 }
 
-/// Whether the port is closed, from what `UICR.APPROTECT` holds since the
-/// last reset and whether `SwDisable` was written since. On build code D
-/// any value but erased is taken as closed, as only `Enabled` and erased
-/// are defined.
+/// Whether the port is closed, from `UICR.APPROTECT` as of the last reset
+/// and whether `SwDisable` was written since. On D any value but erased is
+/// taken as closed, as only `Enabled` and erased are defined.
 pub fn closed(chip: Chip, uicr: u32, sw_disabled: bool) -> bool {
     let pall = uicr & 0xFF;
     match chip {
@@ -141,9 +135,8 @@ mod tests {
         assert_eq!(Chip::of(REV1), Chip::Hardware);
     }
 
-    /// The table, and what each row leaves after the reset that follows
-    /// its UICR write, from each state a board can be in: erased (new or
-    /// after an erase), open on build code F, and protected.
+    /// What each row of the table leaves after the reset that follows its
+    /// UICR write, from every state a board can be in.
     #[test]
     fn every_build_on_every_chip() {
         let states = [
