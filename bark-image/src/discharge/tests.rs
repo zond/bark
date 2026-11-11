@@ -254,3 +254,34 @@ fn a_bench_build_samples_every_ten_minutes_and_marks_its_samples() {
             .bench
     );
 }
+
+/// A sample's line has its fields and the check of the text before it,
+/// which any change of a byte breaks. `bark-fw/scripts/discharge.py`
+/// checks the same line.
+#[test]
+fn a_line_carries_the_check_of_its_text() {
+    use std::string::ToString;
+    let s = Sample {
+        seq: 49,
+        utc_s: 1_794_322_819,
+        uptime_s: 1204,
+        mv: 4153,
+        external: false,
+        sleepy: false,
+        gps: true,
+        bench: true,
+        why: Why::Unplugged,
+    };
+    let line = s.line().to_string();
+    let text = "discharge seq=49 utc_s=1794322819 uptime_s=1204 mv=4153 external=0 sleepy=0 gps=1 bench=1 why=unplugged";
+    assert_eq!(
+        line,
+        std::format!("{text} crc={:04x}", crc16(text.as_bytes()))
+    );
+    assert_eq!(&line[text.len()..], " crc=57cf");
+    for i in 0..text.len() {
+        let mut b = text.as_bytes().to_vec();
+        b[i] ^= 1;
+        assert_ne!(crc16(&b), crc16(text.as_bytes()), "byte {i}");
+    }
+}

@@ -173,26 +173,22 @@ pub use console::{erase, print};
 mod console {
     use bark_image::discharge::{Oldest, BENCH_EVERY_S, EVERY_S};
     use bark_image::layout::external::DISCHARGE;
-    use embassy_time::{Duration, Timer};
     use embedded_storage::nor_flash::NorFlash;
 
     use super::{reader, SLOTS};
     use crate::ext_flash;
 
-    /// A sample's line's longest form, bytes, with the log's prefix: the
-    /// pace at which they are printed, one per 64-byte USB packet and
-    /// 1 ms frame, so that the log's ring never fills and drops them.
-    const LINE: usize = 160;
-    const LINE_DRAIN: Duration = Duration::from_millis(LINE.div_ceil(64) as u64);
-
     /// Every sample, oldest first, a line each between a header and an
-    /// end line; `scale` is the calibration the node image keeps, in
+    /// end line, each line once the log has room for it, so that none is
+    /// dropped (`bark_image::discharge::Line` has the sample's line, its
+    /// check last); `scale` is the calibration the node image keeps, in
     /// 2^-15, by which a reading is multiplied before the levels read it
     /// (`bark_proto::Stored::battery_scale`). The header gives both
     /// intervals, a node image's and a bench build's, as each sample says
     /// which took it.
     pub async fn print(scale: Option<u16>) {
         let (every, bench) = (EVERY_S, BENCH_EVERY_S);
+        crate::log_room().await;
         match scale {
             Some(k) => log::info!(
                 "discharge slots={} every_s={} bench_every_s={} scale={}",
@@ -213,20 +209,10 @@ mod console {
         let mut count = 0;
         while let Some(s) = it.next(&mut read) {
             count += 1;
-            log::info!(
-                "discharge seq={} utc_s={} uptime_s={} mv={} external={} sleepy={} gps={} bench={} why={}",
-                s.seq,
-                s.utc_s,
-                s.uptime_s,
-                s.mv,
-                u8::from(s.external),
-                u8::from(s.sleepy),
-                u8::from(s.gps),
-                u8::from(s.bench),
-                s.why.name()
-            );
-            Timer::after(LINE_DRAIN).await;
+            crate::log_room().await;
+            log::info!("{}", s.line());
         }
+        crate::log_room().await;
         log::info!("discharge end samples={}", count);
     }
 

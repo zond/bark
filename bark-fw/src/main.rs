@@ -660,6 +660,12 @@ type UsbDriver = usb::Driver<'static, HardwareVbusDetect>;
 /// copy of it.
 static LOGGER: usb_log::Logger = usb_log::Logger::new();
 
+/// Waits until the log has room for a whole line (`usb_log::Logger::room`).
+#[cfg(feature = "console")]
+async fn log_room() {
+    LOGGER.room().await
+}
+
 /// One log line as the host reads it, before its line end: the time since
 /// boot, the level and the message; in the console, the host's own command
 /// echoed.

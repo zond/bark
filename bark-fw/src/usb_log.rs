@@ -14,6 +14,9 @@
 //! record in the buffer is the ring's only writer, and the room it found
 //! only grows while it is copied in, one piece of at most [`PIECE`] bytes
 //! at a time: interrupts are masked only for one piece's copy.
+//!
+//! A printer of many lines, the console's, awaits [`Logger::room`] before
+//! each, so that none is dropped however fast the host reads.
 
 use core::cell::RefCell;
 
@@ -24,6 +27,7 @@ use embassy_futures::join::join3;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::pipe::Pipe;
+use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Ticker};
 use embassy_usb::class::cdc_acm::CdcAcmClass;
 use embassy_usb::driver::{Driver, EndpointError};
@@ -52,6 +56,8 @@ pub struct Logger {
     ring: Pipe<CriticalSectionRawMutex, RING>,
     line: Mutex<ThreadModeRawMutex, RefCell<Line<RECORD>>>,
     drops: Drops,
+    /// The port took bytes from the ring.
+    drained: Signal<CriticalSectionRawMutex, ()>,
 }
 
 impl Logger {
@@ -61,6 +67,17 @@ impl Logger {
             ring: Pipe::new(),
             line: Mutex::new(RefCell::new(Line::new())),
             drops: Drops::new(),
+            drained: Signal::new(),
+        }
+    }
+
+    /// Waits until the ring has room for the longest line, which the next
+    /// line logged before an await then takes whole. While the port is
+    /// closed nothing drains it, and this waits for the host.
+    #[cfg(feature = "console")]
+    pub async fn room(&self) {
+        while self.ring.free_capacity() < RECORD {
+            self.drained.wait().await;
         }
     }
 
@@ -120,6 +137,7 @@ impl Logger {
             sender.wait_connection().await;
             loop {
                 let len = self.ring.read(&mut packet).await;
+                self.drained.signal(());
                 // A full packet is followed by an empty one, so the host
                 // sees the transfer end (USB 2.0 §5.8.3).
                 let sent = match sender.write_packet(&packet[..len]).await {
