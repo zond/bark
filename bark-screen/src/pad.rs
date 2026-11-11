@@ -1,19 +1,8 @@
-//! How the firmware reads the touch pad (`bark-fw/src/button.rs`; roadmap
-//! D175; `docs/touch-pad-2026-11-10.md`). The pad is a TTP223-BA6 touch
-//! sensor whose output drives the pin both ways. Its wiring makes it
-//! rest low and go high while touched, but the bench found boards whose
-//! pin rested high, so the resting level is read, not assumed:
-//!
-//! - nothing is read until the sensor has calibrated after power-on
-//!   ([`SETTLE_MS`]);
-//! - then the pin is read with the chip's pull up and then down: a pin
-//!   that follows the pull is driven by nothing, and the pad is taken as
-//!   dead; else the level it holds is its resting level;
-//! - a touch is a change from the resting level that lasts at least
-//!   [`BOUNCE_MS`] and at most [`HOLD_MS`], counted when the pin has
-//!   been back for [`BOUNCE_MS`];
-//! - a change that lasts longer than [`HOLD_MS`] is not a person's
-//!   touch: the level it holds becomes the resting level.
+//! How the firmware reads the touch pad, a TTP223-BA6 whose output drives
+//! the pin both ways (`bark-fw/src/button.rs`, `docs/touch-pad-2026-11-10.md`).
+//! Its wiring makes it rest low, but some boards' pins rest high, so the
+//! resting level is probed once the sensor has calibrated, and a change
+//! held longer than any touch becomes the new resting level.
 //!
 //! Times are milliseconds since boot.
 
@@ -31,7 +20,7 @@ pub const SETTLE_MS: u64 = 1_000;
 pub const BOUNCE_MS: u64 = 40;
 
 /// The longest a touch lasts: a choice, over three times the longest
-/// hold the node asks of a person, the user button's 3 s (D160). The
+/// hold the node asks of a person, the user button's 3 s. The
 /// sensor itself has no such limit, its maximum on time being disabled
 /// in this package (TTP223 datasheet, Maximum key on duration time and
 /// the TTP223-BA6 option table), so a pad that reports a touch it cannot

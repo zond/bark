@@ -1,6 +1,6 @@
-//! The screen's default picture (roadmap D160): a QR code of the project's
-//! page, where a passer-by gets the app, with a small orb web in its
-//! centre and the web's threads in the margin, and one line under it.
+//! The screen's default picture (spec "Screen and buttons"): a QR code of
+//! the project's page with a small orb web in its centre and the web's
+//! threads in the margin, and one line under it.
 //!
 //! The symbol is version 3 at level H, the smallest that holds the
 //! address's 19 bytes at H, whose 24 bytes version 2 does not reach at 14

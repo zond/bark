@@ -1,18 +1,13 @@
 //! When the screen is drawn, and which picture (`bark-fw/README.md`,
-//! Display; roadmap D160). The code is the default; a touch shows the
-//! lines for [`LINES_MS`] or until the next touch, and a pairing or a
-//! removal code shows them for as long as it does. A change of picture is
-//! drawn at once, and so is a new code or a pairing refused for want of
-//! room, since a person stands at the node for each; a change of what the
-//! picture shows that a person acts on is drawn about one refresh after
-//! it; nothing else is drawn.
+//! Display). A change of picture, a new code or a pairing refused is drawn
+//! at once, as a person stands at the node for each; another change a
+//! person acts on about one refresh after it; nothing else is drawn.
 //! Times are milliseconds since boot.
 
 use crate::{role, Battery, Face, Phone, State};
 
 /// A full refresh as the board's label gives it, 2 s (`bark-fw`,
-/// `board::Eink`). Changes a person acts on that come within one are
-/// drawn together.
+/// `board::Eink`); changes within one are drawn together.
 pub const REFRESH_MS: u64 = 2_000;
 
 /// How long a touch shows the lines: a choice, long enough to read ten
@@ -22,11 +17,10 @@ pub const REFRESH_MS: u64 = 2_000;
 pub const LINES_MS: u64 = 30_000;
 
 /// Whether going from `shown` to `now` changes what a person acts on in
-/// the lines: the header (what the node is, and whether it is starting),
-/// the phone's line (a pairing code is typed while the phone waits, spec
-/// "Phone link", Pairing), or the power (a node taken off USB runs on
-/// its cell). The counts, the uptime and the battery's level wait for
-/// the next touch.
+/// the lines: the header, the phone's line (a pairing code is typed while
+/// the phone waits, spec "Pairing"), or the power (a node taken off USB
+/// runs on its cell). The counts, the uptime and the battery's level wait
+/// for the next touch.
 pub fn urgent(shown: &State, now: &State) -> bool {
     role(shown) != role(now)
         || shown.starting != now.starting
@@ -35,8 +29,8 @@ pub fn urgent(shown: &State, now: &State) -> bool {
 }
 
 /// What the code's line shows of the phone, if anything
-/// (`crate::code_line`): all of the state the code's picture shows that
-/// changes, each a thing a person at the node acts on at once.
+/// (`crate::code_line`): all that changes on the code's picture, each a
+/// thing a person at the node acts on at once.
 fn on_code(state: &State) -> Option<Phone> {
     match state.phone {
         p @ (Phone::Code(_) | Phone::Remove(_) | Phone::Full) => Some(p),
