@@ -174,6 +174,12 @@ Verified on the host:
   after a sleep, the search for the delay at boot, the step up on a start
   error and the probe below as the die warms, and the self-check of the
   reading inside a CAD (2026-10-30, roadmap D88).
+- The firmware's own decisions, functions of plain values in `logic/`
+  (`bark-fw-logic`): the install's moment, wait and drain, what a phone
+  link may ask of the attribute table, when the node takes another link,
+  which link is a guest's, and what the links are doing for the reboot
+  (`cargo test -p bark-fw-logic --target x86_64-unknown-linux-gnu`
+  here, 2026-11-11).
 - `scripts/uf2.py` produces UF2s that its own `--check` accepts: correct
   magic numbers, family `0xADA52840`, 256-byte payloads in ascending
   order inside `0x01000..0xEA000`; the loader's at `0x01000`, the rest
