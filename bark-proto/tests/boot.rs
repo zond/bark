@@ -1,5 +1,5 @@
-//! A node takes part from its boot (spec "Channel at boot", "Heartbeat",
-//! roadmap D73): it heartbeats from its first slot, its first rotation a
+//! A node takes part from its boot (spec "Channel at boot", "Heartbeat"):
+//! it heartbeats from its first slot, its first rotation a
 //! burst gap a heartbeat, takes and forwards traffic, and comes back with
 //! what it stored before a reboot.
 

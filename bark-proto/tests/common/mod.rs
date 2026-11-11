@@ -9,7 +9,7 @@
 //! panics if a core starts a second excursion, sends a short preamble or
 //! an oversized frame, or exceeds the duty cycle; and it holds a channel
 //! check while a reception is in progress (rule 8). It also panics if a
-//! test offers a message to a core that does not accept one (spec "Physical layer").
+//! test offers a message to a core that does not accept one.
 
 #![allow(dead_code)]
 
@@ -25,12 +25,10 @@ use std::collections::{HashMap, HashSet};
 /// Synthesiser retune and settle, of the order the SX1262 datasheet gives
 /// for a frequency change plus PLL lock.
 pub const RETUNE: Duration = Duration::from_micros(200);
-/// From the decision to transmit to the frame's first symbol: the
-/// transmission's preparation and start, 765 µs for a 64-byte frame as
-/// measured on the lean driver (spec "Heartbeat", roadmap D88), which
-/// the simulator pays too. A receiver that answers a frame the moment it
-/// ends is on the air this long after it, when the sender is listening
-/// again.
+/// From the decision to transmit to the frame's first symbol, as measured
+/// for a 64-byte frame on the lean driver (spec "Heartbeat"). A receiver
+/// that answers the moment a frame ends is on the air this long after it,
+/// when the sender is listening again.
 pub const TX_START: Duration = Duration::from_micros(765);
 /// A listen-before-talk's channel activity detection over four symbols,
 /// the RSSI read inside it.
@@ -107,8 +105,8 @@ pub struct SimNode<C: Core> {
 }
 
 /// A driver's side of the update without bytes
-/// (spec "Updates over the mesh"): what it was offered, the pieces it kept, and when it came to
-/// hold the image.
+/// (spec "Updates over the mesh"): what it was offered, the pieces it kept,
+/// and when it came to hold the image.
 #[derive(Default)]
 pub struct Updates {
     /// Distinct pieces that decode block `b`.

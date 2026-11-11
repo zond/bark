@@ -96,8 +96,8 @@ fn two_relays_discover_each_other_in_their_first_burst() {
 
 #[test]
 fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
-    // Spec "Busy estimate", roadmap D13: one reading every interval / 13, channels
-    // in turn, so the relay is off its home for one reading at a time.
+    // Spec "Busy estimate": one reading every interval / 13, channels in
+    // turn, so the relay is off its home for one reading at a time.
     let home = ch(4);
     let c = Config {
         position: pos(0.0, 0.0),
@@ -139,7 +139,7 @@ fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
         assert!(w[1].0.since(w[0].1) > Duration::from_millis(50));
     }
     // The reading of the home channel does not leave it (core-interface
-    // spec "Regulatory limits" rule 7); every other one does.
+    // §3 rule 7); every other one does.
     for (_, _, a, off) in &sweep {
         assert_eq!(*off, *a != Action::Rssi(home), "{a:?}");
     }
@@ -212,7 +212,8 @@ fn boot_avoids_busy_channels_and_spreads_ties() {
             h.nodes[0].core.home()
         );
     }
-    // Relays that hear nothing do not all pick channel 0 (spec "Channel at boot").
+    // Relays that hear nothing do not all pick channel 0
+    // (spec "Channel at boot").
     let mut h = Harness::new(
         (0..26)
             .map(|i| relay(i as f64 * 10_000.0, 100 + i))
