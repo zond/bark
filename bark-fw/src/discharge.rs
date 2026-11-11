@@ -67,39 +67,41 @@ fn reader() -> impl FnMut(u32, &mut [u8; LEN]) {
 }
 
 #[cfg(not(feature = "console"))]
-pub use node::{note, open, read};
+pub use node::Log;
 
 /// The node's side: the samples taken and written.
 #[cfg(not(feature = "console"))]
 mod node {
-    use core::cell::Cell;
-
     use bark_image::discharge::{Now, Ring, Sampler, Summary};
     use bark_image::layout::external::DISCHARGE;
-    use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-    use embassy_sync::blocking_mutex::Mutex;
 
     use super::{reader, SLOTS};
     use crate::ext_flash;
 
-    /// The ring and when to sample, once [`open`] found the chip.
-    static LOG: Mutex<ThreadModeRawMutex, Cell<Option<(Ring, Sampler)>>> =
-        Mutex::new(Cell::new(None));
+    /// The log as the node's loop keeps it.
+    pub struct Log {
+        /// The ring and when to sample, once [`Log::open`] found the chip.
+        kept: Option<(Ring, Sampler)>,
+        /// A reading of the battery the log has not yet seen.
+        reading: Option<u16>,
+    }
 
-    /// A reading of the battery the log has not yet seen.
-    static READING: Mutex<ThreadModeRawMutex, Cell<Option<u16>>> = Mutex::new(Cell::new(None));
-
-    /// At boot, after `ext_flash::init`: find where the next sample goes
-    /// and log what the log holds.
-    pub fn open() {
-        if ext_flash::with(|_| ()).is_none() {
-            return;
-        }
-        let s = Summary::of(SLOTS, reader());
-        if s.count == 0 {
-            log::info!("discharge: no samples");
-        } else {
-            log::info!(
+    impl Log {
+        /// At boot, after `ext_flash::init`: find where the next sample goes
+        /// and log what the log holds.
+        pub fn open() -> Log {
+            let mut log = Log {
+                kept: None,
+                reading: None,
+            };
+            if ext_flash::with(|_| ()).is_none() {
+                return log;
+            }
+            let s = Summary::of(SLOTS, reader());
+            if s.count == 0 {
+                log::info!("discharge: no samples");
+            } else {
+                log::info!(
                 "discharge: {} samples over {}.{} h, {} mV to {} mV; the console's `discharge` prints them",
                 s.count,
                 s.span_s / 3600,
@@ -107,56 +109,58 @@ mod node {
                 s.first_mv,
                 s.last_mv
             );
+            }
+            let ring = Ring::open(SLOTS, reader());
+            let sampler = if super::BENCH {
+                Sampler::bench()
+            } else {
+                Sampler::new()
+            };
+            log.kept = Some((ring, sampler));
+            log
         }
-        let ring = Ring::open(SLOTS, reader());
-        let sampler = if super::BENCH {
-            Sampler::bench()
-        } else {
-            Sampler::new()
-        };
-        LOG.lock(|c| c.set(Some((ring, sampler))));
-    }
 
-    /// The driver read the battery: `mv`, uncalibrated.
-    pub fn read(mv: u16) {
-        READING.lock(|c| c.set(Some(mv)));
-    }
+        /// The driver read the battery: `mv`, uncalibrated.
+        pub fn read(&mut self, mv: u16) {
+            self.reading = Some(mv);
+        }
 
-    /// After each of the driver's steps: take a sample if one is due, and
-    /// write it.
-    pub async fn note(sleepy: bool) {
-        let Some((mut ring, mut sampler)) = LOG.lock(Cell::get) else {
-            return;
-        };
-        let now = Now {
-            uptime_s: embassy_time::Instant::now().as_secs() as u32,
-            utc_s: crate::utc::time().utc_s,
-            reading: READING.lock(Cell::take),
-            external: crate::power::reported(),
-            sleepy,
-            gps: crate::gps::awake(),
-        };
-        let sample = sampler.note(now);
-        let write = sample.map(|s| ring.append(s));
-        LOG.lock(|c| c.set(Some((ring, sampler))));
-        let (Some(s), Some(w)) = (sample, write) else {
-            return;
-        };
-        log::info!(
-            "discharge: {} mv={} external={} sleepy={} gps={} bench={}",
-            s.why.name(),
-            s.mv,
-            s.external,
-            s.sleepy,
-            s.gps,
-            s.bench
-        );
-        let written = match w.erase {
-            Some(e) => ext_flash::erase(DISCHARGE.start + e).await,
-            None => Ok(()),
-        };
-        if let Err(e) = written.and(ext_flash::program(DISCHARGE.start + w.at, &w.bytes).await) {
-            log::warn!("discharge: sample not written: {:?}", e);
+        /// After each of the driver's steps: take a sample if one is due, and
+        /// write it.
+        pub async fn note(&mut self, sleepy: bool) {
+            let Some((ring, sampler)) = self.kept.as_mut() else {
+                return;
+            };
+            let now = Now {
+                uptime_s: embassy_time::Instant::now().as_secs() as u32,
+                utc_s: crate::utc::time().utc_s,
+                reading: self.reading.take(),
+                external: crate::power::reported(),
+                sleepy,
+                gps: crate::gps::awake(),
+            };
+            let sample = sampler.note(now);
+            let write = sample.map(|s| ring.append(s));
+            let (Some(s), Some(w)) = (sample, write) else {
+                return;
+            };
+            log::info!(
+                "discharge: {} mv={} external={} sleepy={} gps={} bench={}",
+                s.why.name(),
+                s.mv,
+                s.external,
+                s.sleepy,
+                s.gps,
+                s.bench
+            );
+            let written = match w.erase {
+                Some(e) => ext_flash::erase(DISCHARGE.start + e).await,
+                None => Ok(()),
+            };
+            if let Err(e) = written.and(ext_flash::program(DISCHARGE.start + w.at, &w.bytes).await)
+            {
+                log::warn!("discharge: sample not written: {:?}", e);
+            }
         }
     }
 }

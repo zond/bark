@@ -38,6 +38,7 @@
 
 use core::cell::RefCell;
 
+use bark_fw_logic::link::{self, Access};
 use bark_image::policy::Links;
 use bark_link::neighbours;
 use bark_link::phones::{Keys, RECORDS};
@@ -524,6 +525,9 @@ pub struct State {
     told_counts: [u8; RECORDS],
     /// The flags byte last logged.
     flags: Option<u8>,
+    /// The removal code on the screen, if one is (spec "Phone link",
+    /// Phones).
+    removal: Option<bark_link::phones::Code>,
 }
 
 impl State {
@@ -590,10 +594,9 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     told: Status::EMPTY,
     told_counts: [0; RECORDS],
     flags: None,
+    removal: None,
 }));
 
-/// Raised when a request waits for the node.
-pub static FOR_CORE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// The node's answer to the request: taken, or not.
 static ANSWER: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 /// One request at a time goes to the node, from whichever link.
@@ -605,10 +608,10 @@ static NOTIFY: [Signal<CriticalSectionRawMutex, Notify>; LINKS] = [const { Signa
 /// Raised when the advertisement is to change or may start again: the
 /// public setting changed, or a link ended.
 static ADVERTISE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-/// Raised once the image has confirmed itself (`update.rs`): the
-/// controller starts only then, since the confirmation writes the flash
-/// directly, which the controller's radio timing could not wait for.
-pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// Raised once the image's start has written the flash (`update::started`):
+/// the controller starts only then, since that writes the flash directly,
+/// which the controller's radio timing could not wait for.
+pub static MAY_START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// What to notify, and whether a guest's link, or the link itself, is to
 /// close.
@@ -862,7 +865,7 @@ async fn ask(from: From, request: Request) -> bool {
     let _one = ASKING.lock().await;
     ANSWER.reset();
     LINK.lock(|l| l.borrow_mut().request = Some((from, request)));
-    FOR_CORE.signal(());
+    crate::node::WAKE.link_asks();
     match embassy_time::with_timeout(ANSWER_WAIT, ANSWER.wait()).await {
         Ok(answer) => answer,
         Err(_) => {
@@ -1085,7 +1088,8 @@ async fn slot(
             let mut p = advertising.lock().await;
             loop {
                 let public = public();
-                if links() >= room_for_links() {
+                let paired = crate::phones::read(|p| p.paired());
+                if !link::takes_link(links(), paired, LINKS) {
                     ADVERTISE.wait().await;
                     continue;
                 }
@@ -1137,7 +1141,7 @@ async fn slot(
         });
         // A message waiting for this guest alone is now nobody's, and its
         // turn passes on.
-        crate::mailbox::FOR_CORE.signal(());
+        crate::node::WAKE.mailbox_changed();
         ADVERTISE.signal(());
         ENDED.signal(());
         turn_moved();
@@ -1149,12 +1153,6 @@ pub fn links() -> usize {
     LINK.lock(|l| l.borrow().phones.iter().filter(|p| p.live).count())
 }
 
-/// Links the node takes: one for each phone paired and one more (spec
-/// "Phone link", Finding the node).
-fn room_for_links() -> usize {
-    (crate::phones::read(|p| p.paired()) + 1).min(LINKS)
-}
-
 /// What the links are doing, for a reboot into an image gathered over
 /// the mesh (`bark_image::policy::quiet`). Mid-way is what a reset would
 /// cut: a request written that the node has not answered, or whose reply
@@ -1164,18 +1162,14 @@ fn room_for_links() -> usize {
 pub fn doing() -> Links {
     LINK.lock(|l| {
         let l = l.borrow();
-        let live = || (0..LINKS).filter(|&i| l.phones[i].live);
-        let mid_way = l.request.is_some()
-            || l.answer.is_some()
-            || live().any(|i| {
-                let p = &l.phones[i];
-                p.sending || p.pairing || NOTIFY[i].signaled()
-            });
-        match (mid_way, live().next()) {
-            (true, _) => Links::MidWay,
-            (false, Some(_)) => Links::Idle,
-            (false, None) => Links::None,
-        }
+        let links = (0..LINKS).map(|i| {
+            let p = &l.phones[i];
+            link::Doing {
+                live: p.live,
+                busy: p.sending || p.pairing || NOTIFY[i].signaled(),
+            }
+        });
+        link::doing(l.request.is_some() || l.answer.is_some(), links)
     })
 }
 
@@ -1217,7 +1211,7 @@ fn records_changed() {
         core::mem::replace(&mut l.public, public)
     });
     ADVERTISE.signal(());
-    crate::mailbox::FOR_CORE.signal(());
+    crate::node::WAKE.mailbox_changed();
     notify(Notify {
         status: true,
         close_guests: was && !public,
@@ -1440,17 +1434,10 @@ fn open_handles(link: &Link) -> [u16; 9] {
     ]
 }
 
-/// Whether the link may make the request `att`: a paired phone's may
-/// make any the host allows; on a public node, any link may use the open
-/// handles; on any node, any link may discover the table and read what
-/// the host leaves open. A read by type reads an open value only by the
-/// type of one (Vol 3 Part F §3.4.4.1).
-fn allowed(owner: bool, public: bool, link: &Link, att: &AttClient<'_>) -> bool {
-    if owner || public {
-        return true;
-    }
-    let open = open_handles(link);
-    let touches = |h: &u16| open.contains(h);
+/// What `att` touches, for [`link::allowed`]: a read by type of an open
+/// value's type or a subscription's is told apart here, where the
+/// host's UUIDs are.
+fn access<'a>(att: &'a AttClient<'_>) -> Access<'a> {
     match att {
         AttClient::Request(
             AttReq::Read { handle }
@@ -1458,12 +1445,8 @@ fn allowed(owner: bool, public: bool, link: &Link, att: &AttClient<'_>) -> bool 
             | AttReq::Write { handle, .. }
             | AttReq::PrepareWrite { handle, .. },
         )
-        | AttClient::Command(AttCmd::Write { handle, .. }) => !touches(handle),
-        AttClient::Request(AttReq::ReadMultiple { handles }) => !handles
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .any(|h| touches(&u16::from_le_bytes(*h))),
+        | AttClient::Command(AttCmd::Write { handle, .. }) => Access::One(*handle),
+        AttClient::Request(AttReq::ReadMultiple { handles }) => Access::Several(handles),
         AttClient::Request(AttReq::ReadByType {
             start,
             end,
@@ -1478,11 +1461,14 @@ fn allowed(owner: bool, public: bool, link: &Link, att: &AttClient<'_>) -> bool 
                 uuid::RECIPIENT,
             ]
             .map(|u| Uuid::new_long(le_bytes(u)));
-            let typed = open_types.contains(attribute_type)
-                || *attribute_type == Uuid::new_short(CCCD_TYPE);
-            !typed || !open.iter().any(|h| (*start..=*end).contains(h))
+            Access::ByType {
+                start: *start,
+                end: *end,
+                open_type: open_types.contains(attribute_type)
+                    || *attribute_type == Uuid::new_short(CCCD_TYPE),
+            }
         }
-        _ => true,
+        _ => Access::Other,
     }
 }
 
@@ -1530,18 +1516,13 @@ impl Serving<'_, '_, '_> {
             // A guest's link, on a public node, ends at `ends`: neither a
             // paired phone's nor one that pairs.
             let pairing = LINK.lock(|l| l.borrow().phones[self.slot].pairing);
-            let guest = public() && !pairing && owner(self.conn).is_none();
+            let guest = link::guest(public(), pairing, owner(self.conn).is_some());
             if guest && embassy_time::Instant::now() >= ends {
                 log::info!("ble: the guest in slot {} closed after its time", self.slot);
                 self.conn.raw().disconnect();
             }
-            let next = LINK.lock(|l| l.borrow().turn.ends());
-            let next = match (next, guest) {
-                (Some(t), true) => Some(crate::clock::embassy(t).min(ends)),
-                (Some(t), false) => Some(crate::clock::embassy(t)),
-                (None, true) => Some(ends),
-                (None, false) => None,
-            };
+            let turn_ends = LINK.lock(|l| l.borrow().turn.ends());
+            let next = link::wake_at(turn_ends.map(crate::clock::embassy), guest.then_some(ends));
             let turn = async {
                 match next {
                     Some(t) => embassy_time::Timer::at(t).await,
@@ -1714,7 +1695,12 @@ impl Serving<'_, '_, '_> {
             slot,
             record: owner(conn),
         };
-        if !allowed(from.owner(), public(), link, &incoming) {
+        if !link::allowed(
+            from.owner(),
+            public(),
+            &open_handles(link),
+            access(&incoming),
+        ) {
             if let Ok(reply) = event.reject(AttErrorCode::INSUFFICIENT_AUTHENTICATION) {
                 reply.send().await;
             }
@@ -2299,11 +2285,15 @@ this node speaks {} and serves apps from {}: they do not serve each other, close
     }
     let busy = LINK.lock(|l| {
         let mut l = l.borrow_mut();
-        let other = (0..LINKS).any(|i| {
+        let others = (0..LINKS).filter(|&i| i != from.slot).map(|i| {
             let p = &l.phones[i];
-            i != from.slot && p.live && p.record.is_none() && p.tag.is_some()
+            link::Other {
+                live: p.live,
+                owner: p.record.is_some(),
+                tagged: p.tag.is_some(),
+            }
         });
-        let busy = !from.owner() && other;
+        let busy = link::second_guest(from.owner(), others);
         if !busy {
             l.phones[from.slot].tag = Some(r.tag);
         }
@@ -2440,7 +2430,7 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
         // are told, this one of its person's count.
         records_changed();
     }
-    crate::mailbox::FOR_CORE.signal(());
+    crate::node::WAKE.mailbox_changed();
     log::info!(
         "ble: home of record {} {}",
         now,
@@ -2448,10 +2438,6 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
     );
     Ok(())
 }
-
-/// The removal code on the screen, if one is (spec "Phone link", Phones).
-static REMOVAL: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<bark_link::phones::Code>>> =
-    Mutex::new(core::cell::Cell::new(None));
 
 fn ms_now() -> u64 {
     embassy_time::Instant::now().as_millis()
@@ -2486,7 +2472,7 @@ fn write_phones(
                     break c;
                 }
             };
-            REMOVAL.lock(|c| c.set(Some(code)));
+            LINK.lock(|l| l.borrow_mut().removal = Some(code));
             // The code only in an open build, as a pairing's
             // (spec "Phone link", Pairing).
             match crate::protect::BUILD {
@@ -2506,12 +2492,7 @@ fn write_phones(
             if crate::phones::read(|p| p.holding(number, parts)).is_none() {
                 return Err(malformed(Malformed::Value));
             }
-            let taken = REMOVAL.lock(|c| {
-                let mut drawn = c.get();
-                let taken = Code::take(&mut drawn, code, ms_now());
-                c.set(drawn);
-                taken
-            });
+            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().removal, code, ms_now()));
             crate::display::removal(None);
             if !taken {
                 log::info!("ble: removal refused: not the code shown, or too late");

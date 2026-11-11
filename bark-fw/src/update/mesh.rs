@@ -20,7 +20,7 @@ use bark_driver::Request;
 use bark_image::code::{Encoder, PIECE};
 use bark_image::layout::{ACTIVE, RECORD, STATE};
 use bark_image::pieces::{self, Begin, Poll, Store, Table, Tabling};
-use bark_image::policy::{self, Moment};
+use bark_image::policy;
 use bark_image::{sign, Header, HEADER_LEN};
 use bark_proto::update::{Image, Piece};
 use bark_proto::wire::{Packet, Update, PIECE_BYTES, PIECE_HEADER_LEN};
@@ -39,10 +39,6 @@ use crate::ext_flash::Dfu;
 use crate::store::SharedFlash;
 
 const _: () = assert!(PIECE == PIECE_BYTES);
-
-/// Raised once the image has confirmed itself, so that no swap is asked
-/// for by the trial, and the external flash is up (`main.rs`).
-pub static START: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// The pieces of the image gathered: the radio's task offers, this one
 /// steps. At about 4 KB it is built in place, never on the stack.
@@ -63,21 +59,40 @@ struct Running {
 /// What the core is to be told: read by the driver's application
 /// (`node.rs`). A block decoded is never dropped, or the core would wait
 /// for it for ever, so the task waits for room.
-static FOR_CORE: Channel<CriticalSectionRawMutex, Request, 4> = Channel::new();
+static REQUESTS: Channel<CriticalSectionRawMutex, Request, 4> = Channel::new();
 
-/// The newest image a neighbour's section offered.
-static OFFERED: Signal<CriticalSectionRawMutex, Image> = Signal::new();
-
-/// A piece went into the store's queue.
-static PIECE_IN: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-
-/// A piece the core serves: its image, block and index; and, for the
-/// piece named, whether its bytes were written into [`OUT`], so that a
-/// fill that came too late is never taken for the next piece's.
+/// A piece the core serves: its image, block and index.
 type Named = (u32, u8, u8);
-static SERVE: Signal<CriticalSectionRawMutex, Named> = Signal::new();
-static SERVED: Signal<CriticalSectionRawMutex, (Named, bool)> = Signal::new();
-static OUT: Mutex<ThreadModeRawMutex, RefCell<[u8; PIECE]>> = Mutex::new(RefCell::new([0; PIECE]));
+
+/// What the task waits on beside the store's steps.
+struct ToTask {
+    /// The newest image a neighbour's section offered.
+    offered: Signal<CriticalSectionRawMutex, Image>,
+    /// A piece went into the store's queue, or the store let go of its
+    /// image.
+    piece_in: Signal<CriticalSectionRawMutex, ()>,
+    /// A piece the core serves, to fill.
+    serve: Signal<CriticalSectionRawMutex, Named>,
+}
+
+static TO_TASK: ToTask = ToTask {
+    offered: Signal::new(),
+    piece_in: Signal::new(),
+    serve: Signal::new(),
+};
+
+/// The task's answer to [`ToTask::serve`]: the piece named and whether its
+/// bytes were written into `out`, so that a fill that came too late is
+/// never taken for the next piece's.
+struct Filled {
+    served: Signal<CriticalSectionRawMutex, (Named, bool)>,
+    out: Mutex<ThreadModeRawMutex, RefCell<[u8; PIECE]>>,
+}
+
+static FILLED: Filled = Filled {
+    served: Signal::new(),
+    out: Mutex::new(RefCell::new([0; PIECE])),
+};
 
 /// Where the update stands, for the log and the quiet moment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,18 +110,35 @@ pub enum Phase {
     Staged(u32),
 }
 
-static PHASE: Mutex<CriticalSectionRawMutex, Cell<Phase>> = Mutex::new(Cell::new(Phase::Idle));
+/// Where the update stands, which the task alone writes: its phase, and
+/// the last block served with the pieces served of it.
+#[derive(Clone, Copy)]
+struct Standing {
+    phase: Phase,
+    serving: (u8, u32),
+}
 
-/// The pieces served, of the last block served.
-static SERVING: Mutex<CriticalSectionRawMutex, Cell<(u8, u32)>> = Mutex::new(Cell::new((0, 0)));
+static STANDING: Mutex<CriticalSectionRawMutex, Cell<Standing>> = Mutex::new(Cell::new(Standing {
+    phase: Phase::Idle,
+    serving: (0, 0),
+}));
+
+fn standing<R>(f: impl FnOnce(&mut Standing) -> R) -> R {
+    STANDING.lock(|c| {
+        let mut s = c.get();
+        let r = f(&mut s);
+        c.set(s);
+        r
+    })
+}
 
 fn set_phase(p: Phase) {
-    PHASE.lock(|c| c.set(p));
+    standing(|s| s.phase = p);
 }
 
 /// Where the update stands.
 pub fn phase() -> Phase {
-    PHASE.lock(Cell::get)
+    STANDING.lock(Cell::get).phase
 }
 
 impl core::fmt::Display for Phase {
@@ -114,7 +146,7 @@ impl core::fmt::Display for Phase {
         match *self {
             Phase::Idle => f.write_str("idle"),
             Phase::Holds(v) => {
-                let (block, pieces) = SERVING.lock(Cell::get);
+                let (block, pieces) = STANDING.lock(Cell::get).serving;
                 write!(f, "holds:{} serving:{}:{}", v, block, pieces)
             }
             Phase::Gathering {
@@ -132,24 +164,24 @@ impl core::fmt::Display for Phase {
 
 /// Resolves when a request for the core waits.
 pub async fn ready() {
-    FOR_CORE.ready_to_receive().await
+    REQUESTS.ready_to_receive().await
 }
 
 /// The next request for the core.
 pub fn request() -> Option<Request> {
-    FOR_CORE.try_receive().ok()
+    REQUESTS.try_receive().ok()
 }
 
 /// A neighbour's image newer than this node's (`Action::Offered`).
 pub fn offered(image: &Image) {
-    OFFERED.signal(*image);
+    TO_TASK.offered.signal(*image);
 }
 
 /// Keep a piece (`Action::StorePiece`). One the store has no room for
 /// now is lost, as on the air: the holders send others.
 pub fn store_piece(piece: &Piece) {
     STORE.lock(|s| s.borrow_mut().offer(piece.block, piece.index, &piece.bytes));
-    PIECE_IN.signal(());
+    TO_TASK.piece_in.signal(());
 }
 
 /// How long a piece may take to fill: a check of the channel may be held
@@ -170,11 +202,11 @@ pub async fn serve(frame: &mut Frame) -> bool {
         return false;
     };
     let named = (version, block, index);
-    SERVED.reset();
-    SERVE.signal(named);
+    FILLED.served.reset();
+    TO_TASK.serve.signal(named);
     let filled = async {
         loop {
-            let (n, ok) = SERVED.wait().await;
+            let (n, ok) = FILLED.served.wait().await;
             if n == named {
                 return ok;
             }
@@ -189,7 +221,9 @@ pub async fn serve(frame: &mut Frame) -> bool {
         return false;
     };
     let end = usize::from(frame.len);
-    OUT.lock(|o| frame.bytes[PIECE_HEADER_LEN..end].copy_from_slice(&o.borrow()[..]));
+    FILLED
+        .out
+        .lock(|o| frame.bytes[PIECE_HEADER_LEN..end].copy_from_slice(&o.borrow()[..]));
     true
 }
 
@@ -202,11 +236,6 @@ pub fn staged() -> Option<u32> {
     }
 }
 
-/// Since when the node has drained with its core drained, waiting for
-/// its mailbox and its phones ([`moment`]).
-static WAITING: Mutex<ThreadModeRawMutex, Cell<Option<embassy_time::Instant>>> =
-    Mutex::new(Cell::new(None));
-
 // The write bound is the mailbox's queue at the flash's longest op.
 const _: () = assert!(
     policy::WRITE_WAIT_MS
@@ -214,50 +243,17 @@ const _: () = assert!(
             / 1000
 );
 
-/// What the node is doing as it would reboot into the staged image
-/// ([`policy::quiet`]): `drained`, whether its core may reboot
-/// (`Relay::drained`); `writing`, whether its mailbox writes; and how
-/// long it has waited for them and its phones since both held.
-pub fn moment(drained: bool, writing: bool) -> Moment {
-    let power = super::power();
-    let mut m = Moment {
-        links: crate::ble::doing(),
-        drained,
-        writing,
-        phone_update: super::phone::holds_slot(),
-        swap_allowed: super::swap_allowed(power),
-        waited_ms: 0,
-    };
-    let now = embassy_time::Instant::now();
-    let since = WAITING.lock(|w| {
-        let since = (drained && policy::drains(m)).then(|| w.get().unwrap_or(now));
-        w.set(since);
-        since
-    });
-    m.waited_ms = since.map_or(0, |t| (now - t).as_millis());
-    m
-}
-
-/// The drain asked of the core and not yet seen there, so that it is
-/// asked once.
-static DRAIN_ASKED: Mutex<CriticalSectionRawMutex, Cell<Option<bool>>> =
-    Mutex::new(Cell::new(None));
-
-/// Ask the core to drain, or to take messages again, if `want` is not
-/// what it does: through the requests, which wakes the driver's step.
-pub fn drain(want: bool, draining: bool) {
-    let asked = DRAIN_ASKED.lock(|a| a.get());
-    if want == draining {
-        DRAIN_ASKED.lock(|a| a.set(None));
-        return;
-    }
-    if asked != Some(want) && FOR_CORE.try_send(Request::Drain(want)).is_ok() {
-        DRAIN_ASKED.lock(|a| a.set(Some(want)));
+/// Ask the core to drain, or to take messages again, through the
+/// requests, which wakes the driver's step; whether the ask went in.
+pub fn ask_drain(want: bool) -> bool {
+    let sent = REQUESTS.try_send(Request::Drain(want)).is_ok();
+    if sent {
         match want {
             true => log::info!("update: draining for the reboot: the node takes no message"),
             false => log::info!("update: taking messages again until the reboot may come"),
         }
     }
+    sent
 }
 
 // The phone's side (`phone.rs`).
@@ -273,7 +269,7 @@ pub async fn yield_to_phone() -> bool {
     if STORE.lock(|s| s.borrow().image().is_some()) {
         log::info!("update: the phone's update replaces the image gathered");
         STORE.lock(|s| s.borrow_mut().forget());
-        PIECE_IN.signal(());
+        TO_TASK.piece_in.signal(());
     }
     while STORE.lock(|s| s.borrow().busy()) {
         Timer::after_micros(bark_image::ext_flash::PROGRAM_TYP_US.into()).await;
@@ -285,7 +281,7 @@ pub async fn yield_to_phone() -> bool {
 
 /// Run the mesh's update for ever, once [`START`] is raised.
 pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -> ! {
-    START.wait().await;
+    super::kept_for_mesh().await;
     if crate::ext_flash::with(|_| ()).is_none() {
         log::error!("update: no external flash; nothing gathered or served");
         core::future::pending::<()>().await;
@@ -300,10 +296,10 @@ pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -
 async fn answer(flash: &super::Flash, named: Named) {
     let (version, block, index) = named;
     let ok = fill(flash, version, block, index).await;
-    SERVED.signal((named, ok));
+    FILLED.served.signal((named, ok));
 }
 
-/// Piece `index` of block `block` of the image of `version` into [`OUT`]:
+/// Piece `index` of block `block` of the image of `version` into `FILLED`:
 /// coded from the block's data pieces, read one at a time.
 async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool {
     let running = RUNNING.lock(|r| {
@@ -344,10 +340,10 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
         }
     }
     let out = encoder.finish();
-    OUT.lock(|o| *o.borrow_mut() = out);
-    let (last, count) = SERVING.lock(Cell::get);
+    FILLED.out.lock(|o| *o.borrow_mut() = out);
+    let (last, count) = STANDING.lock(Cell::get).serving;
     let count = if last == block { count + 1 } else { 1 };
-    SERVING.lock(|c| c.set((block, count)));
+    standing(|s| s.serving = (block, count));
     log::info!(
         "update: serving block={} piece={} ({} of this block)",
         block,
@@ -508,7 +504,7 @@ const KEEP_FAILING: u8 = 2;
 
 /// Tell the core, waiting for room.
 async fn tell(r: Request) {
-    FOR_CORE.send(r).await;
+    REQUESTS.send(r).await;
 }
 
 async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> ! {
@@ -593,7 +589,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             gather = None;
             told = false;
         }
-        if let Some(named) = SERVE.try_take() {
+        if let Some(named) = TO_TASK.serve.try_take() {
             answer(flash, named).await;
         }
         let polled = match step() {
@@ -645,13 +641,13 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             Poll::Idle => {
                 // Staged, it only serves until the reboot.
                 while staged().is_some() {
-                    answer(flash, SERVE.wait().await).await;
+                    answer(flash, TO_TASK.serve.wait().await).await;
                 }
                 let wait = select4(
-                    OFFERED.wait(),
-                    PIECE_IN.wait(),
+                    TO_TASK.offered.wait(),
+                    TO_TASK.piece_in.wait(),
                     until_ready(gather, told),
-                    SERVE.wait(),
+                    TO_TASK.serve.wait(),
                 )
                 .await;
                 match wait {

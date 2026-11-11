@@ -44,7 +44,8 @@ pub fn note_power(power: Power) {
     POWER.lock(|p| p.set(power));
 }
 
-pub(super) fn power() -> Power {
+/// The power the node last saw.
+pub fn power() -> Power {
     POWER.lock(|p| p.get())
 }
 

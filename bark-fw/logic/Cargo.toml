@@ -1,0 +1,12 @@
+[package]
+name = "bark-fw-logic"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/zond/bark"
+description = "The firmware's decisions, as functions of plain values, tested on the host."
+publish = false
+
+[dependencies]
+# The quiet moment's rule (`bark_image::policy`), without the flash code.
+bark-image = { path = "../../bark-image", default-features = false }
