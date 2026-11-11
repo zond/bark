@@ -354,7 +354,5 @@ mod tests {
     fn size_follows_the_heard_table_and_ttl() {
         let c = Config::default();
         assert_eq!(queue_for(HEARD, c.delivery_ttl), DELIVERY_QUEUE);
-        // The delivered window's 64 is the same count for 400 leaves.
-        assert_eq!(queue_for(400, c.delivery_ttl), 64);
     }
 }

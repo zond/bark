@@ -385,8 +385,9 @@ fn s1b_hidden_terminals_come_apart() {
 /// bounds leave a margin below seed 1's 0.78 and 65. Indoors at the
 /// design's relay density half the leaves hear their relay less than
 /// 12 dB above sensitivity; a leaf still changes relay about once an
-/// hour, after keepalives fail in two periods in a row, and texts already
-/// queued at the old relay expire there.
+/// hour, when it has missed its anchor's heartbeat two rotations running
+/// and its check hears another relay (spec "Relay choice"), and texts
+/// already queued at the old relay expire there.
 #[test]
 fn s2_block_smoke() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios/s2-block.toml");

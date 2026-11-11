@@ -3697,7 +3697,7 @@ impl Sim {
         if st.held.is_some() && !scripted {
             panic!(
                 "{}: core started {kind:?} while a held check is outstanding \
-                 (docs/core-interface.md §3 rule 1: one excursion outstanding)",
+                 (docs/core-interface.md, \"Radio\": one excursion outstanding at a time)",
                 label()
             );
         }
@@ -3705,7 +3705,7 @@ impl Sim {
             let who = if scripted { "scripted event" } else { "core" };
             panic!(
                 "{}: {who} started {kind:?} on channel {} while a {}{:?} excursion is outstanding \
-                 (docs/core-interface.md §3 rule 1: one excursion outstanding)",
+                 (docs/core-interface.md, \"Radio\": one excursion outstanding at a time)",
                 label(),
                 c.index(),
                 if ex.scripted { "scripted " } else { "" },
@@ -3716,7 +3716,7 @@ impl Sim {
             assert!(
                 f.preamble_symbols >= MIN_PREAMBLE_SYMBOLS,
                 "{}: transmit with a {}-symbol preamble, below the {MIN_PREAMBLE_SYMBOLS}-symbol minimum \
-                 (docs/core-interface.md §3 rule 4)",
+                 (docs/core-interface.md, \"Radio\")",
                 label(),
                 f.preamble_symbols
             );

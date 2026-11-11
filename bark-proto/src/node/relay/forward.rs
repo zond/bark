@@ -916,7 +916,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // (spec "The ACK"); one with none is acted on now: nothing is lost
         // if its ACK never goes.
         let later = v.arrival.acts();
-        let takes = later.then(|| Take::of(&d));
+        let takes = later.then(|| Take::of(&d, completes));
         self.radio
             .owe(reply, d.sender_home, deadline, renews, takes, now);
         self.note_untaken(emit);
@@ -955,9 +955,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// `d` checked again once its ACK has gone out (spec "The ACK"): things
     /// may have changed while the ACK waited for the radio. Not the gate
-    /// nor the drain: its sender is done with it.
-    fn when_taken(&self, d: &Data<'_>, now: Instant) -> Result<(Arrival, Room), DropReason> {
-        let arrival = self.arrival(d, false, now);
+    /// nor the drain: its sender is done with it. `returned`: it came from
+    /// the neighbour being handed the message, whose hand-over its arrival
+    /// ended, so no state here shows it any more.
+    fn when_taken(
+        &self,
+        d: &Data<'_>,
+        returned: bool,
+        now: Instant,
+    ) -> Result<(Arrival, Room), DropReason> {
+        let arrival = self.arrival(d, returned, now);
         if !arrival.acts() {
             return Ok((arrival, Room::default()));
         }
@@ -967,15 +974,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// What `d` is to this relay: its case of spec "Receiving DATA" and
-    /// what that was decided from. `completes`: as for [`Self::verdict`].
-    fn arrival(&self, d: &Data<'_>, completes: bool, now: Instant) -> Arrival {
+    /// what that was decided from. `handing`: it came, when it arrived,
+    /// from the neighbour this relay was handing the message to.
+    fn arrival(&self, d: &Data<'_>, handing: bool, now: Instant) -> Arrival {
         let id = d.msg_id();
         let record = self.records.get(id);
         let repeat = record.is_some_and(|r| r.repeats(d.src_hop, d.hops));
         // A return. The one being handed to has it too, though its ACK has
         // not come.
         let slot = self.neighbours.slot_of(d.src_hop);
-        let returned = completes || record.zip(slot).is_some_and(|(r, s)| r.handed(s));
+        let returned = handing || record.zip(slot).is_some_and(|(r, s)| r.handed(s));
         let owner = self.ends_here((d.dst_id, d.dst_pos), record, 0, Some(d.src_hop), now);
         let case = self.classify(id, repeat, returned, owner);
         Arrival {
@@ -1126,7 +1134,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// ends here, since its sender is done with it.
     pub(super) fn taken(&mut self, take: Take, now: Instant, emit: &mut dyn FnMut(Action)) {
         let d = take.data(self.me());
-        match self.when_taken(&d, now) {
+        match self.when_taken(&d, take.returned, now) {
             Ok((a, room)) => self.act_on(&d, a, room, now, emit),
             Err(why) => self.drop_msg(d.msg_id(), why, emit),
         }
