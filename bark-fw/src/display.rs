@@ -277,34 +277,56 @@ pub async fn show(
     core::future::pending().await
 }
 
-/// What the node shows of its state, as it last published it, and a
-/// signal at each change.
+/// What the screen is told: the node's state, as its loop last
+/// published it ([`publish`]), but for the phone's line, which the phone
+/// link gives as the records say it ([`phone`]), and what shows over that
+/// line for a while ([`Over`]). [`CHANGED`] is raised at each change.
 #[cfg(not(feature = "console"))]
-static STATE: embassy_sync::blocking_mutex::Mutex<
+#[derive(Clone, Copy)]
+struct Told {
+    state: State,
+    phone: bark_screen::Phone,
+    over: Over,
+}
+
+#[cfg(not(feature = "console"))]
+static TOLD: embassy_sync::blocking_mutex::Mutex<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    core::cell::Cell<State>,
-> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(State {
-    starting: true,
-    placed: false,
-    sleepy: false,
-    anchored: false,
-    carried: false,
-    battery: bark_screen::Battery::NotRead,
-    battery_left: None,
-    heard: 0,
-    strong: 0,
-    both_ways: 0,
+    core::cell::Cell<Told>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Told {
+    state: State {
+        starting: true,
+        placed: false,
+        sleepy: false,
+        anchored: false,
+        carried: false,
+        battery: bark_screen::Battery::NotRead,
+        battery_left: None,
+        heard: 0,
+        strong: 0,
+        both_ways: 0,
+        phone: bark_screen::Phone::Unpaired,
+        getting: None,
+    },
     phone: bark_screen::Phone::Unpaired,
-    getting: None,
+    over: Over {
+        pairing: None,
+        removal: None,
+        full: None,
+    },
 }));
 
-/// The phone link's line (`ble.rs`), apart from the node's state, as it
-/// changes outside the node's steps.
+/// Change what the screen is told, under one lock.
 #[cfg(not(feature = "console"))]
-static PHONE: embassy_sync::blocking_mutex::Mutex<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    core::cell::Cell<bark_screen::Phone>,
-> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(bark_screen::Phone::Unpaired));
+fn told<R>(f: impl FnOnce(&mut Told) -> R) -> R {
+    TOLD.lock(|c| {
+        let mut t = c.get();
+        let r = f(&mut t);
+        c.set(t);
+        r
+    })
+}
+
 #[cfg(not(feature = "console"))]
 static CHANGED: embassy_sync::signal::Signal<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
@@ -342,16 +364,6 @@ struct Over {
     full: Option<Instant>,
 }
 
-#[cfg(not(feature = "console"))]
-static OVER: embassy_sync::blocking_mutex::Mutex<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    core::cell::Cell<Over>,
-> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Over {
-    pairing: None,
-    removal: None,
-    full: None,
-}));
-
 /// How long a removal's code and `PHONES FULL` show: the time a pairing
 /// gives its person to type a code (`bark_link::phones::CODE_MS`).
 #[cfg(not(feature = "console"))]
@@ -359,11 +371,7 @@ const SHOWN: Duration = Duration::from_millis(bark_link::phones::CODE_MS);
 
 #[cfg(not(feature = "console"))]
 fn over(f: impl FnOnce(&mut Over)) {
-    OVER.lock(|o| {
-        let mut v = o.get();
-        f(&mut v);
-        o.set(v);
-    });
+    told(|t| f(&mut t.over));
     CHANGED.signal(());
 }
 
@@ -371,7 +379,7 @@ fn over(f: impl FnOnce(&mut Over)) {
 #[cfg(not(feature = "console"))]
 fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
     use bark_screen::Phone;
-    let o = OVER.lock(core::cell::Cell::get);
+    let Told { over: o, phone, .. } = TOLD.lock(core::cell::Cell::get);
     let removal = o.removal.filter(|&(_, until)| now < until);
     let full = o.full.filter(|&until| now < until);
     let ends = removal.map(|(_, u)| u).into_iter().chain(full).min();
@@ -379,7 +387,7 @@ fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
         (Some(c), ..) => Phone::Code(c),
         (None, Some((c, _)), _) => Phone::Remove(c),
         (None, None, Some(_)) => Phone::Full,
-        (None, None, None) => PHONE.lock(core::cell::Cell::get),
+        (None, None, None) => phone,
     };
     (phone, ends)
 }
@@ -387,14 +395,14 @@ fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
 /// The phone link's line at boot, drawn with the first picture.
 #[cfg(not(feature = "console"))]
 pub fn phone_at_boot(phone: bark_screen::Phone) {
-    PHONE.lock(|p| p.set(phone));
+    told(|t| t.phone = phone);
 }
 
 /// The phone link's side: its line, as the records say it; any change
 /// is drawn about one refresh after it (`bark_screen::schedule`).
 #[cfg(not(feature = "console"))]
 pub fn phone(phone: bark_screen::Phone) {
-    if PHONE.lock(|p| p.replace(phone)) != phone {
+    if told(|t| core::mem::replace(&mut t.phone, phone)) != phone {
         CHANGED.signal(());
     }
 }
@@ -423,7 +431,7 @@ pub fn full() {
 /// for the phone's line, which the phone link gives ([`phone`]).
 #[cfg(not(feature = "console"))]
 pub fn publish(state: State) {
-    if STATE.lock(|s| s.replace(state)) != state {
+    if told(|t| core::mem::replace(&mut t.state, state)) != state {
         CHANGED.signal(());
     }
 }
@@ -463,7 +471,7 @@ pub async fn run(
         let (phone, ends) = phone_shown(now);
         let state = State {
             phone,
-            ..STATE.lock(core::cell::Cell::get)
+            ..TOLD.lock(core::cell::Cell::get).state
         };
         let ms = now.as_millis();
         let due = schedule.due(&state, ms);
