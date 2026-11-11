@@ -50,15 +50,11 @@ pub use crate::node::OWNER_RADIUS_M;
 enum Case {
     /// Case 2: no record.
     New,
-    /// Cases 1, 3 and 4: arrived, a retransmission of a packet taken, or a
-    /// copy while this relay holds one. ACK only.
+    /// Cases 1, 3 and 4: ACK only.
     AckOnly,
-    /// Case 5: a return, or a copy for a destination this relay owns now,
-    /// and it holds none. It goes on with its own search.
+    /// Case 5: it goes on with this relay's own search.
     Search,
-    /// Case 6: a copy from a node this relay did not hand the message to,
-    /// and it holds none; or a retransmission of such a copy. Answered
-    /// seen: the copy stays with its sender.
+    /// Case 6: answered seen; the copy stays with its sender.
     Seen,
 }
 
@@ -66,14 +62,13 @@ enum Case {
 #[derive(Clone, Copy, Debug)]
 struct Arrival {
     case: Case,
-    /// The sender's neighbour-table slot.
     slot: Option<usize>,
-    /// A copy of a message this relay has a record of that has not arrived
-    /// here, other than its last packet again.
+    /// A copy of a message with a record here, other than its last packet
+    /// again.
     copy: bool,
     /// From a node that has the message from this relay: a return.
     returned: bool,
-    /// This relay owns the destination, and acts on the packet.
+    /// This relay owns the destination.
     owner: bool,
     /// A sleepy node's own message, count 0, whose search starts here.
     fresh: bool,
@@ -89,7 +84,6 @@ impl Arrival {
 /// Where a packet taken goes.
 #[derive(Clone, Copy, Debug, Default)]
 struct Room {
-    /// Where a new record goes.
     record_at: Option<usize>,
     /// The send-queue place of one to send on; 0 the regular room.
     place: u8,
@@ -99,7 +93,6 @@ struct Room {
 #[derive(Clone, Copy, Debug)]
 struct Verdict {
     arrival: Arrival,
-    /// Why it is refused, if it is.
     refusal: Option<DropReason>,
     /// Its way on, for a refusal's place in that way's line.
     way: Option<NodeId>,
@@ -112,8 +105,8 @@ struct Verdict {
 /// What the gate finds on a message's way on (spec "Send queue").
 #[derive(Clone, Copy, Debug)]
 struct Gate {
-    /// How long the messages queued here for the way take to go, by its
-    /// service time: the message's wait here before its hand-over.
+    /// How long the messages queued here for the way take to go: the
+    /// message's wait here before its hand-over.
     queue: Duration,
     /// When the longest waiting of them began to wait for the way.
     oldest: Option<Instant>,
@@ -122,12 +115,11 @@ struct Gate {
     over: bool,
 }
 
-/// Where an entry whose hand-over failed stands (spec "Hand-over" step 6).
+/// Where an entry whose hand-over failed stands (spec "Hand-over").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Failure {
     /// A sleepy node's own message, handed to its anchor.
     OwnAtAnchor,
-    /// A forward.
     Forward,
     /// A return whose parent is a neighbour not demoted.
     Return,
@@ -233,7 +225,7 @@ fn way<N, P>(
 /// frame it carries by value costs nothing.
 #[allow(clippy::large_enum_variant)]
 enum Routed {
-    /// Addressed: send this frame, whose receiver its ACK names.
+    /// Addressed: send this frame.
     To(Outgoing),
     /// Dropped or delivered here; it leaves the queue.
     Done,
@@ -255,7 +247,7 @@ fn tried(record: &Record, passed: u64, slot: usize) -> bool {
     record.handed(slot) || passed & (1u64 << slot) != 0
 }
 
-/// The frame of the owed reply. Its receiver is listening for it.
+/// The frame of the owed reply.
 fn reply_frame(o: Owed) -> Frame {
     match o.reply {
         Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
@@ -264,12 +256,11 @@ fn reply_frame(o: Owed) -> Frame {
 
 /// A full DATA frame with the long preamble, 372.8 ms
 /// (spec "Duty-cycled receive and the long preamble"): what a relay must
-/// spare to send a message at once to a sleepy node, whose length the
-/// routing does not know (spec "Next hop").
+/// spare to send at once to a sleepy node, as routing does not know the
+/// frame's length (spec "Next hop").
 const LONG_FRAME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
 
-/// The preamble a DATA to `n` needs: the long one to a sleepy node, which
-/// receives duty-cycled between its windows (spec "Sleepy nodes").
+/// The preamble a DATA to `n` needs (spec "Sleepy nodes").
 fn preamble(n: &Neighbour) -> u16 {
     if n.sleepy {
         LONG_PREAMBLE_SYMBOLS
@@ -278,31 +269,24 @@ fn preamble(n: &Neighbour) -> u16 {
     }
 }
 
-/// What forwarding keeps beside the send queue: the one hand-over in
-/// flight, and whether the send queue may have room for the delivery
-/// queue.
+/// What forwarding keeps beside the send queue.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Forwarding {
-    /// What the radio side keeps of the hand-over in flight, that of the
-    /// send queue's current entry.
+    /// The radio side of the current entry's hand-over.
     pub(super) flight: Flight,
     /// The send queue may have room for the delivery queue: a hand-over
     /// ended or the delivery queue changed.
     pub(super) feed_due: bool,
-    /// The second it began to drain for a reboot, rounded up, taking no message
-    /// (`relay/drain.rs`), or [`u32::MAX`] while it does not: whole
-    /// seconds, which fit beside `feed_due`, are fine enough for a bound
-    /// of minutes.
+    /// The second it began to drain for a reboot, or [`u32::MAX`]: whole
+    /// seconds fit beside `feed_due` and suffice for a bound of minutes.
     pub(super) drain_from_s: u32,
     /// When the send queue was last looked at with nothing to send: the
     /// earliest end of a wait or a ban that held an entry back.
     pub(super) wake: Option<Instant>,
     /// When the bucket will fit the DATA to a sleepy node the send queue
-    /// last had no room for, as a hand-over the bucket cannot fit yet is
-    /// deferred (`relay/delivery.rs`).
+    /// last had no room for (`relay/delivery.rs`).
     pub(super) feed_at: Option<Instant>,
-    /// When queued deliveries are next retried, every 60 s, under the
-    /// `sleepy_listens` research switch.
+    /// When queued deliveries are next retried under `sleepy_listens`.
     pub(super) delivery_retry_at: Instant,
     /// When the bucket will have refilled what the senders it refused
     /// were told to come back for (spec "Bans").
@@ -322,15 +306,14 @@ impl Forwarding {
 }
 
 /// The application's own message, from when it is taken until its first
-/// hop takes it, it arrives here, or it is dropped (roadmap D29).
+/// hop takes it, it arrives here, or it is dropped.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct OwnMessage {
     pub(super) id: Option<MsgId>,
     /// Refusals in a row by banned neighbours: each doubles the hold
     /// before it is offered again (`budget::hold`).
     pub(super) refusals: u8,
-    /// Before this the application is not offered a send: the wait the
-    /// last refusal of its message asked for
+    /// Before this the application is not offered a send
     /// (spec "A sleepy node's own message").
     pub(super) retry_at: Instant,
     /// When the bucket lets the application send, if only it is missing.
@@ -347,7 +330,6 @@ impl OwnMessage {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// This node's ID.
     pub(super) fn me(&self) -> NodeId {
         self.id
     }
@@ -394,24 +376,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The wait a refusal for `reason` asks for (spec "Bans"): for want
-    /// of room, until the bucket holds everything queued, a frame of
-    /// `airtime` and its ACK with the reply reserve left, if nothing else
-    /// comes; for want of the way on, `way`, at the gate or as fresh work
-    /// while it is banned, a place in that neighbour's line; anything
-    /// else frees in one ban; and never less than the pushback the
-    /// message's way on gave (`pushback`), the rest of its next hop's
-    /// ban, so a wait told at the centre is passed back hop by hop
-    /// toward the origin.
-    ///
-    /// Every sender refused for room takes a place in line: the next is
-    /// told one ban later than the last, the time the bucket takes to
-    /// refill the frame and ACK a sender will bring back. So the senders
-    /// refused in one moment come back one after the other, as the room
-    /// frees, and not all at once. A sender refused for the way on takes
-    /// a place in that way's line instead, spaced by the time this relay
-    /// takes to get one message through to it, so that the senders come
-    /// back as that way frees; `gate` is what the gate found on the way.
+    /// The wait a refusal for `reason` asks for (spec "Bans"), never less
+    /// than `pushback`, the rest of the way on's ban, so a wait told at the
+    /// centre passes back hop by hop toward the origin. Senders refused in
+    /// one moment get successive places in a line, so they come back one
+    /// after another as the room or the way `way` frees, not all at once.
     #[allow(clippy::too_many_arguments)]
     fn refusal_wait(
         &mut self,
@@ -446,11 +415,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The wait told a sender refused for want of the way on, `to`: until
-    /// its place in `to`'s line is [`HOP_WAIT`] away, rounded up to a wait
-    /// an ACK tells so that it never comes back before it, when it would
-    /// only cost a frame and a refusal; and no less than `pushback`, the
-    /// rest of `to`'s ban, which stands outside the line (spec "Bans").
-    /// `gate`: the queue for `to` here. `None` if `to` is not in the table.
+    /// its place in `to`'s line is [`HOP_WAIT`] away, rounded up so it never
+    /// comes back early to cost a frame and a refusal (spec "Bans"). `None`
+    /// if `to` is not in the table.
     fn line_wait(
         &mut self,
         to: NodeId,
@@ -474,9 +441,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some(wait)
     }
 
-    /// Where the message of `record` to `dst` goes if routed now, and
-    /// when that one's ban ends: its next hop, or its parent once none is
-    /// left (spec "Next hop", "Return to parent").
+    /// Where the message of `record` to `dst` goes if routed now, and when
+    /// that one's ban ends (spec "Next hop", "Return to parent").
     fn heads_to(
         &self,
         record: &Record,
@@ -496,9 +462,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some((parent, ban))
     }
 
-    /// Where queued entry `o` goes now: the neighbour of the hand-over
-    /// under way, or where it would be routed; `None` for a delivery,
-    /// one set aside, or one this relay owns now.
+    /// Where queued entry `o` goes now; `None` for a delivery, one set
+    /// aside, or one this relay owns now.
     fn bound_for(&self, o: &Outgoing, now: Instant) -> Option<NodeId> {
         if o.kind.delivers() || o.held() {
             return None;
@@ -522,13 +487,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|(to, ban)| (to, ban, at))
     }
 
-    /// The entry the next hand-over goes to (spec "Send queue"): every
-    /// queued forward is routed from the state as it is now, and one
-    /// whose next hop is banned is not sendable until the ban ends; of
-    /// the rest the queue's order chooses. With none to send, the
-    /// earliest end of what holds them back is kept for the wakeup.
-    /// At most the queue's entries times the neighbour table's entries
-    /// per call, and no allocation.
+    /// The entry the next hand-over goes to (spec "Send queue"), each
+    /// forward routed from the state as it is now. With none to send, the
+    /// earliest end of what holds them back is kept for the wakeup. At most
+    /// queue entries × neighbour entries per call.
     fn pick(&mut self, now: Instant) -> Option<usize> {
         const N: usize = SEND_QUEUE + HOP_SLOTS;
         let mut banned = [false; N];
@@ -578,13 +540,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The gate of the send queue (spec "Send queue"): what a message
     /// received with `hops`, other than `id`, going to `to`, finds there.
-    /// Its wait here is the service time to `to` for each queued message
-    /// that goes to `to` now; it is refused if that passes [`HOP_WAIT`]
-    /// and its count is not higher than every one of theirs.
-    ///
-    /// The count of a queued message is one less than the count it is
-    /// sent with: the count it holds here. At most the queue's entries
-    /// times the neighbour table's entries per call, and no allocation.
+    /// A queued message's count here is one less than it is sent with. At
+    /// most queue entries × neighbour entries per call.
     fn gate(&self, id: MsgId, to: NodeId, hops: u8, now: Instant) -> Gate {
         let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
         for o in self.queue.iter().filter(|o| o.msg_id() != id) {
@@ -615,13 +572,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The place in the send queue for a frame of `airtime`, received with
-    /// `hops`, after this relay spends `spend` (the ACK that takes the
-    /// packet); 0 is the regular room. The regular room needs a place, and
-    /// everything queued, the frame included, must fit in the bucket now
-    /// with the reply reserve left (spec "Receiving DATA", "Send queue"). Failing that, the
-    /// highest free hop place not above `hops` takes it, whatever the
-    /// bucket holds (roadmap D31). `freed`: the current hand-over ends
-    /// first, giving up its place.
+    /// `hops`, after this relay spends `spend` (the ACK that takes it); 0 is
+    /// the regular room (spec "Receiving DATA", "Send queue"). `freed`: the
+    /// current hand-over ends first, giving up its place.
     pub(super) fn admit(
         &self,
         airtime: Duration,
@@ -658,9 +611,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Why a DATA to a sleepy node in its window, of `airtime`, cannot enter
     /// the regular room now, if it cannot (spec "Delivery queue"). It goes
-    /// ahead of everything queued (spec "Delivery"), so it needs a place and
-    /// its own frame in the bucket with the reply reserve left, not the
-    /// airtime of what it goes ahead of.
+    /// ahead of everything queued (spec "Delivery"), so the bucket need fit
+    /// only its own frame.
     pub(super) fn no_room_to_deliver(&self, airtime: Duration, now: Instant) -> Option<DropReason> {
         if self.regular() >= SEND_QUEUE {
             Some(DropReason::SendQueueFull)
@@ -694,11 +646,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- Owner and next hop (spec "Next hop", "Owner") ---
 
-    /// Whether the message of `record`, if it has one here, to `dst_id`
-    /// at `dst_pos`, ends here: addressed to this node, or its position
-    /// owned here while the addressed node is no live neighbour it can
-    /// be handed to ([`Self::addressed_open`]). `from` is the node it
-    /// comes from now, if any.
+    /// Whether the message of `record` to `dst_id` at `dst_pos` ends here
+    /// (spec "Owner"). `from` is the node it comes from now, if any.
     fn ends_here(
         &self,
         (dst_id, dst_pos): (NodeId, Position),
@@ -711,11 +660,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             || (self.owns(dst_pos, now) && !self.addressed_open(dst_id, record, passed, from, now))
     }
 
-    /// Whether `dst_id` is a live neighbour that is no sleepy node with an
-    /// anchor and that the message of `record` may still be handed to:
-    /// not tried, not its parent, not `from`. The owner of the position
-    /// then hands it over at once rather than queue it for the node's
-    /// beat on its channel (spec "Owner", "Next hop").
+    /// Whether `dst_id` is a live neighbour, no anchored sleepy node, that
+    /// the message of `record` may still be handed to: the owner then hands
+    /// it over at once rather than wait for the node's beat (spec "Owner",
+    /// "Next hop").
     fn addressed_open(
         &self,
         dst_id: NodeId,
@@ -735,10 +683,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether this relay owns the destination `dst` of another node's
-    /// message (spec "Owner"). A sleepy node owns none, nor does a
-    /// carried one, nor one leaving to turn sleepy (`relay/power.rs`):
-    /// they hold mail for nobody, and a neighbour that is carried keeps
-    /// no other from owning.
+    /// message (spec "Owner").
     fn owns(&self, dst: Position, now: Instant) -> bool {
         if self.sleepy() || self.motion.carried() || self.leaving() {
             return false;
@@ -760,10 +705,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .any(|(_, n)| n.holds_mail() && n.local.distance2(target) < mine)
     }
 
-    /// Whether `n` is a last resort at `now` (spec "Next hop"): a sleepy
-    /// neighbour with an anchor, or a carried one not heard for its own
-    /// heartbeat interval, by when it has walked as far as a position is
-    /// good to and its slot has told its place to another channel.
+    /// Whether `n` is a last resort at `now` (spec "Next hop").
     fn last_resort(&self, n: &Neighbour, now: Instant) -> bool {
         n.last_resort()
             || (n.carried
@@ -771,27 +713,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 && now.since(n.last_heard) >= heartbeat_interval(n.id, &self.config))
     }
 
-    /// Whether the sleepy neighbour `n` with an anchor, a message's
-    /// destination, is sent the message now with the long preamble
-    /// rather than reached through its anchor (spec "Next hop"): it has
-    /// not left such a hand-over unanswered since it was last heard, and
-    /// this node's bucket spares a full long frame ([`Self::spares_long`]).
+    /// Whether the anchored sleepy neighbour `n`, a message's destination,
+    /// is sent the message now with the long preamble rather than through
+    /// its anchor (spec "Next hop").
     fn reach_now(&self, n: &Neighbour, now: Instant) -> bool {
         !n.unanswered && self.spares_long(LONG_FRAME, None, now)
     }
 
-    /// Whether `n` is among the neighbours to choose from, `others_open`
-    /// telling whether any that is no last resort is open: a last resort
-    /// only where none is, banned or not (spec "Next hop"). A message
-    /// whose other neighbours are banned waits for them
-    /// (spec "Overload waits").
+    /// Whether `n` is among the neighbours to choose from: a last resort
+    /// only where no other is open, banned or not, so a message whose other
+    /// neighbours are banned waits for them
+    /// (spec "Next hop", "Overload waits").
     fn tier(&self, n: &Neighbour, others_open: bool, now: Instant) -> bool {
         self.last_resort(n, now) != others_open
     }
 
     /// Whether any neighbour that is no last resort is a candidate for the
-    /// message of `record` at `now` ([`Self::tier`]): live, and neither
-    /// handed it nor its parent.
+    /// message of `record` at `now` ([`Self::tier`]).
     fn others_open(&self, record: &Record, passed: u64, now: Instant) -> bool {
         let parent = record.parent().map(|(name, _)| name);
         self.neighbours.live(now).any(|(slot, n)| {
@@ -800,19 +738,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The next hop for the message of `record` to node and position `dst`
-    /// (spec "Next hop"), from the state as it is at `now`: the addressed
-    /// node itself if it is a live neighbour not in the tried set, a stale
-    /// carried one too, a sleepy one with an anchor only while this relay
-    /// spares the long frame ([`Self::reach_now`]), else as a last resort;
-    /// otherwise the live neighbour nearest the position
-    /// that is not in the tried set, ties broken by ID; a demoted one only
-    /// when no other with margin is left, and one without margin only when
-    /// no other at all (roadmap D25, D29, D38). A banned next hop is waited
-    /// for, not gone round (roadmap D106), unless it refused this message:
-    /// the slots of `avoid` are gone round while banned where another is
-    /// left that is no worse a last resort (roadmap D110). A neighbour
-    /// about to leave the air is gone round the same way, unless the
-    /// message may end there ([`Self::ends_at`], roadmap D181).
+    /// at `now` (spec "Next hop"). A banned next hop is waited for, not gone
+    /// round, unless it refused this message (`avoid`); one about to leave
+    /// the air where the message cannot end ([`Self::ends_at`]) is gone
+    /// round too. Either only where another no worse a last resort is left.
     fn next_hop(
         &self,
         record: &Record,
@@ -844,9 +773,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let target = self.plane.point(dst);
         // Only a carried node itself can end the search for it, and a
         // frame to it costs little against a search through the city:
-        // first even when stale (roadmap D116a). A sleepy node with an
-        // anchor is first only while this relay spares the long frame;
-        // otherwise its anchor delivers it (roadmap D134).
+        // first even when stale. An anchored sleepy node is first only
+        // while this relay spares the long frame; else its anchor delivers.
         let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.
@@ -886,10 +814,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .fold(0, |m, (slot, _)| m | 1u64 << slot)
     }
 
-    /// Whether a message to `dst` may end at `n`: it is the destination, or
-    /// it holds mail within the owner radius of the position, so may own it
-    /// (spec "Owner"). Gone round such a node, a message would only wander
-    /// among its neighbours, each passing it over in turn, to the hop cap.
+    /// Whether a message to `dst` may end at `n`: it is the destination or
+    /// may own it (spec "Owner"). Gone round such a node, a message would
+    /// only wander among its neighbours to the hop cap.
     fn ends_at(&self, n: &Neighbour, (dst_id, dst): (NodeId, Position)) -> bool {
         n.id == dst_id
             || (n.holds_mail()
@@ -905,11 +832,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Where a sleepy node hands its own message: its anchor while that is
-    /// live (spec "A sleepy node's own message"). Sent to
-    /// the neighbour nearest the destination instead, the first hop was
-    /// often a faint, far one, and at twice the spec "Capacity and sizing"
-    /// rate the relays reached their cap and the domain collapsed
-    /// (`docs/one-node-type-2026-10-16.md`).
+    /// live (spec "A sleepy node's own message").
     pub(super) fn first_hop(&self, now: Instant) -> Option<NodeId> {
         let a = self.anchor()?;
         self.neighbours
@@ -928,7 +851,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .get(id)
             .is_some_and(|r| r.repeats(d.src_hop, d.hops));
         // A packet from the relay this one is handing the message to shows
-        // that it took it, and ends that hand-over, which frees its place.
+        // that it took it, and ends that hand-over.
         let completes = !repeat && self.handing(id, d.src_hop);
         let v = self.verdict(&d, completes, now);
         let deadline = now + self.config.ack_timeout;
@@ -952,8 +875,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             seen: v.arrival.case == Case::Seen,
         };
         if !self.radio.can_owe(reply, d.sender_home, now) {
-            // The packet could not be answered; its sender's retry
-            // brings it again (spec "The ACK", roadmap D29).
+            // Unanswered, its sender's retry brings it again
+            // (spec "The ACK").
             emit(Action::Trace(Trace::Silent {
                 msg_id: id,
                 owed: true,
@@ -989,9 +912,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // A sleepy node listens on once it has answered, for the next
         // (spec "Delivery").
         let renews = d.dst_id == self.me();
-        // The reply carries a packet with work until it has gone out
-        // (spec "The ACK"); one that is no work is acted on now: nothing
-        // is lost if its ACK never goes.
+        // A packet with work waits for its reply to go out
+        // (spec "The ACK"); one with none is acted on now: nothing is lost
+        // if its ACK never goes.
         let later = v.arrival.acts();
         let takes = later.then(|| Take::of(&d));
         self.radio
@@ -1005,10 +928,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Whether `d`, just arrived, is taken or refused, and what it is
-    /// (spec "Receiving DATA"), with the ACK that would take it still to
-    /// pay for. `completes`: it comes from the neighbour being handed the
-    /// message, whose hand-over ends first, giving up its place.
+    /// Whether `d`, just arrived, is taken or refused, and what it is (spec
+    /// "Receiving DATA"), the ACK that would take it still to pay for.
+    /// `completes`: it comes from the neighbour being handed the message,
+    /// whose hand-over ends first, giving up its place.
     fn verdict(&self, d: &Data<'_>, completes: bool, now: Instant) -> Verdict {
         let arrival = self.arrival(d, completes, now);
         let heads = self.way_on(d, &arrival, now);
@@ -1030,10 +953,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// What remains to be checked of `d` once its take is final, its ACK
-    /// gone out (spec "The ACK"): what it is now, since a hand-over may
-    /// have ended or the message arrived while the ACK waited for the
-    /// radio, and whether the room it takes is still there. Not the gate
+    /// `d` checked again once its ACK has gone out (spec "The ACK"): things
+    /// may have changed while the ACK waited for the radio. Not the gate
     /// nor the drain: its sender is done with it.
     fn when_taken(&self, d: &Data<'_>, now: Instant) -> Result<(Arrival, Room), DropReason> {
         let arrival = self.arrival(d, false, now);
@@ -1051,9 +972,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let id = d.msg_id();
         let record = self.records.get(id);
         let repeat = record.is_some_and(|r| r.repeats(d.src_hop, d.hops));
-        // From a neighbour that has the message from this relay: a return
-        // (spec "Receiving DATA" case 5). The one being handed to has it
-        // too, though its ACK has not come.
+        // A return. The one being handed to has it too, though its ACK has
+        // not come.
         let slot = self.neighbours.slot_of(d.src_hop);
         let returned = completes || record.zip(slot).is_some_and(|(r, s)| r.handed(s));
         let owner = self.ends_here((d.dst_id, d.dst_pos), record, 0, Some(d.src_hop), now);
@@ -1064,16 +984,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             copy: record.is_some_and(|r| !repeat && !r.arrived()),
             returned,
             owner: owner && matches!(case, Case::New | Case::Search),
-            // Count 0: a sleepy node's own message, fresh work that starts
-            // its search here (spec "Packet sender", "Hop count").
+            // Count 0: a sleepy node's own message (spec "Packet sender",
+            // "Hop count").
             fresh: d.hops == 0,
         }
     }
 
     /// Where the message of `d`, to send on, would go from here now, and
-    /// when that one's ban ends: routed as the record it would have, whose
-    /// sender, a sleepy node handing over its own or a child returning
-    /// it, has it.
+    /// when that one's ban ends, routed as the record it would have.
     fn way_on(&self, d: &Data<'_>, a: &Arrival, now: Instant) -> Option<(NodeId, Instant)> {
         if !a.acts() || a.owner {
             return None;
@@ -1095,12 +1013,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The room a packet with work takes, or why there is none (spec
-    /// "Receiving DATA"): a place for a new record; for one to send on,
-    /// past the gate, a send-queue place, and for fresh work no ban on its
-    /// way on, `heads`; for one to deliver, a place in the delivery queue
-    /// or the inbox and the budget. `spend`: the ACK that takes it, if it
-    /// has not gone out; `gate`: asked only then; `completes`: as for
-    /// [`Self::verdict`].
+    /// "Receiving DATA"). `spend`: the ACK that takes it, if it has not gone
+    /// out; `gate`: asked only then; `completes`: as for [`Self::verdict`].
     #[allow(clippy::too_many_arguments)]
     fn room(
         &self,
@@ -1136,11 +1050,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let air = self.data_airtime(d.payload.len());
         let place = self.admit(air, spend, d.hops, completes, now)?;
-        // Fresh work is refused while its way on is banned, and told how
-        // long (spec "Receiving DATA"). A message already in the network
-        // is not: refused for that, its sender would send it round the
-        // pushback, and around a ring of relays the refusals kept each
-        // other up.
+        // Only fresh work is refused for a banned way on: a message already
+        // in the network would be sent round the pushback, and around a
+        // ring of relays the refusals would keep each other up.
         let banned = heads.is_some_and(|(_, ban)| ban > now);
         if a.fresh && (self.bans_end(now).is_some() || banned) {
             return Err(DropReason::Banned);
@@ -1209,11 +1121,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The ACK that takes the DATA of `take` has left the antenna: the
-    /// take is final, and the relay acts on it now (spec "The ACK").
-    /// Nothing has changed since it was answered taken but the ACK's own
-    /// airtime, spent; should the room be gone after all, the copy ends
-    /// here, since its sender is done with it.
+    /// The ACK that takes the DATA of `take` has left the antenna: act on it
+    /// now (spec "The ACK"). Should the room be gone after all, the copy
+    /// ends here, since its sender is done with it.
     pub(super) fn taken(&mut self, take: Take, now: Instant, emit: &mut dyn FnMut(Action)) {
         let d = take.data(self.me());
         match self.when_taken(&d, now) {
@@ -1233,10 +1143,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The case of spec "Receiving DATA" for a DATA packet of message `id`; `repeat`:
-    /// from the sender and with the count of the last one received;
-    /// `returned`: from a neighbour that has the message from this relay;
-    /// `owner`: this relay owns the destination now.
+    /// The case of spec "Receiving DATA" for a DATA of message `id`;
+    /// `repeat`: from the sender and with the count of the last one
+    /// received.
     fn classify(&self, id: MsgId, repeat: bool, returned: bool, owner: bool) -> Case {
         if self.delivered.contains(id) || self.delivery.iter().any(|q| q.msg_id == id) {
             return Case::AckOnly;
@@ -1264,11 +1173,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Case::Seen
     }
 
-    /// Whether this relay holds a copy of message `id` that is sure to live
-    /// on: in its send queue or set aside, but not the frame of a hand-over
-    /// under way, once it has been on air. Its receiver may have taken it
-    /// and only the ACK been lost, and the copy now offered here may be
-    /// that one, come back.
+    /// Whether this relay holds a copy of message `id` sure to live on: not
+    /// the frame of a hand-over once on air, as its receiver may have taken
+    /// it, lost only the ACK, and be offering it back.
     fn holds(&self, id: MsgId) -> bool {
         let sent = self.in_flight().is_some_and(|o| o.transmitted());
         let current = self.queue.current_index().filter(|_| sent);
@@ -1287,10 +1194,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             == Some(self.expect(id, to))
     }
 
-    /// Where a new record goes: never in place of the record of a message
-    /// this relay holds, in its send queue or set aside, which it needs to
-    /// route that message (`tables/records.rs`). `None` only if every
-    /// record is such, which the table's size rules out.
+    /// Where a new record goes: never in place of one of a message this
+    /// relay holds, which it needs for routing. `None` only if every record
+    /// is such, which the table's size rules out.
     pub(super) fn record_place(&self) -> Option<usize> {
         let mut held = [MsgId(0); HELD + 1];
         let mut n = 0;
@@ -1308,10 +1214,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .place(|id| held.binary_search_by_key(&id.0, |h| h.0).is_ok())
     }
 
-    /// Queue `d` onward into `place`, a forward addressed when its
-    /// hand-over starts. Carries the
-    /// received count plus one, which places it among waiting entries,
-    /// until its hand-over stamps the count it is sent with (spec "Hop count").
+    /// Queue `d` onward into `place`. It carries the received count plus
+    /// one until its hand-over stamps the count it is sent with
+    /// (spec "Hop count").
     fn send_on(&mut self, d: &Data<'_>, place: u8, now: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
@@ -1328,9 +1233,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The message has reached its owner, this relay (spec "Owner"): deliver it
-    /// to the application if it is for this node, or queue it for the
-    /// node it is for.
+    /// The message has reached its owner, this relay (spec "Owner").
     fn arrive(&mut self, id: MsgId, d: &Data<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
         let (node, payload) = (d.dst_id, d.payload);
         if self.own.id == Some(id) {
@@ -1366,7 +1269,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Pushed::Duplicate => return,
             Pushed::Full => {
                 // Only when ownership is found at the hand-over, too late
-                // to refuse (spec "Receiving DATA" case 5).
+                // to refuse.
                 self.drop_msg(id, DropReason::DeliveryFull, emit);
                 return;
             }
@@ -1376,13 +1279,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.deliver_now(node, now);
     }
 
-    /// A node that turned sleepy holds mail for nobody: what its delivery
-    /// queue still holds goes into its send queue, oldest first, as
-    /// forwards from here toward their addresses, admitted as any forward
-    /// received with their count; what finds no room waits for it here
-    /// (spec "Sleepy nodes"). Each starts a search here, with no parent,
-    /// so that a copy that comes back is searched on and not taken for
-    /// delivered.
+    /// A node that turned sleepy holds mail for nobody: its delivery queue
+    /// goes into its send queue as forwards from here
+    /// (spec "Sleepy nodes"). Each starts a search here, with no parent, so that a copy
+    /// that comes back is searched on and not taken for delivered.
     pub(super) fn hand_on(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         loop {
             let Some(q) = self.delivery.iter().next() else {
@@ -1414,11 +1314,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Whether the forward `out`, refused by `by`, waits for it in the
     /// delivery queue: `by` is leaving the air and the message may end
-    /// there ([`Self::ends_at`]); sent round it, it would only wander
-    /// among its neighbours to the hop cap (spec "Delivery queue"). Not
-    /// at a node that is sleepy or leaving to turn sleepy, which holds
-    /// mail for nobody, nor where the queue has no place; then it goes
-    /// round as any refused forward.
+    /// there ([`Self::ends_at`]); sent round it, it would only wander to
+    /// the hop cap (spec "Delivery queue").
     fn waits_for_refuser(&self, out: &Outgoing, by: NodeId, now: Instant) -> bool {
         if self.sleepy() || self.leaving() {
             return false;
@@ -1462,9 +1359,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }));
     }
 
-    /// Whether a message that waits for `id` waits no longer at `now`:
-    /// `id`'s last heartbeat no longer says it is leaving, as after its
-    /// swap, or it is no live neighbour.
+    /// Whether a message that waits for `id` waits no longer at `now`: `id`
+    /// no longer says it is leaving, or it is no live neighbour.
     fn waited(&self, id: NodeId, now: Instant) -> bool {
         self.neighbours
             .live(now)
@@ -1473,10 +1369,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Each message that waits for a neighbour that has come back, or is
-    /// gone, goes into the send queue as a forward from here, admitted as
-    /// any forward received with its count, and is routed as any: to that
-    /// neighbour, where it ends, or on as the state now says. What finds
-    /// no room waits for it (spec "Delivery queue", roadmap D186).
+    /// gone, goes into the send queue as a forward from here, routed as any
+    /// (spec "Delivery queue").
     pub(super) fn release(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         if self.sleepy() {
             // What it held goes on by `hand_on`.
@@ -1517,9 +1411,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// `message` as a forward this node sends on, going on from count
-    /// `hops`, which places it among waiting entries until its hand-over
-    /// stamps the count it goes with (spec "Hop count"), addressed when
-    /// its hand-over starts.
+    /// `hops` (spec "Hop count"), addressed when its hand-over starts.
     pub(super) fn onward(&self, message: Message, hops: u8) -> Outgoing {
         Outgoing::new(
             message,
@@ -1546,11 +1438,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- The relay's own application (spec "Routing") ---
 
-    /// Whether the application may send now (roadmap D29 rule 6, D34): the
-    /// relay is running, holds no message of the application's, its send
-    /// queue takes a full frame on top of what it holds, as a sleepy node's
-    /// would be taken but without the ACK, and not every neighbour is
-    /// banned; for a sleepy node with a live anchor, not the anchor.
+    /// Whether the application may send now: it holds no message of the
+    /// application's, its send queue takes a full frame, and the way on is
+    /// not banned.
     pub(super) fn accepts_send(&self, now: Instant) -> bool {
         self.own.id.is_none()
             && !self.draining()
@@ -1605,8 +1495,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.arrive(h.msg_id(), &h.data(self.me(), self.home), now, emit);
     }
 
-    /// Whether a message for `node` that ends here at `now` finds a place:
-    /// in the inbox if it is for this node, else in the delivery queue
+    /// Whether a message for `node` that ends here at `now` finds a place
     /// (spec "Delivery queue").
     pub(super) fn has_room_for(&self, node: NodeId, now: Instant) -> bool {
         if node == self.me() {
@@ -1616,19 +1505,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// `AppCommand::Send`: this relay is the origin. Offered only when
-    /// [`Relay::accepts_send`]; anything else is the driver's bug and is
-    /// ignored. The message is the application's until its first hop
-    /// takes it (`own`).
+    /// `AppCommand::Send`: this relay is the origin; ignored unless
+    /// [`Relay::accepts_send`]. The message is the application's until its
+    /// first hop takes it (`own`).
     ///
-    /// The application is the first sender and sends count 0 (spec "Hop count");
-    /// this node then sends 1, what it received plus one. It cannot put 0
-    /// on the air itself: a node receiving count 0 takes the sender for a
-    /// sleepy node handing over its own and itself for the origin
-    /// (spec "Packet sender"). A sleepy node with an anchor does exactly that
-    /// (`count`). A message the
-    /// relay already has a record of is in the network already, as is one
-    /// delivered or queued here (spec "Owner").
+    /// The application sends count 0 and this node sends 1: count 0 on the
+    /// air means a sleepy node handing over its own (spec "Hop count",
+    /// "Packet sender").
     pub(super) fn originate(
         &mut self,
         dst_pos: Position,
@@ -1663,9 +1546,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             record.set_arrived();
             self.records.put(at, record);
             if !self.has_room_for(dst_id, now) {
-                // At its owner the delivery queue's rule ends it
-                // (spec "Delivery queue"). Admission left it a place, as for any message of the
-                // application's.
+                // Set aside until the delivery queue has a place
+                // (spec "Delivery queue"); admission left it a send-queue
+                // place.
                 let out = Outgoing {
                     state: State::Held,
                     since: now,
@@ -1687,9 +1570,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let record = Record::new(id, None, 0, now);
         if let Some((to, ban)) = self.heads_to(&record, 0, 0, (dst_id, dst_pos), now) {
             // Fresh work, gated as a sleepy node's own is at its anchor
-            // (spec "Receiving DATA"): refused, it goes back to the
-            // application with a place in its way's line, as an ACK
-            // tells.
+            // (spec "Receiving DATA").
             let gate = self.gate(id, to, 0, now);
             emit(Action::Trace(Trace::WayWait {
                 wait: gate.queue,
@@ -1783,10 +1664,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A DATA to a sleepy node goes first (spec "Delivery"): a hand-over
-    /// that waits between its attempts, for the channel, a retry or the
-    /// bucket, steps aside for it and keeps its place. A forward or a
-    /// return is routed again when its turn comes, so it starts afresh.
+    /// A DATA to a sleepy node goes first (spec "Delivery"): a waiting
+    /// hand-over steps aside for it; a forward or return starts afresh, as
+    /// it is routed again when its turn comes.
     fn make_way(&mut self, now: Instant) {
         let Some(current) = self.queue.current().copied() else {
             return;
@@ -1807,21 +1687,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether the delivery `out` goes outside its node's window, with the
-    /// long preamble, to a node not known to be out of reach (spec
-    /// "Delivery", `relay/delivery.rs`).
+    /// long preamble (spec "Delivery").
     fn early(&self, out: &Outgoing) -> bool {
         out.preamble >= LONG_PREAMBLE_SYMBOLS && self.heard.get(out.to).is_some_and(|n| !n.missed)
     }
 
-    /// Address the forward `out` from the state as it is now: to its next
-    /// hop (spec "Next hop"), or back to its parent once none is left
-    /// (spec "Return to parent"), or let it wait while that one is
-    /// banned, or drop it at the origin. Nothing of an earlier choice is
-    /// kept: a neighbour that refused or failed it is chosen again while
-    /// it ranks first, and the message goes elsewhere once it does not,
-    /// demoted or gone.
-    /// Ownership is checked again first: a closer neighbour may have been
-    /// demoted since (spec "Receiving DATA" case 5).
+    /// Address the forward `out` from the state as it is now
+    /// (spec "Next hop", "Return to parent"). Nothing of an earlier choice is kept: a
+    /// neighbour that refused or failed it is chosen again while it ranks
+    /// first. Ownership is checked again: a closer neighbour may have been
+    /// demoted since.
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let id = out.msg_id();
         let dst = (out.message.dst_id, out.message.dst_pos);
@@ -1894,13 +1769,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Until when an origin holds message `id` of `record` while it has
-    /// no candidate, rather than end its search: its application's own
-    /// in its first rotation until it hears a relay or the rotation ends
-    /// (spec "Return to parent", `heard`); at a sleepy node, its own or
-    /// one it held when it turned sleepy, while it hears no neighbour,
-    /// routed again every fade (spec "A sleepy node's own message",
-    /// "Sleepy nodes").
+    /// Until when an origin holds message `id` with no candidate rather than
+    /// end its search
+    /// (spec "Return to parent", "A sleepy node's own message").
     fn origin_waits(&self, record: &Record, id: MsgId, now: Instant) -> Option<Instant> {
         if let Some(ends) = self.boot.ends() {
             if self.own.id == Some(id) && !self.neighbours.live(now).any(|(_, n)| n.relay()) {
@@ -1911,14 +1782,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         (self.sleepy() && record.parent().is_none() && alone).then(|| now + self.config.fade_retry)
     }
 
-    /// When fresh work could next start moving, if every live neighbour is
-    /// banned now: the earliest end of those bans. A message entering here
-    /// has no tried set, so these are all the candidates spec "Next hop" would have
-    /// for it, demoted ones and those without margin included as its last
-    /// resort. Fresh work waits
-    /// at its origin meanwhile, where its application sees it, rather than
-    /// here for a ban, to be refused again (roadmap D34). With no live
-    /// neighbour at all it is no ban: the search ends as before.
+    /// When fresh work could next start moving, if every candidate it would
+    /// have is banned now: the earliest end of those bans. Fresh work waits
+    /// at its origin meanwhile, where its application sees it. With no live
+    /// neighbour at all it is no ban.
     fn bans_end(&self, now: Instant) -> Option<Instant> {
         if let Some((_, a)) = self.first_hop(now).and_then(|a| self.neighbours.by_id(a)) {
             return self.neighbours.is_banned(a, now).then_some(a.banned_until);
@@ -1941,8 +1808,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         until
     }
 
-    /// The home channel of neighbour `id`, as its latest heartbeat or
-    /// packet gave it.
+    /// The home channel of neighbour `id`, as last heard.
     fn home_of(&self, id: NodeId) -> Option<Channel> {
         self.neighbours
             .by_id(id)
@@ -1950,24 +1816,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .or_else(|| self.heard.get(id).map(|n| n.home))
     }
 
-    /// The preamble of a DATA to `id`: the long one while the neighbour
-    /// table has it sleepy, else the shortest.
+    /// The preamble of a DATA to `id`.
     fn preamble_to(&self, id: NodeId) -> u16 {
         self.neighbours
             .get(id)
             .map_or(MIN_PREAMBLE_SYMBOLS, preamble)
     }
 
-    /// The airtime of a DATA with `payload` bytes as this node's next hops
-    /// need it, or as it came to this node: with the long preamble at an
-    /// anchorless node, else the shortest.
+    /// The airtime of a DATA with `payload` bytes as this node forwards it.
     pub(super) fn data_airtime(&self, payload: usize) -> Duration {
         time_on_air((DATA_HEADER_LEN + payload) as u8, self.forward_preamble())
     }
 
     /// The unit of the retry wait of the current hand-over: one hand-over
-    /// of a full frame with its preamble, so a hand-over with the long one
-    /// waits by as much more as its frame is longer (spec "Retry wait").
+    /// of a full frame with its preamble (spec "Retry wait").
     fn retry_unit(&self) -> Duration {
         let preamble = self
             .queue
@@ -1979,11 +1841,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.config.retry_backoff + Duration::from_micros(longer)
     }
 
-    /// Address the current frame as its receiver is now, before each attempt
-    /// (spec "Hand-over"): a neighbour that moved home since the frame was queued, or
-    /// since the last attempt, listens elsewhere, and one whose heartbeat
-    /// has changed between sleepy and not changes its preamble. A receiver no longer in
-    /// its table keeps the address it had.
+    /// Address the current frame as its receiver is now, before each
+    /// attempt (spec "Hand-over"): it may have moved home or turned sleepy
+    /// or not. A receiver no longer in the table keeps the address it had.
     fn readdress(&mut self, now: Instant) -> Option<Outgoing> {
         let mut out = self.queue.current().copied()?;
         let to = out.to;
@@ -2009,7 +1869,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Start listen-before-talk for the current hand-over if it is due and
-    /// the budget lets it (spec "Duty cycle cap": deferred, never dropped).
+    /// the budget lets it; else it is deferred (spec "Duty cycle cap").
     pub(super) fn start_handover(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if !self.handover().is_some_and(|(h, _)| h.due(now)) {
             return false;
@@ -2051,7 +1911,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
-        // The hand-over may have ended meanwhile (spec "Receiving DATA" case 5).
+        // The hand-over may have ended meanwhile.
         let Some(out) = self.queue.current().copied() else {
             return;
         };
@@ -2069,9 +1929,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Listen-before-talk is clear: transmit the current frame, with this
-    /// relay's home channel as it is now (spec "Packet formats" `aux`).
-    /// An owed ACK goes first, and the check is then repeated.
+    /// Listen-before-talk is clear: transmit the current frame with this
+    /// relay's home channel as it is now (spec "Packet formats"). An owed
+    /// ACK goes first, and the check is then repeated.
     fn transmit_current(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         let Some(out) = self.stamp(out, now, emit) else {
             return;
@@ -2117,13 +1977,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The count the current hand-over of `out`, of message `id`, carries
-    /// (spec "Hop count"): stamped at its first transmission as the
-    /// record's highest plus one, repeated by its retries. Stamped when
-    /// queued, a frame would keep a count older than one this relay has
-    /// since received or sent, and a relay that readdressed it would offer
-    /// a count it had already used. `None` past the hop cap, but for a
-    /// delivery: its search has ended, and the cap ends searches, so it
-    /// goes at the cap.
+    /// (spec "Hop count"): stamped at its first transmission, not when
+    /// queued, so it is never older than a count this relay has since
+    /// received or sent. `None` past the hop cap, but for a delivery, whose
+    /// search has ended.
     fn count(&self, id: MsgId, out: &Outgoing) -> Option<u8> {
         if out.transmitted() {
             return Some(out.hops);
@@ -2133,8 +1990,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             "a held message keeps its record"
         );
         match self.records.get(id) {
-            // A sleepy node hands its own message over as fresh work: the
-            // node that takes it is its origin (spec "Hop count").
+            // A sleepy node hands its own message over as fresh work
+            // (spec "Hop count").
             Some(r)
                 if self.anchored_sleepy() && self.own.id == Some(id) && r.parent().is_none() =>
             {
@@ -2152,8 +2009,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match out.kind {
             Kind::Forward | Kind::Return => {
                 // The channel says nothing about the neighbour: the same
-                // neighbour again, after a retry wait (spec "Hand-over"
-                // step 2, roadmap D96, D111).
+                // neighbour again, after a retry wait (spec "Hand-over").
                 let unit = self.retry_unit();
                 let Some((mut h, rng)) = self.handover() else {
                     return;
@@ -2178,9 +2034,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// An ACK arrived: if it answers the current hand-over, the receiver
-    /// took the packet, refused it, or has seen it (spec "The ACK",
-    /// "Bans").
+    /// An ACK arrived (spec "The ACK", "Bans").
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
@@ -2192,13 +2046,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The receiver of the current hand-over has the message's record and
-    /// no copy of it (spec "The ACK", roadmap D90). It is tried, as one
-    /// that took the packet is; a forward is then routed again from the
-    /// record when its turn comes, the same choice a return taken from a
-    /// child gets, so the sender goes on to its next candidate as if the
-    /// receiver had returned the message at once. Nothing is banned and
-    /// no failure is counted. A return has nowhere else to go: the parent
-    /// has gone on without this copy, and it ends here.
+    /// no copy of it (spec "The ACK"): it counts as tried, and a forward
+    /// goes on to its next candidate. A return has nowhere else to go: the
+    /// parent has gone on without this copy, and it ends here.
     fn seen(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if !self
             .in_flight()
@@ -2221,9 +2071,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.drop_msg(id, DropReason::ReturnSeen, emit);
     }
 
-    /// `id` answered this relay (spec "Neighbour table"): traced if it was
-    /// demoted since its last answer, for counting how long a demoted
-    /// neighbour stays silent.
+    /// `id` answered this relay (spec "Neighbour table"); traced if it was
+    /// demoted, to measure how long demoted neighbours stay silent.
     pub(super) fn answer_from(&mut self, id: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {
         let after = self.neighbours.params().demote_after;
         if self
@@ -2236,10 +2085,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.neighbours.answered(id, now);
     }
 
-    /// The receiver `to` of a hand-over of `id` sent at count `hops`
-    /// answered that it has the packet, taken or seen: it is alive and
-    /// tried, and the count is spent (spec "The ACK", "Message records",
-    /// "Hop count").
+    /// The receiver `to` of a hand-over of `id` sent at count `hops` has
+    /// the packet, taken or seen: it is alive and tried, and the count is
+    /// spent (spec "The ACK", "Message records", "Hop count").
     fn tried(
         &mut self,
         id: MsgId,
@@ -2290,9 +2138,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match refusal(out.kind, waits, self.sleepy() && own) {
             // Leaves for the delivery queue, to wait for the refuser.
             Refusal::WaitsForRefuser => self.wait_for(&out, by, now, emit),
-            // Leaves and goes back to its application, which may offer it
-            // again once the wait is over: refused at the origin, it does
-            // not age here.
+            // Back to its application, which may offer it again after the
+            // wait: refused at the origin, it does not age here.
             Refusal::GivenBack => {
                 self.queue.take_current();
                 self.forwarding.feed_due = true;
@@ -2304,16 +2151,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     retry_at: self.own.retry_at,
                 }));
             }
-            // Stays, to be routed again when its turn comes, round the
-            // refuser for the wait it told: its queue that way is full,
-            // and a neighbour with room may sit beside it.
+            // Routed again round the refuser for the wait it told: its
+            // queue that way is full, and a neighbour with room may sit
+            // beside it.
             Refusal::GoesRound => {
                 self.go_round(by);
                 if own {
-                    // Every refusal in a row counts, gone round or not:
-                    // each is a frame and a reply on the full channels
-                    // round the origin, so the origin offers no faster
-                    // for having more neighbours to be refused by.
+                    // Every refusal in a row counts, gone round or not, so
+                    // the origin offers no faster for having more
+                    // neighbours to be refused by.
                     self.own.refusals = self.own.refusals.saturating_add(1);
                     if !self.goes_elsewhere(by, now) {
                         // Each offer costs the refuser a reply and hides its ACKs.
@@ -2329,8 +2175,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     current.tries = 0;
                 }
             }
-            // Stays, waiting for the told wait with the transmissions it
-            // has made: it has no other receiver.
+            // It has no other receiver: it waits the told wait, keeping
+            // its transmissions.
             Refusal::Waits => {
                 let tries = self.handover().map_or(0, |(mut h, _)| h.refused());
                 if let Some(current) = self.queue.current_mut() {
@@ -2388,7 +2234,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::Trace(trace));
     }
 
-    /// Every attempt of the current hand-over went unanswered (spec "Hand-over" step 6).
+    /// Every attempt of the current hand-over went unanswered (spec "Hand-over").
     fn handover_failed(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         let (id, to) = (out.msg_id(), out.to);
         let own_at_anchor = self.sleepy() && out.hops == 0;
@@ -2425,10 +2271,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }));
         }
         match failure(out.kind, own_at_anchor, gone) {
-            // Waits a fade, doubled for each silence in a row, and tries
-            // its anchor again: the ban's ladder would offer it every few
-            // seconds to a node whose channel is full, and a fixed fade
-            // every minute for as long as it waits.
+            // Waits a fade, doubled for each silence in a row: a ban or a
+            // fixed fade would offer it too often to a full channel.
             Failure::OwnAtAnchor => {
                 let neighbour = self.neighbours.by_id(to).map(|(_, n)| *n);
                 let ban = neighbour
@@ -2445,11 +2289,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     current.tries = 0;
                 }
             }
-            // Stays, to be routed again when its turn comes, with fresh
-            // attempts: banned now, the neighbour is waited for while it
-            // ranks first, and the message goes elsewhere once its
-            // demotion makes it a last resort. Most likely the frame, not
-            // the ACK, was lost, so the neighbour stays untried.
+            // Routed again with fresh attempts: the neighbour is waited
+            // for while it ranks first. Most likely the frame, not the ACK,
+            // was lost, so the neighbour stays untried.
             Failure::Forward | Failure::Return => {
                 if let Some(current) = self.queue.current_mut() {
                     current.kind = Kind::Forward;
@@ -2483,13 +2325,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// The current forward, which failed at `to`, has held for `to`
-    /// through its demotion: `to` counts as tried for it while it is
-    /// queued here, so that its search goes on, to the next candidate or
-    /// back to its parent. A link that works one way, the only candidate
-    /// left, would otherwise hold the message for as long as its
-    /// heartbeats keep its entry (spec "Next hop"). Not in the record:
-    /// `to` does not have the message, and a copy it offers later is no
-    /// return (spec "Receiving DATA").
+    /// through its demotion: `to` counts as tried while it is queued here,
+    /// else a one-way link, the only candidate left, would hold it as long
+    /// as its heartbeats keep its entry (spec "Next hop"). Not in the
+    /// record: `to` does not have the message, so a copy it offers later
+    /// is no return.
     fn passed_if_demoted(&mut self, to: NodeId, now: Instant) {
         let Some((slot, n)) = self.neighbours.by_id(to) else {
             return;
@@ -2522,8 +2362,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// Where the forward of `m` would go if routed now: its next hop, or
-    /// its parent once none is left (spec "Next hop", "Return to parent").
+    /// Where the forward of `m` would go if routed now
+    /// (spec "Next hop", "Return to parent").
     fn goes_to(&self, m: &Message, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
         let record = self.records.get(m.id())?;
         self.next_hop(record, passed, avoid, (m.dst_id, m.dst_pos), now)
@@ -2543,9 +2383,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- The owed reply (spec "The ACK") ---
 
-    /// Send the owed reply, if it is ready, at once: its sender is
-    /// listening for it (spec "The ACK"). Without budget for it the relay
-    /// cannot reply (spec "Duty cycle cap"); the reply is abandoned.
+    /// Send the owed reply if it is ready (spec "The ACK"); without budget
+    /// it is abandoned (spec "Duty cycle cap").
     pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         let due = self.radio.reply_due(now);
         self.note_untaken(emit);
