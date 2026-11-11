@@ -495,10 +495,7 @@ pub async fn reboot() -> ! {
 }
 
 #[cfg(not(feature = "console"))]
-pub use phone::{note_power, Phone};
-
-#[cfg(not(feature = "console"))]
-use phone::power;
+pub use phone::{holds_slot, note_power, power, Phone};
 
 #[cfg(not(feature = "console"))]
 mod phone;

@@ -69,6 +69,7 @@ version = "0.1.0"
 dependencies = [
  "bark-app-layer",
  "bark-driver",
+ "bark-fw-logic",
  "bark-image",
  "bark-link",
  "bark-proto",
@@ -94,6 +95,13 @@ dependencies = [
  "panic-persist",
  "static_cell",
  "trouble-host",
+]
+
+[[package]]
+name = "bark-fw-logic"
+version = "0.1.0"
+dependencies = [
+ "bark-image",
 ]
 
 [[package]]

@@ -15,6 +15,7 @@
 use core::mem::MaybeUninit;
 
 use bark_driver::{App, Driver, Outgoing, Ready, Request};
+use bark_fw_logic::install::{Install, Seen};
 use bark_link::Status;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{AppEvent, BatteryLevels, Config, Core, Event, Instant, Position, Stored};
@@ -641,6 +642,7 @@ pub async fn run<'a>(
     if let Some(id) = bark_driver::BENCH_DEAF_TO {
         log::warn!("bench build: deaf to {:02x?} (BARK_IGNORE)", id.0);
     }
+    let mut install = Install::new();
     let mut report_at = embassy_time::Instant::now() + REPORT_EVERY;
     let mut first_report = true;
     loop {
@@ -665,9 +667,12 @@ pub async fn run<'a>(
         // since the told status is a notification not yet sent, the reboot
         // waits for it.
         let staged = crate::update::mesh::staged();
-        let moment = crate::update::mesh::moment(core.drained(now), !crate::mailbox::idle());
-        let installing = staged.filter(|_| bark_image::policy::drains(moment));
-        let status = status(core, now, driver.app().battery_mv, installing);
+        let seen = seen(core, now);
+        let moment = install.moment(seen, embassy_time::Instant::now(), |now, t| {
+            (now - t).as_millis()
+        });
+        let plan = bark_fw_logic::install::plan(staged, moment);
+        let status = status(core, now, driver.app().battery_mv, plan.installing);
         crate::update::note_power(crate::update::Power {
             external: status.external_power,
             battery_mv: core.battery_millivolts(driver.app().battery_mv),
@@ -686,10 +691,14 @@ pub async fn run<'a>(
         crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
         // At the quiet moment the node keeps what the core still holds and
         // its tables, and ends the phones' links first.
-        if let Some(version) = staged {
+        if let (Some(version), Some(want)) = (staged, plan.drain) {
             let core = &driver.core().0;
-            crate::update::mesh::drain(bark_image::policy::drains(moment), core.draining());
-            if bark_image::policy::quiet(moment) {
+            if let Some(want) = install.ask(want, core.draining()) {
+                if crate::update::mesh::ask_drain(want) {
+                    install.asked(want);
+                }
+            }
+            if plan.reboot {
                 log::info!(
                     "update: rebooting into version {} at a quiet moment",
                     version
@@ -755,6 +764,21 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} restarts={} res
                 Drain(driver.core().0, now)
             );
         }
+    }
+}
+
+/// What the node is doing as a step ends, for the install's moment
+/// (`bark_fw_logic::install`).
+fn seen(core: &Role, now: Instant) -> Seen {
+    let drained = core.drained(now);
+    let writing = !crate::mailbox::idle();
+    let power = crate::update::power();
+    Seen {
+        links: crate::ble::doing(),
+        drained,
+        writing,
+        phone_update: crate::update::holds_slot(),
+        swap_allowed: crate::update::swap_allowed(power),
     }
 }
 

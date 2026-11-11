@@ -20,7 +20,7 @@ use bark_driver::Request;
 use bark_image::code::{Encoder, PIECE};
 use bark_image::layout::{ACTIVE, RECORD, STATE};
 use bark_image::pieces::{self, Begin, Poll, Store, Table, Tabling};
-use bark_image::policy::{self, Moment};
+use bark_image::policy;
 use bark_image::{sign, Header, HEADER_LEN};
 use bark_proto::update::{Image, Piece};
 use bark_proto::wire::{Packet, Update, PIECE_BYTES, PIECE_HEADER_LEN};
@@ -202,11 +202,6 @@ pub fn staged() -> Option<u32> {
     }
 }
 
-/// Since when the node has drained with its core drained, waiting for
-/// its mailbox and its phones ([`moment`]).
-static WAITING: Mutex<ThreadModeRawMutex, Cell<Option<embassy_time::Instant>>> =
-    Mutex::new(Cell::new(None));
-
 // The write bound is the mailbox's queue at the flash's longest op.
 const _: () = assert!(
     policy::WRITE_WAIT_MS
@@ -214,50 +209,17 @@ const _: () = assert!(
             / 1000
 );
 
-/// What the node is doing as it would reboot into the staged image
-/// ([`policy::quiet`]): `drained`, whether its core may reboot
-/// (`Relay::drained`); `writing`, whether its mailbox writes; and how
-/// long it has waited for them and its phones since both held.
-pub fn moment(drained: bool, writing: bool) -> Moment {
-    let power = super::power();
-    let mut m = Moment {
-        links: crate::ble::doing(),
-        drained,
-        writing,
-        phone_update: super::phone::holds_slot(),
-        swap_allowed: super::swap_allowed(power),
-        waited_ms: 0,
-    };
-    let now = embassy_time::Instant::now();
-    let since = WAITING.lock(|w| {
-        let since = (drained && policy::drains(m)).then(|| w.get().unwrap_or(now));
-        w.set(since);
-        since
-    });
-    m.waited_ms = since.map_or(0, |t| (now - t).as_millis());
-    m
-}
-
-/// The drain asked of the core and not yet seen there, so that it is
-/// asked once.
-static DRAIN_ASKED: Mutex<CriticalSectionRawMutex, Cell<Option<bool>>> =
-    Mutex::new(Cell::new(None));
-
-/// Ask the core to drain, or to take messages again, if `want` is not
-/// what it does: through the requests, which wakes the driver's step.
-pub fn drain(want: bool, draining: bool) {
-    let asked = DRAIN_ASKED.lock(|a| a.get());
-    if want == draining {
-        DRAIN_ASKED.lock(|a| a.set(None));
-        return;
-    }
-    if asked != Some(want) && FOR_CORE.try_send(Request::Drain(want)).is_ok() {
-        DRAIN_ASKED.lock(|a| a.set(Some(want)));
+/// Ask the core to drain, or to take messages again, through the
+/// requests, which wakes the driver's step; whether the ask went in.
+pub fn ask_drain(want: bool) -> bool {
+    let sent = FOR_CORE.try_send(Request::Drain(want)).is_ok();
+    if sent {
         match want {
             true => log::info!("update: draining for the reboot: the node takes no message"),
             false => log::info!("update: taking messages again until the reboot may come"),
         }
     }
+    sent
 }
 
 // The phone's side (`phone.rs`).
