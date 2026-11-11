@@ -611,9 +611,11 @@ version, `oldestNode` (roadmap D188). The node says in Node the oldest
 app version it serves. The app reads Node first and goes on only when
 each side's version is at least the other's oldest (spec "Phone link",
 Versions; roadmap D177); otherwise it closes the link and says which
-side to update: "This app is too old for this node: update the app.",
-or "This node's firmware is too old for this app: update the node." It
-then writes Recipient with the
+node and which side to update: "ID 275C1AB9BAC7 needs a newer app.
+Update the app.", or "ID 275C1AB9BAC7 needs newer firmware. Update the
+node." The search may take the phone to another node at once, so the
+notice stays there until the person dismisses it or the phone links to
+that node. To a node it serves, the app then writes Recipient with the
 tag, its own link version and `oldestNode`, and the person's name from
 their card on an owner's link,
 cut to 32 bytes at a character's end; a guest writes no name, as the

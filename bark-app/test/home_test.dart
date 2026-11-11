@@ -162,7 +162,7 @@ void main() {
       app.connectFake();
       async.flushMicrotasks();
       expect(f.homeKey, isNull);
-      expect(app.session.notice, contains('no longer keeps your mail'));
+      expect(app.session.notice?.text, contains('no longer keeps your mail'));
       expect(app.homeKeyGone, isTrue);
       expect(
         said(async, app.makeHome(app.session.address!)),
