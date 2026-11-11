@@ -262,6 +262,12 @@ typedef NeighbourTable = ({
   DateTime at,
 });
 
+/// Something worth telling the person; `about` names the node it is
+/// about, when it says that node cannot be used, as the phone may then
+/// be on another: it stays until dismissed or a link to that node is
+/// attached. Any other goes at the next link attached.
+typedef Notice = ({String text, String? about});
+
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
 
@@ -372,7 +378,7 @@ class Session extends ChangeNotifier {
   DateTime? _statusAt;
 
   /// The last thing worth telling the person.
-  String? notice;
+  Notice? notice;
 
   final List<Outgoing> outbox = [];
   final List<Received> received = [];
@@ -485,8 +491,8 @@ class Session extends ChangeNotifier {
   void _badValue(Object e) =>
       _tell('The node sent a value this app cannot read: $e');
 
-  void _tell(String s) {
-    notice = s;
+  void _tell(String s, {String? about}) {
+    notice = (text: s, about: about);
     note(s);
     notifyListeners();
   }
@@ -525,14 +531,15 @@ class Session extends ChangeNotifier {
         'Node: ${nodeName(n.id)}, link version ${n.version}, oldest '
         '${n.oldest}; this app $linkVersion, oldest $oldestNode',
       );
-      _tell(notServedLine(n));
+      _tell(notServedLine(n), about: nodeName(n.id));
       return false;
     }
     node = n;
     _link = link;
     this.guest = guest;
     guestRead = false;
-    notice = null;
+    final about = notice?.about;
+    if (about == null || about == nodeName(n.id)) notice = null;
     note(
       'Node: ${nodeName(n.id)}, link version ${n.version}, image ${n.image}'
       '${nodeNewer ? ', newer than this app\'s $linkVersion' : ''}'
@@ -649,7 +656,7 @@ class Session extends ChangeNotifier {
         return true;
       }
       await link.close();
-      _tell(notServedLine(n));
+      _tell(notServedLine(n), about: nodeName(n.id));
       return false;
     } catch (e) {
       note('Recipient: $e');

@@ -240,10 +240,13 @@ void main() {
     expect(servesEachOther(node(linkVersion + 2, linkVersion + 1)), isFalse);
     expect(
       notServedLine(node(linkVersion + 2, linkVersion + 1)),
-      contains('update the app'),
+      '${nodeLabel(to)} needs a newer app. Update the app.',
     );
     expect(servesEachOther(node(oldestNode - 1, 0)), isFalse);
-    expect(notServedLine(node(oldestNode - 1, 0)), contains('update the node'));
+    expect(
+      notServedLine(node(oldestNode - 1, 0)),
+      '${nodeLabel(to)} needs newer firmware. Update the node.',
+    );
   });
 
   // bark-link/src/phones.rs, `PhonesWrite::encode`, `Phones::page`,

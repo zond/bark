@@ -12,6 +12,7 @@ import 'package:bark_app/contacts.dart';
 import 'package:bark_app/conversations.dart';
 import 'package:bark_app/emojis.dart';
 
+import 'fake_ble.dart' show OtherNode;
 import 'fake_node.dart';
 
 import 'package:bark_app/link.dart';
@@ -862,7 +863,7 @@ void main() {
       final node = fake(linkVersion + 2, oldest: linkVersion + 1);
       expect(attached(async, s, node), isFalse);
       expect(s.connected, isFalse);
-      expect(s.notice, contains('update the app'));
+      expect(s.notice?.text, contains('Update the app'));
       node.dispose();
       s.dispose();
     });
@@ -881,8 +882,41 @@ void main() {
       )..oldest = linkVersion + 1;
       expect(attached(async, s, node), isFalse);
       expect(s.connected, isFalse);
-      expect(s.notice, contains('update'));
+      expect(s.notice?.text, contains('Update'));
       node.dispose();
+      s.dispose();
+    });
+  });
+
+  test('a node the app does not serve is named in a notice that stays on '
+      'another node, until dismissed or that node is linked', () {
+    fakeAsync((async) {
+      final s = session();
+      final home = fake(linkVersion);
+      final other =
+          OtherNode(now: () => start, sodium: sodium, app: List.filled(32, 1))
+            ..version = linkVersion + 2
+            ..oldest = linkVersion + 1;
+      const said = 'ID 0CE400000002 needs a newer app. Update the app.';
+      expect(attached(async, s, other), isFalse);
+      expect(s.notice?.text, said);
+      // The search takes the phone back to its home.
+      expect(attached(async, s, home), isTrue);
+      expect(s.notice?.text, said);
+      s.dismissNotice();
+      expect(s.notice, isNull);
+      s.disconnect();
+      async.flushMicrotasks();
+      expect(attached(async, s, other), isFalse);
+      expect(s.notice?.text, said);
+      // Updated, the node is linked, and what was said of it goes.
+      other
+        ..version = linkVersion
+        ..oldest = linkVersion;
+      expect(attached(async, s, other), isTrue);
+      expect(s.notice, isNull);
+      home.dispose();
+      other.dispose();
       s.dispose();
     });
   });
@@ -893,7 +927,7 @@ void main() {
       final node = fake(oldestNode - 1);
       expect(attached(async, s, node), isFalse);
       expect(s.connected, isFalse);
-      expect(s.notice, contains('update the node'));
+      expect(s.notice?.text, contains('Update the node'));
       node.dispose();
       s.dispose();
     });

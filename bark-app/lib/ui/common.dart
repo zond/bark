@@ -239,7 +239,7 @@ class NoticeCard extends StatelessWidget {
     return Card(
       color: Theme.of(context).colorScheme.errorContainer,
       child: ListTile(
-        title: Text(n),
+        title: Text(n.text),
         trailing: IconButton(
           icon: const Icon(Icons.close),
           onPressed: app.session.dismissNotice,
