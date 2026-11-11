@@ -109,6 +109,15 @@ pub struct LinkApp<'a> {
     /// The mailbox's reply the core holds, to tell its given back from
     /// the phone's.
     replying: Option<bark_proto::MsgId>,
+    kept: &'a mut Kept,
+}
+
+/// What the node's loop keeps on the external flash beside the core: what
+/// it held across the reboot into a gathered image (`carry.rs`) and the
+/// battery's discharge log (`discharge.rs`).
+pub struct Kept {
+    pub carry: crate::carry::Carry,
+    pub discharge: crate::discharge::Log,
 }
 
 /// The core's inbox's oldest message, into the ring, every node's (spec
@@ -171,7 +180,7 @@ impl App for LinkApp<'_> {
     async fn battery(&mut self) -> Option<u16> {
         let mv = self.battery.read().await;
         self.battery_mv = mv;
-        crate::discharge::read(mv);
+        self.kept.discharge.read(mv);
         Some(mv)
     }
 
@@ -222,7 +231,7 @@ impl App for LinkApp<'_> {
     /// then the phone's message, then the mailbox's reply (spec "Mailbox").
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         // What the network took before a reboot goes before what is new.
-        if let Some(out) = crate::carry::take(payload) {
+        if let Some(out) = self.kept.carry.take(payload) {
             return Some(out);
         }
         self.phone_message(payload).or_else(|| {
@@ -255,7 +264,7 @@ impl App for LinkApp<'_> {
             AppEvent::Message { msg_id } => log::info!("message id={:08x}", msg_id.0),
             // The person is to be told and may send again after the wait
             // (spec "A sleepy node's own message").
-            AppEvent::GivenBack { msg_id, .. } if crate::carry::given_back(*msg_id) => {
+            AppEvent::GivenBack { msg_id, .. } if self.kept.carry.given_back(*msg_id) => {
                 log::info!("carry: id={:08x} given back", msg_id.0);
             }
             AppEvent::GivenBack { msg_id, .. } if self.replying == Some(*msg_id) => {
@@ -663,12 +672,20 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
     relay
 }
 
-/// Run the core forever.
+/// The driver on the board.
+type NodeDriver<'a> = Driver<Static, Radio<'a>, &'a Clock, LinkApp<'a>>;
+
+/// Run the core forever: after each step of the driver, the node's loop
+/// places the core's inbox's head in the ring, publishes what the phones
+/// and the screen show, serves the phone's read, drains and reboots for
+/// an image gathered over the mesh, keeps its flash tidy and logs its
+/// counters every [`REPORT_EVERY`].
 pub async fn run<'a>(
     core: &'static mut Role,
     deaf: bool,
     radio: Radio<'a>,
     battery: Battery<'a>,
+    kept: &'a mut Kept,
     config: &Config,
     clock: &'a Clock,
 ) -> ! {
@@ -681,8 +698,31 @@ pub async fn run<'a>(
         power: None,
         placing: None,
         replying: None,
+        kept,
     };
     let mut driver = Driver::new(Static { core, deaf }, radio, clock, app, dbm);
+    log_start(config, dbm);
+    let mut install = Install::new();
+    let mut report = Report::new();
+    loop {
+        if driver.step().await.is_err() {
+            Timer::after(RETRY_PAUSE).await;
+        }
+        let now = bark_driver::Clock::now(&clock);
+        place_inbox_head(&mut driver);
+        if let Some(version) = publish(&mut driver, &mut install, now) {
+            reboot_into(driver.core().core, version).await;
+        }
+        let sleepy = driver.core().core.sleepy();
+        let kept = &mut *driver.app_mut().kept;
+        kept.carry.tidy().await;
+        kept.discharge.note(sleepy).await;
+        report.log_if_due(&driver, now);
+    }
+}
+
+/// The node's first lines, and a bench build's.
+fn log_start(config: &Config, dbm: i8) {
     log::info!(
         "node id={:02x?} at {} power_dbm={} usb={}",
         config.node_id.0,
@@ -699,128 +739,162 @@ pub async fn run<'a>(
     if let Some(id) = bark_driver::BENCH_DEAF_TO {
         log::warn!("bench build: deaf to {:02x?} (BARK_IGNORE)", id.0);
     }
-    let mut install = Install::new();
-    let mut report_at = embassy_time::Instant::now() + REPORT_EVERY;
-    let mut first_report = true;
-    loop {
-        if driver.step().await.is_err() {
-            Timer::after(RETRY_PAUSE).await;
+}
+
+/// Every message is placed in the ring one at a time, each confirmed to
+/// the core once it is (`request`); the phones read their own from the
+/// ring.
+fn place_inbox_head(driver: &mut NodeDriver<'_>) {
+    let head = driver.core().core.inbox().map(|(id, p)| {
+        let mut payload = [0; MAX_PAYLOAD];
+        payload[..p.len()].copy_from_slice(p);
+        (id, p.len() as u8, payload)
+    });
+    let oldest = head.as_ref().map(|(id, n, p)| (*id, &p[..usize::from(*n)]));
+    driver.app_mut().place(oldest);
+}
+
+/// After a step: the status and the power published, the phone's read
+/// served, the screen's state published, the phone's request answered,
+/// and the install's drain asked; the version to reboot into, at a quiet
+/// moment.
+///
+/// An image gathered over the mesh and staged: the node drains, and the
+/// reboot into it waits for a moment that loses nothing
+/// (`bark_image::policy`). The phones are told while it drains, and since
+/// the told status is a notification not yet sent, the reboot waits for
+/// it.
+fn publish(
+    driver: &mut NodeDriver<'_>,
+    install: &mut Install<embassy_time::Instant>,
+    now: Instant,
+) -> Option<u32> {
+    let core = &driver.core().core;
+    let staged = crate::update::mesh::staged();
+    let seen = seen(core, now);
+    let moment = install.moment(seen, embassy_time::Instant::now(), |now, t| {
+        (now - t).as_millis()
+    });
+    let plan = bark_fw_logic::install::plan(staged, moment);
+    publish_status(core, now, driver.app().battery_mv, plan.installing);
+    serve_reads(core, now);
+    crate::display::publish(screen(core, now));
+    // A request the step was woken for and did not take is answered no: a
+    // message the core does not take now.
+    crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
+    let core = &driver.core().core;
+    let (version, want) = staged.zip(plan.drain)?;
+    if let Some(want) = install.ask(want, core.draining()) {
+        if crate::update::mesh::ask_drain(want) {
+            install.asked(want);
         }
-        let now = bark_driver::Clock::now(&clock);
-        // Every message is placed in the ring one at a time, each confirmed
-        // to the core once it is (`request`); the phones read their own
-        // from the ring.
-        let head = driver.core().core.inbox().map(|(id, p)| {
-            let mut payload = [0; MAX_PAYLOAD];
-            payload[..p.len()].copy_from_slice(p);
-            (id, p.len() as u8, payload)
-        });
-        let oldest = head.as_ref().map(|(id, n, p)| (*id, &p[..usize::from(*n)]));
-        driver.app_mut().place(oldest);
-        let core = &driver.core().core;
-        // An image gathered over the mesh and staged: the node drains, and
-        // the reboot into it waits for a moment that loses nothing
-        // (`bark_image::policy`). The phones are told while it drains, and
-        // since the told status is a notification not yet sent, the reboot
-        // waits for it.
-        let staged = crate::update::mesh::staged();
-        let seen = seen(core, now);
-        let moment = install.moment(seen, embassy_time::Instant::now(), |now, t| {
-            (now - t).as_millis()
-        });
-        let plan = bark_fw_logic::install::plan(staged, moment);
-        let status = status(core, now, driver.app().battery_mv, plan.installing);
-        crate::update::note_power(crate::update::Power {
-            external: status.external_power,
-            battery_mv: core.battery_millivolts(driver.app().battery_mv),
-        });
-        publish_ring(status);
-        let core = &driver.core().core;
-        crate::ble::serve_read(|r, b| match *r {
-            crate::ble::Request::Neighbours(from) => neighbours_page(core, now, from, b),
-            crate::ble::Request::Inbox { record, .. } => inbox_message(record, b),
-            crate::ble::Request::Guest { tag, after, .. } => guest_item(tag, after, b),
-            _ => 0,
-        });
-        crate::display::publish(screen(core, now));
-        // A request the step was woken for and did not take is answered
-        // no: a message the core does not take now.
-        crate::ble::answer(core::mem::take(&mut driver.app_mut().serving));
-        // At the quiet moment the node keeps what the core still holds and
-        // its tables, and ends the phones' links first.
-        if let (Some(version), Some(want)) = (staged, plan.drain) {
-            let core = &driver.core().core;
-            if let Some(want) = install.ask(want, core.draining()) {
-                if crate::update::mesh::ask_drain(want) {
-                    install.asked(want);
-                }
-            }
-            if plan.reboot {
-                log::info!(
-                    "update: rebooting into version {} at a quiet moment",
-                    version
-                );
-                // One moment for all that is kept, which the tables'
-                // header times from.
-                let taken = embassy_time::Instant::now();
-                let now = crate::clock::core(taken);
-                if core.held(now).next().is_some() {
-                    crate::carry::keep(core.held(now)).await;
-                }
-                crate::ble::close_all().await;
-                // Last, so that the time it took is known after the reset.
-                crate::tables::keep(core, taken).await;
-                crate::update::reboot().await;
-            }
+    }
+    plan.reboot.then_some(version)
+}
+
+/// What the phones read of the node, and the power the update checks.
+fn publish_status(core: &Role, now: Instant, battery_mv: u16, installing: Option<u32>) {
+    let status = status(core, now, battery_mv, installing);
+    crate::update::note_power(crate::update::Power {
+        external: status.external_power,
+        battery_mv: core.battery_millivolts(battery_mv),
+    });
+    publish_ring(status);
+}
+
+/// The value a phone reads now, if it asks for one of the core's
+/// (`ble::serve_read`).
+fn serve_reads(core: &Role, now: Instant) {
+    crate::ble::serve_read(|r, b| match *r {
+        crate::ble::Request::Neighbours(from) => neighbours_page(core, now, from, b),
+        crate::ble::Request::Inbox { record, .. } => inbox_message(record, b),
+        crate::ble::Request::Guest { tag, after, .. } => guest_item(tag, after, b),
+        _ => 0,
+    });
+}
+
+/// At the quiet moment the node keeps what the core still holds and its
+/// tables, ends the phones' links first, and reboots into `version`.
+async fn reboot_into(core: &Role, version: u32) -> ! {
+    log::info!(
+        "update: rebooting into version {} at a quiet moment",
+        version
+    );
+    // One moment for all that is kept, which the tables' header times
+    // from.
+    let taken = embassy_time::Instant::now();
+    let now = crate::clock::core(taken);
+    if core.held(now).next().is_some() {
+        crate::carry::keep(core.held(now)).await;
+    }
+    crate::ble::close_all().await;
+    // Last, so that the time it took is known after the reset.
+    crate::tables::keep(core, taken).await;
+    crate::update::reboot().await
+}
+
+/// The periodic report: the driver's counters every [`REPORT_EVERY`], the
+/// first time after the boot's facts.
+struct Report {
+    at: embassy_time::Instant,
+    first: bool,
+}
+
+impl Report {
+    fn new() -> Report {
+        Report {
+            at: embassy_time::Instant::now() + REPORT_EVERY,
+            first: true,
         }
-        crate::carry::tidy().await;
-        crate::discharge::note(driver.core().core.sleepy()).await;
-        if embassy_time::Instant::now() >= report_at {
-            report_at += REPORT_EVERY;
-            if core::mem::take(&mut first_report) {
-                let mut facts = crate::boot::facts();
-                facts.display = crate::display::OUTCOME.lock(core::cell::Cell::get);
-                // A map point keeps the GPS at rest by rule (spec
-                // "Position").
-                let map_point = driver.core().core.on_map_point();
-                log::info!("boot: {} map_point={}", facts, map_point);
-            }
-            let s = driver.stats();
-            let r = driver.radio().stats();
-            let t = driver.radio().cold();
-            let restart = driver.radio().restart();
-            log::info!(
-                "driver events={} frames={} failed={} failed_header={} failed_crc={} failed_timeout={} held={} radio_errors={} recoveries={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} own_readies={} \
+    }
+
+    fn log_if_due(&mut self, driver: &NodeDriver<'_>, now: Instant) {
+        if embassy_time::Instant::now() < self.at {
+            return;
+        }
+        self.at += REPORT_EVERY;
+        if core::mem::take(&mut self.first) {
+            let mut facts = crate::boot::facts();
+            facts.display = crate::display::OUTCOME.lock(core::cell::Cell::get);
+            // A map point keeps the GPS at rest by rule (spec "Position").
+            let map_point = driver.core().core.on_map_point();
+            log::info!("boot: {} map_point={}", facts, map_point);
+        }
+        let s = driver.stats();
+        let r = driver.radio().stats();
+        let t = driver.radio().cold();
+        let restart = driver.radio().restart();
+        log::info!(
+            "driver events={} frames={} failed={} failed_header={} failed_crc={} failed_timeout={} held={} radio_errors={} recoveries={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} own_readies={} \
 resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} restarts={} restart_us={} restart_errors={} stack_used={} unserved={} update={}{}{}",
-                s.events,
-                s.frames,
-                s.failed,
-                s.failed_header,
-                s.failed_crc,
-                s.failed_timeout,
-                s.held,
-                s.radio_errors,
-                s.recoveries,
-                s.sniffs,
-                s.longest_handle.as_micros(),
-                s.longest_away.as_micros(),
-                s.empty_readies,
-                s.own_readies,
-                r.resets,
-                r.configured,
-                r.cold_starts,
-                t.delay.as_micros(),
-                t.errors,
-                r.restarts,
-                driver.radio().restart_delay().as_micros(),
-                restart.errors,
-                crate::stack::used(),
-                s.unserved,
-                crate::update::mesh::phase(),
-                Time(crate::utc::time()),
-                Drain(driver.core().core, now)
-            );
-        }
+            s.events,
+            s.frames,
+            s.failed,
+            s.failed_header,
+            s.failed_crc,
+            s.failed_timeout,
+            s.held,
+            s.radio_errors,
+            s.recoveries,
+            s.sniffs,
+            s.longest_handle.as_micros(),
+            s.longest_away.as_micros(),
+            s.empty_readies,
+            s.own_readies,
+            r.resets,
+            r.configured,
+            r.cold_starts,
+            t.delay.as_micros(),
+            t.errors,
+            r.restarts,
+            driver.radio().restart_delay().as_micros(),
+            restart.errors,
+            crate::stack::used(),
+            s.unserved,
+            crate::update::mesh::phase(),
+            Time(crate::utc::time()),
+            Drain(driver.core().core, now)
+        );
     }
 }
 

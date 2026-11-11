@@ -666,15 +666,24 @@ async fn node_radio(n: NodeRadio) {
             radio_up(&radio, &clock, t0);
             ext_flash::init(n.flash);
             mailbox::open();
-            discharge::open();
+            let discharge = discharge::Log::open();
             let boot = update::started(n.shared);
             let ago = tables::restore(n.core, boot.swapped).await;
             // Unknown, the time away is taken as the delivery TTL: a queued
             // message is then stale, never fresher than it is.
             let ago = ago.unwrap_or(n.core.config().delivery_ttl);
-            carry::put_back(n.core, ago).await;
+            // The loop's, held here so that one copy lies in this task's
+            // future, not one in each of the two futures.
+            let mut kept = node::Kept {
+                carry: carry::Carry::new(),
+                discharge,
+            };
+            kept.carry.put_back(n.core, ago).await;
             ble::MAY_START.signal(());
-            node::run(n.core, boot.deaf, radio, n.battery, &n.config, &clock).await;
+            node::run(
+                n.core, boot.deaf, radio, n.battery, &mut kept, &n.config, &clock,
+            )
+            .await;
         }
         // Without a radio USB and the log keep running so the error can be
         // read, and the phone link still comes up, so the node can be found,
