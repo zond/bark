@@ -1,189 +1,27 @@
-//! Forwarding (spec "Forwarding"): the node's part of the depth-first search, the
-//! owner rule, and the per-hop transfer of its send queue.
+//! Forwarding (spec "Forwarding"): what a node does with a DATA addressed
+//! to it, and the hand-overs of its send queue.
 //!
-//! A node owns a message addressed to its own ID wherever it is (spec
-//! "Owner"). A message that reaches the owner of its position and is for
-//! another node waits in the delivery queue until that node, a sleepy one
-//! this node hears, listens (`relay/delivery.rs`); it goes to it as DATA
-//! in the send queue, a hand-over like any other. A sleepy node holds mail
-//! for nobody, so it owns no other node's message and forwards it (spec
-//! "Sleepy nodes"); nor does a sleepy neighbour closer to a destination
-//! keep the owner rule from holding here. The same holds for a carried
-//! node, which also holds mail for nobody (`relay/motion.rs`).
+//! First the types a received DATA is judged by, and three pure functions
+//! that say where a queued entry stands after a failed hand-over
+//! (`failure`), a refused one (`refusal`) and a routing (`way`), with
+//! their table tests at the end of the file. Then the node's methods, in
+//! sections:
 //!
-//! A sleepy neighbour with an anchor is a next hop only as a last resort,
-//! where no other neighbour is left that could take the message but for
-//! a ban, and every DATA to a sleepy neighbour carries the long preamble
-//! (spec "Next hop"). The node a message is addressed to goes first,
-//! though carried and stale, but a sleepy one with an anchor stays a
-//! last resort.
+//! - the send queue's bookkeeping: the hand-over in flight, the wait a
+//!   refusal tells, the gate and admission (spec "Send queue", "Bans");
+//! - the owner and the next hop (spec "Owner", "Next hop");
+//! - receiving DATA, judged when it arrives and checked again when its
+//!   take is final, and messages that enter the send queue from the
+//!   delivery queue (spec "Receiving DATA", "The ACK", "Delivery queue");
+//! - the application's own message (spec "Addresses", "Receiving DATA");
+//! - the hand-over: routing an entry, stamping its count, and what an
+//!   answer or a silence makes of it (spec "Hand-over", "Hop count",
+//!   "Return to parent", "Overload waits");
+//! - the owed reply (spec "The ACK") and the timers.
 //!
-//! # Receiving a DATA packet (spec "Receiving DATA")
-//!
-//! [`Relay::data`] classifies the packet by the six cases of spec "Receiving DATA" in
-//! order and decides whether acting on it is work: sending it on, which
-//! may be a forward or a return, or a delivery. Work to send on first
-//! passes the gate ([`Relay::gate`]): it is routed as it would be from
-//! here now, and so is every message queued, and it is refused if those
-//! that go to the same next hop take longer than [`HOP_WAIT`] to go, by
-//! that neighbour's service time, and one has a count as high or higher,
-//! told when its place in that neighbour's line will be within the budget
-//! (spec "Send queue", "Bans"). It then goes into the
-//! send queue's regular room if it has a place and the bucket holds the
-//! ACK, the airtime of everything queued with the new frame, and the reply
-//! reserve (spec "Receiving DATA", roadmap D29); else into a free hop place numbered no
-//! higher than the packet's count (roadmap D31); else it is refused with
-//! an ACK that says so. A sleepy node's own message, count 0, is refused
-//! too while every neighbour is banned (roadmap D34); one already in the
-//! network is not, since the hop places keep nodes from locking up only
-//! if it moves on.
-//! A new message also needs a place for its record,
-//! which the size of the table guarantees (`tables/records.rs`). A
-//! delivery is refused when
-//! the delivery queue is full, or when the bucket holds less than the
-//! reply reserve and an ACK (`tables/budget.rs`). Otherwise the ACK is
-//! owed before acting. A packet that gives no work (cases 1, 3, 4 and 6)
-//! is ACKed from the reply reserve: the message has arrived, the packet
-//! was answered already, a copy held here goes on, or the copy is seen
-//! (below), and a refusal would send its sender on with a second copy. A
-//! relay that cannot afford even the reply stays silent, and its sender
-//! retries.
-//!
-//! A relay owes one reply at a time (`transfer::REPLIES`, roadmap D29). A
-//! packet that arrives while it owes another one, its ACK still waiting
-//! for the channel, is neither taken nor refused: the relay says nothing,
-//! and the sender's retry brings the packet again. A copy of the packet
-//! the owed reply answers is answered by it too.
-//!
-//! The ACK goes at once, without listening first, and the take is final
-//! only when it has gone out: the reply carries the DATA, and the relay
-//! acts on it at the ACK's `TxDone` ([`Relay::taken`]); an ACK that
-//! cannot go out, for want of budget, leaves the packet untaken,
-//! reported as refused for `DropReason::Unanswered`, and the sender's
-//! retry brings it again: a take the sender does not know of would leave
-//! a second copy searching (spec "The ACK", roadmap D93).
-//!
-//! A packet is ACKed without being acted on only where that cannot end the
-//! last copy (roadmap D35). A copy from a node this relay did not hand
-//! the message to, while it holds none, is answered seen (case 6, roadmap
-//! D90): the ACK's seen flag says the relay has the record and no copy,
-//! and the sender keeps the copy, marks this relay tried and goes on, so
-//! a split's copies do not start the search again at every relay they
-//! reach, and no copy ends. The relay counts the sender as tried too: it
-//! has the message, and searches on from its own record. The same packet
-//! again, its seen answer lost, is answered seen again. A return, from a
-//! node in the record's `handed` set or the one being handed to, is taken
-//! on with this relay's own search (case 5), as is a copy for a
-//! destination this relay owns now. A hand-over under way whose frame has
-//! been on air does not count as a copy held here: its receiver may have
-//! taken it, the ACK been lost, and the copy now offered be that one come
-//! back. A message delivered here, or waiting in the delivery queue, is only
-//! ACKed whatever its record says: the delivered window and the delivery
-//! queue remember it, and its record may have made way for newer ones
-//! (spec "Owner").
-//!
-//! # The send queue (spec "Send queue")
-//!
-//! Every packet this relay sends for a message goes through the send
-//! queue, one hand-over in flight at a time ([`IN_FLIGHT`]); each place
-//! carries its own hand-over ([`HandOver`]). A forward is addressed
-//! when its hand-over starts, by the one next-hop function of spec "Next hop",
-//! from the state as it is then; with no candidate left it becomes a
-//! return to the parent, or at the origin a drop. Nothing of the choice
-//! is kept once the hand-over ends: the next routing makes it afresh.
-//! The hop count a packet
-//! carries is stamped at each hand-over's first transmission, the record's
-//! highest count plus one, and repeated by its retries (spec "Hop count").
-//!
-//! Where a frame goes is read at the moment of sending (roadmap D29 rule
-//! 7): before each attempt its channel is the receiver's home as the
-//! neighbour table has it, from the latest heartbeat or packet of that
-//! neighbour, or the heard table for a sleepy node it delivers to. A neighbour that
-//! moves home (spec "Channel moves") between attempts, or while a message waits to come
-//! back to it, is followed.
-//!
-//! A neighbour is tried, marked in the record, only once it has ACKed
-//! the message, taking it or having seen it (roadmap D36, D90). A seen
-//! ACK says the neighbour has the message's record and no copy of it:
-//! the forward is routed again at once from the record, past that
-//! neighbour, by the same choice a return taken from a child gets; a
-//! return answered seen is dropped, its parent having gone on without
-//! it. A neighbour that failed a hand-over stays untried: an unanswered
-//! frame is more often lost than its ACK, so the neighbour most likely
-//! lacks the message; marked tried, it would end its own search if it
-//! later got the message elsewhere and offered it here.
-//!
-//! A busy channel moves nothing (spec "Hand-over" step 2, roadmap D96,
-//! D111). When listen-before-talk gives up on a forward's or a return's
-//! neighbour, the hand-over keeps the neighbour and its transmissions so
-//! far, waits a retry wait and listens again: the channel says nothing
-//! about the neighbour, and after a transmission the neighbour may hold
-//! the message, so offering it to the next candidate would split it, and
-//! dropping a return would lose the last copy. A DATA from the delivery
-//! queue stays there when it fails and waits for its node's next beat;
-//! for it a give-up counts as one of the three attempts, and never as a
-//! failure against the neighbour.
-//!
-//! An ACK that refuses the current hand-over bans its receiver for the
-//! wait it asks, at least [`BAN`], so no message takes it until then
-//! (spec "Bans", roadmap D27, D29, D32). The refused message stays in its
-//! place, a return now as a forward, the refused transmission not
-//! counting as an attempt, and is routed round the refuser while that
-//! ban lasts: the refusal says the refuser's queue that way is full, and
-//! a neighbour with room may sit beside it (roadmap D110). Where no other
-//! is left that is no worse a last resort, it waits for the ban and is
-//! offered to the same neighbour again. For every other message a ban is
-//! a wait and not an exclusion (spec "Next hop").
-//!
-//! A hand-over whose attempts all go unanswered bans its receiver too,
-//! longer after each failure in a row (`tables/neighbours.rs`, roadmap
-//! D42): silence says the channel or the receiver is full, and offering
-//! it the next message at once only adds frames there. The failed
-//! forward waits for the ban and goes to the same neighbour again; a
-//! return waits the same way. Going to the next candidate at once would
-//! send the message the long way round just when the channel is full;
-//! measured, it undoes the ban's gain (roadmap D42).
-//!
-//! Failed, a forward waits for its neighbour while the neighbour ranks
-//! first, however its ban has grown meanwhile; once it is demoted it
-//! ranks behind the others and the message goes elsewhere, and a return
-//! is dropped once its parent is demoted or gone (roadmap D102, D106).
-//! Refused, it goes round the refuser, as above. The demotion, failed hand-overs in a row with no answer
-//! to this relay between ([`DEMOTE_AFTER_FAILURES`]), is the one test
-//! that the neighbour no longer hears this relay, and the neighbour table
-//! holds it for every message alike: the message keeps nothing of it.
-//!
-//! A forward whose next hop is banned waits in its place until the ban
-//! ends, and is routed again then (roadmap D31). It is not returned or
-//! dropped: overload makes a message wait, never end (roadmap D106,
-//! spec "Overload waits"). Only a search exhausted by neighbours tried
-//! returns or drops.
-//! Waiting entries keep their airtime in admission, and the queue hands
-//! over the first entry that is due. The application's own message,
-//! refused, goes round the refuser as a forward does; where no other is
-//! left it waits for the refuser, longer after refusals in a row
-//! ([`hold`]). One for a node this one holds for that finds the delivery
-//! queue full is set aside in its place ([`State::Held`]) until the queue
-//! has a place (spec "Return to parent"). Either way the application is
-//! given no other meanwhile.
-//!
-//! A sleepy node with an anchor hands its own message to the anchor
-//! (spec "A sleepy node's own message", "Packet sender") with count 0, so
-//! that the node that takes it is the origin of its search, takes it only
-//! into its regular room and only while not every neighbour of its is
-//! banned. Overload then stops a new message where it enters (roadmap D31,
-//! D34), and the search never returns to a node that sleeps. A sleepy
-//! node's own message that finds no live neighbour at all waits for one,
-//! routed again every `fade_retry`: a node in a pocket loses its
-//! neighbours by going dark and finds them again.
-//!
-//! No message ends by age on its way (spec "Overload waits", roadmap
-//! D106): the refusals that hold it carry the load back to its origin
-//! instead.
-//!
-//! [`HandOver`]: crate::node::transfer::HandOver
-//! [`DEMOTE_AFTER_FAILURES`]: crate::tables::DEMOTE_AFTER_FAILURES
-//! [`IN_FLIGHT`]: crate::node::transfer::IN_FLIGHT
+//! The radio steps of one hand-over are in `node/transfer.rs`, the
+//! queue's order in `tables/send_queue.rs`, and delivery to sleepy nodes
+//! in `relay/delivery.rs`.
 
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
@@ -876,10 +714,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Whether this relay owns the destination `dst` of another node's
-    /// message (spec "Owner"). A sleepy node owns none (module
-    /// documentation), nor does a carried one, nor one leaving to turn
-    /// sleepy (`relay/power.rs`): they hold mail for nobody, and
-    /// a neighbour that is carried keeps no other from owning.
+    /// message (spec "Owner"). A sleepy node owns none, nor does a
+    /// carried one, nor one leaving to turn sleepy (`relay/power.rs`):
+    /// they hold mail for nobody, and a neighbour that is carried keeps
+    /// no other from owning.
     fn owns(&self, dst: Position, now: Instant) -> bool {
         if self.sleepy() || self.motion.carried || self.leaving() {
             return false;
@@ -1137,8 +975,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // (spec "Delivery").
         let renews = d.dst_id == self.me();
         // The reply carries a packet with work until it has gone out
-        // (module documentation); one that is no work is acted on now:
-        // nothing is lost if its ACK never goes.
+        // (spec "The ACK"); one that is no work is acted on now: nothing
+        // is lost if its ACK never goes.
         let later = v.arrival.acts();
         let takes = later.then(|| Take::of(&d));
         self.radio
@@ -1562,11 +1400,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Whether the forward `out`, refused by `by`, waits for it in the
     /// delivery queue: `by` is leaving the air and the message may end
-    /// there ([`Self::ends_at`]), where sent round it, it would only
-    /// wander among its neighbours to the hop cap (spec "Delivery queue",
-    /// roadmap D186). Not at a node that is sleepy or leaving to turn
-    /// sleepy, which holds mail for nobody, nor where the queue has no
-    /// place; then it goes round as any refused forward.
+    /// there ([`Self::ends_at`]); sent round it, it would only wander
+    /// among its neighbours to the hop cap (spec "Delivery queue"). Not
+    /// at a node that is sleepy or leaving to turn sleepy, which holds
+    /// mail for nobody, nor where the queue has no place; then it goes
+    /// round as any refused forward.
     fn waits_for_refuser(&self, out: &Outgoing, by: NodeId, now: Instant) -> bool {
         if self.sleepy() || self.leaving() {
             return false;
@@ -2285,7 +2123,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         );
         match self.records.get(id) {
             // A sleepy node hands its own message over as fresh work: the
-            // node that takes it is its origin (module documentation).
+            // node that takes it is its origin (spec "Hop count").
             Some(r)
                 if self.anchored_sleepy() && self.own.id == Some(id) && r.parent().is_none() =>
             {
@@ -2331,7 +2169,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// An ACK arrived: if it answers the current hand-over, the receiver
     /// took the packet, refused it, or has seen it (spec "The ACK",
-    /// "Bans"); see the module documentation.
+    /// "Bans").
     pub(super) fn ack_received(&mut self, ack: Ack, now: Instant, emit: &mut dyn FnMut(Action)) {
         if ack.refused {
             self.refused(ack, now, emit);
