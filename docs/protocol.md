@@ -1637,17 +1637,26 @@ that reboots on battery is a relay, its grace counted from the boot
 
 | | |
 |---|---|
-| battery low | a calibrated reading at or below 3.741 V, until one at or above the high level, or external power |
-| battery high | a calibrated reading at or above 3.775 V |
+| battery low | a calibrated reading at or below 3.504 V, the cell's curve at 20 %, until one at or above the high level, or external power |
+| battery high | a calibrated reading at or above 3.611 V, the curve at 30 % |
 | reading | the cell's voltage, read on battery once a minute while the radio does not transmit |
-| calibration | after 3 h on external power, the first reading an hour into battery is a full cell's, 4.177 V, and every reading after it is scaled to match; a scale beyond ±3 % is not taken; the scale is kept across a reboot, and before the first one readings are taken as read |
+| calibration | after 3 h on external power, the first reading an hour into battery is a full cell's, 4.128 V, the curve at 100 %, and every reading after it is scaled to match; a scale beyond ±3 % is not taken; the scale is kept across a reboot, and before the first one readings are taken as read |
+| the cell's curve | the charge left at a calibrated reading, 5 % + 60 %/V × u + 66 %/V² × u², u the volts above 3.300 V, rounded to the whole percent and kept within 0 and 100 %; a level's voltage is the curve's inverse, rounded to the millivolt |
 
-The three voltages are a typical Li-ion cell's open-circuit voltage at
-20, 30 and 100 % of its charge, read after an hour's rest (Maxim
-Integrated, Application Note 4189, Table 1); ±3 % is the SAADC's gain
-error at gain 1/6 (nRF52840 Product Specification, SAADC). On battery a
-fixed relay draws about 6.4 mA (5.8 mA listening, 32 mA for its
-airtime), so 80 % of the 850 mAh cell lasts it four days.
+The curve is fitted by least squares to the discharge of a T-Echo's own
+cell from full to the board's stop at a constant 35.4 mA, at room
+temperature, 767 mAh in 21.7 h, over its samples at 3 % and above; it
+reads every sample within 1.1 % rms and 3.1 % at most
+(`docs/discharge-2026-11-11.md`; roadmap D210). Its readings are that
+board's, uncalibrated, so a full cell's calibrated reading is the
+curve's own 100 %. A relay's lighter load reads some 10 to 20 mV higher
+at the same charge, which the calibration at full partly scales away.
+A relay keeps a fifth of its cell for its owner when it turns sleepy,
+and relays again only at 30 %, far above a reading's noise and the few
+millivolts a change of load moves it; ±3 % is the SAADC's gain error at gain 1/6 (nRF52840 Product
+Specification, SAADC). On battery a fixed relay draws about 6.4 mA
+(5.8 mA listening, 32 mA for its airtime), so 80 % of the cell lasts it
+four days.
 
 **Turning sleepy.** When it is to turn sleepy the node takes no more
 mail, owning nothing by position, and flushes its delivery queue
@@ -1677,11 +1686,11 @@ go on as it runs now ([screen and buttons](#screen-and-buttons); roadmap
 D169, D189). It keeps two drains, in percent of the cell an hour, one as
 a relay with its GPS at rest and one as a sleepy node, each first what
 its current says and then moved by what its readings show. A sample runs
-from a reading to the first one at least 15 h later while the node runs
+from a reading to the first one at least 13 h later while the node runs
 one of the two ways; it starts an hour after any change of that, of the
 power or of the calibration, and a change, or a relay's GPS tracking,
 ends it unused. Its drop in percent over its hours moves that way's drain
-as a moving average over 92.8 h. The time left is a relay's until the low
+as a moving average over 83.7 h. The time left is a relay's until the low
 level at its drain, and a sleepy node's until the cell is flat: above the
 low level the whole of what is left at its drain, and at or below it the
 low level's share less the time since the first low reading. The drains
@@ -1689,13 +1698,34 @@ are kept across a reboot ([implementation notes](#implementation-notes)).
 
 | | |
 |---|---|
-| a relay's first drain | 0.754 % an hour: 6.41 mA of the 850 mAh cell, its radio's 6.38 mA (5.8 mA listening, 32 mA for its airtime, `docs/battery-role-2026-10-25.md`), the divider's 12 µA and the GPS in standby, 20 µA |
-| a sleepy node's | 0.0696 % an hour: 0.59 mA, its radio's 0.56 mA ([delivery](#delivery)), the divider and the GPS in standby |
-| a sample | at least 15 h: 1 %, the smallest drop the percent shows, at a sleepy node's drain takes 14.4 h, rounded up to the hour |
-| the average | over 92.8 h: the time a relay takes from full to 30 % at its first drain |
+| a relay's first drain | 0.836 % an hour: 6.41 mA of the cell's 767 mAh, its radio's 6.38 mA (5.8 mA listening, 32 mA for its airtime, `docs/battery-role-2026-10-25.md`), the divider's 12 µA and the GPS in standby, 20 µA |
+| a sleepy node's | 0.0772 % an hour: 0.59 mA, its radio's 0.56 mA ([delivery](#delivery)), the divider and the GPS in standby |
+| a sample | at least 13 h: 1 %, the smallest drop the percent shows, at a sleepy node's drain takes 13.0 h, rounded up to the hour |
+| the average | over 83.7 h: the time a relay takes from full to 30 % at its first drain |
+| the cell | 767 mAh: what the cell gave in the run its curve is fitted to, at 35.4 mA counted in the same currents as the first drains, so that the percent are the curve's |
 
-So a full relay on battery shows 4 days, 106 h, and then sleeps about 12
-more; a full sleepy node shows 59 days.
+So a full relay on battery shows 3 days, 96 h rounded down, and then
+sleeps about 11 more; a full sleepy node shows 54 days.
+
+**The cold.** The curve has no term for temperature: the run was at
+room temperature, and nothing else is measured. Published figures put a
+cell's voltage at rest at 0.1 to 1 mV a kelvin either way, and its
+internal resistance at about 1.4 to 3 times its room value at 0 °C and
+2 to 5 times at −20 °C. The drop under load is the current times that
+resistance: at a relay's 6.4 mA a few millivolts at room temperature
+and some 4 to 20 mV at −20 °C, up to about 2 % of the charge at the low
+level; at the run's 35.4 mA tens of millivolts, up to some 9 %. So a cold
+node reads low and calls its battery low before 20 % is left, which
+errs toward keeping it alive; the voltage at rest may add or take back a
+few percent. The cold also gives less charge: at 0.2 C, five times the
+run's current, such a cell gives 80 % of its capacity at 0 °C and 60 %
+at −10 °C, and at a node's smaller current it loses less. The time left
+follows the cold by itself, as it is learned from the charge the node
+sees fall each hour (how long the battery lasts, above). A correction
+would need the cell's resistance by temperature, which is not measured,
+and the chip's sensor reads the chip, not the cell. All of this is an
+estimate from published figures, not a measurement
+(`docs/discharge-2026-11-11.md`; open item O24).
 
 ### Relay choice
 
@@ -3351,7 +3381,7 @@ within minutes.
 | a fixed sleepy node's anchor, ID and position | taken at once ([relay choice](#relay-choice)) |
 | whether it is a relay | a fixed relay that boots on battery relays on ([sleepy nodes](#sleepy-nodes)) |
 | its battery readings' scale | from its last calibration ([sleepy nodes](#sleepy-nodes)) |
-| the drains it learned on battery | a relay's and a sleepy node's, each in steps of 2.2 % of its first, up to 16 times it either way ([sleepy nodes](#sleepy-nodes)); one write a sample at most, 15 h on battery |
+| the drains it learned on battery | a relay's and a sleepy node's, each in steps of 2.2 % of its first, up to 16 times it either way ([sleepy nodes](#sleepy-nodes)); one write a sample at most, 13 h on battery |
 | record | 32 bytes with a checksum, appended to a 4 KiB page of flash, which is erased when its 128 slots are full (`bark-fw/src/store.rs`): at the flash's 10 000 erase cycles, 1.28 million writes |
 
 The same page keeps the phone link's state, in entries of one record or
@@ -3380,6 +3410,7 @@ those of the bring-up order, `roadmap.md` Phase 2.
 | O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s ([position](#position)); the bench so far is in `docs/gps-bench-2026-11-06.md` | step 2 bench, roadmap D70, D136 |
 | O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)); indoors measured in `docs/gps-bench-2026-11-06.md`, open sky and a spoofer not yet | step 2 bench, roadmap D74 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
+| O24 | The cell's curve in the cold: a discharge bench run at 0 °C or below, and one at a relay's current, against the curve at room temperature ([sleepy nodes](#sleepy-nodes)); one cell, one run so far | bench, roadmap D210 |
 
 ## Sources
 

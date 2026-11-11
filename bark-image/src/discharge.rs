@@ -22,10 +22,10 @@ pub const LEN: usize = 16;
 /// Records to a sector.
 pub const PER_SECTOR: u32 = SECTOR / LEN as u32;
 
-/// Seconds between samples on battery: an hour. A sleepy node's 59 days
-/// are 1416 samples, which [`DISCHARGE`] holds; the battery estimate's
-/// 15 h (`bark_proto::drain::SAMPLE`) spans 15. A finer interval would
-/// show the readings' noise, a step of the mapping being some 5.7 mV.
+/// Seconds between samples on battery: an hour. A sleepy node's 54 days
+/// are 1296 samples, which [`DISCHARGE`] holds; the battery estimate's
+/// 13 h (`bark_proto::drain::SAMPLE`) spans 13. A finer interval would
+/// show the readings' noise, a step of the level being 6 to 10 mV.
 ///
 /// [`DISCHARGE`]: crate::layout::external::DISCHARGE
 pub const EVERY_S: u32 = 3600;

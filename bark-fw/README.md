@@ -681,7 +681,7 @@ and `update: acl 1 start=0xf4000 len=0xc000 write=Disable`.
 On battery at or below the low level of spec "Sleepy nodes" a commit,
 and a reboot with a swap asked for, are refused
 (spec "Implementation notes"): the console says `commit refused=BatteryLow battery_mv=...
-low_mv=3741`, and over its USB cable it is never on battery; the phone
+low_mv=3504`, and over its USB cable it is never on battery; the phone
 link answers refused, battery, and the node keeps the image staged, to
 commit once it is on USB or charged. The node reads its battery as the
 core does, calibrated; the console, without a core, uncalibrated.
@@ -1010,13 +1010,12 @@ bit for "answered" would cost no RAM, since it fits the padding of the
 left out while the display is its only reader, since on a quiet network
 neither comes before a take does.
 
-*Why the percentage is "about".* The node knows three open-circuit
-voltages of a typical cell: 20 %, 30 % and full (Maxim AN4189, the core's
-battery levels). It reads the charge off the straight line between them
-(`bark_proto::node::battery_percent`), which is close at the low end
-and a coarse guess between 30 % and full, where a cell's curve is not
-straight. At or below 20 % it says `LOW`: the curve falls steeply there,
-and a fixed relay turns sleepy.
+*Why the percentage is "about".* The node reads the charge off its
+cell's voltage by the curve measured on a T-Echo's own cell
+(`bark_proto::node::battery_percent`; spec "Sleepy nodes"), within about
+3 % on that cell at room temperature; another cell, another load or the
+cold move it. At or below 20 % it says `LOW`, where a fixed relay turns
+sleepy.
 
 *Why the uptime.* A picture stays on the glass when the node stops.
 The lines are drawn at the press that asks for them, so their uptime is
@@ -1440,7 +1439,7 @@ retune times.
 | `ping <k>` | send an 18-byte ping on k, wait 1 s at home for the pong | `rtt_us` from TxDone to the pong, against the 100 ms ACK timeout (spec "Hand-over") |
 | `status [reset]` | node ID, uptime, battery mV, channel, power, counters, the radio's `resets`, `configured` (times the whole configuration was sent), `cold_starts` and `tcxo_us`, whether the node is public, from the bond, and the battery drains the node image kept; `reset` zeroes the counters | |
 | `survey [n]` | a survey build's noise log, the newest n minutes (default all), oldest first | the survey's channel and progress, then per minute `t_s`, `p10` and `median`, 13 values each |
-| `discharge [erase]` | the node image's discharge log (Discharge log, below), oldest first; `erase` erases it | a header with `slots`, `every_s` and the calibration `scale` the node keeps, then per sample `seq`, `utc_s`, `uptime_s`, `mv`, `external`, `sleepy`, `gps` and `why`, then `discharge end samples=N` |
+| `discharge [erase]` | the node image's discharge log (Discharge log, below), oldest first; `erase` erases it | a header with `slots`, `every_s`, `bench_every_s` and the calibration `scale` the node keeps, then per sample `seq`, `utc_s`, `uptime_s`, `mv`, `external`, `sleepy`, `gps`, `bench`, `why` and `crc`, the CRC-16 of the line's text before it, then `discharge end samples=N` |
 | `stage <header hex>` | start staging an image (Updates) | `version`, `length`, `sha256`, or why it is refused |
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
@@ -1718,9 +1717,9 @@ on average (`bark_proto::sniff`). No figure for the whole board is claimed here;
 ## Discharge log
 
 The board has no fuel gauge, and the level it shows is read off the
-cell's voltage by a coarse line through three points of a typical cell's
-curve (roadmap D169). To learn the board's own curve, the node keeps a
-log of its cell's voltage on the external flash, so that a discharge
+cell's voltage by a curve (roadmap D169, D210). To learn that curve, the
+node keeps a log of its cell's voltage on the external flash, so that a
+discharge
 from full to empty, days to weeks on battery where no host reads the
 USB log, can be read afterwards (roadmap D178; `src/discharge.rs`,
 `bark-image` `discharge.rs`).
@@ -1735,7 +1734,7 @@ sample is 16 bytes: a sequence number, UTC seconds if the node knows
 the time from the GPS or a phone, else 0, the uptime, the reading as
 the converter gave it, the power, the mode, why it was taken, and a
 CRC-16, so that a record a power cut tore is skipped. 8 sectors hold
-2048: a full sleepy node lasts 59 days, 1416 hours. The log wraps: the
+2048: a full sleepy node lasts 54 days, 1296 hours. The log wraps: the
 sector after the newest is erased whole before it is written, losing
 the oldest 256 samples, since the discharge to read is the one just
 ended. It is kept across reboots and image swaps.
@@ -1744,12 +1743,22 @@ At boot the node logs `discharge: N samples over H h, A mV to B mV`.
 To read it all, stage a console image (`scripts/image.py stage`) and
 run `discharge`; `scripts/discharge.py PORT --csv run.csv` sends the
 command, writes the samples to a CSV and fits the curve over the last
-run on battery, printing the voltage at every 5 % of the charge
-(its docstring says what it assumes). `discharge erase` empties the
-log before a run.
+run on battery: the core's curve's coefficients, its errors and the
+voltage at every 5 % of the charge (its docstring says what it
+assumes). It reads a saved transcript or its own CSV as well. The
+console prints each line only once the log's buffer has room for it,
+so none is dropped however slowly the host reads, and ends each with
+`crc=`, the CRC-16 of the line's text; the script rejects a line whose
+check fails, cut or spliced on the way, says how many, and says where
+sequence numbers are missing or samples lie further apart than their
+interval. `discharge erase` empties the log before a run.
 
-A full discharge under the node's own rules takes about 16 days, 4.4
-of them relaying to the low level and 12 sleepy at a tenth of the
+The first run, on board f4f5 on 2026-11-11, is in
+`docs/data/discharge-f4f5-2026-11-11.csv`; the core's curve is fitted
+to it (`docs/discharge-2026-11-11.md`; roadmap D210).
+
+A full discharge under the node's own rules takes about 15 days, 4.0
+of them relaying to the low level and 11 sleepy at a tenth of the
 current. The curve's shape needs neither, so a discharge bench build
 (`BARK_DISCHARGE_BENCH=1`, above) runs one mode from full to flat:
 
@@ -1762,7 +1771,7 @@ current. The curve's shape needs neither, so a discharge bench build
   time from the GPS is still kept.
 - A relay's 6.41 mA (roadmap D169) and the receiver's 29 mA while it
   tracks (L76K Hardware Design, Table 2; `docs/gps-schedule-2026-10-25.md`)
-  are 35.4 mA, and 850 mAh last 24.0 h.
+  are 35.4 mA, and 850 mAh would last 24.0 h; the first run lasted 21.7 h.
 - It samples every 10 minutes (`BENCH_EVERY_S`), so that a sample
   spans about as much of the charge as a relay's hour: 3600 s × 6.41 /
   35.4 = 652 s, rounded. A day is about 144 samples against the hour's
@@ -1771,14 +1780,11 @@ current. The curve's shape needs neither, so a discharge bench build
   35.4 mA, so the fit does not depend on the current.
 
 What the faster discharge changes: the cell's voltage under load sits
-below its voltage at rest by its resistance times the current. At the
-0.3 Ω assumed for a small pouch cell (`docs/battery-role-2026-10-25.md`;
-an estimate, not measured on this cell) that is about 11 mV at 35.4 mA,
-9 mV more than a relay's load and 10 mV more than a sleepy node's, and
-the cell rests back up when the load ends. So the curve is the shape
-under 35.4 mA, to be read with that offset in mind: it moves a point
-between the 20 % and 30 % levels, 34 mV apart, by about 3 % of the
-charge, and elsewhere by less than 1 %. The last readings before the
+below its voltage at rest by its resistance times the current, so a
+node at a relay's lighter load reads some 10 to 20 mV higher than the
+bench at the same charge, about 1 to 2 % of it between the levels, which
+the calibration at full partly takes away
+(`docs/discharge-2026-11-11.md`). The last readings before the
 board's 3.3 V regulator drops out and the node stops mark where this
 board's charge truly ends. The drain the core learns meanwhile, a
 relay's at 35.4 mA, is kept in the stored record (roadmap D169), so a

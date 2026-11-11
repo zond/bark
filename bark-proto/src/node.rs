@@ -225,7 +225,7 @@ pub const fn battery_percent(mv: u16) -> Option<u8> {
 pub const BATTERY_CHARGED_AFTER: Duration = Duration::from_secs(3 * 3600);
 
 /// How long a full cell rests on battery before its reading calibrates:
-/// in the cell's measured run the charger's lift, some 25 mV beyond what
+/// in the cell's measured run the charger's lift, some 35 mV beyond what
 /// the charge used explains, was gone within 40 minutes
 /// (`docs/discharge-2026-11-11.md`).
 pub const BATTERY_REST: Duration = Duration::from_secs(3600);
