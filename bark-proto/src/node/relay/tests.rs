@@ -2233,6 +2233,84 @@ fn a_return_answered_seen_is_dropped() {
     assert!(r.holding().next().is_none());
 }
 
+/// A packet from the node this relay is handing the message to is a return
+/// when it arrives, and stays one at the take, though that node has no
+/// neighbour-table slot to mark it handed (spec "Receiving DATA", case 5):
+/// answered taken, the copy must not be left to its sender as seen.
+#[test]
+fn a_return_from_the_node_handed_to_is_taken_without_a_slot() {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let (mut r, mut now, far) = with_every_neighbour_banned();
+    now += BAN;
+    // The parent is known only from the record: no slot.
+    let parent = name(7);
+    let home = Channel::new(6).unwrap();
+    let back = Data {
+        sender_home: r.home,
+        dst_hop: parent,
+        src_hop: r.me(),
+        dst_pos: far,
+        dst_id: NOBODY,
+        hops: 2,
+        payload: b"both ways",
+    };
+    let id = back.msg_id();
+    let at = r.record_place().unwrap();
+    r.records
+        .put(at, Record::new(id, Some((parent, home)), 1, now));
+    r.queue
+        .push(Outgoing::of(
+            &back,
+            home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Return,
+        ))
+        .unwrap();
+    let sent = until_sent(&mut r, &mut now, Vec::new());
+    assert_eq!(data_to(&sent), [(parent, 2)]);
+    assert!(r.neighbours.slot_of(parent).is_none());
+    // The parent took the return, its ACK lost, and offers the message
+    // back while this relay still waits for that ACK.
+    now += Duration::from_millis(5);
+    let offered = Data {
+        sender_home: home,
+        dst_hop: r.me(),
+        src_hop: parent,
+        hops: 4,
+        ..back
+    };
+    let f = mac::frame(&Packet::Data(offered), r.home, MIN_PREAMBLE_SYMBOLS);
+    let event = Event::Received {
+        channel: r.home,
+        rssi_dbm: -80,
+        snr_db: 10,
+        bytes: &f.bytes[..f.len as usize],
+    };
+    let mut pending = Vec::new();
+    r.handle(event, now, &mut |a| pending.push(a));
+    let takes = pending.iter().any(|a| match a {
+        Action::Transmit(f) => matches!(
+            Packet::decode(f.payload()),
+            Ok(Packet::Ack(a)) if a.msg_id == id && !a.refused && !a.seen
+        ),
+        _ => false,
+    });
+    assert!(takes, "answered taken: {pending:?}");
+    let until = now + Duration::from_millis(100);
+    let traces = drive_traces(&mut r, &mut now, until, pending);
+    let answer = traces.iter().find_map(|t| match t {
+        Trace::Copy { seen, .. } => Some(*seen),
+        _ => None,
+    });
+    assert_eq!(answer, Some(false), "a return, not seen: {traces:?}");
+    assert!(
+        r.holding().any(|m| m == id),
+        "the copy taken is kept: {traces:?}"
+    );
+}
+
 /// A node, sleepy or not, that receives a DATA for itself answers it at
 /// once and hands it to its application when the ACK has gone out.
 #[test]

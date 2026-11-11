@@ -305,16 +305,21 @@ pub(crate) struct Take {
     pub(crate) home: Channel,
     /// Its count.
     pub(crate) hops: u8,
+    /// It came from the node this one was handing the message to: a return,
+    /// known only on arrival, since that hand-over then ends
+    /// (spec "Receiving DATA", case 5).
+    pub(crate) returned: bool,
 }
 
 impl Take {
-    /// What `d` gives to take.
-    pub(crate) fn of(d: &Data<'_>) -> Take {
+    /// What `d` gives to take; `returned` as for [`Take::returned`].
+    pub(crate) fn of(d: &Data<'_>, returned: bool) -> Take {
         Take {
             message: Message::of(d),
             from: d.src_hop,
             home: d.sender_home,
             hops: d.hops,
+            returned,
         }
     }
 
@@ -840,6 +845,7 @@ mod tests {
             from: ack(9).from,
             home: out.channel,
             hops: out.hops,
+            returned: false,
         };
         let mut a = Replies::new();
         a.owe(ack(9), ch, at(100), false, Some(take), false, at(0));
