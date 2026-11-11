@@ -1,10 +1,8 @@
-//! The radio's side of the node (`relay.rs` "Radio discipline"): the one
-//! excursion outstanding and the job that owns it, the duty-cycle budget
-//! every transmission is paid from (spec "Duty cycle cap"), the busy
-//! estimate (spec "Busy estimate"), how long the radio has been away from
-//! listening, and the replies this node owes (spec "The ACK"). Beside them
-//! it holds what each job keeps between its excursions, each owned by its
-//! job's module.
+//! The radio's side of the node: the one excursion outstanding and the job
+//! that owns it, the duty-cycle budget (spec "Duty cycle cap"), the busy
+//! estimate (spec "Busy estimate"), the time away from listening, and the
+//! replies owed (spec "The ACK"). It also holds what each job keeps between
+//! excursions; each job's module owns that state.
 
 use super::heartbeat::Beacon;
 use super::status::Asking;
@@ -20,25 +18,18 @@ use crate::tables::budget::Budget;
 use crate::tables::busy::BusyEstimator;
 use crate::time::{Duration, Instant};
 
-/// The radio's side: the one excursion outstanding, what each job keeps
-/// between its excursions, and the airtime budget and the busy estimate
-/// that gate them.
 pub(super) struct Radio {
     excursion: Excursion<Job>,
     /// Since when the radio has been away from listening on the home
     /// channel, free: an excursion under way, or a frame being received
-    /// (`relay/heartbeat.rs`, `count_missed_heartbeats`).
+    /// (`count_missed_heartbeats`).
     away_since: Option<Instant>,
     /// How long it has been away in all before that, µs, wrapping: only
     /// differences are read.
     away_total_us: u32,
-    /// The replies this node owes (`transfer.rs`).
     replies: Replies,
-    /// The busy sweep (`relay/sweep.rs`).
     sweep: Sweep,
-    /// The heartbeat (`relay/heartbeat.rs`).
     pub(super) beacon: Beacon,
-    /// A neighbour's status asked or told (`relay/status.rs`).
     pub(super) asking: Asking,
     busy: BusyEstimator,
     budget: Budget,
@@ -48,8 +39,8 @@ pub(super) struct Radio {
 }
 
 impl Radio {
-    /// Before the first event: the sweep from `sweep`, the heartbeat's
-    /// rotation from `rotation`.
+    /// Before the first event: the sweep and the heartbeat's rotation start
+    /// on the given channels.
     pub(super) const fn new(config: &Config, sweep: Channel, rotation: Channel) -> Radio {
         Radio {
             excursion: Excursion::new(),
@@ -67,7 +58,6 @@ impl Radio {
 
     // --- The excursion (`docs/core-interface.md` §3 rule 1) ---
 
-    /// Whether no excursion is outstanding.
     pub(super) fn idle(&self) -> bool {
         self.excursion.idle()
     }
@@ -77,12 +67,10 @@ impl Radio {
         self.excursion.complete()
     }
 
-    /// Whether `job`'s excursion is outstanding.
     pub(super) fn out_for(&self, job: Job) -> bool {
         self.excursion.step_of(job).is_some()
     }
 
-    /// Start a listen-before-talk check on `channel` for `job`.
     pub(super) fn check(&mut self, job: Job, channel: Channel, emit: &mut dyn FnMut(Action)) {
         self.excursion.check(job, channel, emit);
     }
@@ -114,34 +102,28 @@ impl Radio {
 
     // --- The budget and the busy estimate ---
 
-    /// The duty-cycle budget.
     pub(super) fn budget(&self) -> &Budget {
         &self.budget
     }
 
-    /// The busy estimates and noise floor.
     pub(super) fn busy(&self) -> &BusyEstimator {
         &self.busy
     }
 
     // --- The sweep (`relay/sweep.rs`) ---
 
-    /// When the sweep's next reading is due.
     pub(super) fn sweep_at(&self) -> Instant {
         self.sweep.next_at()
     }
 
-    /// The sweep's next reading is due at `now`.
     pub(super) fn restart_sweep(&mut self, now: Instant) {
         self.sweep.restart(now);
     }
 
-    /// The home channel moved: a home reading held is forgotten.
     pub(super) fn forget_home_reading(&mut self) {
         self.sweep.forget_home();
     }
 
-    /// Start the sweep's next reading, the one after it a `step` later.
     pub(super) fn start_sweep(&mut self, step: Duration, emit: &mut dyn FnMut(Action)) {
         let channel = self.sweep.start(step);
         self.excursion.read(Job::Sweep, channel, emit);
@@ -167,17 +149,14 @@ impl Radio {
         self.sweep.set_aside(airtime, now);
     }
 
-    /// When the move rule moves the home, if it does.
     pub(super) fn move_at(&self) -> Option<Instant> {
         self.sweep.move_at()
     }
 
-    /// Whether the move rule's wait is over at `now`.
     pub(super) fn move_due(&self, now: Instant) -> bool {
         self.sweep.move_at().is_some_and(|t| now >= t)
     }
 
-    /// The move rule starts over.
     pub(super) fn clear_move(&mut self) {
         self.sweep.clear_move();
     }
@@ -195,9 +174,9 @@ impl Radio {
 
     // --- Away from listening ---
 
-    /// How long the radio has been away in all up to `until`, at most
-    /// `now`, µs, wrapping; as far as the core knows: a frame it did not
-    /// decode is not known to it (`docs/core-interface.md` §3 rule 3).
+    /// How long the radio has been away in all up to `until` (at most
+    /// `now`), µs, wrapping; only as far as the core knows: a frame it did
+    /// not decode is not reported (`docs/core-interface.md` §3 rule 3).
     pub(super) fn away_us(&self, now: Instant, until: Instant) -> u32 {
         let open = self
             .away_since
@@ -212,7 +191,6 @@ impl Radio {
         self.away_since = Some(since);
     }
 
-    /// An excursion started at `now`.
     pub(super) fn went(&mut self, now: Instant) {
         self.away_since.get_or_insert(now);
     }
@@ -228,14 +206,12 @@ impl Radio {
         }
     }
 
-    /// Whether this is the first frame from another node since boot.
     pub(super) fn first_heard(&mut self) -> bool {
         !core::mem::replace(&mut self.heard, true)
     }
 
     // --- The replies owed (`transfer.rs`) ---
 
-    /// The replies this node owes.
     pub(super) fn replies(&self) -> &Replies {
         &self.replies
     }
@@ -272,7 +248,6 @@ impl Radio {
         self.replies.untaken()
     }
 
-    /// The reply to start sending now, if one is ready.
     pub(super) fn reply_due(&mut self, now: Instant) -> Option<Owed> {
         self.replies.due(now)
     }

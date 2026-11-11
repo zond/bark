@@ -1,26 +1,6 @@
-//! When a node runs its GPS (`crate::gps`, spec "Beats", roadmap D80,
-//! D82).
-//!
-//! A sleepy node asks its driver for a search ([`Action::Locate`]) only
-//! while it has no anchor: when it turns anchorless, and once a delivery
-//! TTL while it stays so. With an anchor it works by the anchor's
-//! position (`relay/anchor.rs`) and takes no fix, so a search under way
-//! ends when it takes one, and none starts. A search ends at the first
-//! fix or after [`SEARCH_LIMIT`]; one that ends at its limit found
-//! nothing, and none follows for [`BACKOFF`]. A node with no place
-//! (roadmap D83) searches until it has one, anchor or not: from its boot,
-//! and again at the end of each back-off.
-//!
-//! A relay's GPS runs all the time on external power and for the grace
-//! after it is lost ([`Config::grace`]); after that, and whenever its
-//! position is a map point, it rests in standby. A resting relay searches
-//! at boot, and when the heartbeats of its fixed relay neighbours change
-//! over a worst-case rotation more than fading explains. A search that
-//! finds a far fix keeps the GPS running until the node is carried or a
-//! fix is near again. A relay's search has no back-off. A carried node on
-//! battery is sleepy (`relay/power.rs`), and searches as one.
-//!
-//! [`Config::grace`]: crate::Config::grace
+//! When a node runs its GPS (spec "Position", "Beats"): a sleepy node's
+//! searches ([`Action::Locate`]), and a relay's GPS that runs or rests and,
+//! resting, watches its neighbours' heartbeats for a sign that it moved.
 
 use super::{Node, Stage};
 use crate::event::{Action, Trace};
@@ -31,19 +11,16 @@ use crate::position::Position;
 use crate::radio::FADE_DEPTH_DB;
 use crate::time::{Duration, Instant};
 
-/// How far beyond its mean, in its own standard deviations, the sum of a
-/// rotation's squared surprises must lie before a resting relay searches:
-/// two, which a still node's passes in 2.3 % of rotations, the convention
-/// of the switching margin (spec "Relay choice").
+/// How far beyond its mean, in its standard deviations, a rotation's sum of
+/// squared surprises must lie before a resting relay searches: the
+/// switching margin's convention, 2.3 % of a still node's rotations
+/// (spec "Position", "Relay choice").
 const SURPRISE_SIGMAS: f32 = 2.0;
 
-/// The variance of a heartbeat's surprise, the difference between its RSSI
-/// and the neighbour's averaged RSSI before it, under fading of
-/// [`FADE_DEPTH_DB`]: the frame's σ² and the average's σ²/3, since each
-/// frame counts half in it and a neighbour's heartbeats reach the node's
-/// channel a rotation apart, longer than the fading lasts. Frames in a
-/// deep fade are not heard, so a still relay's surprises vary less than
-/// this, and the test errs towards silence (roadmap D82).
+/// The variance of a heartbeat's surprise under fading of [`FADE_DEPTH_DB`]:
+/// the frame's σ² and the average's σ²/3 (spec "Position"). Frames in a
+/// deep fade are not heard, so a still relay's surprises vary less, and the
+/// test errs towards silence.
 const SURPRISE_VAR_DB2: f32 = FADE_DEPTH_DB * FADE_DEPTH_DB * 4.0 / 3.0;
 
 /// The point [`SURPRISE_SIGMAS`] above the mean of a chi-square of `k`
@@ -59,11 +36,9 @@ fn chi_square_point(k: u8) -> f32 {
 /// stays within the size `docs/core-interface.md` §6 gives it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Gps {
-    /// Until when the search under way runs.
     until: u32,
-    /// What the node keeps as a sleepy node or as a relay. A node is one
-    /// at a time, so the two share the room; each starts afresh when the
-    /// node takes its role.
+    /// A node is sleepy or a relay at a time, so the two share the room;
+    /// each starts afresh when the node takes its role.
     role: Role,
 }
 
@@ -110,27 +85,21 @@ impl From<Watch> for Role {
 struct Searches {
     /// When its last search found nothing, until a fix comes.
     failed_at: u32,
-    /// When its last search started.
     tried_at: u32,
-    /// A search is to start.
     due: bool,
 }
 
 /// A relay's watch on its radio, and what keeps its GPS running.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Watch {
-    /// When the rotation of surprises under way began.
     since: u32,
     /// The sum of the rotation's squared surprises over
     /// [`SURPRISE_VAR_DB2`], in thousandths.
     sum_milli: u32,
-    /// The rotation's surprises.
     surprises: u8,
-    /// [`DUE`], [`FOLLOW`] and [`PAST_GRACE`].
     flags: u8,
 }
 
-/// A search is to start.
 const DUE: u8 = 1;
 
 /// Its last fix was far: its GPS runs until it is carried or a fix is
@@ -162,7 +131,6 @@ impl Watch {
 }
 
 impl Gps {
-    /// No search under way, none due.
     pub(super) const DEFAULT: Gps = Gps {
         until: 0,
         role: Role::Relay {
@@ -173,8 +141,6 @@ impl Gps {
         },
     };
 
-    /// Change a sleepy node's searches, taken afresh if the node was a
-    /// relay.
     fn searches<R>(&mut self, f: impl FnOnce(&mut Searches) -> R) -> R {
         let mut s = self.searches_now();
         let r = f(&mut s);
@@ -182,7 +148,6 @@ impl Gps {
         r
     }
 
-    /// Change a relay's watch, taken afresh if the node was sleepy.
     fn watch<R>(&mut self, f: impl FnOnce(&mut Watch) -> R) -> R {
         let mut w = self.watch_now();
         let r = f(&mut w);
@@ -190,7 +155,6 @@ impl Gps {
         r
     }
 
-    /// The searches as they stand, none for a relay.
     fn searches_now(&self) -> Searches {
         match self.role {
             Role::Sleepy {
@@ -206,7 +170,6 @@ impl Gps {
         }
     }
 
-    /// The watch as it stands, none for a sleepy node.
     fn watch_now(&self) -> Watch {
         match self.role {
             Role::Relay {
@@ -225,31 +188,23 @@ impl Gps {
     }
 }
 
-/// `t` in whole seconds, rounded up, and at least 1.
+/// `t` in whole seconds, rounded up, and at least 1, as 0 means none.
 pub(super) fn mark(t: Instant) -> u32 {
     (t.as_micros().div_ceil(1_000_000) as u32).max(1)
 }
 
-/// The instant of a mark, `None` for none.
 fn at(m: u32) -> Option<Instant> {
     (m > 0).then(|| Instant::ZERO + Duration::from_secs(m as u64))
 }
 
-/// What the GPS's rules read of the rest of the node (module
-/// documentation).
+/// What the GPS's rules read of the rest of the node.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Situation {
-    /// The node is sleepy.
     pub(super) sleepy: bool,
-    /// Its first rotation is over.
     pub(super) running: bool,
-    /// Its position is a map point.
     pub(super) map_point: bool,
-    /// It is carried.
     pub(super) carried: bool,
-    /// It has a place.
     pub(super) placed: bool,
-    /// A sleepy node with an anchor.
     pub(super) anchored: bool,
     /// A sleepy node without an anchor, past its boot listen.
     pub(super) anchorless: bool,
@@ -258,11 +213,9 @@ pub(super) struct Situation {
 }
 
 impl Gps {
-    /// Whether the driver is to run the GPS all the time now (module
-    /// documentation): a relay's runs on external power, for its grace on
-    /// battery, while a far fix is followed and while it is carried, but
-    /// never with a map point, which no fix may move; a sleepy node's only
-    /// in the searches it asks for.
+    /// Whether the driver is to run the GPS all the time now
+    /// (spec "Position", a relay's GPS); a sleepy node's runs only in the
+    /// searches it asks for.
     pub(super) fn tracks(&self, s: &Situation) -> bool {
         if s.sleepy || s.map_point {
             return false;
@@ -280,9 +233,7 @@ impl Gps {
     }
 
     /// A heartbeat of a fixed relay neighbour came `surprise_db` from that
-    /// neighbour's averaged RSSI before it. At the end of a worst-case
-    /// `rotation`, a sum of their squares beyond what fading explains
-    /// starts a search (module documentation).
+    /// neighbour's averaged RSSI before it (spec "Position").
     pub(super) fn surprise(
         &mut self,
         s: &Situation,
@@ -337,10 +288,9 @@ impl Gps {
         }
     }
 
-    /// The node took an anchor: it works by the anchor's position now, so
-    /// a search under way ends, and none is due; one with no place
-    /// searches on. The driver ends a search at a `Locate` at or before
-    /// now (`docs/core-interface.md` §4).
+    /// The node took an anchor and works by its position: a search under
+    /// way ends, unless the node has no place. A `Locate` at or before now
+    /// ends a search (`docs/core-interface.md` §4).
     pub(super) fn anchored(&mut self, placed: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         if Self::searches_anchored(placed) {
             return;
@@ -352,7 +302,6 @@ impl Gps {
         }
     }
 
-    /// A fix came: the search is over.
     pub(super) fn fixed(&mut self, sleepy: bool) {
         self.until = 0;
         if sleepy {
@@ -360,48 +309,41 @@ impl Gps {
         }
     }
 
-    /// A fix came to a relay and was handled: a `far` one keeps its GPS
-    /// on.
+    /// A fix came to a relay and was handled: a `far` one keeps its GPS on.
     pub(super) fn after_fix(&mut self, sleepy: bool, far: bool) {
         if !sleepy {
             self.watch(|w| w.set(FOLLOW, far));
         }
     }
 
-    /// The node is a relay now: its GPS runs.
     pub(super) fn relay(&mut self) {
         *self = Gps::DEFAULT;
     }
 
-    /// The node turned sleepy: nothing of a relay's is left. It searches
-    /// once it is anchorless ([`Gps::due`]), and a search under way runs
-    /// on as a sleepy node's.
+    /// The node turned sleepy: a search under way runs on as a sleepy
+    /// node's.
     pub(super) fn sleepy(&mut self) {
         self.role = Searches::default().into();
     }
 
-    /// When a relay on battery rests its GPS: a `grace` after it lost
-    /// external power.
     fn grace_ends(s: &Situation, grace: Duration) -> Option<Instant> {
         Some(s.unplugged? + grace)
     }
 
-    /// When a search may start again after one that found nothing.
     fn allowed_at(&self) -> Instant {
         at(self.searches_now().failed_at).map_or(Instant::ZERO, |t| t + BACKOFF)
     }
 
     /// Whether a sleepy node searches while it has an anchor: only one
     /// with no place, which cannot rebuild its anchor's position without
-    /// a fix of its own (module documentation).
+    /// a fix of its own.
     fn searches_anchored(placed: bool) -> bool {
         !placed
     }
 
-    /// When a sleepy node's next search is due of its own accord, if one
-    /// is: anchorless, once a delivery TTL, so that its address, its own
-    /// position, is never older than the least the network keeps its mail (spec
-    /// "Sleepy nodes alone"); without a place, when the back-off ends.
+    /// When a sleepy node's next search is due of its own accord: anchorless,
+    /// once a delivery TTL (spec "Sleepy nodes alone"); without a place,
+    /// when the back-off ends.
     fn sleepy_at(&self, s: &Situation, delivery_ttl: Duration) -> Option<Instant> {
         if self.until > 0 {
             return None;
@@ -451,8 +393,7 @@ impl Gps {
         }
         // A search due while it cannot start is dropped.
         let due = if s.sleepy {
-            // No fix is taken while a map point is set (roadmap D84), nor
-            // with an anchor (module documentation).
+            // No fix is taken while a map point is set, nor with an anchor.
             let anchored = s.anchored && !Self::searches_anchored(s.placed);
             let held = now < self.allowed_at() || s.map_point || anchored;
             self.searches(|s| core::mem::take(&mut s.due)) && !held
@@ -470,8 +411,6 @@ impl Gps {
         emit(Action::Locate(at(self.until).expect("just set")));
     }
 
-    /// When the core next needs a wakeup for its searches, and for a
-    /// relay the end of its grace on battery.
     pub(super) fn next_wakeup(&self, s: &Situation, config: &Config) -> Option<Instant> {
         let other = if s.sleepy {
             self.sleepy_at(s, config.delivery_ttl)
@@ -486,7 +425,6 @@ impl Gps {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// What the GPS's rules read of the node now.
     pub(super) fn gps_situation(&self) -> Situation {
         Situation {
             sleepy: self.sleepy(),
@@ -506,10 +444,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.gps.tracks(&self.gps_situation())
     }
 
-    /// Whether a fix at `position` passes the check against the relays
-    /// this node knows (spec "Position", roadmap D74): it lies within the
-    /// hearing radius of one of them, or the node knows none, or it has
-    /// no place and so cannot rebuild where they are (roadmap D83).
+    /// Whether a fix at `position` passes the check against the relays this
+    /// node knows (spec "Position"); with no place it cannot rebuild where
+    /// they are, so it passes.
     pub fn fix_in_reach(&self, position: Position) -> bool {
         if !self.placed() {
             return true;

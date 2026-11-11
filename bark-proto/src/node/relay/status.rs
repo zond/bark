@@ -1,12 +1,6 @@
-//! A neighbour's status asked and told (spec "Neighbour status"). The application
-//! asks while a person looks at the node's neighbours; each neighbour
-//! asked is marked in the neighbour table, and so is each that asked this
-//! node, and the status job sends one frame at a time, an answer before a
-//! question: on the neighbour's home channel, with the long preamble to
-//! a sleepy one, which receives duty-cycled, after a listen-before-talk
-//! and paid from the bucket with the reply reserve kept, as a piece is.
-//! Neither is answered or sent again: the app asks again a neighbour
-//! that has not answered.
+//! A neighbour's status asked and told (spec "Neighbour status"). Pending
+//! questions and answers are marks in the neighbour table; the status job
+//! sends one frame at a time and never resends: the application asks again.
 
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Frame, Trace};
@@ -19,7 +13,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::time::{Duration, Instant};
 use crate::wire::{Packet, StatusFrame};
 
-/// The status job's state, in 16 bytes: the node's state beside its
+/// The status job's state, in 16 bytes: the node's state outside its
 /// tables is held under 1 KiB (`docs/core-interface.md` §6).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Asking {
@@ -47,8 +41,7 @@ impl Asking {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    /// What this node's screen shows of it now, which its status tells
-    /// (spec "Neighbour status").
+    /// What this node's screen shows of it now, and its status tells.
     pub fn status(&self, now: Instant) -> Status {
         Status {
             placed: self.placed(),
@@ -69,7 +62,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A status frame was received.
     pub(super) fn status_heard(
         &mut self,
         f: StatusFrame,
@@ -117,8 +109,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some(mac::frame(&Packet::Status(f), n.home, preamble))
     }
 
-    /// Start the next status frame due: its check of the channel, once the
-    /// bucket holds it with the reply reserve left.
+    /// Start the check of the channel for the next status frame due, once
+    /// the bucket holds it with the reply reserve left.
     pub(super) fn start_status(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
         if now < self.radio.asking.ready_at {
             return false;
@@ -151,9 +143,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         true
     }
 
-    /// The check of the status frame's channel completed: send it if the
-    /// channel is clear, else wait a backoff, or give it up after as many
-    /// checks as a heartbeat's (spec "Heartbeat").
+    /// The channel check completed. A busy channel gives the frame up after
+    /// as many checks as a heartbeat gets (spec "Heartbeat").
     pub(super) fn status_check(&mut self, busy: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         let Some((to, tell, checks)) = self.radio.asking.current else {
             return;
@@ -185,7 +176,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.radio.send(Job::Status, f, now, emit);
     }
 
-    /// The frame to `to` went, or was given up.
     fn status_done(&mut self, to: NodeId, tell: bool) {
         self.neighbours.status_gone(to, tell);
         self.radio.asking.current = None;
