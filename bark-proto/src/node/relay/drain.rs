@@ -107,7 +107,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let since = Instant::from_micros(u64::from(self.forwarding.drain_from_s) * 1_000_000);
         let empty = self.holding().next().is_none()
             && self.inbox.is_empty()
-            && !self.radio.replies.taking();
+            && !self.radio.replies().taking();
         empty || now.since(since) >= self.config.delivery_ttl
     }
 

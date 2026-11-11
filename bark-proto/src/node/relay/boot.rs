@@ -27,24 +27,27 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let ends = self.boot_end(now);
         self.stage = Stage::Booting;
         self.timers.boot_ends = Some(ends);
-        self.radio.sweep.next_at = now;
+        self.radio.restart_sweep(now);
         // One with no place is carried at none: its first fix is its
         // place, fixed (`relay/motion.rs`).
-        if self.motion.placed && self.config.stored.is_some_and(|s| s.carried) {
+        if self.motion.placed() && self.config.stored.is_some_and(|s| s.carried) {
             // Still since now: no clock ran while it was off.
-            self.motion = Motion::carried(self.config.position, now);
+            self.motion = Motion::carried_at(self.config.position, now);
         }
         // At a random phase of its interval: nodes that boot together, after
         // a power cut, would otherwise heartbeat in step whenever their
         // intervals have a small common multiple.
         let interval = heartbeat_interval(self.id, &self.config);
-        self.radio.beacon.next_at = now + self.rng.duration(Duration::ZERO, interval);
+        let at = now + self.rng.duration(Duration::ZERO, interval);
+        self.radio.beacon.next_at(at);
         // A sleepy node does not burst: it heartbeats once it has an anchor
         // or its first rotation has ended, and its beats keep no slots.
-        self.radio.beacon.burst = if self.sleepy() { 0 } else { CHANNELS };
+        self.radio
+            .beacon
+            .burst(if self.sleepy() { 0 } else { CHANNELS });
         // A sleepy node searches once it is anchorless (`relay/gps.rs`).
         if !self.sleepy() && !self.gps_tracks() {
-            self.gps_due();
+            self.gps.due(self.sleepy());
         }
         emit(Action::Listen(self.home));
         emit(Action::App(AppEvent::Boot {
@@ -65,7 +68,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// not proven, since a heartbeat is one way, and those that have taken
     /// a message from it, proven to hear it (spec "Neighbour table").
     pub fn neighbour_counts(&self, now: Instant) -> NeighbourCounts {
-        let floor = self.radio.busy.noise_floor_dbm();
+        let floor = self.radio.busy().noise_floor_dbm();
         let mut c = NeighbourCounts::default();
         for (_, n) in self.neighbours.live(now) {
             c.heard = c.heard.saturating_add(1);
@@ -97,11 +100,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.retune(home, emit);
             }
             if !self.reconsider_anchor(now, emit) {
-                self.gps_due();
+                self.gps.due(self.sleepy());
                 // At a random time within a beat period, so that nodes that
                 // boot together do not beat together.
-                self.radio.beacon.next_at =
-                    now + self.rng.duration(Duration::ZERO, self.anchorless_period());
+                let at = now + self.rng.duration(Duration::ZERO, self.anchorless_period());
+                self.radio.beacon.next_at(at);
             }
             return;
         }
@@ -110,7 +113,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let to = self.quietest();
             self.retune(to, emit);
             if self.home != old {
-                self.radio.beacon.announce = Some(old);
+                self.radio.beacon.moved_from(old);
                 self.take_listeners(old, now);
             }
         }
@@ -121,10 +124,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// the neighbours that know it a rotation of a stale channel.
     pub(super) fn home_is_quietest(&self) -> bool {
         let min = Channel::all()
-            .map(|c| self.radio.busy.fraction(c))
+            .map(|c| self.radio.busy().fraction(c))
             .min()
             .unwrap_or(ONE);
-        self.radio.busy.fraction(self.home) <= min.saturating_add(percent(1))
+        self.radio.busy().fraction(self.home) <= min.saturating_add(percent(1))
     }
 
     /// A sleepy node handed back its anchor at boot (`store.rs`) takes it
@@ -140,15 +143,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }));
         self.set_anchor(Some(a));
         self.anchored();
-        self.radio.beacon.next_at = now;
-        self.radio.beacon.quick = 1;
+        self.radio.beacon.beat(now, 1);
         self.check_anchor(now, emit);
     }
 
     pub(super) fn retune(&mut self, to: Channel, emit: &mut dyn FnMut(Action)) {
         if to != self.home {
             // What was heard on the old channel says nothing of the new.
-            self.radio.sweep.pending = None;
+            self.radio.forget_home_reading();
             emit(Action::Trace(Trace::HomeChannelMoved {
                 from: self.home,
                 to,
@@ -162,10 +164,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// so nodes that hear nothing do not all pick channel 0.
     pub(super) fn quietest(&mut self) -> Channel {
         let min = Channel::all()
-            .map(|c| self.radio.busy.fraction(c))
+            .map(|c| self.radio.busy().fraction(c))
             .min()
             .unwrap_or(ONE);
-        let busy = &self.radio.busy;
+        let busy = self.radio.busy();
         let near = |c: &Channel| busy.fraction(*c) <= min.saturating_add(percent(1));
         let count = Channel::all().filter(near).count() as u64;
         let pick = self.rng.range(0, count.saturating_sub(1)) as usize;

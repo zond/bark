@@ -74,7 +74,6 @@ use crate::ids::NodeId;
 use crate::node::{heartbeat_interval, heartbeat_lag};
 use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::anchorless_beat_period;
-use crate::tables::heard::beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours, BEATS};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::HEARTBEAT_LEN;
@@ -127,7 +126,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// When a sleepy node next needs its radio of its own accord: its
     /// next beat, or the next offer of a message it waits to send.
     pub(super) fn radio_due(&self) -> Instant {
-        let beat = self.radio.beacon.next_at.max(self.radio.beacon.ready_at);
+        let beat = self.radio.beacon.due_at();
         let due = self.forwarding.wake.map_or(beat, |t| t.min(beat));
         self.watch().map_or(due, |(from, _)| due.min(from))
     }
@@ -293,24 +292,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.timers.awake_until = now + self.heard.params().linger;
     }
 
-    /// The time to a sleepy node's next beat: a random half to one beat
-    /// period, the anchorless one without an anchor. A relay heartbeats on its fixed interval instead
-    /// (`heartbeat_done`).
-    pub(super) fn beat_interval(&mut self) -> Duration {
-        if self.radio.beacon.quick > 0 {
-            self.radio.beacon.quick -= 1;
-            return self
-                .rng
-                .duration(self.config.heartbeat_min, self.config.heartbeat_max);
-        }
-        let period = if self.anchored_sleepy() {
-            beat_period(self.config.delivery_ttl)
-        } else {
-            self.anchorless_period()
-        };
-        self.rng.duration(period.div(2), period)
-    }
-
     /// Choose or keep a sleepy node's anchor among the live neighbours
     /// that are not sleepy, and follow its home channel. Returns whether
     /// the anchor changed.
@@ -379,7 +360,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 // heartbeat: each beats at a random time within a heartbeat
                 // interval (spec "Beats").
                 let soon = now + self.rng.duration(Duration::ZERO, self.config.heartbeat_max);
-                self.radio.beacon.next_at = self.radio.beacon.next_at.min(soon);
+                self.radio.beacon.beat_by(soon);
             }
         }
         let Some(to) = to else {
@@ -411,10 +392,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             emit(Action::Listen(self.home));
         }
         // Heard at once and again soon by the new holder.
-        self.radio.beacon.next_at = now;
-        self.radio.beacon.quick = 1;
+        self.radio.beacon.beat(now, 1);
         self.anchored();
-        self.gps_anchor(now, emit);
+        self.gps.anchored(self.motion.placed(), now, emit);
     }
 
     /// The anchor was chosen or confirmed: a node that sleeps keeps it
@@ -444,9 +424,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn leave_anchor(&mut self, now: Instant) {
         self.set_anchor(None);
         self.anchored();
-        self.gps_due();
-        self.radio.beacon.next_at = now;
-        self.radio.beacon.quick = 0;
+        self.gps.due(self.sleepy());
+        self.radio.beacon.beat(now, 0);
     }
 
     /// Listen a worst-case rotation, from `now`, to check the anchor of a

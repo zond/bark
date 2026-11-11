@@ -892,12 +892,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let jitter = self.rng.duration(Duration::ZERO, FULL_FRAME.mul(2));
             self.spread.ready_at = self
                 .radio
-                .budget
+                .budget()
                 .allowed_at(airtime, REPLY_RESERVE, now)
                 .map_or(now + PACE, |t| t + jitter);
             return false;
         }
-        self.radio.excursion.check(Job::Update, c, emit);
+        self.radio.check(Job::Update, c, emit);
         true
     }
 
@@ -979,11 +979,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         let deficit = self.deficit(c, block, now);
-        self.radio.budget.record(airtime, now);
         let slot = self.spread.slot_open.is_some();
         self.slot_end(SlotPiece::Sent, emit);
         self.update_sent(c, Some((block, deficit)), slot, now);
-        self.radio.excursion.serve(Job::Update, f, emit);
+        self.radio.serve(Job::Update, f, now, emit);
     }
 
     /// The piece went, or gave the channel up: the pace starts again,

@@ -55,7 +55,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             sleepy: self.sleepy(),
             anchored: self.anchor().is_some(),
             carried: self.carried(),
-            battery: self.battery_status(),
+            battery: self.battery.status(),
             neighbours: self.neighbour_counts(now),
             version: self.config.version,
             gathering: self.gathering_status(),
@@ -142,12 +142,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if !self.affordable(airtime, now) {
             self.radio.asking.ready_at = self
                 .radio
-                .budget
+                .budget()
                 .allowed_at(airtime, REPLY_RESERVE, now)
                 .unwrap_or(Instant::MAX);
             return false;
         }
-        self.radio.excursion.check(Job::Status, f.channel, emit);
+        self.radio.check(Job::Status, f.channel, emit);
         true
     }
 
@@ -181,9 +181,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // An owed reply spent the bucket since the check began.
             return;
         }
-        self.radio.budget.record(airtime, now);
         self.status_done(to, tell);
-        self.radio.excursion.transmit(Job::Status, f, emit);
+        self.radio.send(Job::Status, f, now, emit);
     }
 
     /// The frame to `to` went, or was given up.

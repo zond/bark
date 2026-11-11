@@ -34,6 +34,7 @@
 //! they will be, and the earliest of those is `next_wakeup`.
 
 mod anchor;
+mod battery;
 mod boot;
 mod delivery;
 mod drain;
@@ -42,6 +43,7 @@ mod gps;
 mod heartbeat;
 mod motion;
 mod power;
+mod radio;
 mod remember;
 mod status;
 mod sweep;
@@ -49,27 +51,22 @@ mod update;
 
 use boot::random_channel;
 pub use drain::{Held, HeldAt};
-use heartbeat::Beacon;
+use radio::Radio;
 pub use remember::{remembered_within, Kept};
-use status::Asking;
-use sweep::Sweep;
 use update::Spread;
 
+use battery::Battery;
 use forward::{Forwarding, OwnMessage};
-use power::Battery;
 pub use power::Forced;
 
 use crate::event::{Action, AppCommand, Event};
 use crate::geo::LocalPlane;
 use crate::ids::{MsgId, NodeId};
-use crate::node::mac::Excursion;
-use crate::node::transfer::Replies;
 use crate::node::{Config, Core, Rng};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::store::Stored;
-use crate::tables::budget::Budget;
 use crate::tables::busy::BusyEstimator;
 use crate::tables::delivered::Delivered;
 use crate::tables::delivery::{DeliveryQueue, DELIVERY_QUEUE, INBOX};
@@ -117,75 +114,6 @@ const JOBS_UPDATE_FIRST: [Job; 6] = [
     Job::Status,
     Job::Sweep,
 ];
-
-/// The radio's side: the one excursion outstanding, what each job keeps
-/// between its excursions, and the airtime budget and the busy estimate
-/// that gate them.
-struct Radio {
-    excursion: Excursion<Job>,
-    /// Since when the radio has been away from listening on the home
-    /// channel, free: an excursion under way, or a frame being received
-    /// (`relay/heartbeat.rs`, `count_missed_heartbeats`).
-    away_since: Option<Instant>,
-    /// How long it has been away in all before that, µs, wrapping: only
-    /// differences are read.
-    away_total_us: u32,
-    /// The replies this node owes (`transfer.rs`).
-    replies: Replies,
-    /// The busy sweep (`relay/sweep.rs`).
-    sweep: Sweep,
-    /// The heartbeat (`relay/heartbeat.rs`).
-    beacon: Beacon,
-    /// A neighbour's status asked or told (`relay/status.rs`).
-    asking: Asking,
-    busy: BusyEstimator,
-    budget: Budget,
-    /// A frame from another node has decoded since boot
-    /// (`AppEvent::Heard`).
-    heard: bool,
-}
-
-impl Radio {
-    /// Before the first event: the sweep from `sweep`, the heartbeat's
-    /// rotation from `rotation`.
-    const fn new(config: &Config, sweep: Channel, rotation: Channel) -> Radio {
-        Radio {
-            excursion: Excursion::new(),
-            away_since: None,
-            away_total_us: 0,
-            replies: Replies::new(),
-            sweep: Sweep::new(sweep),
-            beacon: Beacon::new(rotation),
-            asking: Asking::IDLE,
-            busy: BusyEstimator::from_config(config),
-            budget: Budget::new(),
-            heard: false,
-        }
-    }
-}
-
-impl Radio {
-    /// How long the radio has been away in all up to `until`, at most
-    /// `now`, µs, wrapping; as far as the core knows: a frame it did not
-    /// decode is not known to it (`docs/core-interface.md` §3 rule 3).
-    fn away_us(&self, now: Instant, until: Instant) -> u32 {
-        let open = self
-            .away_since
-            .map_or(0, |a| until.min(now).since(a).as_micros());
-        self.away_total_us.wrapping_add(open as u32)
-    }
-
-    /// The radio is back listening at `now`, unless an excursion is
-    /// still out.
-    fn back(&mut self, now: Instant) {
-        if let (Some(a), true) = (self.away_since, self.excursion.idle()) {
-            self.away_total_us = self
-                .away_total_us
-                .wrapping_add(now.since(a).as_micros() as u32);
-            self.away_since = None;
-        }
-    }
-}
 
 /// A sleepy node's anchor: the node that is not sleepy whose home channel
 /// it listens on and whose position is its address.
@@ -484,7 +412,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             home: channel,
             stage: Stage::Off,
             mode: Self::mode_at_boot(),
-            battery: Battery::at_boot(None),
+            battery: Battery::UNSET,
             radio: Radio::new(&config, channel, channel),
             neighbours: Neighbours::new(NeighbourParams::from_config(&config)),
             records: Records::new(),
@@ -566,8 +494,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *h = home;
         *stage = Stage::Off;
         *mode = Self::mode_at_boot();
-        *battery = Battery::at_boot(config.stored.and_then(|s| s.battery_scale));
-        battery.drain = crate::drain::Drain::from_kept(config.stored.and_then(|s| s.drain));
+        *battery = Battery::at_boot(config.stored);
         *radio = Radio::new(
             &config,
             Channel::all().next().expect("the plan has channels"),
@@ -657,7 +584,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether its position is a map point a person set in the app (spec
     /// "Position").
     pub fn on_map_point(&self) -> bool {
-        self.motion.map_point
+        self.motion.map_point()
     }
 
     /// The preamble the frames this node forwards are counted with before
@@ -674,10 +601,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the radio is free of anything the node does: no excursion,
     /// hand-over, owed reply or heartbeat under way.
     fn radio_free(&self) -> bool {
-        self.radio.excursion.idle()
+        self.radio.idle()
             && self.handover_idle()
-            && !self.radio.replies.pending()
-            && self.radio.beacon.current.is_none()
+            && !self.radio.replies().pending()
+            && !self.radio.beacon.under_way()
     }
 
     /// The heard table.
@@ -703,7 +630,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The busy estimates and noise floor.
     pub fn busy(&self) -> &BusyEstimator {
-        &self.radio.busy
+        self.radio.busy()
     }
 
     /// The messages waiting in the delivery queue for their nodes (spec
@@ -791,7 +718,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// it changes nothing.
     pub fn load(&self, now: Instant) -> Load {
         Load {
-            bucket: self.radio.budget.available(now),
+            bucket: self.radio.budget().available(now),
             send_queue: self.queue.len(),
             delivery_queue: self.delivery.len(),
             heard: self.heard.len(),
@@ -822,7 +749,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// fixed, a sleepy one the home it had then, and no anchor, since one
     /// that boots where it has gone chooses afresh.
     fn to_keep(&self) -> Stored {
-        let carried = self.motion.carried;
+        let (battery_scale, drain) = self.battery.kept();
+        let carried = self.motion.carried();
         let kept = self.stored.filter(|_| carried);
         Stored {
             home: match kept {
@@ -831,20 +759,20 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             },
             place: kept.map_or(self.motion.place(), |s| s.place),
             carried,
-            map_point: kept.map_or(self.motion.map_point, |s| s.map_point),
+            map_point: kept.map_or(self.motion.map_point(), |s| s.map_point),
             anchor: self.anchor().filter(|_| !carried),
             // Kept only where it is read (`relay/power.rs`), so that a node
             // without battery levels writes no more than before.
             relay: !self.sleepy() && self.config.battery.is_some(),
-            battery_scale: self.battery.scale,
-            drain: self.battery.drain.kept(),
+            battery_scale,
+            drain,
         }
     }
 
     /// Tell the driver to keep what changed.
     fn keep(&mut self, emit: &mut dyn FnMut(Action)) {
         // A node with no place has none to keep: it boots without one.
-        if !self.motion.placed {
+        if !self.motion.placed() {
             return;
         }
         let now = self.to_keep();
@@ -877,13 +805,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let to = self.quietest();
                 self.retune(to, emit);
                 if self.home != old {
-                    self.radio.beacon.announce = Some(old);
+                    self.radio.beacon.moved_from(old);
                     self.take_listeners(old, now);
                 }
             }
         }
         self.power_timers(now, emit);
-        self.gps_timers(now, emit);
+        let gps = self.gps_situation();
+        self.gps.fire(&gps, &self.config, now, emit);
         self.forward_timers(now, emit);
         self.delivery_timers(now);
     }
@@ -897,7 +826,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.timers.next(),
             self.grace_ends(),
             self.flush_ends(),
-            self.gps_wakeup(),
+            self.gps.next_wakeup(&self.gps_situation(), &self.config),
             self.delivery_wakeup(),
             self.next_slot_edge(),
         ]
@@ -917,7 +846,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.forwarding.feed_due || self.timers.feed_at.is_some_and(|t| t <= now) {
             self.feed(false, now);
         }
-        while self.radio.excursion.idle() {
+        while self.radio.idle() {
             self.prepare(now, emit);
             let jobs = if self.update_first() {
                 JOBS_UPDATE_FIRST
@@ -951,26 +880,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// event wakes the core otherwise. The hand-over's ACK wait counts
     /// even while an owed reply holds the radio.
     fn ready_at(&self, job: Job) -> Option<Instant> {
-        let free = self.radio.excursion.idle();
+        let free = self.radio.idle();
         match job {
-            Job::Reply => self.radio.replies.wake_at().filter(|_| free),
+            Job::Reply => self.radio.replies().wake_at().filter(|_| free),
             Job::Heartbeat => {
                 if !free || self.awaiting_ack() || !self.heartbeats() {
                     return None;
                 }
-                let pending = self.radio.beacon.announce.is_some()
-                    || self.radio.beacon.current.is_some()
-                    || self.radio.beacon.change.is_some();
-                let due = if pending {
-                    self.radio.beacon.ready_at
-                } else {
-                    // A relay's answer may come before its next slot.
-                    let answer = self.answer_due().map(|(_, _, at)| at);
-                    answer.map_or(self.radio.beacon.next_at, |t| {
-                        t.min(self.radio.beacon.next_at)
-                    })
-                };
-                Some(due.max(self.radio.beacon.ready_at))
+                Some(self.heartbeat_ready_at())
             }
             Job::HandOver => {
                 let flight = self.flight_wake().filter(|_| self.awaiting_ack() || free);
@@ -981,8 +898,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .filter(|_| self.handover_idle() && free);
                 earlier(flight, queued)
             }
-            Job::Sweep => (free && !self.awaiting_ack() && self.sweeping())
-                .then_some(self.radio.sweep.next_at),
+            Job::Sweep => {
+                (free && !self.awaiting_ack() && self.sweeping()).then_some(self.radio.sweep_at())
+            }
             Job::Update => {
                 if !free || self.awaiting_ack() {
                     return None;
@@ -1012,8 +930,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // frame format work with another node's
         // (spec "Updates over the mesh", the install); a piece names no
         // sender, but no node hears its own.
-        if !self.radio.heard && decoded.as_ref().is_ok_and(|p| p.sender() != Some(self.id)) {
-            self.radio.heard = true;
+        if decoded.as_ref().is_ok_and(|p| p.sender() != Some(self.id)) && self.radio.first_heard() {
             emit(Action::App(crate::AppEvent::Heard));
         }
         // A node's DATA says where it listens now (spec "Packet sender"),
@@ -1074,11 +991,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Battery { millivolts } => self.battery_read(millivolts, now, emit),
             AppCommand::ClearMapPoint => self.clear_map_point(),
             AppCommand::Fix { position } => {
-                self.gps_fixed();
+                self.gps.fixed(self.sleepy());
                 self.fix(position, now, emit);
-                self.gps_after_fix();
+                self.gps.after_fix(self.sleepy(), self.far());
             }
-            AppCommand::NoFix => self.no_fix(),
+            AppCommand::NoFix => self.motion.no_fix(),
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
             AppCommand::Block { index, ok } => self.block_done(index, ok),
@@ -1118,11 +1035,10 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         // heartbeat due meanwhile is counted first, against that.
         if let Event::Received { bytes, .. } = event {
             let started = now - time_on_air(bytes.len() as u8, MIN_PREAMBLE_SYMBOLS);
-            let since = self.radio.away_since.map_or(started, |a| a.min(started));
-            self.radio.away_since = Some(since);
+            self.radio.received_from(started);
         }
         self.count_missed_heartbeats(now);
-        let threshold = self.radio.busy.threshold_dbm();
+        let threshold = self.radio.busy().threshold_dbm();
         match event {
             Event::Wakeup => {}
             Event::Received {
@@ -1133,7 +1049,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             // "Heartbeat", "Busy estimate").
             Event::LbtDone { busy, dbm, .. } => {
                 let busy = busy || dbm > threshold;
-                match self.radio.excursion.complete() {
+                match self.radio.complete() {
                     Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
                     Some(Job::HandOver) => self.handover_check(busy, now, emit),
                     Some(Job::Update) => self.update_check(busy, now, emit),
@@ -1142,12 +1058,12 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                     Some(Job::Sweep | Job::Reply) | None => {}
                 }
             }
-            Event::RssiSample { channel, dbm } => match self.radio.excursion.complete() {
+            Event::RssiSample { channel, dbm } => match self.radio.complete() {
                 Some(Job::Sweep) => self.sweep_sample(channel, dbm, now),
                 Some(Job::Heartbeat | Job::HandOver | Job::Reply | Job::Update | Job::Status)
                 | None => {}
             },
-            Event::TxDone => match self.radio.excursion.complete() {
+            Event::TxDone => match self.radio.complete() {
                 Some(Job::Heartbeat) => self.heartbeat_done(now, true),
                 // Unless the hand-over was given up meanwhile (a displaced record).
                 Some(Job::HandOver) => {
@@ -1160,7 +1076,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                     }
                 }
                 Some(Job::Reply) => {
-                    let (listens_on, taken) = self.radio.replies.sent();
+                    let (listens_on, taken) = self.radio.reply_sent();
                     if listens_on {
                         self.took(now);
                     }
@@ -1180,7 +1096,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
         self.fire(now, emit);
         self.schedule(now, emit);
         if away.get() {
-            self.radio.away_since.get_or_insert(now);
+            self.radio.went(now);
         }
         self.timers.app_ready_at = self.send_ready_at(now);
         if woke.get() {
