@@ -81,7 +81,8 @@ t10_est,t10_rx,t10_dist,t10_listen,t12_est,t12_rx,t12_dist,t12_listen,\
 rx_dbm,p_noise_loss,fate,how\n";
 
 impl Sim {
-    /// Log every DATA to a relay after the settle time to `out`.
+    /// Log every DATA to a node, relay or sleepy, after the settle time to
+    /// `out`.
     pub fn margin_to(&mut self, mut out: Box<dyn Write>) {
         out.write_all(HEADER.as_bytes()).expect("margin log header");
         self.margin = Some(MarginLog {

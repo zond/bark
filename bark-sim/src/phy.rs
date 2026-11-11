@@ -299,7 +299,9 @@ pub struct RadioParams {
     /// 60 dB: at least the ±1.5 × BW figure.
     pub acr2_db: f64,
     /// CAD length in symbols, one of 1, 2, 4, 8, 16 (DS Table 13-72).
-    /// Default 8: the value the `lora-phy` driver hard-codes.
+    /// Default 8: what the node's driver programs
+    /// (`bark-driver/src/sx1262.rs` `CAD_SYMBOLS`; spec "Heartbeat",
+    /// listen-before-talk).
     pub cad_symbols: u32,
     /// Probability that CAD misses a LoRa signal above sensitivity.
     /// Assumption: 0 until measured.

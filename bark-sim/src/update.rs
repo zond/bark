@@ -283,11 +283,11 @@ impl UpdateRun {
         self.air_total[3] += us;
     }
 
-    /// A row of the series. `relays` and `sleepy` say, per node now alive,
-    /// whether it is a relay or sleepy and whether it was placed as a
-    /// relay; `busy` the busy share of each relay's home channel as it
-    /// estimates it.
-    /// `gathering` has the first block each node that gathers lacks.
+    /// A row of the series. `nodes` says, per node now alive, whether it
+    /// is a relay, else sleepy, and whether it was placed as a relay;
+    /// `gathering` has the first block each node that gathers lacks;
+    /// `busy` the busy share of each relay's home channel as it estimates
+    /// it.
     pub fn sample(
         &mut self,
         now: Instant,
