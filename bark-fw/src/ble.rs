@@ -525,6 +525,9 @@ pub struct State {
     told_counts: [u8; RECORDS],
     /// The flags byte last logged.
     flags: Option<u8>,
+    /// The removal code on the screen, if one is (spec "Phone link",
+    /// Phones).
+    removal: Option<bark_link::phones::Code>,
 }
 
 impl State {
@@ -591,6 +594,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     told: Status::EMPTY,
     told_counts: [0; RECORDS],
     flags: None,
+    removal: None,
 }));
 
 /// The node's answer to the request: taken, or not.
@@ -2435,10 +2439,6 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
     Ok(())
 }
 
-/// The removal code on the screen, if one is (spec "Phone link", Phones).
-static REMOVAL: Mutex<CriticalSectionRawMutex, core::cell::Cell<Option<bark_link::phones::Code>>> =
-    Mutex::new(core::cell::Cell::new(None));
-
 fn ms_now() -> u64 {
     embassy_time::Instant::now().as_millis()
 }
@@ -2472,7 +2472,7 @@ fn write_phones(
                     break c;
                 }
             };
-            REMOVAL.lock(|c| c.set(Some(code)));
+            LINK.lock(|l| l.borrow_mut().removal = Some(code));
             // The code only in an open build, as a pairing's
             // (spec "Phone link", Pairing).
             match crate::protect::BUILD {
@@ -2492,12 +2492,7 @@ fn write_phones(
             if crate::phones::read(|p| p.holding(number, parts)).is_none() {
                 return Err(malformed(Malformed::Value));
             }
-            let taken = REMOVAL.lock(|c| {
-                let mut drawn = c.get();
-                let taken = Code::take(&mut drawn, code, ms_now());
-                c.set(drawn);
-                taken
-            });
+            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().removal, code, ms_now()));
             crate::display::removal(None);
             if !taken {
                 log::info!("ble: removal refused: not the code shown, or too late");
