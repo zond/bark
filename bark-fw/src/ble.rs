@@ -2149,8 +2149,10 @@ fn refresh(
         l.phones[slot].refuses = refuses;
     });
     phones_moved();
-    if let Err(e) = conn.raw().set_refuses_pairing(refuses) {
-        log::error!("ble: refusing pairing {}", HostError(&e));
+    match conn.raw().set_refuses_pairing(refuses) {
+        // The link has ended already, as a removed phone's does: nothing to set.
+        Ok(()) | Err(trouble_host::Error::Disconnected) => {}
+        Err(e) => log::error!("ble: refusing pairing {}", HostError(&e)),
     }
     turn_moved();
     let status = status_now(slot).encode();
