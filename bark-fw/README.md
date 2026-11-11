@@ -1366,10 +1366,31 @@ relay; its USB device, log, touch and watchdog are tasks as in the node.
 
 The relay, 95 536 B, is built in place in its static
 (`Relay::reset`, `docs/core-interface.md` §6), so that no task's frame
-holds it. The deepest poll the disassembly shows (`llvm-objdump`, an
-upper bound, since calls through pointers are not followed) is the
-phone link's, about 10 KB, with the radio and core's about 9 KB beside
-it; every other task's is under 1 KB.
+holds it. So are the phone link's host and attribute table: the host
+writes its nine connections' storage, 10 KB, where it lies, and the
+attribute server is built in its static (`vendor/README.md`). What the
+link's start-up still puts on the stack, the host's state and the
+clients' tables, passes through functions called once and returned from
+(`ble::start`, `ble::host`, `ble::server`), not through the frame of the
+host's loop, which each of its polls holds for as long as the node runs.
+
+The deepest call paths the disassembly shows (`llvm-objdump`; calls
+through pointers are not followed, and each path is the sum of the
+largest frames it can reach, an upper bound), 2026-11-11:
+
+| task | deepest path | bytes |
+|---|---|---|
+| radio and core | `handle`, `schedule`, the update's `section` | 14 468 |
+| update over the mesh | `sign::verify` | 8 884 |
+| a phone link's slot | an image's check, `sign::verify` | 8 652 |
+| phone link | pairing's P-256 multiplication | 7 648 |
+| phone link, start-up | the host's key pair | 7 472 |
+| main | spawning the screen's task | 5 604 |
+
+Every other task's is under 1.2 KB. The largest frames:
+`mailbox::open` 5 024 B, the main task's 4 480, `handle` 4 248,
+`sign::verify` 4 168, `ble::server` 2 504, `ble::host` 1 888, the phone
+link's task 1 656.
 
 **The floor.** The stack is the RAM static memory leaves, and nothing
 else bounds it: an image whose statics grow past it faults at boot. The
@@ -1392,7 +1413,7 @@ confirmation takes.
 
 | release, open | data + bss | stack |
 |---|---|---|
-| node image | 196 120 B | 64 976 B |
+| node image | 196 072 B | 65 024 B |
 | console | 18 080 B | 243 024 B |
 
 (2026-11-11, `size -A`, `uf2.py --stack`.)

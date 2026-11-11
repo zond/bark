@@ -160,6 +160,25 @@ impl<'values, M: RawMutex, P: PacketPool, const ATT_MAX: usize, const CONN_MAX: 
         }
     }
 
+    /// Create the server where it lies, as [`new`](Self::new) does, with
+    /// the attributes `build` adds to its empty table: as a value, the
+    /// table passes through the caller's stack more than once.
+    pub fn new_in<R>(
+        slot: &mut core::mem::MaybeUninit<Self>,
+        build: impl FnOnce(&mut AttributeTable<'values, M, ATT_MAX>) -> R,
+    ) -> (&mut Self, R) {
+        let server = slot.as_mut_ptr();
+        // SAFETY: each field is written before the whole is taken as set up.
+        unsafe {
+            let table = &raw mut (*server).att_table;
+            table.write(AttributeTable::new());
+            let built = build(&mut *table);
+            (&raw mut (*server).client_att_tables).write(ClientAttTables::new(&*table));
+            (&raw mut (*server)._p).write(PhantomData);
+            (slot.assume_init_mut(), built)
+        }
+    }
+
     /// Read an attribute value with permission checks for the given connection.
     pub fn read(
         &self,
@@ -877,6 +896,44 @@ mod tests {
     use crate::connection_manager::tests::{setup, ADDR_1};
     use crate::prelude::*;
     use crate::Address;
+
+    #[test]
+    fn a_server_built_in_place_is_the_one_new_builds() {
+        const MAX_ATTRIBUTES: usize = 16;
+        fn build(table: &mut AttributeTable<'_, NoopRawMutex, MAX_ATTRIBUTES>) -> u16 {
+            let mut svc = table.add_service(Service {
+                uuid: Uuid::new_long([1; 16]),
+            });
+            svc.add_characteristic_ro::<[u8; 2], _>(Uuid::new_long([2; 16]), &[1, 2])
+                .build();
+            let notified = svc
+                .add_characteristic_small(Uuid::new_long([3; 16]), [CharacteristicProp::Notify], [0u8; 4])
+                .build();
+            unwrap!(notified.cccd_handle)
+        }
+        let mut table = AttributeTable::new();
+        let cccd = build(&mut table);
+        let server = AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, 2>::new(table);
+        let mut slot = core::mem::MaybeUninit::uninit();
+        let (in_place, cccd_in_place) =
+            AttributeServer::<_, DefaultPacketPool, MAX_ATTRIBUTES, 2>::new_in(&mut slot, build);
+        assert_eq!(cccd_in_place, cccd);
+        assert_eq!(in_place.table().hash(), server.table().hash());
+        let mgr = setup();
+        unwrap!(mgr.connect(
+            ConnHandle::new(0),
+            Address::new(AddrKind::RANDOM, BdAddr::new(ADDR_1)),
+            LeConnRole::Peripheral,
+            ConnParams::new(),
+        ));
+        let Poll::Ready(conn) = mgr.poll_accept(LeConnRole::Peripheral, &[], None) else {
+            panic!("no connection");
+        };
+        for s in [&server, &*in_place] {
+            unwrap!(s.connect(&conn));
+            assert!(!s.should_notify(&conn, cccd));
+        }
+    }
 
     #[test]
     fn test_attribute_server_last_handle_of_group() {

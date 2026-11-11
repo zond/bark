@@ -37,6 +37,7 @@
 //! "Phone link", Updates).
 
 use core::cell::RefCell;
+use core::mem::MaybeUninit;
 
 use bark_fw_logic::link::{self, Access};
 use bark_image::policy::Links;
@@ -180,33 +181,64 @@ impl AttributeHandle for Cccd {
 /// a phone that the table never changes, so the phone would keep a table
 /// it cached for good. The hash lets a phone that reads it see a change
 /// without waiting for an indication.
-fn server(name: &str) -> (Server<'_>, Gatt) {
-    let mut table = AttributeTable::new();
-    let mut gap = table.add_service(Service::new(service::GAP));
-    gap.add_characteristic_ro(characteristic::DEVICE_NAME, name);
-    gap.add_characteristic_ro(characteristic::APPEARANCE, &appearance::UNKNOWN);
-    gap.build();
-    let mut gatt = table.add_service(Service::new(service::GATT));
-    let service_changed = gatt
-        .add_characteristic_small(
-            characteristic::SERVICE_CHANGED,
-            [CharacteristicProp::Indicate],
-            ALL_HANDLES,
-        )
-        .build();
+///
+/// Built in its static, as `Server::new` would build it on the stack,
+/// where the table and its copies took 9.7 KB. Not inlined, so that its
+/// frame and the host's ([`host`]) are not held at once.
+#[inline(never)]
+fn server(name: &'static str) -> &'static (Server<'static>, Gatt) {
+    static SERVER: StaticCell<(Server<'static>, Gatt)> = StaticCell::new();
     // Readable by any link: discovery shows the same table to anyone.
     static HASH: StaticCell<[u8; 16]> = StaticCell::new();
-    let hash = gatt
-        .add_characteristic_ro(characteristic::DATABASE_HASH, &[0u8; 16])
-        .build();
-    gatt.build();
-    let server = Server::new(table);
+    let slot = SERVER.uninit();
+    let whole = slot.as_mut_ptr();
+    // SAFETY: a field's place in the static, not yet set up, which
+    // `MaybeUninit` allows.
+    let attributes = unsafe { place(&raw mut (*whole).0.server) };
+    let (_, (link, service_changed, hash)) = AttributeServer::new_in(attributes, |table| {
+        let mut gap = table.add_service(Service::new(service::GAP));
+        gap.add_characteristic_ro(characteristic::DEVICE_NAME, name);
+        gap.add_characteristic_ro(characteristic::APPEARANCE, &appearance::UNKNOWN);
+        gap.build();
+        let mut gatt = table.add_service(Service::new(service::GATT));
+        let service_changed = gatt
+            .add_characteristic_small(
+                characteristic::SERVICE_CHANGED,
+                [CharacteristicProp::Indicate],
+                ALL_HANDLES,
+            )
+            .build();
+        let hash = gatt
+            .add_characteristic_ro(characteristic::DATABASE_HASH, &[0u8; 16])
+            .build();
+        gatt.build();
+        (Link::new(table), service_changed, hash)
+    });
+    // Fails to build if `Server` gains a field the writes below leave out.
+    let _ = |Server { server: _, link: _ }: Server<'_>| ();
+    // SAFETY: the attribute server is set up above, and these are the
+    // other two fields; the whole is then set up.
+    let built: &'static (Server<'static>, Gatt) = unsafe {
+        (&raw mut (*whole).0.link).write(link);
+        (&raw mut (*whole).1).write(Gatt { service_changed });
+        let slot: &'static MaybeUninit<_> = slot;
+        slot.assume_init_ref()
+    };
     // The hash covers the hash's declaration but not its value (5.1,
     // Vol 3 Part G §7.3.1), so it is taken once the table is whole.
-    let value = HASH.init(server.table().hash().to_le_bytes());
-    hash.set_ro(&server, value)
+    let value = HASH.init(built.0.table().hash().to_le_bytes());
+    hash.set_ro(&built.0, value)
         .unwrap_or_else(|e| panic!("the database hash: {}", HostError(&e)));
-    (server, Gatt { service_changed })
+    built
+}
+
+/// The place `p` points to, as one not yet set up.
+///
+/// # Safety
+///
+/// `p` points into a static, and nothing else refers to its place.
+unsafe fn place<T>(p: *mut T) -> &'static mut MaybeUninit<T> {
+    unsafe { &mut *p.cast() }
 }
 
 /// The service and its characteristics, each with room for its value's
@@ -1017,19 +1049,29 @@ pub async fn run(
     internal: &'static crate::store::SharedFlash,
     flash: &'static crate::update::Flash,
 ) {
-    static RESOURCES: StaticCell<
-        HostResources<DefaultPacketPool, LINKS, CHANNELS, ADV_SETS, BONDS>,
-    > = StaticCell::new();
-    static STACK: StaticCell<Stack> = StaticCell::new();
-    let resources = RESOURCES.init(HostResources::new());
-    // The node shows a passkey and takes none: passkey entry, the phone
-    // typing what the node displays (Vol 3 Part H §2.3.5.1, Table 2.8).
-    let stack: &'static Stack = STACK.init(
-        trouble_host::new(controller, resources)
-            .set_random_address(address())
-            .set_io_capabilities(IoCapabilities::DisplayOnly)
-            .build(),
-    );
+    let stack = start(spawner, controller, id, image, internal, flash);
+    let mut runner = stack.runner();
+    loop {
+        if let Err(e) = runner.run().await {
+            log::error!("ble: host {}", StackError(&e));
+        }
+    }
+}
+
+/// Set up the host, the attribute table and the slots, in their statics.
+/// Not inlined, so that what building them takes of the stack is given
+/// back once they are built, not held in [`run`]'s frame by every poll
+/// of the host for as long as the node runs.
+#[inline(never)]
+fn start(
+    spawner: embassy_executor::Spawner,
+    controller: SoftdeviceController<'static>,
+    id: NodeId,
+    image: u32,
+    internal: &'static crate::store::SharedFlash,
+    flash: &'static crate::update::Flash,
+) -> &'static Stack {
+    let stack = host(controller);
     resolving_list();
     for i in 0..RECORDS {
         let Some(r) = crate::phones::read(|p| p.get(i).copied()) else {
@@ -1055,8 +1097,7 @@ pub async fn run(
     records_changed();
     static NAME: StaticCell<[u8; bark_link::NAME_LEN]> = StaticCell::new();
     let name = core::str::from_utf8(NAME.init(bark_link::name(id))).expect("the name is ASCII");
-    static SERVER: StaticCell<(Server<'static>, Gatt)> = StaticCell::new();
-    let (server, gatt) = SERVER.init(server(name));
+    let (server, gatt) = server(name);
     let node = Node {
         version: bark_link::VERSION,
         oldest: bark_link::OLDEST,
@@ -1076,12 +1117,26 @@ pub async fn run(
         let token = slot(i, stack, advertising, server, gatt, name, update);
         spawner.spawn(token.expect("one task a slot"));
     }
-    let mut runner = stack.runner();
-    loop {
-        if let Err(e) = runner.run().await {
-            log::error!("ble: host {}", StackError(&e));
-        }
-    }
+    stack
+}
+
+/// The host, in its static. Not inlined, as [`server`] is not: its state
+/// passes through this frame.
+#[inline(never)]
+fn host(controller: SoftdeviceController<'static>) -> &'static Stack {
+    static RESOURCES: StaticCell<
+        HostResources<DefaultPacketPool, LINKS, CHANNELS, ADV_SETS, BONDS>,
+    > = StaticCell::new();
+    static STACK: StaticCell<Stack> = StaticCell::new();
+    let resources = RESOURCES.init(HostResources::new());
+    // The node shows a passkey and takes none: passkey entry, the phone
+    // typing what the node displays (Vol 3 Part H §2.3.5.1, Table 2.8).
+    STACK.init(
+        trouble_host::new(controller, resources)
+            .set_random_address(address())
+            .set_io_capabilities(IoCapabilities::DisplayOnly)
+            .build(),
+    )
 }
 
 /// A slot for one link, for ever: advertise while the node may take a

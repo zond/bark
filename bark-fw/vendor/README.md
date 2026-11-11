@@ -99,12 +99,20 @@ without the `central` feature, 6 KB the image has no room for
   check is `assert!` rather than `assert_ne!`. Each value's `Debug` was the
   only use of the ATT PDUs', the attribute's, the UUID's and `u128`'s
   formatting: 3 820 B of flash less.
+- `src/lib.rs` and `src/attribute_server.rs`: large values are set up where
+  they lie rather than passed by value through the stack (bark-fw
+  `README.md`, "Tasks and the stack"). `new` writes each connection's
+  storage into the resources in place, over zero bytes, which a constant
+  checks are a valid one; as published, the array of nine, 10 KB, passed
+  through the caller's frame twice. `AttributeServer::new_in` builds a server
+  in a place given, its table filled there, as `new` builds one from a table
+  passed by value. A test in `attribute_server.rs` builds a server both ways.
 - The unit tests of `pairing` and `pairing::peripheral` pair against the
   central's side, so they run only with `central`.
 
-The tests: `cargo test --lib --features security` runs all 64, and
+The tests: `cargo test --lib --features security` runs all 65, and
 `cargo test --lib --no-default-features --features
-peripheral,gatt,derive,default-packet-pool,security` the 49 without
+peripheral,gatt,derive,default-packet-pool,security` the 50 without
 `central`. The integration tests in `tests/` do not build with
 `security`, as published.
 
