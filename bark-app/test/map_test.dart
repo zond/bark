@@ -5,10 +5,13 @@
 // Then Ask: each neighbour asked as the map opens, one that does not
 // answer asked again every 2 s up to three asks, a refresh asking only
 // those without an answer in the last 10 s, and the answers drawn in the
-// words of the neighbours' screens. Last, nodes a finger cannot tell
-// apart: one marker with their count, which lists them.
+// words of the neighbours' screens. A node's sheet asks it alone, by the
+// same rule, and says while it has no answer that it is asked or did
+// not answer. Last, nodes a finger cannot tell apart: one marker with
+// their count, which lists them.
 
 import 'package:bark_app/app.dart';
+import 'package:bark_app/asks.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 
@@ -33,6 +36,9 @@ void main() {
   late Sodium sodium;
   setUpAll(() async => sodium = await SodiumInit.init());
   final start = DateTime.utc(2026, 11, 7);
+
+  /// A sheet's line while its node is asked and has not answered.
+  const asking = 'Asking it for power, neighbours and version\u2026';
 
   /// An app connected to the fake node, or to the node `make` gives.
   void run(
@@ -130,16 +136,35 @@ void main() {
       ]);
       // Not asked again before its round's wait is over, then asked
       // again at each, and no more after three asks.
-      async.elapse(Session.answerWait - FakeNode.answerAfter * 2);
+      async.elapse(Asks.wait - FakeNode.answerAfter * 2);
       expect(fake.asked.length, t.list.length);
       async.elapse(FakeNode.answerAfter);
       expect(fake.asked.length, t.list.length + 1);
       expect(fake.asked.last, hex(silent.id));
-      async.elapse(Session.answerWait);
+      async.elapse(Asks.wait);
       expect(fake.asked.length, t.list.length + 2);
-      async.elapse(Session.answerWait * 5);
+      async.elapse(Asks.wait * 5);
       expect(fake.asked.length, t.list.length + 2);
       expect(fake.asked.where((k) => k == hex(silent.id)).length, 3);
+    });
+  });
+
+  test('once the map shuts, no neighbour is asked again', () {
+    run((async, app) {
+      final fake = app.fakeNode!..loseEvery = 0;
+      final s = app.session;
+      final t = read(async, app)!;
+      // Shut before an ask was written: none is.
+      s.askNeighbours(t.list);
+      s.stopAsking();
+      async.elapse(Asks.wait * 5);
+      expect(fake.asked, isEmpty);
+      // Shut after the first round: the silent one not asked again.
+      s.askNeighbours(t.list);
+      async.elapse(FakeNode.answerAfter);
+      s.stopAsking();
+      async.elapse(Asks.wait * 5);
+      expect(fake.asked, [for (final n in t.list) hex(n.id)]);
     });
   });
 
@@ -153,7 +178,7 @@ void main() {
       async.elapse(FakeNode.answerAfter);
       // Of the four that answer, the second and fourth asks are lost.
       expect(s.answers.length, 2);
-      async.elapse(Session.answerWait * 3);
+      async.elapse(Asks.wait * 3);
       expect(s.answers.keys.toSet(), fake.statuses.keys.toSet());
       // Five, then the two lost and the silent one, then the one lost
       // again and the silent one.
@@ -170,7 +195,7 @@ void main() {
         t.list.singleWhere((n) => !fake.statuses.containsKey(hex(n.id))).id,
       );
       s.askNeighbours(t.list);
-      async.elapse(Session.answerWait * 3);
+      async.elapse(Asks.wait * 3);
       final first = fake.asked.length;
       fake.asked.clear();
       fake.statuses.remove(hex(t.list.first.id));
@@ -179,17 +204,20 @@ void main() {
       // The answers kept, the silent one asked anew.
       expect(fake.asked, [silent]);
       expect(s.answers.length, t.list.length - 1);
-      async.elapse(Session.answerWait * 3);
+      async.elapse(Asks.wait * 3);
       fake.asked.clear();
       // Past 10 s since they answered, every one is asked, and the old
-      // answers go.
-      async.elapse(Session.askFresh);
+      // answers stay until new ones come; the first's, which no longer
+      // comes, stays.
+      async.elapse(Asks.fresh);
+      final old = s.answers[hex(t.list.first.id)];
       s.askNeighbours(t.list);
       async.flushMicrotasks();
       expect(fake.asked, [for (final n in t.list) hex(n.id)]);
-      expect(s.answers, isEmpty);
-      async.elapse(Session.answerWait * 3);
-      expect(s.answers.length, t.list.length - 2);
+      expect(s.answers.length, t.list.length - 1);
+      async.elapse(Asks.wait * 3);
+      expect(s.answers.length, t.list.length - 1);
+      expect(s.answers[hex(t.list.first.id)], same(old));
       expect(first, t.list.length + 2);
     });
   });
@@ -371,6 +399,8 @@ void main() {
       ),
       findsOneWidget,
     );
+    // Still being asked, as its sheet says.
+    expect(line(asking), findsOneWidget);
     // A relay: no Anchor row, and no contact's name.
     expect(named('role, relay'), findsOneWidget);
     expect(line("relay: passes on others' texts"), findsOneWidget);
@@ -387,17 +417,179 @@ void main() {
     await closeSheet(t);
     await t.pumpAndSettle();
 
-    // The silent one asked twice more, then, refreshed once the answers
-    // are 10 s old, each is asked again, and the answers replaced.
-    await t.pump(Session.askFresh);
+    // The silent one asked twice more, its sheet's opening adding none,
+    // then, refreshed once the answers are 10 s old, each is asked again,
+    // the old answers shown until the new replace them.
+    await t.pump(Asks.fresh);
     expect(fake.asked.length, list.length + 2);
     fake.statuses.updateAll((_, s) => const NeighbourStatus());
     await t.tap(find.byTooltip('Read again'));
     await t.pump();
-    expect(find.text('FIXED RELAY'), findsNothing);
+    expect(find.text('FIXED RELAY'), findsNWidgets(2));
     await t.pump(FakeNode.answerAfter);
     expect(fake.asked.length, 2 * list.length + 2);
     expect(find.text('RELAY NO PLACE'), findsNWidgets(4));
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('a neighbour\'s sheet asks it alone while it has no answer, '
+      'and says how its asks stand', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final list = fake.neighbours.values.toList();
+    final silent = list.singleWhere(
+      (n) => !fake.statuses.containsKey(hex(n.id)),
+    );
+    final key = hex(silent.id);
+    int asksOf(String k) => fake.asked.where((a) => a == k).length;
+    Finder icon(String label) =>
+        find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
+    final sheet = find.byType(BottomSheet);
+    Finder line(String text) =>
+        find.descendant(of: sheet, matching: find.text(text));
+    Finder named(String label) =>
+        find.descendant(of: sheet, matching: icon(label));
+
+    // Opened during the opening round, which serves: nothing more sent.
+    await t.pump(FakeNode.answerAfter);
+    await t.tap(icon(nodeLabel(silent.id)));
+    await t.pumpAndSettle();
+    expect(fake.asked.length, list.length);
+    expect(line(asking), findsOneWidget);
+    expect(find.text('Ask again'), findsNothing);
+
+    // Its three asks run out, and the open sheet says so.
+    await t.pump(Asks.wait * 3);
+    expect(asksOf(key), 3);
+    expect(fake.asked.length, list.length + 2);
+    expect(line(asking), findsNothing);
+    expect(line('It did not answer.'), findsOneWidget);
+    expect(find.text('Ask again'), findsOneWidget);
+    await closeSheet(t);
+
+    // Opened again, it alone is asked; it answers the second ask, and
+    // its rows appear in the open sheet.
+    fake.statuses[key] = const NeighbourStatus(
+      placed: true,
+      heard: 5,
+      strong: 3,
+      version: 9,
+    );
+    fake.silentFor[key] = 1;
+    fake.asked.clear();
+    await t.tap(icon(nodeLabel(silent.id)));
+    await t.pumpAndSettle();
+    expect(fake.asked, [key]);
+    expect(line(asking), findsOneWidget);
+    expect(named('neighbours known'), findsNothing);
+    await t.pump(Asks.wait + FakeNode.answerAfter);
+    expect(fake.asked, [key, key]);
+    expect(line(asking), findsNothing);
+    expect(line('5 heard \u00b7 3 strong \u00b7 0 exchanged'), findsOneWidget);
+    expect(named('firmware version'), findsOneWidget);
+    expect(named('power'), findsNothing);
+    expect(named('battery'), findsOneWidget);
+    await closeSheet(t);
+
+    // One that answered 5 s ago is not asked by its sheet, nor is this
+    // node.
+    fake.asked.clear();
+    await t.pump(const Duration(seconds: 4));
+    await t.tap(icon(nodeLabel(silent.id)));
+    await t.pumpAndSettle();
+    await closeSheet(t);
+    await t.tap(icon('this node'));
+    await t.pumpAndSettle();
+    await closeSheet(t);
+    expect(fake.asked, isEmpty);
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('taps in quick succession add no asks to a series', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final silent = fake.neighbours.values.singleWhere(
+      (n) => !fake.statuses.containsKey(hex(n.id)),
+    );
+    final key = hex(silent.id);
+    final marker = find.byWidgetPredicate(
+      (w) => w is Icon && w.semanticLabel == nodeLabel(silent.id),
+    );
+    await t.tap(marker);
+    await t.pumpAndSettle();
+    await t.pump(Asks.wait * 3);
+    fake.asked.clear();
+    // Ask again, tapped thrice, then the sheet shut and opened twice.
+    final again = t.getCenter(find.text('Ask again'));
+    for (var i = 0; i < 3; i++) {
+      await t.tapAt(again);
+      await t.pump(const Duration(milliseconds: 100));
+    }
+    await closeSheet(t);
+    for (var i = 0; i < 2; i++) {
+      await t.tap(marker);
+      await t.pumpAndSettle();
+      await closeSheet(t);
+    }
+    await t.tap(marker);
+    await t.pumpAndSettle();
+    await t.pump(Asks.wait * 5);
+    expect(fake.asked, [key, key, key]);
+    expect(find.text('It did not answer.'), findsOneWidget);
+    await closeSheet(t);
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('a sleepy node that does not answer: its sheet says why', (
+    t,
+  ) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    late Neighbour sleepy;
+    final app = await openMap(
+      t,
+      make: (now, me) {
+        final f = FakeNode(now: now, sodium: sodium, app: me);
+        sleepy = f.neighbours.values.singleWhere((n) => n.sleepy);
+        f.silentFor[hex(sleepy.id)] = Asks.rounds;
+        return f;
+      },
+    );
+    // Opened while the map asks it, then its asks run out.
+    await t.pump(FakeNode.answerAfter);
+    await t.tap(
+      find.byWidgetPredicate(
+        (w) => w is Icon && w.semanticLabel == nodeLabel(sleepy.id),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.pump(Asks.wait * 3);
+    expect(
+      app.fakeNode!.asked.where((k) => k == hex(sleepy.id)).length,
+      Asks.rounds,
+    );
+    expect(
+      find.text('It did not answer: it sleeps between its windows.'),
+      findsOneWidget,
+    );
+    expect(find.text('Ask again'), findsOneWidget);
+    await closeSheet(t);
     await shut(t, app);
     debugPrint = print;
   });
@@ -427,12 +619,16 @@ void main() {
       final rows = find.descendant(of: sheet, matching: find.byType(InkWell));
       for (var i = 0; i < rows.evaluate().length; i++) {
         final row = rows.at(i);
-        final label = factHelp.keys.singleWhere(
-          (l) => find
-              .descendant(of: row, matching: find.text(l))
-              .evaluate()
-              .isNotEmpty,
-        );
+        final label = factHelp.keys
+            .where(
+              (l) => find
+                  .descendant(of: row, matching: find.text(l))
+                  .evaluate()
+                  .isNotEmpty,
+            )
+            .singleOrNull;
+        // Not a fact's row: the Ask again button.
+        if (label == null) continue;
         await t.ensureVisible(row);
         await t.tap(row);
         await t.pumpAndSettle();

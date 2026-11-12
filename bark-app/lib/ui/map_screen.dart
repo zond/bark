@@ -1,11 +1,12 @@
 // The paired node and the neighbours it knows on a street map, a line to
 // each coloured by the link's quality (spec "Phone link", Neighbours).
 // Read when the screen opens, at every status the node gives and when
-// the person asks. When it opens and when the person asks, each
-// neighbour without a fresh answer is also asked what its own screen
-// shows, and asked again while it does not answer (spec "Phone link",
-// Ask), and its marker says it in those words. Nodes too close on the
-// screen for a finger to choose share one marker, which lists them.
+// the person asks. When it opens, when the person asks and when they
+// open a neighbour's sheet, each neighbour without a fresh answer is also
+// asked what its own screen shows, and asked again while it does not
+// answer (spec "Phone link", Ask; [Asks]), and its marker says it in
+// those words. Nodes too close on the screen for a finger to choose share
+// one marker, which lists them.
 
 import 'dart:async';
 
@@ -14,6 +15,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../app.dart';
+import '../asks.dart';
 import '../contacts.dart';
 import '../link.dart';
 import '../session.dart';
@@ -228,6 +230,9 @@ class _Spot {
   final Color color;
   final Widget Function(int count) look;
   final Widget Function() sheet;
+
+  /// Done as its sheet opens.
+  final VoidCallback? onOpen;
   const _Spot(
     this.point, {
     required this.width,
@@ -238,6 +243,7 @@ class _Spot {
     required this.color,
     required this.look,
     required this.sheet,
+    this.onOpen,
   });
 }
 
@@ -479,8 +485,8 @@ class _MapScreenState extends State<MapScreen> {
         icon: look.icon,
         color: qualityColor(m.quality(t.floorDbm)),
         look: look.build,
-        sheet: () =>
-            _Sheet(contactsAt(contacts, m.id), nodeLabel(m.id), look.facts()),
+        sheet: () => Watch(widget.app, (_) => _neighbourSheet(m, t)),
+        onOpen: () => _askOne(m),
       );
     }
 
@@ -507,6 +513,55 @@ class _MapScreenState extends State<MapScreen> {
       for (final m in t.list)
         if (m.sleepy) neighbour(m),
     ];
+  }
+
+  /// Asks `m` alone, as its sheet opens or the person asks again; by the
+  /// rule of [Asks], not when its asks are under way or it answered lately.
+  void _askOne(Neighbour m) {
+    if (!_readable) return;
+    _s.askNeighbours([m]).catchError((Object e) => _s.note('Ask: $e'));
+  }
+
+  /// A neighbour's sheet as it stands now, from the table read last, or
+  /// `then`'s if the link is gone: it changes as the answer comes or the
+  /// asks run out.
+  Widget _neighbourSheet(Neighbour was, NeighbourTable then) {
+    final table = _s.neighbours ?? then;
+    final n =
+        table.list.where((n) => hex(n.id) == hex(was.id)).firstOrNull ?? was;
+    final placed = _s.status?.placed ?? false;
+    final said = _s.answers[hex(n.id)];
+    final look = _NeighbourMarker(
+      n,
+      table,
+      placed ? _at(table.own) : null,
+      said,
+      widget.app.contacts,
+    );
+    final facts = look.facts();
+    final sleepy = said?.sleepy ?? n.sleepy;
+    final line = said != null
+        ? null
+        : switch (_s.askState(n.id)) {
+            AskState.asking => const _Line(
+              'Asking it for power, neighbours and version\u2026',
+            ),
+            AskState.gaveUp => _Line(
+              sleepy
+                  ? 'It did not answer: it sleeps between its windows.'
+                  : 'It did not answer.',
+              again: _readable ? () => _askOne(n) : null,
+            ),
+            _ => null,
+          };
+    return _Sheet(
+      contactsAt(widget.app.contacts, n.id),
+      nodeLabel(n.id),
+      facts,
+      line: line,
+      // Where its power would be, the first row an answer gives.
+      lineAt: facts.indexWhere((f) => f.label == 'Place') + 1,
+    );
   }
 
   /// A place's marker: one node's, which a tap opens, or the first's with
@@ -542,12 +597,15 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  void _open(BuildContext context, _Spot s) => showModalBottomSheet<void>(
-    context: context,
-    // Taller than half the screen when its rows need it.
-    isScrollControlled: true,
-    builder: (_) => s.sheet(),
-  );
+  void _open(BuildContext context, _Spot s) {
+    s.onOpen?.call();
+    showModalBottomSheet<void>(
+      context: context,
+      // Taller than half the screen when its rows need it.
+      isScrollControlled: true,
+      builder: (_) => s.sheet(),
+    );
+  }
 
   /// The nodes at one place, a row each, which opens its sheet.
   void _list(BuildContext context, List<_Spot> here) =>
@@ -841,13 +899,43 @@ class _NeighbourMarker {
   }
 }
 
+/// What a sheet says of a neighbour's asks while it has no answer, and
+/// how to ask it again once they ran out.
+class _Line extends StatelessWidget {
+  final String text;
+  final VoidCallback? again;
+  const _Line(this.text, {this.again});
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: kMinInteractiveDimension),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        if (again != null)
+          TextButton(onPressed: again, child: const Text('Ask again')),
+      ],
+    ),
+  );
+}
+
 /// A node's details: whose it is, if a contact's, its ID, and a row a
-/// fact, in plain words, none of its screen's.
+/// fact, in plain words, none of its screen's, with `line` before the
+/// row at `lineAt`.
 class _Sheet extends StatelessWidget {
   final String? whose;
   final String id;
   final List<Fact> facts;
-  const _Sheet(this.whose, this.id, this.facts);
+  final Widget? line;
+  final int lineAt;
+  const _Sheet(this.whose, this.id, this.facts, {this.line, this.lineAt = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -862,7 +950,11 @@ class _Sheet extends StatelessWidget {
             if (whose != null) Text(whose!, style: text.titleLarge),
             Text(id, style: whose == null ? text.titleLarge : text.titleSmall),
             const SizedBox(height: 8),
-            for (final f in facts) _row(context, f),
+            for (final (i, f) in facts.indexed) ...[
+              if (i == lineAt) ?line,
+              _row(context, f),
+            ],
+            if (lineAt >= facts.length) ?line,
           ],
         ),
       ),
