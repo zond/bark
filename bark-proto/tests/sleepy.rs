@@ -1374,8 +1374,10 @@ const APP_WAIT: Duration = Duration::from_secs(2);
 
 /// Node `s`'s application asks `anchor` for its status `asks` times, as
 /// the app's neighbour map does, at moments spread over its beat period:
-/// every ask goes, and each is answered within the app's wait unless the
-/// anchor was off its channel or on the air while the ask was.
+/// every ask goes unless the anchor was on the air through its three
+/// checks of the channel, as in a run of pieces after its slot heartbeat,
+/// and each is answered within the app's wait unless the anchor was off
+/// its channel or on the air while the ask was.
 fn asks_answered(h: &mut Harness<Relay>, s: usize, anchor: usize, asks: u64) {
     let id = h.nodes[anchor].core.id();
     let before = status_sent(h, s).len();
@@ -1390,8 +1392,22 @@ fn asks_answered(h: &mut Harness<Relay>, s: usize, anchor: usize, asks: u64) {
         }
     }
     let sent = status_sent(h, s);
-    assert_eq!(sent.len() - before, asks as usize, "every ask goes");
     assert!(sent.iter().all(|&(_, tell)| !tell));
+    // An ask is given up after three busy checks, up to two backoffs of
+    // 200 ms apart (spec "Heartbeat").
+    let checks = Duration::from_millis(500);
+    let gone = sent.len() - before;
+    let held = missed
+        .iter()
+        .filter(|&&m| !sent.iter().any(|&(t, _)| t >= m && t < m + APP_WAIT))
+        .inspect(|&&m| {
+            assert!(
+                away(h, anchor, m, m + checks),
+                "the ask at {m:?} did not go though the channel was free"
+            )
+        })
+        .count();
+    assert_eq!(gone + held, asks as usize, "every ask goes or finds the channel busy");
     for m in missed {
         // The ask is on the air from its check on, a few milliseconds.
         let ask = Duration::from_millis(20);

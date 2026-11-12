@@ -406,8 +406,9 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         done,
         "the sleepy node does not hold the image within twelve hours"
     );
-    // One piece a rotation of the anchor, its slot piece keeping no pace:
-    // the image's 72 pieces within 72 of the longest rotations, 195 s
+    // A run a rotation of the anchor, the pieces the pace gives its home
+    // channel in one, 9 in the shortest of 130 s: the image's 72 pieces
+    // and the loss margin within 12 of the longest rotations, 195 s
     // (spec "Heartbeat").
     let took = h.nodes[1]
         .updates
@@ -416,9 +417,10 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         .holds_at
         .unwrap()
         .since(start);
-    assert!(took.as_micros() <= 72 * 195_000_000, "{took:?}");
-    // Its beats carried its section, and every piece it took came right
-    // after one of its anchor's heartbeats on its channel.
+    assert!(took.as_micros() <= 12 * 195_000_000, "{took:?}");
+    // Its beats carried its section, and every piece it took came in a
+    // run after one of its anchor's heartbeats on its channel: 14 pieces
+    // at most, of 138.6 ms and a check each.
     assert!(h.nodes[1].sent.iter().any(|(_, f)| {
         matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_)))
             && bark_proto::wire::decode_section(f.payload()).is_some()
@@ -437,7 +439,7 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         .unwrap()
         .pieces
         .iter()
-        .filter(|(t, _)| beats.iter().any(|b| *t > *b && t.since(*b) < secs(1)))
+        .filter(|(t, _)| beats.iter().any(|b| *t > *b && t.since(*b) < secs(3)))
         .count();
     assert_eq!(after_slot, NEEDS.iter().sum::<usize>());
 }

@@ -3014,8 +3014,8 @@ none. No node that runs a newer image gathers the lowest.
    pieces from other nodes since its last there sends its next there
    k + 1 paces after its last, so that the helpers at home on a channel
    share one piece a pace; having heard none, and on another channel, at
-   the gap or the pace (below). The piece after a slot heartbeat is apart
-   from this (sleepy nodes, below).
+   the gap or the pace (below). The run after a slot heartbeat is the
+   home channel's pace for a rotation sent together (sleepy nodes, below).
 
 **Pace and priority.** A node sends its next piece on a channel a **gap**
 after its last there, 4.16 s, a full frame's 138.6 ms thirty times over,
@@ -3053,25 +3053,33 @@ gap, 3.3 % of an idle one's, however many help.
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes the
 pieces it hears in its windows ([delivery](#delivery)) and after its
-anchor's slot heartbeats. The anchor sends one piece right after each of
-its slot heartbeats on its home channel, where its sleepy nodes listen
-for that heartbeat ([relay choice](#relay-choice)), while a sleepy node
-there lacks a block it holds: the next piece of its stream on that
-channel, which all its sleepy nodes take at once. That piece keeps no
-pace: it is fixed by the rotation, one frame of 138.6 ms in a rotation of
-130 s, 0.1 % of the channel for each anchor, so it neither waits for the
-home channel's shared pace nor counts toward it. A node that hears a
-piece end within 143.6 ms of a heartbeat it heard takes it for that
-sender's slot piece and does not count it. The piece still pays from the
-bucket and listens before it talks, and if the channel is busy it waits
-for the next slot. A stream only sleepy nodes need goes only then. The
-node listens after its anchor's slot heartbeat for that piece while it
-gathers and the anchor's section says it holds a block the node lacks:
-143.6 ms, the anchor's check of the channel, about 3 ms, the
-transmission's start, under 1 ms ([heartbeat](#heartbeat)), and a full
-frame, with a margin to 5 ms. A sleepy node without an anchor takes no
-part. Today's image takes a sleepy node 2 428 rotations, about 3.7 days,
-for 0.56 mAh of listening and 0.1 mAh of sections.
+anchor's slot heartbeats. While a sleepy node on its home channel lacks a
+block the anchor holds, the anchor's slot heartbeat there, the one its
+sleepy nodes listen for ([relay choice](#relay-choice)), carries its
+section every rotation, and a **run** of pieces follows it at once: the
+pieces of its stream on that channel that the pace gives it in one
+rotation, 9 in a rotation of 130 s and 14 in one of 195 s, less the pieces
+it heard others send there since its last slot heartbeat, of which it
+remembers 8, and one at least. All its sleepy nodes take the run at once, and so do the relays
+that gather on that channel. The run is the home channel's pace sent
+together, 1 % of the channel, not added to it: while a sleepy node needs
+the stream there, its pieces go on that channel only in runs. Each piece
+of a run pays from the bucket and listens before it talks; a busy check,
+or a bucket that cannot pay, ends the run until the next slot. A run
+holds the channel for 1.3 to 2.0 s, and goes before the send queue.
+
+The node listens after its anchor's slot heartbeat while it gathers and
+the section in that heartbeat, or the last it heard, says the anchor
+holds a block it lacks: 143.6 ms, the anchor's check of the channel,
+about 3 ms, the transmission's start, under 1 ms
+([heartbeat](#heartbeat)), and a full frame, with a margin to 5 ms; and
+again after each piece that ends within that time, so that it follows
+the run to its end and sleeps when no piece follows. A sleepy node hears
+no other heartbeat of its anchor, which is why the section rides this
+one (roadmap D213). A sleepy node without an anchor takes no part.
+Today's image, 2 428 pieces, takes a sleepy node 270 rotations, about
+10 hours, for 0.62 mAh of listening and 0.01 mAh of sections
+(roadmap D214).
 
 **The install.** A node that holds a gathered image whole checks it and
 stages it as the phone's update does
