@@ -161,6 +161,15 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         !(self.sleepy() && self.stage == Stage::Running)
     }
 
+    /// How many of its heartbeats' readings the floor of a node that does
+    /// not sweep holds: two hours of its beats at one check each, 24, as a
+    /// sweeping node's holds two of its windows, so that the floor follows
+    /// a rise in about an hour (spec "Busy estimate").
+    pub(super) fn check_window(&self) -> u32 {
+        let beat = crate::tables::heard::beat_period(self.config.delivery_ttl);
+        (2 * 3600 * 1_000_000 / beat.as_micros().max(1)) as u32
+    }
+
     /// One reading at a time, each channel once per sweep interval: each
     /// reading of another channel loses the packets whose preamble starts
     /// in a 0.8 ms window around it (spec "Busy estimate").

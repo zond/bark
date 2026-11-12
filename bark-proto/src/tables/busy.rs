@@ -75,14 +75,32 @@ impl NoiseFloor {
             self.below += 1;
         }
         if self.total >= self.halve_at {
-            self.total = 0;
-            for b in &mut self.bins {
-                *b /= 2;
-                self.total += *b;
-            }
-            (self.floor, self.below) = (0, 0);
+            self.halve();
         }
         self.settle();
+    }
+
+    /// Add one reading to a histogram kept to `window` samples: what it
+    /// holds is halved first until it is below that.
+    pub fn add_within(&mut self, dbm: i16, window: u32) {
+        while self.total >= window.max(1) {
+            self.halve();
+        }
+        self.add(dbm);
+    }
+
+    /// Forget every reading.
+    pub fn clear(&mut self) {
+        *self = NoiseFloor::new(self.halve_at);
+    }
+
+    fn halve(&mut self) {
+        self.total = 0;
+        for b in &mut self.bins {
+            *b /= 2;
+            self.total += *b;
+        }
+        (self.floor, self.below) = (0, 0);
     }
 
     /// Move the floor to the lowest bin where the bins up to it hold the
@@ -131,6 +149,9 @@ pub struct BusyEstimator {
     inverse: u16,
     threshold_db: u8,
     noise: NoiseFloor,
+    /// Whether the floor is kept by listen-before-talk readings, not the
+    /// sweep's.
+    by_checks: bool,
 }
 
 impl BusyEstimator {
@@ -144,6 +165,7 @@ impl BusyEstimator {
             inverse,
             threshold_db,
             noise: NoiseFloor::new(2 * CHANNELS as u32 * inverse as u32),
+            by_checks: false,
         }
     }
 
@@ -168,9 +190,23 @@ impl BusyEstimator {
             .saturating_add(self.threshold_db as i16)
     }
 
+    /// A reading that is no part of a sweep, for the noise floor alone:
+    /// a listen-before-talk reading of a node that does not sweep.
+    /// The first such reading starts the floor again: a sweep's readings
+    /// are taken another way and are many. The floor then holds `window`
+    /// readings at most, so that it follows them at their own rate.
+    pub fn floor_reading(&mut self, dbm: i16, window: u32) {
+        if !self.by_checks {
+            self.by_checks = true;
+            self.noise.clear();
+        }
+        self.noise.add_within(dbm, window);
+    }
+
     /// One sweep reading of a channel, home included.
     pub fn sample(&mut self, c: Channel, dbm: i16) {
         let x = if dbm > self.threshold_dbm() { ONE } else { 0 };
+        self.by_checks = false;
         self.noise.add(dbm);
         self.update(c, x);
     }

@@ -1512,3 +1512,26 @@ fn a_sleepy_node_s_ask_is_answered_while_its_anchor_streams_an_update() {
         }
     }
 }
+
+/// A sleepy node's surroundings turn noisier than the floor its boot sweep
+/// found: its own channel checks move the floor, and its beats go on
+/// (spec "Busy estimate").
+#[test]
+fn a_sleepy_node_s_floor_follows_its_own_channel_checks() {
+    let (anchor, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 1), node(50.0, true, 3)]);
+    h.link(anchor, s);
+    h.start_at(s, at(600));
+    h.run_until(at(3600), |_| false);
+    assert!(h.nodes[s].core.anchor().is_some());
+    let before = beats(&h, s).len();
+    assert!(before > 0);
+    // 8 dB up: over the 6 dB that count as busy above the old floor.
+    h.noise.insert(s, common::NOISE_DBM + 8);
+    h.run_until(at(3600 + 4 * 3600), |_| false);
+    let period = bark_proto::Config::default().delivery_ttl.as_micros() / 2;
+    let due = (4 * 3600 * 1_000_000 / period) as usize;
+    let sent = beats(&h, s).len() - before;
+    // The first checks are busy against the old floor, then it has moved.
+    assert!(sent + 6 >= due, "{sent} of {due} beats went");
+}
