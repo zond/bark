@@ -306,6 +306,16 @@ pub async fn boot<'a>(
     Sx1262::boot(hardware, clock, channel).await
 }
 
+impl Hardware<'_> {
+    /// Wait for BUSY low before a command: the chip takes none while BUSY
+    /// is high, as it also is while handling an interrupt of its own (DS
+    /// §8.3.1). Not before a wake, whose falling NSS edge is what ends a
+    /// sleep that holds BUSY high (DS §8.2.2).
+    async fn idle(&mut self) -> Result<(), RadioError> {
+        self.sx.iv_mut().wait_ready().await
+    }
+}
+
 /// The receiver's packet parameters as `lora-phy` wants them, for
 /// reading a frame out.
 const RX_PARAMS: PacketParams = PacketParams {
@@ -329,18 +339,22 @@ impl Chip for Hardware<'_> {
     }
 
     async fn standby(&mut self, xosc: bool) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.standby(xosc).await
     }
 
     async fn calibrate(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.calibrate_all().await
     }
 
     async fn calibrate_image(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.calibrate_image(CHANNEL_0_HZ).await
     }
 
     async fn configure(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.regulator_dcdc().await?;
         self.sx.dio2_rf_switch(true).await?;
         self.sx.packet_type_lora().await?;
@@ -359,26 +373,32 @@ impl Chip for Hardware<'_> {
     }
 
     async fn cad_params(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.cad_params(SF).await
     }
 
     async fn set_tcxo(&mut self, delay: Duration) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.tcxo(TCXO_VOLTAGE, delay.as_micros() as u32).await
     }
 
     async fn errors(&mut self) -> Result<(u16, u8), RadioError> {
+        self.idle().await?;
         self.sx.device_errors().await
     }
 
     async fn clear_errors(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.clear_device_errors().await
     }
 
     async fn set_frequency(&mut self, channel: Channel) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.set_channel(channel.hz()).await
     }
 
     async fn set_packet_params(&mut self, preamble: u16, len: u8) -> Result<(), RadioError> {
+        self.idle().await?;
         let params = PacketParams {
             preamble_length: preamble,
             payload_length: len,
@@ -388,40 +408,49 @@ impl Chip for Hardware<'_> {
     }
 
     async fn set_tx_power(&mut self, dbm: i8) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx
             .set_tx_power_and_ramp_time(dbm.into(), None, true)
             .await
     }
 
     async fn write_payload(&mut self, bytes: &[u8]) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.set_payload(bytes).await
     }
 
     async fn rx(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.rx_continuous().await
     }
 
     async fn rx_duty_cycle(&mut self, rx: Duration, sleep: Duration) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.rx_duty_cycle(steps(rx), steps(sleep)).await
     }
 
     async fn cad(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.start_cad().await
     }
 
     async fn tx(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.start_tx().await
     }
 
     async fn rssi(&mut self) -> Result<i16, RadioError> {
+        self.idle().await?;
         self.sx.get_rssi().await
     }
 
     async fn irq_status(&mut self) -> Result<u16, RadioError> {
+        self.idle().await?;
         self.sx.irq_status().await
     }
 
     async fn clear_irq(&mut self) -> Result<(), RadioError> {
+        self.idle().await?;
         self.sx.clear_irq_status().await
     }
 
@@ -430,6 +459,7 @@ impl Chip for Hardware<'_> {
     }
 
     async fn read_frame(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<(u8, i16, i8), RadioError> {
+        self.idle().await?;
         let len = self.sx.get_rx_payload(&RX_PARAMS, buf).await?;
         let status = self.sx.get_rx_packet_status().await?;
         let snr = status.snr.db().clamp(i8::MIN.into(), i8::MAX.into()) as i8;

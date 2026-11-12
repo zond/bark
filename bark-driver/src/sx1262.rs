@@ -118,8 +118,10 @@ pub const SELF_CHECK_LIMIT_DB: i16 = 12;
 /// (`docs/core-interface.md` §3 rule 4).
 pub const RX_PACKET: (u16, u8) = (LONG_PREAMBLE_SYMBOLS, MAX_FRAME as u8);
 
-/// The chip, one command at a time. Every method sends one command and
-/// waits for BUSY to fall, unless its comment says more.
+/// The chip, one command at a time. Every method waits for BUSY low, sends
+/// one command and waits for BUSY to fall again, unless its comment says
+/// more: the chip takes no command while BUSY is high, which it also is
+/// while it handles an interrupt of its own (DS §8.3.1).
 pub trait Chip {
     /// A failure of the bus, a pin wait or an interrupt wait; `Display`
     /// for the log, as [`crate::Radio::Error`].
@@ -130,8 +132,9 @@ pub trait Chip {
     async fn reset(&mut self) -> Result<(), Self::Error>;
 
     /// Wake a chip that may be asleep in a duty-cycled receive with a
-    /// harmless command on a falling NSS edge (DS §13.1.7); the chip is
-    /// then in STDBY_RC.
+    /// harmless command on a falling NSS edge (DS §8.2.2, §13.1.7), sent
+    /// without waiting for BUSY first, which a sleeping chip holds high;
+    /// then wait for BUSY low. Harmless to a chip awake.
     async fn wake(&mut self) -> Result<(), Self::Error>;
 
     /// `SetStandby`: STDBY_XOSC with the oscillator running, or STDBY_RC
