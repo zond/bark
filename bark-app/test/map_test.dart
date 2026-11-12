@@ -9,6 +9,7 @@
 // apart: one marker with their count, which lists them.
 
 import 'package:bark_app/app.dart';
+import 'package:bark_app/asks.dart';
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 
@@ -130,16 +131,35 @@ void main() {
       ]);
       // Not asked again before its round's wait is over, then asked
       // again at each, and no more after three asks.
-      async.elapse(Session.answerWait - FakeNode.answerAfter * 2);
+      async.elapse(Asks.wait - FakeNode.answerAfter * 2);
       expect(fake.asked.length, t.list.length);
       async.elapse(FakeNode.answerAfter);
       expect(fake.asked.length, t.list.length + 1);
       expect(fake.asked.last, hex(silent.id));
-      async.elapse(Session.answerWait);
+      async.elapse(Asks.wait);
       expect(fake.asked.length, t.list.length + 2);
-      async.elapse(Session.answerWait * 5);
+      async.elapse(Asks.wait * 5);
       expect(fake.asked.length, t.list.length + 2);
       expect(fake.asked.where((k) => k == hex(silent.id)).length, 3);
+    });
+  });
+
+  test('once the map shuts, no neighbour is asked again', () {
+    run((async, app) {
+      final fake = app.fakeNode!..loseEvery = 0;
+      final s = app.session;
+      final t = read(async, app)!;
+      // Shut before an ask was written: none is.
+      s.askNeighbours(t.list);
+      s.stopAsking();
+      async.elapse(Asks.wait * 5);
+      expect(fake.asked, isEmpty);
+      // Shut after the first round: the silent one not asked again.
+      s.askNeighbours(t.list);
+      async.elapse(FakeNode.answerAfter);
+      s.stopAsking();
+      async.elapse(Asks.wait * 5);
+      expect(fake.asked, [for (final n in t.list) hex(n.id)]);
     });
   });
 
@@ -153,7 +173,7 @@ void main() {
       async.elapse(FakeNode.answerAfter);
       // Of the four that answer, the second and fourth asks are lost.
       expect(s.answers.length, 2);
-      async.elapse(Session.answerWait * 3);
+      async.elapse(Asks.wait * 3);
       expect(s.answers.keys.toSet(), fake.statuses.keys.toSet());
       // Five, then the two lost and the silent one, then the one lost
       // again and the silent one.
@@ -170,7 +190,7 @@ void main() {
         t.list.singleWhere((n) => !fake.statuses.containsKey(hex(n.id))).id,
       );
       s.askNeighbours(t.list);
-      async.elapse(Session.answerWait * 3);
+      async.elapse(Asks.wait * 3);
       final first = fake.asked.length;
       fake.asked.clear();
       fake.statuses.remove(hex(t.list.first.id));
@@ -179,17 +199,20 @@ void main() {
       // The answers kept, the silent one asked anew.
       expect(fake.asked, [silent]);
       expect(s.answers.length, t.list.length - 1);
-      async.elapse(Session.answerWait * 3);
+      async.elapse(Asks.wait * 3);
       fake.asked.clear();
       // Past 10 s since they answered, every one is asked, and the old
-      // answers go.
-      async.elapse(Session.askFresh);
+      // answers stay until new ones come; the first's, which no longer
+      // comes, stays.
+      async.elapse(Asks.fresh);
+      final old = s.answers[hex(t.list.first.id)];
       s.askNeighbours(t.list);
       async.flushMicrotasks();
       expect(fake.asked, [for (final n in t.list) hex(n.id)]);
-      expect(s.answers, isEmpty);
-      async.elapse(Session.answerWait * 3);
-      expect(s.answers.length, t.list.length - 2);
+      expect(s.answers.length, t.list.length - 1);
+      async.elapse(Asks.wait * 3);
+      expect(s.answers.length, t.list.length - 1);
+      expect(s.answers[hex(t.list.first.id)], same(old));
       expect(first, t.list.length + 2);
     });
   });
@@ -387,14 +410,15 @@ void main() {
     await closeSheet(t);
     await t.pumpAndSettle();
 
-    // The silent one asked twice more, then, refreshed once the answers
-    // are 10 s old, each is asked again, and the answers replaced.
-    await t.pump(Session.askFresh);
+    // The silent one asked twice more, its sheet's opening adding none,
+    // then, refreshed once the answers are 10 s old, each is asked again,
+    // the old answers shown until the new replace them.
+    await t.pump(Asks.fresh);
     expect(fake.asked.length, list.length + 2);
     fake.statuses.updateAll((_, s) => const NeighbourStatus());
     await t.tap(find.byTooltip('Read again'));
     await t.pump();
-    expect(find.text('FIXED RELAY'), findsNothing);
+    expect(find.text('FIXED RELAY'), findsNWidgets(2));
     await t.pump(FakeNode.answerAfter);
     expect(fake.asked.length, 2 * list.length + 2);
     expect(find.text('RELAY NO PLACE'), findsNWidgets(4));
