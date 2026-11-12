@@ -262,6 +262,12 @@ impl Radio {
         self.replies.sent()
     }
 
+    /// A listen-before-talk reading of a node that does not sweep, for
+    /// its noise floor (spec "Busy estimate").
+    pub(super) fn floor_reading(&mut self, dbm: i16, window: u32) {
+        self.busy.floor_reading(dbm, window);
+    }
+
     #[cfg(test)]
     pub(super) fn budget_mut(&mut self) -> &mut Budget {
         &mut self.budget

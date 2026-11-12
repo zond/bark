@@ -255,6 +255,7 @@ peers, since what hurts a node is busy time at its own receiver.
 | sweep | one channel a second, channels in turn: each channel every 13 s |
 | window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
 | noise floor | the 10th percentile of every reading, all channels pooled in 1 dB bins, each bin halved whenever they hold two windows of samples, about an hour; −118 dBm before the first reading (open item O11) |
+| noise floor of a node that does not sweep | the 10th percentile of the readings its heartbeats' listen-before-talk takes on its home channel, started again at the first of them and halved whenever they hold 24, two hours of beats (roadmap D212) |
 
 The receiver's RSSI reads nothing for about 150 µs after it starts, then
 climbs a step a symbol period, and reads a strong signal as one fixed
@@ -1889,7 +1890,8 @@ not, since without a fix of its own it rebuilds no position it hears
 
 A sleepy node with an anchor does not sweep the channels
 ([busy estimate](#busy-estimate)) or move its home channel by the busy
-estimate: receiving duty-cycled, it could not.
+estimate: receiving duty-cycled, it could not. It keeps its noise floor by
+the readings of its own heartbeats' checks.
 
 ### Heard table
 

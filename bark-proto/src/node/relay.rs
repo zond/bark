@@ -892,7 +892,17 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::LbtDone { busy, dbm, .. } => {
                 let busy = busy || dbm > threshold;
                 match self.radio.complete() {
-                    Some(Job::Heartbeat) => self.heartbeat_check(busy, now, emit),
+                    Some(Job::Heartbeat) => {
+                        // A node that does not sweep keeps its floor by
+                        // its heartbeats' checks, which come at a known
+                        // rate whatever it has to send
+                        // (spec "Busy estimate").
+                        if !self.sweeping() {
+                            let window = self.check_window();
+                            self.radio.floor_reading(dbm, window);
+                        }
+                        self.heartbeat_check(busy, now, emit)
+                    }
                     Some(Job::HandOver) => self.handover_check(busy, now, emit),
                     Some(Job::Update) => self.update_check(busy, now, emit),
                     Some(Job::Status) => self.status_check(busy, now, emit),

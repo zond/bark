@@ -141,6 +141,9 @@ pub struct Harness<C: Core> {
     /// Frames to lose on the way, for tests of retransmission: called as
     /// `(now, from, to, bytes)` for each frame a node would receive.
     pub lose: Option<Loss>,
+    /// The level a node reads on an empty channel, where it is not
+    /// [`NOISE_DBM`].
+    pub noise: HashMap<usize, i16>,
 }
 
 impl<C: Core> Harness<C> {
@@ -182,6 +185,7 @@ impl<C: Core> Harness<C> {
             txs: Vec::new(),
             excursions: 0,
             lose: None,
+            noise: HashMap::new(),
         }
     }
 
@@ -380,7 +384,8 @@ impl<C: Core> Harness<C> {
             let dbm = if self.jammed_at(i, ex.channel, ex.end) {
                 SIGNAL_DBM
             } else {
-                self.strongest(i, ex.channel, ex.end).unwrap_or(NOISE_DBM)
+                self.strongest(i, ex.channel, ex.end)
+                    .unwrap_or(self.noise.get(&i).copied().unwrap_or(NOISE_DBM))
             };
             let ev = match ex.kind {
                 Kind::Lbt => Event::LbtDone {
