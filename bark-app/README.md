@@ -295,8 +295,8 @@ is a prototype for the bench, not the app people will carry.
   image it gathers among them. An ask or its answer is lost now and then
   on a busy channel, and a sleepy node may sleep through it, so a
   neighbour that has not answered within 2 s of its ask is asked again,
-  up to three asks in a series while the map is open (spec "Neighbour
-  status"). Each ask is a frame on the air, and its answer another, so
+  up to three asks in a series while the map is open (spec
+  "Neighbour status"). Each ask is a frame on the air, and its answer another, so
   one rule, in `lib/asks.dart`, decides for all three: a neighbour is
   asked unless its series is under way or it answered within the last
   10 s, so a tap during a series, or several in quick succession, sends
