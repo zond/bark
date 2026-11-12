@@ -118,8 +118,10 @@ pub const SELF_CHECK_LIMIT_DB: i16 = 12;
 /// (`docs/core-interface.md` §3 rule 4).
 pub const RX_PACKET: (u16, u8) = (LONG_PREAMBLE_SYMBOLS, MAX_FRAME as u8);
 
-/// The chip, one command at a time. Every method sends one command and
-/// waits for BUSY to fall, unless its comment says more.
+/// The chip, one command at a time. Every method waits for BUSY low, sends
+/// one command and waits for BUSY to fall again, unless its comment says
+/// more: the chip takes no command while BUSY is high, which it also is
+/// while it handles an interrupt of its own (DS §8.3.1).
 pub trait Chip {
     /// A failure of the bus, a pin wait or an interrupt wait; `Display`
     /// for the log, as [`crate::Radio::Error`].
@@ -130,8 +132,9 @@ pub trait Chip {
     async fn reset(&mut self) -> Result<(), Self::Error>;
 
     /// Wake a chip that may be asleep in a duty-cycled receive with a
-    /// harmless command on a falling NSS edge (DS §13.1.7); the chip is
-    /// then in STDBY_RC.
+    /// harmless command on a falling NSS edge (DS §8.2.2, §13.1.7), sent
+    /// without waiting for BUSY first, which a sleeping chip holds high;
+    /// then wait for BUSY low. Harmless to a chip awake.
     async fn wake(&mut self) -> Result<(), Self::Error>;
 
     /// `SetStandby`: STDBY_XOSC with the oscillator running, or STDBY_RC
@@ -234,6 +237,9 @@ pub enum Error<E> {
     /// A receive that did not start, cold either: the status byte after
     /// the cold start.
     NotStarted(u8),
+    /// A chip taken out of its duty-cycled receive that is not in
+    /// STDBY_RC: the status byte.
+    NotStandby(u8),
 }
 
 /// The text `Debug` writes.
@@ -243,6 +249,7 @@ impl<E: Display> Display for Error<E> {
             Error::Chip(e) => write!(f, "Chip({e})"),
             Error::NotDone(flags) => write!(f, "NotDone({flags})"),
             Error::NotStarted(status) => write!(f, "NotStarted({status})"),
+            Error::NotStandby(status) => write!(f, "NotStandby({status})"),
         }
     }
 }
@@ -581,26 +588,12 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                 self.last_start = Start::Running;
                 self.unread = Start::Running;
             }
-            Mode::Sniff => {
-                // A wake edge that comes as the chip goes to sleep may be
-                // lost, BUSY then high for the sleep: try once more.
-                if self.chip.wake().await.is_err() {
-                    let r = self.chip.wake().await;
-                    self.note(r)?;
-                }
-                let r = self.chip.standby(false).await;
-                self.note(r)?;
-                self.held.mode = Mode::StandbyRc;
-                self.held.osc_stopped = None;
-            }
+            Mode::Sniff => self.leave_cycle().await?,
             _ => {}
         }
         if self.held.slept {
-            // The cycle's wakes were cold starts with the probed delay.
             self.held.slept = false;
             self.held.configured = false;
-            let delay = self.held.tcxo.unwrap_or(self.cold.delay);
-            self.start_errors(Start::Cold { gap: None, delay }).await?;
         }
         if !self.held.configured {
             let r = self.chip.configure().await;
@@ -619,6 +612,42 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                 let r = self.chip.calibrate_image().await;
                 self.note(r)?;
             }
+        }
+        Ok(())
+    }
+
+    /// Take the chip out of its duty-cycled receive, however the cycle
+    /// ended, into STDBY_RC, read back from the status byte. The datasheet
+    /// ends the cycle by a SetStandby in a receive window, a sleeping chip
+    /// woken first by a falling NSS edge (§13.1.7); it also says a packet
+    /// ends it in STDBY_RC, which the bench of 2026-11-12 contradicts
+    /// (`docs/sleepy-receive-2026-11-12.md`), so a packet is followed by
+    /// this too. The error word after a cycle holds `XOSC_START_ERR`, which
+    /// a wake from sleep raises with a TCXO (§13.3.6) whatever the delay:
+    /// it is cleared, not blamed.
+    async fn leave_cycle(&mut self) -> Result<(), Error<C::Error>> {
+        // A wake edge that comes as the chip goes to sleep is ignored
+        // (§13.1.1), BUSY then high for the sleep: try once more.
+        if self.chip.wake().await.is_err() {
+            let r = self.chip.wake().await;
+            self.note(r)?;
+        }
+        let r = self.chip.standby(false).await;
+        self.note(r)?;
+        let r = self.chip.errors().await;
+        let (errors, status) = self.note(r)?;
+        if errors != 0 {
+            let r = self.chip.clear_errors().await;
+            self.note(r)?;
+        }
+        if status::mode(status) != status::STBY_RC {
+            self.held = Held::UNKNOWN;
+            return Err(Error::NotStandby(status));
+        }
+        self.held.mode = Mode::StandbyRc;
+        self.held.osc_stopped = None;
+        if errors & PLL_LOCK_ERR != 0 {
+            self.start_failed(self.last_start).await;
         }
         Ok(())
     }
@@ -862,11 +891,13 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.held.mode = Mode::Sniff;
         self.held.slept = true;
         self.held.osc_stopped = None;
+        // Each window's start is cold, after the sleep; the error word
+        // after the cycle is read as the cycle ends (`leave_cycle`).
         self.last_start = Start::Cold {
-            gap: None,
+            gap: Some(sleep),
             delay: self.cold.delay,
         };
-        self.unread = self.last_start;
+        self.unread = Start::Running;
         Ok(())
     }
 
@@ -877,43 +908,46 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     }
 
     /// What the chip reported: a frame into `buf`, a packet begun, a
-    /// packet failed, or nothing. Clears the flags. A duty-cycled receive
-    /// ends with its packet, the chip then in STDBY_RC.
+    /// packet failed, or nothing. Clears the flags. A packet that ends or
+    /// fails in a duty-cycled receive ends it: the frame is read first, as
+    /// a chip that goes back to sleep clears its buffer (DS §7.4), and the
+    /// chip is then taken out of the cycle into STDBY_RC.
     pub async fn service(&mut self, buf: &mut [u8; MAX_FRAME]) -> Result<Heard, Error<C::Error>> {
+        let sniffing = self.held.mode == Mode::Sniff;
+        if sniffing {
+            // It may have gone back to sleep since its interrupt.
+            let r = self.chip.wake().await;
+            self.note(r)?;
+        }
         let r = self.chip.irq_status().await;
         let flags = self.note(r)?;
         let r = self.chip.clear_irq().await;
         self.note(r)?;
-        let failed = irq::HEADER_ERR | irq::CRC_ERR | irq::TIMEOUT;
-        if self.held.mode == Mode::Sniff && flags & (irq::RX_DONE | failed) != 0 {
-            // Asleep between its windows, so its next start is cold.
-            self.held.mode = Mode::StandbyRc;
-            self.held.osc_stopped = None;
-        }
         // The payload is checked only after the header passed, so a
         // payload error says the header was good.
-        if flags & irq::CRC_ERR != 0 {
-            return Ok(Heard::Failed(Failure::Crc));
-        }
-        if flags & irq::HEADER_ERR != 0 {
-            return Ok(Heard::Failed(Failure::Header));
-        }
-        if flags & irq::TIMEOUT != 0 {
-            return Ok(Heard::Failed(Failure::Timeout));
-        }
-        if flags & irq::RX_DONE != 0 {
+        let heard = if flags & irq::CRC_ERR != 0 {
+            Heard::Failed(Failure::Crc)
+        } else if flags & irq::HEADER_ERR != 0 {
+            Heard::Failed(Failure::Header)
+        } else if flags & irq::TIMEOUT != 0 {
+            Heard::Failed(Failure::Timeout)
+        } else if flags & irq::RX_DONE != 0 {
             let r = self.chip.read_frame(buf).await;
             let (len, rssi_dbm, snr_db) = self.note(r)?;
-            return Ok(Heard::Frame {
+            Heard::Frame {
                 len,
                 rssi_dbm,
                 snr_db,
-            });
+            }
+        } else if flags & (irq::PREAMBLE_DETECTED | irq::HEADER_VALID) != 0 {
+            Heard::Started
+        } else {
+            Heard::Nothing
+        };
+        if sniffing && matches!(heard, Heard::Frame { .. } | Heard::Failed(_)) {
+            self.leave_cycle().await?;
         }
-        if flags & (irq::PREAMBLE_DETECTED | irq::HEADER_VALID) != 0 {
-            return Ok(Heard::Started);
-        }
-        Ok(Heard::Nothing)
+        Ok(heard)
     }
 
     /// The instantaneous RSSI of the channel being listened to.
@@ -1371,6 +1405,57 @@ mod tests {
         /// How long `SetDIO3AsTCXOCtrl` holds the driver, another task
         /// running meanwhile.
         tcxo_takes: Duration,
+        /// Where a packet leaves a duty-cycled receive.
+        after_packet: AfterPacket,
+    }
+
+    /// Where a packet leaves a chip in its duty-cycled receive. The
+    /// datasheet says STDBY_RC (§13.1.7); on the bench of 2026-11-12 the
+    /// driver's next commands, sent as to STDBY_RC, met BUSY high for good
+    /// after each packet, so the chip was elsewhere: in STDBY_XOSC, the
+    /// fallback set in the configuration, or going on with its cycle.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum AfterPacket {
+        StandbyRc,
+        StandbyXosc,
+        Cycle,
+    }
+
+    /// Saving the context into sleep, and restoring it after: about half
+    /// a millisecond each (DS §13.1.7, Figure 13-2). Going to sleep the
+    /// chip ignores the bus (§13.1.1).
+    const SAVE: Duration = Duration::from_micros(bark_proto::sniff::SNIFF_RESTORE.as_micros() / 2);
+
+    /// SLEEP to STDBY_RC with the configuration kept (DS Table 8-2).
+    const WARM_START: Duration = Duration::from_micros(340);
+
+    /// The firmware's bound on a BUSY wait, `bark-fw/src/radio.rs`
+    /// `BUSY_TIMEOUT`: twice a calibration after the longest delay.
+    const BUSY_BOUND: Duration = Duration::from_micros(2 * (3500 + tcxo::MAX.as_micros()));
+
+    /// A chip in its duty-cycled receive: its windows and sleeps by the
+    /// clock.
+    #[derive(Clone, Copy, Debug)]
+    struct Cycle {
+        /// When the current or last receive window opened.
+        window: Instant,
+        rx: Duration,
+        sleep: Duration,
+    }
+
+    /// Where the cycle is.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Phase {
+        /// Receiving: BUSY low.
+        Window,
+        /// Saving its context: BUSY high and a wake edge ignored, then
+        /// asleep until this.
+        Saving(Instant),
+        /// BUSY high until a falling NSS edge wakes it.
+        Asleep,
+        /// Restoring its context and starting the oscillator: BUSY high
+        /// until the window opens at this.
+        Waking(Instant),
     }
 
     #[derive(Clone)]
@@ -1388,6 +1473,14 @@ mod tests {
         /// Flags raised and not cleared, which hold DIO1 high.
         latched: u16,
         done: bool,
+        /// In its duty-cycled receive.
+        cycle: Option<Cycle>,
+        /// The data buffer after a packet in the cycle: whether it holds
+        /// the frame. `None` for frames the tests raise by their flags.
+        buffer: Option<bool>,
+        /// BUSY high until a reset, as the bench's chip after a
+        /// `SetDIO3AsTCXOCtrl` outside STDBY_RC.
+        wedged: bool,
     }
 
     #[derive(Clone)]
@@ -1421,8 +1514,16 @@ mod tests {
                 cad_at: Instant::ZERO,
                 latched: 0,
                 done: false,
+                cycle: None,
+                buffer: None,
+                wedged: false,
             };
             (fake, cmds, clock)
+        }
+
+        fn advance(&self, d: Duration) {
+            let now = self.clock.now();
+            *self.clock.0.borrow_mut() = now + d;
         }
 
         fn cmd(&mut self, c: Cmd) -> Result<(), &'static str> {
@@ -1432,11 +1533,110 @@ mod tests {
                 return Err("bus");
             }
             drop(b);
-            self.cmds.borrow_mut().push(c);
+            self.cmds.borrow_mut().push(c.clone());
+            if self.wedged && c != Cmd::Reset {
+                self.advance(BUSY_BOUND);
+                return Err("busy");
+            }
+            self.busy_first(&c)?;
             // A command takes about 50 µs on the bus.
-            let now = self.clock.now();
-            *self.clock.0.borrow_mut() = now + Duration::from_micros(50);
+            self.advance(Duration::from_micros(50));
             Ok(())
+        }
+
+        /// BUSY before command `c`, which waits for it to fall, as every
+        /// command but the wake does (`Chip`), for at most the firmware's
+        /// bound.
+        fn busy_first(&mut self, c: &Cmd) -> Result<(), &'static str> {
+            match self.phase() {
+                None | Some(Phase::Window) => Ok(()),
+                Some(Phase::Waking(until)) => {
+                    let now = self.clock.now();
+                    self.advance(until.since(now));
+                    Ok(())
+                }
+                Some(Phase::Asleep) if *c == Cmd::Wake => {
+                    // The edge wakes it into STDBY_RC (DS §8.2.2), its
+                    // TCXO flag raised (§13.3.6).
+                    self.cycle = None;
+                    self.mode = Mode::StandbyRc;
+                    self.errors |= XOSC_START_ERR;
+                    self.advance(WARM_START);
+                    Ok(())
+                }
+                // Asleep, a command that waits for BUSY first never sends
+                // its edge; saving, the edge is ignored.
+                Some(Phase::Asleep | Phase::Saving(_)) => {
+                    self.advance(BUSY_BOUND);
+                    Err("busy")
+                }
+            }
+        }
+
+        /// Where the cycle is now, if the chip is in one. Each wake from
+        /// its sleep raises the TCXO flag, as on the bench at every delay
+        /// (DS §13.3.6), and each sleep clears the data buffer (§7.4).
+        fn phase(&mut self) -> Option<Phase> {
+            let mut cycle = self.cycle?;
+            let now = self.clock.now();
+            let period = cycle.rx + SAVE + cycle.sleep + SAVE + self.delay;
+            while now >= cycle.window + period {
+                cycle.window += period;
+                self.errors |= XOSC_START_ERR;
+                self.clear_buffer();
+            }
+            self.cycle = Some(cycle);
+            let asleep = cycle.window + cycle.rx + SAVE;
+            let woken = asleep + cycle.sleep;
+            Some(if now < cycle.window + cycle.rx {
+                Phase::Window
+            } else if now < asleep {
+                Phase::Saving(woken)
+            } else if now < woken {
+                self.clear_buffer();
+                Phase::Asleep
+            } else {
+                self.clear_buffer();
+                Phase::Waking(cycle.window + period)
+            })
+        }
+
+        /// A packet, or a failed one, with these flags, in a receive window
+        /// of the cycle.
+        fn packet(&mut self, flags: u16) {
+            assert_eq!(self.phase(), Some(Phase::Window), "caught in a window");
+            self.latched |= flags;
+            let ends = flags & irq::RX_DONE != 0;
+            self.buffer = Some(ends && flags & irq::CRC_ERR == 0);
+            let now = self.clock.now();
+            let after = self.board.borrow().after_packet;
+            match (ends, after) {
+                (true, AfterPacket::StandbyRc) => {
+                    self.cycle = None;
+                    self.mode = Mode::StandbyRc;
+                }
+                (true, AfterPacket::StandbyXosc) => {
+                    self.cycle = None;
+                    self.mode = Mode::StandbyXosc;
+                }
+                // A window from the packet's end, then its sleep.
+                _ => {
+                    if let Some(c) = self.cycle.as_mut() {
+                        c.window = now;
+                    }
+                }
+            }
+        }
+
+        fn clear_buffer(&mut self) {
+            if self.buffer.is_some() {
+                self.buffer = Some(false);
+            }
+        }
+
+        /// A command that only a chip out of its cycle takes.
+        fn idle(&mut self, what: &str) {
+            assert!(self.phase().is_none(), "{what} to a chip in its cycle");
         }
 
         /// The oscillator starts from STDBY_RC: still running within a
@@ -1477,6 +1677,10 @@ mod tests {
         type Error = &'static str;
 
         async fn reset(&mut self) -> Result<(), &'static str> {
+            // A pin, not a command: it reaches a wedged or sleeping chip.
+            self.wedged = false;
+            self.cycle = None;
+            self.buffer = None;
             self.cmd(Cmd::Reset)?;
             self.mode = Mode::StandbyRc;
             self.errors = XOSC_START_ERR;
@@ -1488,6 +1692,10 @@ mod tests {
         }
         async fn standby(&mut self, xosc: bool) -> Result<(), &'static str> {
             self.cmd(Cmd::Standby(xosc))?;
+            // In a receive window it ends the cycle (DS §13.1.7).
+            if self.cycle.take().is_some() {
+                self.mode = Mode::Sniff;
+            }
             // From STDBY_RC, as after a start that failed, it stops no
             // oscillator.
             if !xosc && self.mode != Mode::StandbyRc {
@@ -1510,15 +1718,25 @@ mod tests {
             self.cmd(Cmd::CalibrateImage)
         }
         async fn configure(&mut self) -> Result<(), &'static str> {
-            self.cmd(Cmd::Configure)
+            self.cmd(Cmd::Configure)?;
+            self.idle("the configuration");
+            Ok(())
         }
         async fn cad_params(&mut self) -> Result<(), &'static str> {
-            self.cmd(Cmd::CadParams)
+            self.cmd(Cmd::CadParams)?;
+            self.idle("SetCadParams");
+            Ok(())
         }
         async fn set_tcxo(&mut self, delay: Duration) -> Result<(), &'static str> {
-            assert_eq!(self.mode, Mode::StandbyRc, "SetDIO3AsTCXOCtrl in STDBY_RC");
             self.cmd(Cmd::Tcxo(delay.as_micros()))?;
             assert!(delay > Duration::ZERO, "a delay of zero hangs the chip");
+            // Valid in STDBY_RC (DS §13.3.6); sent elsewhere, the bench's
+            // chip held BUSY high until it was reset.
+            if self.mode != Mode::StandbyRc || self.cycle.is_some() {
+                self.wedged = true;
+                self.advance(BUSY_BOUND);
+                return Err("busy");
+            }
             self.delay = delay;
             let takes = self.board.borrow().tcxo_takes;
             let now = self.clock.now();
@@ -1535,19 +1753,28 @@ mod tests {
             Ok(())
         }
         async fn set_frequency(&mut self, channel: Channel) -> Result<(), &'static str> {
-            self.cmd(Cmd::Freq(channel.index()))
+            self.cmd(Cmd::Freq(channel.index()))?;
+            self.idle("SetRfFrequency");
+            Ok(())
         }
         async fn set_packet_params(&mut self, preamble: u16, len: u8) -> Result<(), &'static str> {
-            self.cmd(Cmd::Packet(preamble, len))
+            self.cmd(Cmd::Packet(preamble, len))?;
+            self.idle("SetPacketParams");
+            Ok(())
         }
         async fn set_tx_power(&mut self, dbm: i8) -> Result<(), &'static str> {
-            self.cmd(Cmd::Power(dbm))
+            self.cmd(Cmd::Power(dbm))?;
+            self.idle("SetTxParams");
+            Ok(())
         }
         async fn write_payload(&mut self, bytes: &[u8]) -> Result<(), &'static str> {
-            self.cmd(Cmd::Payload(bytes.len()))
+            self.cmd(Cmd::Payload(bytes.len()))?;
+            self.idle("WriteBuffer");
+            Ok(())
         }
         async fn rx(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::Rx)?;
+            self.idle("SetRx");
             // A start that failed leaves the chip in STDBY_RC, as on the
             // bench (`OpError(170)`).
             if self.start_osc() {
@@ -1560,14 +1787,21 @@ mod tests {
             rx: Duration,
             sleep: Duration,
         ) -> Result<(), &'static str> {
-            assert_eq!(self.mode, Mode::StandbyRc, "SetRxDutyCycle from STDBY_RC");
             self.cmd(Cmd::RxDutyCycle(rx.as_micros(), sleep.as_micros()))?;
+            assert_eq!(self.mode, Mode::StandbyRc, "SetRxDutyCycle from STDBY_RC");
+            self.idle("SetRxDutyCycle");
             self.start_osc();
             self.mode = Mode::Sniff;
+            self.cycle = Some(Cycle {
+                window: self.clock.now(),
+                rx,
+                sleep,
+            });
             Ok(())
         }
         async fn cad(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::Cad)?;
+            self.idle("SetCAD");
             self.done = false;
             self.start_osc();
             self.cad_at = self.clock.now();
@@ -1576,6 +1810,7 @@ mod tests {
         }
         async fn tx(&mut self) -> Result<(), &'static str> {
             self.cmd(Cmd::Tx)?;
+            self.idle("SetTx");
             self.done = false;
             self.start_osc();
             self.mode = Mode::Tx;
@@ -1593,11 +1828,6 @@ mod tests {
         async fn irq_status(&mut self) -> Result<u16, &'static str> {
             self.cmd(Cmd::IrqStatus)?;
             if let Some(f) = self.board.borrow_mut().flags.take() {
-                // A packet ends a duty-cycled receive in STDBY_RC.
-                if self.mode == Mode::Sniff && f & irq::RX_DONE != 0 {
-                    self.mode = Mode::StandbyRc;
-                    self.osc_stopped_at = None;
-                }
                 return Ok(f);
             }
             let own = match self.mode {
@@ -1653,6 +1883,10 @@ mod tests {
             buf: &mut [u8; MAX_FRAME],
         ) -> Result<(u8, i16, i8), &'static str> {
             self.cmd(Cmd::ReadFrame)?;
+            if self.buffer.take() == Some(false) {
+                // Slept since the packet: the buffer is cleared.
+                return Ok((0, -80, 5));
+            }
             buf[0] = 1;
             Ok((1, -80, 5))
         }
@@ -1676,6 +1910,7 @@ mod tests {
             irq_late: Duration::ZERO,
             fail_on: None,
             tcxo_takes: Duration::ZERO,
+            after_packet: AfterPacket::StandbyRc,
         }
     }
 
@@ -2031,19 +2266,29 @@ mod tests {
                 Cmd::RxDutyCycle(3_750, 233_625)
             ]
         );
-        // A packet ends the cycle in STDBY_RC.
-        radio.chip().board.borrow_mut().flags = Some(irq::RX_DONE);
+        // A packet: read, then the chip taken out of the cycle.
+        radio.chip().packet(irq::RX_DONE);
         let mut buf = [0; MAX_FRAME];
         let heard = run(radio.service(&mut buf)).unwrap();
         assert!(matches!(heard, Heard::Frame { len: 1, .. }));
+        assert_eq!(
+            take(&cmds),
+            [
+                Cmd::Wake,
+                Cmd::IrqStatus,
+                Cmd::ClearIrq,
+                Cmd::ReadFrame,
+                Cmd::Wake,
+                Cmd::Standby(false),
+                Cmd::Errors,
+            ]
+        );
         assert_eq!(radio.held().mode, Mode::StandbyRc);
-        take(&cmds);
-        // The cycle's cold starts checked, then the whole configuration.
+        // Then the whole configuration.
         run(radio.listen(ch(3))).unwrap();
         assert_eq!(
             take(&cmds),
             [
-                Cmd::Errors,
                 Cmd::Configure,
                 Cmd::Freq(3),
                 Cmd::Packet(RX_PACKET.0, RX_PACKET.1),
@@ -2061,6 +2306,142 @@ mod tests {
             &take(&cmds)[..4],
             &[Cmd::Wake, Cmd::Standby(false), Cmd::Errors, Cmd::Configure]
         );
+    }
+
+    /// One period of the cycle the chip runs for `radio`'s delay: its
+    /// window, the context saved, its sleep, the context restored and the
+    /// oscillator started.
+    fn period(radio: &Radio) -> Duration {
+        let (rx, sleep) = periods(radio.cold().delay);
+        rx + SAVE + sleep + SAVE + radio.cold().delay
+    }
+
+    /// Sniffing from now, the clock moved `cycles` periods and `into` on.
+    fn sniff_for(radio: &mut Radio, clock: &FakeClock, cycles: u64, into: Duration) {
+        run(radio.sniff(ch(3))).unwrap();
+        let t = clock.now() + period(radio).mul(cycles) + into;
+        run(clock.at(t));
+    }
+
+    fn ack() -> Frame {
+        Frame {
+            channel: ch(3),
+            preamble_symbols: MIN_PREAMBLE_SYMBOLS,
+            len: 17,
+            bytes: [0; MAX_FRAME],
+        }
+    }
+
+    /// The bench of 2026-11-12: a frame caught in a duty-cycled receive
+    /// was followed by `Chip(Busy)` and a reset, and the oscillator's flag
+    /// the cycle's wakes raise climbed the cold delay. Wherever the packet
+    /// leaves the chip, the frame is read, and the cycle started again or
+    /// the ACK owed sent, without an error, a reset or a delay stepped up.
+    #[test]
+    fn a_frame_caught_in_a_sniff_is_read_and_the_radio_goes_on_without_an_error() {
+        for after in [
+            AfterPacket::StandbyRc,
+            AfterPacket::StandbyXosc,
+            AfterPacket::Cycle,
+        ] {
+            let mut b = board();
+            b.after_packet = after;
+            let (mut radio, _, clock) = booted(b);
+            let (cold, restart) = (radio.cold().delay, radio.restart().delay);
+            logged();
+            let mut buf = [0; MAX_FRAME];
+            for owed in [false, true] {
+                // Caught a millisecond into a window, a few sleeps in.
+                sniff_for(&mut radio, &clock, 3, Duration::from_millis(1));
+                radio
+                    .chip()
+                    .packet(irq::PREAMBLE_DETECTED | irq::HEADER_VALID | irq::RX_DONE);
+                run(radio.wait()).unwrap();
+                let heard = run(radio.service(&mut buf)).expect("read");
+                assert!(matches!(heard, Heard::Frame { len: 1, .. }), "{after:?}");
+                let cold_starts = radio.stats().cold_starts;
+                if owed {
+                    run(radio.transmit(&ack(), 10)).expect("the ACK");
+                    // The oscillator was off: one cold start, clean.
+                    assert_eq!(radio.stats().cold_starts, cold_starts + 1);
+                } else {
+                    run(radio.sniff(ch(3))).expect("the cycle again");
+                    assert_eq!(radio.stats().cold_starts, cold_starts);
+                }
+                run(radio.listen(ch(3))).expect("listening");
+            }
+            assert_eq!(radio.stats().resets, 0, "{after:?}");
+            assert_eq!((radio.cold().delay, radio.cold().errors), (cold, 0));
+            assert_eq!(
+                (radio.restart().delay, radio.restart().errors),
+                (restart, 0)
+            );
+            let lines = logged();
+            assert!(!lines.iter().any(|l| l.contains("failed at")), "{lines:?}");
+            assert!(!radio.chip().wedged);
+        }
+    }
+
+    /// The other ends of a sniff: a packet whose header or payload fails,
+    /// a timeout, a preamble and then nothing, a driver late to the packet
+    /// whose chip went back to sleep, and the core's next action wherever
+    /// it finds the cycle. None errs, resets or steps a delay up.
+    #[test]
+    fn every_end_of_a_sniff_leaves_the_chip_in_standby_without_an_error() {
+        let mut b = board();
+        b.after_packet = AfterPacket::Cycle;
+        let (mut radio, cmds, clock) = booted(b);
+        let cold = radio.cold().delay;
+        let mut buf = [0; MAX_FRAME];
+        for (flags, heard) in [
+            (
+                irq::PREAMBLE_DETECTED | irq::HEADER_ERR,
+                Heard::Failed(Failure::Header),
+            ),
+            (
+                irq::HEADER_VALID | irq::RX_DONE | irq::CRC_ERR,
+                Heard::Failed(Failure::Crc),
+            ),
+            (irq::TIMEOUT, Heard::Failed(Failure::Timeout)),
+        ] {
+            sniff_for(&mut radio, &clock, 2, Duration::from_millis(1));
+            radio.chip().packet(flags);
+            assert_eq!(run(radio.service(&mut buf)), Ok(heard));
+            assert_eq!(radio.held().mode, Mode::StandbyRc);
+            assert_eq!(radio.chip().mode, Mode::StandbyRc);
+        }
+        // A preamble and then nothing: the cycle goes on, and the driver,
+        // which waits out the longest frame, starts it again.
+        sniff_for(&mut radio, &clock, 2, Duration::from_millis(1));
+        radio.chip().packet(irq::PREAMBLE_DETECTED);
+        assert_eq!(run(radio.service(&mut buf)), Ok(Heard::Started));
+        assert_eq!(radio.held().mode, Mode::Sniff);
+        run(clock.at(clock.now() + Duration::from_millis(373)));
+        run(radio.sniff(ch(3))).expect("started again");
+        // Late to a packet: the chip slept since, and its buffer is gone,
+        // but nothing errs.
+        sniff_for(&mut radio, &clock, 1, Duration::from_millis(1));
+        radio.chip().packet(irq::RX_DONE);
+        run(clock.at(clock.now() + Duration::from_millis(10)));
+        let heard = run(radio.service(&mut buf)).expect("woken and read");
+        assert!(matches!(heard, Heard::Frame { len: 0, .. }));
+        assert_eq!(radio.chip().mode, Mode::StandbyRc);
+        // The core's next action in each phase of the cycle: the window,
+        // the context being saved, the sleep, the wake.
+        let (rx, _) = periods(radio.cold().delay);
+        for into in [
+            Duration::from_millis(1),
+            rx + SAVE.div(2),
+            Duration::from_millis(100),
+            period(&radio) - SAVE.div(2),
+        ] {
+            sniff_for(&mut radio, &clock, 1, into);
+            take(&cmds);
+            run(radio.lbt(ch(5))).expect("a check");
+            run(radio.listen(ch(3))).expect("listening");
+        }
+        assert_eq!(radio.stats().resets, 0);
+        assert_eq!((radio.cold().delay, radio.cold().errors), (cold, 0));
     }
 
     #[test]
