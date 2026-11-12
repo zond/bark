@@ -190,6 +190,11 @@ class FakeNode implements NodeLink {
   int loseEvery = 3;
   int _answerable = 0;
 
+  /// How many asks each neighbour, by its ID in hex, leaves unanswered
+  /// before it answers again, as a sleepy node asleep through them; a
+  /// test may set it.
+  final Map<String, int> silentFor = {};
+
   /// The shortest wait a refusal tells, one ban (spec "Bans").
   static const ban = Duration(milliseconds: 1580);
 
@@ -1161,6 +1166,11 @@ class FakeNode implements NodeLink {
     if (!neighbours.values.any((n) => hex(n.id) == key)) return;
     final s = statuses[key];
     if (s == null) return;
+    final silent = silentFor[key] ?? 0;
+    if (silent > 0) {
+      silentFor[key] = silent - 1;
+      return;
+    }
     _answerable++;
     if (loseEvery > 0 && _answerable % loseEvery == 0) return;
     _timers.add(

@@ -5,8 +5,10 @@
 // Then Ask: each neighbour asked as the map opens, one that does not
 // answer asked again every 2 s up to three asks, a refresh asking only
 // those without an answer in the last 10 s, and the answers drawn in the
-// words of the neighbours' screens. Last, nodes a finger cannot tell
-// apart: one marker with their count, which lists them.
+// words of the neighbours' screens. A node's sheet asks it alone, by the
+// same rule, and says while it has no answer that it is asked or did
+// not answer. Last, nodes a finger cannot tell apart: one marker with
+// their count, which lists them.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/asks.dart';
@@ -34,6 +36,9 @@ void main() {
   late Sodium sodium;
   setUpAll(() async => sodium = await SodiumInit.init());
   final start = DateTime.utc(2026, 11, 7);
+
+  /// A sheet's line while its node is asked and has not answered.
+  const asking = 'Asking it for power, neighbours and version\u2026';
 
   /// An app connected to the fake node, or to the node `make` gives.
   void run(
@@ -394,6 +399,8 @@ void main() {
       ),
       findsOneWidget,
     );
+    // Still being asked, as its sheet says.
+    expect(line(asking), findsOneWidget);
     // A relay: no Anchor row, and no contact's name.
     expect(named('role, relay'), findsOneWidget);
     expect(line("relay: passes on others' texts"), findsOneWidget);
@@ -426,6 +433,167 @@ void main() {
     debugPrint = print;
   });
 
+  testWidgets('a neighbour\'s sheet asks it alone while it has no answer, '
+      'and says how its asks stand', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final list = fake.neighbours.values.toList();
+    final silent = list.singleWhere(
+      (n) => !fake.statuses.containsKey(hex(n.id)),
+    );
+    final key = hex(silent.id);
+    int asksOf(String k) => fake.asked.where((a) => a == k).length;
+    Finder icon(String label) =>
+        find.byWidgetPredicate((w) => w is Icon && w.semanticLabel == label);
+    final sheet = find.byType(BottomSheet);
+    Finder line(String text) =>
+        find.descendant(of: sheet, matching: find.text(text));
+    Finder named(String label) =>
+        find.descendant(of: sheet, matching: icon(label));
+
+    // Opened during the opening round, which serves: nothing more sent.
+    await t.pump(FakeNode.answerAfter);
+    await t.tap(icon(nodeLabel(silent.id)));
+    await t.pumpAndSettle();
+    expect(fake.asked.length, list.length);
+    expect(line(asking), findsOneWidget);
+    expect(find.text('Ask again'), findsNothing);
+
+    // Its three asks run out, and the open sheet says so.
+    await t.pump(Asks.wait * 3);
+    expect(asksOf(key), 3);
+    expect(fake.asked.length, list.length + 2);
+    expect(line(asking), findsNothing);
+    expect(line('It did not answer.'), findsOneWidget);
+    expect(find.text('Ask again'), findsOneWidget);
+    await closeSheet(t);
+
+    // Opened again, it alone is asked; it answers the second ask, and
+    // its rows appear in the open sheet.
+    fake.statuses[key] = const NeighbourStatus(
+      placed: true,
+      heard: 5,
+      strong: 3,
+      version: 9,
+    );
+    fake.silentFor[key] = 1;
+    fake.asked.clear();
+    await t.tap(icon(nodeLabel(silent.id)));
+    await t.pumpAndSettle();
+    expect(fake.asked, [key]);
+    expect(line(asking), findsOneWidget);
+    expect(named('neighbours known'), findsNothing);
+    await t.pump(Asks.wait + FakeNode.answerAfter);
+    expect(fake.asked, [key, key]);
+    expect(line(asking), findsNothing);
+    expect(line('5 heard \u00b7 3 strong \u00b7 0 exchanged'), findsOneWidget);
+    expect(named('firmware version'), findsOneWidget);
+    expect(named('power'), findsNothing);
+    expect(named('battery'), findsOneWidget);
+    await closeSheet(t);
+
+    // One that answered 5 s ago is not asked by its sheet, nor is this
+    // node.
+    fake.asked.clear();
+    await t.pump(const Duration(seconds: 4));
+    await t.tap(icon(nodeLabel(silent.id)));
+    await t.pumpAndSettle();
+    await closeSheet(t);
+    await t.tap(icon('this node'));
+    await t.pumpAndSettle();
+    await closeSheet(t);
+    expect(fake.asked, isEmpty);
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('taps in quick succession add no asks to a series', (t) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    final app = await openMap(t);
+    final fake = app.fakeNode!;
+    final silent = fake.neighbours.values.singleWhere(
+      (n) => !fake.statuses.containsKey(hex(n.id)),
+    );
+    final key = hex(silent.id);
+    final marker = find.byWidgetPredicate(
+      (w) => w is Icon && w.semanticLabel == nodeLabel(silent.id),
+    );
+    await t.tap(marker);
+    await t.pumpAndSettle();
+    await t.pump(Asks.wait * 3);
+    fake.asked.clear();
+    // Ask again, tapped thrice, then the sheet shut and opened twice.
+    final again = t.getCenter(find.text('Ask again'));
+    for (var i = 0; i < 3; i++) {
+      await t.tapAt(again);
+      await t.pump(const Duration(milliseconds: 100));
+    }
+    await closeSheet(t);
+    for (var i = 0; i < 2; i++) {
+      await t.tap(marker);
+      await t.pumpAndSettle();
+      await closeSheet(t);
+    }
+    await t.tap(marker);
+    await t.pumpAndSettle();
+    await t.pump(Asks.wait * 5);
+    expect(fake.asked, [key, key, key]);
+    expect(find.text('It did not answer.'), findsOneWidget);
+    await closeSheet(t);
+    await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('a sleepy node that does not answer: its sheet says why', (
+    t,
+  ) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    t.view.physicalSize = const Size(1200, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    late Neighbour sleepy;
+    final app = await openMap(
+      t,
+      make: (now, me) {
+        final f = FakeNode(now: now, sodium: sodium, app: me);
+        sleepy = f.neighbours.values.singleWhere((n) => n.sleepy);
+        f.silentFor[hex(sleepy.id)] = Asks.rounds;
+        return f;
+      },
+    );
+    // Opened while the map asks it, then its asks run out.
+    await t.pump(FakeNode.answerAfter);
+    await t.tap(
+      find.byWidgetPredicate(
+        (w) => w is Icon && w.semanticLabel == nodeLabel(sleepy.id),
+      ),
+    );
+    await t.pumpAndSettle();
+    await t.pump(Asks.wait * 3);
+    expect(
+      app.fakeNode!.asked.where((k) => k == hex(sleepy.id)).length,
+      Asks.rounds,
+    );
+    expect(
+      find.text('It did not answer: it sleeps between its windows.'),
+      findsOneWidget,
+    );
+    expect(find.text('Ask again'), findsOneWidget);
+    await closeSheet(t);
+    await shut(t, app);
+    debugPrint = print;
+  });
+
   test('every fact has its help, two to four sentences', () {
     for (final MapEntry(:key, :value) in factHelp.entries) {
       final sentences = RegExp(r'[.!?](\s|$)').allMatches(value).length;
@@ -451,12 +619,16 @@ void main() {
       final rows = find.descendant(of: sheet, matching: find.byType(InkWell));
       for (var i = 0; i < rows.evaluate().length; i++) {
         final row = rows.at(i);
-        final label = factHelp.keys.singleWhere(
-          (l) => find
-              .descendant(of: row, matching: find.text(l))
-              .evaluate()
-              .isNotEmpty,
-        );
+        final label = factHelp.keys
+            .where(
+              (l) => find
+                  .descendant(of: row, matching: find.text(l))
+                  .evaluate()
+                  .isNotEmpty,
+            )
+            .singleOrNull;
+        // Not a fact's row: the Ask again button.
+        if (label == null) continue;
         await t.ensureVisible(row);
         await t.tap(row);
         await t.pumpAndSettle();

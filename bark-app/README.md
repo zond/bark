@@ -288,14 +288,26 @@ is a prototype for the bench, not the app people will carry.
   heartbeats. This node's own sheet says the same of it from its
   status, its neighbours counted from the table read. The map reads Neighbours when it opens, at every
   status the node gives, and when the refresh button is pressed. When
-  it opens and when refreshed it also asks each neighbour that has not answered within the last 10 s,
-  through Ask, what its own screen shows;
-  a neighbour that answers has its role under its marker in its
-  screen's words, and its details the rows its answer gives, the image
-  it gathers among them. An ask or its
-  answer is lost now and then on a busy channel, so a neighbour that
-  has not answered within 2 s is asked again, a round at a time, up to
-  three asks while the map is open (spec "Neighbour status"). The
+  it opens, when refreshed and when a neighbour's details are opened, it
+  also asks, through Ask, what its own screen shows: every neighbour, or
+  the one opened. A neighbour that answers has its role under its marker
+  in its screen's words, and its details the rows its answer gives, the
+  image it gathers among them. An ask or its answer is lost now and then
+  on a busy channel, and a sleepy node may sleep through it, so a
+  neighbour that has not answered within 2 s of its ask is asked again,
+  up to three asks in a series while the map is open (spec "Neighbour
+  status"). Each ask is a frame on the air, and its answer another, so
+  one rule, in `lib/asks.dart`, decides for all three: a neighbour is
+  asked unless its series is under way or it answered within the last
+  10 s, so a tap during a series, or several in quick succession, sends
+  nothing more. An older answer stays shown until a new one replaces it.
+  While a neighbour has no answer its details say so where its power
+  would be: `Asking it for power, neighbours and version…`, then, once
+  the asks ran out, `It did not answer.` (for a sleepy node `It did not
+  answer: it sleeps between its windows.`) with an **Ask again** button,
+  which starts a new series for it alone, as opening its details again
+  does. The rows appear in the open details when the answer comes. This
+  node's own details ask nothing. The
   node is drawn at its own position, not its address, so a sleepy node
   is not drawn on its anchor; a sleepy neighbour with an anchor is drawn
   at its address, the anchor's position, which its heartbeats carry, so
