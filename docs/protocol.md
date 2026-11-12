@@ -2435,7 +2435,8 @@ deviations, 8 dB, the switching margin's convention
 neighbour for its status ([neighbour status](#neighbour-status)); the
 write is answered once the node has taken it, whether or not the ID is a
 live neighbour's. The app asks the neighbours it shows when the person
-opens or refreshes the map, never at other times (its retries are in
+opens or refreshes the map, and one neighbour when the person opens its
+details, never at other times (its retries are in
 `bark-app/README.md`). Each answer the node is given, the neighbour's ID
 and its status as the radio carries it, is Ask's value from then on,
 notified to the paired phones; the value is empty before the first since
