@@ -129,9 +129,17 @@ pub(super) struct Spread {
     /// Until when the frame after its slot heartbeat on its home channel
     /// may start, where its sleepy nodes listen.
     slot_open: Option<Instant>,
-    /// When it last heard a heartbeat on its home channel: a piece that
-    /// ends within [`SLOT_LISTEN`] of it is the sender's slot piece.
+    /// The pieces still to go in the run after its slot heartbeat, the one
+    /// under way among them.
+    run_left: u8,
+    /// When its last slot heartbeat went on its home channel.
+    slot_at: Instant,
+    /// When it last heard a heartbeat, or a piece that followed one in a
+    /// run: a piece that ends within [`SLOT_LISTEN`] of it goes on the run.
     beat_heard: Instant,
+    /// A sleepy node heard its anchor's slot heartbeat, and has yet to
+    /// decide whether it listens for the run.
+    slot_heard: bool,
     /// When it last heard other nodes' pieces on its home channel, the
     /// last few: they share the channel's pace with it.
     others: [Instant; OTHERS],
@@ -161,7 +169,10 @@ impl Spread {
             told: None,
             helper: None,
             slot_open: None,
+            run_left: 0,
+            slot_at: Instant::ZERO,
             beat_heard: Instant::ZERO,
+            slot_heard: false,
             others: [Instant::ZERO; OTHERS],
             current: None,
             busy_checks: 0,
@@ -297,8 +308,17 @@ impl Spread {
         let version = v.config.version;
         let due = self.rotation_due(version, now)
             || self.section_to & bit(channel) != 0
-            || self.restates_on(v, now) == Some(channel);
+            || self.restates_on(v, now) == Some(channel)
+            || self.serves_sleepy(v, now, channel);
         self.section(version).filter(|_| due)
+    }
+
+    /// Whether a heartbeat on `channel` is the one its sleepy nodes hear
+    /// while one of them lacks a block it holds: it then says what it
+    /// holds, since they hear no other of its heartbeats and listen for
+    /// the piece after this one only if they know.
+    fn serves_sleepy(&self, v: &View<'_>, now: Instant, channel: Channel) -> bool {
+        channel == v.home && self.needs(v, now)[usize::from(v.home.index())].sleepy > 0
     }
 
     /// A heartbeat with the section went on `channel`: a rotation of them
@@ -458,16 +478,42 @@ impl Spread {
     }
 
     /// Its slot heartbeat went on its home channel: a relay whose sleepy
-    /// nodes there gather what it holds sends them the next piece of its
-    /// stream at once, while they listen.
+    /// nodes there gather what it holds sends them a run of its stream's
+    /// pieces at once, while they listen: the pieces the pace gives its
+    /// home channel in a rotation, less those it heard others send there
+    /// since its last slot heartbeat, and one at least.
     pub(super) fn slot_heartbeat(&mut self, v: &View<'_>, now: Instant) {
         let home = self.needs(v, now)[usize::from(v.home.index())];
         if home.sleepy > 0 {
+            let paced = Self::rotation(v).as_micros() / PACE.as_micros();
+            let others = self.others.iter().filter(|&&o| o > self.slot_at).count() as u64;
+            self.run_left = paced.saturating_sub(others).clamp(1, u64::from(u8::MAX)) as u8;
             self.slot_open = Some(now + SLOT_START);
-            // A wait for a pace that had nothing to send ends: this frame
+            // A wait for a pace that had nothing to send ends: this run
             // is its own chance, and the bucket is asked again.
             self.ready_at = self.ready_at.min(now);
         }
+        self.slot_at = now;
+    }
+
+    /// A piece's transmission ended: the next of its run may start at
+    /// once, while the sleepy nodes still listen.
+    pub(super) fn piece_done(&mut self, now: Instant) {
+        if self.run_left > 0 {
+            self.slot_open = Some(now + SLOT_START);
+            self.ready_at = self.ready_at.min(now);
+        }
+    }
+
+    /// A sleepy node heard its anchor's slot heartbeat: it decides whether
+    /// it listens once the heartbeat's section is taken.
+    pub(super) fn slot_heard(&mut self) {
+        self.slot_heard = true;
+    }
+
+    /// Whether its anchor's slot heartbeat was just heard, once.
+    pub(super) fn take_slot_heard(&mut self) -> bool {
+        core::mem::take(&mut self.slot_heard)
     }
 
     /// A sleepy node heard its anchor's slot heartbeat, the anchor `n`:
@@ -489,35 +535,37 @@ impl Spread {
         self.beat_heard = now;
     }
 
+    /// A piece was heard; whether it followed a heartbeat or a piece of
+    /// its run within [`SLOT_LISTEN`], so that the next may follow it.
     pub(super) fn update_heard(
         &mut self,
         v: &View<'_>,
         u: Update<'_>,
         now: Instant,
         emit: &mut dyn FnMut(Action),
-    ) {
+    ) -> bool {
         let Update::Piece {
             version,
             block,
             index,
             bytes,
         } = u;
-        // Another node sends here: it shares the channel's pace, unless
-        // this is the piece after a slot heartbeat just heard, which keeps
-        // no pace.
-        if now.since(self.beat_heard) > SLOT_LISTEN {
-            let o = &mut self.others;
-            o.rotate_right(1);
-            o[0] = now;
+        // Another node sends here: it shares the channel's pace.
+        let o = &mut self.others;
+        o.rotate_right(1);
+        o[0] = now;
+        let run = now.since(self.beat_heard) <= SLOT_LISTEN;
+        if run {
+            self.beat_heard = now;
         }
         if usize::from(index) >= PIECES {
-            return;
+            return run;
         }
         let Some(g) = self.gather.as_mut().filter(|g| g.image.version == version) else {
-            return;
+            return run;
         };
         if !g.take(block, index) {
-            return;
+            return run;
         }
         let mut piece = Piece {
             block,
@@ -527,6 +575,7 @@ impl Spread {
         piece.bytes.copy_from_slice(bytes);
         emit(Action::StorePiece(piece));
         self.helper = self.holder_of(v, block, now).map(|m| m.id);
+        run
     }
 
     /// The blocks from the first of the image it streams that `m` holds,
@@ -740,17 +789,17 @@ impl Spread {
     }
 
     /// The channel of the next piece and when the pace lets it go. The
-    /// piece right after the slot heartbeat keeps no pace; a stream only
-    /// sleepy nodes need goes only then.
+    /// run after the slot heartbeat is the home channel's pace for the
+    /// rotation, sent together: while a sleepy node needs the stream
+    /// there, it goes only then.
     fn next_out(&self, v: &View<'_>, now: Instant) -> Option<(Channel, Instant)> {
         let home = v.home;
         self.stream_channels(v, now)
             .into_iter()
             .flatten()
             .filter_map(|(c, need)| match self.slot_open {
-                // The piece after the slot heartbeat keeps no pace.
                 Some(_) if c == home => Some((c, now)),
-                None if c == home && need.sleepy == need.count => None,
+                None if c == home && need.sleepy > 0 => None,
                 _ => Some((c, self.pace_allows(v, c, now))),
             })
             .min_by_key(|x| x.1)
@@ -881,6 +930,10 @@ impl Spread {
     }
 
     fn slot_end(&mut self, why: SlotPiece, emit: &mut dyn FnMut(Action)) {
+        if why != SlotPiece::Sent {
+            // The sleepy nodes stop listening when no piece follows.
+            self.run_left = 0;
+        }
         if self.slot_open.take().is_some() {
             emit(Action::Trace(Trace::SlotPiece(why)));
         }
@@ -981,7 +1034,9 @@ impl Spread {
         self.current = None;
         self.busy_checks = 0;
         self.slot_open = None;
-        if !after_slot {
+        if after_slot {
+            self.run_left = self.run_left.saturating_sub(1);
+        } else {
             self.passed = 0;
             self.paced(c, now + jitter);
         }
@@ -1072,6 +1127,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
+    /// A piece's transmission ended ([`Spread::piece_done`]).
+    pub(super) fn update_sent(&mut self, now: Instant) {
+        self.spread.piece_done(now);
+    }
+
     pub(super) fn update_heard(
         &mut self,
         u: Update<'_>,
@@ -1079,7 +1139,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         let v = view!(self);
-        self.spread.update_heard(&v, u, now, emit);
+        let run = self.spread.update_heard(&v, u, now, emit);
+        // A sleepy node listens on while its anchor's run goes on.
+        if run && self.sleepy() {
+            self.listen.awake_until_at_least(now + SLOT_LISTEN);
+        }
     }
 
     pub(super) fn update_ready_at(&self) -> Option<Instant> {

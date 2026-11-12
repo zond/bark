@@ -549,7 +549,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             } else {
                 self.anchor_heard(started);
                 if self.sleepy() {
-                    self.anchor_slot_heard(now);
+                    self.spread.slot_heard();
                 }
             }
         }

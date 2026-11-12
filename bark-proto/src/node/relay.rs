@@ -795,6 +795,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if let Some(section) = crate::wire::decode_section(bytes) {
                     self.section_heard(hb.id, section, now, emit);
                 }
+                // After the section, which says what the anchor holds.
+                if self.spread.take_slot_heard() {
+                    self.anchor_slot_heard(now);
+                }
             }
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
@@ -936,6 +940,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                         self.taken(take, now, emit);
                     }
                 }
+                Some(Job::Update) => self.update_sent(now),
                 _ => {}
             },
             Event::App(cmd) => self.app(cmd, now, emit),
