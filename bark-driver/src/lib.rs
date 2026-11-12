@@ -605,7 +605,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         self.receiving = None;
         let listening = self.listening;
         if self.sniffing {
-            // Duty-cycled receive ends with a packet (DS §13.1.7), and
+            // A packet, or a failed one, ends duty-cycled receive, and
             // after anything else the radio may have been woken out of
             // it; the next `listen_resting` starts it again.
             self.listening = None;
