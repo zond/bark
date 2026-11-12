@@ -1559,7 +1559,9 @@ are the firmware's own board interface (`radio::Pins`) rather than the
 driver's generic SX126x one: the generic one polls BUSY immediately after
 each command, but BUSY may take up to 600 ns to rise (DS §8.3.1), so the
 poll can see the previous low and send the next command too early. Ours
-waits out the rise first, bounds every BUSY wait (15 ms, twice a
+waits out the rise first, waits for BUSY low before every command but the
+wake too, since the chip takes no command while BUSY is high, as it is
+while it handles an interrupt of its own (DS §8.3.1), bounds every BUSY wait (15 ms, twice a
 calibration plus the longest oscillator delay the search allows) and
 bounds the wait for DIO1 in every operation, so a radio that does not
 answer gives an error, after which the chip is reset and configured again,
@@ -1658,11 +1660,23 @@ restore its state and the TCXO start (DS Figures 13-2 and 13-3), 1.5 ms
 at the delay the cycle is derived for (`bark_proto::sniff::SNIFF_WAKE`,
 roadmap D92). The receiver gain register is kept on
 the chip's retention list, with the transmit modulation errata bit, so
-that the cycle's own wakes restore them. After a frame the chip stops in
-standby, and the driver starts the cycle again once the core has the
-frame, sending the whole configuration first, since the chip slept; any
-command to the chip is preceded by a falling NSS edge, which wakes it, and
-the error word is read for a start error in the cycle's wakes.
+that the cycle's own wakes restore them.
+
+However the cycle ends, the driver takes the chip out of it the same way
+before anything else: a falling NSS edge, which wakes a sleeping chip
+(DS §8.2.2), a SetStandby to STDBY_RC, which ends the cycle (DS §13.1.7),
+and the error word read with the status byte, which must show STDBY_RC,
+else the chip is reset. The core's next action ends a sniff so, and so
+does a packet, received or failed: its frame is read first, at once, as a
+chip back asleep has cleared its buffer (DS §7.4). The datasheet says a
+packet ends the cycle in STDBY_RC (§13.1.7); on the bench of 2026-11-12 a
+driver that trusted it configured a chip that was not there, and every
+frame was followed by `Chip(Busy)` and a reset
+(`docs/sleepy-receive-2026-11-12.md`, roadmap D211). The cycle starts
+again with the whole configuration, since the chip slept. The error word
+after a cycle holds XOSC_START_ERR, which a wake from sleep raises with a
+TCXO (DS §13.3.6), on the bench at every delay up to 4 ms: it is cleared
+and steps no delay up; a PLL_LOCK_ERR does.
 
 The radio's expected current in the cycle, from the datasheet: the window
 in receive at 4.6 mA (DS Table 3-5, DC-DC, LoRa 125 kHz, power-saving
