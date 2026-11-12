@@ -4,6 +4,7 @@
 
 mod common;
 
+use bark_proto::radio::MIN_PREAMBLE_SYMBOLS;
 use bark_proto::sniff::{anchorless_beat_period, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::tables::heard::{beat_period, HeardParams};
 use bark_proto::wire::{Data, Packet};
@@ -1332,4 +1333,182 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
         .filter(|(_, t)| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
         .count();
     assert_eq!(dropped, 0);
+}
+
+/// The status frames node `i` sent: when, and whether each is an answer.
+fn status_sent(h: &Harness<Relay>, i: usize) -> Vec<(Instant, bool)> {
+    use bark_proto::wire::StatusFrame;
+    h.nodes[i]
+        .sent
+        .iter()
+        .filter_map(|(t, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Status(s)) => Some((*t, matches!(s, StatusFrame::Tell { .. }))),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether node `i`'s application was handed an answer from `from` in
+/// `[since, until)`.
+fn told(h: &Harness<Relay>, i: usize, from: NodeId, since: Instant, until: Instant) -> bool {
+    h.nodes[i].app.iter().any(|(t, e)| {
+        matches!(e, AppEvent::Status { from: f, .. } if *f == from) && *t >= since && *t < until
+    })
+}
+
+/// Whether node `i` was off its channel or on the air at some time in
+/// `[from, to)`: a frame that came then may have gone unheard.
+fn away(h: &Harness<Relay>, i: usize, from: Instant, to: Instant) -> bool {
+    let n = &h.nodes[i];
+    let sent = n
+        .airtime
+        .iter()
+        .map(|&(t, a)| (t, t + a + common::TX_START));
+    let checks = n.checks.iter().filter(|c| c.3).map(|c| (c.0, c.1));
+    sent.chain(checks).any(|(a, b)| a < to && b > from)
+}
+
+/// The app's wait for an answer before it asks again (`bark-app`,
+/// `lib/asks.dart`, `Asks.wait`).
+const APP_WAIT: Duration = Duration::from_secs(2);
+
+/// Node `s`'s application asks `anchor` for its status `asks` times, as
+/// the app's neighbour map does, at moments spread over its beat period:
+/// every ask goes, and each is answered within the app's wait unless the
+/// anchor was off its channel or on the air while the ask was.
+fn asks_answered(h: &mut Harness<Relay>, s: usize, anchor: usize, asks: u64) {
+    let id = h.nodes[anchor].core.id();
+    let before = status_sent(h, s).len();
+    let mut missed = Vec::new();
+    for k in 0..asks {
+        h.run_for(secs(37) + Duration::from_millis(113 * k));
+        let asked = h.now;
+        h.command(s, AppCommand::Ask { neighbour: id });
+        h.run_for(APP_WAIT);
+        if !told(h, s, id, asked, h.now) {
+            missed.push(asked);
+        }
+    }
+    let sent = status_sent(h, s);
+    assert_eq!(sent.len() - before, asks as usize, "every ask goes");
+    assert!(sent.iter().all(|&(_, tell)| !tell));
+    for m in missed {
+        // The ask is on the air from its check on, a few milliseconds.
+        let ask = Duration::from_millis(20);
+        assert!(
+            away(h, anchor, m, m + ask),
+            "the ask at {m:?} found the anchor listening and went unanswered"
+        );
+    }
+}
+
+/// A sleepy node's application asks its anchor for its status: the ask
+/// goes at once with the short preamble on the anchor's channel, and the
+/// answer, with the long preamble, reaches the node receiving duty-cycled
+/// (spec "Neighbour status",
+/// "Duty-cycled receive and the long preamble").
+#[test]
+fn a_sleepy_node_s_ask_of_its_anchor_is_answered() {
+    let (relay, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 1), node(3.0, true, 2)]);
+    h.link(relay, s);
+    h.start_at(s, at(10));
+    h.run_until(at(1200), |_| false);
+    let anchor = h.nodes[s].core.anchor().expect("an anchor").id;
+    assert_eq!(anchor, h.nodes[relay].core.id());
+    let sniffs = h.nodes[s].sniffed.len();
+    asks_answered(&mut h, s, relay, 20);
+    assert!(h.nodes[s].sniffed.len() > sniffs, "it receives duty-cycled");
+    let home = h.nodes[relay].core.home();
+    for (_, f) in &h.nodes[s].sent {
+        if let Ok(Packet::Status(_)) = Packet::decode(f.payload()) {
+            assert_eq!(
+                (f.channel, f.preamble_symbols),
+                (home, MIN_PREAMBLE_SYMBOLS)
+            );
+        }
+    }
+    for (_, f) in &h.nodes[relay].sent {
+        if let Ok(Packet::Status(_)) = Packet::decode(f.payload()) {
+            assert_eq!(
+                (f.channel, f.preamble_symbols),
+                (home, LONG_PREAMBLE_SYMBOLS)
+            );
+        }
+    }
+}
+
+/// Today's image: 28 blocks, the table's two pieces, 26 whole blocks and
+/// a short one.
+fn todays_image() -> (bark_proto::update::Image, Vec<usize>) {
+    let image = bark_proto::update::Image {
+        version: 3,
+        blocks: 28,
+        last: 40,
+        key: 0,
+    };
+    let mut needs = vec![2];
+    needs.extend(std::iter::repeat_n(64, 26));
+    needs.push(40);
+    (image, needs)
+}
+
+/// As above while the anchor streams an update to three relays, on other
+/// channels or on its own, and to the sleepy node too or not: the bench's
+/// relay and its sleepy node on 2026-11-12.
+#[test]
+fn a_sleepy_node_s_ask_is_answered_while_its_anchor_streams_an_update() {
+    use common::Updates;
+    let (image, needs) = todays_image();
+    let (relay, s) = (0, 1);
+    let at_home = |east: f64, seed: u64, home: u8| {
+        let config = Config {
+            position: pos(east, 0.0),
+            boot_listen: secs(5),
+            home_override: bark_proto::Channel::new(home),
+            ..Config::default()
+        };
+        (Relay::new(config, seed), true)
+    };
+    for gathers in [false, true] {
+        for homes in [[1, 4, 6], [9, 9, 9]] {
+            let mut h = Harness::powered(vec![
+                at_home(0.0, 1, 9),
+                node(3.0, true, 2),
+                at_home(100.0, 3, homes[0]),
+                at_home(200.0, 4, homes[1]),
+                at_home(300.0, 5, homes[2]),
+            ]);
+            for g in 1..5 {
+                h.link(relay, g);
+            }
+            h.start_at(s, at(10));
+            for (i, n) in h.nodes.iter_mut().enumerate() {
+                if i != s || gathers {
+                    n.updates = Some(Updates {
+                        needs: needs.clone(),
+                        ..Updates::default()
+                    });
+                }
+            }
+            h.run_until(at(1200), |_| false);
+            let anchor = h.nodes[s].core.anchor().expect("an anchor").id;
+            assert_eq!(anchor, h.nodes[relay].core.id());
+            h.deliver_app(relay, AppCommand::Holds(image));
+            h.run_for(secs(600));
+            let pieces = |h: &Harness<Relay>| {
+                h.nodes[relay]
+                    .sent
+                    .iter()
+                    .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Update(_))))
+                    .count()
+            };
+            let streamed = pieces(&h);
+            asks_answered(&mut h, s, relay, 40);
+            assert!(
+                pieces(&h) - streamed > 100,
+                "the anchor streamed throughout"
+            );
+        }
+    }
 }
