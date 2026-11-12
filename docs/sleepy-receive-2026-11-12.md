@@ -137,6 +137,16 @@ error, no reset and the delays unchanged
 (`a_frame_caught_in_a_sniff_is_read_and_the_radio_goes_on_without_an_error`), as do the other
 ends of a sniff (`every_end_of_a_sniff_leaves_the_chip_in_standby_without_an_error`).
 
+## The fix on the bench
+
+The quiet run again, the same day, S anchorless on channel 2: `radio_errors`, `resets`,
+`tcxo_errors` and `recoveries` stayed at 0, the cold delay at 750 µs. By S's own clock (K's is
+31.33 s ahead) S had 103 frames when the 105 long beacons had ended, at 963.6 s, missing one
+among seq 8 to 10 and one among 97 to 105, about what its own beats cost; and 104 at the end, the
+one short beacon caught among seq 174 to 176, 1 of 101. Count by the board's clock, not the
+host's: the USB log held S's lines back by up to 33 s, and its `frames=103` line reached the host
+after the short run had begun.
+
 ## To measure
 
 - The quiet run again, long and short preamble: frames caught as before, and `radio_errors`,
