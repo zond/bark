@@ -36,7 +36,10 @@ use bark_proto::MAX_FRAME;
 
 /// Ring size, bytes. Lines logged before the host opens the port wait
 /// here; once it is full, new lines are dropped, so the banner survives.
-pub const RING: usize = 2048;
+/// A node logs 2048 bytes in its first 1.7 s and some 500 more before a
+/// host that waited for the port has opened it (four boards, 2026-11-13);
+/// twice that, for a slower host.
+pub const RING: usize = 4096;
 
 /// The longest line, bytes, with its end: the console's report of a
 /// received frame, its bytes in hex at two digits each, and 128 for the
