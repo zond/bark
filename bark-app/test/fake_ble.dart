@@ -204,9 +204,15 @@ class FakeNodes extends UniversalBlePlatform {
         details: '133',
       );
     }
-    final link = bonds.contains(deviceId) || !n.public
-        ? n.connect()
-        : n.connectGuest();
+    _take(
+      deviceId,
+      bonds.contains(deviceId) || !n.public ? n.connect() : n.connectGuest(),
+    );
+    return expectedMtu;
+  }
+
+  /// Makes `link` the phone's link to `deviceId`.
+  void _take(String deviceId, NodeLink link) {
     _links[deviceId] = link;
     // What the node notifies reaches the app as Android gives it, in
     // bytes.
@@ -231,7 +237,6 @@ class FakeNodes extends UniversalBlePlatform {
       _up.remove(deviceId);
       updateConnection(deviceId, false);
     });
-    return expectedMtu;
   }
 
   @override
@@ -270,7 +275,7 @@ class FakeNodes extends UniversalBlePlatform {
     final guest = _links[deviceId];
     if (guest is FakeGuest) {
       // The owner's link first, so that the guest's end is not the link's.
-      _links[deviceId] = n.connect();
+      _take(deviceId, n.connect());
       await guest.close();
     }
     return true;
