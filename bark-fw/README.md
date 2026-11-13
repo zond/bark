@@ -1531,6 +1531,35 @@ radio parameters. `scripts/bench.py` builds, flashes and logs the boards of
 steps 4 and 5 from the host and reads their logs
 (`docs/bringup-2026-11-06.md`).
 
+## Bench build
+
+Built with `--features bench`, which no release sets: the node image,
+which also takes commands on the serial port, for the acceptance and
+stress tests on the bench (`docs/bench-suite-2026-11-13.md`). It logs
+`bench build: commands on the serial port` as the node starts. Each
+command is echoed as `bench> <line>`, and what it does is logged in
+`bench:` lines.
+
+| Command | Does |
+|---|---|
+| `text <id> <lat> <lon> <words>` | send the words to node `id`, twelve hex digits, at the position in degrees, as the node's `node id=… at <lat> <lon>` line gives it, as a phone's message: offered to the core after any message of the node's own, and logged `bench: send id=<message ID> len=<bytes> taken` as it is taken, as a phone's is (`ble: send …`). One waits at a time. The message ID is the address's and the words', so the same words to the same node twice are one message |
+| `power <usb\|battery\|real>` | the power the core is told it is on from now on, `real` what USB detection says; the node then turns sleepy or relay by its own rules. The LED, the crystal, the update's battery check and the phone's status still follow the real supply |
+| `txpower <dbm>` | the transmit power, clamped to −9..10 dBm, from the next frame |
+| `carrier <k> <seconds>` | transmit on k for up to 1 800 s, twice the longest a relay's move takes (spec "Channel moves"): two-byte frames, a bench frame's first two bytes (Console, above), each behind the longest preamble that ends in time, back to back. The node does nothing else meanwhile. A bench-only transmission: it keeps to no duty cycle (spec "Regulatory limits") |
+| `reboot` | reset, once the log has reached the host |
+| `status` | `reset`, the causes the chip recorded for the reset before this boot (nRF52840 Product Specification, POWER, RESETREAS: `pin`, `watchdog`, `software`, `lockup`, `debug`, an `off-` wake, or `power-on` for none), read at the first `status` of a boot and cleared; the `power` told; `tx_dbm`; `stack_used` of the stack's size |
+
+The rest the bench's checks read is in the node's own lines: the radio's
+errors in the 10 s line, and a message dropped and a heartbeat skipped
+as busy in the core's traces (`Dropped`, `HeartbeatSkipped`).
+
+`txpower` and `carrier` run in the node's loop between two of the
+driver's steps; `text` and `power` reach the core at its next step.
+
+The home channel cannot be pinned at run time: the core takes
+`Config::home_override` only as it starts, and pinning it later needs a
+command in the core or a setting kept across a reboot outside the store.
+
 ## Radio driver
 
 The radio is driven in two layers (roadmap D88). `bark-driver/src/sx1262.rs`,
