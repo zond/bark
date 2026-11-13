@@ -1,0 +1,75 @@
+# A3, mail to and from a sleepy node (docs/bench-suite-2026-11-13.md,
+# "Acceptance tests"): delivered in the node's window, and its own text
+# arrives.
+#
+# S is built to report battery whatever USB says, so it is sleepy from its
+# boot and still logs (docs/bringup-2026-11-06.md, "A sleepy node"). A and
+# R are relays, either of which S may take as its anchor.
+
+about = "a text to a sleepy node, delivered in its window, and one from it"
+waits_for = ["the bench build's `text <node id hex> <words>` command and its answer line"]
+# The relays' first rotation, then a sleepy node's choice of its anchor,
+# then the two texts; 15 min as the design gives it.
+duration_s = 900.0
+
+[[boards]]
+name = "A"
+place_m = -50.0
+features = ["bench"]
+
+[[boards]]
+name = "R"
+place_m = 50.0
+
+[[boards]]
+name = "S"
+place_m = 0.0
+env = { BARK_ON_BATTERY = "1" }
+features = ["bench"]
+
+[[boards]]
+name = "D"
+silent = true
+
+[[actions]]
+at_s = 300.0
+board = "A"
+do = "say"
+command = "text ${S.id} to the sleepy node"
+name = "as"
+expect = '^text id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[actions]]
+at_s = 360.0
+board = "S"
+do = "say"
+command = "text ${A.id} from the sleepy node"
+name = "sa"
+expect = '^text id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[pass]]
+board = "S"
+line = '^message id=${as.id}$'
+after = "as"
+why = "at S"
+
+# Handed to S in its window by its holder (spec "Delivery"), whichever
+# relay that is.
+[[pass]]
+any = [
+  { board = "A", line = '^Delivered \{ msg_id: MsgId\(${as.id|dec}\), node: NodeId\(\[${S.id_dec}\]\), by: Window' },
+  { board = "R", line = '^Delivered \{ msg_id: MsgId\(${as.id|dec}\), node: NodeId\(\[${S.id_dec}\]\), by: Window' },
+]
+why = "in S's window"
+
+[[pass]]
+board = "A"
+line = '^message id=${sa.id}$'
+after = "sa"
+why = "S's own text at A"
+
+[[pass]]
+board = "S"
+line = '^Role \{ sleepy: false'
+absent = true
+why = "S stays sleepy"

@@ -102,8 +102,8 @@ def setup(node: str, log) -> None:
     cargo(FW, {"BARK_OPEN": "1", "BARK_IMAGE_VERSION": "1"}, ["--features", "console"])
     uf2 = OUT / "base.uf2"
     subprocess.run([sys.executable, "-I", FW / "scripts/uf2.py", "--loader", LOADER_ELF, ELF, uf2], check=True)
-    bench.off(argparse.Namespace(id=node))
-    bench.on(argparse.Namespace(id=node, uf2=str(uf2)))
+    bench.off(node)
+    bench.on(node, uf2)
     sessions = boots(node, time.monotonic() + ROUND_S, log, None)
     if not sessions or banner(sessions[-1]) != 1:
         sys.exit("setup: the board did not come back running version 1")

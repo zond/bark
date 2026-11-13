@@ -1,0 +1,120 @@
+[   214.472 INFO ] display: shown in 2091 ms, asleep
+[   220.341 INFO ] uptime 220 s
+[   220.414 INFO ] driver events=801 frames=3 failed=11 held=11 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7752 utc_s=1793946274 offset_min=None from=Gps
+[   230.341 INFO ] uptime 230 s
+[   230.414 INFO ] driver events=837 frames=3 failed=11 held=11 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7752 utc_s=1793946284 offset_min=None from=Gps
+[   240.341 INFO ] uptime 240 s
+[   240.414 INFO ] driver events=877 frames=3 failed=11 held=12 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7752 utc_s=1793946294 offset_min=None from=Gps
+[   245.243 INFO ] HeartbeatSkipped { channel: Channel(9) }
+[   250.342 INFO ] uptime 250 s
+[   250.414 INFO ] driver events=913 frames=3 failed=11 held=12 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946304 offset_min=None from=Gps
+[   251.053 INFO ] HeartbeatSkipped { channel: Channel(10) }
+[   260.342 INFO ] uptime 260 s
+[   260.414 INFO ] driver events=954 frames=4 failed=11 held=12 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946314 offset_min=None from=Gps
+[   270.342 INFO ] uptime 270 s
+[   270.414 INFO ] driver events=990 frames=4 failed=12 held=12 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946324 offset_min=None from=Gps
+[   280.342 INFO ] uptime 280 s
+[   280.414 INFO ] driver events=1026 frames=4 failed=12 held=13 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946334 offset_min=None from=Gps
+[   290.342 INFO ] uptime 290 s
+[   290.414 INFO ] driver events=1059 frames=4 failed=13 held=14 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946344 offset_min=None from=Gps
+[   300.342 INFO ] uptime 300 s
+[   300.414 INFO ] driver events=1095 frames=4 failed=13 held=14 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946354 offset_min=None from=Gps
+[   310.342 INFO ] uptime 310 s
+[   310.414 INFO ] driver events=1131 frames=4 failed=13 held=14 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946364 offset_min=None from=Gps
+[   320.342 INFO ] uptime 320 s
+[   320.414 INFO ] driver events=1169 frames=4 failed=13 held=15 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946374 offset_min=None from=Gps
+[   325.291 INFO ] HeartbeatSkipped { channel: Channel(10) }
+[   330.343 INFO ] uptime 330 s
+[   330.414 INFO ] driver events=1205 frames=4 failed=13 held=15 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946384 offset_min=None from=Gps
+[   340.343 INFO ] uptime 340 s
+[   340.414 INFO ] driver events=1243 frames=4 failed=13 held=15 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946394 offset_min=None from=Gps
+[   350.343 INFO ] uptime 350 s
+[   350.414 INFO ] driver events=1279 frames=4 failed=13 held=16 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946404 offset_min=None from=Gps
+[   360.343 INFO ] uptime 360 s
+[   360.414 INFO ] driver events=1315 frames=4 failed=13 held=16 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946414 offset_min=None from=Gps
+[   370.343 INFO ] uptime 370 s
+[   370.414 INFO ] driver events=1350 frames=5 failed=13 held=17 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946424 offset_min=None from=Gps
+[   380.343 INFO ] uptime 380 s
+[   380.414 INFO ] driver events=1388 frames=6 failed=14 held=17 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946434 offset_min=None from=Gps
+[   390.343 INFO ] uptime 390 s
+[   390.414 INFO ] driver events=1424 frames=6 failed=15 held=19 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946444 offset_min=None from=Gps
+[   393.729 INFO ] HeartbeatSkipped { channel: Channel(9) }
+[   400.343 INFO ] uptime 400 s
+[   400.414 INFO ] driver events=1465 frames=6 failed=15 held=20 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946454 offset_min=None from=Gps
+[   410.344 INFO ] uptime 410 s
+[   410.414 INFO ] driver events=1498 frames=6 failed=15 held=21 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946464 offset_min=None from=Gps
+[   410.766 INFO ] HeartbeatSkipped { channel: Channel(12) }
+[   420.344 INFO ] uptime 420 s
+[   420.414 INFO ] driver events=1537 frames=6 failed=15 held=21 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946474 offset_min=None from=Gps
+[   430.344 INFO ] uptime 430 s
+[   430.414 INFO ] driver events=1573 frames=6 failed=15 held=21 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946484 offset_min=None from=Gps
+[   440.344 INFO ] uptime 440 s
+[   440.414 INFO ] driver events=1609 frames=6 failed=15 held=22 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946494 offset_min=None from=Gps
+[   450.344 INFO ] uptime 450 s
+[   450.414 INFO ] driver events=1642 frames=6 failed=16 held=23 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946504 offset_min=None from=Gps
+[   460.344 INFO ] uptime 460 s
+[   460.414 INFO ] driver events=1678 frames=6 failed=16 held=23 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946514 offset_min=None from=Gps
+[   467.842 INFO ] HeartbeatSkipped { channel: Channel(9) }
+[   470.344 INFO ] uptime 470 s
+[   470.414 INFO ] driver events=1717 frames=6 failed=16 held=23 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946524 offset_min=None from=Gps
+[   480.344 INFO ] uptime 480 s
+[   480.414 INFO ] driver events=1753 frames=6 failed=17 held=23 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946534 offset_min=None from=Gps
+[   490.345 INFO ] uptime 490 s
+[   490.767 INFO ] driver events=1788 frames=7 failed=17 held=24 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946544 offset_min=None from=Gps
+[   500.345 INFO ] uptime 500 s
+[   500.414 INFO ] driver events=1823 frames=7 failed=18 held=25 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946554 offset_min=None from=Gps
+[   510.345 INFO ] uptime 510 s
+[   510.414 INFO ] driver events=1859 frames=7 failed=19 held=25 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946564 offset_min=None from=Gps
+[   520.345 INFO ] uptime 520 s
+[   520.414 INFO ] driver events=1895 frames=7 failed=19 held=26 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946574 offset_min=None from=Gps
+[   530.345 INFO ] uptime 530 s
+[   530.414 INFO ] driver events=1930 frames=7 failed=19 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946584 offset_min=None from=Gps
+[   540.345 INFO ] uptime 540 s
+[   540.414 INFO ] driver events=1963 frames=7 failed=19 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946594 offset_min=None from=Gps
+[   541.800 INFO ] HeartbeatSkipped { channel: Channel(9) }
+[   550.345 INFO ] uptime 550 s
+[   550.414 INFO ] driver events=2002 frames=7 failed=19 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946604 offset_min=None from=Gps
+[   560.345 INFO ] uptime 560 s
+[   560.414 INFO ] driver events=2038 frames=7 failed=19 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946614 offset_min=None from=Gps
+[   570.345 INFO ] uptime 570 s
+[   570.414 INFO ] driver events=2076 frames=8 failed=19 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946624 offset_min=None from=Gps
+[   580.346 INFO ] uptime 580 s
+[   580.414 INFO ] driver events=2109 frames=8 failed=20 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=7788 utc_s=1793946634 offset_min=None from=Gps
+[   589.188 INFO ] ble: connected peer=Address { kind: AddrKind(1), addr: BdAddr([0, 0, 0, 0, 0, 0]) } interval_us=48767 latency=0 timeout_ms=5000
+[   589.602 INFO ] ble: att Request(ReadByType { start: 1, end: 65535, attribute_type: Uuid16([1, 42]) })
+[   589.700 INFO ] ble: att Request(ReadByType { start: 1, end: 65535, attribute_type: Uuid16([42, 43]) })
+[   589.797 INFO ] ble: att Request(ReadByGroupType { start: 1, end: 65535, group_type: Uuid16([0, 40]) })
+[   589.895 INFO ] ble: att Request(ReadByGroupType { start: 7, end: 65535, group_type: Uuid16([0, 40]) })
+[   589.992 INFO ] ble: att Request(ReadByType { start: 1, end: 5, attribute_type: Uuid16([2, 40]) })
+[   590.090 INFO ] ble: att Request(ReadByType { start: 1, end: 5, attribute_type: Uuid16([3, 40]) })
+[   590.187 INFO ] ble: att Request(ReadByType { start: 5, end: 5, attribute_type: Uuid16([3, 40]) })
+[   590.285 INFO ] ble: att Request(ReadByType { start: 7, end: 65535, attribute_type: Uuid16([2, 40]) })
+[   590.285 INFO ] ble: parameters interval_us=7507 latency=0 timeout_ms=5000
+[   590.346 INFO ] uptime 590 s
+[   590.348 INFO ] ble: att Request(ReadByType { start: 7, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.371 INFO ] ble: att Request(ReadByType { start: 9, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.386 INFO ] ble: att Request(ReadByType { start: 11, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.401 INFO ] ble: att Request(ReadByType { start: 14, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.414 INFO ] driver events=2145 frames=8 failed=20 held=27 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=8140 utc_s=1793946644 offset_min=None from=Gps
+[   590.423 INFO ] ble: att Request(ReadByType { start: 16, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.446 INFO ] ble: att Request(ReadByType { start: 18, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.468 INFO ] ble: att Request(ReadByType { start: 21, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.483 INFO ] ble: att Request(ReadByType { start: 23, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.498 INFO ] ble: att Request(ReadByType { start: 25, end: 65535, attribute_type: Uuid16([3, 40]) })
+[   590.521 INFO ] ble: att Request(FindInformation { start_handle: 12, end_handle: 12 })
+[   590.543 INFO ] ble: att Request(FindInformation { start_handle: 19, end_handle: 19 })
+[   590.558 INFO ] ble: att Request(FindInformation { start_handle: 26, end_handle: 65535 })
+[   590.641 INFO ] ble: att Request(Read { handle: 9 })
+[   590.678 INFO ] ble: att write handle=12 len=2
+[   590.768 INFO ] ble: att write handle=19 len=2
+[   590.791 INFO ] ble: att Request(Read { handle: 11 })
+[   590.836 INFO ] ble: att Request(Read { handle: 18 })
+[   590.903 INFO ] ble: att write handle=23 len=6
+[   590.904 INFO ] utc: phone 1793946644 s offset 60 min, time kept from the gps
+[   590.941 INFO ] ble: att Request(Read { handle: 23 })
+[   591.016 INFO ] ble: parameters interval_us=48767 latency=0 timeout_ms=5000
+[   591.162 INFO ] ble: data length tx=251 rx=251
+[   600.346 INFO ] uptime 600 s
+[   600.414 INFO ] driver events=2181 frames=8 failed=20 held=28 radio_errors=0 sniffs=0 longest_handle_us=824 longest_away_us=1007 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=8140 utc_s=1793946654 offset_min=Some(60) from=Gps
+[   601.841 INFO ] ble: att write handle=14 len=130
+[   601.842 INFO ] ble: send id=9a1c50b3 len=117 taken

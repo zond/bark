@@ -1,0 +1,83 @@
+# S3 (docs/bench-suite-2026-11-13.md, "Stress tests"): every board
+# rebooted at random for hours during an update. The blocks gathered, the
+# stored home channel and the mail held are there after each reboot; the
+# update completes.
+#
+# C holds the run's newest image and serves it, as in A4; A and B gather
+# it. Texts between A and B fill their mailboxes. Every board runs the
+# bench build, the image C serves too, so that each still takes `reboot`
+# and `text` once it has installed.
+
+about = "every board rebooted at random during an update"
+waits_for = [
+  "the bench build's `text <node id hex> <words>` command and its answer line",
+  "the bench build's `reboot` command",
+]
+duration_s = 18000.0
+
+[[boards]]
+name = "A"
+features = ["bench"]
+
+[[boards]]
+name = "B"
+features = ["bench"]
+
+[[boards]]
+name = "C"
+features = ["bench"]
+serves = true
+
+[[boards]]
+name = "D"
+silent = true
+
+[[actions]]
+at_s = 300.0
+every_s = [300.0, 900.0]
+until_s = 14400.0
+board = "A"
+do = "say"
+command = "text ${B.id} mail for B"
+
+[[actions]]
+at_s = 450.0
+every_s = [300.0, 900.0]
+until_s = 14400.0
+board = "B"
+do = "say"
+command = "text ${A.id} mail for A"
+
+[[actions]]
+at_s = 900.0
+every_s = [600.0, 1800.0]
+until_s = 14400.0
+boards = ["A", "B", "C"]
+do = "say"
+command = "reboot"
+
+# The home: the last stored before the reboot is the one read at boot
+# (bark-fw/src/node.rs, `stored`).
+[[pass]]
+boards = ["A", "B", "C"]
+kept = { before = '^(?:store Stored|stored Some\(Stored) \{ home: Channel\((?P<v>\d+)\)', after = '^stored Some\(Stored \{ home: Channel\((?P<v>\d+)\)' }
+why = "the home kept"
+
+# The blocks held, in the 10 s line, never fewer after a reboot; not at the
+# install, after which nothing is gathered.
+[[pass]]
+boards = ["A", "B"]
+kept = { before = ' update=gathering:\d+ blocks:(?P<v>\d+)/', after = ' update=gathering:\d+ blocks:(?P<v>\d+)/', compare = "not_less", unless = '^update: rebooting into version' }
+why = "the blocks kept"
+
+# The mail: the newest kept before the reboot is still there at boot
+# (bark-fw/src/mailbox.rs).
+[[pass]]
+boards = ["A", "B"]
+kept = { before = '^mailbox: id=[0-9a-f]{8} kept as (?P<v>\d+)', after = '^mailbox: home=\w+ oldest=\d+ newest=(?P<v>\d+)', compare = "not_less" }
+why = "the mail kept"
+
+[[pass]]
+boards = ["A", "B"]
+line = '^update: version ${C.version} confirmed'
+why = "the update completes"

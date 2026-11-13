@@ -1,0 +1,94 @@
+# A2, a text along a line A, B, C (docs/bench-suite-2026-11-13.md,
+# "Acceptance tests"): delivered and acknowledged each way within the bound
+# of two hand-overs.
+#
+# A and C are built deaf to each other, B between them, at the places of
+# bring-up step 4 (docs/bringup-2026-11-06.md, "A line"). D stays in its
+# bootloader, else it would be a fourth relay every board hears.
+
+about = "a text from A to C and one back, each through B, within two hand-overs"
+waits_for = ["the bench build's `text <node id hex> <words>` command and its answer line"]
+duration_s = 420.0
+
+[[boards]]
+name = "A"
+place_m = -150.0
+deaf_to = "C"
+features = ["bench"]
+
+[[boards]]
+name = "B"
+place_m = 0.0
+
+[[boards]]
+name = "C"
+place_m = 150.0
+deaf_to = "A"
+features = ["bench"]
+
+[[boards]]
+name = "D"
+silent = true
+
+# After every first rotation, 195 s from the boots, which the runner puts
+# within a minute of the start (spec "Channel at boot").
+[[actions]]
+at_s = 240.0
+board = "A"
+do = "say"
+command = "text ${C.id} from A along the line"
+name = "ac"
+expect = '^text id=(?P<id>[0-9a-f]{8}) .*taken'
+
+[[actions]]
+at_s = 300.0
+board = "C"
+do = "say"
+command = "text ${A.id} from C along the line"
+name = "ca"
+expect = '^text id=(?P<id>[0-9a-f]{8}) .*taken'
+
+# Each way: through B, the first hand-over acknowledged, and at the other
+# end's application within two hand-overs of at most 3.15 s each (spec
+# "Bounds"): 6.3 s.
+[[pass]]
+board = "A"
+line = '^Forwarded \{ msg_id: MsgId\(${ac.id|dec}\), to: NodeId\(\[${B.id_dec}\]\)'
+after = "ac"
+within_s = 6.3
+why = "A to B acknowledged"
+
+[[pass]]
+board = "B"
+line = '^(Forwarded|Delivered) \{ msg_id: MsgId\(${ac.id|dec}\)'
+after = "ac"
+within_s = 6.3
+why = "on from B"
+
+[[pass]]
+board = "C"
+line = '^message id=${ac.id}$'
+after = "ac"
+within_s = 6.3
+why = "at C"
+
+[[pass]]
+board = "C"
+line = '^Forwarded \{ msg_id: MsgId\(${ca.id|dec}\), to: NodeId\(\[${B.id_dec}\]\)'
+after = "ca"
+within_s = 6.3
+why = "C to B acknowledged"
+
+[[pass]]
+board = "B"
+line = '^(Forwarded|Delivered) \{ msg_id: MsgId\(${ca.id|dec}\)'
+after = "ca"
+within_s = 6.3
+why = "on from B"
+
+[[pass]]
+board = "A"
+line = '^message id=${ca.id}$'
+after = "ca"
+within_s = 6.3
+why = "at A"

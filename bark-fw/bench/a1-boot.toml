@@ -1,0 +1,52 @@
+# A1, boot and join (docs/bench-suite-2026-11-13.md, "Acceptance tests"):
+# four relays on one desk, flashed one after another, each holds its three
+# neighbours and a home channel.
+#
+# Each is built at its own place, 100 m apart along a line east of the
+# desk, all within the carried radius of 250 m (roadmap D136) of the
+# desk's fixes (docs/gps-bench-2026-11-06.md), so that none waits for a
+# fix or turns carried.
+
+about = "four relays boot and each holds its three neighbours and a home channel"
+# The first rotation ends 195 s after the last board's boot (spec "Channel
+# at boot": 13 channels of 15 s); with room for a second report.
+duration_s = 300.0
+
+[[boards]]
+name = "A"
+place_m = -150.0
+
+[[boards]]
+name = "B"
+place_m = -50.0
+
+[[boards]]
+name = "C"
+place_m = 50.0
+
+[[boards]]
+name = "D"
+place_m = 150.0
+
+# The relays heard in the first rotation (bark-fw/src/node.rs,
+# AppEvent::Boot), or by a board that kept its tables, when its fast boot
+# ends (roadmap D73). The runner starts every board within a minute, inside
+# the first's rotation. No line says how many neighbours a board holds
+# later; the 10 s line could.
+[[pass]]
+boards = ["A", "B", "C", "D"]
+line = '^boot relays=3 '
+why = "three neighbours each"
+
+# A home: stored as the rotation ends, or kept from before the flash
+# (spec "Channel at boot").
+[[pass]]
+boards = ["A", "B", "C", "D"]
+line = '^(store Stored|stored Some\(Stored) \{ home: Channel\(\d+\)'
+why = "a home channel each"
+
+[[pass]]
+boards = ["A", "B", "C", "D"]
+line = '^Carried \{ carried: true'
+absent = true
+why = "none carried"

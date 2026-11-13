@@ -13,6 +13,8 @@ run from bark-fw/.
     scripts/bench.py texts DIR             # each text's path and timing
     scripts/bench.py catch DIR S K         # long-preamble frames S caught of K's
     scripts/bench.py watch DIR S           # S's anchor and its watches
+    scripts/bench.py run SCENARIO A=ID ...  # a scenario on the boards (scenario.py)
+    scripts/bench.py check DIR [SCENARIO]  # its checks over logs already written
 
 ID is a board's node ID: twelve hex digits for build and on, and for the
 other commands its last four as well.
@@ -21,10 +23,12 @@ other commands its last four as well.
 from __future__ import annotations
 
 import argparse
+import collections
 import glob
 import math
 import os
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -35,12 +39,19 @@ import tty
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import uf2  # the ELF's symbols, beside this script
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import checks  # noqa: E402  (beside this script: the log's lines)
+import image  # noqa: E402  (beside this script: pack)
+import uf2  # noqa: E402  (beside this script: the ELF's symbols)
 
 FW = Path(__file__).resolve().parent.parent
 ELF = FW / "target/thumbv7em-none-eabihf/release/bark-fw"
+LOADER = FW.parent / "bark-loader"
+LOADER_ELF = LOADER / "target/thumbv7em-none-eabihf/release/bark-loader"
 OUT = FW / "target/bench"
 PORTS = "/dev/serial/by-id/usb-bark_bark_T-Echo_*-if00"
+PORT = "/dev/serial/by-id/usb-bark_bark_T-Echo_{}-if00"
 
 # The places of scenarios/line.toml, metres east of the desk on the
 # simulator's projection (bark-sim/src/geo.rs): B at the desk, where the
@@ -84,19 +95,61 @@ def full_id(short: str, known: list[str] | None = None) -> str:
 # ---- build ---------------------------------------------------------------
 
 
-def cargo(env: dict[str, str], console: bool, out: Path) -> None:
-    # Bench boards stay open to a debug probe (README, "Read-out protection").
+def cargo_build(where: Path, env: dict[str, str], features: list[str]) -> None:
+    """A release build in `where` with `env` and no other BARK_ variable
+    from the shell. Bench boards stay open to a debug probe (README,
+    "Read-out protection")."""
     env = {"BARK_OPEN": "1", **env}
     e = {k: v for k, v in os.environ.items() if not k.startswith("BARK_")}
     e.update(env)
-    cmd = ["cargo", "build", "--release"] + (["--features", "console"] if console else [])
-    print(" ".join(f"{k}={v}" for k, v in env.items()), " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=FW, env=e, check=True)
+    cmd = ["cargo", "build", "--release"] + (["--features", ",".join(features)] if features else [])
+    print(" ".join(f"{k}={v}" for k, v in env.items()), " ".join(cmd), f"({where.name})", flush=True)
+    subprocess.run(cmd, cwd=where, env=e, check=True)
+
+
+def cargo(env: dict[str, str], console: bool, out: Path) -> None:
+    cargo_build(FW, env, ["console"] if console else [])
     subprocess.run([sys.executable, FW / "scripts/uf2.py", ELF, out], cwd=FW, check=True)
     size = subprocess.run(["size", ELF], capture_output=True, text=True)
     text, data = size.stdout.splitlines()[-1].split()[:2]
     start, end = uf2.region(uf2.symbols(ELF.read_bytes()), "__bootloader_active")
     print(f"{out.name}: image {int(text) + int(data)} B of the {end - start} B slot\n", flush=True)
+
+
+def build_loader() -> Path:
+    cargo_build(LOADER, {}, [])
+    return LOADER_ELF
+
+
+@dataclass
+class Built:
+    version: int
+    elf: Path
+    image: Path  # packed and signed by the bench key
+    uf2: Path  # the loader, the firmware and, if it serves, its image's header
+    stack_room: int
+
+
+def build_image(name: str, env: dict[str, str], features: list[str], version: int, out: Path, serves: bool) -> Built:
+    """One board's build at `version`, kept under `out` as `name`: its ELF,
+    its image signed by the bench key (bark-fw/README.md, "Updates"), and
+    a UF2 with the loader, built by `build_loader` first. A board that
+    `serves` holds its image to serve it over the mesh (uf2.py --header)."""
+    cargo_build(FW, {**env, "BARK_IMAGE_VERSION": str(version)}, features)
+    out.mkdir(parents=True, exist_ok=True)
+    elf = out / f"{name}.elf"
+    shutil.copyfile(ELF, elf)
+    data, v = image.pack(elf.read_bytes())
+    if v != version:
+        sys.exit(f"{name}: the ELF says version {v}, built as {version}")
+    img = out / f"{name}.img"
+    img.write_bytes(data)
+    key = ["--key-id", str(image.bench_key_id())]
+    subprocess.run([sys.executable, "-I", FW / "scripts/image.py", "sign", img, image.BENCH_KEY, *key], check=True)
+    u = out / f"{name}.uf2"
+    header = ["--header", img] if serves else []
+    subprocess.run([sys.executable, "-I", FW / "scripts/uf2.py", "--loader", LOADER_ELF, *header, elf, u], check=True)
+    return Built(version, elf, img, u, uf2.check_stack(uf2.symbols(elf.read_bytes())))
 
 
 def build(a: argparse.Namespace) -> None:
@@ -147,64 +200,168 @@ def open_raw(port: str) -> int:
     return fd
 
 
-def capture(a: argparse.Namespace) -> None:
-    """Every board's log into DIR/<id>.log, each line after the host's clock
-    in seconds. A board that leaves (its bootloader, a reset) is logged
-    again when it comes back."""
-    out = Path(a.dir)
-    out.mkdir(parents=True, exist_ok=True)
-    running: dict[str, threading.Thread] = {}
+def holders(port: str) -> list[str]:
+    """The other processes that hold `port` open, as "PID (name)": a second
+    reader takes part of every line, and both logs come out cut
+    (docs/bench-suite-2026-11-13.md). Processes of other users cannot be
+    seen, so the bench's readers run as its user."""
+    dev = os.path.realpath(port)
+    me = os.getpid()
+    out = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) == me:
+            continue
+        try:
+            fds = os.listdir(f"/proc/{pid}/fd")
+            held = any(os.path.realpath(f"/proc/{pid}/fd/{fd}") == dev for fd in fds)
+            if held:
+                with open(f"/proc/{pid}/comm") as f:
+                    out.append(f"{pid} ({f.read().strip()})")
+        except OSError:
+            continue
+    return out
 
-    def follow(node: str, port: str) -> None:
-        with open(out / f"{node}.log", "a", buffering=1) as log:
+
+class Capture:
+    """One reader for each board's port, writing its lines to DIR/<id>.log,
+    each after the host's clock in seconds. A board that leaves (its
+    bootloader, a reset) is read again when it comes back, unless another
+    process holds its port then, which is noted instead. `nodes` limits it
+    to those boards; the last `keep` lines of each are kept for `wait`, and
+    `on_line(node, t, text)` sees each line as it is read."""
+
+    def __init__(self, out: Path, nodes: set[str] | None = None, keep: int = 20000, say=print, on_line=None):
+        self.out = out
+        self.nodes = nodes
+        self.say = say
+        self.on_line = on_line
+        self.recent: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=keep))
+        self.arrived = threading.Condition()
+        self.stopping = threading.Event()
+        self.running: dict[str, threading.Thread] = {}
+        self.notes: list[tuple[float, str, str]] = []
+        self.held: set[str] = set()
+        self.watcher: threading.Thread | None = None
+
+    def start(self) -> None:
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.watcher = threading.Thread(target=self._watch, daemon=True)
+        self.watcher.start()
+
+    def stop(self) -> None:
+        self.stopping.set()
+        for t in [self.watcher, *self.running.values()]:
+            if t is not None:
+                t.join(timeout=5)
+
+    def wait(self, node: str, pattern: re.Pattern, since: float, timeout: float) -> tuple[float, re.Match] | None:
+        """The first line of `node` read at or after `since` that `pattern`
+        searches out, and when it was read; None after `timeout`."""
+        end = time.time() + timeout
+        with self.arrived:
+            while True:
+                for t, text in self.recent[node]:
+                    if t >= since:
+                        m = pattern.search(text)
+                        if m:
+                            return t, m
+                left = end - time.time()
+                if left <= 0:
+                    return None
+                self.arrived.wait(min(left, 1.0))
+
+    def last(self, node: str, pattern: re.Pattern) -> tuple[float, re.Match] | None:
+        """The latest line of `node` kept that `pattern` searches out."""
+        with self.arrived:
+            for t, text in reversed(self.recent[node]):
+                m = pattern.search(text)
+                if m:
+                    return t, m
+        return None
+
+    def _watch(self) -> None:
+        while not self.stopping.is_set():
+            for node, port in ports().items():
+                if self.nodes is not None and node not in self.nodes:
+                    continue
+                t = self.running.get(node)
+                if t is None or not t.is_alive():
+                    others = holders(port)
+                    if others:
+                        if node not in self.held:
+                            self.held.add(node)
+                            self.notes.append((time.time(), node, f"port held by {', '.join(others)}: not read"))
+                            self.say(f"{time.strftime('%H:%M:%S')} {node[-4:]}: held by {', '.join(others)}")
+                        continue
+                    self.held.discard(node)
+                    self.say(f"{time.strftime('%H:%M:%S')} {node[-4:]} on {port}")
+                    t = threading.Thread(target=self._follow, args=(node, port), daemon=True)
+                    t.start()
+                    self.running[node] = t
+            self.stopping.wait(0.5)
+
+    def _follow(self, node: str, port: str) -> None:
+        with open(self.out / f"{node}.log", "a", buffering=1) as log:
             try:
                 fd = open_raw(port)
                 os.set_blocking(fd, True)
             except OSError as e:
-                print(f"{node}: {e}", file=sys.stderr)
+                self.say(f"{node}: {e}")
                 return
             try:
                 rest = b""
-                while True:
+                while not self.stopping.is_set():
+                    if not select.select([fd], [], [], 0.5)[0]:
+                        continue
                     chunk = os.read(fd, 4096)
                     if not chunk:
                         break
                     now = time.time()
                     rest += chunk
                     *lines, rest = rest.split(b"\n")
+                    got = []
                     for line in lines:
                         text = line.rstrip(b"\r").decode("utf-8", "replace")
                         log.write(f"{now:.3f} {text}\n")
+                        got.append((now, checks.HEADER.sub("", text, count=1)))
+                    if self.on_line is not None:
+                        for t, text in got:
+                            self.on_line(node, t, text)
+                    if got:
+                        with self.arrived:
+                            self.recent[node].extend(got)
+                            self.arrived.notify_all()
             except OSError:
                 pass
             finally:
                 os.close(fd)
-        print(f"{time.strftime('%H:%M:%S')} {node[-4:]} gone", flush=True)
-
-    print(f"logging to {out}/, ^C to stop", flush=True)
-    while True:
-        for node, port in ports().items():
-            t = running.get(node)
-            if t is None or not t.is_alive():
-                print(f"{time.strftime('%H:%M:%S')} {node[-4:]} on {port}", flush=True)
-                t = threading.Thread(target=follow, args=(node, port), daemon=True)
-                t.start()
-                running[node] = t
-        time.sleep(0.5)
+        self.say(f"{time.strftime('%H:%M:%S')} {node[-4:]} gone")
 
 
-def say(a: argparse.Namespace) -> None:
-    fd = os.open(ports()[full_id(a.id)], os.O_WRONLY | os.O_NOCTTY)
+def capture(a: argparse.Namespace) -> None:
+    """Every board's log into DIR/<id>.log until ^C."""
+    c = Capture(Path(a.dir), say=lambda s: print(s, flush=True))
+    print(f"logging to {a.dir}/, ^C to stop", flush=True)
+    c.start()
     try:
-        os.write(fd, a.command.encode() + b"\r\n")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        c.stop()
+
+
+def say(node: str, command: str) -> None:
+    """Type a console command into the board."""
+    fd = os.open(ports()[node], os.O_WRONLY | os.O_NOCTTY)
+    try:
+        os.write(fd, command.encode() + b"\r\n")
     finally:
         os.close(fd)
 
 
-def off(a: argparse.Namespace) -> None:
+def off(node: str) -> None:
     """The 1200-baud touch (bark-fw/README.md, Flash): the board resets into
     its bootloader and its radio is silent until a UF2 is copied."""
-    node = full_id(a.id)
     subprocess.run(["stty", "-F", ports()[node], "1200"], check=True)
     print(f"{node[-4:]}: into its bootloader")
 
@@ -240,9 +397,8 @@ def drive(node: str) -> Path | None:
     return None
 
 
-def on(a: argparse.Namespace) -> None:
+def on(node: str, uf2_path: str | Path) -> None:
     """Copy a UF2 to the board's bootloader drive; the board boots it."""
-    node = full_id(a.id, [])
     for _ in range(40):
         d = drive(node)
         if d is not None:
@@ -250,9 +406,9 @@ def on(a: argparse.Namespace) -> None:
         time.sleep(0.5)
     else:
         sys.exit(f"{node[-4:]}: no TECHOBOOT drive of its own: double-tap its reset button")
-    shutil.copyfile(a.uf2, d / Path(a.uf2).name)
+    shutil.copyfile(uf2_path, d / Path(uf2_path).name)
     os.sync()
-    print(f"{node[-4:]}: {Path(a.uf2).name} copied to {d}")
+    print(f"{node[-4:]}: {Path(uf2_path).name} copied to {d}")
 
 
 # ---- reading the logs ----------------------------------------------------
@@ -274,25 +430,13 @@ class Logs:
         return [x for x in self.lines if x.node == node]
 
 
-HOST = re.compile(r"^(\d+\.\d+) (.*)$")
-BOARD = re.compile(r"^\[\s*(\d+\.\d+)\s+(\w+)\s*\]\s?(.*)$")
-
-
 def read(d: str) -> Logs:
     logs = Logs()
     for f in sorted(Path(d).glob("*.log")):
-        node = f.stem
-        for raw in f.read_text(errors="replace").splitlines():
-            h = HOST.match(raw)
-            t = float(h.group(1)) if h else None
-            body = h.group(2) if h else raw
-            b = BOARD.match(body)
-            if not b:
-                continue
-            if t is None:
+        for x in checks.read(str(f)).lines:
+            if x.host is None:
                 logs.host_time = False
-                t = float(b.group(1))
-            logs.lines.append(Line(t, node, b.group(3)))
+            logs.lines.append(Line(x.board if x.host is None else x.host, f.stem, x.text))
     logs.lines.sort(key=lambda x: x.t)
     if not logs.lines:
         sys.exit(f"{d}: no log lines")
@@ -508,14 +652,17 @@ def main() -> None:
     s = sub.add_parser("say", help="type a console command into a board")
     s.add_argument("id")
     s.add_argument("command")
-    s.set_defaults(fn=say)
+    s.set_defaults(fn=lambda a: say(full_id(a.id), a.command))
     o = sub.add_parser("off", help="the board into its bootloader: silent")
     o.add_argument("id")
-    o.set_defaults(fn=off)
+    o.set_defaults(fn=lambda a: off(full_id(a.id)))
     o = sub.add_parser("on", help="copy a UF2 to the board's bootloader drive")
     o.add_argument("id", help="twelve hex digits")
     o.add_argument("uf2")
-    o.set_defaults(fn=on)
+    o.set_defaults(fn=lambda a: on(full_id(a.id, []), a.uf2))
+    import scenario  # beside this script; it builds on this one
+
+    scenario.add_commands(sub)
     t = sub.add_parser("texts", help="each text's path and timing")
     t.add_argument("dir")
     t.add_argument("--name", action="append", help="LABEL=ID, as A=f4f5")
