@@ -1553,6 +1553,10 @@ The rest the bench's checks read is in the node's own lines: the radio's
 errors in the 10 s line, and a message dropped and a heartbeat skipped
 as busy in the core's traces (`Dropped`, `HeartbeatSkipped`).
 
+It also logs each transmission as it ends, `tx ch=<k> airtime_us=<n>`,
+so that the bench can tell which board sent when another found a channel
+busy.
+
 `txpower` and `carrier` run in the node's loop between two of the
 driver's steps; `text` and `power` reach the core at its next step.
 

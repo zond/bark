@@ -299,7 +299,7 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
 /// Between two of the driver's steps: the transmit power asked for, and
 /// the carrier.
 pub async fn serve<C: Core, K: Clock, A: bark_driver::App>(
-    driver: &mut Driver<C, Radio<'_>, K, A>,
+    driver: &mut Driver<C, Logged<Radio<'_>>, K, A>,
 ) {
     let (tx_dbm, carrier) = ASKED.lock(|a| {
         let mut a = a.borrow_mut();
@@ -324,7 +324,7 @@ const CARRIER_LEN: u8 = 2;
 
 /// Transmit on `channel` for `seconds`, frame after frame, at `dbm`. A
 /// bench transmission: it keeps to no duty cycle.
-async fn send_carrier(radio: &mut Radio<'_>, channel: Channel, seconds: u32, dbm: i8) {
+async fn send_carrier(radio: &mut Logged<Radio<'_>>, channel: Channel, seconds: u32, dbm: i8) {
     let mut frame = Frame {
         channel,
         preamble_symbols: MIN_PREAMBLE_SYMBOLS,
@@ -363,4 +363,71 @@ async fn send_carrier(radio: &mut Radio<'_>, channel: Channel, seconds: u32, dbm
         frames,
         start.elapsed().as_millis()
     );
+}
+
+/// The radio with each transmission logged as it ends, its channel and
+/// its time on air: the bench's check of a skipped heartbeat asks which
+/// board sent then (`scripts/checks.py`).
+pub struct Logged<R>(pub R);
+
+// The node's loop reads the radio it wraps.
+impl<R> core::ops::Deref for Logged<R> {
+    type Target = R;
+    fn deref(&self) -> &R {
+        &self.0
+    }
+}
+
+impl<R> core::ops::DerefMut for Logged<R> {
+    fn deref_mut(&mut self) -> &mut R {
+        &mut self.0
+    }
+}
+
+impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
+    type Error = R::Error;
+    const DEAF_TO: Option<NodeId> = R::DEAF_TO;
+
+    async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        self.0.listen(channel).await
+    }
+
+    async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        self.0.sniff(channel).await
+    }
+
+    async fn wait(&mut self) -> Result<(), Self::Error> {
+        self.0.wait().await
+    }
+
+    async fn service(
+        &mut self,
+        buf: &mut [u8; MAX_FRAME],
+    ) -> Result<bark_driver::Heard, Self::Error> {
+        self.0.service(buf).await
+    }
+
+    async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Self::Error> {
+        self.0.lbt(channel).await
+    }
+
+    async fn rssi(&mut self) -> Result<i16, Self::Error> {
+        self.0.rssi().await
+    }
+
+    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error> {
+        let sent = self.0.transmit(frame, dbm).await;
+        // After it, so that the log takes no time between the
+        // listen-before-talk and the frame.
+        log::info!(
+            "tx ch={} airtime_us={}",
+            frame.channel.index(),
+            time_on_air(frame.len, frame.preamble_symbols).as_micros()
+        );
+        sent
+    }
+
+    fn recover(&mut self) {
+        self.0.recover()
+    }
 }

@@ -376,8 +376,8 @@ class HostClock:
 
 
 SKIPPED = re.compile(r"^HeartbeatSkipped \{ channel: Channel\((\d+)\) \}")
-# PROPOSED, not yet logged by the firmware: a line as each transmission
-# starts, its channel and its airtime, from the driver.
+# A bench build's line as each transmission ends, its channel and its
+# airtime (bark-fw/src/bench.rs, `Logged`).
 TX = re.compile(r"^tx ch=(\d+) airtime_us=(\d+)$")
 
 
@@ -393,7 +393,7 @@ def transmissions(log: Log) -> list[tuple[float, float, int]]:
             m = TX.match(x.text)
             if m:
                 t = clock.host(x.board)
-                out.append((t, t + int(m.group(2)) / 1e6, int(m.group(1))))
+                out.append((t - int(m.group(2)) / 1e6, t, int(m.group(1))))
     return out
 
 
@@ -402,8 +402,8 @@ def heartbeats(logs: list[Log]) -> list[Finding]:
     it: no transmission of another board on that channel overlaps the
     skip's checks, the LBT_SPAN_S before it.
 
-    Needs every board's transmissions (TX, a line the firmware does not
-    log yet) and the host's clock."""
+    Needs every board's transmissions (TX, a bench build's line) and the
+    host's clock."""
     skips = [(log, x, boot) for log in logs for boot in log.boots for x in boot.lines if SKIPPED.match(x.text)]
     if not skips:
         return []
