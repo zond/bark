@@ -68,6 +68,8 @@ struct Inner {
     started: bool,
     lost: u32,
     ops: Vec<(Instant, Op)>,
+    /// The power of the last transmit.
+    dbm: Option<i8>,
 }
 
 #[derive(Clone, Default)]
@@ -282,8 +284,9 @@ impl Radio for FakeRadio {
         Ok(climb(self.world.now().since(since)))
     }
 
-    async fn transmit(&mut self, frame: &Frame, _dbm: i8) -> Result<(), Infallible> {
+    async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Infallible> {
         self.world.op(Op::Transmit(*frame));
+        self.world.0.borrow_mut().dbm = Some(dbm);
         self.deaf();
         let airtime = time_on_air(frame.len, frame.preamble_symbols);
         self.world.sleep(self.world.now() + airtime).await;
@@ -785,6 +788,38 @@ fn a_transmit_goes_out_and_completes() {
             (Instant::ZERO, Op::Listen(ch(3))),
             (at_ms(10), Op::Transmit(frame(ch(5), b"out"))),
             (done, Op::Listen(ch(3))),
+        ]
+    );
+}
+
+/// A power set between steps is the next frame's.
+#[test]
+fn a_power_set_is_the_next_frames() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(500)]);
+    core.send.push(at_ms(10));
+    let mut d = driver(core, &world, Duration::ZERO);
+    step(&mut d, &world);
+    assert_eq!(d.tx_dbm(), 10);
+    d.set_tx_dbm(-3);
+    run_until(&mut d, &world, at_ms(500));
+    assert_eq!(world.0.borrow().dbm, Some(-3));
+}
+
+/// The radio lent between steps is put back to listening at the next.
+#[test]
+fn the_radio_lent_listens_again_at_the_next_step() {
+    let world = World::default();
+    let core = Scripted::new(ch(3), &[at_ms(100)]);
+    let mut d = driver(core, &world, Duration::ZERO);
+    step(&mut d, &world);
+    d.radio_mut().deaf();
+    run_until(&mut d, &world, at_ms(100));
+    assert_eq!(
+        world.ops(),
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (Instant::ZERO, Op::Listen(ch(3))),
         ]
     );
 }
