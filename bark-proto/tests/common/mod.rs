@@ -144,6 +144,9 @@ pub struct Harness<C: Core> {
     /// The level a node reads on an empty channel, where it is not
     /// [`NOISE_DBM`].
     pub noise: HashMap<usize, i16>,
+    /// The level a node reads on one empty channel, where it differs from
+    /// its others: interference near its receiver.
+    pub channel_noise: HashMap<(usize, Channel), i16>,
 }
 
 impl<C: Core> Harness<C> {
@@ -186,6 +189,7 @@ impl<C: Core> Harness<C> {
             excursions: 0,
             lose: None,
             noise: HashMap::new(),
+            channel_noise: HashMap::new(),
         }
     }
 
@@ -231,6 +235,15 @@ impl<C: Core> Harness<C> {
     /// A carrier on `channel` at `node` for the first `on` of every `period`.
     pub fn jam_part(&mut self, node: usize, channel: Channel, on: Duration, period: Duration) {
         self.jammed.insert((node, channel), (on, period));
+    }
+
+    /// What `node` reads on `channel` while nothing is sent.
+    fn noise_at(&self, node: usize, channel: Channel) -> i16 {
+        self.channel_noise
+            .get(&(node, channel))
+            .or(self.noise.get(&node))
+            .copied()
+            .unwrap_or(NOISE_DBM)
     }
 
     fn jammed_at(&self, node: usize, channel: Channel, t: Instant) -> bool {
@@ -385,7 +398,7 @@ impl<C: Core> Harness<C> {
                 SIGNAL_DBM
             } else {
                 self.strongest(i, ex.channel, ex.end)
-                    .unwrap_or(self.noise.get(&i).copied().unwrap_or(NOISE_DBM))
+                    .unwrap_or(self.noise_at(i, ex.channel))
             };
             let ev = match ex.kind {
                 Kind::Lbt => Event::LbtDone {

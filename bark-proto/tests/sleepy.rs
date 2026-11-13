@@ -1555,3 +1555,44 @@ fn a_sleepy_node_s_floor_follows_its_own_channel_checks() {
     // The first checks are busy against the old floor, then it has moved.
     assert!(sent + 6 >= due, "{sent} of {due} beats went");
 }
+
+/// The bench of 2026-11-12: one channel reads 8 dB louder than the others
+/// at both boards, interference near them. A relay pinned there and its
+/// sleepy node beat on it as on any other: each check is judged against
+/// that channel's own floor (spec "Busy estimate").
+#[test]
+fn a_relay_and_its_sleepy_node_beat_on_a_channel_louder_than_the_others() {
+    let (relay, s) = (0, 1);
+    let loud = bark_proto::Channel::new(9).unwrap();
+    let pinned = Config {
+        home_override: Some(loud),
+        ..Config::default()
+    };
+    let run = |spur: bool| {
+        let mut h = Harness::powered(vec![node_with(0.0, false, 1, pinned), node(50.0, true, 3)]);
+        h.link(relay, s);
+        if spur {
+            for i in [relay, s] {
+                h.channel_noise.insert((i, loud), common::NOISE_DBM + 8);
+            }
+        }
+        h.start_at(s, at(600));
+        h.run_until(at(4 * 3600), |_| false);
+        assert_eq!(
+            h.nodes[s].core.anchor().map(|a| a.id),
+            Some(h.nodes[relay].core.id())
+        );
+        let on_loud = |i: usize| beats(&h, i).iter().filter(|b| b.1 == loud).count();
+        (on_loud(relay), on_loud(s))
+    };
+    let (quiet, louder) = (run(false), run(true));
+    assert!(quiet.0 > 0 && quiet.1 > 0, "{quiet:?}");
+    assert!(
+        louder.0 + 2 >= quiet.0,
+        "the relay's beats: {louder:?} against {quiet:?}"
+    );
+    assert!(
+        louder.1 + 2 >= quiet.1,
+        "the sleepy node's: {louder:?} against {quiet:?}"
+    );
+}

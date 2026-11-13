@@ -101,7 +101,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// margin (likely, not proven, to hear this node: a heartbeat is one
     /// way), and proven both ways by a message taken (spec "Neighbour table").
     pub fn neighbour_counts(&self, now: Instant) -> NeighbourCounts {
-        let floor = self.radio.busy().noise_floor_dbm();
+        let floor = self.radio.busy().noise_floor_dbm(self.home);
         let mut c = NeighbourCounts::default();
         for (_, n) in self.neighbours.live(now) {
             c.heard = c.heard.saturating_add(1);

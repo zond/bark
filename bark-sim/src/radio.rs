@@ -97,7 +97,7 @@ impl Sim {
     fn entries(&self, b: u32) -> Vec<(bark_proto::ids::NodeId, bool, bool, bool)> {
         use bark_proto::tables::neighbours::Neighbours;
         let r = self.relay(b);
-        let floor = r.busy().noise_floor_dbm();
+        let floor = r.busy().noise_floor_dbm(r.home());
         let now = self.now;
         r.neighbours()
             .map(|e| {
@@ -123,7 +123,7 @@ impl Sim {
             return;
         }
         let r = self.relay(src);
-        let floor = r.busy().noise_floor_dbm();
+        let floor = r.busy().noise_floor_dbm(r.home());
         let seen = r.neighbours().find(|e| e.id == to).map(|e| {
             (
                 usize::from(Neighbours::has_margin(e, floor)),

@@ -2505,7 +2505,7 @@ impl Sim {
             if !self.nodes[i].alive || r.booting() {
                 continue;
             }
-            let floor = r.busy().noise_floor_dbm();
+            let floor = r.busy().noise_floor_dbm(r.home());
             for e in r.neighbours().filter(|e| e.relay()) {
                 if let Some(&j) = self.relay_index.get(&key(e.id)) {
                     let k = &mut known[j as usize];
@@ -2571,7 +2571,7 @@ impl Sim {
             if !self.nodes[i].alive || r.booting() {
                 continue;
             }
-            let floor = r.busy().noise_floor_dbm();
+            let floor = r.busy().noise_floor_dbm(r.home());
             let e = &mut t.relays[i];
             e.0 += 1;
             for n in r.neighbours() {

@@ -778,7 +778,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let addressed = |n: &Neighbour| n.id == dst_id;
         let parent = record.parent().map(|(name, _)| name);
         // Computed once: it takes a logarithm.
-        let margin = Neighbours::margin_dbm(self.radio.busy().noise_floor_dbm());
+        let margin = Neighbours::margin_dbm(self.radio.busy().noise_floor_dbm(self.home));
         let faint = |n: &Neighbour| n.rssi < margin;
         let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
         let first = self.first_hop(now).filter(|_| record.parent().is_none());
