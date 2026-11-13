@@ -18,6 +18,9 @@ exclude = ["vendor"]
 default = []
 # Run the bring-up measurement console (README, Console) instead of the core.
 console = []
+# The node build with the bench's commands on the serial port (README,
+# Bench build); never a release.
+bench = []
 
 [dependencies]
 bark-proto = { path = "../bark-proto" }

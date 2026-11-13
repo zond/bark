@@ -31,10 +31,15 @@ pub fn paint() {
     });
 }
 
+/// The stack's bytes: from the end of static memory to its top.
+pub fn size() -> usize {
+    addr_of!(_stack_start) as usize - addr_of!(__sheap) as usize
+}
+
 /// The most bytes of stack used since [`paint`].
 pub fn used() -> usize {
     let bottom = addr_of!(__sheap) as usize;
-    let top = addr_of!(_stack_start) as usize;
+    let top = bottom + size();
     let mut p = bottom;
     // SAFETY: the words read lie between the end of static memory and the
     // top of the stack, all RAM.
