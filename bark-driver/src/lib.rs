@@ -473,6 +473,23 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         &self.radio
     }
 
+    /// The radio, for the node's own use between steps. The driver takes
+    /// it as having left its channel, and listens again at its next step.
+    pub fn radio_mut(&mut self) -> &mut R {
+        self.deaf();
+        &mut self.radio
+    }
+
+    /// The transmit power, dBm conducted.
+    pub fn tx_dbm(&self) -> i8 {
+        self.tx_dbm
+    }
+
+    /// Transmit at `dbm` conducted from the next frame on.
+    pub fn set_tx_dbm(&mut self, dbm: i8) {
+        self.tx_dbm = dbm;
+    }
+
     /// The application.
     pub fn app(&self) -> &A {
         &self.app

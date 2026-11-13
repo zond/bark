@@ -10,3 +10,6 @@ publish = false
 [dependencies]
 # The quiet moment's rule (`bark_image::policy`), without the flash code.
 bark-image = { path = "../../bark-image", default-features = false }
+# The bench build's commands name nodes, channels and places
+# (`src/bench.rs`).
+bark-proto = { path = "../../bark-proto" }

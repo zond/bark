@@ -330,19 +330,20 @@ NODE_FIELD = re.compile(r"(\w+): NodeId\(\[[\d, ]+\]\)")
 
 
 def texts(a: argparse.Namespace) -> None:
-    """Each text's path: where it was taken from a phone, each hand-over,
-    return and drop, and where it reached an application, in the host's
-    time from the take. Then the events that name no text: demotions, a
-    turn to carried, the role."""
+    """Each text's path: where it was taken from a phone or the bench
+    build's `text`, each hand-over, return and drop, and where it reached
+    an application, in the host's time from the take. Then the events that
+    name no text: demotions, a turn to carried, the role."""
     logs = read(a.dir)
     names = names_arg(a)
     n = lambda node: name_of(names, node)  # noqa: E731
     events: dict[str, list[tuple[float, str, str]]] = {}
     other: list[tuple[float, str, str]] = []
     for x in logs.lines:
-        m = re.match(r"ble: send id=([0-9a-f]{8}) len=(\d+) taken", x.text)
+        m = re.match(r"(ble|bench): send id=([0-9a-f]{8}) len=(\d+) taken", x.text)
         if m:
-            events.setdefault(m.group(1), []).append((x.t, x.node, f"taken from the phone, {m.group(2)} B"))
+            source = {"ble": "the phone", "bench": "the bench"}[m.group(1)]
+            events.setdefault(m.group(2), []).append((x.t, x.node, f"taken from {source}, {m.group(3)} B"))
             continue
         m = re.match(r"message id=([0-9a-f]{8})", x.text)
         if m:

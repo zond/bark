@@ -77,6 +77,7 @@ use embassy_time::{Duration, Instant, Timer};
 use crate::clock::Clock;
 use crate::radio::{Error, Radio, MAX_LEN, MAX_TX_DBM, MIN_TX_DBM};
 use crate::update::{decimal, ConsoleStager, External, Flash, Power, Refused};
+use bark_fw_logic::line::{Line, LineError};
 use bark_image::boot::cut::{choose, Phase};
 use bark_image::boot::{blocking, CHUNK};
 use bark_image::protect::Build;
@@ -101,60 +102,23 @@ const LINE: usize = 600;
 const _: () = assert!(LINE + 2 + 2 <= crate::usb_log::RECORD);
 
 /// Command lines assembled from [`INPUT`].
-pub struct Lines {
-    buf: [u8; LINE],
-    len: usize,
-    overflow: bool,
-    complete: bool,
-}
-
-/// A line that cannot be a command.
-pub enum LineError {
-    TooLong,
-    NotUtf8,
-}
+pub struct Lines(Line<LINE>);
 
 impl Lines {
     pub const fn new() -> Lines {
-        Lines {
-            buf: [0; LINE],
-            len: 0,
-            overflow: false,
-            complete: false,
-        }
+        Lines(Line::new())
     }
 
     /// The next non-empty line, without its terminator. Cancel-safe: bytes
     /// read so far stay in `self`.
     pub async fn next(&mut self) -> Result<&str, LineError> {
-        if self.complete {
-            self.len = 0;
-            self.overflow = false;
-            self.complete = false;
-        }
         loop {
             // One byte at a time: commands are typed by hand, and a byte
             // read is never lost when the caller drops this future.
             let mut byte = [0u8];
             INPUT.read(&mut byte).await;
-            match byte[0] {
-                b'\r' | b'\n' if self.len == 0 && !self.overflow => {}
-                b'\r' | b'\n' => {
-                    self.complete = true;
-                    if self.overflow {
-                        return Err(LineError::TooLong);
-                    }
-                    return core::str::from_utf8(&self.buf[..self.len])
-                        .map_err(|_| LineError::NotUtf8);
-                }
-                b => {
-                    if self.len < LINE {
-                        self.buf[self.len] = b;
-                        self.len += 1;
-                    } else {
-                        self.overflow = true;
-                    }
-                }
+            if self.0.push(byte[0]) {
+                return self.0.text();
             }
         }
     }

@@ -6,12 +6,15 @@
 //! (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
 //! with the `console` feature the bring-up measurement console
 //! (`console.rs`) on the serial port. Reads the battery (`battery.rs`).
-//! The node build runs the phone link (`ble.rs`) and the GPS (`gps.rs`).
+//! The node build runs the phone link (`ble.rs`) and the GPS (`gps.rs`);
+//! with the `bench` feature it takes the bench's commands (`bench.rs`).
 
 #![no_std]
 #![no_main]
 
 mod battery;
+#[cfg(feature = "bench")]
+mod bench;
 #[cfg(not(feature = "console"))]
 mod ble;
 mod board;
@@ -694,12 +697,14 @@ async fn usb_device(mut device: embassy_usb::UsbDevice<'static, UsbDriver>) {
 }
 
 /// The log, to the host, and what the host types: commands for the
-/// console, nothing to the node.
+/// console or the bench build, nothing to the node.
 #[embassy_executor::task]
 async fn log_sink(class: CdcAcmClass<'static, UsbDriver>) {
     #[cfg(feature = "console")]
     let input = console::host_input;
-    #[cfg(not(feature = "console"))]
+    #[cfg(feature = "bench")]
+    let input = bench::host_input;
+    #[cfg(not(any(feature = "console", feature = "bench")))]
     let input = async |_: &[u8]| {};
     LOGGER.run(class, input).await
 }

@@ -675,7 +675,14 @@ pub fn core(config: Config, seed: u64) -> &'static mut Role {
 }
 
 /// The driver on the board.
-type NodeDriver<'a> = Driver<Static, Radio<'a>, &'a Clock, LinkApp<'a>>;
+type NodeDriver<'a> = Driver<Static, Radio<'a>, &'a Clock, NodeApp<'a>>;
+
+/// The application the driver runs: the phone link's, in a bench build
+/// under the bench's commands (`bench.rs`).
+#[cfg(not(feature = "bench"))]
+type NodeApp<'a> = LinkApp<'a>;
+#[cfg(feature = "bench")]
+type NodeApp<'a> = crate::bench::App<LinkApp<'a>>;
 
 /// Run the core forever: after each step of the driver, the node's loop
 /// places the core's inbox's head in the ring, publishes what the phones
@@ -702,6 +709,8 @@ pub async fn run<'a>(
         replying: None,
         kept,
     };
+    #[cfg(feature = "bench")]
+    let app = crate::bench::App::from(app);
     let mut driver = Driver::new(Static { core, deaf }, radio, clock, app, dbm);
     log_start(config, dbm);
     let mut install = Install::new();
@@ -720,6 +729,8 @@ pub async fn run<'a>(
         kept.carry.tidy().await;
         kept.discharge.note(sleepy).await;
         report.log_if_due(&driver, now);
+        #[cfg(feature = "bench")]
+        crate::bench::serve(&mut driver).await;
     }
 }
 

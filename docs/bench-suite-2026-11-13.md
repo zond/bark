@@ -43,11 +43,14 @@ recorded logs.
 
 **The bench build** is the node's firmware with a cargo feature, `bench`,
 that no release sets. It adds commands on the serial line and nothing
-else: send a text to a node, say what power the node is on, pin the home
-channel, set the transmit power, send a carrier on a channel, reboot. The
-feature lives in one module with one call from the rest of the firmware.
-A hook that cannot be added that way is not added, and its test stays
-pending.
+else: send a text to a node, say what power the node is on, set the
+transmit power, send a carrier on a channel, reboot, and give what the
+node's own lines do not (`bark-fw/README.md`, "Bench build"). The
+feature lives in one module, which the rest of the firmware names where
+the serial line's input goes, where the node's application is made and
+between two of the driver's steps. A hook that cannot be added that way
+is not added, and its test stays pending: pinning the home channel,
+which the core takes only as it starts.
 
 **The phone test** is an integration test of the app, run on the phone
 over adb against a board: it pairs, sends, receives and gives the node an
