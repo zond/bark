@@ -8,8 +8,9 @@
 # fix or turns carried.
 
 about = "four relays boot and each holds its three neighbours and a home channel"
-# The first rotation ends 195 s after the last board's boot (spec "Channel
-# at boot": 13 channels of 15 s); with room for a second report.
+# The first rotation ends 195 s after the last board's boot
+# (spec "Channel at boot": 13 channels of 15 s); with room for a second
+# report.
 duration_s = 300.0
 
 [[boards]]
