@@ -763,8 +763,8 @@ fn drifting_clocks_keep_the_anchor_watch() {
             s.watches[0]
         );
         assert_eq!(s.watches[1], 0, "seed {seed}: heartbeats missed");
-        for n in 1..4 {
-            let checks = sim.metrics.nodes[n].core.anchor_checks;
+        for (n, node) in sim.metrics.nodes.iter().enumerate().take(4).skip(1) {
+            let checks = node.core.anchor_checks;
             assert_eq!(checks, 0, "seed {seed}: node {n} checked its anchor");
         }
     }

@@ -99,9 +99,9 @@ fn every_relay_comes_to_hold_the_image() {
             .all(|n| n.updates.as_ref().unwrap().holds_at.is_some())
     });
     assert!(done, "not every relay holds the image within six hours");
-    for i in 1..4 {
-        assert_eq!(h.nodes[i].core.image(), Some(IMAGE));
-        let u = h.nodes[i].updates.as_ref().unwrap();
+    for n in &h.nodes[1..4] {
+        assert_eq!(n.core.image(), Some(IMAGE));
+        let u = n.updates.as_ref().unwrap();
         assert_eq!(u.offered.first().map(|o| o.1), Some(IMAGE));
         // Never a piece twice, and only of the block gathered.
         let mut seen = std::collections::HashSet::new();
@@ -113,8 +113,8 @@ fn every_relay_comes_to_hold_the_image() {
     let took = h.now.since(start);
     assert!(took >= GAP.mul(71), "faster than the gap: {took:?}");
     // Each learned of the image from a heartbeat's section.
-    for i in 1..4 {
-        assert!(h.nodes[i].sent.iter().any(|(_, f)| f.len > 13));
+    for n in &h.nodes[1..4] {
+        assert!(n.sent.iter().any(|(_, f)| f.len > 13));
     }
 }
 
