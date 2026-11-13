@@ -102,6 +102,7 @@ name = "bark-fw-logic"
 version = "0.1.0"
 dependencies = [
  "bark-image",
+ "bark-proto",
 ]
 
 [[package]]
