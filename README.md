@@ -30,7 +30,7 @@ carried, behind a loader that swaps in new images, which reach a node
 signed from the phone, from its neighbours over the mesh, or over USB.
 A node serves up to eight paired phones and, unless they make it
 private, any other phone as a guest. Releases carry the firmware and
-the app, v22 the latest (Releases, below).
+the app, v45 the latest (Releases, below).
 
 The bench has measured the radio's timings, capture and a still link's
 fading (`docs/bench-*.md`), the swap under resets, pairing, and updates
