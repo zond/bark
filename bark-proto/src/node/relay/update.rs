@@ -9,6 +9,7 @@ use super::{Job, Node, Stage};
 use crate::event::{Action, Frame, SlotPiece, Trace};
 use crate::geo::Point;
 use crate::ids::NodeId;
+use crate::position::Position;
 use crate::node::{heartbeat_interval, heartbeat_lag, mac};
 use crate::node::{Config, Rng};
 use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
@@ -197,6 +198,8 @@ pub(super) struct View<'a> {
     pub(super) neighbours: &'a Neighbours,
     pub(super) config: &'a Config,
     pub(super) home: Channel,
+    /// Its own position: a sleepy node whose address it is, is its own.
+    pub(super) position: Position,
     pub(super) id: NodeId,
     /// It streams: a relay past its first rotation.
     pub(super) spreads: bool,
@@ -213,6 +216,7 @@ macro_rules! view {
             neighbours: &$node.neighbours,
             config: &$node.config,
             home: $node.home,
+            position: $node.config.position,
             id: $node.id,
             spreads: $node.stage == Stage::Running && !$node.sleepy(),
             sleepy: $node.sleepy(),
@@ -588,11 +592,16 @@ impl Spread {
     }
 
     /// Whether this node streams to the gatherer `n` on `n`'s channel:
-    /// always at home; elsewhere only if no relay it hears that is not at
+    /// to a sleepy node only as its anchor, the one relay whose slot
+    /// heartbeats it wakes for, known by its address; to another always at
+    /// home; elsewhere only if no relay it hears that is not at
     /// home there, holds more than `n` and is no farther from `n` is a
     /// better holder, with more blocks from the first, then a lower ID
     /// (spec "Updates over the mesh").
     fn streams_to(&self, v: &View<'_>, n: &Neighbour, image: Image, now: Instant) -> bool {
+        if n.sleepy {
+            return n.position == v.position;
+        }
         if n.home == v.home {
             return true;
         }
