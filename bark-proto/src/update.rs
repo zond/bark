@@ -160,10 +160,12 @@ pub fn sweep_pieces(lacks: u8) -> u8 {
 }
 
 /// How long a sleepy node that gathers listens after its anchor's slot
-/// heartbeat for the update frame the anchor sends then: the anchor's
-/// check of the channel, about 3 ms, the transmission's start, under 1 ms
-/// (spec "Heartbeat"), and a full frame.
-pub const SLOT_LISTEN: Duration = Duration::from_micros(FULL_FRAME.as_micros() + 5_000);
+/// heartbeat, and after each piece of the run that follows it, for the
+/// next: a full frame and the time the anchor takes from the end of one
+/// transmission to the start of the next, its check of the channel within
+/// it. The bench measured 8.0 to 19.4 ms of that between the pieces of a
+/// run (`docs/sleepy-receive-2026-11-12.md`); 25 ms covers it.
+pub const SLOT_LISTEN: Duration = Duration::from_micros(FULL_FRAME.as_micros() + 25_000);
 
 /// A piece of a block the node gathers, for the driver to keep
 /// (`Action::StorePiece`).

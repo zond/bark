@@ -3066,19 +3066,19 @@ together, 1 % of the channel, not added to it: while a sleepy node needs
 the stream there, its pieces go on that channel only in runs. Each piece
 of a run pays from the bucket and listens before it talks; a busy check,
 or a bucket that cannot pay, ends the run until the next slot. A run
-holds the channel for 1.3 to 2.0 s, and goes before the send queue.
+holds the channel for 1.3 to 2.3 s, and goes before the send queue.
 
 The node listens after its anchor's slot heartbeat while it gathers and
 the section in that heartbeat, or the last it heard, says the anchor
-holds a block it lacks: 143.6 ms, the anchor's check of the channel,
-about 3 ms, the transmission's start, under 1 ms
-([heartbeat](#heartbeat)), and a full frame, with a margin to 5 ms; and
-again after each piece that ends within that time, so that it follows
+holds a block it lacks: 163.6 ms, a full frame and 25 ms for the anchor
+to go from the end of one transmission to the start of the next, its
+check of the channel within it, measured at 8.0 to 19.4 ms on the bench;
+and again after each piece that ends within that time, so that it follows
 the run to its end and sleeps when no piece follows. A sleepy node hears
 no other heartbeat of its anchor, which is why the section rides this
 one (roadmap D213). A sleepy node without an anchor takes no part.
 Today's image, 2 428 pieces, takes a sleepy node 270 rotations, about
-10 hours, for 0.62 mAh of listening and 0.01 mAh of sections
+10 hours, for 0.71 mAh of listening and 0.01 mAh of sections
 (roadmap D214).
 
 **The install.** A node that holds a gathered image whole checks it and
