@@ -1357,7 +1357,7 @@ fn a_faint_neighbour_is_the_last_resort_and_its_ack_counts() {
     let margin = |h: &Harness<Relay>| {
         let r = core(h, o);
         let n = r.neighbours().find(|n| n.position == target).unwrap();
-        Neighbours::has_margin(n, r.busy().noise_floor_dbm())
+        Neighbours::has_margin(n, r.busy().noise_floor_dbm(r.home()))
     };
     assert!(!margin(&h));
     let heartbeats = |h: &Harness<Relay>| {

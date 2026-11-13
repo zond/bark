@@ -884,26 +884,25 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             self.radio.received_from(started);
         }
         self.count_missed_heartbeats(now);
-        let threshold = self.radio.busy().threshold_dbm();
         match event {
             Event::Wakeup => {}
             Event::Received {
                 bytes, rssi_dbm, ..
             } => self.received(bytes, rssi_dbm, now, emit),
             // The channel is clear only if neither the CAD saw a preamble
-            // nor the reading was above the busy threshold (spec
+            // nor the reading was above the channel's busy threshold (spec
             // "Heartbeat", "Busy estimate").
-            Event::LbtDone { busy, dbm, .. } => {
-                let busy = busy || dbm > threshold;
+            Event::LbtDone { channel, busy, dbm } => {
+                let busy = busy || dbm > self.radio.busy().threshold_dbm(channel);
                 match self.radio.complete() {
                     Some(Job::Heartbeat) => {
-                        // A node that does not sweep keeps its floor by
-                        // its heartbeats' checks, which come at a known
-                        // rate whatever it has to send
+                        // A node that does not sweep keeps its channel's
+                        // floor by its heartbeats' checks, which come at a
+                        // known rate whatever it has to send
                         // (spec "Busy estimate").
                         if !self.sweeping() {
                             let window = self.check_window();
-                            self.radio.floor_reading(dbm, window);
+                            self.radio.floor_reading(channel, dbm, window);
                         }
                         self.heartbeat_check(busy, now, emit)
                     }

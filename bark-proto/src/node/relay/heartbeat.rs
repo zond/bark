@@ -597,7 +597,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if !self.listens() {
             return;
         }
-        let floor = self.radio.busy().noise_floor_dbm();
+        let floor = self.radio.busy().noise_floor_dbm(self.home);
         let home = self.home;
         for slot in 0..NEIGHBOURS {
             while let Some(n) = self.neighbours.slot(slot).copied() {

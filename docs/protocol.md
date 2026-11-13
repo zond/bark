@@ -243,19 +243,37 @@ not transmitting. All traffic *to* a node is sent on its home channel.
 ### Busy estimate
 
 Per channel, a node keeps `busy[c]`, an exponential moving average of a
-0/1 busy reading: the fraction of time listen-before-talk would refuse.
+0/1 busy reading: the fraction of time the channel is louder than the
+node's quietest channels, by traffic or by steady interference.
 Foreign transmitters (key fobs, LPD433 handhelds) count exactly like
 peers, since what hurts a node is busy time at its own receiver.
 
 | | |
 |---|---|
-| reading | 1 if RSSI > noise floor + 6 dB (≈−112 dBm), else 0 |
+| reading | 1 if RSSI > the floor of all channels + 6 dB (≈−112 dBm), else 0 |
 | a reading of another channel | taken four symbol periods, 1.02 ms, after the receiver starts on it |
 | a reading of the home channel | taken as the radio listens, without a restart |
 | sweep | one channel a second, channels in turn: each channel every 13 s |
 | window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
-| noise floor | the 10th percentile of every reading, all channels pooled in 1 dB bins, each bin halved whenever they hold two windows of samples, about an hour; −118 dBm before the first reading (open item O11) |
-| noise floor of a node that does not sweep | the 10th percentile of the readings its heartbeats' listen-before-talk takes on its home channel, started again at the first of them and halved whenever they hold 24, two hours of beats (roadmap D212) |
+| a channel's noise floor | the 10th percentile of that channel's readings in 1 dB bins, each bin halved whenever they hold two windows of the channel's readings, about an hour; while it has none, the floor of all channels; −118 dBm before the first reading (open item O11) |
+| the floor of all channels | the 10th percentile of every channel's readings together |
+| the node's noise floor | where no channel is named: its home channel's |
+| listen-before-talk | busy if RSSI > the checked channel's floor + 6 dB (roadmap D216) |
+| noise floor of a node that does not sweep | its home channel's, kept by the readings its heartbeats' listen-before-talk takes there, halved whenever they hold 24, two hours of beats (roadmap D212) |
+
+Interference near a receiver need not be the same on every channel. On
+the bench, boards beside a computer read their quiet channels 8 dB apart,
+medians −91 to −83 dBm (roadmap D216). A floor of all channels together
+sits at the quietest channels' lowest readings, so a check on a louder
+channel would find it busy at its usual level and never send there.
+Each check is therefore judged against its own channel's floor. The
+busy readings are still judged against all channels together: a louder
+channel costs every link on it range, and the move rule
+([channel moves](#channel-moves)) should leave it. A carrier on one
+channel moves that channel's floor once it fills nine-tenths of what the
+floor holds, after 1.6 hours of sweeps, while the move rule leaves it
+within 17 minutes; a check under it then lets the node send, which harms
+no packet the carrier does not already.
 
 The receiver's RSSI reads nothing for about 150 µs after it starts, then
 climbs a step a symbol period, and reads a strong signal as one fixed
@@ -474,7 +492,7 @@ busy, skip; else send; retune home.
 
 | | |
 |---|---|
-| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the threshold. 3.1 ms from listening to listening, 2.18 ms of it the detection's 8 symbols and half a symbol of processing. The datasheet documents the reading for receive only, so the driver checks at boot that the two agree on the home channel, keeps the offset it finds, and reads after the detection if they do not (roadmap D88) |
+| listen-before-talk | one channel activity detection with the channel's RSSI read four symbol periods into it ([busy estimate](#busy-estimate)): busy if the detection saw a preamble or the reading was above the channel's threshold. 3.1 ms from listening to listening, 2.18 ms of it the detection's 8 symbols and half a symbol of processing. The datasheet documents the reading for receive only, so the driver checks at boot that the two agree on the home channel, keeps the offset it finds, and reads after the detection if they do not (roadmap D88) |
 | transmission | its airtime and 1.8 ms more, from listening to listening (roadmap D88) |
 
 **A radio that reads every channel busy.** A heartbeat skipped on every
@@ -1890,8 +1908,8 @@ not, since without a fix of its own it rebuilds no position it hears
 
 A sleepy node with an anchor does not sweep the channels
 ([busy estimate](#busy-estimate)) or move its home channel by the busy
-estimate: receiving duty-cycled, it could not. It keeps its noise floor by
-the readings of its own heartbeats' checks.
+estimate: receiving duty-cycled, it could not. It keeps its home channel's
+noise floor by the readings of its own heartbeats' checks.
 
 ### Heard table
 

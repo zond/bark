@@ -9,11 +9,15 @@
 //! the node's own traffic and set aside is the relay's call
 //! (`node/relay.rs`).
 //!
-//! The noise floor pools every channel, which is sound because the
-//! receiver's noise is the same on all 13 (1.6 MHz of one front end). Its
-//! 10th percentile fails only if nine-tenths of all readings are signals;
-//! carrier sense keeps load far below that (spec "Capacity and sizing").
-//! The percentile and the 1 dB bins are first choices for open item O11.
+//! Each channel keeps its own readings. Listen-before-talk judges a
+//! reading against its own channel's floor, which interference near the
+//! receiver raises on some channels and not on others. A busy reading of
+//! the sweep is judged against all channels' readings together, so that
+//! a channel louder than the others counts as busy and is not chosen. A
+//! 10th percentile fails only if nine-tenths of the readings are
+//! signals; carrier sense keeps load far below that
+//! (spec "Capacity and sizing"). The percentile and the 1 dB bins are
+//! first choices for open item O11.
 
 use crate::node::Config;
 use crate::radio::{Channel, CHANNELS};
@@ -43,9 +47,10 @@ const HIST_BINS: usize = 64;
 const FLOOR_PERCENTILE: u64 = 10;
 
 /// The noise-floor estimator.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct NoiseFloor {
-    bins: [u32; HIST_BINS],
+    /// No bin counts past `halve_at`, which `new` keeps within `u16`.
+    bins: [u16; HIST_BINS],
     total: u32,
     halve_at: u32,
     /// The bin the percentile falls in, and the samples below it: kept as
@@ -60,7 +65,11 @@ impl NoiseFloor {
         NoiseFloor {
             bins: [0; HIST_BINS],
             total: 0,
-            halve_at,
+            halve_at: if halve_at > u16::MAX as u32 {
+                u16::MAX as u32
+            } else {
+                halve_at
+            },
             floor: 0,
             below: 0,
         }
@@ -83,22 +92,17 @@ impl NoiseFloor {
     /// Add one reading to a histogram kept to `window` samples: what it
     /// holds is halved first until it is below that.
     pub fn add_within(&mut self, dbm: i16, window: u32) {
-        while self.total >= window.max(1) {
+        while self.total >= window.clamp(1, self.halve_at) {
             self.halve();
         }
         self.add(dbm);
-    }
-
-    /// Forget every reading.
-    pub fn clear(&mut self) {
-        *self = NoiseFloor::new(self.halve_at);
     }
 
     fn halve(&mut self) {
         self.total = 0;
         for b in &mut self.bins {
             *b /= 2;
-            self.total += *b;
+            self.total += *b as u32;
         }
         (self.floor, self.below) = (0, 0);
     }
@@ -115,11 +119,11 @@ impl NoiseFloor {
         loop {
             if self.floor > 0 && self.below as u64 >= rank {
                 self.floor -= 1;
-                self.below -= self.bins[self.floor];
+                self.below -= self.bins[self.floor] as u32;
             } else if self.floor + 1 < HIST_BINS
-                && ((self.below + self.bins[self.floor]) as u64) < rank
+                && ((self.below + self.bins[self.floor] as u32) as u64) < rank
             {
-                self.below += self.bins[self.floor];
+                self.below += self.bins[self.floor] as u32;
                 self.floor += 1;
             } else {
                 return;
@@ -136,6 +140,23 @@ impl NoiseFloor {
     }
 }
 
+/// The floor of several histograms' readings taken together.
+fn pooled(floors: &[NoiseFloor]) -> i16 {
+    let total: u32 = floors.iter().map(|n| n.total).sum();
+    if total == 0 {
+        return NOMINAL_NOISE_FLOOR_DBM;
+    }
+    let rank = rank(total);
+    let mut seen = 0u64;
+    for i in 0..HIST_BINS {
+        seen += floors.iter().map(|n| n.bins[i] as u64).sum::<u64>();
+        if seen >= rank {
+            return HIST_LOW_DBM + i as i16;
+        }
+    }
+    HIST_LOW_DBM + HIST_BINS as i16 - 1
+}
+
 /// How many of `total` samples lie at or below the floor.
 fn rank(total: u32) -> u64 {
     (total as u64 * FLOOR_PERCENTILE).div_ceil(100).max(1)
@@ -148,10 +169,8 @@ pub struct BusyEstimator {
     samples: [u16; CHANNELS as usize],
     inverse: u16,
     threshold_db: u8,
-    noise: NoiseFloor,
-    /// Whether the floor is kept by listen-before-talk readings, not the
-    /// sweep's.
-    by_checks: bool,
+    /// Each channel's readings.
+    noise: [NoiseFloor; CHANNELS as usize],
 }
 
 impl BusyEstimator {
@@ -164,8 +183,8 @@ impl BusyEstimator {
             samples: [0; CHANNELS as usize],
             inverse,
             threshold_db,
-            noise: NoiseFloor::new(2 * CHANNELS as u32 * inverse as u32),
-            by_checks: false,
+            // Two windows of a channel's readings, about an hour.
+            noise: [NoiseFloor::new(2 * inverse as u32); CHANNELS as usize],
         }
     }
 
@@ -179,35 +198,44 @@ impl BusyEstimator {
         self.busy[c.index() as usize]
     }
 
-    /// Current noise floor in dBm.
-    pub fn noise_floor_dbm(&self) -> i16 {
-        self.noise.dbm()
+    /// The noise floor of `c` in dBm: of its own readings, or of all
+    /// channels' while it has none.
+    pub fn noise_floor_dbm(&self, c: Channel) -> i16 {
+        let own = &self.noise[c.index() as usize];
+        match own.total {
+            0 => self.pooled_floor_dbm(),
+            _ => own.dbm(),
+        }
     }
 
-    /// RSSI above which a channel counts as busy, in dBm.
-    pub fn threshold_dbm(&self) -> i16 {
-        self.noise_floor_dbm()
+    /// The noise floor of all channels' readings together, in dBm.
+    pub fn pooled_floor_dbm(&self) -> i16 {
+        pooled(&self.noise)
+    }
+
+    /// RSSI above which listen-before-talk finds `c` busy, in dBm.
+    pub fn threshold_dbm(&self, c: Channel) -> i16 {
+        self.noise_floor_dbm(c)
             .saturating_add(self.threshold_db as i16)
     }
 
-    /// A reading that is no part of a sweep, for the noise floor alone:
-    /// a listen-before-talk reading of a node that does not sweep.
-    /// The first such reading starts the floor again: a sweep's readings
-    /// are taken another way and are many. The floor then holds `window`
-    /// readings at most, so that it follows them at their own rate.
-    pub fn floor_reading(&mut self, dbm: i16, window: u32) {
-        if !self.by_checks {
-            self.by_checks = true;
-            self.noise.clear();
-        }
-        self.noise.add_within(dbm, window);
+    /// A reading of `c` that is no part of a sweep, for its floor alone:
+    /// a listen-before-talk reading of a node that does not sweep. The
+    /// channel's floor then holds `window` readings at most, so that it
+    /// follows them at their own rate.
+    pub fn floor_reading(&mut self, c: Channel, dbm: i16, window: u32) {
+        self.noise[c.index() as usize].add_within(dbm, window);
     }
 
-    /// One sweep reading of a channel, home included.
+    /// One sweep reading of a channel, home included: busy if above all
+    /// channels' floor, so that a channel louder than the others is not
+    /// chosen.
     pub fn sample(&mut self, c: Channel, dbm: i16) {
-        let x = if dbm > self.threshold_dbm() { ONE } else { 0 };
-        self.by_checks = false;
-        self.noise.add(dbm);
+        let threshold = self
+            .pooled_floor_dbm()
+            .saturating_add(self.threshold_db as i16);
+        let x = if dbm > threshold { ONE } else { 0 };
+        self.noise[c.index() as usize].add(dbm);
         self.update(c, x);
     }
 
@@ -339,15 +367,97 @@ mod tests {
     fn threshold_follows_floor() {
         let mut b = BusyEstimator::new(600, 6);
         assert_eq!(
-            b.threshold_dbm(),
+            b.threshold_dbm(ch(0)),
             -112,
             r#"spec "Busy estimate": ≈−112 dBm"#
         );
         for _ in 0..100 {
             b.sample(ch(0), -124);
         }
-        assert_eq!(b.threshold_dbm(), -118);
+        assert_eq!(b.threshold_dbm(ch(0)), -118);
+        // A channel not yet read takes all channels' floor.
+        assert_eq!(b.threshold_dbm(ch(1)), -118);
         b.sample(ch(1), -117);
         assert_eq!(b.fraction(ch(1)), ONE);
+    }
+
+    /// The bench of 2026-11-12: channels whose quiet readings differ by
+    /// 8 dB. Listen-before-talk on the loud one finds it clear at its usual
+    /// level, while the sweep still counts it busy against the others.
+    #[test]
+    fn a_loud_channel_is_clear_to_its_checks_and_busy_to_the_sweep() {
+        let mut b = BusyEstimator::from_config(&Config::default());
+        let (quiet, loud) = (ch(7), ch(9));
+        for i in 0..2000 {
+            for c in Channel::all() {
+                let level = if c == loud { -83 } else { -91 };
+                b.sample(c, level - (i % 3) as i16);
+            }
+        }
+        assert_eq!(b.pooled_floor_dbm(), -93);
+        assert_eq!(b.noise_floor_dbm(quiet), -93);
+        assert_eq!(b.noise_floor_dbm(loud), -85);
+        assert!(
+            -83 <= b.threshold_dbm(loud),
+            "a quiet reading of it is clear"
+        );
+        assert!(b.fraction(loud) > percent(99));
+        assert!(b.fraction(quiet) < percent(1));
+    }
+
+    /// A carrier on one channel moves that channel's floor only once it
+    /// fills nine-tenths of what the floor holds: over an hour of sweeps,
+    /// longer than the move rule takes to leave it (spec "Channel moves").
+    #[test]
+    fn a_carrier_moves_its_channel_s_floor_after_an_hour() {
+        let config = Config::default();
+        let mut b = BusyEstimator::from_config(&config);
+        let jammed = ch(4);
+        let rounds_per_hour = 3600 / config.sweep_interval.as_micros().div_ceil(1_000_000);
+        let round = |b: &mut BusyEstimator| {
+            for c in Channel::all() {
+                b.sample(c, if c == jammed { -60 } else { -120 });
+            }
+        };
+        for _ in 0..2 * rounds_per_hour {
+            for c in Channel::all() {
+                b.sample(c, -120);
+            }
+        }
+        for _ in 0..rounds_per_hour {
+            round(&mut b);
+        }
+        assert_eq!(b.threshold_dbm(jammed), -114, "an hour in");
+        for _ in 0..rounds_per_hour {
+            round(&mut b);
+        }
+        assert!(b.threshold_dbm(jammed) > -60, "two hours in");
+        assert_eq!(b.pooled_floor_dbm(), -120, "the others hold theirs");
+        // The sweep still counts it busy: (1 − 1/138)^276 of the quiet
+        // past is left, e^−2.
+        assert!(b.fraction(jammed) > percent(85));
+    }
+
+    /// A node that does not sweep: its checks keep its home's floor, at
+    /// most `window` of them, so that a few cannot move it and a few
+    /// windows' worth do.
+    #[test]
+    fn checks_keep_their_channel_s_floor_within_their_window() {
+        let mut b = BusyEstimator::from_config(&Config::default());
+        let (home, window) = (ch(2), 24);
+        for _ in 0..300 {
+            for c in Channel::all() {
+                b.sample(c, -93);
+            }
+        }
+        for _ in 0..window / 4 {
+            b.floor_reading(home, -85, window);
+        }
+        assert_eq!(b.noise_floor_dbm(home), -93);
+        for _ in 0..4 * window {
+            b.floor_reading(home, -85, window);
+        }
+        assert_eq!(b.noise_floor_dbm(home), -85);
+        assert_eq!(b.noise_floor_dbm(ch(3)), -93);
     }
 }

@@ -115,7 +115,10 @@ pub(crate) mod sizes {
         assert_eq!(delivery::INBOX, 23);
         let sum = tables();
         std::println!("{:>10}: {sum:>6} B", "tables");
-        assert!(size_of::<busy::BusyEstimator>() <= 512);
+        // A histogram of 64 two-byte bins for each of the 13 channels, with
+        // its counts, and each channel's estimate.
+        let channels = crate::radio::CHANNELS as usize;
+        assert!(size_of::<busy::BusyEstimator>() <= channels * (64 * 2 + 24 + 6) + 16);
     }
 
     /// A send-queue entry: its message and bookkeeping, 288 B, and the

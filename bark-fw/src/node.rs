@@ -501,7 +501,7 @@ fn neighbours_page(
     let header = Header {
         floor_dbm: core
             .busy()
-            .noise_floor_dbm()
+            .noise_floor_dbm(core.home())
             .clamp(i8::MIN.into(), i8::MAX.into()) as i8,
         next,
         own: match core.placed() {

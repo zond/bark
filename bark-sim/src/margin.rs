@@ -135,7 +135,7 @@ impl Sim {
             u8::from(self.nodes[dst as usize].present),
             u8::from(self.relay(dst).sleepy())
         );
-        let floor_src = sender.busy().noise_floor_dbm();
+        let floor_src = sender.busy().noise_floor_dbm(sender.home());
         let src_home = sender.home();
         let plane = LocalPlane::new(self.origin.position(self.xy[src as usize]));
         let here = plane.point(self.origin.position(self.xy[src as usize]));
@@ -172,7 +172,10 @@ impl Sim {
             ),
             None => (f64::NAN, f64::NAN, f64::NAN),
         };
-        let floor_dst = self.relay(dst).busy().noise_floor_dbm();
+        let floor_dst = self
+            .relay(dst)
+            .busy()
+            .noise_floor_dbm(self.relay(dst).home());
 
         // The alternatives.
         let sender = self.relay(src);

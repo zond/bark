@@ -2435,7 +2435,7 @@ fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
         r.next_wakeup().unwrap() <= from,
         "awake when the window opens"
     );
-    let floor = r.radio.busy().noise_floor_dbm() as f32;
+    let floor = r.radio.busy().noise_floor_dbm(r.home) as f32;
     // The weight the last reading at the floor had, from what it moved.
     let weight = |before: f32, after: f32| 2.0 * (after - before) / (floor - before);
 
@@ -3411,7 +3411,7 @@ fn neighbour_counts_tell_heard_strong_and_proven() {
     let mut now = Instant::ZERO;
     drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
     let me = r.config.position;
-    let margin = Neighbours::margin_dbm(r.radio.busy().noise_floor_dbm());
+    let margin = Neighbours::margin_dbm(r.radio.busy().noise_floor_dbm(r.home));
     let mut ids = Vec::new();
     for (k, rssi) in [
         (1, margin as i16 + 10),
