@@ -3,8 +3,8 @@
 **Status:** design, 2026-11-13. The runner, the standing checks, the
 bench build, the phone test and scenarios A1 to A5, S2 and S3 are built.
 A1, A2 and A3 have passed on the boards; the others and the phone test
-have not run yet. The heartbeat check waits for a line the firmware does
-not log, each transmission's channel and airtime. Four T-Echo 433 boards on
+have not run yet. The heartbeat check needs every board of a run on the
+bench build, which logs each transmission. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
 is a heading of `docs/protocol.md`.
 
@@ -46,8 +46,8 @@ The checks are functions of log lines, tested on the host against
 recorded logs.
 
 **The bench build** is the node's firmware with a cargo feature, `bench`,
-that no release sets. It adds commands on the serial line and nothing
-else: send a text to a node, say what power the node is on, set the
+that no release sets. It logs each transmission, and adds commands on
+the serial line and nothing else: send a text to a node, say what power the node is on, set the
 transmit power, send a carrier on a channel, reboot, and give what the
 node's own lines do not (`bark-fw/README.md`, "Bench build"). The
 feature lives in one module, which the rest of the firmware names where
