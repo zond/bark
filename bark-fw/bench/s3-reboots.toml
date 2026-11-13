@@ -9,10 +9,6 @@
 # and `text` once it has installed.
 
 about = "every board rebooted at random during an update"
-waits_for = [
-  "the bench build's `text <node id hex> <words>` command and its answer line",
-  "the bench build's `reboot` command",
-]
 duration_s = 18000.0
 
 [[boards]]
@@ -38,7 +34,7 @@ every_s = [300.0, 900.0]
 until_s = 14400.0
 board = "A"
 do = "say"
-command = "text ${B.id} mail for B"
+command = "text ${B.id} ${B.lat} ${B.lon} mail for B"
 
 [[actions]]
 at_s = 450.0
@@ -46,7 +42,7 @@ every_s = [300.0, 900.0]
 until_s = 14400.0
 board = "B"
 do = "say"
-command = "text ${A.id} mail for A"
+command = "text ${A.id} ${A.lat} ${A.lon} mail for A"
 
 [[actions]]
 at_s = 900.0

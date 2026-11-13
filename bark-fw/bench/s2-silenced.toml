@@ -14,7 +14,6 @@
 # (scripts/uf2.py): B holds its own image again, as before.
 
 about = "the middle relay silenced during a text and an update, then a sleepy node's anchor"
-waits_for = ["the bench build's `text <node id hex> <words>` command and its answer line"]
 duration_s = 14400.0
 
 [[boards]]
@@ -50,9 +49,9 @@ do = "off"
 at_s = 310.0
 board = "A"
 do = "say"
-command = "text ${C.id} while B is silent"
+command = "text ${C.id} ${C.lat} ${C.lon} while B is silent"
 name = "t1"
-expect = '^text id=(?P<id>[0-9a-f]{8}) '
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) '
 
 [[actions]]
 at_s = 600.0
@@ -70,9 +69,9 @@ name = "b_off"
 at_s = 3610.0
 board = "A"
 do = "say"
-command = "text ${C.id} while B is silent again"
+command = "text ${C.id} ${C.lat} ${C.lon} while B is silent again"
 name = "t2"
-expect = '^text id=(?P<id>[0-9a-f]{8}) '
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) '
 
 [[actions]]
 at_s = 4200.0
@@ -98,25 +97,25 @@ name = "anchor_off"
 at_s = 5420.0
 board = "S"
 do = "say"
-command = "text ${A.id} from S, its anchor silent"
+command = "text ${A.id} ${A.lat} ${A.lon} from S, its anchor silent"
 name = "sa"
-expect = '^text id=(?P<id>[0-9a-f]{8}) '
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) '
 
 [[actions]]
 at_s = 5430.0
 board = "S"
 do = "say"
-command = "text ${B.id} from S, its anchor silent"
+command = "text ${B.id} ${B.lat} ${B.lon} from S, its anchor silent"
 name = "sb"
-expect = '^text id=(?P<id>[0-9a-f]{8}) '
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) '
 
 [[actions]]
 at_s = 5440.0
 board = "S"
 do = "say"
-command = "text ${C.id} from S, its anchor silent"
+command = "text ${C.id} ${C.lat} ${C.lon} from S, its anchor silent"
 name = "sc"
-expect = '^text id=(?P<id>[0-9a-f]{8}) '
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) '
 
 [[actions]]
 at_s = 6000.0
@@ -128,35 +127,35 @@ do = "on"
 [[pass]]
 any = [
   { board = "C", line = '^message id=${t1.id}$', after = "t1" },
-  { board = "A", line = '^(given back id=|carry: id=)${t1.id}\b', after = "t1" },
+  { board = "A", line = '^(given back id=|carry: id=|bench: text id=)${t1.id}\b', after = "t1" },
 ]
 why = "the text while B was silent"
 
 [[pass]]
 any = [
   { board = "C", line = '^message id=${t2.id}$', after = "t2" },
-  { board = "A", line = '^(given back id=|carry: id=)${t2.id}\b', after = "t2" },
+  { board = "A", line = '^(given back id=|carry: id=|bench: text id=)${t2.id}\b', after = "t2" },
 ]
 why = "the text while B was silent again"
 
 [[pass]]
 any = [
   { board = "A", line = '^message id=${sa.id}$', after = "sa" },
-  { board = "S", line = '^(given back id=|carry: id=)${sa.id}\b', after = "sa" },
+  { board = "S", line = '^(given back id=|carry: id=|bench: text id=)${sa.id}\b', after = "sa" },
 ]
 why = "S to A"
 
 [[pass]]
 any = [
   { board = "B", line = '^message id=${sb.id}$', after = "sb" },
-  { board = "S", line = '^(given back id=|carry: id=)${sb.id}\b', after = "sb" },
+  { board = "S", line = '^(given back id=|carry: id=|bench: text id=)${sb.id}\b', after = "sb" },
 ]
 why = "S to B"
 
 [[pass]]
 any = [
   { board = "C", line = '^message id=${sc.id}$', after = "sc" },
-  { board = "S", line = '^(given back id=|carry: id=)${sc.id}\b', after = "sc" },
+  { board = "S", line = '^(given back id=|carry: id=|bench: text id=)${sc.id}\b', after = "sc" },
 ]
 why = "S to C"
 

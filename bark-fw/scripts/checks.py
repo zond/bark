@@ -123,7 +123,8 @@ def parse(raw: Iterable[str], name: str) -> Log:
         body = h.group(2) if h else line
         heads = list(HEADER.finditer(body))
         if not heads:
-            if body.strip() and not continues and not body.startswith(NOT_RECORDS):
+            # The reader opened the port in the middle of the first line.
+            if n > 1 and body.strip() and not continues and not body.startswith(NOT_RECORDS):
                 log.broken.append((n, body, "a line without its start"))
             continue
         lead = body[: heads[0].start()]

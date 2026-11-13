@@ -7,7 +7,6 @@
 # bootloader, else it would be a fourth relay every board hears.
 
 about = "a text from A to C and one back, each through B, within two hand-overs"
-waits_for = ["the bench build's `text <node id hex> <words>` command and its answer line"]
 duration_s = 420.0
 
 [[boards]]
@@ -36,17 +35,17 @@ silent = true
 at_s = 240.0
 board = "A"
 do = "say"
-command = "text ${C.id} from A along the line"
+command = "text ${C.id} ${C.lat} ${C.lon} from A along the line"
 name = "ac"
-expect = '^text id=(?P<id>[0-9a-f]{8}) .*taken'
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
 
 [[actions]]
 at_s = 300.0
 board = "C"
 do = "say"
-command = "text ${A.id} from C along the line"
+command = "text ${A.id} ${A.lat} ${A.lon} from C along the line"
 name = "ca"
-expect = '^text id=(?P<id>[0-9a-f]{8}) .*taken'
+expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
 
 # Each way: through B, the first hand-over acknowledged, and at the other
 # end's application within two hand-overs of at most 3.15 s each (spec

@@ -351,10 +351,11 @@ def capture(a: argparse.Namespace) -> None:
 
 
 def say(node: str, command: str) -> None:
-    """Type a console command into the board."""
+    """Type a console command into the board, after a line's end: the
+    host echoed the board's first bytes back into its line (`open_raw`)."""
     fd = os.open(ports()[node], os.O_WRONLY | os.O_NOCTTY)
     try:
-        os.write(fd, command.encode() + b"\r\n")
+        os.write(fd, b"\r\n" + command.encode() + b"\r\n")
     finally:
         os.close(fd)
 
@@ -381,7 +382,7 @@ def mounts() -> dict[str, Path]:
 def drive(node: str) -> Path | None:
     """The bootloader drive of the board `node`: the one whose USB serial,
     the chip's device ID, ends in the node ID (bark-fw/src/main.rs,
-    `node_id`), else the only one there is."""
+    `node_id`)."""
     by_id = glob.glob("/dev/disk/by-id/usb-*")
     devs = sorted({os.path.realpath(p) for p in by_id if node.upper() in p.upper()})
     mounted = mounts()
@@ -392,8 +393,8 @@ def drive(node: str) -> Path | None:
         subprocess.run(["udisksctl", "mount", "-b", dev], capture_output=True)
         if dev in mounts():
             return mounts()[dev]
-    if not devs and len(mounted) == 1:
-        return next(iter(mounted.values()))
+    # Never "the only drive there is": it may be another board's, already
+    # in its bootloader while this one is still on its way there.
     return None
 
 

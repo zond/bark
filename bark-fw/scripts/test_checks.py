@@ -51,7 +51,8 @@ class Parse(unittest.TestCase):
     def test_two_records_joined_are_two_lines_and_a_break(self):
         log = fixture("start-garbled.log")
         whys = {n: why for n, _, why in log.broken}
-        self.assertEqual(whys[1], "a line without its start")
+        # The first line is cut where the reader opened the port.
+        self.assertNotIn(1, whys)
         self.assertEqual(whys[7], "two records on one line, the first cut")
         joined = [x for x in log.lines if x.n == 7]
         self.assertEqual([x.text for x in joined], ["drive", "uptime 130 s"])

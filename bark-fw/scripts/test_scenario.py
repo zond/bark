@@ -43,7 +43,7 @@ class Files(unittest.TestCase):
         for path in SCENARIOS:
             s = scenario.load(path)
             ids = {b.name: f"{i:012x}" for i, b in enumerate(s.boards, 1)}
-            vars = scenario.board_vars(ids, {b.name: 7 for b in s.boards})
+            vars = scenario.board_vars(ids, {b.name: 7 for b in s.boards}, s.boards)
             for a in s.actions:
                 for g in re.findall(r"\(\?P<(\w+)>", a.expect or ""):
                     vars[f"{a.name}.{g}"] = "0a0b0c0d" if g == "id" else "1, 2, 3, 4, 5, 6"

@@ -8,10 +8,6 @@
 # the new image among them.
 
 about = "a sleepy node installs a relay's image and is sleepy again on it"
-waits_for = [
-  "the bench build's power command, written here as `power battery`",
-  "the bench build in the image R serves, so that S has the command after the install",
-]
 duration_s = 36000.0
 
 [[boards]]

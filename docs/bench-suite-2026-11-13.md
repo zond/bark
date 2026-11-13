@@ -1,10 +1,10 @@
 # Acceptance and stress tests on four boards
 
-**Status:** design, 2026-11-13. The runner, the standing checks and
-scenarios A1 to A5, S2 and S3 are built and tested on recorded logs, not
-yet run on the boards; A2, A3, A5, S2 and S3 wait for the bench build,
-which is not yet built, nor is the phone test, and the heartbeat check
-for a line the firmware does not log yet. Four T-Echo 433 boards on
+**Status:** design, 2026-11-13. The runner, the standing checks, the
+bench build, the phone test and scenarios A1 to A5, S2 and S3 are built.
+A1, A2 and A3 have passed on the boards; the others and the phone test
+have not run yet. The heartbeat check waits for a line the firmware does
+not log, each transmission's channel and airtime. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
 is a heading of `docs/protocol.md`.
 
@@ -106,12 +106,14 @@ are; `bark-fw/scripts/scenario.py` describes the format. From `bark-fw/`:
     scripts/bench.py run bench/a1-boot.toml A=f4f5 B=3112 C=c367 D=bac7
     scripts/bench.py check target/bench/runs/a1-boot-<time>
 
+A board the last run left in its bootloader has no serial port to find it
+by, and is named by all twelve digits of its ID.
+
 `run` builds every board's image, signs it with the bench key and packs
 it with the loader; puts every board in its bootloader, then flashes each
 and checks the version it reports; does the actions; and judges the logs.
 The first run is given `--first-version N`, above every version a board
-has run or gathered; later runs count on from the last. A scenario that
-waits for the bench build is refused unless `--anyway` is given.
+has run or gathered; later runs count on from the last.
 Everything goes to `target/bench/runs/<scenario>-<time>/`, with the result
 in `result.txt`.
 

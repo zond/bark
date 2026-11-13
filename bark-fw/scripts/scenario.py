@@ -45,9 +45,9 @@ without a package (tomllib):
     board = "A"                 # or a variable naming a board
     do = "say"                  # say; watch (the latest line, else the next);
                                 # off; on (copies the board's UF2 again)
-    command = "text ${C.id} hello"
+    command = "text ${C.id} ${C.lat} ${C.lon} hello"
     name = "ac"                 # its time and its captures: ${ac.id}
-    expect = 'text id=(?P<id>[0-9a-f]{8}) .*taken'
+    expect = '^bench: send id=(?P<id>[0-9a-f]{8}) .*taken'
     expect_s = 10.0             # a line not seen in time fails the run
     every_s = [600.0, 1800.0]   # again after a wait drawn from this range
     until_s = 14400.0           # until then
@@ -76,7 +76,8 @@ its flash on: what came before is its old image's.
 
 Variables are written ${name} in a command, a board or a line: for each
 board <label>.id (twelve hex digits), <label>.id_dec (as the firmware's
-NodeId prints, `186, 230, ...`) and <label>.version; for each named action
+NodeId prints, `186, 230, ...`), <label>.version, and <label>.lat and
+<label>.lon in degrees, the desk's where no place is built in; for each named action
 its expect's groups, <name>.<group>, and a hex group as decimal with
 |dec, as a MsgId prints: ${ac.id|dec}. In a line they match literally.
 """
@@ -295,8 +296,11 @@ def id_dec(node: str) -> str:
     return ", ".join(str(int(node[i : i + 2], 16)) for i in range(0, 12, 2))
 
 
-def board_vars(ids: dict[str, str], versions: dict[str, int]) -> dict[str, str]:
+def board_vars(ids: dict[str, str], versions: dict[str, int], boards: list[Board] = []) -> dict[str, str]:
     out = {}
+    for b in boards:
+        # A board with no place built in is on the desk.
+        out[f"{b.name}.lat"], out[f"{b.name}.lon"] = bench.place(b.place_m or 0.0)
     for label, node in ids.items():
         out[f"{label}.id"] = node
         out[f"{label}.id_dec"] = id_dec(node)
@@ -455,15 +459,18 @@ def evaluate(s: Scenario | None, run: Run, rooms: dict[str, int], asked: dict[st
 # ---- check: a directory of logs --------------------------------------------------
 
 
-def label_logs(d: Path, given: dict[str, str]) -> dict[str, Path]:
+def label_logs(d: Path, given: dict[str, str], quiet: set[str] = set()) -> dict[str, Path]:
     """Each label's log in `d`: the one whose name holds the ID it was
-    given; without labels, every log under its own name."""
+    given; without labels, every log under its own name. A board in
+    `quiet`, in its bootloader for the whole run, may have none."""
     files = sorted(d.glob("*.log"))
     if not given:
         return {f.stem: f for f in files}
     out = {}
     for label, node in given.items():
         found = [f for f in files if node.lower() in f.stem.lower()]
+        if not found and label in quiet:
+            continue
         if len(found) != 1:
             sys.exit(f"{label}={node}: {len(found)} logs in {d} have it in their name")
         out[label] = found[0]
@@ -500,7 +507,7 @@ def judge_dir(d: Path, scenario: str | None, given: dict[str, str], stack_room: 
     meta = json.loads((d / "run.json").read_text()) if (d / "run.json").exists() else {}
     s = load(scenario) if scenario else (load(meta["scenario"]) if "scenario" in meta else None)
     acted: dict[str, float] = {}
-    vars = board_vars(meta.get("ids", {}), meta.get("versions", {}))
+    vars = board_vars(meta.get("ids", {}), meta.get("versions", {}), s.boards if s else [])
     asked: dict[str, list[float]] | None = None
     silent = set(meta.get("silent_at_end", []))
     flashed: dict[str, float] = {}
@@ -521,7 +528,8 @@ def judge_dir(d: Path, scenario: str | None, given: dict[str, str], stack_room: 
                 vars.update({f"{e['name']}.{k}": v for k, v in e.get("vars", {}).items()})
             if "failed" in e:
                 failed.append(f"{board or ''}: {e['failed']}")
-    files = label_logs(d, given or meta.get("ids", {}))
+    quiet = {b.name for b in s.boards if b.silent} if s else set()
+    files = label_logs(d, given or meta.get("ids", {}), quiet)
     # Each board from its flash: before it, its old image's lines.
     logs = {label: read_since(f, flashed.get(label, meta.get("setup"))) for label, f in files.items()}
     rooms = meta.get("stack_rooms", {})
@@ -577,7 +585,7 @@ class Live:
 
     def __init__(self, s: Scenario, ids: dict[str, str], out: Path, built: dict[str, bench.Built]):
         self.s, self.ids, self.out, self.built = s, ids, out, built
-        self.vars = board_vars(ids, {k: v.version for k, v in built.items()})
+        self.vars = board_vars(ids, {k: v.version for k, v in built.items()}, s.boards)
         self.record = open(out / "actions.jsonl", "a", buffering=1)
         self.label = {node: label for label, node in ids.items()}
         self.booted: dict[str, float] = {}
@@ -622,11 +630,14 @@ class Live:
 
     def reset(self, label: str, do: str, name: str | None = None) -> None:
         node = self.ids[label]
-        self.note(board=label, do=do, name=name, resets=True)
         if do == "off":
+            self.note(board=label, do=do, name=name, resets=True)
             bench.off(node)
         else:
+            # Noted once copied: the judge reads the board's log from here,
+            # and the old image's last lines come before it.
             bench.on(node, self.built[label].uf2)
+            self.note(board=label, do=do, name=name, resets=True)
 
     def silence(self, b: Board) -> None:
         """Into the bootloader, unless it is there already."""
