@@ -1407,7 +1407,11 @@ fn asks_answered(h: &mut Harness<Relay>, s: usize, anchor: usize, asks: u64) {
             )
         })
         .count();
-    assert_eq!(gone + held, asks as usize, "every ask goes or finds the channel busy");
+    assert_eq!(
+        gone + held,
+        asks as usize,
+        "every ask goes or finds the channel busy"
+    );
     for m in missed {
         // The ask is on the air from its check on, a few milliseconds.
         let ask = Duration::from_millis(20);

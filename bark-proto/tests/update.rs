@@ -482,7 +482,10 @@ fn only_its_anchor_streams_to_a_sleepy_node() {
         });
     }
     h.run_until(at(1200), |_| false);
-    let anchor = h.nodes[2].core.anchor().expect("the sleepy node has an anchor");
+    let anchor = h.nodes[2]
+        .core
+        .anchor()
+        .expect("the sleepy node has an anchor");
     let other = (0..2)
         .find(|&i| h.nodes[i].core.address() != anchor.position)
         .unwrap();
