@@ -1,0 +1,51 @@
+[  1440.079 INFO ] driver events=3242 frames=0 failed=1 held=39 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1440.137 INFO ] uptime 1440 s
+[  1450.079 INFO ] driver events=3265 frames=0 failed=1 held=39 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1450.137 INFO ] uptime 1450 s
+[  1460.079 INFO ] driver events=3290 frames=0 failed=1 held=40 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1460.138 INFO ] uptime 1460 s
+[  1470.079 INFO ] driver events=3310 frames=0 failed=2 held=40 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1470.139 INFO ] uptime 1470 s
+[  1480.079 INFO ] driver events=3333 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1480.139 INFO ] uptime 1480 s
+[  1490.079 INFO ] driver events=3356 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1490.140 INFO ] uptime 1490 s
+[  1500.079 INFO ] driver events=3376 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1500.141 INFO ] uptime 1500 s
+[  1510.079 INFO ] driver events=3399 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1510.142 INFO ] uptime 1510 s
+[  1520.079 INFO ] driver events=3422 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1520.142 INFO ] uptime 1520 s
+[  1530.079 INFO ] driver events=3442 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1530.143 INFO ] uptime 1530 s
+[  1540.079 INFO ] driver events=3465 frames=0 failed=2 held=41 radio_errors=0 sniffs=0 longest_handle_us=854 longest_away_us=885 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[  1540.144 INFO ] uptime 1540 s
+--- port lost 17:33:19
+--- port opened 17:33:21
+[     9.997 INFO ] HeartbeatSkipped { channel: Channel(7) }
+[    10.032 INFO ] uptime 10 s
+[    10.079 INFO ] driver events=28 frames=0 failed=0 held=0 radio_errors=0 sniffs=0 longest_handle_us=305 longest_away_us=184 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35748
+[    11.082 INFO ] HeartbeatSkipped { channel: Channel(8) }
+[    12.310 INFO ] HeartbeatSkipped { channel: Channel(9) }
+[    13.429 INFO ] HeartbeatSkipped { channel: Channel(10) }
+[    14.500 INFO ] HeartbeatSkipped { channel: Channel(11) }
+--- port lost 17:33:34
+--- port opened 17:33:51
+[     4.992 INFO ] Burst
+[     6.080 INFO ] Burst
+[     7.167 INFO ] Burst
+[     8.254 INFO ] Burst
+[     9.341 INFO ] Burst
+[    10.032 INFO ] uptime 10 s
+[    10.079 INFO ] driver events=36 frames=0 failed=0 held=0 radio_errors=0 sniffs=0 longest_handle_us=305 longest_away_us=183 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35628
+[    10.428 INFO ] Burst
+[    11.515 INFO ] Burst
+[    12.603 INFO ] Burst
+[    13.690 INFO ] Burst
+[    14.777 INFO ] Burst
+[    15.864 INFO ] Burst
+[    16.951 INFO ] Burst
+[    18.111 INFO ] Burst
+[    20.033 INFO ] uptime 20 s
+[    20.079 INFO ] driver events=82 frames=0 failed=0 held=0 radio_errors=0 sniffs=0 longest_handle_us=305 longest_away_us=184 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=35628
+[    30.034 INFO ] uptime 30 s

@@ -1,0 +1,101 @@
+[   188.619 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   189.652 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   190.653 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   191.623 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   192.302 INFO ] uptime 192 s
+[   192.366 INFO ] driver events=641 frames=10 failed=1 held=8 radio_errors=0 sniffs=0 longest_handle_us=489 longest_away_us=916 empty_readies=2 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=13808 unserved=0 update=holds:9 serving:0:0 utc_s=1794204074 offset_min=Some(60) from=Gps
+[   192.649 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   193.651 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   194.649 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=21 mean=25 max=29 dB-Hz
+[   195.616 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   196.618 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   197.361 INFO ] boot relays=2 first_rotation_left_s=None
+[   197.361 INFO ] ble: status flags=0x23 relays=2 inbox=0 address=0.000000 0.000000
+[   197.646 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   197.742 INFO ] update: serving block=0 piece=170 (1 of this block)
+[   198.648 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   199.459 INFO ] display: shown in 2091 ms, asleep
+[   199.619 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   200.647 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   201.647 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   202.303 INFO ] uptime 202 s
+[   202.366 INFO ] driver events=676 frames=10 failed=1 held=9 radio_errors=0 sniffs=0 longest_handle_us=640 longest_away_us=916 empty_readies=2 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=13808 unserved=0 update=holds:9 serving:0:1 utc_s=1794204084 offset_min=Some(60) from=Gps
+[   202.649 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   203.662 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   204.658 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=29 dB-Hz
+[   205.630 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=28 dB-Hz
+[   206.629 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=28 dB-Hz
+[   207.614 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   208.608 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   209.611 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   209.912 INFO ] ble: connected peer=Address { kind: AddrKind(1), addr: BdAddr([0, 0, 0, 0, 0, 0]) } the bond's=Some(false) interval_us=15014 latency=0 timeout_ms=5000
+[   209.912 INFO ] ble: link 2 in slot 1
+[   209.917 INFO ] ble: advertising every 1022500 us, public true
+[   209.983 INFO ] ble: att Request(ReadByType { start: 1, end: 65535, attribute_type: Uuid16([0, 42]) })
+[   210.013 INFO ] ble: att Request(ReadByType { start: 1, end: 65535, attribute_type: Uuid16([42, 43]) })
+[   210.058 INFO ] ble: att Request(ReadByType { start: 1, end: 65535, attribute_type: Uuid16([1, 42]) })
+[   210.118 INFO ] ble: att Request(Read { handle: 14 })
+[   210.133 INFO ] ble: parameters interval_us=45013 latency=0 timeout_ms=5000
+[   210.253 INFO ] ble: att write handle=38 len=1
+[   210.257 INFO ] ble: recipient a5 slot 1 owner false
+[   210.257 INFO ] ble: data length tx=251 rx=251
+[   210.388 INFO ] ble: att write handle=17 len=2
+[   210.478 INFO ] ble: att write handle=24 len=2
+[   210.568 INFO ] ble: att Request(Read { handle: 16 })
+[   210.610 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   210.658 INFO ] ble: att Request(Read { handle: 23 })
+[   210.748 INFO ] ble: att write handle=42 len=3
+[   210.838 INFO ] ble: att Request(Read { handle: 21 })
+[   210.838 WARN ] app said ready but offered nothing
+[   211.609 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   211.625 INFO ] update: serving block=0 piece=171 (2 of this block)
+[   212.303 INFO ] uptime 212 s
+[   212.366 INFO ] driver events=710 frames=11 failed=1 held=9 radio_errors=0 sniffs=0 longest_handle_us=640 longest_away_us=916 empty_readies=3 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=13808 unserved=0 update=holds:9 serving:0:2 utc_s=1794204094 offset_min=Some(60) from=Gps
+[   212.629 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=28 dB-Hz
+[   213.628 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.2 mode=A speed=35cm/s course=0.0 c/n0 n=9 min=22 mean=25 max=28 dB-Hz
+[   214.618 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=98cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   214.933 INFO ] ble: disconnected 0x13 slot 1
+[   214.934 INFO ] ble: advertising every 1022500 us, public true
+[   215.611 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=22 mean=25 max=28 dB-Hz
+[   216.610 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=23 mean=25 max=28 dB-Hz
+[   217.611 INFO ] gps: fix at 0.000000 0.000000 sats=8 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=8 min=23 mean=25 max=28 dB-Hz
+[   218.635 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=23 mean=25 max=30 dB-Hz
+[   219.630 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=23 mean=25 max=30 dB-Hz
+[   220.651 INFO ] gps: fix at 0.000000 0.000000 sats=10 hdop=1.1 mode=A speed=0cm/s course=0.0 c/n0 n=10 min=23 mean=26 max=30 dB-Hz
+[   221.632 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=23 mean=26 max=30 dB-Hz
+[   222.304 INFO ] uptime 222 s
+[   222.366 INFO ] driver events=744 frames=12 failed=1 held=9 radio_errors=0 sniffs=0 longest_handle_us=640 longest_away_us=916 empty_readies=3 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=13808 unserved=0 update=holds:9 serving:0:2 utc_s=1794204104 offset_min=Some(60) from=Gps
+[   222.638 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=23 mean=26 max=30 dB-Hz
+[   223.642 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=23 mean=26 max=30 dB-Hz
+[   224.633 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.4 mode=A speed=0cm/s course=0.0 c/n0 n=9 min=23 mean=26 max=30 dB-Hz
+=== port lost 07:01:48
+=== port open 07:01:53
+[     0.271 INFO ] bark-fw 0.1.0 on LILYGO T-Echo, node image version 9, id=bae6e6cbf4f5
+
+[     0.271 INFO ] bark-proto: 13 channels from 433170000 Hz, spacing 125000 Hz, SF5, symbol 256 us, heartbeat 14400 us
+
+[     0.271 INFO ] protection=off build_code=D approtect=0xffffffff
+
+[     0.271 INFO ] lfclk: crystal, started in 39 ms
+
+[     0.272 ERROR] previous boot panicked: panicked at src/update/mesh.rs:338:61:
+range start index 256 out of range for slice of length 247
+
+
+[     0.272 WARN ] no BARK_LAT/BARK_LON at build time: no place until a fix
+
+[     0.272 INFO ] stored Some(Stored { home: Channel(12), place: Position { lat: 0, lon: 0 }, carried: false, map_point: false, anchor: None, relay: true, battery_scale: None })
+
+[     0.327 INFO ] tcxo: delay 500 us after 8 probes, lowest confirmed Some(250) us
+
+[     0.348 INFO ] radio: reading inside a CAD less listening [-2, -1, 0, 1, 1] dB over 5 pairs: Inside { offset_db: 0 }
+
+[     0.349 INFO ] radio up in 75561 us, tcxo 500 us after 8 probes, lbt reading Inside { offset_db: 0 }
+
+[     0.350 INFO ] ext flash: id ba 60 15, status 0x00, asleep
+
+[     2.310 INFO ] mailbox: home=false oldest=1 newest=1 unread=0 unsent=0, 1024 slots read in 1960 ms
+
+[     2.311 INFO ] update: acl 0 start=0x0 len=0x5000 write=Disable
+
+[     2.311 INFO ] update: acl 1 start=0xf4000 len=0xc000 write=Disable

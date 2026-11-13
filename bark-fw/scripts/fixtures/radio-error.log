@@ -1,0 +1,41 @@
+[    84.278 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    85.282 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    86.276 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    87.278 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    88.279 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    89.280 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    90.275 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=28 dB-Hz
+[    90.339 INFO ] uptime 90 s
+[    90.410 INFO ] driver events=338 frames=5 failed=3 held=4 radio_errors=0 sniffs=0 longest_handle_us=793 longest_away_us=916 resets=0 configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 stack_used=9236 utc_s=1793970275 offset_min=Some(60) from=Gps
+[    91.275 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    92.281 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    93.288 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    94.292 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    95.283 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    96.289 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    97.284 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    98.287 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    99.294 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[    99.528 WARN ] radio: NotDone(4)
+[   100.290 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   100.339 INFO ] uptime 100 s
+[   100.410 INFO ] driver events=379 frames=6 failed=3 held=4 radio_errors=1 sniffs=0 longest_handle_us=793 longest_away_us=916 resets=1 configured=2 cold_starts=1 tcxo_us=500 tcxo_errors=0 stack_used=9236 utc_s=1793970285 offset_min=Some(60) from=Gps
+[   101.289 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   102.296 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   103.286 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   104.291 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   105.286 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   106.287 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   107.290 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   108.290 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   109.290 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   110.287 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   110.340 INFO ] uptime 110 s
+[   110.410 INFO ] driver events=413 frames=7 failed=3 held=4 radio_errors=1 sniffs=0 longest_handle_us=793 longest_away_us=916 resets=1 configured=2 cold_starts=1 tcxo_us=500 tcxo_errors=0 stack_used=9236 utc_s=1793970295 offset_min=Some(60) from=Gps
+[   111.289 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   112.292 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   113.292 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   114.293 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   115.292 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   116.286 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
+[   117.289 INFO ] gps: fix at 0.000000 0.000000 sats=9 hdop=1.7 mode=A c/n0 n=9 min=21 mean=24 max=29 dB-Hz
