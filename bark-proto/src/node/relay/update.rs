@@ -23,9 +23,9 @@ use crate::update::{
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
-/// How long after its slot heartbeat a relay may still start the frame for
-/// its sleepy nodes: [`SLOT_LISTEN`]'s 5 ms less the frame's about 3 ms and
-/// its check and start, under 1 ms (spec "Heartbeat").
+/// How long after its slot heartbeat, or a piece of its run, a relay may
+/// still start the check for the next frame for its sleepy nodes: at
+/// once, or the sleepy nodes' [`SLOT_LISTEN`] would not cover it.
 const SLOT_START: Duration = Duration::from_millis(1);
 
 /// Other senders' pieces a node remembers, to count them against its own

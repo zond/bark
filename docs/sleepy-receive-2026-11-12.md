@@ -154,3 +154,12 @@ after the short run had begun.
 - With the relay streaming: S gathers blocks, hears its anchor, and answers asks.
 - Where a packet leaves the chip, which would say whether the datasheet's line holds: the
   status byte before the SetStandby, not logged yet.
+
+## A run of pieces, 2026-11-13
+
+With roadmap D214 an anchor sends a run of pieces after its slot heartbeat.
+On the bench, by the boards' own clocks, one relay's pieces of a run started
+146.6 ms apart and another's 158.0 ms apart: a frame's 138.6 ms and 8.0 to
+19.4 ms from the end of one transmission to the start of the next, the
+check of the channel within it. A sleepy board that listened 143.6 ms for
+the next piece caught 41 of the 148 pieces sent to it in 40 minutes.
