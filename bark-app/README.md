@@ -1363,3 +1363,58 @@ a phone (Trying it).
     30 s, the phone is on C as a guest. Restart the app: A is
     tried once again. Flash A back to version 1 and tap its row: the
     phone links to it, and the search takes it again.
+
+## The phone test
+
+`integration_test/phone_test.dart` runs the app on a phone against a
+board, with the app's own files, so its identity and pairings, and says
+each of five steps in the Android log as passed, failed or skipped, with
+why; `bark-fw/scripts/phonetest.py` builds it, runs it and reads it
+(`docs/bench-suite-2026-11-13.md`, row A7). The search runs from the
+start, as in `main.dart`. A step goes through the screen where the
+screen itself could break, and through the app's model where a tap only
+calls it; one whose earlier step failed is skipped.
+
+1. **find**: Settings, **Scan**, until the node named for the test is
+   listed.
+2. **pair**: a tap on its row, over the bond the phone holds; or its
+   **Pair** and the dialog's, and the code in Android's dialog; until the
+   phone is linked as its owner. Asked for a fresh pairing, the phone
+   first unpairs from the node, or forgets it while not linked.
+3. **send**: the second node's address from the node's neighbour table;
+   a contact, **Bench friend**, made by the app's own code from a fixed
+   identity, whose home it is; a text typed in its thread, until the node
+   has taken it. The network says nothing of arrival (Screens), so the
+   script looks for the text's message ID in the second node's log.
+4. **receive**: Bench friend's first message to the person, sealed by the
+   app's code to the person's card, which the script has a board send to
+   the node; until it is read and opened.
+5. **update**: the image the script put in the app's files, sent from the
+   update screen and rebooted into, until the node is back on its
+   version.
+
+An open build writes the pairing's code to its log (spec "Phone link",
+Pairing): the script reads it from the board's log once step 1 has
+passed and types it into Android's dialog with `adb shell input`. A
+protected build's code is typed by hand. The steps also run against the
+fake node, in `test/phone_steps_test.dart`.
+
+```
+cd bark-fw
+scripts/phonetest.py --node <A> --to <B> --node-log <A's log> \
+    --to-log <B's log> --image target/vN+1.img --send '<command>'
+```
+
+The logs are as `scripts/bench.py capture` writes them. `--send` is the
+command by which a board sends a payload to an address, with `{dst}`,
+`{dst_id}`, `{payload}` and `{id}` in it; without it the script prints
+what to send. `--pair` is `any`, the default, `bond` or `fresh`. The
+script installs the test's build over the app, keeping its files: it
+never uninstalls, so over an app signed with another key the install
+fails. It grants the Bluetooth, location and notification permissions,
+copies the image into the app's files by `run-as` and wakes the screen,
+which must have no lock. Node A needs a place, and B must be among its
+neighbours, with a place. Exit status 0 is every step passed, 1 a step
+failed, 2 a run that did not end. Afterwards the phone runs the test's
+build: build and install the app again, as a restart of the phone would
+start the test (Starting with the phone).
