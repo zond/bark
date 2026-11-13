@@ -99,9 +99,9 @@ fn every_relay_comes_to_hold_the_image() {
             .all(|n| n.updates.as_ref().unwrap().holds_at.is_some())
     });
     assert!(done, "not every relay holds the image within six hours");
-    for i in 1..4 {
-        assert_eq!(h.nodes[i].core.image(), Some(IMAGE));
-        let u = h.nodes[i].updates.as_ref().unwrap();
+    for n in &h.nodes[1..4] {
+        assert_eq!(n.core.image(), Some(IMAGE));
+        let u = n.updates.as_ref().unwrap();
         assert_eq!(u.offered.first().map(|o| o.1), Some(IMAGE));
         // Never a piece twice, and only of the block gathered.
         let mut seen = std::collections::HashSet::new();
@@ -113,8 +113,8 @@ fn every_relay_comes_to_hold_the_image() {
     let took = h.now.since(start);
     assert!(took >= GAP.mul(71), "faster than the gap: {took:?}");
     // Each learned of the image from a heartbeat's section.
-    for i in 1..4 {
-        assert!(h.nodes[i].sent.iter().any(|(_, f)| f.len > 13));
+    for n in &h.nodes[1..4] {
+        assert!(n.sent.iter().any(|(_, f)| f.len > 13));
     }
 }
 
@@ -442,6 +442,61 @@ fn a_sleepy_node_gathers_after_its_anchor_s_slot_heartbeats() {
         .filter(|(t, _)| beats.iter().any(|b| *t > *b && t.since(*b) < secs(3)))
         .count();
     assert_eq!(after_slot, NEEDS.iter().sum::<usize>());
+}
+
+/// A sleepy node wakes for its anchor's slot heartbeats only, so a second
+/// holder on the same home channel sends it nothing: the node's address,
+/// its anchor's position, says whose it is (spec "Updates over the mesh").
+#[test]
+fn only_its_anchor_streams_to_a_sleepy_node() {
+    let holder = |east, seed| {
+        Relay::new(
+            Config {
+                position: pos(east),
+                boot_listen: secs(5),
+                home_override: bark_proto::Channel::new(4),
+                ..Config::default()
+            },
+            seed,
+        )
+    };
+    let sleepy = Relay::new(
+        Config {
+            position: pos(50.0),
+            ..Config::default()
+        },
+        23,
+    );
+    let mut h = Harness::powered(vec![
+        (holder(0.0, 21), true),
+        (holder(100.0, 22), true),
+        (sleepy, false),
+    ]);
+    h.link(0, 1);
+    h.link(0, 2);
+    h.link(1, 2);
+    for n in &mut h.nodes {
+        n.updates = Some(Updates {
+            needs: NEEDS.to_vec(),
+            ..Updates::default()
+        });
+    }
+    h.run_until(at(1200), |_| false);
+    let anchor = h.nodes[2]
+        .core
+        .anchor()
+        .expect("the sleepy node has an anchor");
+    let other = (0..2)
+        .find(|&i| h.nodes[i].core.address() != anchor.position)
+        .unwrap();
+    h.deliver_app(0, AppCommand::Holds(IMAGE));
+    h.deliver_app(1, AppCommand::Holds(IMAGE));
+    let done = h.run_until(h.now + secs(12 * 3600), |h| {
+        h.nodes[2].updates.as_ref().unwrap().holds_at.is_some()
+    });
+    assert!(done, "the sleepy node does not hold the image");
+    assert!(!update_frames(&h, 1 - other).is_empty());
+    assert_eq!(update_frames(&h, other), vec![]);
 }
 
 /// With nothing changing, a node's heartbeats carry its section for one

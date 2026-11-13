@@ -162,10 +162,9 @@ fn a_draining_relay_under_load_takes_nothing_and_empties_within_the_bound() {
             .any(|&s| h.nodes[s].core.holding().any(|x| x == *id));
         assert!(got.contains(id) || at_source, "{id:?} lost");
     }
-    for i in 0..h.nodes.len() {
+    for (i, n) in h.nodes.iter().enumerate() {
         assert!(
-            !h.nodes[i]
-                .traces
+            !n.traces
                 .iter()
                 .any(|(_, t)| matches!(t, Trace::Dropped { .. })),
             "relay {i} dropped"

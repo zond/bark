@@ -3001,7 +3001,10 @@ none. No node that runs a newer image gathers the lowest.
    gathers the image the relay gathers or holds and lacks a block the
    relay holds: it **streams** there, at the gap or the pace (below),
    from the blocks it holds, to each gatherer from the first block it
-   lacks. It streams to a gatherer on another channel only if it is the
+   lacks. It streams to a sleepy gatherer only as its anchor, the relay
+   whose position is the node's address ([beats](#beats)): the node wakes
+   for no other relay's pieces (below; roadmap D215). It streams to
+   another gatherer on another channel only if it is the
    best holder it hears for it: no relay it hears that is not at home
    there, holds more than the gatherer and is no farther from it has more
    blocks from the first, or as many and a lower ID, since relays
@@ -3071,7 +3074,7 @@ gap, 3.3 % of an idle one's, however many help.
 **Sleepy nodes.** A sleepy node with an anchor gathers from its anchor
 alone, and serves nothing. Its beats carry its section, and it takes the
 pieces it hears in its windows ([delivery](#delivery)) and after its
-anchor's slot heartbeats. While a sleepy node on its home channel lacks a
+anchor's slot heartbeats. While one of its sleepy nodes lacks a
 block the anchor holds, the anchor's slot heartbeat there, the one its
 sleepy nodes listen for ([relay choice](#relay-choice)), carries its
 section every rotation, and a **run** of pieces follows it at once: the

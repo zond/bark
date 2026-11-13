@@ -369,8 +369,8 @@ fn sleepy_nodes_alone_meet_and_route() {
     );
     let id = send(&mut h, 0, 2, b"among ourselves");
     assert!(h.run_until(h.now + secs(10), |h| delivered_at(h, 2, id).is_some()));
-    for i in 0..2 {
-        let data = h.nodes[i]
+    for (i, n) in h.nodes[..2].iter().enumerate() {
+        let data = n
             .sent
             .iter()
             .filter(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Data(_))));
