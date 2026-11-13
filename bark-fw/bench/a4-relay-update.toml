@@ -1,0 +1,37 @@
+# A4, relay update (docs/bench-suite-2026-11-13.md, "Acceptance tests"):
+# two relays install an image given to the third.
+#
+# C is flashed holding its own image, the newest of the run, as a node
+# that took it from a phone holds it (scripts/uf2.py --header), and serves
+# it over the mesh. A and B hold none and serve nothing. Once installed,
+# A and B run C's build, so no board has a place or a deafness built in:
+# each takes its place from its fixes, as a field node does.
+
+about = "two relays install the image a third holds"
+duration_s = 10800.0
+
+[[boards]]
+name = "A"
+
+[[boards]]
+name = "B"
+
+# Last, so its version is the run's highest.
+[[boards]]
+name = "C"
+serves = true
+
+[[boards]]
+name = "D"
+silent = true
+
+[[pass]]
+boards = ["A", "B"]
+line = '^update: version ${C.version} confirmed'
+why = "installed and confirmed"
+
+[[pass]]
+boards = ["A", "B"]
+line = '(image version |\bimage_version=)${C.version}\b'
+last_boot = true
+why = "running it at the end"

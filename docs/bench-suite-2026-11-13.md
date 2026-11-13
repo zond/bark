@@ -1,6 +1,10 @@
 # Acceptance and stress tests on four boards
 
-**Status:** design, 2026-11-13, not yet built. Four T-Echo 433 boards on
+**Status:** design, 2026-11-13. The runner, the standing checks and
+scenarios A1 to A5, S2 and S3 are built and tested on recorded logs, not
+yet run on the boards; A2, A3, A5, S2 and S3 wait for the bench build,
+which is not yet built, nor is the phone test, and the heartbeat check
+for a line the firmware does not log yet. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
 is a heading of `docs/protocol.md`.
 
@@ -90,3 +94,35 @@ port's power, which is to be found out.
 - **Smoke**, 30 min: A1 to A3.
 - **Night**: A4, A5 and one stress test in turn.
 - **Weekend**: S9.
+
+## Running a scenario
+
+The scenarios are TOML files in `bark-fw/bench/`, as the simulator's
+are; `bark-fw/scripts/scenario.py` describes the format. From `bark-fw/`:
+
+    scripts/bench.py run bench/a1-boot.toml A=f4f5 B=3112 C=c367 D=bac7
+    scripts/bench.py check target/bench/runs/a1-boot-<time>
+
+`run` builds every board's image, signs it with the bench key and packs
+it with the loader; puts every board in its bootloader, then flashes each
+and checks the version it reports; does the actions; and judges the logs.
+The first run is given `--first-version N`, above every version a board
+has run or gathered; later runs count on from the last. A scenario that
+waits for the bench build is refused unless `--anyway` is given.
+Everything goes to `target/bench/runs/<scenario>-<time>/`, with the result
+in `result.txt`.
+
+`check` judges a directory of logs again, or any other with one log a
+board, as `bench.py capture` writes them: `check DIR SCENARIO A=f4f5 ...`
+names the boards, and `--stack-room` gives the stack's room where no run
+recorded it. What needs the host's clock or the run's actions is reported
+unchecked.
+
+A board holds and serves its own image only where its scenario says
+`serves`: otherwise every board would take the highest version of the run.
+An image carries what its board was built with, its place and the board
+it is deaf to, so a board that installs another's image takes those too;
+the update scenarios are laid out for it.
+
+`python3 -m unittest`, run in `bark-fw/scripts/`, tests the checks on
+pieces of recorded logs, and every scenario file.

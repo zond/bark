@@ -1,0 +1,181 @@
+# S2 (docs/bench-suite-2026-11-13.md, "Stress tests"): the middle relay
+# silenced during a text and during an update, then a sleepy node's
+# anchor silenced. Every text arrives or is refused at its sender; the
+# download goes on from the blocks held.
+#
+# A, B, C are the line of A2. B holds the image of the run that A and C
+# gather; it serves from its boot. S, sleepy from its boot as in A3, has
+# the highest version, so it takes no image and stays the build it is.
+# After the install A and C run B's build, which has B's place and no
+# deafness: the line lasts until then, past the texts on it.
+#
+# A silenced board is put in its bootloader and brought back by copying
+# its UF2 again, which writes its record as the UF2 has it
+# (scripts/uf2.py): B holds its own image again, as before.
+
+about = "the middle relay silenced during a text and an update, then a sleepy node's anchor"
+waits_for = ["the bench build's `text <node id hex> <words>` command and its answer line"]
+duration_s = 14400.0
+
+[[boards]]
+name = "A"
+place_m = -150.0
+deaf_to = "C"
+features = ["bench"]
+
+[[boards]]
+name = "C"
+place_m = 150.0
+deaf_to = "A"
+features = ["bench"]
+
+[[boards]]
+name = "B"
+place_m = 0.0
+serves = true
+
+[[boards]]
+name = "S"
+place_m = 0.0
+env = { BARK_ON_BATTERY = "1" }
+features = ["bench"]
+
+# B silenced during a text.
+[[actions]]
+at_s = 300.0
+board = "B"
+do = "off"
+
+[[actions]]
+at_s = 310.0
+board = "A"
+do = "say"
+command = "text ${C.id} while B is silent"
+name = "t1"
+expect = '^text id=(?P<id>[0-9a-f]{8}) '
+
+[[actions]]
+at_s = 600.0
+board = "B"
+do = "on"
+
+# B silenced during the download, and a text then.
+[[actions]]
+at_s = 3600.0
+board = "B"
+do = "off"
+name = "b_off"
+
+[[actions]]
+at_s = 3610.0
+board = "A"
+do = "say"
+command = "text ${C.id} while B is silent again"
+name = "t2"
+expect = '^text id=(?P<id>[0-9a-f]{8}) '
+
+[[actions]]
+at_s = 4200.0
+board = "B"
+do = "on"
+name = "b_on"
+
+# S's anchor, whichever relay it is, silenced; S writes to every relay.
+[[actions]]
+at_s = 5400.0
+board = "S"
+do = "watch"
+name = "anchor"
+expect = 'anchor: Some\(Anchor \{ id: NodeId\(\[(?P<id>[\d, ]+)\]\)'
+
+[[actions]]
+at_s = 5410.0
+board = "${anchor.id}"
+do = "off"
+name = "anchor_off"
+
+[[actions]]
+at_s = 5420.0
+board = "S"
+do = "say"
+command = "text ${A.id} from S, its anchor silent"
+name = "sa"
+expect = '^text id=(?P<id>[0-9a-f]{8}) '
+
+[[actions]]
+at_s = 5430.0
+board = "S"
+do = "say"
+command = "text ${B.id} from S, its anchor silent"
+name = "sb"
+expect = '^text id=(?P<id>[0-9a-f]{8}) '
+
+[[actions]]
+at_s = 5440.0
+board = "S"
+do = "say"
+command = "text ${C.id} from S, its anchor silent"
+name = "sc"
+expect = '^text id=(?P<id>[0-9a-f]{8}) '
+
+[[actions]]
+at_s = 6000.0
+board = "${anchor.id}"
+do = "on"
+
+# Each text at its node's application, or given back to its sender with a
+# time to retry (bark-fw/src/node.rs, AppEvent::GivenBack).
+[[pass]]
+any = [
+  { board = "C", line = '^message id=${t1.id}$', after = "t1" },
+  { board = "A", line = '^(given back id=|carry: id=)${t1.id}\b', after = "t1" },
+]
+why = "the text while B was silent"
+
+[[pass]]
+any = [
+  { board = "C", line = '^message id=${t2.id}$', after = "t2" },
+  { board = "A", line = '^(given back id=|carry: id=)${t2.id}\b', after = "t2" },
+]
+why = "the text while B was silent again"
+
+[[pass]]
+any = [
+  { board = "A", line = '^message id=${sa.id}$', after = "sa" },
+  { board = "S", line = '^(given back id=|carry: id=)${sa.id}\b', after = "sa" },
+]
+why = "S to A"
+
+[[pass]]
+any = [
+  { board = "B", line = '^message id=${sb.id}$', after = "sb" },
+  { board = "S", line = '^(given back id=|carry: id=)${sb.id}\b', after = "sb" },
+]
+why = "S to B"
+
+[[pass]]
+any = [
+  { board = "C", line = '^message id=${sc.id}$', after = "sc" },
+  { board = "S", line = '^(given back id=|carry: id=)${sc.id}\b', after = "sc" },
+]
+why = "S to C"
+
+# S takes another anchor while its own is silent (spec "Relay choice").
+[[pass]]
+board = "S"
+line = 'anchor: Some\(Anchor \{ id: NodeId\(\[(?!${anchor.id}\])'
+after = "anchor_off"
+within_s = 590.0
+why = "a new anchor"
+
+# The download goes on from what A and C held: neither starts it again.
+[[pass]]
+boards = ["A", "C"]
+line = '^update: version ${B.version} confirmed'
+why = "the update completes"
+
+[[pass]]
+boards = ["A", "C"]
+line = '^update: version \d+ (gathered before is not wanted|given up)'
+absent = true
+why = "nothing gathered forgotten"

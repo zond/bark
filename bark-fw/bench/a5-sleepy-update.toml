@@ -1,0 +1,53 @@
+# A5, sleepy update (docs/bench-suite-2026-11-13.md, "Acceptance tests"):
+# a sleepy node installs the image and is sleepy again on it.
+#
+# R, a relay, holds the run's newest image and serves it; S takes it. A
+# node is sleepy by the power it is on, not by its image, so S cannot be
+# built sleepy: the image it installs is R's. S is told it is on battery
+# by the bench build's power command, at every boot, its first boot on
+# the new image among them.
+
+about = "a sleepy node installs a relay's image and is sleepy again on it"
+waits_for = [
+  "the bench build's power command, written here as `power battery`",
+  "the bench build in the image R serves, so that S has the command after the install",
+]
+duration_s = 36000.0
+
+[[boards]]
+name = "S"
+place_m = 0.0
+features = ["bench"]
+on_boot = ["power battery"]
+
+# After S, so its version is higher.
+[[boards]]
+name = "R"
+place_m = 0.0
+features = ["bench"]
+serves = true
+
+[[boards]]
+name = "C"
+silent = true
+
+[[boards]]
+name = "D"
+silent = true
+
+[[pass]]
+board = "S"
+line = '^update: version ${R.version} confirmed'
+why = "installed and confirmed"
+
+[[pass]]
+board = "S"
+line = '(image version |\bimage_version=)${R.version}\b'
+last_boot = true
+why = "running it at the end"
+
+[[pass]]
+board = "S"
+line = '^Role \{ sleepy: true'
+last_boot = true
+why = "sleepy again on it"
