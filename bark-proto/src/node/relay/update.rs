@@ -429,8 +429,8 @@ impl Spread {
         self.cur = [u8::MAX; CHANNELS as usize];
         self.sent_cur = [0; CHANNELS as usize];
         self.target = [0; CHANNELS as usize];
-        for i in 0..MAX_BLOCKS {
-            self.index[i] = rng.range(0, PIECES as u64 - 1) as u8;
+        for index in &mut self.index {
+            *index = rng.range(0, PIECES as u64 - 1) as u8;
         }
     }
 
