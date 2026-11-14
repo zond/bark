@@ -153,6 +153,11 @@ impl Clock for FakeClock {
         }
         self.world.sleep(t).await
     }
+
+    fn hold(&self, t: Instant) {
+        let mut w = self.world.0.borrow_mut();
+        w.now = w.now.max(t);
+    }
 }
 
 struct FakeRadio {

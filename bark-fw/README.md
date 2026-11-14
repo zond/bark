@@ -1430,10 +1430,25 @@ cannot wait long (Radio driver, below): the reading inside a
 listen-before-talk's CAD is due 1 024 µs into it and must be made before
 its sampling ends at 2 048 µs, or the check counts as busy and a
 heartbeat is skipped; and the receive after a CAD must start within
-1 ms of it for the oscillator to restart warm. So no other task may run
-longer between two awaits than a quarter of the shorter window,
-`radio::STRETCH`, 250 µs: the radio's wake can then wait out four such
-stretches and still be in time.
+1 ms of it for the oscillator to restart warm.
+
+The reading waits for no other task: from `SetCAD` to the reading the
+radio's task keeps the processor, waiting for BUSY and for the reading's
+time without an await (`sx1262::Chip::hold`, `bark_driver::Clock::hold`),
+about 1.1 ms, more by the oscillator's delay when the CAD starts it. Only
+an interrupt can make it late. Left to the executor, the reading waited
+out what ran at two awaits, the command's wait for BUSY and the reading's
+timer, and the two together had the 1 024 µs: in 17 of 23 checks without
+a reading in four hours on a board gathering an image, the CAD's result
+came less than its 2 ms after the start the driver saw, so the driver
+saw the start late, by up to 0.6 ms, and the reading came after the CAD
+had ended; in 5 more the reading's own wake was 1.4 to 2.3 ms late
+(2026-11-14).
+
+For the restart no other task may run longer between two awaits than a
+quarter of its window, `radio::STRETCH`, 250 µs: the radio's wake can
+then wait out four such stretches and still be in time. A restart missed
+is a cold start, the oscillator's longer delay, not a lost frame.
 
 The external flash's software bus moves a byte in 8 µs (roadmap, Phase
 2, "The external flash's bus"), so a read of a 256-byte slot took 2 ms;

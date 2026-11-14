@@ -85,17 +85,12 @@ pub const RAIL_SETTLE: embassy_time::Duration =
 pub const CPU_HZ: u64 = 64_000_000;
 
 /// The longest any other task holds the processor between two awaits
-/// (`README.md`, "Work beside the radio"): a quarter of the shorter of
-/// two windows the radio's task must wake in, so that it can wait out
-/// four such stretches in either. One is what a listen-before-talk's
-/// reading has to spare, from its timer at `RSSI_SETTLE` into the CAD to
-/// the sampling's end, 1 024 µs; the other the oscillator's warm restart
-/// after the CAD, `tcxo::STILL_RUNNING`, 1 000 µs. 250 µs.
-pub const STRETCH: Duration = {
-    let reading = sx1262::CAD_SAMPLING.as_micros() - bark_proto::radio::RSSI_SETTLE.as_micros();
-    let restart = tcxo::STILL_RUNNING.as_micros();
-    Duration::from_micros(if reading < restart { reading } else { restart } / 4)
-};
+/// (`README.md`, "Work beside the radio"): a quarter of the window the
+/// radio's task must wake in after a CAD for the oscillator to restart
+/// warm, `tcxo::STILL_RUNNING`, so that it can wait out four such
+/// stretches. 250 µs. The reading inside the CAD waits for no task: the
+/// radio's task keeps the processor for it (`Chip::hold`).
+pub const STRETCH: Duration = Duration::from_micros(tcxo::STILL_RUNNING.as_micros() / 4);
 
 /// BUSY rises at most 600 ns after NSS rises (DS §8.3.1, T_SW). The driver
 /// polls BUSY right after each command; polled sooner it can still read the
@@ -159,11 +154,23 @@ pub struct Pins {
     reset: Output<'static>,
     dio1: Input<'static>,
     busy: Input<'static>,
+    /// Wait for BUSY on the processor, letting no other task run
+    /// ([`Chip::hold`]).
+    hold: bool,
 }
 
 impl Pins {
     async fn wait_ready(&mut self) -> Result<(), RadioError> {
         cortex_m::asm::delay(BUSY_RISE_CYCLES);
+        if self.hold {
+            let until = embassy_time::Instant::now() + BUSY_TIMEOUT;
+            while self.busy.is_high() {
+                if embassy_time::Instant::now() > until {
+                    return Err(RadioError::Busy);
+                }
+            }
+            return Ok(());
+        }
         with_timeout(BUSY_TIMEOUT, self.busy.wait_for_low())
             .await
             .map_err(|_| RadioError::Busy)
@@ -295,6 +302,7 @@ pub async fn boot<'a>(
         reset,
         dio1: Input::new(pins.dio1, Pull::None),
         busy: Input::new(pins.busy, Pull::None),
+        hold: false,
     };
     // The sequencer programs the oscillator's delay and chooses each
     // standby itself; the vendored driver's own sequences, which these
@@ -445,6 +453,10 @@ impl Chip for Hardware<'_> {
     async fn cad(&mut self) -> Result<(), RadioError> {
         self.idle().await?;
         self.sx.start_cad().await
+    }
+
+    fn hold(&mut self, on: bool) {
+        self.sx.iv_mut().hold = on;
     }
 
     async fn tx(&mut self) -> Result<(), RadioError> {
