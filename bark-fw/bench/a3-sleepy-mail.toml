@@ -15,7 +15,6 @@ duration_s = 900.0
 [[boards]]
 name = "A"
 place_m = -50.0
-features = ["bench"]
 
 [[boards]]
 name = "R"
@@ -26,7 +25,6 @@ name = "S"
 place_m = 0.0
 deaf_to = "A"
 env = { BARK_ON_BATTERY = "1" }
-features = ["bench"]
 
 [[boards]]
 name = "D"

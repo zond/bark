@@ -96,20 +96,6 @@ do = "off"
         self.assertIsNone(scenario.fill("${zz.id}", vars, escape=False))
         self.assertEqual(scenario.id_dec(A), "186, 230, 230, 203, 244, 245")
 
-    def test_versions_never_given_twice(self):
-        with tempfile.TemporaryDirectory() as d:
-            old = scenario.VERSION_FILE
-            scenario.VERSION_FILE = Path(d) / "image-version"
-            try:
-                with self.assertRaises(SystemExit):
-                    scenario.next_versions(2, None)
-                self.assertEqual(scenario.next_versions(2, 50), [50, 51])
-                self.assertEqual(scenario.next_versions(1, None), [52])
-                with self.assertRaises(SystemExit):
-                    scenario.next_versions(1, 52)
-            finally:
-                scenario.VERSION_FILE = old
-
 
 def line(host: float, board: float, text: str) -> str:
     return f"{host:.3f} [{board:10.3f} INFO ] {text}\n"
@@ -166,6 +152,24 @@ within_s = 6.3
                 ok, report = scenario.judge_dir(self.run_dir(Path(d), at), None, {}, None)
             self.assertFalse(ok)
             self.assertTrue(report[-1].startswith("FAIL 1: C: 0 of"), report)
+
+    def test_the_forgetting_before_the_setup_is_not_judged(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self.run_dir(Path(d), 13.0)
+            log = p / f"{A}.log"
+            log.write_text(line(950.0, 3.0, "Dropped { msg_id: MsgId(1), reason: Full }") + log.read_text())
+            events = (p / "actions.jsonl").read_text()
+            forgot = {"t": 940.0, "board": "A", "do": "on", "resets": True}
+            (p / "actions.jsonl").write_text(json.dumps(forgot) + "\n" + events)
+            ok, report = scenario.judge_dir(p, None, {}, None)
+        self.assertTrue(ok, report)
+
+    def test_the_answers_to_forget(self):
+        got = scenario.FORGOT.search("bench: forgot the image gathered and the versions given up")
+        self.assertIsNotNone(got)
+        self.assertIsNone(got.group("why"))
+        got = scenario.FORGOT.search("bench: forget refused: the staged slot is taken")
+        self.assertEqual(got.group("why"), "the staged slot is taken")
 
     def test_an_action_that_failed_fails_the_run(self):
         with tempfile.TemporaryDirectory() as d:

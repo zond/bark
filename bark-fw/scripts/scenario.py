@@ -6,11 +6,13 @@ docs/bench-suite-2026-11-13.md. Run through scripts/bench.py from bark-fw/:
     scripts/bench.py check target/bench/runs/a1-boot-20261113-210000
     scripts/bench.py check LOGDIR bench/a1-boot.toml A=f4f5 ...
 
-`run` builds an image for each board, every one under its own image
-version, flashes each board with the loader and its image and checks the
-version it reports, logs every board through one reader a port, does the
-scenario's actions at their times, and then judges the logs: the standing
-checks (checks.py) and the scenario's own conditions. It refuses to start
+`run` builds a bench build for each board, the boards' image versions 1
+to n in the order the scenario lists them; has each board, alone on the
+air, forget the images earlier runs left it; flashes each board with the
+loader and its image and checks the version it reports; logs every board
+through one reader a port, does the scenario's actions at their times,
+and then judges the logs: the standing checks (checks.py) and the
+scenario's own conditions. It refuses to start
 while another process holds a board's port. Everything goes to
 target/bench/runs/<scenario>-<time>/: a log for each board, `run.json`
 (the boards, their builds, the run's start and end) and `actions.jsonl`
@@ -30,12 +32,11 @@ without a package (tomllib):
     seed = 1                    # for actions at random times
     waits_for = ["..."]         # firmware it needs that main lacks: `run` refuses
 
-    [[boards]]                  # in this order the builds take their versions
+    [[boards]]                  # in this order the builds take versions 1, 2, ...
     name = "A"                  # the label on the command line, A=ID
     place_m = -150.0            # built in, metres east of the desk; else GPS
     deaf_to = "C"               # BARK_IGNORE: drops every frame of C
     env = { BARK_ON_BATTERY = "1" }
-    features = ["bench"]
     serves = false              # holds its image to serve over the mesh
     silent = false              # kept in its bootloader for the run
     on_boot = ["..."]           # console commands typed at each boot
@@ -71,8 +72,8 @@ without a package (tomllib):
     skip = { heartbeat = "why" }  # a standing check the scenario defeats by design
 
 The window of a condition starts, without `after`, when the run's setup
-first touched a board, and the standing checks read each board's log from
-its flash on: what came before is its old image's.
+first flashed a board, and the standing checks read each board's log from
+its flash on: what came before is its old image's, and its forgetting.
 
 Variables are written ${name} in a command, a board or a line: for each
 board <label>.id (twelve hex digits), <label>.id_dec (as the firmware's
@@ -100,15 +101,13 @@ import bench
 import checks
 
 RUNS = bench.OUT / "runs"
-# The last image version a bench build took, so that no two builds ever
-# share one: a board keeps the blocks it gathered and the versions it gave
-# up across runs (bark-fw/src/update/mesh.rs).
-VERSION_FILE = bench.OUT / "image-version"
 # From the copy of a UF2 to the version in the board's log: the copy, the
 # boot, and the first 10 s report, which repeats the banner's version for a
 # host that reopened the port late (bark-fw/src/boot.rs); with room.
 BOOT_S = 60.0
 VERSION = re.compile(r"(?:image version |\bimage_version=)(\d+)\b")
+# The bench build's answer to `forget` (bark-fw/README.md, "Bench build").
+FORGOT = re.compile(r"^bench: (forgot the image gathered|forget refused: (?P<why>.*))")
 VAR = re.compile(r"\$\{([A-Za-z_][\w]*(?:\.[\w]+)?)(\|dec)?\}")
 
 
@@ -125,7 +124,6 @@ class Board:
     place_m: float | None = None
     deaf_to: str | None = None
     env: dict[str, str] = field(default_factory=dict)
-    features: list[str] = field(default_factory=list)
     serves: bool = False
     silent: bool = False
     on_boot: list[str] = field(default_factory=list)
@@ -209,7 +207,7 @@ def load(path: str | Path) -> Scenario:
     take(d, {"name", "about", "duration_s", "seed", "waits_for", "boards", "actions", "pass", "checks"}, p.name)
     boards = []
     for b in d.get("boards", []):
-        take(b, {"name", "place_m", "deaf_to", "env", "features", "serves", "silent", "on_boot"}, f"board {b.get('name')}")
+        take(b, {"name", "place_m", "deaf_to", "env", "serves", "silent", "on_boot"}, f"board {b.get('name')}")
         if not re.fullmatch(r"[A-Za-z_]\w*", b.get("name", "")):
             raise Bad("a board's name is a word")
         env = b.get("env", {})
@@ -511,6 +509,7 @@ def judge_dir(d: Path, scenario: str | None, given: dict[str, str], stack_room: 
     asked: dict[str, list[float]] | None = None
     silent = set(meta.get("silent_at_end", []))
     flashed: dict[str, float] = {}
+    setup = meta.get("setup")
     failed = []
     if (d / "actions.jsonl").exists():
         asked = {}
@@ -521,7 +520,8 @@ def judge_dir(d: Path, scenario: str | None, given: dict[str, str], stack_room: 
                 asked.setdefault(board, []).append(e["t"])
             if e.get("do") in ("off", "on") and board:
                 (silent.add if e["do"] == "off" else silent.discard)(board)
-                if e["do"] == "on":
+                # Not the copy a board forgot after, before the setup.
+                if e["do"] == "on" and (setup is None or e["t"] >= setup):
                     flashed.setdefault(board, e["t"])
             if e.get("name") and "failed" not in e:
                 acted[e["name"]] = e["t"]
@@ -531,11 +531,11 @@ def judge_dir(d: Path, scenario: str | None, given: dict[str, str], stack_room: 
     quiet = {b.name for b in s.boards if b.silent} if s else set()
     files = label_logs(d, given or meta.get("ids", {}), quiet)
     # Each board from its flash: before it, its old image's lines.
-    logs = {label: read_since(f, flashed.get(label, meta.get("setup"))) for label, f in files.items()}
+    logs = {label: read_since(f, flashed.get(label, setup)) for label, f in files.items()}
     rooms = meta.get("stack_rooms", {})
     if stack_room:
         rooms = {label: stack_room for label in logs}
-    run = Run(logs, vars, acted, meta.get("setup"), meta.get("end"))
+    run = Run(logs, vars, acted, setup, meta.get("end"))
     ok, report = evaluate(s, run, rooms, asked, silent)
     if failed:
         ok = False
@@ -551,24 +551,6 @@ def check_cmd(a: argparse.Namespace) -> None:
 
 
 # ---- run: on the boards ----------------------------------------------------------
-
-
-def next_versions(n: int, first: int | None) -> list[int]:
-    """`n` image versions no bench build has had (VERSION_FILE)."""
-    last = int(VERSION_FILE.read_text()) if VERSION_FILE.exists() else None
-    if first is not None:
-        if last is not None and first <= last:
-            sys.exit(f"--first-version {first}: bench builds have reached {last}")
-        last = first - 1
-    elif last is None:
-        sys.exit(
-            f"no {VERSION_FILE}: give --first-version, above every version a board has run or gathered "
-            "(their banners' `image version`)"
-        )
-    out = list(range(last + 1, last + 1 + n))
-    VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    VERSION_FILE.write_text(f"{out[-1]}\n")
-    return out
 
 
 def build_env(b: Board, ids: dict[str, str]) -> dict[str, str]:
@@ -590,6 +572,8 @@ class Live:
         self.label = {node: label for label, node in ids.items()}
         self.booted: dict[str, float] = {}
         self.boots: list[str] = []
+        # The boots of the boards' forgetting have no boot commands.
+        self.forgotten = False
         self.lock = threading.Lock()
         self.cap = bench.Capture(out, set(ids.values()), say=self.say, on_line=self.line)
 
@@ -608,7 +592,7 @@ class Live:
         """From the reader: a boot of a board with boot commands, its
         banner or its first report, whichever the reader saw first."""
         label = self.label[node]
-        if not self.s.board(label).on_boot or not (checks.BANNER.match(text) or checks.BOOT_FACTS.match(text)):
+        if not self.forgotten or not self.s.board(label).on_boot or not (checks.BANNER.match(text) or checks.BOOT_FACTS.match(text)):
             return
         with self.lock:
             if t - self.booted.get(label, -BOOT_S) >= BOOT_S:
@@ -646,16 +630,39 @@ class Live:
 
     def flash(self, b: Board) -> None:
         """The board's UF2 copied to its bootloader, and its version read."""
-        node = self.ids[b.name]
         t = time.time()
         self.reset(b.name, "on")
+        self.runs(b, t)
+
+    def runs(self, b: Board, since: float) -> None:
+        """The board's version, read from a boot after `since`."""
         want = self.built[b.name].version
-        got = self.cap.wait(node, VERSION, t, BOOT_S)
+        got = self.cap.wait(self.ids[b.name], VERSION, since, BOOT_S)
         if got is None:
-            sys.exit(f"{b.name}: no version in its log within {BOOT_S:.0f} s of the copy")
+            sys.exit(f"{b.name}: no version in its log within {BOOT_S:.0f} s")
         if int(got[1].group(1)) != want:
             sys.exit(f"{b.name}: runs version {got[1].group(1)}, flashed with {want}: a stale UF2?")
         self.say(f"{b.name}: version {want} runs")
+
+    def forget(self, b: Board) -> None:
+        """Flashed, the board drops what it keeps of the images of earlier
+        runs, which used the same versions for other builds: the image it
+        gathered and the versions it gave up (bark-fw/README.md, "Bench
+        build", `forget`). It reboots, and is silenced again."""
+        node = self.ids[b.name]
+        self.flash(b)
+        t = time.time()
+        bench.say(node, "forget")
+        self.note(board=b.name, do="say", command="forget", resets=True, t=t)
+        got = self.cap.wait(node, FORGOT, t, BOOT_S)
+        if got is None or got[1].group("why"):
+            sys.exit(f"{b.name}: forget: {got[1].group('why') if got else 'no answer'}")
+        rebooted = self.cap.wait(node, checks.REBOOT, got[0], BOOT_S)
+        if rebooted is None:
+            sys.exit(f"{b.name}: forgot, and no reboot")
+        # The old boot's last lines reach the host within the log's drain.
+        self.runs(b, rebooted[0] + checks.LOG_DRAIN_S)
+        self.reset(b.name, "off")
 
     def act(self, a: Action, label: str) -> None:
         """One action; one that cannot be done is a failure of the run,
@@ -682,7 +689,7 @@ class Live:
         got = None
         if a.do == "say":
             bench.say(self.ids[board], command)
-            e.update(command=command, resets=command == "reboot")
+            e.update(command=command, resets=command in ("reboot", "forget"))
             if a.expect is None:
                 return self.note(**e)
         else:
@@ -722,11 +729,12 @@ def run_cmd(a: argparse.Namespace) -> None:
 
     out = RUNS / f"{s.name}-{time.strftime('%Y%m%d-%H%M%S')}"
     out.mkdir(parents=True)
-    versions = next_versions(len(s.boards), a.first_version)
     bench.build_loader()
     built = {}
-    for b, v in zip(s.boards, versions):
-        built[b.name] = bench.build_image(b.name, build_env(b, ids), b.features, v, out / "builds", b.serves)
+    # Every run the same versions, so that they never run out; later
+    # boards higher, as the scenarios lay out.
+    for v, b in enumerate(s.boards, 1):
+        built[b.name] = bench.build_image(b.name, build_env(b, ids), v, out / "builds", b.serves)
     meta = {
         "scenario": str(Path(a.scenario).resolve()),
         "ids": ids,
@@ -743,10 +751,17 @@ def run_cmd(a: argparse.Namespace) -> None:
     live.cap.start()
     try:
         # All silent first, so that no board runs its old image beside the
-        # new ones, and the boots fall close together.
-        meta["setup"] = time.time()
+        # new ones. Then each forgets alone on the air: a new build's first
+        # boot goes on gathering what its board kept, and could offer it
+        # to a board that forgot already. Then every board's boot, close
+        # together.
         for b in s.boards:
             live.silence(b)
+        for b in s.boards:
+            if not b.silent:
+                live.forget(b)
+        live.forgotten = True
+        meta["setup"] = time.time()
         for b in s.boards:
             if not b.silent:
                 live.flash(b)
@@ -782,7 +797,6 @@ def add_commands(sub) -> None:
     r = sub.add_parser("run", help="a scenario on the boards (scripts/scenario.py)")
     r.add_argument("scenario")
     r.add_argument("boards", nargs="+", metavar="LABEL=ID", help="the board each label stands for")
-    r.add_argument("--first-version", type=int, help="the first image version, if no bench build has one yet")
     r.add_argument("--build-only", action="store_true", help="build and stop before any board is touched")
     r.add_argument("--anyway", action="store_true", help="run a scenario that waits for firmware")
     r.set_defaults(fn=run_cmd)

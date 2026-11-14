@@ -13,7 +13,6 @@ duration_s = 420.0
 name = "A"
 place_m = -150.0
 deaf_to = "C"
-features = ["bench"]
 
 [[boards]]
 name = "B"
@@ -23,7 +22,6 @@ place_m = 0.0
 name = "C"
 place_m = 150.0
 deaf_to = "A"
-features = ["bench"]
 
 [[boards]]
 name = "D"
