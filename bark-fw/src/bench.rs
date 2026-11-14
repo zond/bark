@@ -434,6 +434,8 @@ pub struct Logged<R> {
     /// is sent, or at the next: a line between the two would delay the
     /// frame.
     checked: Option<(Channel, bool, i16)>,
+    /// The channel last listened on, which a reading is of.
+    listening: Option<Channel>,
 }
 
 impl<R> Logged<R> {
@@ -441,6 +443,7 @@ impl<R> Logged<R> {
         Logged {
             radio,
             checked: None,
+            listening: None,
         }
     }
 
@@ -475,6 +478,7 @@ impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
     const DEAF_TO: Option<NodeId> = R::DEAF_TO;
 
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        self.listening = Some(channel);
         self.radio.listen(channel).await
     }
 
@@ -503,7 +507,11 @@ impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
     }
 
     async fn rssi(&mut self) -> Result<i16, Self::Error> {
-        self.radio.rssi().await
+        let read = self.radio.rssi().await;
+        if let (Ok(dbm), Some(channel)) = (&read, self.listening) {
+            log::info!("rssi ch={} dbm={}", channel.index(), dbm);
+        }
+        read
     }
 
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error> {

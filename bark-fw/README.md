@@ -1560,7 +1560,7 @@ busy.
 
 Each listen-before-talk is logged `lbt ch=<k> preamble=<bool> dbm=<n>`,
 after the frame it let through or at the next one, so that the line
-delays no frame. Once a minute `bench: busy home=<k> tenths=[…]
+delays no frame. Each reading of the busy sweep is logged `rssi ch=<k> dbm=<n>`. Once a minute `bench: busy home=<k> tenths=[…]
 floor_dbm=[…]` gives each channel's busy estimate in tenths of a percent
 and its noise floor (spec "Busy estimate").
 
