@@ -936,7 +936,7 @@ const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Answer::LEN <= value_room(ATT_MTU));
 const _: () = assert!(ID + STATUS_UNGATHERED <= value_room(DEFAULT_ATT_MTU));
-const _: () = assert!(Send::MAX_LEN == 240);
+const _: () = assert!(Send::MAX_LEN == 238);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));
 const _: () = assert!(update::Progress::LEN <= value_room(ATT_MTU));

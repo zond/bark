@@ -26,7 +26,9 @@ pub struct Held<'a> {
     /// Its payload.
     pub payload: &'a [u8],
     /// The count it goes on from (spec "Hop count").
-    pub hops: u8,
+    pub hops: crate::wire::Hops,
+    /// The wrong-hop count it goes on from.
+    pub wrong: u8,
     /// Where it was.
     pub at: HeldAt,
 }
@@ -125,6 +127,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     // It carries the count received plus one until its
                     // hand-over stamps it (`relay/forward.rs`).
                     hops: record.map_or(o.hops.saturating_sub(1), Record::highest_hops),
+                    wrong: record.map_or(o.wrong, Record::highest_wrong),
                     at,
                 }
             });
@@ -135,6 +138,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 dst_id: q.node,
                 payload: q.payload(),
                 hops: q.hops,
+                wrong: q.wrong,
                 at,
             }
         }
@@ -172,6 +176,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             )
             .map(|mut q| {
                 q.hops = m.hops;
+                q.wrong = m.wrong;
                 q
             })
         };
@@ -181,7 +186,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if m.payload.len() > MAX_PAYLOAD {
                     return false;
                 }
-                let out = self.onward(Message::new(m.dst_pos, m.dst_id, m.payload), m.hops);
+                let out = self.onward(
+                    Message::new(m.dst_pos, m.dst_id, m.payload),
+                    (m.hops, m.wrong),
+                );
                 let free = match place {
                     0 => self.queue.regular() < SEND_QUEUE,
                     k => self.queue.iter().all(|o| o.place != k),
@@ -199,7 +207,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     let Some(at) = self.record_place() else {
                         return false;
                     };
-                    self.records.put(at, Record::new(id, parent, m.hops, now));
+                    self.records
+                        .put(at, Record::new(id, parent, (m.hops, m.wrong), now));
                 }
                 self.push_forward(out, place, now)
             }

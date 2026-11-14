@@ -1097,7 +1097,7 @@ originated:
 | parent | `src_hop` and `aux` of the packet that created the record: the ID and home channel of the node the message first came from; none at the origin. The channel is used only if that node is no longer in the neighbour table ([return to parent](#return-to-parent)) |
 | handed | the neighbours that have had the message from this relay or offered it one: those that took a hand-over of it, a forward or a return, by ACKing it ([hand-over](#hand-over)), those that answered seen, and those whose copy this relay answered seen ([the ACK](#the-ack)), as one bit per neighbour-table slot |
 | last packet | `src_hop` and `hops` of the last DATA of the message it received, and whether it was answered seen: the same pair again is a retransmission, answered as the first was ([receiving DATA](#receiving-data)) |
-| highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that was taken or answered seen |
+| highest counts | the largest `hops` and the largest `wrong` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that was taken or answered seen |
 | arrived | whether the message has reached its owner: this node owns the destination ([owner](#owner)), or the node it is addressed to took it from this one |
 | last active | when it last received or sent the message |
 
@@ -1120,7 +1120,7 @@ of recent IDs.
 its place; a new record then replaces the least recently active one whose
 message the relay does not hold. A relay holds a message while it is in
 its send queue ([send queue](#send-queue)), the hand-over included, or set
-aside for a full delivery queue. The table holds 667 records
+aside for a full delivery queue. The table holds 649 records
 ([bounds](#bounds)), so a message is never lost for want of room for its
 record (roadmap D31).
 
@@ -1284,15 +1284,16 @@ delivery that goes first have spent it since its packet was taken
 ([delivery](#delivery)).
 
 A packet received with count h that the regular room refuses takes the
-highest free hop place numbered h or lower, and keeps it until it leaves
-the queue. A hop place holds its packet whatever the bucket holds; the
-bucket still decides when it is sent. A packet received at 255 ends at
-the cap ([hop count](#hop-count)), so 254 hop places are enough. Of the
-254 places, 64 can be held at once: a place is free when its number is
-unheld and fewer than 64 places are held, and with 64 held the relay
-refuses the packet as any other refusal ([bans](#bans)). Packets with
-counts up to c hold at most c places, so while fewer than 64 are held the
-places behave as if all 254 were there (roadmap D155).
+highest free hop place numbered min(h, 254) or lower, and keeps it until
+it leaves the queue. A hop place holds its packet whatever the bucket
+holds; the bucket still decides when it is sent. Of the 254 places, 64
+can be held at once: a place is free when its number is unheld and fewer
+than 64 places are held, and with 64 held the relay refuses the packet as
+any other refusal ([bans](#bans)). Packets with counts up to c hold at
+most c places, so while fewer than 64 are held the places behave as if
+there were one for every count (roadmap D155): a packet with a count of
+64 or more always finds one at or below its count, so numbers above 254
+would change nothing. A place's number fits a byte.
 
 A message entering the network, a sleepy node's own with count 0 or a
 node's own app's, takes no hop place, so overload stops new messages
@@ -1430,8 +1431,8 @@ The packet is one of the following, tested in this order:
    goes on to its next candidate at once.
 
 In every case the relay records the packet's sender and count as the last
-packet, with whether it was answered seen, raises its highest count if
-the packet's is higher, and updates its last-active time.
+packet, with whether it was answered seen, raises its highest counts
+where the packet's are higher, and updates its last-active time.
 
 No case ends the last copy of a message: it has arrived, the packet was
 answered when it first came, another copy goes on, or, seen, the copy
@@ -1476,7 +1477,10 @@ clear ([hand-over](#hand-over) step 2, roadmap D111).
 
 #### Hop count
 
-`hops` in the DATA header counts hand-overs:
+The DATA header carries two counts: `hops`, the hand-overs so far, and
+`wrong`, the search's wrong hops (below).
+
+`hops` counts hand-overs:
 
 - A sleepy node with an anchor sends its own message with 0
   ([a sleepy node's own message](#a-sleepy-nodes-own-message)): the node
@@ -1486,7 +1490,7 @@ clear ([hand-over](#hand-over) step 2, roadmap D111).
   the message at 0, since 0 means "a sleepy node's own, start the search
   here"; not higher, as fresh work must not take hop place 1 at its first
   hop ([send queue](#send-queue)).
-- A relay sends its record's highest count plus one
+- A relay sends its record's highest `hops` plus one
   ([message records](#message-records)), whether forwarding or returning
   to its parent.
 
@@ -1506,15 +1510,46 @@ tells a retransmission by the sender and the count
 ([receiving DATA](#receiving-data), case 3). The count also numbers the
 hop places of the send queue.
 
-A relay that would have to send a count above 255, the largest the
-one-byte field holds, drops the message, except an owner delivering it to
-its node ([delivery](#delivery)), which sends 255: the search has ended
-there. The cap ends a search that has lost its way because a record was
-replaced or the message split, and it ends the chain of hop places
-([overload waits](#overload-waits)). The longest straight route across
-the city of [capacity and sizing](#capacity-and-sizing), ≈30 km at
-≈750 m a hop, is about 40 hand-overs, leaving about 200 for routing
-around gaps.
+`hops` takes one byte below 128 and two from 128
+([packet formats](#packet-formats)), up to 32 767. It does not limit how
+far a message travels; that is `wrong`'s job. A relay that would have to
+send a count above 32 767 drops the message, except an owner delivering
+it to its node ([delivery](#delivery)), which sends 32 767: the search has
+ended there.
+
+`wrong` is the search's budget. The sender of a hand-over adds one to its
+record's highest `wrong` when the receiver is no closer to the
+destination position than the sender: when the receiver's position, as
+the sender's neighbour table has it, is not strictly nearer to `dst_pos`
+than the sender's own, or the sender does not know it, as for a return to
+a parent no longer in its table. Both distances are measured in the plane
+centred on `dst_pos` ([positions on the wire](#positions-on-the-wire)), so
+every node judges a pair of positions alike. A return to the parent is
+judged by the same rule. Three hand-overs add nothing:
+
+- one to the node the message is addressed to, which ends the search
+  wherever that node is;
+- an owner's delivery to its node ([delivery](#delivery));
+- a sleepy node's own message to its anchor, sent with `wrong` 0, since
+  the search starts at the anchor.
+
+`wrong` is set and repeated with `hops`, and only grows, as `hops` does.
+A relay that would have to send a `wrong` above its cap drops the message
+as at the largest `hops`. The cap is 64, a node's setting, not a limit of
+the byte, which holds 255. It is the lowest cap measured in the simulated
+scenarios that delivers every text the earlier rule, a cap of 255
+hand-overs, delivered, with leeway over the 45 wrong hops the longest way
+round a gap needed there, and with about the earlier rule's air spent on
+lost texts in the simulated city (roadmap D220).
+
+A hand-over that is no wrong hop brings the message strictly nearer its
+destination, so a loop of such hand-overs cannot form while no node
+moves, and every loop spends the budget. The caps end a search that has
+lost its way because a record was replaced or the message split, and the
+largest `hops` ends one that loops through a node that moved between its
+heartbeat and the hand-over, which can make a step that seemed nearer
+not be. The caps end the chain of hop places too
+([overload waits](#overload-waits)).
 
 #### Overload waits
 
@@ -1542,7 +1577,7 @@ A message ends only:
   ([delivery queue](#delivery-queue)), or when the relay holding it comes
   to own its destination while it is queued and finds that queue full
   ([owner](#owner));
-- at the hop cap ([hop count](#hop-count));
+- at the wrong-hop cap or the largest hop count ([hop count](#hop-count));
 - when a node holding it dies (roadmap D31, D44, D106).
 
 Never by age on its way: at its owner the delivery queue keeps it by its
@@ -1554,8 +1589,8 @@ under a long overload the messages already taken outrank new ones
 The hop places keep waiting from locking relays up (roadmap D29): the
 message with the highest count held anywhere, k, is sent with k + 1 or
 more; at the neighbour it is offered to the gate lets it in, as every
-queued message there holds k or less, and place k + 1 is free, so it
-moves, then the next highest, down to the regular room. With 64 places
+queued message there holds k or less, and a place at or below k + 1 is
+free ([send queue](#send-queue)), so it moves, then the next highest, down to the regular room. With 64 places
 held at a relay the argument stops: it refuses, and the stall is bounded
 by the gate's budget (roadmap D155). The most travelled message goes
 first so that the message offered when a ban ends is one the next
@@ -1573,19 +1608,19 @@ the origin without a loop; and a relay met again answers seen, so it is
 neither searched twice nor skipped. So the message makes a depth-first
 traversal of the relays reachable from the origin through neighbours
 that answer, nearest to the destination first: it finds an owner if a
-path to one exists and the traversal fits in the 255 hand-overs of
-[hop count](#hop-count), and otherwise returns to the origin.
+path to one exists and the traversal takes no more wrong hops than the
+cap of [hop count](#hop-count), and otherwise returns to the origin.
 
 What breaks it:
 
 - **A lost record.** A message returning to a relay whose record has
   been replaced is new there; the search ends early, or wanders until
-  the hop cap ends it.
+  the wrong-hop cap ends it: every loop it walks holds a wrong hop.
 - **A split.** A hand-over whose ACKs were all lost looks failed, so two
   copies search at once. They share the relays' records, each answered
   seen where the other has been. A copy ends where it meets the other
   held at a relay (case 4), where the message has arrived (case 1), at
-  the origin, at the hop cap, or as a return to a parent that gave the
+  the origin, at a cap, or as a return to a parent that gave the
   child up and answers seen (case 6). Only the last can end the last
   copy, and it takes every ACK of three hand-overs on one link lost.
 - **Links that change** during the search, including a parent that moves
@@ -1595,13 +1630,13 @@ What breaks it:
 
 | | |
 |---|---|
-| hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
+| hand-overs per message | at most 32 768 that succeed (the first, at count 0, and 32 767 more, [hop count](#hop-count)); with no node moving, at most (c + 1)(R − 1) + c for a wrong-hop cap c and R relays reachable, since between two wrong hops each hand-over brings the message nearer and so meets a relay at most once |
 | a hand-over | at most 3.15 s: three attempts of 738.6 ms (500 ms of listen-before-talk, a 138.6 ms frame, the 100 ms ACK timeout) and the retry waits, 311 + 622 ms ([hand-over](#hand-over)); a channel that stays busy adds its wait but no airtime |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages: until it leaves the table 390 s after its last heartbeat or answer, with bans of 1.58, 3.16, 6.3, 12.7, 25.3 and 50.6 s, 100 s, and then 61 s |
 | a message held on one neighbour that does not answer | at most 14.2 s: two bans, 1.58 and 3.16 s, and three hand-overs, since the third failure in a row demotes the neighbour and moves the message on; later messages a hand-over each until the demotion lapses. One that answers this relay between failures holds it while its bans last ([bans](#bans)) |
 | life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
-| cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer; a split adds a round trip; within the hop cap a search explores about 64 to 128 links beyond the route into the gap (roadmap D36) |
-| message records | at most 667 per relay, below |
+| cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer; a split adds a round trip; the wrong-hop cap ends a search after 64 hand-overs away from its destination (roadmap D36, D220) |
+| message records | at most 649 per relay, below |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
 *The records.* A message sent on can come back, and its record must
@@ -1610,12 +1645,12 @@ takes to drain, each of its 103 places (39 regular and 64 hop places)
 waiting out one ban of 1.58 s: 162.9 s. Any 162.9 s carries at most
 6 s + 9.83% × 162.9 s = 22.0 s of airtime
 ([duty cycle cap](#duty-cycle-cap)), and every message costs at least an
-ACK (18 bytes, 17.0 ms) and a DATA with no payload (28 bytes, 22.1 ms),
-39.0 ms, so a relay handles at most 564 messages in that time. The
+ACK (18 bytes, 17.0 ms) and a DATA with no payload (29 bytes, 23.4 ms),
+40.3 ms, so a relay handles at most 546 messages in that time. The
 records of held messages are never evicted, so the table has room for
-the 103 a send queue holds on top: 667. A longer wait, after silence or
-a long refusal, may outlast a record, and the hop cap then ends a search
-that loses its way (roadmap D42).
+the 103 a send queue holds on top: 649. A longer wait, after silence or
+a long refusal, may outlast a record, and the wrong-hop cap then ends a
+search that loses its way (roadmap D42).
 
 ## Sleepy nodes
 
@@ -1976,7 +2011,7 @@ period, and the rest are refused.
 last heartbeat had the leaving flag, where the message may end, addressed
 to it or to a position it may own ([next hop](#next-hop)), waits in the
 queue for that neighbour, by the same rules of age and place: sent round
-it, a message that can end only there would wander to the hop cap. Once
+it, a message that can end only there would wander to the wrong-hop cap. Once
 its heartbeat comes without the flag, as after its swap, or its entry is
 gone, the message goes into the send queue as a forward received with its
 count, and is routed as any. Where the queue has no place, it goes round
@@ -2272,8 +2307,8 @@ and its characteristics in the order of this table:
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
 | Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) | 18 |
-| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
-| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
+| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–225) | 13–238 |
+| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–225), empty when none; a guest's: number(3) msg_id(4) payload(0–225) | 0, 4–229, 7–232 |
 | | | write | msg_id(4) | 4 |
 | Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
 | Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
@@ -2688,7 +2723,7 @@ drops a payload of a version or form it does not know.
 | 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3), the count of items still unsent (2) and the item; the nonce is not sent | 23 |
 
 Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
-227 − 23 = 204 bytes, so that its mailbox can send any payload on as a
+225 − 23 = 202 bytes, so that its mailbox can send any payload on as a
 reply.
 
 *Recipient tag.* The first byte of `crypto_generichash` of the
@@ -2745,7 +2780,7 @@ each a message of its own with its own `sent`, delivered as a text is.
 The parts take consecutive `sent`, so a part's `sent` less its number and
 one is the first part's, which names the text: the receiver puts parts
 together in any order of arrival and knows from the count which have not
-come. A part holds 155 bytes of text in a box without an address; 16
+come. A part holds 153 bytes of text in a box without an address; 16
 parts hold about 2.5 KB (roadmap D137).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
@@ -2882,17 +2917,17 @@ collision domain, the area within which transmissions interfere, is
 
 One 125 kHz channel at SF5 carries 1.95 kB/s raw (15.6 kbps) and
 ≈680 B/s with listen-before-talk (≈35% usable). A 100-byte text over 8
-hops with ACKs takes ≈0.72 s of channel time: per hop a 128-byte DATA
-packet (73.3 ms) and its ACK (17.0 ms).
+hops with ACKs takes ≈0.73 s of channel time: per hop a 129-byte DATA
+packet (74.6 ms) and its ACK (17.0 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
-| Single channel, 60 s heartbeats | 270 × 14.4 ms / 60 s = 6.5% | ≈6 kB/s | 14 × 0.285 / 0.72 s ≈ 6 | ≈2 |
+| Single channel, 60 s heartbeats | 270 × 14.4 ms / 60 s = 6.5% | ≈6 kB/s | 14 × 0.285 / 0.73 s ≈ 5 | ≈1.5 |
 | 7-colour fixed grid, 10 s heartbeats on all colours | 270 × 14.4 ms / 10 s = 39%, over the 35 % a channel can use | none | none | none |
-| **13 channels, measured selection, rotating heartbeat (this design)** | **270 × 14.4 ms / (10 s × 13) = 3.0%** | **≈80 kB/s** | **14 × 13 × 0.32 / 0.72 s ≈ 80** | **≈23** |
+| **13 channels, measured selection, rotating heartbeat (this design)** | **270 × 14.4 ms / (10 s × 13) = 3.0%** | **≈80 kB/s** | **14 × 13 × 0.32 / 0.73 s ≈ 80** | **≈23** |
 
 Each row is the 14 domains times the row's channels times what of a
-channel's 35 % the heartbeats leave, over 0.72 s a text, and a day of
+channel's 35 % the heartbeats leave, over 0.73 s a text, and a day of
 that over the 300 000 users. 23 texts a user a day is the **design rate**
 the rest of this document uses. The city centre is the hot spot, and the
 per-relay 10% cap ([duty cycle cap](#duty-cycle-cap)) binds there first.
@@ -3324,9 +3359,13 @@ ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           in the answered packet's aux
           from, to = the IDs of the answering and the answered node
 DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
-          hops(1) payload                                                   = 28 + payload
+          wrong(1) hops(1 or 2) payload                                     = 29 + payload,
+                                                                              30 from 128 hops
           dst_hop, src_hop = IDs of the receiving and the sending node;
-          aux = sender's home channel, so the receiver knows where to ACK
+          aux = sender's home channel, so the receiver knows where to ACK;
+          wrong, hops = the counts of [hop count](#hop-count); hops below
+          128 is one byte, from 128 two, big-endian, the first byte's top
+          bit set and the other 15 bits the count, up to 32 767
 PIECE     first(1) format(1) version(4) block(1) index(1) piece(247)        = 255
           aux = 15; version = the image's; index = which coded piece of the block, 0 to 254
 ASK       first(1) format(1) to(6) from(6)                                  = 14
@@ -3339,7 +3378,8 @@ STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
 ```
 
 Multi-byte numbers in the section and the status, the versions, are
-big-endian.
+big-endian. A DATA count below 128 in the two-byte form is rejected, so
+every count has one form.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
@@ -3351,8 +3391,9 @@ acknowledges. The app must keep payloads unique
 `dst_hop` lets every node on a channel discard packets not addressed to
 it after 8 bytes. `src_hop` and `aux` name the sender and its home
 channel, where the ACK goes and where a return is sent
-([routing](#routing)). The payload is at most 255 − 28 = 227 bytes; the
-sender's address is inside it, encrypted.
+([routing](#routing)). The payload is at most 255 − 30 = 225 bytes, so
+that a full frame has room for the count's two-byte form, which a message
+may reach on its way; the sender's address is inside it, encrypted.
 
 ### Positions on the wire
 

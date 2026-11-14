@@ -8,6 +8,10 @@
 //! free everywhere, so its next hop can take it, unless the count is at
 //! the cap, where the message ends. By induction downwards, every message
 //! held moves. That holds while fewer than [`HOP_SLOTS`] places are held.
+//! A count above [`HOP_PLACES`] takes a place as one at it would: with
+//! fewer than [`HOP_SLOTS`] held, a count of [`HOP_SLOTS`] or more always
+//! finds a free place at or below it, so numbers above that never change
+//! what is taken.
 //!
 //! Where a forward goes is not kept: the relay routes every entry each
 //! time it may send, and tells [`SendQueue::next_due`] which may go now.
@@ -21,9 +25,8 @@ use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
-use crate::tables::records::MAX_HOPS;
 use crate::time::{Duration, Instant};
-use crate::wire::{Data, Packet, ACK_LEN, DATA_HEADER_LEN, MAX_PAYLOAD};
+use crate::wire::{data_header_len, Data, Hops, Packet, ACK_LEN, DATA_HEADER_MAX, MAX_PAYLOAD};
 
 /// A full frame and the ACK that takes it, µs.
 const HAND_OVER_US: u64 = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
@@ -45,9 +48,12 @@ const _: () = assert!(SEND_QUEUE == 39);
 /// wait at the design rate, 20 to 30 s, so it refuses only a slow hop.
 pub const HOP_WAIT: Duration = Duration::from_secs(30);
 
-/// Hop places: one for each count a packet can be received with and still
-/// be sent on, 1 to 254; a packet received at 255 ends at the hop cap.
-pub const HOP_PLACES: usize = MAX_HOPS as usize - 1;
+/// Hop places, numbered 1 to 254 in a byte, 0 being the regular room. A
+/// packet received with a higher count takes a place as one at 254 does
+/// (module docs).
+pub const HOP_PLACES: usize = u8::MAX as usize - 1;
+
+const _: () = assert!(HOP_PLACES >= HOP_SLOTS);
 
 /// Hop places held at once (spec "Send queue"). The simulated city at the
 /// design rate held at most 3 at once; holding 64 needs packets of count
@@ -159,9 +165,10 @@ impl Message {
         MsgId::of(self.dst_pos, self.dst_id, self.payload())
     }
 
-    /// The airtime of a DATA carrying it with `preamble` symbols.
+    /// The airtime of a DATA carrying it with `preamble` symbols, at any
+    /// count.
     pub fn airtime(&self, preamble: u16) -> Duration {
-        time_on_air((DATA_HEADER_LEN + self.payload().len()) as u8, preamble)
+        time_on_air((DATA_HEADER_MAX + self.payload().len()) as u8, preamble)
     }
 }
 
@@ -183,7 +190,10 @@ pub struct Outgoing {
     /// The count its DATA carries: a forward's received count plus one
     /// until its hand-over stamps the count it goes with
     /// (spec "Hop count").
-    pub hops: u8,
+    pub hops: Hops,
+    /// The wrong-hop count its DATA carries: a forward's received count
+    /// until its hand-over stamps it (spec "Hop count").
+    pub wrong: u8,
     /// The receiver; [`NodeId::NONE`] until a forward is addressed when
     /// its hand-over starts.
     pub to: NodeId,
@@ -232,7 +242,7 @@ impl Outgoing {
     /// with `preamble` symbols, due at once.
     pub const fn new(
         message: Message,
-        hops: u8,
+        hops: Hops,
         to: NodeId,
         channel: Channel,
         preamble: u16,
@@ -241,6 +251,7 @@ impl Outgoing {
         Outgoing {
             message,
             hops,
+            wrong: 0,
             to,
             channel,
             preamble,
@@ -266,6 +277,7 @@ impl Outgoing {
             src_hop: me,
             dst_pos: self.message.dst_pos,
             dst_id: self.message.dst_id,
+            wrong: self.wrong,
             hops: self.hops,
             payload: self.message.payload(),
         }
@@ -286,9 +298,10 @@ impl Outgoing {
         f
     }
 
-    /// The airtime of its frame.
+    /// The airtime of its frame, at the count it carries now.
     pub fn airtime(&self) -> Duration {
-        self.message.airtime(self.preamble)
+        let len = data_header_len(self.hops) + self.message.payload().len();
+        time_on_air(len as u8, self.preamble)
     }
 
     /// Its message's ID.
@@ -330,7 +343,10 @@ impl Outgoing {
     /// The message `d` carries, to its `dst_hop` at its count, queued for
     /// `kind` on `channel` with `preamble` symbols.
     pub(crate) fn of(d: &Data<'_>, channel: Channel, preamble: u16, kind: Kind) -> Outgoing {
-        Outgoing::new(Message::of(d), d.hops, d.dst_hop, channel, preamble, kind)
+        Outgoing {
+            wrong: d.wrong,
+            ..Outgoing::new(Message::of(d), d.hops, d.dst_hop, channel, preamble, kind)
+        }
     }
 }
 
@@ -393,7 +409,7 @@ impl SendQueue {
 
     /// The highest free hop place for a packet received with `hops`,
     /// counting `freed` as free: none while [`HOP_SLOTS`] are held.
-    pub fn free_place(&self, hops: u8, freed: Option<u8>) -> Option<u8> {
+    pub fn free_place(&self, hops: Hops, freed: Option<u8>) -> Option<u8> {
         let mut taken = [false; HOP_PLACES + 1];
         let mut held = 0;
         for o in self.iter().filter(|o| o.place > 0) {
@@ -578,6 +594,7 @@ mod tests {
     extern crate std;
     use super::*;
     use crate::tables::budget::REPLY_RESERVE;
+    use crate::wire::{DATA_HEADER_LEN, MAX_HOPS};
 
     fn message(tag: u8) -> Message {
         Message::new(Position::default(), NodeId([3; 6]), &[tag])
@@ -666,6 +683,24 @@ mod tests {
         assert_eq!(q.push(entry(0)), Err(Full));
     }
 
+    /// A count above the numbered places takes a place as one at the top
+    /// does, and finds one while fewer than [`HOP_SLOTS`] are held.
+    #[test]
+    fn a_count_above_the_places_finds_one() {
+        let mut q = SendQueue::new();
+        assert_eq!(q.free_place(1000, None), Some(HOP_PLACES as u8));
+        for k in 1..HOP_SLOTS as u8 {
+            let mut o = entry(k);
+            o.place = HOP_PLACES as u8 + 1 - k;
+            q.push(o).unwrap();
+            assert_eq!(q.free_place(HOP_SLOTS as Hops, None), Some(HOP_SLOTS as u8));
+        }
+        assert_eq!(
+            q.free_place(MAX_HOPS, None),
+            Some(HOP_PLACES as u8 + 1 - HOP_SLOTS as u8)
+        );
+    }
+
     #[test]
     fn a_packet_takes_the_highest_free_place_not_above_its_count() {
         let mut q = SendQueue::new();
@@ -694,7 +729,7 @@ mod tests {
     }
 
     /// A forward with `hops` that has waited until `due` ms, if given.
-    fn data(tag: u8, hops: u8, due: Option<u64>) -> Outgoing {
+    fn data(tag: u8, hops: Hops, due: Option<u64>) -> Outgoing {
         let ch = Channel::new(3).unwrap();
         let mut o = Outgoing::new(
             message(tag),

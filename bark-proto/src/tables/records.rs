@@ -15,10 +15,8 @@ use crate::tables::budget::{most_on_air, BAN};
 use crate::tables::neighbours::NEIGHBOURS;
 use crate::tables::send_queue::{HOP_SLOTS, SEND_QUEUE};
 use crate::time::{Duration, Instant};
+pub use crate::wire::{Hops, MAX_HOPS};
 use crate::wire::{ACK_LEN, DATA_HEADER_LEN};
-
-/// The hop cap: the largest count the one-byte `hops` field holds (spec "Hop count").
-pub const MAX_HOPS: u8 = u8::MAX;
 
 /// How long a full send queue takes to drain with each entry waiting out
 /// one ban: 103 × 1.58 s = 162.9 s (spec "Bounds").
@@ -29,7 +27,7 @@ pub const DRAIN: Duration = BAN.mul((SEND_QUEUE + HOP_SLOTS) as u64);
 pub const HELD: usize = SEND_QUEUE + HOP_SLOTS;
 
 /// The most messages a relay can touch in `span`: its most airtime over
-/// an ACK and an empty DATA each, ⌊22.02 s / 39.04 ms⌋ = 564 for
+/// an ACK and an empty DATA each, ⌊22.02 s / 40.3 ms⌋ = 546 for
 /// [`DRAIN`] (spec "Bounds").
 pub const fn records_for(span: Duration) -> usize {
     let airtime = most_on_air(span).as_micros();
@@ -42,7 +40,7 @@ pub const fn records_for(span: Duration) -> usize {
 /// messages, which are never evicted, on top (spec "Bounds").
 pub const RECORDS: usize = records_for(DRAIN) + HELD;
 
-const _: () = assert!(RECORDS == 667);
+const _: () = assert!(RECORDS == 649);
 const _: () = assert!(RECORDS <= u16::MAX as usize, "a hint holds a place");
 const _: () = assert!(RECORDS > HELD, "a new record always finds a place");
 const _: () = assert!(
@@ -71,18 +69,26 @@ pub struct Record {
     /// The parent's home channel when the message arrived, used only if
     /// the parent has left the table (spec "Return to parent").
     parent_home: Channel,
-    highest_hops: u8,
-    last_hops: u8,
+    /// The largest wrong-hop count received or sent (spec "Hop count").
+    highest_wrong: u8,
     flags: u8,
+    highest_hops: Hops,
+    last_hops: Hops,
     handed: u64,
     last_active: Instant,
 }
 
 impl Record {
-    /// A record for a message first received at `now` with `hops`, from
-    /// `parent` (ID and home channel), or from a sleepy node's own message
-    /// or this node's application (`None`): this node is the origin.
-    pub fn new(id: MsgId, parent: Option<(NodeId, Channel)>, hops: u8, now: Instant) -> Record {
+    /// A record for a message first received at `now` with `hops` and
+    /// `wrong`, from `parent` (ID and home channel), or from a sleepy
+    /// node's own message or this node's application (`None`): this node
+    /// is the origin.
+    pub fn new(
+        id: MsgId,
+        parent: Option<(NodeId, Channel)>,
+        (hops, wrong): (Hops, u8),
+        now: Instant,
+    ) -> Record {
         let (name, home, flags) = match parent {
             Some((name, home)) => (name, home, HAS_PARENT),
             None => (NodeId::NONE, NO_HOME, 0),
@@ -92,6 +98,7 @@ impl Record {
             parent: name,
             last_from: name,
             parent_home: home,
+            highest_wrong: wrong,
             highest_hops: hops,
             last_hops: hops,
             flags,
@@ -113,8 +120,14 @@ impl Record {
 
     /// The largest count received for the message, or carried by a
     /// hand-over of it from this relay that succeeded (spec "Hop count").
-    pub fn highest_hops(&self) -> u8 {
+    pub fn highest_hops(&self) -> Hops {
         self.highest_hops
+    }
+
+    /// The largest wrong-hop count received for the message, or carried by
+    /// a hand-over of it from this relay that was taken or seen.
+    pub fn highest_wrong(&self) -> u8 {
+        self.highest_wrong
     }
 
     /// Whether the message has arrived: this relay owns the destination
@@ -142,24 +155,25 @@ impl Record {
     /// Whether a packet of the message from `from` with `hops` repeats
     /// the last one received: a retransmission whose ACK was lost
     /// (spec "Receiving DATA", "Hop count").
-    pub fn repeats(&self, from: NodeId, hops: u8) -> bool {
+    pub fn repeats(&self, from: NodeId, hops: Hops) -> bool {
         (from, hops) == (self.last_from, self.last_hops)
     }
 
-    /// A packet of the message from `from` with `hops` was received at
-    /// `now`, and taken.
-    pub fn received(&mut self, from: NodeId, hops: u8, now: Instant) {
+    /// A packet of the message from `from` with `hops` and `wrong` was
+    /// received at `now`, and taken.
+    pub fn received(&mut self, from: NodeId, (hops, wrong): (Hops, u8), now: Instant) {
         self.flags &= !LAST_SEEN;
         self.last_active = now;
         self.last_from = from;
         self.last_hops = hops;
         self.highest_hops = self.highest_hops.max(hops);
+        self.highest_wrong = self.highest_wrong.max(wrong);
     }
 
-    /// A packet of the message from `from` with `hops` was received at
-    /// `now` and answered seen (spec "Receiving DATA" case 6).
-    pub fn seen(&mut self, from: NodeId, hops: u8, now: Instant) {
-        self.received(from, hops, now);
+    /// A packet of the message from `from` with `hops` and `wrong` was
+    /// received at `now` and answered seen (spec "Receiving DATA" case 6).
+    pub fn seen(&mut self, from: NodeId, count: (Hops, u8), now: Instant) {
+        self.received(from, count, now);
         self.flags |= LAST_SEEN;
     }
 
@@ -168,10 +182,11 @@ impl Record {
         self.flags & LAST_SEEN != 0
     }
 
-    /// A hand-over of the message with count `hops` succeeded
-    /// (spec "Hop count").
-    pub fn handed_over(&mut self, hops: u8) {
+    /// A hand-over of the message with counts `hops` and `wrong`
+    /// succeeded or was answered seen (spec "Hop count").
+    pub fn handed_over(&mut self, (hops, wrong): (Hops, u8)) {
         self.highest_hops = self.highest_hops.max(hops);
+        self.highest_wrong = self.highest_wrong.max(wrong);
     }
 
     /// The neighbour in neighbour-table `slot` has had the message from
@@ -208,9 +223,10 @@ impl Records {
             parent: NodeId::NONE,
             last_from: NodeId::NONE,
             parent_home: NO_HOME,
+            highest_wrong: 0,
+            flags: 0,
             highest_hops: 0,
             last_hops: 0,
-            flags: 0,
             handed: 0,
             last_active: Instant::ZERO,
         };
@@ -320,7 +336,7 @@ impl Records {
 }
 
 /// Bytes of a record kept across a reset ([`Records::kept`]).
-pub const KEPT_LEN: usize = 32;
+pub const KEPT_LEN: usize = 35;
 
 impl Records {
     /// Every record active within `ttl` of `now`, as kept across a reset,
@@ -343,11 +359,12 @@ impl Records {
                 b[4..10].copy_from_slice(&r.parent.0);
                 b[10..16].copy_from_slice(&r.last_from.0);
                 b[16] = r.parent_home.index();
-                b[17] = r.highest_hops;
-                b[18] = r.last_hops;
-                b[19] = r.flags;
-                b[20..28].copy_from_slice(&r.handed.to_be_bytes());
-                put(&mut b[28..32], r.last_active, now, Round::Earlier);
+                b[17..19].copy_from_slice(&r.highest_hops.to_be_bytes());
+                b[19..21].copy_from_slice(&r.last_hops.to_be_bytes());
+                b[21] = r.highest_wrong;
+                b[22] = r.flags;
+                b[23..31].copy_from_slice(&r.handed.to_be_bytes());
+                put(&mut b[31..35], r.last_active, now, Round::Earlier);
                 b
             })
     }
@@ -364,13 +381,13 @@ impl Records {
         ttl: Duration,
         now: Instant,
     ) -> bool {
-        let Some(last_active) = super::kept::get(&b[28..32], then) else {
+        let Some(last_active) = super::kept::get(&b[31..35], then) else {
             return false;
         };
         let (Ok(parent), Ok(last_from), Ok(handed)) = (
             b[4..10].try_into(),
             b[10..16].try_into(),
-            b[20..28].try_into(),
+            b[23..31].try_into(),
         ) else {
             return false;
         };
@@ -382,9 +399,10 @@ impl Records {
             parent: NodeId(parent),
             last_from: NodeId(last_from),
             parent_home,
-            highest_hops: b[17],
-            last_hops: b[18],
-            flags: b[19],
+            highest_wrong: b[21],
+            flags: b[22],
+            highest_hops: Hops::from_be_bytes([b[17], b[18]]).min(MAX_HOPS),
+            last_hops: Hops::from_be_bytes([b[19], b[20]]).min(MAX_HOPS),
             handed: u64::from_be_bytes(handed),
             last_active,
         };
@@ -419,35 +437,37 @@ mod tests {
         assert_eq!(DRAIN, BAN.mul(103));
         assert_eq!(DRAIN.as_millis(), 162_900);
         assert_eq!(HELD, 103);
-        assert_eq!(RECORDS, 564 + 103);
+        assert_eq!(RECORDS, 546 + 103);
         assert_eq!(core::mem::size_of::<Record>(), 40);
     }
 
     #[test]
     fn record_fields() {
         let p = NodeId([0, 0, 0, 0, 0xab, 0xcd]);
-        let mut r = Record::new(MsgId(7), Some((p, ch(4))), 3, at(0));
+        let mut r = Record::new(MsgId(7), Some((p, ch(4))), (3, 1), at(0));
         assert_eq!(r.parent(), Some((p, ch(4))));
         assert!(!r.arrived());
         assert!(r.repeats(p, 3), "the packet that created it, again");
         assert!(!r.repeats(p, 2) && !r.repeats(NodeId([5; 6]), 3));
-        r.received(NodeId([5; 6]), 2, at(1));
+        r.received(NodeId([5; 6]), (2, 0), at(1));
         assert!(
             r.repeats(NodeId([5; 6]), 2) && !r.repeats(p, 3),
             "the last only"
         );
         assert_eq!((r.highest_hops(), r.last_active()), (3, at(1)));
-        r.received(NodeId([5; 6]), 9, at(2));
-        assert_eq!(r.highest_hops(), 9);
+        assert_eq!(r.highest_wrong(), 1);
+        r.received(NodeId([5; 6]), (9, 4), at(2));
+        assert_eq!((r.highest_hops(), r.highest_wrong()), (9, 4));
         assert!(!r.last_seen());
-        r.seen(NodeId([6; 6]), 4, at(3));
+        r.seen(NodeId([6; 6]), (4, 2), at(3));
         assert!(r.repeats(NodeId([6; 6]), 4) && r.last_seen());
         assert_eq!((r.highest_hops(), r.last_active()), (9, at(3)));
-        r.received(NodeId([6; 6]), 11, at(4));
+        r.received(NodeId([6; 6]), (11, 4), at(4));
         assert!(!r.last_seen(), "taken: the answer changes with the packet");
-        r.handed_over(12);
-        r.handed_over(10);
-        assert_eq!(r.highest_hops(), 12, "what it sent counts too");
+        r.handed_over((300, 5));
+        r.handed_over((10, 3));
+        assert_eq!(r.highest_hops(), 300, "what it sent counts too");
+        assert_eq!(r.highest_wrong(), 5);
         r.handed_to(63);
         assert!(r.handed(63) && !r.handed(0) && !r.handed(64));
         r.handed_to(0);
@@ -457,7 +477,7 @@ mod tests {
         r.set_arrived();
         assert!(r.arrived());
 
-        let origin = Record::new(MsgId(8), None, 0, at(0));
+        let origin = Record::new(MsgId(8), None, (0, 0), at(0));
         assert_eq!(origin.parent(), None);
         assert!(
             origin.repeats(NodeId::NONE, 0),
@@ -473,7 +493,7 @@ mod tests {
     #[test]
     fn records_have_no_lifetime() {
         let mut t = Records::new();
-        keep(&mut t, Record::new(MsgId(1), None, 0, at(0)));
+        keep(&mut t, Record::new(MsgId(1), None, (0, 0), at(0)));
         assert!(t.get(MsgId(1)).is_some());
         assert_eq!(t.len(), 1);
     }
@@ -483,24 +503,26 @@ mod tests {
         let mut t = Records::new();
         for i in 0..RECORDS as u32 {
             let now = at(i as u64);
-            assert_eq!(keep(&mut t, Record::new(MsgId(i), None, 0, now)), None);
+            assert_eq!(keep(&mut t, Record::new(MsgId(i), None, (0, 0), now)), None);
         }
         assert!(t.is_full());
         let now = at(RECORDS as u64);
         // Touch the oldest; hold the second oldest: the third goes.
         t.get_mut(MsgId(0)).unwrap().sent(now);
         let i = t.place(|id| id == MsgId(1)).unwrap();
-        let gone = t.put(i, Record::new(MsgId(10_000), None, 0, now)).unwrap();
+        let gone = t
+            .put(i, Record::new(MsgId(10_000), None, (0, 0), now))
+            .unwrap();
         assert_eq!(gone.id(), MsgId(2));
         assert!(t.get(MsgId(0)).is_some() && t.get(MsgId(1)).is_some());
         assert!(t.get(MsgId(10_000)).is_some() && t.get(MsgId(2)).is_none());
         // Received counts as touched too.
         t.get_mut(MsgId(3))
             .unwrap()
-            .received(NodeId([1; 6]), 1, now);
+            .received(NodeId([1; 6]), (1, 0), now);
         let i = t.place(|_| false).unwrap();
         assert_eq!(
-            t.put(i, Record::new(MsgId(10_001), None, 0, now))
+            t.put(i, Record::new(MsgId(10_001), None, (0, 0), now))
                 .unwrap()
                 .id(),
             MsgId(1)
@@ -512,7 +534,7 @@ mod tests {
     fn a_reoccupied_slot_is_not_handed() {
         let mut t = Records::new();
         for id in 0..3 {
-            keep(&mut t, Record::new(MsgId(id), None, 0, at(0)));
+            keep(&mut t, Record::new(MsgId(id), None, (0, 0), at(0)));
             let r = t.get_mut(MsgId(id)).unwrap();
             r.handed_to(7);
             r.handed_to(8);

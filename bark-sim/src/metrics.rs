@@ -513,6 +513,9 @@ pub struct DropCounts {
     pub no_route: u64,
     /// The hop cap (spec "Hop count").
     pub hop_cap: u64,
+    /// The wrong-hop cap (spec "Hop count"); left out where none was.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wrong_hop_cap: u64,
     /// No place for its record (spec "Message records").
     pub no_record: u64,
     /// The send queue was full (spec "Send queue").
@@ -562,6 +565,7 @@ impl DropCounts {
         let c = match r {
             DropReason::NoRoute => &mut self.no_route,
             DropReason::HopCap => &mut self.hop_cap,
+            DropReason::WrongHopCap => &mut self.wrong_hop_cap,
             DropReason::NoRecord => &mut self.no_record,
             DropReason::SendQueueFull => &mut self.send_queue_full,
             DropReason::Budget => &mut self.budget,
@@ -580,10 +584,11 @@ impl DropCounts {
     }
 
     /// Every counter with its name, as in the JSON output.
-    pub fn fields(&self) -> [(&'static str, u64); 15] {
+    pub fn fields(&self) -> [(&'static str, u64); 16] {
         [
             ("no_route", self.no_route),
             ("hop_cap", self.hop_cap),
+            ("wrong_hop_cap", self.wrong_hop_cap),
             ("no_record", self.no_record),
             ("send_queue_full", self.send_queue_full),
             ("budget", self.budget),
@@ -612,6 +617,7 @@ impl DropCounts {
         for (c, (_, n)) in [
             &mut out.no_route,
             &mut out.hop_cap,
+            &mut out.wrong_hop_cap,
             &mut out.no_record,
             &mut out.send_queue_full,
             &mut out.budget,

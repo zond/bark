@@ -139,9 +139,14 @@ mod tests {
         let parent = id
             .is_multiple_of(2)
             .then(|| (NodeId::from_u64(id as u64), Channel::new(3).unwrap()));
-        let mut rec = Record::new(MsgId(id), parent, (id % 9) as u8, now);
+        let mut rec = Record::new(
+            MsgId(id),
+            parent,
+            ((id % 9) as u16 * 100, (id % 7) as u8),
+            now,
+        );
         rec.handed_to(id as usize % NEIGHBOURS);
-        rec.received(NodeId::from_u64(7 + id as u64), 4, now);
+        rec.received(NodeId::from_u64(7 + id as u64), (4, 2), now);
         let at = r.records.place(|_| false).unwrap();
         r.records.put(at, rec);
     }
