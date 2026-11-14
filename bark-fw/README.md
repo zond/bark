@@ -1558,6 +1558,12 @@ It also logs each transmission as it ends, `tx ch=<k> airtime_us=<n>`,
 so that the bench can tell which board sent when another found a channel
 busy.
 
+Each listen-before-talk is logged `lbt ch=<k> preamble=<bool> dbm=<n>`,
+after the frame it let through or at the next one, so that the line
+delays no frame. Once a minute `bench: busy home=<k> tenths=[…]
+floor_dbm=[…]` gives each channel's busy estimate in tenths of a percent
+and its noise floor (spec "Busy estimate").
+
 `txpower` and `carrier` run in the node's loop between two of the
 driver's steps; `text` and `power` reach the core at its next step.
 

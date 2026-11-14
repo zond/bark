@@ -717,7 +717,10 @@ pub async fn run<'a>(
         kept,
     };
     #[cfg(feature = "bench")]
-    let (app, radio) = (crate::bench::App::from(app), crate::bench::Logged(radio));
+    let (app, radio) = (
+        crate::bench::App::from(app),
+        crate::bench::Logged::new(radio),
+    );
     let mut driver = Driver::new(Static { core, deaf }, radio, clock, app, dbm);
     log_start(config, dbm);
     let mut install = Install::new();
@@ -737,7 +740,11 @@ pub async fn run<'a>(
         kept.discharge.note(sleepy).await;
         report.log_if_due(&driver, now);
         #[cfg(feature = "bench")]
-        crate::bench::serve(&mut driver).await;
+        {
+            let core = &driver.core().core;
+            crate::bench::log_busy(core.busy(), core.home());
+            crate::bench::serve(&mut driver).await;
+        }
     }
 }
 

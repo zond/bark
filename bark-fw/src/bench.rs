@@ -188,6 +188,39 @@ fn status() {
     );
 }
 
+/// How often [`log_busy`] logs: each channel is read every 13 s and its
+/// estimate moves by a 138th a reading (spec "Busy estimate").
+const BUSY_EVERY: embassy_time::Duration = embassy_time::Duration::from_secs(60);
+
+/// When [`log_busy`] logs next.
+static BUSY_AT: Mutex<ThreadModeRawMutex, Cell<Option<embassy_time::Instant>>> =
+    Mutex::new(Cell::new(None));
+
+/// Once a minute: each channel's busy estimate in tenths of a percent and
+/// its noise floor, with the home channel, which the move rule compares
+/// (spec "Channel moves").
+pub fn log_busy(busy: &bark_proto::tables::busy::BusyEstimator, home: Channel) {
+    use bark_proto::tables::busy::ONE;
+    let now = embassy_time::Instant::now();
+    if BUSY_AT.lock(Cell::get).is_some_and(|at| now < at) {
+        return;
+    }
+    BUSY_AT.lock(|at| at.set(Some(now + BUSY_EVERY)));
+    let mut tenths = [0u16; bark_proto::radio::CHANNELS as usize];
+    let mut floors = [0i16; bark_proto::radio::CHANNELS as usize];
+    for c in Channel::all() {
+        let i = usize::from(c.index());
+        tenths[i] = (u64::from(busy.fraction(c)) * 1000 / u64::from(ONE)) as u16;
+        floors[i] = busy.noise_floor_dbm(c);
+    }
+    log::info!(
+        "bench: busy home={} tenths={:?} floor_dbm={:?}",
+        home.index(),
+        tenths,
+        floors
+    );
+}
+
 /// The node's application under the bench's commands: a text is offered
 /// after whatever the application itself has, and the power the bench
 /// tells it is the core's.
@@ -392,21 +425,48 @@ async fn send_carrier(radio: &mut Logged<Radio<'_>>, channel: Channel, seconds: 
 }
 
 /// The radio with each transmission logged as it ends, its channel and
-/// its time on air: the bench's check of a skipped heartbeat asks which
-/// board sent then (`scripts/checks.py`).
-pub struct Logged<R>(pub R);
+/// its time on air, and each listen-before-talk with its reading: the
+/// bench's check of a skipped heartbeat asks which board sent then, and
+/// what the node read (`scripts/checks.py`).
+pub struct Logged<R> {
+    radio: R,
+    /// The last listen-before-talk, logged once the frame it let through
+    /// is sent, or at the next: a line between the two would delay the
+    /// frame.
+    checked: Option<(Channel, bool, i16)>,
+}
+
+impl<R> Logged<R> {
+    pub fn new(radio: R) -> Logged<R> {
+        Logged {
+            radio,
+            checked: None,
+        }
+    }
+
+    fn log_checked(&mut self) {
+        if let Some((channel, preamble, dbm)) = self.checked.take() {
+            log::info!(
+                "lbt ch={} preamble={} dbm={}",
+                channel.index(),
+                preamble,
+                dbm
+            );
+        }
+    }
+}
 
 // The node's loop reads the radio it wraps.
 impl<R> core::ops::Deref for Logged<R> {
     type Target = R;
     fn deref(&self) -> &R {
-        &self.0
+        &self.radio
     }
 }
 
 impl<R> core::ops::DerefMut for Logged<R> {
     fn deref_mut(&mut self) -> &mut R {
-        &mut self.0
+        &mut self.radio
     }
 }
 
@@ -415,34 +475,39 @@ impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
     const DEAF_TO: Option<NodeId> = R::DEAF_TO;
 
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
-        self.0.listen(channel).await
+        self.radio.listen(channel).await
     }
 
     async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error> {
-        self.0.sniff(channel).await
+        self.radio.sniff(channel).await
     }
 
     async fn wait(&mut self) -> Result<(), Self::Error> {
-        self.0.wait().await
+        self.radio.wait().await
     }
 
     async fn service(
         &mut self,
         buf: &mut [u8; MAX_FRAME],
     ) -> Result<bark_driver::Heard, Self::Error> {
-        self.0.service(buf).await
+        self.radio.service(buf).await
     }
 
     async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Self::Error> {
-        self.0.lbt(channel).await
+        self.log_checked();
+        let read = self.radio.lbt(channel).await;
+        if let Ok((preamble, dbm)) = read {
+            self.checked = Some((channel, preamble, dbm));
+        }
+        read
     }
 
     async fn rssi(&mut self) -> Result<i16, Self::Error> {
-        self.0.rssi().await
+        self.radio.rssi().await
     }
 
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error> {
-        let sent = self.0.transmit(frame, dbm).await;
+        let sent = self.radio.transmit(frame, dbm).await;
         // After it, so that the log takes no time between the
         // listen-before-talk and the frame.
         log::info!(
@@ -450,10 +515,11 @@ impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
             frame.channel.index(),
             time_on_air(frame.len, frame.preamble_symbols).as_micros()
         );
+        self.log_checked();
         sent
     }
 
     fn recover(&mut self) {
-        self.0.recover()
+        self.radio.recover()
     }
 }
