@@ -12,6 +12,18 @@
 #![no_std]
 #![no_main]
 
+/// The future `run`, each of its polls timed as `timing::$task`'s in the
+/// bench build (`timing.rs`), as it is in others.
+macro_rules! timed {
+    ($task:ident, $run:expr) => {{
+        #[cfg(feature = "bench")]
+        let run = crate::timing::timed(&crate::timing::$task, $run);
+        #[cfg(not(feature = "bench"))]
+        let run = $run;
+        run
+    }};
+}
+
 mod battery;
 #[cfg(feature = "bench")]
 mod bench;
@@ -46,6 +58,8 @@ mod stack;
 mod store;
 #[cfg(not(feature = "console"))]
 mod tables;
+#[cfg(feature = "bench")]
+mod timing;
 mod touch;
 mod update;
 mod usb_log;
@@ -81,26 +95,27 @@ bind_interrupts!(struct Irqs {
 });
 
 /// Where the task being polled is, for the bench build's longest poll
-/// (`bench::at`); nothing in other builds.
+/// (`timing::at`); nothing in other builds.
 #[inline(always)]
 pub fn at(_place: &'static str) {
     #[cfg(feature = "bench")]
-    bench::at(_place);
+    timing::at(_place);
 }
 
-// The MPSL's interrupts beside ours (`ble.rs`); TEMP is the MPSL's.
+// The MPSL's interrupts beside ours (`ble.rs`); TEMP is the MPSL's. The
+// bench build times each (`timing.rs`).
 #[cfg(not(feature = "console"))]
 bind_interrupts!(struct Irqs {
-    USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => vbus_detect::InterruptHandler, power::InterruptHandler, nrf_mpsl::ClockInterruptHandler;
-    SPI2 => spim::InterruptHandler<peripherals::SPI2>;
-    TWISPI1 => spim::InterruptHandler<peripherals::TWISPI1>;
-    SAADC => embassy_nrf::saadc::InterruptHandler;
-    EGU0_SWI0 => nrf_mpsl::LowPrioInterruptHandler;
-    RADIO => nrf_mpsl::HighPrioInterruptHandler;
-    TIMER0 => nrf_mpsl::HighPrioInterruptHandler;
-    RTC0 => nrf_mpsl::HighPrioInterruptHandler;
-    UARTE1 => embassy_nrf::uarte::InterruptHandler<peripherals::UARTE1>;
+    USBD => #[cfg(feature = "bench")] timing::Enter, usb::InterruptHandler<peripherals::USBD>, #[cfg(feature = "bench")] timing::Leave;
+    CLOCK_POWER => #[cfg(feature = "bench")] timing::Enter, vbus_detect::InterruptHandler, power::InterruptHandler, nrf_mpsl::ClockInterruptHandler, #[cfg(feature = "bench")] timing::Leave;
+    SPI2 => #[cfg(feature = "bench")] timing::Enter, spim::InterruptHandler<peripherals::SPI2>, #[cfg(feature = "bench")] timing::Leave;
+    TWISPI1 => #[cfg(feature = "bench")] timing::Enter, spim::InterruptHandler<peripherals::TWISPI1>, #[cfg(feature = "bench")] timing::Leave;
+    SAADC => #[cfg(feature = "bench")] timing::Enter, embassy_nrf::saadc::InterruptHandler, #[cfg(feature = "bench")] timing::Leave;
+    EGU0_SWI0 => #[cfg(feature = "bench")] timing::Enter, nrf_mpsl::LowPrioInterruptHandler, #[cfg(feature = "bench")] timing::Leave;
+    RADIO => #[cfg(feature = "bench")] timing::Enter, nrf_mpsl::HighPrioInterruptHandler, #[cfg(feature = "bench")] timing::Leave;
+    TIMER0 => #[cfg(feature = "bench")] timing::Enter, nrf_mpsl::HighPrioInterruptHandler, #[cfg(feature = "bench")] timing::Leave;
+    RTC0 => #[cfg(feature = "bench")] timing::Enter, nrf_mpsl::HighPrioInterruptHandler, #[cfg(feature = "bench")] timing::Leave;
+    UARTE1 => #[cfg(feature = "bench")] timing::Enter, embassy_nrf::uarte::InterruptHandler<peripherals::UARTE1>, #[cfg(feature = "bench")] timing::Leave;
 });
 
 /// The priority of every interrupt of ours in the node build: below the
@@ -204,6 +219,8 @@ async fn main(spawner: Spawner) {
     // Mutable for the seed's borrow of the generator in the node build.
     #[cfg_attr(feature = "console", allow(unused_mut))]
     let mut p = embassy_nrf::init(chip_config());
+    #[cfg(feature = "bench")]
+    timing::start();
     #[cfg(not(feature = "console"))]
     let clocks = Clocks::start(
         ble::MpslParts {
@@ -701,7 +718,7 @@ fn log_line(record: &log::Record<'_>, line: &mut bark_driver::record::Line<{ usb
 /// The USB device.
 #[embassy_executor::task]
 async fn usb_device(mut device: embassy_usb::UsbDevice<'static, UsbDriver>) {
-    device.run().await
+    timed!(USB, device.run()).await
 }
 
 /// The log, to the host, and what the host types: commands for the
@@ -714,19 +731,19 @@ async fn log_sink(class: CdcAcmClass<'static, UsbDriver>) {
     let input = bench::host_input;
     #[cfg(not(any(feature = "console", feature = "bench")))]
     let input = async |_: &[u8]| {};
-    LOGGER.run(class, input).await
+    timed!(LOG, LOGGER.run(class, input)).await
 }
 
 /// The bootloader from the serial port (`touch.rs`).
 #[embassy_executor::task]
 async fn touch_task() {
-    touch::run().await
+    timed!(TOUCH, touch::run()).await
 }
 
 /// The watchdog of an image on trial (`update.rs`).
 #[embassy_executor::task]
 async fn watchdog(dog: embassy_nrf::Peri<'static, peripherals::WDT>) {
-    update::watchdog(dog).await
+    timed!(WATCHDOG, update::watchdog(dog)).await
 }
 
 /// The radio's start, logged.
@@ -749,14 +766,14 @@ async fn blink(
     pin: embassy_nrf::Peri<'static, peripherals::P1_01>,
     mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>,
 ) {
-    on_usb_only(pin, mpsl).await
+    timed!(LED, on_usb_only(pin, mpsl)).await
 }
 
 /// The MPSL's own work (`ble.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn mpsl_task(mpsl: &'static nrf_mpsl::MultiprotocolServiceLayer<'static>) {
-    mpsl.run().await
+    timed!(MPSL, mpsl.run()).await
 }
 
 /// The phone link: the controller once the image has confirmed itself
@@ -775,10 +792,11 @@ async fn phone(
     match ble::controller(parts, rng, mpsl) {
         Ok(c) => {
             let image = update::BARK_IMAGE_VERSION;
-            let run = ble::run(spawner, c, node_id(), image, internal, flash);
-            #[cfg(feature = "bench")]
-            let run = bench::timed(&bench::PHONE, run);
-            run.await
+            timed!(
+                PHONE,
+                ble::run(spawner, c, node_id(), image, internal, flash)
+            )
+            .await
         }
         // An nRF errno, negated (`nrf_mpsl::Error`).
         Err(e) => log::error!("ble: controller {}", i32::from(e)),
@@ -789,17 +807,14 @@ async fn phone(
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn mesh(flash: &'static update::Flash, internal: &'static store::SharedFlash) {
-    let run = update::mesh::run(flash, internal);
-    #[cfg(feature = "bench")]
-    let run = bench::timed(&bench::UPDATE, run);
-    run.await
+    timed!(UPDATE, update::mesh::run(flash, internal)).await
 }
 
 /// A gathered image's trial (`update::trial`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn trial(internal: &'static store::SharedFlash) {
-    update::trial(internal).await
+    timed!(TRIAL, update::trial(internal)).await
 }
 
 /// What the radio's task takes.
@@ -886,14 +901,14 @@ async fn screen(
     spim: embassy_nrf::Peri<'static, peripherals::TWISPI1>,
     fixed: bark_screen::Fixed<'static>,
 ) {
-    display::run(pins, spim, Irqs, fixed).await
+    timed!(SCREEN, display::run(pins, spim, Irqs, fixed)).await
 }
 
 /// The user button (`button.rs`).
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn user_button(pin: embassy_nrf::Peri<'static, peripherals::P1_10>) {
-    button::run(pin).await
+    timed!(BUTTON, button::run(pin)).await
 }
 
 /// Blink half-period: 1 Hz means 500 ms on, 500 ms off.

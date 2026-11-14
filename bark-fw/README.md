@@ -1643,25 +1643,47 @@ busy.
 
 Each listen-before-talk is logged `lbt ch=<k> preamble=<bool> dbm=<n>`,
 after the frame it let through or at the next one, so that the line
-delays no frame. One that got no reading inside its CAD, and so `dbm=0`,
-is followed by `bench: no reading ch=<k> wake_us=<n> late=<bool>
-start=<running|restart|cold> off_us=<n> delay_us=<n> cad_us=<n>`:
-`wake_us` is when the wait for the read ended, from the CAD's start;
-`late=true`, past the CAD's 2 048 µs of sampling, means no read was made,
-another task having held the processor, and `late=false` that the chip
+delays no frame. Each reading of the busy sweep is logged `rssi ch=<k>
+dbm=<n>`.
+
+The bench build times the work beside the radio (`timing.rs`, Work
+beside the radio, above) in the processor's cycles: each task's polls,
+less the interrupts that came during them, and each interrupt bound in
+`main.rs`, from its first handler to its last, one that comes inside
+another counted in the other's. GPIOTE's and the clock's interrupts,
+which embassy-nrf binds itself, count as the time of the task they come
+in. A task's place is what it last said it was doing (`crate::at`): a
+step of the update's store (`slot`, `erase`, `find`, `weigh`, `sum`,
+`write`, `scan`, `open`, `clear`, `wait` for the chip, …), `fill` for a
+piece served, `verify` and `hash` for the running image at boot, `stage`,
+`commit`, `read`, `program`, or `-`; a poll's place is the one it spent
+longest at.
+
+A check that got no reading inside its CAD, and so `dbm=0`, is followed
+by `bench: no reading ch=<k> wake_us=<n> late=<bool>
+start=<running|restart|cold> off_us=<n> delay_us=<n> cad_us=<n>
+entered_us=<n> read_us=<n> tasks_us=<n> task=<task>:<place>:<us>
+irq_us=<n> irq=<interrupt>:<us>`. `wake_us` is when the wait for the
+read ended, from the CAD's start; `late=true`, past the CAD's 2 048 µs of
+sampling, means no read was made, and `late=false` that the chip
 answered with no reading. `start` is the oscillator's start for the CAD,
 `running` from receive, with how long it had been off and the delay
-programmed, `-` where none; `cad_us` is from the CAD's start to its result read. Each reading of the busy sweep is logged `rssi ch=<k> dbm=<n>`. Once a minute `bench: busy home=<k> tenths=[…]
-floor_dbm=[…]` gives each channel's busy estimate in tenths of a percent
-and its noise floor (spec "Busy estimate"), followed by `bench: longest
-poll task=<update|phone> us=<n> at=<place>` for the update over the
-mesh's task and the phone link's: its longest single poll since the
-last line, to the 30.5 µs tick, and where it was, a step of the store
-(`slot`, `erase`, `find`, `weigh`, `sum`, `write`, `scan`, `open`, …),
-`fill` for a piece served, `hash` and `verify` for the running image at
-boot, `stage`, `commit`, `read`, `program`, or `-`. Under 250 µs
-(Work beside the radio, above) the task holds the radio up by no more
-than its bound.
+programmed, `-` where none; `entered_us` is from `SetCAD` to the CAD's
+start as the driver saw it, `read_us` the read's own time, and `cad_us`
+from the CAD's start to its result read. The rest is what ran from the
+check's start to its end: the tasks' time, the longest of their polls,
+the interrupts' time and the longest of them.
+
+Once a minute `bench: busy home=<k> tenths=[…] floor_dbm=[…]` gives each
+channel's busy estimate in tenths of a percent and its noise floor (spec
+"Busy estimate"), followed by `bench: longest poll task=<task> us=<n>
+at=<place>` for each task but the radio's, its longest poll since the
+last line less the interrupts in it, and `bench: interrupts us=<n>
+longest=<interrupt>:<us>`, the time in interrupts since the last line and
+the longest. The tasks are `update`, `phone` (the phone link's host),
+`link` (its links' slots), `gps`, `screen`, `store`, `mailbox`, `log`,
+`usb`, `mpsl`, `trial`, `led`, `button`, `touch` and `watchdog`. A poll
+under 250 µs holds the radio up by no more than its bound.
 
 `txpower`, `tcxo` and `carrier` run in the node's loop between two of the
 driver's steps; `text` and `power` reach the core at its next step.

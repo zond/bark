@@ -150,7 +150,11 @@ fn runs(gps: Gps) -> bool {
 }
 
 #[embassy_executor::task]
-pub async fn run(mut p: Parts) -> ! {
+pub fn run(p: Parts) -> impl core::future::Future<Output = ()> {
+    timed!(GPS, work(p))
+}
+
+async fn work(mut p: Parts) {
     let mut wake = Output::new(p.pins.standby, Level::Low, OutputDrive::Standard);
     let mut config = uarte::Config::default();
     config.baudrate = BAUD;
