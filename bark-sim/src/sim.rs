@@ -401,6 +401,9 @@ struct OriginRecord {
     airtime_us: u64,
     /// The largest hand-over count a DATA frame of it carried (spec "Hop count").
     hops: u16,
+    /// The counts, hand-overs and wrong hops, of the last DATA of it its
+    /// destination node received, addressed to it.
+    at_dst: Option<(u16, u8)>,
     /// How far apart its origin and destination were when it was sent,
     /// and whether its destination was walking then.
     distance_m: f64,
@@ -443,6 +446,9 @@ pub struct MessageRow {
     pub airtime_s: f64,
     /// The largest hand-over count it carried.
     pub hops: u16,
+    /// The hand-over and wrong-hop counts of the last DATA of it its
+    /// destination received.
+    pub at_dst: Option<(u16, u8)>,
     /// Straight-line distance from origin to destination when it was
     /// sent, metres.
     pub distance_m: f64,
@@ -2235,6 +2241,12 @@ impl Sim {
             if let Ok(bark_proto::wire::Packet::Data(d)) = bark_proto::wire::Packet::decode(bytes) {
                 if d.dst_hop == self.relays[node as usize].id() {
                     self.arrival_hops[usize::from(d.hops).min(255)] += 1;
+                    if d.dst_id == d.dst_hop {
+                        let tag = self.msg_tags.get(&d.msg_id().0).copied();
+                        if let Some(o) = tag.and_then(|t| self.origins.get_mut(t as usize)) {
+                            o.at_dst = Some((d.hops, d.wrong));
+                        }
+                    }
                 }
             }
         }
@@ -4220,6 +4232,7 @@ impl Sim {
                 frames: o.frames,
                 airtime_s: o.airtime_us as f64 / 1e6,
                 hops: o.hops,
+                at_dst: o.at_dst,
                 distance_m: o.distance_m,
                 dst_walking: o.dst_walking,
                 taken_s: o.taken_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
@@ -4281,7 +4294,7 @@ impl Sim {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end,src_sleepy\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end,src_sleepy,dst_hops,dst_wrong\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -4338,8 +4351,12 @@ impl Sim {
                 .offer_log
                 .get(&r.tag)
                 .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
+            let (dst_hops, dst_wrong) =
+                r.at_dst.map_or((String::new(), String::new()), |(h, w)| {
+                    (h.to_string(), w.to_string())
+                });
             s.push_str(&format!(
-                ",{},{offers},{hops},{flaps},{},{},{},{},{},{},{}\n",
+                ",{},{offers},{hops},{flaps},{},{},{},{},{},{},{},{dst_hops},{dst_wrong}\n",
                 w.elsewhere,
                 relay(r.holder),
                 r.holder_anchor_end,
@@ -4582,6 +4599,7 @@ impl Sim {
             frames: 0,
             airtime_us: 0,
             hops: 0,
+            at_dst: None,
             distance_m: self.place(src).dist(self.place(dst)),
             dst_walking: self
                 .walks
@@ -5645,6 +5663,7 @@ mod tests {
                 frames: 0,
                 airtime_us: 0,
                 hops: 0,
+                at_dst: None,
                 distance_m: 0.0,
                 dst_walking: false,
                 src_relay: None,

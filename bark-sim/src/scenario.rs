@@ -120,6 +120,7 @@ pub struct ProtocolOverrides {
     pub sleepy_listens: Option<bool>,
     pub fixed_after_ms: Option<u64>,
     pub grace_ms: Option<u64>,
+    pub wrong_hop_cap: Option<u8>,
 }
 
 impl ProtocolOverrides {
@@ -167,6 +168,7 @@ impl ProtocolOverrides {
         set!(sleepy_listens);
         set!(fixed_after, fixed_after_ms, ms);
         set!(grace, grace_ms, ms);
+        set!(wrong_hop_cap);
         c
     }
 }
@@ -1148,11 +1150,14 @@ mod tests {
         let o = ProtocolOverrides {
             ack_timeout_ms: Some(250),
             tx_power_dbm: Some(7),
+            wrong_hop_cap: Some(32),
             ..Default::default()
         };
         let c = o.config();
         assert_eq!(c.ack_timeout, Duration::from_millis(250));
         assert_eq!(c.tx_power_dbm, 7);
+        assert_eq!(c.wrong_hop_cap, 32);
+        assert_eq!(Config::default().wrong_hop_cap, 255);
         assert_eq!(c.heartbeat_min, Config::default().heartbeat_min);
     }
 
