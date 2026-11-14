@@ -51,6 +51,8 @@ pub enum Command<'a> {
     Power(Power),
     /// The transmit power, dBm conducted, before the radio's limits.
     TxPower(i8),
+    /// The least cold oscillator delay, µs, before the probed range.
+    Tcxo(u32),
     /// Transmit on `channel` for `seconds`.
     Carrier {
         channel: Channel,
@@ -64,7 +66,7 @@ pub enum Command<'a> {
 
 /// The commands, for a line that is none of them.
 pub const HELP: &str = "commands: text <id> <lat> <lon> <words> | power <usb|battery|real> | \
-txpower <dbm> | carrier <k> <seconds> | reboot | status | forget";
+txpower <dbm> | tcxo <us> | carrier <k> <seconds> | reboot | status | forget";
 
 pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim();
@@ -82,6 +84,11 @@ pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
             args.next()
                 .and_then(|w| w.parse().ok())
                 .ok_or("txpower: a whole number of dBm")?,
+        ),
+        "tcxo" => Command::Tcxo(
+            args.next()
+                .and_then(|w| w.parse().ok())
+                .ok_or("tcxo: a whole number of microseconds")?,
         ),
         "carrier" => {
             let channel = args
@@ -271,6 +278,7 @@ mod tests {
         assert_eq!(parse("power real"), Ok(Command::Power(Power::Real)));
         assert_eq!(Power::Real.told(), None);
         assert_eq!(parse("txpower -9"), Ok(Command::TxPower(-9)));
+        assert_eq!(parse("tcxo 750"), Ok(Command::Tcxo(750)));
         assert_eq!(
             parse("carrier 12 900"),
             Ok(Command::Carrier {
@@ -286,6 +294,10 @@ mod tests {
             "power mains",
             "txpower",
             "txpower 3.5",
+            "tcxo",
+            "tcxo -250",
+            "tcxo 0.75",
+            "tcxo 750 us",
             "carrier 13 10",
             "carrier 3 0",
             "carrier 3 1801",

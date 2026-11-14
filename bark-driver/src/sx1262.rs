@@ -331,7 +331,7 @@ pub enum LbtRead {
     After,
 }
 
-/// The phases of a listen-before-talk, for the console.
+/// The phases of a listen-before-talk, for the console and the bench.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LbtTiming {
     /// The CAD saw a preamble.
@@ -340,8 +340,13 @@ pub struct LbtTiming {
     pub dbm: i16,
     /// The reading as read inside the CAD, if one was.
     pub inside_dbm: Option<i16>,
+    /// The oscillator's start for the CAD.
+    pub start: Start,
     /// From the call to the CAD's start.
     pub prepare: Duration,
+    /// From the CAD's start to the wake for the read inside it: past
+    /// [`CAD_SAMPLING`] no read was made.
+    pub wake: Duration,
     /// The RSSI read inside the CAD.
     pub read: Duration,
     /// From the CAD's start to its result read and cleared.
@@ -349,6 +354,20 @@ pub struct LbtTiming {
     /// After the CAD, to the reading after it, if the reading is taken
     /// after.
     pub after: Duration,
+}
+
+/// One CAD as [`Sx1262::cad`] ran it.
+struct CadRun {
+    busy: bool,
+    /// The reading as read, `None` if there was none or the read came too
+    /// late to be one.
+    inside: Option<i16>,
+    start: Start,
+    /// The phases, as [`LbtTiming`] names them.
+    prepare: Duration,
+    wake: Duration,
+    read: Duration,
+    cad: Duration,
 }
 
 /// The phases of a transmission, for the console.
@@ -503,6 +522,13 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// more than a cold start's.
     pub fn restart_delay(&self) -> Duration {
         self.restart.delay.min(self.cold.delay)
+    }
+
+    /// Start cold with `delay`, within the range the search probes, until
+    /// an error or the schedule moves it: for the bench, to test a delay
+    /// against the one probed.
+    pub fn set_cold_delay(&mut self, delay: Duration) {
+        self.cold.delay = delay.clamp(tcxo::MIN, tcxo::MAX);
     }
 
     /// The last start of the oscillator.
@@ -956,15 +982,9 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.note(r)
     }
 
-    /// One CAD on `channel`, with the RSSI read inside it if `read`:
-    /// whether a preamble was seen, and the reading as read, `None` if
-    /// there was none or the read came too late to be one. Leaves the
-    /// chip in STDBY_RC.
-    async fn cad(
-        &mut self,
-        channel: Channel,
-        read: bool,
-    ) -> Result<(bool, Option<i16>, [Duration; 3]), Error<C::Error>> {
+    /// One CAD on `channel`, with the RSSI read inside it if `read`.
+    /// Leaves the chip in STDBY_RC.
+    async fn cad(&mut self, channel: Channel, read: bool) -> Result<CadRun, Error<C::Error>> {
         let t0 = self.clock.now();
         let receiving = matches!(self.held.mode, Mode::Rx | Mode::Sniff);
         self.ready().await?;
@@ -983,16 +1003,17 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let started = self.clock.now();
         let mut inside = None;
         let mut read_took = Duration::ZERO;
+        let mut wake = Duration::ZERO;
         if read {
             self.clock.at(started + RSSI_SETTLE).await;
             let t_read = self.clock.now();
+            wake = t_read.since(started);
             if t_read <= started + CAD_SAMPLING {
                 let r = self.chip.rssi().await;
                 inside = Some(self.note(r)?);
             }
             read_took = self.clock.now().since(t_read);
         }
-        let read = read_took;
         let r = self.chip.await_irq(Some(CAD_TIME + IRQ_SLACK)).await;
         self.note(r)?;
         let r = self.chip.irq_status().await;
@@ -1011,9 +1032,15 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             return Err(Error::NotDone(flags));
         }
         self.after_start(start).await?;
-        let busy = flags & irq::CAD_DETECTED != 0;
-        let phases = [started.since(t0), read, ended.since(started)];
-        Ok((busy, inside.filter(|&d| d > NO_READING_DBM), phases))
+        Ok(CadRun {
+            busy: flags & irq::CAD_DETECTED != 0,
+            inside: inside.filter(|&d| d > NO_READING_DBM),
+            start,
+            prepare: started.since(t0),
+            wake,
+            read: read_took,
+            cad: ended.since(started),
+        })
     }
 
     /// Listen before talking on `channel`: the CAD and the reading, on
@@ -1021,9 +1048,9 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// standby, or listening on `channel` if the reading is taken after
     /// the CAD.
     pub async fn lbt(&mut self, channel: Channel) -> Result<LbtTiming, Error<C::Error>> {
-        let (busy, inside, [prepare, read, cad]) = self.cad(channel, true).await?;
+        let c = self.cad(channel, true).await?;
         let mut after = Duration::ZERO;
-        let dbm = match (self.lbt, inside) {
+        let dbm = match (self.lbt, c.inside) {
             (LbtRead::Inside { offset_db }, Some(dbm)) => dbm - offset_db,
             // No reading: the top of the scale, so the core does not
             // transmit on a check it never got.
@@ -1038,12 +1065,14 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             }
         };
         Ok(LbtTiming {
-            busy,
+            busy: c.busy,
             dbm,
-            inside_dbm: inside,
-            prepare,
-            read,
-            cad,
+            inside_dbm: c.inside,
+            start: c.start,
+            prepare: c.prepare,
+            wake: c.wake,
+            read: c.read,
+            cad: c.cad,
             after,
         })
     }
@@ -1054,8 +1083,8 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         &mut self,
         channel: Channel,
     ) -> Result<(bool, Duration, Duration), Error<C::Error>> {
-        let (busy, _, [prepare, _, cad]) = self.cad(channel, false).await?;
-        Ok((busy, prepare, cad))
+        let c = self.cad(channel, false).await?;
+        Ok((c.busy, c.prepare, c.cad))
     }
 
     /// Send `frame` at `dbm` conducted. Leaves the chip in STDBY_XOSC.
@@ -1279,8 +1308,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             self.receive(channel).await?;
             self.clock.at(self.clock.now() + RSSI_SETTLE).await;
             let listening = self.rssi().await?;
-            let (_, inside, _) = self.cad(channel, true).await?;
-            let Some(inside) = inside else {
+            let Some(inside) = self.cad(channel, true).await?.inside else {
                 continue;
             };
             *diff = inside - listening;
@@ -1483,8 +1511,10 @@ mod tests {
         wedged: bool,
     }
 
+    /// The time, and how late each wait ends: another task holding the
+    /// processor.
     #[derive(Clone)]
-    struct FakeClock(Rc<RefCell<Instant>>);
+    struct FakeClock(Rc<RefCell<Instant>>, Rc<RefCell<Duration>>);
 
     impl Clock for FakeClock {
         fn now(&self) -> Instant {
@@ -1494,7 +1524,7 @@ mod tests {
         async fn at(&self, t: Instant) {
             let mut now = self.0.borrow_mut();
             if t > *now {
-                *now = t;
+                *now = t + *self.1.borrow();
             }
         }
     }
@@ -1502,7 +1532,10 @@ mod tests {
     impl Fake {
         fn new(board: Board) -> (Fake, Rc<RefCell<Vec<Cmd>>>, FakeClock) {
             let cmds = Rc::new(RefCell::new(Vec::new()));
-            let clock = FakeClock(Rc::new(RefCell::new(Instant::ZERO)));
+            let clock = FakeClock(
+                Rc::new(RefCell::new(Instant::ZERO)),
+                Rc::new(RefCell::new(Duration::ZERO)),
+            );
             let fake = Fake {
                 cmds: cmds.clone(),
                 board: Rc::new(RefCell::new(board)),
@@ -2727,6 +2760,55 @@ mod tests {
         b.inside_dbm = -50;
         let (radio, _, _) = booted(b);
         assert_eq!(radio.lbt_read(), LbtRead::After);
+    }
+
+    /// The bench tells a read that came too late from one the chip
+    /// answered with no reading, and a CAD from receive, which starts no
+    /// oscillator, from one after a CAD.
+    #[test]
+    fn a_check_says_when_its_read_woke_and_how_its_oscillator_started() {
+        let (mut radio, _, clock) = booted(board());
+        let t = run(radio.lbt(ch(5))).unwrap();
+        assert_eq!(
+            (t.start, t.wake, t.inside_dbm),
+            (Start::Running, RSSI_SETTLE, Some(-75))
+        );
+        // Straight after a CAD the next one restarts the oscillator.
+        let t = run(radio.lbt(ch(5))).unwrap();
+        assert!(matches!(t.start, Start::Restart { .. }), "{:?}", t.start);
+        // Woken after the sampling: no read, and the check fails busy.
+        run(radio.listen(ch(3))).unwrap();
+        *clock.1.borrow_mut() = CAD_SAMPLING - RSSI_SETTLE + Duration::from_micros(1);
+        let t = run(radio.lbt(ch(5))).unwrap();
+        assert!(t.wake > CAD_SAMPLING);
+        assert_eq!((t.inside_dbm, t.dbm), (None, crate::FAILED_RSSI_DBM));
+        assert_eq!(t.read, Duration::ZERO);
+        // The chip's own no reading, read in time.
+        *clock.1.borrow_mut() = Duration::ZERO;
+        radio.chip().board.borrow_mut().inside_dbm = NO_READING_DBM;
+        run(radio.listen(ch(3))).unwrap();
+        let t = run(radio.lbt(ch(5))).unwrap();
+        assert_eq!((t.wake, t.inside_dbm), (RSSI_SETTLE, None));
+    }
+
+    #[test]
+    fn the_bench_sets_the_cold_delay_within_the_probed_range() {
+        let (mut radio, cmds, clock) = booted(board());
+        radio.set_cold_delay(Duration::ZERO);
+        assert_eq!(radio.cold().delay, tcxo::MIN);
+        radio.set_cold_delay(tcxo::MAX + tcxo::STEP);
+        assert_eq!(radio.cold().delay, tcxo::MAX);
+        radio.set_cold_delay(Duration::from_micros(750));
+        run(radio.lbt(ch(5))).unwrap();
+        let later = clock.now() + tcxo::COLD_WAIT;
+        *clock.0.borrow_mut() = later;
+        take(&cmds);
+        run(radio.listen(ch(3))).unwrap();
+        assert!(take(&cmds).contains(&Cmd::Tcxo(750)));
+        assert!(matches!(
+            radio.last_start(),
+            Start::Cold { delay, .. } if delay == Duration::from_micros(750)
+        ));
     }
 
     /// The cycle is derived for the least delay a probe can land on; a

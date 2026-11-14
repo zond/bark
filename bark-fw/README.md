@@ -1545,9 +1545,10 @@ command is echoed as `bench> <line>`, and what it does is logged in
 | `text <id> <lat> <lon> <words>` | send the words to node `id`, twelve hex digits, at the position in degrees, as the node's `node id=… at <lat> <lon>` line gives it, as a phone's message: offered to the core after any message of the node's own, and logged `bench: send id=<message ID> len=<bytes> taken` as it is taken, as a phone's is (`ble: send …`). One waits at a time. The message ID is the address's and the words', so the same words to the same node twice are one message |
 | `power <usb\|battery\|real>` | the power the core is told it is on from now on, `real` what USB detection says; the node then turns sleepy or relay by its own rules. The LED, the crystal, the update's battery check and the phone's status still follow the real supply |
 | `txpower <dbm>` | the transmit power, clamped to −9..10 dBm, from the next frame |
+| `tcxo <us>` | a floor under the oscillator's cold delay (Radio driver, below), clamped to the 250..4 000 µs the boot's search probes, logged `bench: tcxo floor <us> us`: whenever the search or a probe below has set the delay lower, it is raised to the floor at the next step, logged `bench: cold starts take <floor> us, the floor, not <us>`. An error still steps it up. `tcxo 250` lifts the floor |
 | `carrier <k> <seconds>` | transmit on k for up to 1 800 s, twice the longest a relay's move takes (spec "Channel moves"): two-byte frames, a bench frame's first two bytes (Console, above), each behind the longest preamble that ends in time, back to back. The node does nothing else meanwhile. A bench-only transmission: it keeps to no duty cycle (spec "Regulatory limits") |
 | `reboot` | reset, once the log has reached the host |
-| `status` | `reset`, the causes the chip recorded for the reset before this boot (nRF52840 Product Specification, POWER, RESETREAS: `pin`, `watchdog`, `software`, `lockup`, `debug`, an `off-` wake, or `power-on` for none), read at the first `status` of a boot and cleared; the `power` told; `tx_dbm`; `stack_used` of the stack's size |
+| `status` | `reset`, the causes the chip recorded for the reset before this boot (nRF52840 Product Specification, POWER, RESETREAS: `pin`, `watchdog`, `software`, `lockup`, `debug`, an `off-` wake, or `power-on` for none), read at the first `status` of a boot and cleared; the `power` told; `tx_dbm`; `tcxo_floor_us`; `stack_used` of the stack's size |
 | `forget` | drop what the node keeps of images other than its own, the image it gathers over the mesh and the versions it gave up (Updates), so that a bench run can use the versions an earlier run used; logged `bench: forgot the image gathered and the versions given up`, then a reboot, as the core keeps the image it was told to gather until it starts again. It waits for the update over the mesh to open its store after a boot. Refused, `bench: forget refused: <why>`, while the staged slot holds an image to swap in or the phone's update holds it |
 
 The rest the bench's checks read is in the node's own lines: the radio's
@@ -1560,11 +1561,19 @@ busy.
 
 Each listen-before-talk is logged `lbt ch=<k> preamble=<bool> dbm=<n>`,
 after the frame it let through or at the next one, so that the line
-delays no frame. Each reading of the busy sweep is logged `rssi ch=<k> dbm=<n>`. Once a minute `bench: busy home=<k> tenths=[…]
+delays no frame. One that got no reading inside its CAD, and so `dbm=0`,
+is followed by `bench: no reading ch=<k> wake_us=<n> late=<bool>
+start=<running|restart|cold> off_us=<n> delay_us=<n> cad_us=<n>`:
+`wake_us` is when the wait for the read ended, from the CAD's start;
+`late=true`, past the CAD's 2 048 µs of sampling, means no read was made,
+another task having held the processor, and `late=false` that the chip
+answered with no reading. `start` is the oscillator's start for the CAD,
+`running` from receive, with how long it had been off and the delay
+programmed, `-` where none; `cad_us` is from the CAD's start to its result read. Each reading of the busy sweep is logged `rssi ch=<k> dbm=<n>`. Once a minute `bench: busy home=<k> tenths=[…]
 floor_dbm=[…]` gives each channel's busy estimate in tenths of a percent
 and its noise floor (spec "Busy estimate").
 
-`txpower` and `carrier` run in the node's loop between two of the
+`txpower`, `tcxo` and `carrier` run in the node's loop between two of the
 driver's steps; `text` and `power` reach the core at its next step.
 
 The home channel cannot be pinned at run time: the core takes
