@@ -737,3 +737,48 @@ fn a_gatherer_that_hears_only_a_holder_elsewhere_is_served() {
         assert!(on_5 > 0, "hears the holder at home {hears_home}: none on 5");
     }
 }
+
+/// A holder streams today's image to one gatherer, pieces on the
+/// gatherer's home channel. They are the gatherer's own traffic and would
+/// follow it to any channel, so it does not count them as busy and stays
+/// (spec "Busy estimate").
+#[test]
+fn a_gatherer_does_not_flee_the_pieces_sent_to_it() {
+    use bark_proto::tables::busy::{percent, ONE};
+    use bark_proto::Trace;
+    let (image, needs) = todays_image();
+    let mut h = Harness::new(vec![relay(0.0, 1), relay(100.0, 2)]);
+    h.link(0, 1);
+    for n in &mut h.nodes {
+        n.updates = Some(Updates {
+            needs: needs.clone(),
+            ..Updates::default()
+        });
+    }
+    h.run_until(at(400), |_| false);
+    h.deliver_app(0, AppCommand::Holds(image));
+    let start = h.now;
+    let mut most = 0;
+    let mut t = start;
+    let mut done = false;
+    while !done && t < start + secs(12 * 3600) {
+        t += secs(60);
+        done = h.run_until(t, |h| {
+            h.nodes[1].updates.as_ref().unwrap().holds_at.is_some()
+        });
+        let r = &h.nodes[1].core;
+        most = most.max(r.busy().fraction(r.home()));
+    }
+    assert!(done, "the image did not arrive within twelve hours");
+    let moves = h.nodes[1]
+        .traces
+        .iter()
+        .filter(|(t, tr)| *t >= start && matches!(tr, Trace::HomeChannelMoved { .. }))
+        .count();
+    println!(
+        "home busy at most {:.2} %, {moves} moves",
+        most as f64 * 100.0 / ONE as f64
+    );
+    assert_eq!(moves, 0, "the gatherer moved");
+    assert!(most < percent(1), "the gatherer counts its own pieces");
+}
