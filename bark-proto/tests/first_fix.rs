@@ -209,3 +209,23 @@ fn a_node_stored_as_carried_has_no_place() {
     let kept = h.nodes[1].stored.expect("a place to keep");
     assert_eq!((kept.place, kept.carried), (pos(300.0), false));
 }
+
+/// A sleepy node with no place plugged in still takes its first accepted
+/// fix as its place, however late it comes.
+#[test]
+fn a_node_with_no_place_plugged_in_takes_its_first_fix() {
+    let mut h = pair(false);
+    h.run_until(at(1000), |_| false);
+    h.command(1, AppCommand::Power { external: true });
+    assert!(!h.nodes[1].core.placed());
+    h.run_for(secs(120));
+    h.command(
+        1,
+        AppCommand::Fix {
+            position: pos(30.0),
+        },
+    );
+    let node = &h.nodes[1].core;
+    assert!(node.placed() && !node.carried());
+    assert_eq!(node.config().position, pos(30.0));
+}

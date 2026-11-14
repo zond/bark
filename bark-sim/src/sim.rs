@@ -697,6 +697,9 @@ pub struct Sim {
     /// Per relay, its last first far fix, and whether it has turned fixed
     /// again since it was first carried.
     far_at: HashMap<u32, (Instant, bool)>,
+    /// Fixed nodes plugged in that have had no fix since: when, their
+    /// position then, and their entry in `metrics::Carried::plugged_fixed`.
+    plugged: HashMap<u32, (Instant, bark_proto::Position, usize)>,
     /// The walks under way, begun after the settle time, of walkers that
     /// were fixed relays when they set off: when the walk began, whether
     /// the node was on battery, and when it turned carried.
@@ -1330,6 +1333,7 @@ impl Sim {
             receivers: vec![Default::default(); n],
             held_far: HashMap::new(),
             far_at: HashMap::new(),
+            plugged: HashMap::new(),
             relay_walks: HashMap::new(),
             carried_flip: Default::default(),
             changing: HashMap::new(),
@@ -3108,6 +3112,13 @@ impl Sim {
                         let after = self.now >= self.settle;
                         self.carried_metrics().plugged_in += u64::from(after);
                     }
+                    Trace::Role { sleepy: false } if self.relays[node as usize].placed() => {
+                        let at = self.relays[node as usize].config().position;
+                        let c = self.carried_metrics();
+                        c.plugged_fixed.push(None);
+                        let k = c.plugged_fixed.len() - 1;
+                        self.plugged.insert(node, (self.now, at, k));
+                    }
                     Trace::Carried { carried } => self.note_carried(node, carried),
                     Trace::AnchorCarried => {
                         let after = self.now >= self.settle;
@@ -3591,6 +3602,14 @@ impl Sim {
         self.fixing = true;
         self.deliver(n, Event::App(AppCommand::Fix { position }));
         self.fixing = false;
+        if let Some((t, before, k)) = self.plugged.remove(&n) {
+            if self.now.since(t) <= bark_proto::gps::SEARCH_LIMIT {
+                let truly = self.origin.position(self.place(n));
+                let m = bark_proto::geo::LocalPlane::new(before).distance_m(before, truly);
+                let kept = self.relays[n as usize].config().position == before;
+                self.carried_metrics().plugged_fixed[k] = Some((kept, f64::from(m)));
+            }
+        }
         true
     }
 

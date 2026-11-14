@@ -1090,6 +1090,11 @@ pub struct Carried {
     pub sleepy_changed: (u64, f64),
     /// Nodes plugged in while carried, after the settle time.
     pub plugged_in: u64,
+    /// Every plug-in of a fixed node with a place, and of those whose
+    /// first fix came within a search's limit, whether that fix left its
+    /// position as it was, and how far the node truly was from that
+    /// position, m.
+    pub plugged_fixed: Vec<Option<(bool, f64)>>,
     /// Texts queued for a sleepy node at a node while it was carried: none
     /// is, since a carried node owns nothing by position.
     pub queued: u64,
