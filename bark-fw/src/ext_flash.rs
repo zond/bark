@@ -8,9 +8,12 @@
 //! Table 4-2, ISB and IDPD). So [`init`] puts it there once the rail is
 //! up, and the driver wakes it for each use and puts it back.
 //!
-//! One chip, kept here: its users all run in thread mode, so a read
-//! that waits out an erase, up to 12 ms, holds up the executor but masks
-//! no interrupt.
+//! One chip, kept here: its users all run in thread mode. A read or a
+//! start while another user's program or erase runs would wait it out in
+//! the driver, up to 12 ms, holding up the executor, so the asynchronous
+//! users here wait for the chip with a timer first ([`free`]), and move
+//! at most [`CHUNK`] bytes between two awaits (`README.md`, "Work beside
+//! the radio").
 
 use core::cell::RefCell;
 
@@ -90,8 +93,16 @@ pub fn with<R>(f: impl FnOnce(&mut Chip) -> R) -> Option<R> {
 /// What a use of a chip [`init`] did not find fails with.
 const NO_CHIP: Error = Error::Absent([0; 3]);
 
+pub use bark_image::ext_flash::CHUNK;
+
+// A transfer of a chunk is one stretch of work beside the radio.
+const _: () = assert!(
+    bark_image::ext_flash::read_us(CHUNK) as u64 <= crate::radio::STRETCH.as_micros()
+        && bark_image::ext_flash::program_us(CHUNK) as u64 <= crate::radio::STRETCH.as_micros()
+);
+
 #[cfg(not(feature = "console"))]
-pub use mailbox::{erase, erase_region, program};
+pub use mailbox::{erase, erase_region, free, program, read};
 
 #[cfg(not(feature = "console"))]
 pub use dfu::Dfu;
@@ -100,16 +111,39 @@ pub use dfu::Dfu;
 #[cfg(not(feature = "console"))]
 mod mailbox {
     use bark_image::ext_flash::{
-        Error, ERASE_MAX_US, ERASE_TYP_US, POLL_US, PROGRAM_MAX_US, PROGRAM_TYP_US, SECTOR,
+        Error, ERASE_MAX_US, ERASE_TYP_US, POLL_US, PROGRAM_MAX_US, SECTOR,
     };
     use bark_image::layout::Region;
     use embassy_time::Timer;
+    use embedded_storage::nor_flash::ReadNorFlash;
 
-    use super::{with, NO_CHIP};
+    use super::{with, CHUNK, NO_CHIP};
+
+    /// Resolves once no program or erase runs on the chip, whoever
+    /// started it, so that the next command does not wait it out on the
+    /// processor.
+    pub async fn free() {
+        while !with(|c| c.done()).unwrap_or(true) {
+            Timer::after_micros(POLL_US.into()).await;
+        }
+    }
+
+    /// Read `bytes` at `address`, [`CHUNK`] bytes between two awaits.
+    pub async fn read(address: u32, bytes: &mut [u8]) -> Result<(), Error> {
+        let mut at = address;
+        for part in bytes.chunks_mut(CHUNK) {
+            free().await;
+            with(|c| c.read(at, part)).unwrap_or(Err(NO_CHIP))?;
+            at += part.len() as u32;
+            embassy_futures::yield_now().await;
+        }
+        Ok(())
+    }
 
     /// Erase the sector at `address`, the executor free while the chip
     /// erases.
     pub async fn erase(address: u32) -> Result<(), Error> {
+        free().await;
         let started = with(|c| c.start_erase(address));
         wait(started, ERASE_TYP_US, ERASE_MAX_US).await
     }
@@ -124,15 +158,23 @@ mod mailbox {
     }
 
     /// Program `data` at `address`, within one page of the chip, the
-    /// executor free while the chip programs.
+    /// executor free while the chip programs: [`CHUNK`] bytes a Page
+    /// Program, each looked at from [`POLL_US`] on, since the datasheet
+    /// gives a page's time alone (Table 4-3, tPP).
     pub async fn program(address: u32, data: &[u8]) -> Result<(), Error> {
-        let started = with(|c| c.start_program(address, data));
-        wait(started, PROGRAM_TYP_US, PROGRAM_MAX_US).await
+        let mut at = address;
+        for part in data.chunks(CHUNK) {
+            free().await;
+            let started = with(|c| c.start_program(at, part));
+            wait(started, POLL_US, PROGRAM_MAX_US).await?;
+            at += part.len() as u32;
+        }
+        Ok(())
     }
 
-    /// Wait out a program or an erase that `started`: its typical time, then
-    /// a poll every [`POLL_US`] up to its maximum, then the driver's own
-    /// bounded wait. A read meanwhile waits for it in the driver.
+    /// Wait out a program or an erase that `started`: `typ_us`, then a
+    /// poll every [`POLL_US`] up to its maximum, then the driver's own
+    /// bounded wait.
     async fn wait(
         started: Option<Result<(), Error>>,
         typ_us: u32,
@@ -156,14 +198,15 @@ mod dfu {
     use bark_image::layout::external::DFU;
     use embedded_storage_async::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 
-    use super::{erase, program, with, NO_CHIP};
+    use super::{erase, program, read};
 
     /// The staged slot, addressed from its start, as the update's staging
     /// writes it (`bark_image::boot::Stager`): its erases and programs as
     /// the mailbox's, the executor free while the chip works; and each
-    /// read, as the staged image is hashed, a chunk at a time with the
-    /// executor let run between, so that the hash of a whole slot, some
-    /// seconds on this bus, holds nothing up for longer than a chunk.
+    /// read, as the staged image is hashed, [`super::CHUNK`] bytes at a
+    /// time with the executor let run between, so that the hash of a
+    /// whole slot, some seconds on this bus, holds nothing up for longer
+    /// than a chunk.
     pub struct Dfu;
 
     fn within(offset: u32, len: usize) -> Result<u32, Error> {
@@ -181,11 +224,7 @@ mod dfu {
         const READ_SIZE: usize = 1;
 
         async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Error> {
-            let at = within(offset, bytes.len())?;
-            let read = with(|c| embedded_storage::nor_flash::ReadNorFlash::read(c, at, bytes))
-                .unwrap_or(Err(NO_CHIP));
-            embassy_futures::yield_now().await;
-            read
+            read(within(offset, bytes.len())?, bytes).await
         }
 
         fn capacity(&self) -> usize {

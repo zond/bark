@@ -84,6 +84,19 @@ pub const RAIL_SETTLE: embassy_time::Duration =
 /// nRF52840 CPU clock, Hz (nRF52840 Product Specification, CLOCK).
 pub const CPU_HZ: u64 = 64_000_000;
 
+/// The longest any other task holds the processor between two awaits
+/// (`README.md`, "Work beside the radio"): a quarter of the shorter of
+/// two windows the radio's task must wake in, so that it can wait out
+/// four such stretches in either. One is what a listen-before-talk's
+/// reading has to spare, from its timer at `RSSI_SETTLE` into the CAD to
+/// the sampling's end, 1 024 µs; the other the oscillator's warm restart
+/// after the CAD, `tcxo::STILL_RUNNING`, 1 000 µs. 250 µs.
+pub const STRETCH: Duration = {
+    let reading = sx1262::CAD_SAMPLING.as_micros() - bark_proto::radio::RSSI_SETTLE.as_micros();
+    let restart = tcxo::STILL_RUNNING.as_micros();
+    Duration::from_micros(if reading < restart { reading } else { restart } / 4)
+};
+
 /// BUSY rises at most 600 ns after NSS rises (DS §8.3.1, T_SW). The driver
 /// polls BUSY right after each command; polled sooner it can still read the
 /// previous low, and the next command would reach a chip that is not ready.

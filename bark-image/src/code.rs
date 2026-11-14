@@ -193,6 +193,11 @@ impl Points {
         })
     }
 
+    /// Whether every weight is worked out.
+    pub fn weighed(&self) -> bool {
+        self.weighed == self.len
+    }
+
     /// Work out up to `rows` more weights; whether all are.
     pub fn weigh(&mut self, rows: usize) -> bool {
         let end = self.len.min(self.weighed + rows);
