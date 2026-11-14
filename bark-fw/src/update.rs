@@ -513,9 +513,10 @@ pub fn reboot_allowed(flash: &Flash, power: Power) -> bool {
 }
 
 /// How long [`reboot`] waits for the log to reach the host: the log's
-/// buffer at one 64-byte packet per 1 ms frame (USB 2.0 full speed, bulk).
+/// buffer at one 64-byte packet and the empty one that ends its transfer
+/// (`usb_log`), a 1 ms frame each (USB 2.0 full speed, bulk).
 const LOG_DRAIN: Duration =
-    Duration::from_millis((crate::usb_log::RING / crate::usb_log::PIECE) as u64);
+    Duration::from_millis((2 * crate::usb_log::RING / crate::usb_log::PIECE) as u64);
 
 /// Reset the chip, to let the loader swap, once the log has reached the
 /// host.
