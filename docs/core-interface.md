@@ -180,9 +180,9 @@ D84). `AppCommand::Fix` hands the core a GPS fix that passed the checks of spec
 and the distance to the relays the node knows, which it asks of the core with
 `fix_in_reach(position)`: within the hearing radius, 3 km (`gps::HEARING_RADIUS_M`), of
 one of them, or any fix while the node knows none or has no place. The driver hands each
-fix that passes, and none while a map point is set, and the core takes none then. A node decides from the fixes whether it is carried; a carried node, or a
-sleepy one without an anchor, takes each fix, a fixed relay keeps its position, and a
-sleepy node with an anchor takes none and keeps the flag it had: its position is its
+fix that passes, and none while a map point is set, and the core takes none then. A node decides from the fixes whether it is carried; a carried node takes each fix, a
+fixed sleepy one without an anchor each far fix and its place at a near one, a fixed relay
+keeps its position, and a sleepy node with an anchor takes none and keeps the flag it had: its position is its
 anchor's, which it beats and rebuilds the short positions it hears near, and
 `Node::address` gives it (roadmap D70, D72, D91). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").

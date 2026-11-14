@@ -65,13 +65,15 @@ sleeps in a pocket.
   between, forwards what it is given at once, anchors to a fixed relay
   and keeps no PO box.
 - **Carried**: its GPS says it moves ([position](#position)). A map point
-  set in the app makes it not carried at once. A carried node, and a
-  sleepy node without an anchor, takes each fix as its position, so its
-  neighbours route to it where it is. A node that is neither keeps the
-  place it stands, so that no later fix, true or spoofed, moves it
-  (roadmap D63). A sleepy node with an anchor takes no fix: its position
-  is its anchor's, and it keeps the carried flag it has ([beats](#beats)).
-  A carried relay is otherwise like any other.
+  set in the app makes it not carried at once. A carried node takes each
+  fix as its position, so its neighbours route to it where it is. A
+  sleepy node without an anchor, fixed, takes each far fix
+  ([position](#position)) as its position, since it may have moved, and
+  stands at its place again at a fix that is not far. A relay that is
+  not carried keeps the place it stands, so that no later fix, true or
+  spoofed, moves it (roadmap D63). A sleepy node with an anchor takes no
+  fix: its position is its anchor's, and it keeps the carried flag it has
+  ([beats](#beats)). A carried relay is otherwise like any other.
 
 Holding mail for sleepy nodes, owning a destination by its position
 ([owner](#owner)) and being a sleepy node's anchor
@@ -408,17 +410,21 @@ fixes for minutes, the **carried radius**: five allowances, clearing the
 
 **Fixed and carried.** Every node measures from its fixes whether it
 moves, but a sleepy node with an anchor, which takes none and keeps the
-flag it has ([beats](#beats)):
+flag it has ([beats](#beats)). A node that has a place keeps it until an
+accepted fix lies beyond the carried radius of it: a still node's fixes
+wander that far, and a new place changes the node's address
+([node identity](#node-identity)), which every contact then holds stale
+(roadmap D219).
 
 | | |
 |---|---|
-| the place it stands | its first accepted fix, its map point, or the fix it had when last made fixed |
+| the place it stands | its first accepted fix, its map point, or the place it took when last made fixed |
 | far fix | an accepted fix more than the carried radius from that place |
 | carried | after 72 s of far fixes with none near between, counting only time in which the GPS gave fixes; 72 s is the time a walker at 1.4 m/s takes to cross the allowance's width, 2 × 50 m, at the L76K's one fix a second. For a sleepy node without an anchor, which fixes once a delivery TTL ([beats](#beats)), it is two far fixes at least 72 s apart |
 | time without fixes | while the GPS runs and gives no fix that passes the checks, the driver says so, and the time until the next fix does not count; a search ends at a fix, so a sleepy node's time between searches counts |
-| fixed again | after four hours of fixes within the carried radius of one place; it keeps the fix it has then. A node that stopped for less would take mail for new sleepy nodes and strand it (roadmap D70) |
+| fixed again | after four hours of fixes within the carried radius of one place; it takes the place it stood as a fixed node if the fix it has then lies within the carried radius of it, and else that fix. It keeps that place in RAM only, so a node booted carried has none. A node that stopped for less would take mail for new sleepy nodes and strand it (roadmap D70) |
 | map point | fixed at once; cleared, the next accepted fix is the place |
-| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has, since a sleepy node's last fix may be hours old (roadmap D85) |
+| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one stands at its position, and takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place if that fix is far, since a sleepy node's last fix may be hours and kilometres old (roadmap D85, D219) |
 
 A node whose position changes heartbeats the new one
 ([node identity](#node-identity)). At its first far fix a relay that
@@ -1634,9 +1640,9 @@ stay longer while nothing needs their place.
 power at once (roadmap D71). A sleepy node plugged in is a relay at once:
 
 - it leaves its anchor;
-- its address becomes its own position: the place it has, or its first
-  fix within a search's limit if one comes ([position](#position)), which
-  it keeps from then on unless it is carried;
+- its address becomes its own position, or its first fix within a
+  search's limit if that is far ([position](#position)), which it keeps
+  from then on unless it is carried;
 - it heartbeats as a relay, the first time at once
   ([heartbeat](#heartbeat)), on the node's home channel, its anchor's
   until then, where its old anchor hears it and hands over what it holds
@@ -1886,8 +1892,8 @@ inside half a short position's period; a node carried farther while it
 hears no relay is open item O19. It takes no fix, runs no search
 and measures nothing of its motion: it keeps the carried flag it had when
 it took the anchor until it is anchorless or a relay again
-([position](#position); roadmap D80, D91). Its own place, the last it had
-by its own fixes, is what it stands at when plugged in
+([position](#position); roadmap D80, D91). Its own position, the last it
+had by its own fixes, is what it stands at when plugged in
 ([sleepy nodes](#sleepy-nodes)).
 
 Without an anchor a sleepy node runs its GPS (roadmap D80): it searches
