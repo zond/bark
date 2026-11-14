@@ -949,6 +949,30 @@ impl Store {
         (0..image.blocks).find(|&b| !self.is_done(b))
     }
 
+    /// What the next step does, a word for the log.
+    pub fn doing(&self) -> &'static str {
+        if self.op.is_some() {
+            return "wait";
+        }
+        match self.mode {
+            Mode::Empty => "idle",
+            Mode::Open | Mode::Head(_) => "open",
+            Mode::Clear(_) => "clear",
+            Mode::Record => "record",
+            Mode::Scan { .. } => "scan",
+            Mode::Forget => "forget",
+            Mode::Gather if self.queue[0].is_some() => "slot",
+            Mode::Gather if self.lanes.iter().any(|l| l.erase.is_some()) => "erase",
+            Mode::Gather => match &self.decode {
+                None => "idle",
+                Some(d) if d.found < d.n => "find",
+                Some(d) if !d.points.weighed() => "weigh",
+                Some(d) if !d.writing => "sum",
+                Some(_) => "write",
+            },
+        }
+    }
+
     /// How many blocks are decoded and written.
     pub fn decoded(&self) -> u8 {
         self.done.count_ones() as u8

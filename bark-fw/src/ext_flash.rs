@@ -133,6 +133,7 @@ mod mailbox {
         let mut at = address;
         for part in bytes.chunks_mut(CHUNK) {
             free().await;
+            crate::at("read");
             with(|c| c.read(at, part)).unwrap_or(Err(NO_CHIP))?;
             at += part.len() as u32;
             embassy_futures::yield_now().await;
@@ -165,6 +166,7 @@ mod mailbox {
         let mut at = address;
         for part in data.chunks(CHUNK) {
             free().await;
+            crate::at("program");
             let started = with(|c| c.start_program(at, part));
             wait(started, POLL_US, PROGRAM_MAX_US).await?;
             at += part.len() as u32;

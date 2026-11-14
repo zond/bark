@@ -120,6 +120,7 @@ impl Phone {
         }
         let internal = self.internal;
         let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
+        crate::at("stage");
         let begun = super::stage(part(RECORD), part(STATE), Dfu, header).await;
         match begun {
             Ok(s) => {
@@ -172,6 +173,7 @@ impl Phone {
     /// Commit the image held ([`super::commit`]).
     pub async fn commit(&mut self) -> Result<(), Refusal> {
         let power = power();
+        crate::at("commit");
         match super::commit(&mut self.staging, power).await {
             Ok(h) => {
                 log::info!(

@@ -80,6 +80,14 @@ bind_interrupts!(struct Irqs {
     TEMP => embassy_nrf::temp::InterruptHandler;
 });
 
+/// Where the task being polled is, for the bench build's longest poll
+/// (`bench::at`); nothing in other builds.
+#[inline(always)]
+pub fn at(_place: &'static str) {
+    #[cfg(feature = "bench")]
+    bench::at(_place);
+}
+
 // The MPSL's interrupts beside ours (`ble.rs`); TEMP is the MPSL's.
 #[cfg(not(feature = "console"))]
 bind_interrupts!(struct Irqs {
@@ -767,7 +775,10 @@ async fn phone(
     match ble::controller(parts, rng, mpsl) {
         Ok(c) => {
             let image = update::BARK_IMAGE_VERSION;
-            ble::run(spawner, c, node_id(), image, internal, flash).await
+            let run = ble::run(spawner, c, node_id(), image, internal, flash);
+            #[cfg(feature = "bench")]
+            let run = bench::timed(&bench::PHONE, run);
+            run.await
         }
         // An nRF errno, negated (`nrf_mpsl::Error`).
         Err(e) => log::error!("ble: controller {}", i32::from(e)),
@@ -778,7 +789,10 @@ async fn phone(
 #[cfg(not(feature = "console"))]
 #[embassy_executor::task]
 async fn mesh(flash: &'static update::Flash, internal: &'static store::SharedFlash) {
-    update::mesh::run(flash, internal).await
+    let run = update::mesh::run(flash, internal);
+    #[cfg(feature = "bench")]
+    let run = bench::timed(&bench::UPDATE, run);
+    run.await
 }
 
 /// A gathered image's trial (`update::trial`).
