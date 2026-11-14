@@ -8,7 +8,9 @@
 //! application the driver runs, here wrapped in [`App`], which offers a
 //! text as a phone's message is offered and tells the core the power it
 //! is told, and the node's loop between two steps ([`serve`]), which sets
-//! the transmit power and sends a carrier.
+//! the transmit power and sends a carrier. `forget` asks the update over
+//! the mesh (`update::mesh::forget`), as the phone's update asks it to
+//! give up the image gathered.
 
 use core::cell::{Cell, RefCell};
 
@@ -67,37 +69,60 @@ static TX_DBM: Mutex<ThreadModeRawMutex, Cell<Option<i8>>> = Mutex::new(Cell::ne
 /// What the chip recorded of the resets before this boot, read once.
 static RESET: Mutex<ThreadModeRawMutex, Cell<Option<u32>>> = Mutex::new(Cell::new(None));
 
+/// What a command leaves to be awaited once its line is read.
+enum Then {
+    Nothing,
+    Reboot,
+    Forget,
+}
+
 /// Takes what the host types, and carries out each command as its line
 /// ends.
 pub async fn host_input(data: &[u8]) {
     for &byte in data {
-        let reboot = TYPED.lock(|t| {
+        let then = TYPED.lock(|t| {
             let mut t = t.borrow_mut();
             if !t.push(byte) {
-                return false;
+                return Then::Nothing;
             }
             match t.text() {
                 Ok(line) => execute(line),
                 Err(e) => {
                     log::warn!("bench: line refused: {:?}", e);
-                    false
+                    Then::Nothing
                 }
             }
         });
-        if reboot {
-            crate::update::reboot().await;
+        match then {
+            Then::Nothing => {}
+            Then::Reboot => crate::update::reboot().await,
+            Then::Forget => forget().await,
         }
     }
 }
 
-/// Carries out `line`, all but a reboot, which it asks for.
-fn execute(line: &str) -> bool {
+/// Drops the image gathered and the versions given up, so that a run may
+/// use versions an earlier run did, then reboots: the core keeps the
+/// image it was told to gather, and names it in its heartbeats, until it
+/// starts again.
+async fn forget() {
+    match crate::update::mesh::forget().await {
+        Ok(()) => {
+            log::info!("bench: forgot the image gathered and the versions given up");
+            crate::update::reboot().await
+        }
+        Err(why) => log::warn!("bench: forget refused: {}", why),
+    }
+}
+
+/// Carries out `line`, all but what it leaves to be awaited.
+fn execute(line: &str) -> Then {
     log::info!("bench> {}", line);
     let command = match parse(line) {
         Ok(c) => c,
         Err(why) => {
             log::warn!("bench: {}", why);
-            return false;
+            return Then::Nothing;
         }
     };
     ASKED.lock(|a| {
@@ -123,15 +148,16 @@ fn execute(line: &str) -> bool {
             }
             Command::TxPower(dbm) => a.tx_dbm = Some(dbm.clamp(MIN_TX_DBM, MAX_TX_DBM)),
             Command::Carrier { channel, seconds } => a.carrier = Some((channel, seconds)),
-            Command::Reboot | Command::Status => {}
+            Command::Reboot | Command::Status | Command::Forget => {}
         }
     });
     match command {
-        Command::Reboot => return true,
+        Command::Reboot => return Then::Reboot,
+        Command::Forget => return Then::Forget,
         Command::Status => status(),
         _ => WAKE.signal(()),
     }
-    false
+    Then::Nothing
 }
 
 /// What the 10 s line does not carry: the reset that started this boot,

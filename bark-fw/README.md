@@ -1548,6 +1548,7 @@ command is echoed as `bench> <line>`, and what it does is logged in
 | `carrier <k> <seconds>` | transmit on k for up to 1 800 s, twice the longest a relay's move takes (spec "Channel moves"): two-byte frames, a bench frame's first two bytes (Console, above), each behind the longest preamble that ends in time, back to back. The node does nothing else meanwhile. A bench-only transmission: it keeps to no duty cycle (spec "Regulatory limits") |
 | `reboot` | reset, once the log has reached the host |
 | `status` | `reset`, the causes the chip recorded for the reset before this boot (nRF52840 Product Specification, POWER, RESETREAS: `pin`, `watchdog`, `software`, `lockup`, `debug`, an `off-` wake, or `power-on` for none), read at the first `status` of a boot and cleared; the `power` told; `tx_dbm`; `stack_used` of the stack's size |
+| `forget` | drop what the node keeps of images other than its own, the image it gathers over the mesh and the versions it gave up (Updates), so that a bench run can use the versions an earlier run used; logged `bench: forgot the image gathered and the versions given up`, then a reboot, as the core keeps the image it was told to gather until it starts again. It waits for the update over the mesh to open its store after a boot. Refused, `bench: forget refused: <why>`, while the staged slot holds an image to swap in or the phone's update holds it |
 
 The rest the bench's checks read is in the node's own lines: the radio's
 errors in the 10 s line, and a message dropped and a heartbeat skipped
