@@ -128,7 +128,7 @@ the actions `Action::Offered`, `Action::StorePiece` and `Action::Serve`, the que
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+at most 225 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
@@ -390,21 +390,21 @@ test in `tables/mod.rs`:
 | Neighbours (spec "Neighbour table") | 64 × 128 B, and 4 × 12 B for the images their sections name | 8.1 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 667 × 40 B | 26.1 KiB |
+| Message records (spec "Message records") | 649 × 40 B | 25.4 KiB |
 | Send queue (spec "Send queue") | (39 + 64) × 296 B | 29.8 KiB |
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate"), a histogram of readings for each channel | 16 B + 2 064 B | 2.0 KiB |
-| **All** | | **91.2 KiB** |
+| **All** | | **90.5 KiB** |
 
-The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
-for each hop count a message can be sent on with, keep overload from dropping messages
+The send queue's 39 regular places follow from the duty bucket, and its 254 hop places,
+numbered in a byte and taken at min(count, 254), keep overload from dropping messages
 (spec "Send queue", roadmap D31); 64 of them can be held at once (roadmap D155). The records
-hold the 564 messages a relay can handle in the 162.9 s a full send queue takes to drain at one
+hold the 546 messages a relay can handle in the 162.9 s a full send queue takes to drain at one
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-96 392 B (94.1 KiB): the tables and, in under 1 KiB around them, the
+95 688 B (93.4 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
@@ -463,8 +463,9 @@ action at a time, and the core never allocates.
   - A sleepy node's own DATA has `hops` zero. A relay sending for its own application
     sends `hops` 1, as if it had received the message from the application at 0: a
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
-  - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
-    header; the decoder rejects anything longer.
+  - Application payload at most 225 bytes, what remains of 255 after the longest DATA
+    header, 30 bytes; the decoder rejects anything longer. `hops` is one byte below 128
+    and two from 128, and a two-byte count below 128 is rejected (spec "Packet formats").
   - A DATA's `aux` 15 is the update's piece, 16 and 17 a neighbour's status asked and
     told, and 13, 14 and 18 to 63 are rejected (spec "Packet formats"); a piece is always a
     full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 30. A
