@@ -1466,7 +1466,9 @@ the processor, up to 12 ms. The update over the mesh's store, the
 serving of a piece, the hash of an image staged from the mesh or the
 phone, the mailbox's writes and the phone's staging all go so; the
 code's points are weighed 16 rows a step, 0.1 ms, and the running
-image's hash yields every 256 bytes.
+image's hash yields every 256 bytes. The update's task awaits after each
+part of its pass, a piece served, a block's line, an offer taken, so that
+none runs on into the next step within one poll.
 
 The parts cost time: a block decoded from none of its data pieces reads
 for about 12 s instead of 8, a slot is written in 16 programs, and the

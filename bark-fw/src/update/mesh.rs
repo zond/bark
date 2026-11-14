@@ -350,6 +350,9 @@ async fn answer(flash: &super::Flash, named: Named) {
     let (version, block, index) = named;
     let ok = fill(flash, version, block, index).await;
     FILLED.served.signal((named, ok));
+    // The piece's end and its line, a stretch of their own: what follows
+    // is a step of the store or the next piece.
+    embassy_futures::yield_now().await;
 }
 
 /// Piece `index` of block `block` of the image of `version` into `FILLED`:
@@ -650,6 +653,8 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
     let mut refused: Option<u32> = None;
     // Blocks of the image gathered that failed their check.
     let mut failed: u8 = 0;
+    // Each part of a pass ends in an await, so that none runs on into the
+    // next within one poll (`README.md`, "Work beside the radio").
     loop {
         if let Some(i) = gather.filter(|_| !told) {
             if STORE.lock(|s| s.borrow().ready()) {
@@ -661,6 +666,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 .await;
                 told = true;
                 set_phase(gathering(&i));
+                embassy_futures::yield_now().await;
             }
         }
         if let Some(i) = gather.filter(|_| told && STORE.lock(|s| s.borrow().whole())) {
@@ -678,6 +684,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             }
             gather = None;
             told = false;
+            embassy_futures::yield_now().await;
         }
         if let Some(named) = TO_TASK.serve.try_take() {
             answer(flash, named).await;
@@ -712,6 +719,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     gather.map_or(0, |i| i.blocks)
                 );
                 tell(Request::Block { index: b, ok: true }).await;
+                embassy_futures::yield_now().await;
             }
             Poll::Failed(b) => {
                 log::warn!("update: block {} failed its check; gathered again", b);
@@ -727,6 +735,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     ok: false,
                 })
                 .await;
+                embassy_futures::yield_now().await;
             }
             Poll::Idle => {
                 // Staged, it only serves until the reboot.
@@ -747,6 +756,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                             told = false;
                             failed = 0;
                         }
+                        embassy_futures::yield_now().await;
                     }
                     Either4::Fourth(named) => answer(flash, named).await,
                     _ => {}
