@@ -41,7 +41,8 @@
 //! **Pacing.** [`Store::poll`] does one step: it sees whether the chip is
 //! done with a program or an erase, its own or another user's, and if so
 //! starts one, reads [`CHUNK`] bytes and adds them in, weighs
-//! [`WEIGH_ROWS`] of a decode's points or hashes a piece. So no step holds
+//! [`WEIGH_ROWS`] of a decode's points or hashes [`HASH_PART`] bytes of
+//! it. So no step holds
 //! the processor longer than a read of [`CHUNK`] bytes and its sums, which
 //! the firmware checks against its bound (`bark-fw/README.md`, "Work
 //! beside the radio"). The firmware calls it until [`Poll::Idle`]. It must
@@ -172,6 +173,11 @@ const QUEUE: usize = 2;
 /// Data pieces decoded at once: 494 bytes of RAM, and the lane read 32
 /// times a pass for a block of 64 none of whose data pieces came.
 const GROUP: usize = 2;
+
+/// Bytes of a decoded group hashed a step: one block of SHA-256 (FIPS
+/// 180-4, §6.2). A whole piece took 0.5 to 0.7 ms on the board
+/// (2026-11-14, the bench build's `sum`), so a block about 0.15 ms.
+const HASH_PART: usize = 64;
 
 /// A slot's piece index that is no piece.
 const NONE: u8 = CODED as u8;
@@ -673,8 +679,8 @@ struct Decode {
     part: u8,
     /// A data piece of the group is not among the pieces used.
     lacking: bool,
-    /// Pieces of the group hashed.
-    hashed: u8,
+    /// Bytes of the group hashed.
+    hashed: u16,
     /// Bytes of the group written.
     wrote: u16,
     /// The factors for each data piece of the group.
@@ -1353,16 +1359,18 @@ impl Store {
         }
         let more = d.first() + count < n;
         if !d.writing {
-            // A piece hashed a step.
-            if d.block != 0 && usize::from(d.hashed) < count {
-                if d.block == 1 && d.group == 0 && d.hashed == 0 {
+            // The group hashed a part a step.
+            let hashed = usize::from(d.hashed);
+            if d.block != 0 && hashed < count * PIECE {
+                if d.block == 1 && d.group == 0 && hashed == 0 {
                     let signed = &d.out.as_flattened()[..SIGNED_LEN];
                     // The name block 0 carried, the table's start.
                     d.header_ok =
                         <[u8; HASH_LEN]>::from(Sha256::digest(signed))[..] == table[..HASH_LEN];
                 }
-                d.sha.update(d.out[usize::from(d.hashed)]);
-                d.hashed += 1;
+                let to = (count * PIECE).min(hashed + HASH_PART);
+                d.sha.update(&d.out.as_flattened()[hashed..to]);
+                d.hashed = to as u16;
                 return Ok(Poll::Again);
             }
             if d.block == 0 {
