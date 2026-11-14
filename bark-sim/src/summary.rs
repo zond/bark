@@ -1199,6 +1199,23 @@ impl Summary {
                 c.plugged_in,
                 c.queued
             );
+            let p = &c.plugged_fixed;
+            let mut kept: Vec<f64> = p.iter().flatten().filter(|x| x.0).map(|x| x.1).collect();
+            kept.sort_by(f64::total_cmp);
+            let q = |v: &[f64], f: f64| {
+                let i = ((v.len() as f64 * f).ceil() as usize).saturating_sub(1);
+                v.get(i).map_or_else(|| "-".into(), |x| format!("{x:.0}"))
+            };
+            let _ = writeln!(
+                s,
+                "fixed nodes plugged in: {}; first fix within a search's limit {}, of which kept the place {}, truly from it p50 {} m p90 {} m max {} m",
+                p.len(),
+                p.iter().flatten().count(),
+                kept.len(),
+                q(&kept, 0.5),
+                q(&kept, 0.9),
+                q(&kept, 1.0)
+            );
             let d = c.delivered_by;
             let _ = writeln!(
                 s,
