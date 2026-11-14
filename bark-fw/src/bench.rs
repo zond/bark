@@ -8,18 +8,20 @@
 //! application the driver runs, here wrapped in [`App`], which offers a
 //! text as a phone's message is offered and tells the core the power it
 //! is told, and the node's loop between two steps ([`serve`]), which sets
-//! the transmit power and sends a carrier. `forget` asks the update over
-//! the mesh (`update::mesh::forget`), as the phone's update asks it to
-//! give up the image gathered.
+//! the transmit power, holds the oscillator's cold delay at its floor and
+//! sends a carrier. `forget` asks the update over the mesh
+//! (`update::mesh::forget`), as the phone's update asks it to give up the
+//! image gathered.
 
 use core::cell::{Cell, RefCell};
 
-use bark_driver::{Clock, Driver, Outgoing, Ready, Request};
+use bark_driver::sx1262::{LbtRead, LbtTiming, Start, Sx1262};
+use bark_driver::{tcxo, Clock, Driver, Outgoing, Ready, Request};
 use bark_fw_logic::bench::{parse, Command, Power, ResetCause, LINE};
 use bark_fw_logic::line::Line;
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::wire::{BENCH_FIRST, FORMAT, MAX_PAYLOAD};
-use bark_proto::{AppEvent, Core, Frame, MsgId, NodeId, Position, Stored, MAX_FRAME};
+use bark_proto::{AppEvent, Core, Duration, Frame, MsgId, NodeId, Position, Stored, MAX_FRAME};
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
@@ -38,6 +40,8 @@ struct Asked {
     power: Power,
     text: Option<Text>,
     tx_dbm: Option<i8>,
+    /// The least cold oscillator delay, held from now on.
+    tcxo_floor: Option<Duration>,
     carrier: Option<(Channel, u32)>,
 }
 
@@ -53,6 +57,7 @@ static ASKED: Mutex<ThreadModeRawMutex, RefCell<Asked>> = Mutex::new(RefCell::ne
     power: Power::Real,
     text: None,
     tx_dbm: None,
+    tcxo_floor: None,
     carrier: None,
 }));
 
@@ -147,6 +152,11 @@ fn execute(line: &str) -> Then {
                 log::info!("bench: power {:?}", p);
             }
             Command::TxPower(dbm) => a.tx_dbm = Some(dbm.clamp(MIN_TX_DBM, MAX_TX_DBM)),
+            Command::Tcxo(us) => {
+                let floor = Duration::from_micros(us.into()).clamp(tcxo::MIN, tcxo::MAX);
+                a.tcxo_floor = Some(floor);
+                log::info!("bench: tcxo floor {} us", floor.as_micros());
+            }
             Command::Carrier { channel, seconds } => a.carrier = Some((channel, seconds)),
             Command::Reboot | Command::Status | Command::Forget => {}
         }
@@ -176,13 +186,17 @@ fn status() {
         r.set(Some(bits));
         bits
     });
-    let power = ASKED.lock(|a| a.borrow().power);
+    let (power, floor) = ASKED.lock(|a| {
+        let a = a.borrow();
+        (a.power, a.tcxo_floor)
+    });
     let tx_dbm = TX_DBM.lock(Cell::get);
     log::info!(
-        "bench: status reset={} power={:?} tx_dbm={:?} stack_used={} of {}",
+        "bench: status reset={} power={:?} tx_dbm={:?} tcxo_floor_us={:?} stack_used={} of {}",
         ResetCause(reset),
         power,
         tx_dbm,
+        floor.map(|f| f.as_micros()),
         crate::stack::used(),
         crate::stack::size()
     );
@@ -355,18 +369,29 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
     }
 }
 
-/// Between two of the driver's steps: the transmit power asked for, and
-/// the carrier.
+/// Between two of the driver's steps: the transmit power asked for, the
+/// cold delay raised to its floor, after the boot's search or a probe
+/// below set it lower, and the carrier.
 pub async fn serve<C: Core, K: Clock, A: bark_driver::App>(
     driver: &mut Driver<C, Logged<Radio<'_>>, K, A>,
 ) {
-    let (tx_dbm, carrier) = ASKED.lock(|a| {
+    let (tx_dbm, floor, carrier) = ASKED.lock(|a| {
         let mut a = a.borrow_mut();
-        (a.tx_dbm.take(), a.carrier.take())
+        (a.tx_dbm.take(), a.tcxo_floor, a.carrier.take())
     });
     if let Some(dbm) = tx_dbm {
         driver.set_tx_dbm(dbm);
         log::info!("bench: tx_dbm={}", dbm);
+    }
+    let radio = driver.radio_mut();
+    if let Some(floor) = floor.filter(|&f| radio.cold().delay < f) {
+        let was = radio.cold().delay;
+        radio.set_cold_delay(floor);
+        log::info!(
+            "bench: cold starts take {} us, the floor, not {}",
+            floor.as_micros(),
+            was.as_micros()
+        );
     }
     TX_DBM.lock(|t| t.set(Some(driver.tx_dbm())));
     if let Some((channel, seconds)) = carrier {
@@ -427,13 +452,16 @@ async fn send_carrier(radio: &mut Logged<Radio<'_>>, channel: Channel, seconds: 
 /// The radio with each transmission logged as it ends, its channel and
 /// its time on air, and each listen-before-talk with its reading: the
 /// bench's check of a skipped heartbeat asks which board sent then, and
-/// what the node read (`scripts/checks.py`).
+/// what the node read (`scripts/checks.py`). A check that got no reading
+/// inside its CAD also says why: a read woken after the CAD's sampling was
+/// not made, one in time the chip answered with none; and how the
+/// oscillator started for it.
 pub struct Logged<R> {
     radio: R,
     /// The last listen-before-talk, logged once the frame it let through
     /// is sent, or at the next: a line between the two would delay the
-    /// frame.
-    checked: Option<(Channel, bool, i16)>,
+    /// frame. Its phases if it got no reading.
+    checked: Option<(Channel, bool, i16, Option<LbtTiming>)>,
 }
 
 impl<R> Logged<R> {
@@ -445,13 +473,43 @@ impl<R> Logged<R> {
     }
 
     fn log_checked(&mut self) {
-        if let Some((channel, preamble, dbm)) = self.checked.take() {
+        let Some((channel, preamble, dbm, none)) = self.checked.take() else {
+            return;
+        };
+        log::info!(
+            "lbt ch={} preamble={} dbm={}",
+            channel.index(),
+            preamble,
+            dbm
+        );
+        if let Some(t) = none {
+            let (start, off, delay) = match t.start {
+                Start::Running => ("running", None, None),
+                Start::Restart { gap, delay } => ("restart", Some(gap), Some(delay)),
+                Start::Cold { gap, delay } => ("cold", gap, Some(delay)),
+            };
             log::info!(
-                "lbt ch={} preamble={} dbm={}",
+                "bench: no reading ch={} wake_us={} late={} start={} off_us={} delay_us={} cad_us={}",
                 channel.index(),
-                preamble,
-                dbm
+                t.wake.as_micros(),
+                t.wake > bark_driver::sx1262::CAD_SAMPLING,
+                start,
+                Us(off),
+                Us(delay),
+                t.cad.as_micros()
             );
+        }
+    }
+}
+
+/// Microseconds, or `-` for none.
+struct Us(Option<Duration>);
+
+impl core::fmt::Display for Us {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Some(d) => write!(f, "{}", d.as_micros()),
+            None => f.write_str("-"),
         }
     }
 }
@@ -470,9 +528,9 @@ impl<R> core::ops::DerefMut for Logged<R> {
     }
 }
 
-impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
-    type Error = R::Error;
-    const DEAF_TO: Option<NodeId> = R::DEAF_TO;
+impl<'a> bark_driver::Radio for Logged<Radio<'a>> {
+    type Error = <Radio<'a> as bark_driver::Radio>::Error;
+    const DEAF_TO: Option<NodeId> = <Radio<'a> as bark_driver::Radio>::DEAF_TO;
 
     async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
         self.radio.listen(channel).await
@@ -495,11 +553,12 @@ impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
 
     async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Self::Error> {
         self.log_checked();
-        let read = self.radio.lbt(channel).await;
-        if let Ok((preamble, dbm)) = read {
-            self.checked = Some((channel, preamble, dbm));
-        }
-        read
+        // As the radio's own listen-before-talk, its phases kept.
+        let t = Sx1262::lbt(&mut self.radio, channel).await?;
+        let inside = matches!(self.radio.lbt_read(), LbtRead::Inside { .. });
+        let none = (inside && t.inside_dbm.is_none()).then_some(t);
+        self.checked = Some((channel, t.busy, t.dbm, none));
+        Ok((t.busy, t.dbm))
     }
 
     async fn rssi(&mut self) -> Result<i16, Self::Error> {
@@ -507,7 +566,7 @@ impl<R: bark_driver::Radio> bark_driver::Radio for Logged<R> {
     }
 
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error> {
-        let sent = self.radio.transmit(frame, dbm).await;
+        let sent = bark_driver::Radio::transmit(&mut self.radio, frame, dbm).await;
         // After it, so that the log takes no time between the
         // listen-before-talk and the frame.
         log::info!(
