@@ -1430,25 +1430,13 @@ cannot wait long (Radio driver, below): the reading inside a
 listen-before-talk's CAD is due 1 024 µs into it and must be made before
 its sampling ends at 2 048 µs, or the check counts as busy and a
 heartbeat is skipped; and the receive after a CAD must start within
-1 ms of it for the oscillator to restart warm.
+1 ms of it for the oscillator to restart warm, or it is a cold start, the
+oscillator's longer delay.
 
-The reading waits for no other task: from `SetCAD` to the reading the
-radio's task keeps the processor, waiting for BUSY and for the reading's
-time without an await (`sx1262::Chip::hold`, `bark_driver::Clock::hold`),
-about 1.1 ms, more by the oscillator's delay when the CAD starts it. Only
-an interrupt can make it late. Left to the executor, the reading waited
-out what ran at two awaits, the command's wait for BUSY and the reading's
-timer, and the two together had the 1 024 µs: in 17 of 23 checks without
-a reading in four hours on a board gathering an image, the CAD's result
-came less than its 2 ms after the start the driver saw, so the driver
-saw the start late, by up to 0.6 ms, and the reading came after the CAD
-had ended; in 5 more the reading's own wake was 1.4 to 2.3 ms late
-(2026-11-14).
-
-For the restart no other task may run longer between two awaits than a
-quarter of its window, `radio::STRETCH`, 250 µs: the radio's wake can
-then wait out four such stretches and still be in time. A restart missed
-is a cold start, the oscillator's longer delay, not a lost frame.
+No other task may run longer between two awaits than a quarter of the
+restart's window, `radio::STRETCH`, 250 µs: the radio's wake can then
+wait out four such stretches and still be in time. The reading inside a
+CAD waits for no task at all (below).
 
 The external flash's software bus moves a byte in 8 µs (roadmap, Phase
 2, "The external flash's bus"), so a read of a 256-byte slot took 2 ms;
@@ -1476,31 +1464,50 @@ hash of a staged image takes about 6 s instead of 3. Until a board
 measures how long a short program takes, a phone's update may take up
 to twice its 20 s.
 
+The parts were not enough for the reading: in four hours on a board
+gathering an image with them, 23 checks got no reading, 14 of them
+within 20 s before a block was written (2026-11-14). The reading's wake
+waited out what ran at two awaits, the command's wait for BUSY and the
+reading's own timer, and the two together had the 1 024 µs, not each:
+in 17 of the 23 the CAD's result came less than its 2 ms after the start
+the driver saw, so the driver saw the start late and read after the CAD
+had ended, the two waits 1 ms or more together; in 5 the reading's wake
+alone was 1.4 to 2.3 ms late, longer than any poll of the update or the
+phone link measured that minute, so something not then timed held the
+processor. So from
+`SetCAD` to the reading the radio's task keeps the processor, waiting
+for BUSY and for the reading's time without an await
+(`sx1262::Chip::hold`, `bark_driver::Clock::hold`): about 1.1 ms a
+check, more by the oscillator's delay when the CAD starts it, a few a
+minute. Only an interrupt can make the reading late now.
+
 This bounds what the update does, not every task. Known stretches over
-the bound, left as they are (2026-11-14, worked out from the bus and the
-datasheets, not measured unless the bench build shows them):
+the bound, left as they are (2026-11-14; measured where it says so, else
+worked out from the bus and the datasheets):
 
 | Where | How long | Why it stays |
 |---|---|---|
-| `sign::verify`, a header's Ed25519 signature: once a boot for the running image, at each image staged | tens of ms | one call into the library; once a boot and once an update |
+| `sign::verify`, a header's Ed25519 signature: once a boot for the running image, at each image staged | 45.6 ms at boot, measured | one call into the library; once a boot and once an update |
+| the phone link's start, its host's key pair | 286 ms, measured, 1.4 s after boot, the radio up | once a boot |
+| the phone link's host while a phone is linked | 1.5 to 1.9 ms a poll, measured with the interrupts in it | not yet known what; the bench build now tells the host from the links' slots |
 | the mailbox's reads (`mailbox.rs`, `Ring::read`), from the phone link's task, `home_now` | 4 ms for an item, up to 63 ms after a page erase; a read during a write waits it out, up to 12 ms | the ring reads blocking through `bark-app-layer`; parts there are a larger change |
 | the same reads from the radio's own task between its steps | as above | they delay its next step, not its reading inside a CAD |
-| the MPSL's flash timeslots for the internal flash (`store.rs`) | 41 µs a word written, 328 µs a record; an erase in parts of up to 10 ms | the processor stops while the internal flash writes; no task can shorten it |
+| the MPSL's flash timeslots for the internal flash (`store.rs`) | 41 µs a word written, 328 µs a record; an erase in parts of up to 10 ms | the processor stops while the internal flash writes, inside the MPSL's interrupt: no task can shorten it, and it can make a reading inside a CAD late |
 | the phone link's pairing, P-256 in software | tens of ms | once a pairing |
 | the GPS's parse of up to 1 KiB of sentences, the screen's drawing of a line | 0.2 to 1 ms, guessed | to be measured first |
 
 A wholly bounded radio would run its task on an interrupt executor above
-thread mode, so that no task could delay its wake. That costs more than
-it looks: what the radio's task shares with the others, the update's
-store and requests, the mailbox, the phone link's notes, is held in
-`ThreadModeRawMutex` cells today, which an interrupt cannot take, and
-each would need a critical section or a channel; the MPSL's flash, whose
-users must stay in thread mode; and the external flash, which both the
-radio's task and the others read. It is the answer if the bench shows
-the parts are not enough.
+thread mode, so that no task could delay any of its wakes, not only the
+reading's. That costs more than it looks: what the radio's task shares
+with the others, the update's store and requests, the mailbox, the phone
+link's notes, is held in `ThreadModeRawMutex` cells today, which an
+interrupt cannot take, and each would need a critical section or a
+channel; the MPSL's flash, whose users must stay in thread mode; and the
+external flash, which both the radio's task and the others read. It is
+the answer if the bench shows the restart or a frame's service late.
 
-The bench build logs each task's longest poll once a minute (Bench
-build, below).
+The bench build times every task's polls and every interrupt, once a
+minute and over each check without a reading (Bench build, below).
 
 ## Radio power
 
