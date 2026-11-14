@@ -130,12 +130,13 @@ class Built:
     stack_room: int
 
 
-def build_image(name: str, env: dict[str, str], features: list[str], version: int, out: Path, serves: bool) -> Built:
-    """One board's build at `version`, kept under `out` as `name`: its ELF,
+def build_image(name: str, env: dict[str, str], version: int, out: Path, serves: bool) -> Built:
+    """One board's bench build (bark-fw/README.md, "Bench build") at
+    `version`, kept under `out` as `name`: its ELF,
     its image signed by the bench key (bark-fw/README.md, "Updates"), and
     a UF2 with the loader, built by `build_loader` first. A board that
     `serves` holds its image to serve it over the mesh (uf2.py --header)."""
-    cargo_build(FW, {**env, "BARK_IMAGE_VERSION": str(version)}, features)
+    cargo_build(FW, {**env, "BARK_IMAGE_VERSION": str(version)}, ["bench"])
     out.mkdir(parents=True, exist_ok=True)
     elf = out / f"{name}.elf"
     shutil.copyfile(ELF, elf)

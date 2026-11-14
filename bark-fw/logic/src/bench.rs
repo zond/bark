@@ -58,11 +58,13 @@ pub enum Command<'a> {
     },
     Reboot,
     Status,
+    /// Drop what the node keeps of images other than its own, and reboot.
+    Forget,
 }
 
 /// The commands, for a line that is none of them.
 pub const HELP: &str = "commands: text <id> <lat> <lon> <words> | power <usb|battery|real> | \
-txpower <dbm> | carrier <k> <seconds> | reboot | status";
+txpower <dbm> | carrier <k> <seconds> | reboot | status | forget";
 
 pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim();
@@ -96,6 +98,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
         }
         "reboot" => Command::Reboot,
         "status" => Command::Status,
+        "forget" => Command::Forget,
         _ => return Err(HELP),
     };
     match args.next() {
@@ -277,6 +280,7 @@ mod tests {
         );
         assert_eq!(parse(" reboot "), Ok(Command::Reboot));
         assert_eq!(parse("status"), Ok(Command::Status));
+        assert_eq!(parse("forget"), Ok(Command::Forget));
         for line in [
             "power",
             "power mains",
@@ -286,6 +290,7 @@ mod tests {
             "carrier 3 0",
             "carrier 3 1801",
             "reboot now",
+            "forget all",
             "home 3",
             "",
         ] {

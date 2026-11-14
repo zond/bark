@@ -827,4 +827,19 @@ fn the_versions_given_up_round_trip_and_start_again_on_a_full_page() {
     assert_eq!(given_up::contains(&board.internal, version(0)), Ok(true));
 }
 
+#[test]
+fn the_versions_given_up_are_all_forgotten_by_a_clear() {
+    let board = board(&a());
+    for v in [7, 8] {
+        given_up::add(&board.internal, v).unwrap();
+    }
+    let page = part(&board.internal, crate::layout::GIVEN_UP);
+    now(given_up::clear(BlockingAsync::new(page))).unwrap();
+    for v in [7, 8] {
+        assert_eq!(given_up::contains(&board.internal, v), Ok(false));
+    }
+    given_up::add(&board.internal, 8).unwrap();
+    assert_eq!(given_up::contains(&board.internal, 8), Ok(true));
+}
+
 mod cut;

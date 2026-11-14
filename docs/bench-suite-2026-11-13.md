@@ -3,8 +3,8 @@
 **Status:** design, 2026-11-13. The runner, the standing checks, the
 bench build, the phone test and scenarios A1 to A5, S2 and S3 are built.
 A1, A2 and A3 have passed on the boards; the others and the phone test
-have not run yet. The heartbeat check needs every board of a run on the
-bench build, which logs each transmission. Four T-Echo 433 boards on
+have not run yet. Every board of a run runs the bench build, which logs
+each transmission, as the heartbeat check needs. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
 is a heading of `docs/protocol.md`.
 
@@ -29,9 +29,12 @@ of actions, and the conditions that pass it. Its actions are those
 back, type a console command into it, and build it deaf to another
 (`BARK_IGNORE`, `bringup-2026-11-06.md`), which makes a line on one desk.
 It logs every board through one reader a port, with the host's time on
-each line, and refuses to start while another process holds a port. It
-gives every build of a run its own image version and checks the version
-each board reports after flashing.
+each line, and refuses to start while another process holds a port. Every
+run gives its boards the image versions 1 to n, in the order the scenario
+lists them, and checks the version each board reports after flashing.
+A board keeps across runs the blocks of an image it was gathering and the
+versions it gave up, both named by version alone, so before a run each
+board forgets them (the bench build's `forget`).
 
 **The standing checks** run on every scenario's logs, whatever it tests,
 and any one fails the run:
@@ -48,11 +51,12 @@ recorded logs.
 **The bench build** is the node's firmware with a cargo feature, `bench`,
 that no release sets. It logs each transmission, and adds commands on
 the serial line and nothing else: send a text to a node, say what power the node is on, set the
-transmit power, send a carrier on a channel, reboot, and give what the
-node's own lines do not (`bark-fw/README.md`, "Bench build"). The
-feature lives in one module, which the rest of the firmware names where
-the serial line's input goes, where the node's application is made and
-between two of the driver's steps. A hook that cannot be added that way
+transmit power, send a carrier on a channel, reboot, give what the
+node's own lines do not, and forget the images other than its own
+(`bark-fw/README.md`, "Bench build"). The feature lives in one module,
+which the rest of the firmware names where the serial line's input goes,
+where the node's application is made and between two of the driver's
+steps, and in the update over the mesh, which forgets for it. A hook that cannot be added that way
 is not added, and its test stays pending: pinning the home channel,
 which the core takes only as it starts.
 
@@ -109,11 +113,14 @@ are; `bark-fw/scripts/scenario.py` describes the format. From `bark-fw/`:
 A board the last run left in its bootloader has no serial port to find it
 by, and is named by all twelve digits of its ID.
 
-`run` builds every board's image, signs it with the bench key and packs
-it with the loader; puts every board in its bootloader, then flashes each
-and checks the version it reports; does the actions; and judges the logs.
-The first run is given `--first-version N`, above every version a board
-has run or gathered; later runs count on from the last.
+`run` builds every board's image, the bench build, signs it with the bench
+key and packs it with the loader; puts every board in its bootloader;
+flashes each in turn, alone on the air, has it forget, and puts it back
+in its bootloader, since a new build's first boot goes on gathering what
+its board kept and would offer it to the boards that forgot already;
+then flashes each again and checks the version it reports; does the
+actions; and judges the logs, each board's from its last flash before the
+actions. A board brought back during a run forgets nothing.
 Everything goes to `target/bench/runs/<scenario>-<time>/`, with the result
 in `result.txt`.
 

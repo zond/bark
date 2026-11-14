@@ -13,14 +13,12 @@ duration_s = 36000.0
 [[boards]]
 name = "S"
 place_m = 0.0
-features = ["bench"]
 on_boot = ["power battery"]
 
 # After S, so its version is higher.
 [[boards]]
 name = "R"
 place_m = 0.0
-features = ["bench"]
 serves = true
 
 [[boards]]

@@ -1,5 +1,7 @@
 //! The page [`GIVEN_UP`]: the versions of the images this node swapped
-//! back, written by [`crate::boot::start`] (spec "Updates over the mesh").
+//! back, written by [`crate::boot::start`] (spec "Updates over the mesh"),
+//! and erased by the bench build's `forget` (`bark-fw/README.md`, "Bench
+//! build").
 //!
 //! Each version is a little-endian word appended in the first erased slot.
 //! A full page is erased and starts again with the newest: each version
@@ -8,6 +10,7 @@
 //! which refuses it anyway.
 
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
+use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
 
 use crate::boot::{flash_error, part, FlashError, Shared};
 use crate::layout::GIVEN_UP;
@@ -67,4 +70,11 @@ pub fn add<F: NorFlash>(flash: &Shared<F>, version: u32) -> Result<(), FlashErro
         }
     };
     page.write(at, &version.to_le_bytes()).map_err(flash_error)
+}
+
+/// Forget every version given up: the page erased. `page` is [`GIVEN_UP`]
+/// as a flash that may wait, as a firmware writes its internal flash
+/// between radio events.
+pub async fn clear<F: AsyncNorFlash>(mut page: F) -> Result<(), FlashError> {
+    page.erase(0, GIVEN_UP.len).await.map_err(flash_error)
 }

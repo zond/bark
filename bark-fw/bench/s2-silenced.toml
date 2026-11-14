@@ -11,7 +11,8 @@
 #
 # A silenced board is put in its bootloader and brought back by copying
 # its UF2 again, which writes its record as the UF2 has it
-# (scripts/uf2.py): B holds its own image again, as before.
+# (scripts/uf2.py): B holds its own image again, as before. It forgets
+# nothing: only the run's setup has a board forget (scripts/scenario.py).
 
 about = "the middle relay silenced during a text and an update, then a sleepy node's anchor"
 duration_s = 14400.0
@@ -20,13 +21,11 @@ duration_s = 14400.0
 name = "A"
 place_m = -150.0
 deaf_to = "C"
-features = ["bench"]
 
 [[boards]]
 name = "C"
 place_m = 150.0
 deaf_to = "A"
-features = ["bench"]
 
 [[boards]]
 name = "B"
@@ -37,7 +36,6 @@ serves = true
 name = "S"
 place_m = 0.0
 env = { BARK_ON_BATTERY = "1" }
-features = ["bench"]
 
 # B silenced during a text.
 [[actions]]

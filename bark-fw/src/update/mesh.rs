@@ -266,15 +266,65 @@ pub async fn yield_to_phone() -> bool {
     if matches!(phase(), Phase::Installing(_) | Phase::Staged(_)) {
         return false;
     }
-    if STORE.lock(|s| s.borrow().image().is_some()) {
+    if let_go().await {
         log::info!("update: the phone's update replaces the image gathered");
+    }
+    true
+}
+
+/// The store forgets the image gathered, if it holds one; whether it did.
+/// Resolves once the store has let go of the slot, its head erased, so
+/// that a reset finds no image.
+async fn let_go() -> bool {
+    let held = STORE.lock(|s| s.borrow().image().is_some());
+    if held {
         STORE.lock(|s| s.borrow_mut().forget());
         TO_TASK.piece_in.signal(());
     }
     while STORE.lock(|s| s.borrow().busy()) {
         Timer::after_micros(bark_image::ext_flash::PROGRAM_TYP_US.into()).await;
     }
-    true
+    held
+}
+
+// The bench's side (`crate::bench`).
+
+/// The flashes, once the task has opened the store: a forget before then
+/// would be undone as it opens. Held in thread mode, where every task
+/// runs, as the MPSL's flash is no `Sync`.
+#[cfg(feature = "bench")]
+static OPENED: ThreadModeMutex<Cell<Option<Flashes>>> = ThreadModeMutex::new(Cell::new(None));
+
+#[cfg(feature = "bench")]
+type Flashes = (&'static super::Flash, &'static SharedFlash);
+
+#[cfg(feature = "bench")]
+use embassy_sync::blocking_mutex::ThreadModeMutex;
+
+/// [`OPENED`] was set.
+#[cfg(feature = "bench")]
+static OPENED_NOW: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// The bench's `forget`: the image gathered and the versions given up are
+/// dropped, unless the staged slot is taken. The task's own state and the
+/// core's still name the image until the node reboots.
+#[cfg(feature = "bench")]
+pub async fn forget() -> Result<(), &'static str> {
+    use bark_image::layout::GIVEN_UP;
+    let (flash, internal) = loop {
+        if let Some(f) = OPENED.lock(Cell::get) {
+            break f;
+        }
+        OPENED_NOW.wait().await;
+    };
+    if matches!(phase(), Phase::Installing(_) | Phase::Staged(_)) || slot_taken(flash) {
+        return Err("the staged slot is taken");
+    }
+    let_go().await;
+    let page = Partition::new(internal, GIVEN_UP.start, GIVEN_UP.len);
+    bark_image::given_up::clear(page)
+        .await
+        .map_err(|_| "the page of versions given up was not erased")
 }
 
 // The task.
@@ -552,6 +602,11 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 i.blocks
             );
         }
+    }
+    #[cfg(feature = "bench")]
+    {
+        OPENED.lock(|o| o.set(Some((flash, internal))));
+        OPENED_NOW.signal(());
     }
     // The image to tell the core of once the store takes pieces.
     let mut told = false;

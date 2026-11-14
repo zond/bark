@@ -4,24 +4,21 @@
 # update completes.
 #
 # C holds the run's newest image and serves it, as in A4; A and B gather
-# it. Texts between A and B fill their mailboxes. Every board runs the
-# bench build, the image C serves too, so that each still takes `reboot`
-# and `text` once it has installed.
+# it. Texts between A and B fill their mailboxes. The image C serves is a
+# bench build, as every board's is, so that each still takes `reboot` and
+# `text` once it has installed.
 
 about = "every board rebooted at random during an update"
 duration_s = 18000.0
 
 [[boards]]
 name = "A"
-features = ["bench"]
 
 [[boards]]
 name = "B"
-features = ["bench"]
 
 [[boards]]
 name = "C"
-features = ["bench"]
 serves = true
 
 [[boards]]
