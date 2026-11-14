@@ -838,11 +838,11 @@ void main() {
     await t.runAsync(() => app.contacts.put(olena));
     await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
 
-    // A box without an address holds 156 bytes of text, a part 155.
-    await t.enterText(find.byType(TextField), 'a' * 156);
+    // A box without an address holds 154 bytes of text, a part 153.
+    await t.enterText(find.byType(TextField), 'a' * 154);
     await t.pump();
     expect(find.textContaining('parts'), findsNothing);
-    await t.enterText(find.byType(TextField), 'a' * 157);
+    await t.enterText(find.byType(TextField), 'a' * 155);
     await t.pump();
     expect(find.text('2 parts'), findsOneWidget);
     final long = List.filled(40, 'word').join(' ');

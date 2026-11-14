@@ -22,7 +22,7 @@ use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::delivery::Queued;
 use crate::tables::send_queue::{Kind, Outgoing};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::DATA_HEADER_LEN;
+use crate::wire::data_header_len;
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether the sleepy node `id` may be sent to with the short preamble
@@ -105,7 +105,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .filter(|o| Some(o.msg_id) != except)
             .map(|o| {
                 time_on_air(
-                    (DATA_HEADER_LEN + o.payload().len()) as u8,
+                    (data_header_len(o.hops.saturating_add(1)) + o.payload().len()) as u8,
                     MIN_PREAMBLE_SYMBOLS,
                 )
             })

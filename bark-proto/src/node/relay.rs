@@ -531,7 +531,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The highest count this relay would send to the neighbour `to`, of
     /// the forwards that could go to it (spec "Next hop", "Hop count").
-    pub fn highest_count_for(&self, to: NodeId, now: Instant) -> Option<u8> {
+    pub fn highest_count_for(&self, to: NodeId, now: Instant) -> Option<crate::wire::Hops> {
         let (slot, n) = self.neighbours.by_id(to)?;
         if self.neighbours.is_expired(n, now) {
             return None;

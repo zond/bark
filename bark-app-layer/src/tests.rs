@@ -28,7 +28,7 @@ fn vectors_file_is_current() {
 
 #[test]
 fn the_sizes_are_the_notes() {
-    assert_eq!(MAX_APP_PAYLOAD, 204);
+    assert_eq!(MAX_APP_PAYLOAD, 202);
     assert_eq!(seal::BOX_OVERHEAD, 42);
     assert_eq!(seal::INTRO_OVERHEAD, 50);
     assert_eq!(seal::REPLY_OVERHEAD, 23);
@@ -37,10 +37,10 @@ fn the_sizes_are_the_notes() {
     assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 100);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
-    // The longest text: 204 less the box, the header and the record's type.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 156);
+    // The longest text: 202 less the box, the header and the record's type.
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 154);
     // A part's: one byte more, its number and the count.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 155);
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 153);
 }
 
 #[test]
@@ -603,13 +603,13 @@ fn the_longest_parts_fill_a_box() {
         sent: 1,
         address: None,
     };
-    for (len, fits) in [(155, true), (156, false)] {
+    for (len, fits) in [(153, true), (154, false)] {
         let mut b = [0u8; MAX_PAYLOAD];
         let mut w = Writer::new(&mut b, &h).unwrap();
         w.push(&Record::Text {
             encoding: Encoding::Utf8,
             part: Some(Part { number: 1, of: 2 }),
-            bytes: &[b'a'; 156][..len],
+            bytes: &[b'a'; 154][..len],
         })
         .unwrap();
         let n = w.finish();

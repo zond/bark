@@ -1232,7 +1232,7 @@ fn a_retransmission_is_acked_and_not_delivered_twice() {
         "a retransmission, and an ACK for each"
     );
     // The retransmission repeats the count.
-    let counts: Vec<u8> = h.nodes[a]
+    let counts: Vec<u16> = h.nodes[a]
         .sent
         .iter()
         .filter_map(|(_, f)| match Packet::decode(f.payload()) {
@@ -2140,6 +2140,7 @@ fn replies_stay_within_the_reserve() {
         for (i, &s) in senders.iter().enumerate() {
             let text = k.to_be_bytes();
             let data = Data {
+                wrong: 0,
                 sender_home: ch(2 + (i % 11) as u8),
                 dst_hop: pf,
                 src_hop: core(&h, s).id(),

@@ -742,7 +742,8 @@ pub struct Kept {
     pub dst_pos: bark_proto::Position,
     pub dst_id: bark_proto::NodeId,
     pub payload: Vec<u8>,
-    pub hops: u8,
+    pub hops: u16,
+    pub wrong: u8,
     pub at: bark_proto::HeldAt,
 }
 
@@ -754,12 +755,14 @@ impl Kept {
             dst_id: m.dst_id,
             payload: m.payload.to_vec(),
             hops: m.hops,
+            wrong: m.wrong,
             at: m.at,
         }
     }
 
     pub fn held(&self) -> bark_proto::Held<'_> {
         bark_proto::Held {
+            wrong: self.wrong,
             msg_id: self.msg_id,
             dst_pos: self.dst_pos,
             dst_id: self.dst_id,

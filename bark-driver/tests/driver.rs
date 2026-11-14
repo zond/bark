@@ -712,6 +712,7 @@ fn a_deaf_radio_drops_every_frame_of_its_node() {
         }))
     };
     let data = encode(Packet::Data(Data {
+        wrong: 0,
         sender_home: ch(3),
         dst_hop: other,
         src_hop: DEAF,

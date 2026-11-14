@@ -117,6 +117,9 @@ pub struct Config {
     /// The firmware image version its status tells
     /// (spec "Neighbour status"); 0 where none is known.
     pub version: u32,
+    /// The most wrong hops a search may take: a relay that would send a
+    /// higher wrong-hop count drops the message (spec "Hop count").
+    pub wrong_hop_cap: u8,
 }
 
 /// A calibrated battery reading, millivolts, at which a fixed relay on
@@ -367,6 +370,7 @@ impl Config {
         grace: Duration::from_secs(3600),
         battery: None,
         version: 0,
+        wrong_hop_cap: u8::MAX,
     };
 }
 

@@ -1307,12 +1307,13 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
     let text = b"the long way round";
     let (dst_pos, dst_id) = (h.nodes[s].core.address(), h.nodes[s].core.id());
     let data = Data {
+        wrong: 0,
         sender_home: h.resting(q).unwrap(),
         dst_hop: h.nodes[r].core.id(),
         src_hop: h.nodes[q].core.id(),
         dst_pos,
         dst_id,
-        hops: u8::MAX,
+        hops: bark_proto::wire::MAX_HOPS,
         payload: text,
     };
     let mut frame = Frame {
