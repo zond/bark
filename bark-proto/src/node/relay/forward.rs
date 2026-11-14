@@ -42,7 +42,7 @@ use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD};
 use crate::tables::send_queue::{Kind, Message, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::{Ack, Data, Hops, Packet, DATA_HEADER_MAX, MAX_HOPS, MAX_PAYLOAD};
+use crate::wire::{data_header_len, Ack, Data, Hops, Packet, MAX_HOPS, MAX_PAYLOAD};
 
 pub use crate::node::OWNER_RADIUS_M;
 
@@ -437,7 +437,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             neighbour: to,
             wait,
             service,
-            at_cap: !self.affordable(self.data_airtime(MAX_PAYLOAD), now),
+            at_cap: !self.affordable(self.data_airtime(MAX_PAYLOAD, MAX_HOPS), now),
         }));
         Some(wait)
     }
@@ -856,7 +856,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let completes = !repeat && self.handing(id, d.src_hop);
         let v = self.verdict(&d, completes, now);
         let deadline = now + self.config.ack_timeout;
-        let air = self.data_airtime(d.payload.len());
+        let air = self.data_airtime(d.payload.len(), d.hops.saturating_add(1));
         if let Some(g) = v.gate {
             emit(Action::Trace(Trace::WayWait {
                 wait: g.queue,
@@ -1057,7 +1057,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 place: 0,
             });
         }
-        let air = self.data_airtime(d.payload.len());
+        let air = self.data_airtime(d.payload.len(), d.hops.saturating_add(1));
         let place = self.admit(air, spend, d.hops, completes, now)?;
         // Only fresh work is refused for a banned way on: a message already
         // in the network would be sent round the pushback, and around a
@@ -1461,7 +1461,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && !self.draining()
             && now >= self.own.retry_at
             && self
-                .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
+                .no_room(
+                    self.data_airtime(MAX_PAYLOAD, MAX_HOPS),
+                    Duration::ZERO,
+                    now,
+                )
                 .is_none()
             && self.bans_end(now).is_none()
     }
@@ -1472,7 +1476,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.own.id.is_some() || self.draining() || self.regular() >= SEND_QUEUE {
             return None;
         }
-        let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
+        let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD, MAX_HOPS) + REPLY_RESERVE;
         let bucket = self
             .radio
             .budget()
@@ -1839,10 +1843,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map_or(MIN_PREAMBLE_SYMBOLS, preamble)
     }
 
-    /// The airtime of a DATA with `payload` bytes as this node forwards it,
-    /// at any count.
-    pub(super) fn data_airtime(&self, payload: usize) -> Duration {
-        time_on_air((DATA_HEADER_MAX + payload) as u8, self.forward_preamble())
+    /// The airtime of a DATA with `payload` bytes as this node forwards it
+    /// with count `hops`.
+    pub(super) fn data_airtime(&self, payload: usize, hops: Hops) -> Duration {
+        time_on_air(
+            (data_header_len(hops) + payload) as u8,
+            self.forward_preamble(),
+        )
     }
 
     /// The unit of the retry wait of the current hand-over: one hand-over
