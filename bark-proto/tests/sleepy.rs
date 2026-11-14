@@ -1285,10 +1285,10 @@ fn a_pocket_learns_its_way_out_from_long_beats() {
     assert!(on(9).abs_diff(on(3)) <= 1, "{sent:?}");
 }
 
-/// A message that reaches its owner at the hop cap has found its way: the
-/// owner delivers it to its node, at the cap, rather than dropping it at
-/// the last step and finding it in its delivery queue again
-/// (spec "Hop count").
+/// A message that reaches its owner at the largest hop count, and past the
+/// wrong-hop cap, has found its way: the owner delivers it to its node at
+/// those counts, rather than dropping it at the last step and finding it in
+/// its delivery queue again (spec "Hop count").
 #[test]
 fn a_message_at_the_hop_cap_is_still_delivered() {
     use bark_proto::radio::MIN_PREAMBLE_SYMBOLS;
@@ -1307,7 +1307,7 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
     let text = b"the long way round";
     let (dst_pos, dst_id) = (h.nodes[s].core.address(), h.nodes[s].core.id());
     let data = Data {
-        wrong: 0,
+        wrong: u8::MAX,
         sender_home: h.resting(q).unwrap(),
         dst_hop: h.nodes[r].core.id(),
         src_hop: h.nodes[q].core.id(),
@@ -1334,6 +1334,61 @@ fn a_message_at_the_hop_cap_is_still_delivered() {
         .filter(|(_, t)| matches!(t, Trace::Dropped { msg_id, .. } if *msg_id == id))
         .count();
     assert_eq!(dropped, 0);
+    let counts: Vec<_> = h.nodes[r]
+        .sent
+        .iter()
+        .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+            Ok(Packet::Data(d)) if d.dst_hop == dst_id => Some((d.hops, d.wrong)),
+            _ => None,
+        })
+        .collect();
+    assert!(!counts.is_empty());
+    assert!(
+        counts
+            .iter()
+            .all(|&c| c == (bark_proto::wire::MAX_HOPS, u8::MAX)),
+        "the delivery adds no hop past the largest and no wrong hop: {counts:?}"
+    );
+}
+
+/// A sleepy node's own message goes to its anchor at counts 0 and 0, even
+/// where the anchor is farther from the destination than the sleepy node:
+/// the search starts at the anchor (spec "Hop count"). The anchor's
+/// hand-over on, toward the destination, is no wrong hop.
+#[test]
+fn a_sleepy_node_s_own_message_starts_with_no_wrong_hop() {
+    let (r, s, u) = (0, 1, 2);
+    let mut h = Harness::powered(vec![
+        node(0.0, false, 81),
+        node(50.0, true, 82),
+        node(300.0, false, 83),
+    ]);
+    h.link(r, s);
+    h.link(r, u);
+    h.start_at(s, at(10));
+    h.run_until(at(1000), |_| false);
+    assert_eq!(
+        h.nodes[s].core.anchor().map(|a| a.id),
+        Some(h.nodes[r].core.id())
+    );
+    let id = send(&mut h, s, u, b"away from my anchor");
+    assert!(h.run_until(h.now + secs(30), |h| delivered_at(h, u, id).is_some()));
+    let counts = |i: usize| -> Vec<(u16, u8)> {
+        h.nodes[i]
+            .sent
+            .iter()
+            .filter_map(|(_, f)| match Packet::decode(f.payload()) {
+                Ok(Packet::Data(d)) if d.msg_id() == id => Some((d.hops, d.wrong)),
+                _ => None,
+            })
+            .collect()
+    };
+    let (own, on) = (counts(s), counts(r));
+    assert!(
+        !own.is_empty() && own.iter().all(|&c| c == (0, 0)),
+        "{own:?}"
+    );
+    assert!(!on.is_empty() && on.iter().all(|&c| c == (1, 0)), "{on:?}");
 }
 
 /// The status frames node `i` sent: when, and whether each is an answer.

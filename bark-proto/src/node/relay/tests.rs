@@ -3960,6 +3960,16 @@ fn first_hand_over(
     cap: u8,
     wrong: u8,
 ) -> (Option<(NodeId, u16, u8)>, Vec<Trace>) {
+    first_hand_over_from(lats, dst_id, cap, (3, wrong))
+}
+
+/// [`first_hand_over`] with the record's highest counts `(hops, wrong)`.
+fn first_hand_over_from(
+    lats: &[i32],
+    dst_id: Option<i32>,
+    cap: u8,
+    (held, wrong): (u16, u8),
+) -> (Option<(NodeId, u16, u8)>, Vec<Trace>) {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
     use crate::wire::Data;
@@ -4009,7 +4019,7 @@ fn first_hand_over(
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let place = r.record_place().unwrap();
     r.records
-        .put(place, Record::new(id, parent, (3, wrong), now));
+        .put(place, Record::new(id, parent, (held, wrong), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -4097,4 +4107,54 @@ fn a_wrong_hop_past_the_cap_ends_the_message() {
     );
     let (sent, _) = first_hand_over(&[-5_000], None, 4, 3);
     assert_eq!(sent, Some((id(-5_000), 4, 4)), "within the cap");
+}
+
+/// A return to a parent this relay no longer has in its table is a wrong
+/// hop: its position is not known (spec "Hop count").
+#[test]
+fn a_return_to_a_parent_out_of_the_table_is_a_wrong_hop() {
+    assert_eq!(
+        first_hand_over(&[], None, 255, 3).0,
+        Some((name(7), 4, 4)),
+        "returned to its parent, name 7"
+    );
+    let (sent, traces) = first_hand_over(&[], None, 3, 3);
+    assert_eq!(sent, None);
+    assert!(traces.iter().any(|t| matches!(
+        t,
+        Trace::Dropped {
+            reason: crate::event::DropReason::WrongHopCap,
+            ..
+        }
+    )));
+}
+
+/// A message received at the largest hop count goes no further, however
+/// few its wrong hops (spec "Hop count").
+#[test]
+fn the_largest_hop_count_ends_a_search() {
+    use crate::wire::MAX_HOPS;
+    let (sent, traces) = first_hand_over_from(&[5_000], None, 255, (MAX_HOPS, 0));
+    assert_eq!(sent, None);
+    assert!(traces.iter().any(|t| matches!(
+        t,
+        Trace::Dropped {
+            reason: crate::event::DropReason::HopCap,
+            ..
+        }
+    )));
+    let (sent, _) = first_hand_over_from(&[5_000], None, 255, (MAX_HOPS - 1, 0));
+    assert_eq!(
+        sent.map(|(_, h, _)| h),
+        Some(MAX_HOPS),
+        "the largest is sent"
+    );
+}
+
+/// The default cap is the setting roadmap D220 chose, below what the byte
+/// holds.
+#[test]
+fn the_default_wrong_hop_cap() {
+    assert_eq!(Config::default().wrong_hop_cap, crate::node::WRONG_HOP_CAP);
+    assert_eq!(crate::node::WRONG_HOP_CAP, 64);
 }

@@ -1157,7 +1157,10 @@ mod tests {
         assert_eq!(c.ack_timeout, Duration::from_millis(250));
         assert_eq!(c.tx_power_dbm, 7);
         assert_eq!(c.wrong_hop_cap, 32);
-        assert_eq!(Config::default().wrong_hop_cap, 255);
+        assert_eq!(
+            Config::default().wrong_hop_cap,
+            bark_proto::node::WRONG_HOP_CAP
+        );
         assert_eq!(c.heartbeat_min, Config::default().heartbeat_min);
     }
 
