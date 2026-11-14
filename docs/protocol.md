@@ -298,8 +298,9 @@ stay behind if it moved, since its own traffic would follow it (roadmap
 D55):
 
 - A home reading taken while DATA addressed to the node, the ACK of one
-  of its own hand-overs, or its own transmission was on the air is set
-  aside. Every other is the same 0/1 reading as on any other channel.
+  of its own hand-overs, a piece of the image it gathers
+  ([updates over the mesh](#updates-over-the-mesh)), or its own
+  transmission was on the air is set aside. Every other is the same 0/1 reading as on any other channel.
 - Whether a reading fell in the node's own packet is known only when
   that packet ends, so a home reading is held until the next, 13 s
   later, longer than any packet (roadmap D24).

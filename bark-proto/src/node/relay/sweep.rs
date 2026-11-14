@@ -5,7 +5,7 @@ use crate::event::Action;
 use crate::radio::{time_on_air, Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::busy::percent;
 use crate::time::{Duration, Instant};
-use crate::wire::Packet;
+use crate::wire::{Packet, Update};
 
 /// The busy sweep (spec "Busy estimate").
 pub(super) struct Sweep {
@@ -218,13 +218,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Set aside a home reading taken while a packet addressed to this
-    /// relay, or the reply to its hand-over, was on the air: that energy
-    /// follows it to any channel (spec "Busy estimate").
+    /// relay, the reply to its hand-over, or a piece of the image it
+    /// gathers was on the air: that energy follows it to any channel
+    /// (spec "Busy estimate").
     pub(super) fn set_aside_own(&mut self, bytes: &[u8], now: Instant) {
         let me = self.me();
         let own = match Packet::decode(bytes) {
             Ok(Packet::Data(d)) => d.dst_hop == me,
             Ok(Packet::Ack(a)) => self.in_flight().is_some_and(|o| o.answered_by(a, me)),
+            // A piece names no node: its holder sends it where a gatherer
+            // listens.
+            Ok(Packet::Update(Update::Piece { version, .. })) => self
+                .gathering()
+                .is_some_and(|(image, _)| image.version == version),
             _ => false,
         };
         if !own {
