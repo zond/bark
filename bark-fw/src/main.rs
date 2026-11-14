@@ -102,6 +102,20 @@ pub fn at(_place: &'static str) {
     timing::at(_place);
 }
 
+/// `f`, its time counted at `place` in the bench build's longest poll,
+/// and the task back where it was after.
+#[inline(always)]
+pub fn during<R>(_place: &'static str, f: impl FnOnce() -> R) -> R {
+    #[cfg(feature = "bench")]
+    let was = timing::place();
+    #[cfg(feature = "bench")]
+    timing::at(_place);
+    let r = f();
+    #[cfg(feature = "bench")]
+    timing::at(was);
+    r
+}
+
 // The MPSL's interrupts beside ours (`ble.rs`); TEMP is the MPSL's. The
 // bench build times each (`timing.rs`).
 #[cfg(not(feature = "console"))]

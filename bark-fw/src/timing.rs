@@ -70,18 +70,23 @@ pub struct Leave;
 
 impl<I: Interrupt> Handler<I> for Enter {
     unsafe fn on_interrupt() {
+        let t = now();
         if DEPTH.fetch_add(1, Relaxed) == 0 {
-            ENTERED.store(now(), Relaxed);
+            ENTERED.store(t, Relaxed);
         }
     }
 }
 
 impl<I: Interrupt> Handler<I> for Leave {
     unsafe fn on_interrupt() {
+        // Read before the depth falls: once it is 0 an interrupt that
+        // comes in sets its own start, and a span taken from that one
+        // would wrap to the largest (`USBD:1048575`, 2026-11-14).
+        let entered = ENTERED.load(Relaxed);
         if DEPTH.fetch_sub(1, Relaxed) != 1 {
             return;
         }
-        let took = now().wrapping_sub(ENTERED.load(Relaxed));
+        let took = now().wrapping_sub(entered);
         IN_INTERRUPTS.fetch_add(took, Relaxed);
         let packed =
             (took.min(u32::MAX >> NUMBER_BITS) << NUMBER_BITS) | u32::from(I::IRQ.number());
@@ -199,6 +204,11 @@ static SEGMENT: Mutex<ThreadModeRawMutex, Cell<Option<Segment>>> = Mutex::new(Ce
 fn own_since((cycles, interrupts): (u32, u32)) -> u32 {
     let took = now().wrapping_sub(cycles);
     took.saturating_sub(IN_INTERRUPTS.load(Relaxed).wrapping_sub(interrupts))
+}
+
+/// Where the task being polled is, `-` outside a timed poll.
+pub fn place() -> &'static str {
+    SEGMENT.lock(|s| s.get().map_or("-", |g| g.place))
 }
 
 /// The task being polled is at `place` from now on.
