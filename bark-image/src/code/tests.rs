@@ -206,6 +206,42 @@ fn an_encoder_takes_the_data_in_any_order() {
 }
 
 #[test]
+fn an_encoder_weighed_in_steps_and_fed_in_parts_gives_the_same_piece() {
+    let mut rng = Rng(6);
+    let data = block(DATA, &mut rng);
+    for k in [0u8, 63, 64, 254] {
+        let mut e = Encoder::start(data.len(), k).unwrap();
+        let mut steps = 1;
+        while !e.weigh() {
+            steps += 1;
+        }
+        assert_eq!(steps, DATA.div_ceil(WEIGH_ROWS));
+        for (i, piece) in data.iter().enumerate() {
+            if e.wants(i) {
+                for from in (0..PIECE).step_by(16) {
+                    let to = (from + 16).min(PIECE);
+                    e.add_part(i, from, &piece[from..to]);
+                }
+            }
+        }
+        assert_eq!(e.finish(), encode_piece(&data, k).unwrap());
+    }
+}
+
+#[test]
+fn points_weighed_a_few_rows_at_a_time_are_the_points_weighed_at_once() {
+    let mut rng = Rng(7);
+    let indices = rng.subset(DATA);
+    let whole = Points::new(&indices).unwrap();
+    let mut stepped = Points::start(&indices).unwrap();
+    while !stepped.weigh(3) {}
+    let at = whole.at(200);
+    for j in 0..DATA {
+        assert_eq!(stepped.factor(&at, j), whole.factor(&at, j));
+    }
+}
+
+#[test]
 fn wrong_pieces_are_refused() {
     let p = [[0u8; PIECE]; 3];
     let mut out = [[0u8; PIECE]; 2];
