@@ -27,7 +27,9 @@ const ID: usize = AT + 1;
 const POS: usize = ID + 4;
 const DST: usize = POS + Position::WIRE_LEN;
 const HOPS: usize = DST + NodeId::LEN;
-const WRONG: usize = HOPS + 2;
+/// The count in three bytes, big-endian: the most it can be
+/// ([`bark_proto::wire::MAX_HOPS`]) takes 21 bits.
+const WRONG: usize = HOPS + 3;
 /// A forward's parent or the neighbour a delivery waits for; never both.
 const NODE: usize = WRONG + 1;
 /// A forward's place and its parent's home, or a queued message's age.
@@ -35,6 +37,7 @@ const MORE: usize = NODE + NodeId::LEN;
 const PAYLOAD: usize = MORE + 2;
 const CHECK: usize = PAYLOAD + MAX_PAYLOAD;
 const _: () = assert!(CHECK < SLOT_LEN);
+const _: () = assert!(bark_proto::wire::MAX_HOPS < 1 << 24);
 
 const OWN: u8 = 0;
 const FORWARD: u8 = 1;
@@ -77,7 +80,7 @@ pub fn encode(m: &Held<'_>) -> Option<[u8; SLOT_LEN]> {
     s[ID..POS].copy_from_slice(&m.msg_id.0.to_be_bytes());
     s[POS..DST].copy_from_slice(&m.dst_pos.encode());
     s[DST..HOPS].copy_from_slice(&m.dst_id.0);
-    s[HOPS..WRONG].copy_from_slice(&m.hops.to_be_bytes());
+    s[HOPS..WRONG].copy_from_slice(&m.hops.to_be_bytes()[1..]);
     s[WRONG] = m.wrong;
     let (at, node, more) = match m.at {
         HeldAt::Own => (OWN, NodeId::NONE, [0; 2]),
@@ -137,7 +140,8 @@ pub fn decode(s: &[u8; SLOT_LEN]) -> Option<Held<'_>> {
         dst_pos: Position::decode(&pos),
         dst_id: NodeId(dst),
         payload: &s[PAYLOAD..PAYLOAD + len],
-        hops: u16::from_be_bytes([s[HOPS], s[HOPS + 1]]),
+        hops: u32::from_be_bytes([0, s[HOPS], s[HOPS + 1], s[HOPS + 2]])
+            .min(bark_proto::wire::MAX_HOPS),
         wrong: s[WRONG],
         at,
     };
@@ -157,7 +161,7 @@ mod tests {
             dst_pos,
             dst_id,
             payload,
-            hops: 300,
+            hops: 70_000,
             at,
         }
     }

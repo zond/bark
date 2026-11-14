@@ -336,7 +336,7 @@ impl Records {
 }
 
 /// Bytes of a record kept across a reset ([`Records::kept`]).
-pub const KEPT_LEN: usize = 35;
+pub const KEPT_LEN: usize = 37;
 
 impl Records {
     /// Every record active within `ttl` of `now`, as kept across a reset,
@@ -359,12 +359,12 @@ impl Records {
                 b[4..10].copy_from_slice(&r.parent.0);
                 b[10..16].copy_from_slice(&r.last_from.0);
                 b[16] = r.parent_home.index();
-                b[17..19].copy_from_slice(&r.highest_hops.to_be_bytes());
-                b[19..21].copy_from_slice(&r.last_hops.to_be_bytes());
-                b[21] = r.highest_wrong;
-                b[22] = r.flags;
-                b[23..31].copy_from_slice(&r.handed.to_be_bytes());
-                put(&mut b[31..35], r.last_active, now, Round::Earlier);
+                b[17..20].copy_from_slice(&r.highest_hops.to_be_bytes()[1..]);
+                b[20..23].copy_from_slice(&r.last_hops.to_be_bytes()[1..]);
+                b[23] = r.highest_wrong;
+                b[24] = r.flags;
+                b[25..33].copy_from_slice(&r.handed.to_be_bytes());
+                put(&mut b[33..37], r.last_active, now, Round::Earlier);
                 b
             })
     }
@@ -381,13 +381,13 @@ impl Records {
         ttl: Duration,
         now: Instant,
     ) -> bool {
-        let Some(last_active) = super::kept::get(&b[31..35], then) else {
+        let Some(last_active) = super::kept::get(&b[33..37], then) else {
             return false;
         };
         let (Ok(parent), Ok(last_from), Ok(handed)) = (
             b[4..10].try_into(),
             b[10..16].try_into(),
-            b[23..31].try_into(),
+            b[25..33].try_into(),
         ) else {
             return false;
         };
@@ -399,10 +399,10 @@ impl Records {
             parent: NodeId(parent),
             last_from: NodeId(last_from),
             parent_home,
-            highest_wrong: b[21],
-            flags: b[22],
-            highest_hops: Hops::from_be_bytes([b[17], b[18]]).min(MAX_HOPS),
-            last_hops: Hops::from_be_bytes([b[19], b[20]]).min(MAX_HOPS),
+            highest_wrong: b[23],
+            flags: b[24],
+            highest_hops: Hops::from_be_bytes([0, b[17], b[18], b[19]]).min(MAX_HOPS),
+            last_hops: Hops::from_be_bytes([0, b[20], b[21], b[22]]).min(MAX_HOPS),
             handed: u64::from_be_bytes(handed),
             last_active,
         };
@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(DRAIN.as_millis(), 162_900);
         assert_eq!(HELD, 103);
         assert_eq!(RECORDS, 546 + 103);
-        assert_eq!(core::mem::size_of::<Record>(), 40);
+        assert_eq!(core::mem::size_of::<Record>(), 48);
     }
 
     #[test]
