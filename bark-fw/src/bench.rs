@@ -28,6 +28,14 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
+
+/// The bench build's sync word, 0x21 as the SX126x writes it: neither
+/// the nodes' 0x12 (0x1424) nor LoRaWAN's 0x34 (0x3444) in either half,
+/// so bench boards and nodes in range of each other drop each other's
+/// frames in the radio. Otherwise a bench board would take a node at
+/// home as a neighbour and gather its release, which has the higher
+/// version, and the node would relay through boards a test silences.
+pub const SYNC_WORD: u16 = 0x2414;
 use crate::timing::Beside;
 
 const _: () = assert!(

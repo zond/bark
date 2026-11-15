@@ -4,7 +4,8 @@
 bench build, the phone test and scenarios A1 to A5, S2 and S3 are built.
 A1, A2 and A3 have passed on the boards; the others and the phone test
 have not run yet. Every board of a run runs the bench build, which logs
-each transmission, as the heartbeat check needs. Four T-Echo 433 boards on
+each transmission, as the heartbeat check needs. The bench build has a sync word of
+its own, so nodes running a release in range take no part in a run. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
 is a heading of `docs/protocol.md`.
 

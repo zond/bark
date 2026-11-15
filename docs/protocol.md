@@ -158,7 +158,7 @@ on the channel; it works below the noise floor.
 | 255-byte packet | 138.6 ms | ≈400 ms at SF7 |
 | Sensitivity | ≈−120 dBm | ≈−124 dBm at SF7 |
 | Noise floor (125 kHz, noise figure ≈5 dB) | ≈−118 dBm | SF5 signals near sensitivity sit below the floor: RSSI cannot see them, CAD can |
-| Sync word | 0x12, the private one, written 0x1424 to the SX126x (not LoRaWAN's 0x34) | other LoRa networks and this one ignore each other's packets |
+| Sync word | 0x12, the private one, written 0x1424 to the SX126x (not LoRaWAN's 0x34) | other LoRa networks and this one ignore each other's packets; a test build that must not join the nodes in range uses another word, as the bench build does (0x21) |
 | CRC | on (LoRa hardware CRC) | |
 | Maximum packet (MTU) | 255 bytes | SX126x maximum LoRa payload |
 | Range, relay↔handheld, street | ≈750 m (≈1 km at SF7) | |
