@@ -25,6 +25,7 @@
 
 use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
+use crate::geo::{LocalPlane, Point};
 use crate::ids::{MsgId, NodeId};
 use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, Take, IN_FLIGHT};
 use crate::node::Rng;
@@ -38,10 +39,10 @@ use crate::tables::budget::{
 };
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
-use crate::tables::records::{Record, HELD, MAX_HOPS};
+use crate::tables::records::{Record, HELD};
 use crate::tables::send_queue::{Kind, Message, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::{Ack, Data, Packet, DATA_HEADER_LEN, MAX_PAYLOAD};
+use crate::wire::{data_header_len, Ack, Data, Hops, Packet, MAX_HOPS, MAX_PAYLOAD};
 
 pub use crate::node::OWNER_RADIUS_M;
 
@@ -436,7 +437,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             neighbour: to,
             wait,
             service,
-            at_cap: !self.affordable(self.data_airtime(MAX_PAYLOAD), now),
+            at_cap: !self.affordable(self.data_airtime(MAX_PAYLOAD, MAX_HOPS), now),
         }));
         Some(wait)
     }
@@ -542,7 +543,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// received with `hops`, other than `id`, going to `to`, finds there.
     /// A queued message's count here is one less than it is sent with. At
     /// most queue entries × neighbour entries per call.
-    fn gate(&self, id: MsgId, to: NodeId, hops: u8, now: Instant) -> Gate {
+    fn gate(&self, id: MsgId, to: NodeId, hops: Hops, now: Instant) -> Gate {
         let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
         for o in self.queue.iter().filter(|o| o.msg_id() != id) {
             if self.bound_for(o, now) == Some(to) {
@@ -579,7 +580,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &self,
         airtime: Duration,
         spend: Duration,
-        hops: u8,
+        hops: Hops,
         freed: bool,
         now: Instant,
     ) -> Result<u8, DropReason> {
@@ -855,7 +856,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let completes = !repeat && self.handing(id, d.src_hop);
         let v = self.verdict(&d, completes, now);
         let deadline = now + self.config.ack_timeout;
-        let air = self.data_airtime(d.payload.len());
+        let air = self.data_airtime(d.payload.len(), d.hops.saturating_add(1));
         if let Some(g) = v.gate {
             emit(Action::Trace(Trace::WayWait {
                 wait: g.queue,
@@ -1010,7 +1011,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             _ => Record::new(
                 id,
                 (!a.fresh).then_some((d.src_hop, d.sender_home)),
-                d.hops,
+                (d.hops, d.wrong),
                 now,
             ),
         };
@@ -1056,7 +1057,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 place: 0,
             });
         }
-        let air = self.data_airtime(d.payload.len());
+        let air = self.data_airtime(d.payload.len(), d.hops.saturating_add(1));
         let place = self.admit(air, spend, d.hops, completes, now)?;
         // Only fresh work is refused for a banned way on: a message already
         // in the network would be sent round the pushback, and around a
@@ -1081,7 +1082,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let id = d.msg_id();
         if a.case == Case::New {
             let parent = (!a.fresh).then_some((d.src_hop, d.sender_home));
-            let mut record = Record::new(id, parent, d.hops, now);
+            let mut record = Record::new(id, parent, (d.hops, d.wrong), now);
             if a.owner {
                 record.set_arrived();
             }
@@ -1097,12 +1098,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if a.case == Case::Seen {
                 // The sender has the message and searches on from its own
                 // record; it need not be offered this one.
-                r.seen(d.src_hop, d.hops, now);
+                r.seen(d.src_hop, (d.hops, d.wrong), now);
                 if let Some(s) = a.slot {
                     r.handed_to(s);
                 }
             } else {
-                r.received(d.src_hop, d.hops, now);
+                r.received(d.src_hop, (d.hops, d.wrong), now);
             }
             if a.owner {
                 r.set_arrived();
@@ -1234,7 +1235,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let out = Outgoing {
             place,
             since: now,
-            ..self.onward(Message::of(d), d.hops)
+            ..self.onward(Message::of(d), (d.hops, d.wrong))
         };
         if self.queue.push(out).is_err() {
             self.drop_msg(id, DropReason::SendQueueFull, emit);
@@ -1252,6 +1253,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         };
         q.hops = d.hops;
+        q.wrong = d.wrong;
         if node == self.me() {
             self.delivered.insert(id, now);
             // The inbox keeps it until the application confirms it, by the
@@ -1302,7 +1304,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::HopCap, emit);
                 continue;
             }
-            let out = self.onward(q.message(), hops);
+            let out = self.onward(q.message(), (hops, q.wrong));
             let Ok(place) = self.admit(out.airtime(), Duration::ZERO, hops, false, now) else {
                 return;
             };
@@ -1311,7 +1313,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let Some(at) = self.record_place() else {
                 return;
             };
-            self.records.put(at, Record::new(id, None, hops, now));
+            self.records
+                .put(at, Record::new(id, None, (hops, q.wrong), now));
             if !self.push_forward(out, place, now) {
                 return;
             }
@@ -1345,11 +1348,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(mut q) = Queued::new(id, m.dst_pos, m.dst_id, m.payload(), now) else {
             return;
         };
-        // The count it arrived with, which it goes on from (`release`).
-        q.hops = self
-            .records
-            .get(id)
-            .map_or(out.hops.saturating_sub(1), Record::highest_hops);
+        // The counts it arrived with, which it goes on from (`release`).
+        let record = self.records.get(id);
+        q.hops = record.map_or(out.hops.saturating_sub(1), Record::highest_hops);
+        q.wrong = record.map_or(out.wrong, Record::highest_wrong);
         q.waits_for = by;
         self.make_room(now, emit);
         let pushed = self.delivery.push(q);
@@ -1399,7 +1401,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.drop_msg(id, DropReason::HopCap, emit);
                 continue;
             }
-            let out = self.onward(q.message(), hops);
+            let out = self.onward(q.message(), (hops, q.wrong));
             let Ok(place) = self.admit(out.airtime(), Duration::ZERO, hops, false, now) else {
                 return;
             };
@@ -1408,7 +1410,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 let Some(at) = self.record_place() else {
                     return;
                 };
-                self.records.put(at, Record::new(id, None, hops, now));
+                self.records
+                    .put(at, Record::new(id, None, (hops, q.wrong), now));
             }
             if !self.push_forward(out, place, now) {
                 return;
@@ -1418,17 +1421,21 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// `message` as a forward this node sends on, going on from count
-    /// `hops` (spec "Hop count"), addressed when its hand-over starts.
-    pub(super) fn onward(&self, message: Message, hops: u8) -> Outgoing {
-        Outgoing::new(
-            message,
-            hops.saturating_add(1),
-            NodeId::NONE,
-            self.home,
-            self.forward_preamble(),
-            Kind::Forward,
-        )
+    /// `message` as a forward this node sends on, going on from counts
+    /// `hops` and `wrong` (spec "Hop count"), addressed when its hand-over
+    /// starts.
+    pub(super) fn onward(&self, message: Message, (hops, wrong): (Hops, u8)) -> Outgoing {
+        Outgoing {
+            wrong,
+            ..Outgoing::new(
+                message,
+                hops.saturating_add(1).min(MAX_HOPS),
+                NodeId::NONE,
+                self.home,
+                self.forward_preamble(),
+                Kind::Forward,
+            )
+        }
     }
 
     /// Queue the forward `out`, whose record is in the table, into
@@ -1454,7 +1461,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             && !self.draining()
             && now >= self.own.retry_at
             && self
-                .no_room(self.data_airtime(MAX_PAYLOAD), Duration::ZERO, now)
+                .no_room(
+                    self.data_airtime(MAX_PAYLOAD, MAX_HOPS),
+                    Duration::ZERO,
+                    now,
+                )
                 .is_none()
             && self.bans_end(now).is_none()
     }
@@ -1465,7 +1476,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if self.own.id.is_some() || self.draining() || self.regular() >= SEND_QUEUE {
             return None;
         }
-        let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD) + REPLY_RESERVE;
+        let need = self.queue.airtime() + self.data_airtime(MAX_PAYLOAD, MAX_HOPS) + REPLY_RESERVE;
         let bucket = self
             .radio
             .budget()
@@ -1546,11 +1557,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             src_hop: self.me(),
             dst_pos,
             dst_id,
+            wrong: 0,
             hops: 0,
             payload,
         };
         if self.ends_here((dst_id, dst_pos), None, 0, None, now) {
-            let mut record = Record::new(id, None, 0, now);
+            let mut record = Record::new(id, None, (0, 0), now);
             record.set_arrived();
             self.records.put(at, record);
             if !self.has_room_for(dst_id, now) {
@@ -1575,7 +1587,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return;
         }
-        let record = Record::new(id, None, 0, now);
+        let record = Record::new(id, None, (0, 0), now);
         if let Some((to, ban)) = self.heads_to(&record, 0, 0, (dst_id, dst_pos), now) {
             // Fresh work, gated as a sleepy node's own is at its anchor
             // (spec "Receiving DATA").
@@ -1831,9 +1843,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map_or(MIN_PREAMBLE_SYMBOLS, preamble)
     }
 
-    /// The airtime of a DATA with `payload` bytes as this node forwards it.
-    pub(super) fn data_airtime(&self, payload: usize) -> Duration {
-        time_on_air((DATA_HEADER_LEN + payload) as u8, self.forward_preamble())
+    /// The airtime of a DATA with `payload` bytes as this node forwards it
+    /// with count `hops`.
+    pub(super) fn data_airtime(&self, payload: usize, hops: Hops) -> Duration {
+        time_on_air(
+            (data_header_len(hops) + payload) as u8,
+            self.forward_preamble(),
+        )
     }
 
     /// The unit of the retry wait of the current hand-over: one hand-over
@@ -1952,13 +1968,14 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         if let Some(current) = self.queue.current_mut() {
             current.hops = out.hops;
+            current.wrong = out.wrong;
         }
         let frame = out.frame(self.me(), self.home);
         self.radio.send(Job::HandOver, frame, now, emit);
     }
 
-    /// The current entry as it goes now, its count stamped, or `None`
-    /// where it is dropped at the cap, or held for an owed reply.
+    /// The current entry as it goes now, its counts stamped, or `None`
+    /// where it is dropped at a cap, or held for an owed reply.
     fn stamp(
         &mut self,
         out: Outgoing,
@@ -1972,26 +1989,29 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return None;
         }
         let id = out.msg_id();
-        let Some(hops) = self.count(id, &out) else {
-            self.queue.take_current();
-            self.forwarding.feed_due = true;
-            self.drop_msg(id, DropReason::HopCap, emit);
-            return None;
+        let (hops, wrong) = match self.count(id, &out) {
+            Ok(counts) => counts,
+            Err(cap) => {
+                self.queue.take_current();
+                self.forwarding.feed_due = true;
+                self.drop_msg(id, cap, emit);
+                return None;
+            }
         };
         if let Some(r) = self.records.get_mut(id) {
             r.sent(now);
         }
-        Some(Outgoing { hops, ..out })
+        Some(Outgoing { hops, wrong, ..out })
     }
 
-    /// The count the current hand-over of `out`, of message `id`, carries
+    /// The counts the current hand-over of `out`, of message `id`, carries
     /// (spec "Hop count"): stamped at its first transmission, not when
-    /// queued, so it is never older than a count this relay has since
-    /// received or sent. `None` past the hop cap, but for a delivery, whose
-    /// search has ended.
-    fn count(&self, id: MsgId, out: &Outgoing) -> Option<u8> {
+    /// queued, so they are never older than counts this relay has since
+    /// received or sent. The cap passed, if one is, but for a delivery,
+    /// whose search has ended.
+    fn count(&self, id: MsgId, out: &Outgoing) -> Result<(Hops, u8), DropReason> {
         if out.transmitted() {
-            return Some(out.hops);
+            return Ok((out.hops, out.wrong));
         }
         debug_assert!(
             self.records.get(id).is_some(),
@@ -2003,12 +2023,46 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Some(r)
                 if self.anchored_sleepy() && self.own.id == Some(id) && r.parent().is_none() =>
             {
-                Some(0)
+                Ok((0, 0))
             }
-            Some(r) if out.kind.delivers() => Some(r.highest_hops().saturating_add(1)),
-            Some(r) => r.highest_hops().checked_add(1),
-            None => Some(out.hops),
+            Some(r) if out.kind.delivers() => Ok((
+                r.highest_hops().saturating_add(1).min(MAX_HOPS),
+                r.highest_wrong(),
+            )),
+            Some(r) if r.highest_hops() >= MAX_HOPS => Err(DropReason::HopCap),
+            Some(r) => {
+                let wrong = u16::from(r.highest_wrong()) + u16::from(self.wrong_hop(out));
+                match wrong > u16::from(self.config.wrong_hop_cap) {
+                    true => Err(DropReason::WrongHopCap),
+                    false => Ok((r.highest_hops() + 1, wrong as u8)),
+                }
+            }
+            None => Ok((out.hops, out.wrong)),
         }
+    }
+
+    /// Whether the hand-over of `out` to its receiver is a wrong hop: the
+    /// receiver's position is not strictly closer to the destination than
+    /// this node's, or not known (spec "Hop count"). Both are measured in
+    /// the plane centred on the destination, the same at every node, so
+    /// that the hops that are not wrong strictly approach it and form no
+    /// loop. A hand-over to the addressed node ends the search, and is
+    /// never wrong.
+    fn wrong_hop(&self, out: &Outgoing) -> bool {
+        let m = &out.message;
+        if out.to == m.dst_id {
+            return false;
+        }
+        let Some(to) = self.neighbours.get(out.to) else {
+            return true;
+        };
+        let plane = LocalPlane::new(m.dst_pos);
+        let origin = Point::default();
+        let (mine, theirs) = (
+            plane.point(self.config.position).distance2(origin),
+            plane.point(to.position).distance2(origin),
+        );
+        theirs >= mine
     }
 
     /// Listen-before-talk gave up on the current hand-over's channel.
@@ -2069,7 +2123,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         let (id, to) = (out.msg_id(), out.to);
         emit(Action::Trace(Trace::Seen { msg_id: id, by: to }));
-        self.tried(id, to, out.hops, now, emit);
+        self.tried(id, to, (out.hops, out.wrong), now, emit);
         if out.kind == Kind::Forward {
             self.cancel_handover();
             return;
@@ -2100,7 +2154,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         &mut self,
         id: MsgId,
         to: NodeId,
-        hops: u8,
+        counts: (Hops, u8),
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
@@ -2109,7 +2163,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.answer_from(to, now, emit);
         }
         if let Some(r) = self.records.get_mut(id) {
-            r.handed_over(hops);
+            r.handed_over(counts);
             // The parent that took a return has the message from this
             // relay as much as a child has (spec "Message records").
             if let Some(s) = slot {
@@ -2214,7 +2268,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return self.delivered_to(id, to, by, now, emit);
         }
         self.neighbours.took(to, out.since, now);
-        self.tried(id, to, out.hops, now, emit);
+        self.tried(id, to, (out.hops, out.wrong), now, emit);
         if to == out.message.dst_id {
             // The node it is addressed to took it: it has arrived.
             if let Some(r) = self.records.get_mut(id) {

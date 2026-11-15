@@ -249,14 +249,50 @@ fn a_walker_turns_carried_within_four_minutes() {
     assert_eq!(t - 1, 167 + 72);
 }
 
-/// A sleepy node takes each fix as before.
+/// A sleepy node without an anchor takes a far fix as its position,
+/// since it may have moved, and stands at its place again at a near one;
+/// a fix within the carried radius moves it nowhere (roadmap D219).
 #[test]
-fn a_sleepy_node_takes_each_fix() {
+fn a_sleepy_node_takes_a_far_fix_and_keeps_its_place_through_a_near_one() {
     let mut h = Harness::powered(vec![node(0.0, true, 2)]);
     h.run_until(at(10), |_| false);
+    fix(&mut h, 0, 100.0);
+    assert_eq!(h.nodes[0].core.config().position, pos(0.0));
     fix(&mut h, 0, 500.0);
     assert_eq!(h.nodes[0].core.config().position, pos(500.0));
+    h.run_for(secs(10));
+    fix(&mut h, 0, 30.0);
+    assert_eq!(h.nodes[0].core.config().position, pos(0.0));
     assert!(!h.nodes[0].core.carried());
+}
+
+/// The bench's night (`docs/gps-bench-2026-11-06.md`): a still relay's
+/// fixes stray beyond the carried radius long enough to make it carried,
+/// then stand 7 m from its place. Fixed again, it takes its old place, so
+/// its address is as before. One that stops beyond the radius of where it
+/// stood takes the fix it has, as
+/// `a_relay_turns_carried_after_a_run_of_far_fixes_and_fixed_after_staying`
+/// shows.
+#[test]
+fn a_relay_carried_on_noise_is_fixed_again_at_its_old_place() {
+    let r = 0;
+    let mut h = Harness::powered(vec![node(0.0, false, 1)]);
+    h.run_until(at(100), |_| false);
+    let address = h.nodes[r].core.address();
+    assert_eq!(address, pos(0.0));
+    for _ in 0..=73 {
+        fix(&mut h, r, 330.0);
+        h.run_for(secs(1));
+    }
+    assert!(h.nodes[r].core.carried());
+    for _ in 0..=10 {
+        fix(&mut h, r, 7.0);
+        h.run_for(secs(60));
+    }
+    assert!(!h.nodes[r].core.carried());
+    assert_eq!(h.nodes[r].core.address(), address);
+    h.run_for(secs(30));
+    assert_eq!(h.nodes[r].stored.map(|s| s.place), Some(address));
 }
 
 /// R holds a message for its sleepy node S, which waits for S's beat

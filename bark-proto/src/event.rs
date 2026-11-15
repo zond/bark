@@ -176,8 +176,12 @@ pub enum AppCommand<'a> {
 pub enum DropReason {
     /// The origin has no neighbour left to try (spec "Return to parent").
     NoRoute,
-    /// Sending it on would need a count above 255 (spec "Hop count").
+    /// Sending it on would need a count above the largest
+    /// (spec "Hop count").
     HopCap,
+    /// Sending it on would need a wrong-hop count above the cap
+    /// ([`crate::Config::wrong_hop_cap`], spec "Hop count").
+    WrongHopCap,
     /// No place for its record (spec "Message records"). Refused; the table
     /// outnumbers the send queue's places, so this does not happen.
     NoRecord,
@@ -411,7 +415,7 @@ pub enum Trace {
         /// The neighbour.
         to: NodeId,
         /// The count it carried (spec "Hop count").
-        hops: u8,
+        hops: crate::wire::Hops,
         /// The transmissions the hand-over took, the last one answered
         /// (spec "Hand-over").
         attempts: u8,

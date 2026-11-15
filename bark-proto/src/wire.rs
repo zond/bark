@@ -9,8 +9,9 @@
 //! ```text
 //! HEARTBEAT  first format flags id pos                            = 13
 //! ACK        first format msg from to                             = 18
-//! DATA       first format dst_hop src_hop dst_pos dst_id hops
-//!            payload                                              = 28 + payload
+//! DATA       first format dst_hop src_hop dst_pos dst_id wrong
+//!            hops payload                                         = 29 + payload,
+//!                                                                   30 from 128 hops
 //! HEARTBEAT  + section: runs version key blocks last complete have = 26
 //! PIECE      first format version block index bytes               = 255
 //! ASK        first format to from                                 = 14
@@ -37,7 +38,15 @@ const POS_LEN: usize = Position::WIRE_LEN;
 const SHORT_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
 const ID_LEN: usize = NodeId::LEN;
-const HOPS_LEN: usize = 1;
+const WRONG_LEN: usize = 1;
+/// The hop count's short form, and its long form (spec "Hop count").
+/// The hop count's shortest form, and its longest (spec "Hop count").
+const HOPS_SHORT: usize = 1;
+const HOPS_LONG: usize = 3;
+/// Bits of the count in each of its bytes; the top bit says another
+/// byte follows.
+const HOPS_BITS: u32 = 7;
+const HOPS_MORE: u8 = 0x80;
 
 // First byte.
 const FIRST: usize = 0;
@@ -94,13 +103,67 @@ const DATA_DST_HOP: usize = VERSION + FORMAT_LEN;
 const DATA_SRC_HOP: usize = DATA_DST_HOP + ID_LEN;
 const DATA_DST_POS: usize = DATA_SRC_HOP + ID_LEN;
 const DATA_DST_ID: usize = DATA_DST_POS + POS_LEN;
-const DATA_HOPS: usize = DATA_DST_ID + ID_LEN;
-/// DATA header length (spec "Packet formats": 28).
-pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_LEN;
+const DATA_WRONG: usize = DATA_DST_ID + ID_LEN;
+const DATA_HOPS: usize = DATA_WRONG + WRONG_LEN;
+/// DATA header length with the count's shortest form, below 128
+/// (spec "Packet formats": 29).
+pub const DATA_HEADER_LEN: usize = DATA_HOPS + HOPS_SHORT;
+/// DATA header length with the count's longest form: 31.
+pub const DATA_HEADER_MAX: usize = DATA_HOPS + HOPS_LONG;
 
-/// Largest application payload: [`MAX_FRAME`] less the DATA header,
-/// 255 − 28 = 227 bytes.
-pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_LEN;
+/// A hand-over count (spec "Hop count").
+pub type Hops = u32;
+/// The largest count, the longest form's 21 bits: 2 097 151
+/// (spec "Hop count").
+pub const MAX_HOPS: Hops = (1 << (HOPS_BITS * HOPS_LONG as u32)) - 1;
+
+/// Largest application payload: [`MAX_FRAME`] less the longest DATA
+/// header, 255 − 31 = 224 bytes, since the count grows on the way and a
+/// full frame cannot.
+pub const MAX_PAYLOAD: usize = MAX_FRAME - DATA_HEADER_MAX;
+
+/// The bytes the count `hops` takes: as many 7-bit groups as it needs.
+const fn hops_len(hops: Hops) -> usize {
+    let mut n = HOPS_SHORT;
+    while n < HOPS_LONG && hops >> (HOPS_BITS * n as u32) != 0 {
+        n += 1;
+    }
+    n
+}
+
+/// The DATA header's length for a count of `hops`.
+pub const fn data_header_len(hops: Hops) -> usize {
+    DATA_HOPS + hops_len(hops)
+}
+
+/// Write `hops` at `b[0..]` in its form, the most significant group first;
+/// returns its length.
+fn put_hops(b: &mut [u8], hops: Hops) -> usize {
+    let n = hops_len(hops);
+    for (i, byte) in b[..n].iter_mut().enumerate() {
+        let group = (hops >> (HOPS_BITS * (n - 1 - i) as u32)) as u8 & !HOPS_MORE;
+        *byte = group | if i + 1 < n { HOPS_MORE } else { 0 };
+    }
+    n
+}
+
+/// The count at `b[0..]` and its length. A form longer than the count
+/// needs, or one that runs past the longest, is rejected: each count has
+/// one form.
+fn get_hops(b: &[u8]) -> Result<(Hops, usize), DecodeError> {
+    let mut hops: Hops = 0;
+    for i in 0..HOPS_LONG {
+        let byte = *b.get(i).ok_or(DecodeError::Short)?;
+        if i == 0 && byte == HOPS_MORE {
+            return Err(DecodeError::Hops);
+        }
+        hops = hops << HOPS_BITS | Hops::from(byte & !HOPS_MORE);
+        if byte & HOPS_MORE == 0 {
+            return Ok((hops, i + 1));
+        }
+    }
+    Err(DecodeError::Hops)
+}
 
 // The frames from node to node (spec "Packet formats").
 /// DATA `aux` of the update's piece (spec "Updates over the mesh").
@@ -166,8 +229,9 @@ const _: () = assert!(
 );
 
 const _: () = assert!(HEARTBEAT_LEN == 13 && ACK_LEN == 18);
-const _: () = assert!(DATA_HEADER_LEN == 28);
-const _: () = assert!(MAX_PAYLOAD == 227);
+const _: () = assert!(DATA_HEADER_LEN == 29 && DATA_HEADER_MAX == 31);
+const _: () = assert!(MAX_HOPS == 2_097_151);
+const _: () = assert!(MAX_PAYLOAD == 224);
 
 /// Whether a frame of `len` bytes takes as long on air as one `less`
 /// bytes shorter.
@@ -257,8 +321,11 @@ pub struct Data<'a> {
     pub dst_pos: Position,
     /// The destination node.
     pub dst_id: NodeId,
-    /// Hand-overs so far (spec "Hop count").
-    pub hops: u8,
+    /// The search's wrong hops so far: hand-overs to a node not closer to
+    /// `dst_pos` than its sender (spec "Hop count").
+    pub wrong: u8,
+    /// Hand-overs so far, at most [`MAX_HOPS`] (spec "Hop count").
+    pub hops: Hops,
     /// Opaque application payload, at most [`MAX_PAYLOAD`] bytes.
     pub payload: &'a [u8],
 }
@@ -437,6 +504,10 @@ pub enum DecodeError {
     Kind(u8),
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
+    /// A DATA hop count in a longer form than it needs, or longer than the
+    /// longest: each
+    /// count has one form.
+    Hops,
     /// A frame from node to node of a kind reserved for later, DATA `aux`
     /// 13, 14 or 18 to 63.
     Reserved(u8),
@@ -448,6 +519,8 @@ pub enum EncodeError {
     /// The payload is longer than [`MAX_PAYLOAD`], or a piece's bytes are
     /// not [`PIECE_BYTES`].
     PayloadTooLong,
+    /// A DATA count above [`MAX_HOPS`].
+    Hops,
 }
 
 fn put(buf: &mut [u8], at: usize, bytes: &[u8]) {
@@ -551,15 +624,19 @@ impl Packet<'_> {
                 if d.payload.len() > MAX_PAYLOAD {
                     return Err(EncodeError::PayloadTooLong);
                 }
+                if d.hops > MAX_HOPS {
+                    return Err(EncodeError::Hops);
+                }
                 buf[FIRST] = d.sender_home.index();
                 buf[VERSION] = FORMAT;
                 put(buf, DATA_DST_HOP, &d.dst_hop.0);
                 put(buf, DATA_SRC_HOP, &d.src_hop.0);
                 put(buf, DATA_DST_POS, &d.dst_pos.encode());
                 put(buf, DATA_DST_ID, &d.dst_id.0);
-                buf[DATA_HOPS] = d.hops;
-                put(buf, DATA_HEADER_LEN, d.payload);
-                Ok(DATA_HEADER_LEN + d.payload.len())
+                buf[DATA_WRONG] = d.wrong;
+                let header = DATA_HOPS + put_hops(&mut buf[DATA_HOPS..], d.hops);
+                put(buf, header, d.payload);
+                Ok(header + d.payload.len())
             }
             Packet::Update(u) => {
                 buf[VERSION] = FORMAT;
@@ -671,7 +748,9 @@ impl<'a> Packet<'a> {
         if Channel::new(aux).is_none() {
             return Self::decode_update(aux, b).map(Packet::Update);
         }
-        let payload = payload(b, DATA_HEADER_LEN)?;
+        let (hops, len) = get_hops(b.get(DATA_HOPS..).ok_or(DecodeError::Short)?)?;
+        let header = DATA_HOPS + len;
+        let payload = payload(b, header)?;
         format(b)?;
         Ok(Packet::Data(Data {
             sender_home: channel(aux)?,
@@ -679,7 +758,8 @@ impl<'a> Packet<'a> {
             src_hop: get_id(b, DATA_SRC_HOP),
             dst_pos: get_pos(b, DATA_DST_POS),
             dst_id: get_id(b, DATA_DST_ID),
-            hops: b[DATA_HOPS],
+            wrong: b[DATA_WRONG],
+            hops,
             payload,
         }))
     }
@@ -760,7 +840,9 @@ mod tests {
         let expected = match p {
             Packet::Heartbeat(_) => 13,
             Packet::Ack(_) => 18,
-            Packet::Data(d) => 28 + d.payload.len(),
+            Packet::Data(d) => {
+                29 + usize::from(d.hops >= 128) + usize::from(d.hops >= 16_384) + d.payload.len()
+            }
             Packet::Update(Update::Piece { .. }) => 255,
             Packet::Status(StatusFrame::Ask { .. }) => 14,
             Packet::Status(StatusFrame::Tell { .. }) => 30,
@@ -894,10 +976,11 @@ mod tests {
             src_hop in id(),
             dst_pos in position(),
             dst_id in id(),
-            hops: u8,
+            wrong: u8,
+            hops in 0..=MAX_HOPS,
             payload in payload(),
         ) {
-            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, hops, payload: &payload };
+            let d = Data { sender_home, dst_hop, src_hop, dst_pos, dst_id, wrong, hops, payload: &payload };
             round_trip(&Packet::Data(d));
             prop_assert_eq!(Packet::Data(d).sender(), Some(src_hop));
             // The ID survives the trip: it depends only on fields every hop keeps.
@@ -982,11 +1065,25 @@ mod tests {
             src_hop: NodeId([2; ID_LEN]),
             dst_pos: Position::default(),
             dst_id: NodeId([3; ID_LEN]),
-            hops: 0,
+            wrong: 0,
+            hops: MAX_HOPS,
             payload: &payload,
         };
         let mut buf = [0; MAX_FRAME];
         assert_eq!(Packet::Data(d).encode(&mut buf), Ok(MAX_FRAME));
+        assert_eq!(
+            Packet::Data(Data { hops: 0, ..d }).encode(&mut buf),
+            Ok(MAX_FRAME - 2),
+            "a full payload leaves room for the count's longest form"
+        );
+        assert_eq!(
+            Packet::Data(Data {
+                hops: MAX_HOPS + 1,
+                ..d
+            })
+            .encode(&mut buf),
+            Err(EncodeError::Hops)
+        );
         let long = [0; MAX_PAYLOAD + 1];
         assert_eq!(
             Packet::Data(Data {
@@ -1048,6 +1145,38 @@ mod tests {
             "an empty payload is a payload"
         );
         assert_eq!(Packet::decode(&data[..DATA_HEADER_LEN - 1]), Err(Short));
+        data[DATA_HOPS] = 0x81;
+        assert_eq!(
+            Packet::decode(&data),
+            Err(Short),
+            "a longer form's next byte"
+        );
+        let mut long = [0u8; DATA_HEADER_MAX];
+        long[VERSION] = FORMAT;
+        // A form longer than its count needs: a first group of 0.
+        for form in [&[0x80, 0x05][..], &[0x80, 0x81, 0x00], &[0x80, 0x80, 0x00]] {
+            long[DATA_HOPS..DATA_HOPS + form.len()].copy_from_slice(form);
+            assert_eq!(
+                Packet::decode(&long[..DATA_HOPS + form.len()]),
+                Err(Hops),
+                "{form:?}"
+            );
+        }
+        // Past the longest form: a third byte that says a fourth follows.
+        long[DATA_HOPS..].copy_from_slice(&[0x81, 0x80, 0x80]);
+        assert_eq!(Packet::decode(&long), Err(Hops), "no fourth byte");
+        for (form, hops) in [
+            (&[0x81, 0x00][..], 128),
+            (&[0xff, 0x7f], 16_383),
+            (&[0x81, 0x80, 0x00], 16_384),
+            (&[0xff, 0xff, 0x7f], MAX_HOPS),
+        ] {
+            long[DATA_HOPS..DATA_HOPS + form.len()].copy_from_slice(form);
+            let Ok(Packet::Data(d)) = Packet::decode(&long[..DATA_HOPS + form.len()]) else {
+                panic!("{form:?}")
+            };
+            assert_eq!((d.hops, d.payload.len()), (hops, 0));
+        }
     }
 
     #[test]
@@ -1087,9 +1216,10 @@ mod tests {
     }
 
     /// The version byte's cost in DATA (spec "Hand-over"): a block of
-    /// symbols for 91 of the 228 payload lengths, those whose frame is 1
-    /// or 4 bytes mod 5, 0.51 ms on average; and nothing for the
-    /// 100-byte text of spec "Capacity and sizing".
+    /// symbols for 90 of the 225 payload lengths, those whose frame is 1
+    /// or 4 bytes mod 5, 0.51 ms on average;
+    /// and the wrong-hop count's: a block for the 100-byte text of spec
+    /// "Capacity and sizing", 73.28 to 74.56 ms.
     #[test]
     fn the_version_byte_in_data() {
         let air = |len: usize| time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS).as_micros();
@@ -1098,15 +1228,15 @@ mod tests {
         let grows: std::vec::Vec<usize> = (0..=MAX_PAYLOAD)
             .filter(|p| air(DATA_HEADER_LEN + p) > air(DATA_HEADER_LEN - FORMAT_LEN + p))
             .collect();
-        assert_eq!(grows.len(), 91);
+        assert_eq!(grows.len(), 90);
+        let mean_us = grows.len() as u64 * block / (MAX_PAYLOAD as u64 + 1);
+        assert_eq!(mean_us, 512);
         assert!(grows
             .iter()
             .all(|p| matches!((DATA_HEADER_LEN + p) % 5, 1 | 4)));
-        let mean_us = grows.len() as u64 * block / (MAX_PAYLOAD as u64 + 1);
-        assert_eq!(mean_us, 510);
         let text = DATA_HEADER_LEN + 100;
-        assert_eq!(air(text), air(text - FORMAT_LEN));
-        assert_eq!(air(text), 73_280);
+        assert_eq!(air(text - WRONG_LEN), 73_280);
+        assert_eq!(air(text), 74_560);
     }
 
     #[test]
@@ -1238,20 +1368,38 @@ mod tests {
             src_hop: NodeId([7, 8, 9, 10, 11, 12]),
             dst_pos: position,
             dst_id: NodeId([13, 14, 15, 16, 17, 18]),
+            wrong: 20,
             hops: 19,
             payload: &[21, 22],
         };
         let len = Packet::Data(d).encode(&mut buf).unwrap();
         let mut want = std::vec![0x09, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
         want.extend_from_slice(&position.encode());
-        want.extend_from_slice(&[13, 14, 15, 16, 17, 18, 19, 21, 22]);
+        want.extend_from_slice(&[13, 14, 15, 16, 17, 18, 20, 19, 21, 22]);
         assert_eq!(&buf[..len], &want[..]);
+        for (hops, form) in [
+            (127, &[0x7f][..]),
+            (128, &[0x81, 0x00]),
+            (0x1234, &[0xa4, 0x34]),
+            (16_383, &[0xff, 0x7f]),
+            (16_384, &[0x81, 0x80, 0x00]),
+            (MAX_HOPS, &[0xff, 0xff, 0x7f]),
+        ] {
+            let len = Packet::Data(Data { hops, ..d }).encode(&mut buf).unwrap();
+            let end = DATA_HOPS + form.len();
+            assert_eq!(
+                &buf[DATA_HOPS..end],
+                form,
+                "{hops}: 7-bit groups, most significant first"
+            );
+            assert_eq!(&buf[end..len], &[21, 22]);
+        }
         let header = Data { payload: &[], ..d };
         let len = Packet::Data(header).encode(&mut buf).unwrap();
         assert_eq!(
             time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS),
-            Duration::from_micros(22_080),
-            "86.25 symbols at SF5"
+            Duration::from_micros(23_360),
+            "91.25 symbols at SF5"
         );
     }
 }

@@ -259,17 +259,9 @@ void main() {
       Header(greater(f.identity, app.me.identity), hello.sent + 60),
       [ReactionRecord(hello.sent, '❤️')],
     );
-    final pair = sodium.crypto.box.precalculate(
-      publicKey: app.me.identity,
-      secretKey: f.pair.secretKey,
-    );
+    final pair = SivKeys.pair(sodium, app.me.identity, f.pair.secretKey);
     await t.runAsync(
-      () => app.messenger.receive(
-        InboxMessage(
-          4242,
-          sealBox(pair, 0, sodium.randombytes.buf(nonceLen), heart),
-        ),
-      ),
+      () => app.messenger.receive(InboxMessage(4242, sealBox(pair, 0, heart))),
     );
     await t.pump();
     expect(find.byTooltip('They reacted: red heart'), findsOneWidget);
@@ -838,24 +830,30 @@ void main() {
     await t.runAsync(() => app.contacts.put(olena));
     await t.pumpWidget(MaterialApp(home: ThreadScreen(app, olena.key)));
 
-    // A box without an address holds 156 bytes of text, a part 155.
-    await t.enterText(find.byType(TextField), 'a' * 156);
+    // A box without an address holds the room less its header and the
+    // record's type of text, a part a byte less.
+    const whole = maxAppPayload - boxOverhead - 5 - 1;
+    const part = whole - 1;
+    await t.enterText(find.byType(TextField), 'a' * whole);
     await t.pump();
     expect(find.textContaining('parts'), findsNothing);
-    await t.enterText(find.byType(TextField), 'a' * 157);
+    await t.enterText(find.byType(TextField), 'a' * (whole + 1));
     await t.pump();
     expect(find.text('2 parts'), findsOneWidget);
-    final long = List.filled(40, 'word').join(' ');
+    final long = List.filled(part ~/ 5 + 10, 'word').join(' ');
     await t.enterText(find.byType(TextField), long);
     await t.pump();
     expect(find.text('2 parts'), findsOneWidget);
     // Cyrillic counts one byte a letter.
-    await t.enterText(find.byType(TextField), 'ї' * 300);
+    await t.enterText(find.byType(TextField), 'ї' * (part + 10));
     await t.pump();
     expect(find.text('2 parts'), findsOneWidget);
-    await t.enterText(find.byType(TextField), 'x' * 3000);
+    await t.enterText(find.byType(TextField), 'x' * (part * (maxParts + 4)));
     await t.pump();
-    expect(find.text('20 parts, 16 at most'), findsOneWidget);
+    expect(
+      find.text('${maxParts + 4} parts, $maxParts at most'),
+      findsOneWidget,
+    );
 
     // Sent: one bubble with the whole text; the parts agree, so the
     // usual mark.

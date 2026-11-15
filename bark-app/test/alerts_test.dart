@@ -117,15 +117,9 @@ void main() {
   /// A boxed message from the fake friend.
   InboxMessage fromFriend(AppModel app, int id, List<Record> rs) {
     final f = app.fakeNode!.friend;
-    final pair = sodium.crypto.box.precalculate(
-      publicKey: app.me.identity,
-      secretKey: f.pair.secretKey,
-    );
+    final pair = SivKeys.pair(sodium, app.me.identity, f.pair.secretKey);
     final h = Header(greater(f.identity, app.me.identity), 1000 + id, null);
-    return InboxMessage(
-      id,
-      sealBox(pair, 0, sodium.randombytes.buf(nonceLen), writePlain(h, rs)),
-    );
+    return InboxMessage(id, sealBox(pair, 0, writePlain(h, rs)));
   }
 
   test('texts collect per contact until their thread is opened', () {

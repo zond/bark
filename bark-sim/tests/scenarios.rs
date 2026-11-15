@@ -620,6 +620,8 @@ fn bench_line(sc: &Scenario) {
     for r in &settled {
         assert_eq!(r.fate, Fate::Delivered, "seed {seed}: text {}", r.tag);
         assert_eq!(r.hops, 2, "seed {seed}: text {} went through B", r.tag);
+        // Each hand-over approaches the destination, or is to it.
+        assert_eq!(r.at_dst, Some((2, 0)), "seed {seed}: text {}", r.tag);
         let l = r.latency_s.expect("delivered");
         assert!(l < 1.0, "seed {seed}: text {} took {l} s", r.tag);
     }

@@ -255,9 +255,10 @@ fn an_anchorless_node_measures_its_fixes_and_keeps_the_flag_at_an_anchor() {
     assert_eq!(traced(&h, l, Trace::Carried { carried: false }), 1);
     assert_eq!(traced(&h, l, Trace::Changed), 2);
     assert_eq!(last_type(&h, l), SLEEPY | ANCHORLESS);
-    // Still anchorless, it takes each fix.
+    // Still anchorless, a fix within the carried radius of its place
+    // leaves it there.
     fix(&mut h, l, stop + 40.0);
-    assert_eq!(h.nodes[l].core.config().position, pos(stop + 40.0));
+    assert_eq!(h.nodes[l].core.config().position, pos(stop + 10.0));
     // Carried again as R comes in reach, it anchors carried, and stays so
     // however long its fixes stand, since it takes none.
     let stop = walk_until_carried(&mut h, l, stop + 40.0);
@@ -356,10 +357,11 @@ fn a_carried_sleepy_node_plugged_in_is_a_carried_relay() {
 }
 
 /// A sleepy node that is not carried, plugged in, is fixed at once at the
-/// place it has, its own and not its anchor's; its first fix as a relay
-/// is its place, which it keeps.
+/// place it has, its own and not its anchor's; its first fix as a relay,
+/// within the carried radius of that place, leaves it there, as later
+/// ones do (spec "Position", roadmap D219).
 #[test]
-fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
+fn a_still_sleepy_node_plugged_in_keeps_its_place() {
     let (r, s) = (0, 1);
     let mut h = Harness::powered(vec![node(0.0, true, 41), node(20.0, false, 42)]);
     h.link(r, s);
@@ -372,13 +374,14 @@ fn a_still_sleepy_node_plugged_in_is_fixed_at_once() {
     let here = 100.0;
     h.run_for(secs(10));
     fix(&mut h, s, here);
-    assert_eq!(h.nodes[s].core.config().position, pos(here));
+    assert_eq!(h.nodes[s].core.config().position, pos(20.0));
     for k in 1..=10 {
         h.run_for(secs(10));
         fix(&mut h, s, here + 40.0 * (k % 2) as f64);
     }
     assert!(!h.nodes[s].core.carried());
-    assert_eq!(h.nodes[s].core.config().position, pos(here));
+    assert_eq!(h.nodes[s].core.config().position, pos(20.0));
+    assert_eq!(traced(&h, s, Trace::FarFix), 0);
     assert_eq!(last_type(&h, s), RELAY);
 }
 

@@ -44,7 +44,7 @@ pub struct Keys {
 /// `crypto_kdf_derive_from_key`: BLAKE2b keyed with the master key, the
 /// subkey's number little-endian as the salt and the context as the
 /// personalisation, each padded with zeros to 16 bytes.
-fn kdf(master: &[u8; KEY_LEN], id: u64, context: &[u8; 8]) -> [u8; KEY_LEN] {
+pub(crate) fn kdf(master: &[u8; KEY_LEN], id: u64, context: &[u8; 8]) -> [u8; KEY_LEN] {
     let mut salt = [0u8; 16];
     salt[..8].copy_from_slice(&id.to_le_bytes());
     let mut personal = [0u8; 16];

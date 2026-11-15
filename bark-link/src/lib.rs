@@ -779,7 +779,7 @@ impl PublicWrite {
 }
 
 /// Bytes of an item's number in the ring, which counts to 2^24 − 1
-/// (`bark_app_layer::seal::NUMBER_LEN`).
+/// (`bark_app_layer::mailbox::NUMBER_LEN`).
 const NUMBER: usize = 3;
 
 /// Guest, write: the number of the last item the guest took; its next
@@ -936,7 +936,7 @@ const _: () = assert!(Status::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(GivenBack::LEN <= value_room(DEFAULT_ATT_MTU));
 const _: () = assert!(Answer::LEN <= value_room(ATT_MTU));
 const _: () = assert!(ID + STATUS_UNGATHERED <= value_room(DEFAULT_ATT_MTU));
-const _: () = assert!(Send::MAX_LEN == 240);
+const _: () = assert!(Send::MAX_LEN == 237);
 const _: () = assert!(neighbours::MAX_LEN <= value_room(ATT_MTU));
 const _: () = assert!(update::Piece::MAX_LEN == value_room(ATT_MTU));
 const _: () = assert!(update::Progress::LEN <= value_room(ATT_MTU));

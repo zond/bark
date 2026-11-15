@@ -44,7 +44,7 @@ impl MsgId {
     /// 32-bit FNV-1a over the three in wire bytes, concatenated. FNV-1a
     /// because the phone app computes it too. Payloads are unique (spec
     /// "Phone link"), so IDs collide only by chance: about 5 × 10⁻⁵ among
-    /// the 667 a relay remembers (spec "Message records").
+    /// the 649 a relay remembers (spec "Message records").
     pub fn of(dst_pos: Position, dst_id: NodeId, payload: &[u8]) -> MsgId {
         let mut h: u32 = 0x811c_9dc5;
         for part in [&dst_pos.encode()[..], &dst_id.0, payload] {

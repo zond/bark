@@ -27,13 +27,17 @@ const ID: usize = AT + 1;
 const POS: usize = ID + 4;
 const DST: usize = POS + Position::WIRE_LEN;
 const HOPS: usize = DST + NodeId::LEN;
+/// The count in three bytes, big-endian: the most it can be
+/// ([`bark_proto::wire::MAX_HOPS`]) takes 21 bits.
+const WRONG: usize = HOPS + 3;
 /// A forward's parent or the neighbour a delivery waits for; never both.
-const NODE: usize = HOPS + 1;
+const NODE: usize = WRONG + 1;
 /// A forward's place and its parent's home, or a queued message's age.
 const MORE: usize = NODE + NodeId::LEN;
 const PAYLOAD: usize = MORE + 2;
 const CHECK: usize = PAYLOAD + MAX_PAYLOAD;
 const _: () = assert!(CHECK < SLOT_LEN);
+const _: () = assert!(bark_proto::wire::MAX_HOPS < 1 << 24);
 
 const OWN: u8 = 0;
 const FORWARD: u8 = 1;
@@ -54,7 +58,7 @@ fn age_of(b: &[u8]) -> Duration {
 }
 
 /// CRC-8 with the polynomial x⁸ + x² + x + 1 of what the ID does not
-/// cover: where it was, its count, the node and the rest.
+/// cover: where it was, its counts, the node and the rest.
 fn check(s: &[u8; SLOT_LEN]) -> u8 {
     let mut c = 0u8;
     for &b in core::iter::once(&s[AT]).chain(&s[HOPS..PAYLOAD]) {
@@ -76,7 +80,8 @@ pub fn encode(m: &Held<'_>) -> Option<[u8; SLOT_LEN]> {
     s[ID..POS].copy_from_slice(&m.msg_id.0.to_be_bytes());
     s[POS..DST].copy_from_slice(&m.dst_pos.encode());
     s[DST..HOPS].copy_from_slice(&m.dst_id.0);
-    s[HOPS] = m.hops;
+    s[HOPS..WRONG].copy_from_slice(&m.hops.to_be_bytes()[1..]);
+    s[WRONG] = m.wrong;
     let (at, node, more) = match m.at {
         HeldAt::Own => (OWN, NodeId::NONE, [0; 2]),
         HeldAt::Forward { parent, place } => {
@@ -135,7 +140,9 @@ pub fn decode(s: &[u8; SLOT_LEN]) -> Option<Held<'_>> {
         dst_pos: Position::decode(&pos),
         dst_id: NodeId(dst),
         payload: &s[PAYLOAD..PAYLOAD + len],
-        hops: s[HOPS],
+        hops: u32::from_be_bytes([0, s[HOPS], s[HOPS + 1], s[HOPS + 2]])
+            .min(bark_proto::wire::MAX_HOPS),
+        wrong: s[WRONG],
         at,
     };
     (MsgId::of(m.dst_pos, m.dst_id, m.payload) == m.msg_id).then_some(m)
@@ -149,11 +156,12 @@ mod tests {
         let dst_pos = Position::from_degrees(50.45, 30.52);
         let dst_id = NodeId([1, 2, 3, 4, 5, 6]);
         Held {
+            wrong: 9,
             msg_id: MsgId::of(dst_pos, dst_id, payload),
             dst_pos,
             dst_id,
             payload,
-            hops: 17,
+            hops: 70_000,
             at,
         }
     }

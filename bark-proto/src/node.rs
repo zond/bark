@@ -117,6 +117,9 @@ pub struct Config {
     /// The firmware image version its status tells
     /// (spec "Neighbour status"); 0 where none is known.
     pub version: u32,
+    /// The most wrong hops a search may take: a relay that would send a
+    /// higher wrong-hop count drops the message (spec "Hop count").
+    pub wrong_hop_cap: u8,
 }
 
 /// A calibrated battery reading, millivolts, at which a fixed relay on
@@ -285,6 +288,14 @@ pub const fn burst_gap(config: &Config) -> Duration {
     )
 }
 
+/// The most wrong hops a search may take by default (spec "Hop count",
+/// roadmap D220). The lowest cap measured that delivers every text today's
+/// hop cap does in the simulated scenarios, with leeway over the most any
+/// text through a gap needed there (45 wrong hops; 48 left a margin of 3),
+/// at about today's air spent on lost texts in the simulated city. The
+/// byte allows 255: the cap is a node's setting, not a limit of the format.
+pub const WRONG_HOP_CAP: u8 = 64;
+
 /// A relay within this distance of a destination, with no live, undemoted
 /// neighbour closer, owns it (spec "Owner"): what spec "Position" allows
 /// between two fixes of a relay that has not moved.
@@ -367,6 +378,7 @@ impl Config {
         grace: Duration::from_secs(3600),
         battery: None,
         version: 0,
+        wrong_hop_cap: WRONG_HOP_CAP,
     };
 }
 

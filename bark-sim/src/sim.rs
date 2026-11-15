@@ -400,7 +400,10 @@ struct OriginRecord {
     frames: u32,
     airtime_us: u64,
     /// The largest hand-over count a DATA frame of it carried (spec "Hop count").
-    hops: u8,
+    hops: u32,
+    /// The counts, hand-overs and wrong hops, of the last DATA of it its
+    /// destination node received, addressed to it.
+    at_dst: Option<(u32, u8)>,
     /// How far apart its origin and destination were when it was sent,
     /// and whether its destination was walking then.
     distance_m: f64,
@@ -442,7 +445,10 @@ pub struct MessageRow {
     /// Time on air of those frames, seconds.
     pub airtime_s: f64,
     /// The largest hand-over count it carried.
-    pub hops: u8,
+    pub hops: u32,
+    /// The hand-over and wrong-hop counts of the last DATA of it its
+    /// destination received.
+    pub at_dst: Option<(u32, u8)>,
     /// Straight-line distance from origin to destination when it was
     /// sent, metres.
     pub distance_m: f64,
@@ -697,6 +703,9 @@ pub struct Sim {
     /// Per relay, its last first far fix, and whether it has turned fixed
     /// again since it was first carried.
     far_at: HashMap<u32, (Instant, bool)>,
+    /// Fixed nodes plugged in that have had no fix since: when, their
+    /// position then, and their entry in `metrics::Carried::plugged_fixed`.
+    plugged: HashMap<u32, (Instant, bark_proto::Position, usize)>,
     /// The walks under way, begun after the settle time, of walkers that
     /// were fixed relays when they set off: when the walk began, whether
     /// the node was on battery, and when it turned carried.
@@ -829,7 +838,7 @@ pub struct Sim {
     offered: HashMap<u32, Offer>,
     /// The count of the last DATA of each message to each node, to read
     /// the count a refusing ACK answers.
-    pub(crate) data_hops: HashMap<(u32, u64), u8>,
+    pub(crate) data_hops: HashMap<(u32, u64), u32>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 5]>>,
     /// Messages queued, by holder and destination node's ID, for counting
@@ -902,7 +911,7 @@ pub struct Sim {
     pub(crate) awaiting: HashMap<(u32, u32, u64), (Instant, bool)>,
     /// The relay DATA a relay is being handed now: (relay, message,
     /// sender's ID, count), for [`crate::metrics::HopPlaceRefusals`].
-    rx_data: Option<(u32, u32, u64, u8)>,
+    rx_data: Option<(u32, u32, u64, u32)>,
     /// (relay, message) for every record a relay has kept, for
     /// [`crate::metrics::RecordsLost`].
     recorded: std::collections::HashSet<(u32, u32)>,
@@ -1330,6 +1339,7 @@ impl Sim {
             receivers: vec![Default::default(); n],
             held_far: HashMap::new(),
             far_at: HashMap::new(),
+            plugged: HashMap::new(),
             relay_walks: HashMap::new(),
             carried_flip: Default::default(),
             changing: HashMap::new(),
@@ -2230,7 +2240,13 @@ impl Sim {
         if let Event::Received { bytes, .. } = &ev {
             if let Ok(bark_proto::wire::Packet::Data(d)) = bark_proto::wire::Packet::decode(bytes) {
                 if d.dst_hop == self.relays[node as usize].id() {
-                    self.arrival_hops[usize::from(d.hops)] += 1;
+                    self.arrival_hops[d.hops.min(255) as usize] += 1;
+                    if d.dst_id == d.dst_hop {
+                        let tag = self.msg_tags.get(&d.msg_id().0).copied();
+                        if let Some(o) = tag.and_then(|t| self.origins.get_mut(t as usize)) {
+                            o.at_dst = Some((d.hops, d.wrong));
+                        }
+                    }
                 }
             }
         }
@@ -3108,6 +3124,13 @@ impl Sim {
                         let after = self.now >= self.settle;
                         self.carried_metrics().plugged_in += u64::from(after);
                     }
+                    Trace::Role { sleepy: false } if self.relays[node as usize].placed() => {
+                        let at = self.relays[node as usize].config().position;
+                        let c = self.carried_metrics();
+                        c.plugged_fixed.push(None);
+                        let k = c.plugged_fixed.len() - 1;
+                        self.plugged.insert(node, (self.now, at, k));
+                    }
                     Trace::Carried { carried } => self.note_carried(node, carried),
                     Trace::AnchorCarried => {
                         let after = self.now >= self.settle;
@@ -3525,7 +3548,7 @@ impl Sim {
         let lowest = self.relays[node as usize].lowest_free_hop_place();
         let then = self.clocks[sender as usize].local(self.now);
         let held = self.relays[sender as usize].highest_count_for(me, then);
-        let with = matches!((lowest, held), (Some(k), Some(h)) if h >= k);
+        let with = matches!((lowest, held), (Some(k), Some(h)) if h >= u32::from(k));
         let h = &mut self.metrics.hop_places;
         h.refusals += 1;
         h.with_place += u64::from(with);
@@ -3591,6 +3614,14 @@ impl Sim {
         self.fixing = true;
         self.deliver(n, Event::App(AppCommand::Fix { position }));
         self.fixing = false;
+        if let Some((t, before, k)) = self.plugged.remove(&n) {
+            if self.now.since(t) <= bark_proto::gps::SEARCH_LIMIT {
+                let truly = self.origin.position(self.place(n));
+                let m = bark_proto::geo::LocalPlane::new(before).distance_m(before, truly);
+                let kept = self.relays[n as usize].config().position == before;
+                self.carried_metrics().plugged_fixed[k] = Some((kept, f64::from(m)));
+            }
+        }
         true
     }
 
@@ -4057,7 +4088,7 @@ impl Sim {
     pub(crate) fn message_frame(
         &mut self,
         id: MsgId,
-        hops: u8,
+        hops: u32,
         air_us: u64,
         src: u32,
         kind: FrameKind,
@@ -4201,6 +4232,7 @@ impl Sim {
                 frames: o.frames,
                 airtime_s: o.airtime_us as f64 / 1e6,
                 hops: o.hops,
+                at_dst: o.at_dst,
                 distance_m: o.distance_m,
                 dst_walking: o.dst_walking,
                 taken_s: o.taken_at.map(|d| d.since(t).as_micros() as f64 / 1e6),
@@ -4262,7 +4294,7 @@ impl Sim {
             s.push_str(",b_");
             s.push_str(n);
         }
-        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end,src_sleepy\n");
+        s.push_str(",b_elsewhere,offers,next_hops,flaps,holder,holder_anchor_end,dst_sleepy_end,dst_switch_s,dst_switches,holder_links_anchor_end,src_sleepy,dst_hops,dst_wrong\n");
         for r in self.message_rows() {
             let (fate, node, reason) = match r.fate {
                 Fate::Delivered => ("delivered", String::new(), String::new()),
@@ -4319,8 +4351,12 @@ impl Sim {
                 .offer_log
                 .get(&r.tag)
                 .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
+            let (dst_hops, dst_wrong) =
+                r.at_dst.map_or((String::new(), String::new()), |(h, w)| {
+                    (h.to_string(), w.to_string())
+                });
             s.push_str(&format!(
-                ",{},{offers},{hops},{flaps},{},{},{},{},{},{},{}\n",
+                ",{},{offers},{hops},{flaps},{},{},{},{},{},{},{},{dst_hops},{dst_wrong}\n",
                 w.elsewhere,
                 relay(r.holder),
                 r.holder_anchor_end,
@@ -4563,6 +4599,7 @@ impl Sim {
             frames: 0,
             airtime_us: 0,
             hops: 0,
+            at_dst: None,
             distance_m: self.place(src).dist(self.place(dst)),
             dst_walking: self
                 .walks
@@ -4697,7 +4734,7 @@ impl Sim {
         if !self.with_mailboxes {
             return false;
         }
-        if Form::of(payload) == Ok(Form::Reply) {
+        if Form::of(payload).is_ok_and(Form::is_reply) {
             self.replies.push((node, payload.to_vec()));
             return true;
         }
@@ -5626,6 +5663,7 @@ mod tests {
                 frames: 0,
                 airtime_us: 0,
                 hops: 0,
+                at_dst: None,
                 distance_m: 0.0,
                 dst_walking: false,
                 src_relay: None,
@@ -5668,7 +5706,7 @@ mod tests {
     /// the home's application send slot (spec "Mailbox").
     #[test]
     fn a_fetch_from_another_node_gets_the_mailbox_items() {
-        use bark_app_layer::seal::{self, Fetch, Opened};
+        use bark_app_layer::seal::{self, Fetch, Form};
         use bark_app_layer::Address;
         let mut sc = Scenario::new("mailbox", 1, 1800.0)
             .point("A", RoleSpec::Relay, 0.0, 0.0)
@@ -5692,6 +5730,7 @@ mod tests {
         let items: Vec<Vec<u8>> = (1..=3)
             .map(|i| {
                 let mut b = format!("item {i}").into_bytes();
+                b[0] = Form::Boxed.format();
                 b[1] = tag;
                 b
             })
@@ -5713,34 +5752,47 @@ mod tests {
                 address,
                 recipient: 0,
             }
-            .seal(&key, 0, &[sent as u8; 24])
-            .unwrap()
+            .seal(&key, 0)
         };
         send(&mut sim, 2, &fetch(7));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
+        // The summary counts three; each item comes back as it was kept,
+        // but for the recipient tag the fetch asked for.
+        let mut summaries = Vec::new();
         let mut got = Vec::new();
         for (node, r) in sim.replies.drain(..) {
             assert_eq!(node, 2);
-            let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
-            match seal::open_reply(&key, 7, &r, &mut out) {
-                Ok(Opened::Item { number, len, .. }) => got.push((number, out[..len].to_vec())),
-                o => panic!("not an item of round 7: {o:?}"),
+            if Form::of(&r) == Ok(Form::Summary) {
+                summaries.push(seal::open_summary(&key, 7, &r).unwrap());
+                continue;
             }
+            let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+            let n = seal::open_item(&key, 7, &r, &mut out).unwrap();
+            got.push(out[..n].to_vec());
         }
+        summaries.dedup();
+        assert_eq!(summaries, [(3, 0)]);
         got.sort();
         got.dedup();
-        assert_eq!(got, (1..=3).zip(items).collect::<Vec<_>>());
+        let want: Vec<Vec<u8>> = items
+            .iter()
+            .map(|i| {
+                let mut b = i.clone();
+                b[1] = 0;
+                b
+            })
+            .collect();
+        assert_eq!(got, want);
         // Asked again, the home has nothing new and says so.
         send(&mut sim, 2, &fetch(8));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
-        let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
         let answers: Vec<_> = sim
             .replies
             .iter()
-            .map(|(_, r)| seal::open_reply(&key, 8, r, &mut out))
+            .map(|(_, r)| seal::open_summary(&key, 8, r))
             .collect();
-        assert_eq!(answers, [Ok(Opened::NothingNew)]);
+        assert_eq!(answers, [Ok((0, 0))]);
     }
 }

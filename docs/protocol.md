@@ -65,13 +65,15 @@ sleeps in a pocket.
   between, forwards what it is given at once, anchors to a fixed relay
   and keeps no PO box.
 - **Carried**: its GPS says it moves ([position](#position)). A map point
-  set in the app makes it not carried at once. A carried node, and a
-  sleepy node without an anchor, takes each fix as its position, so its
-  neighbours route to it where it is. A node that is neither keeps the
-  place it stands, so that no later fix, true or spoofed, moves it
-  (roadmap D63). A sleepy node with an anchor takes no fix: its position
-  is its anchor's, and it keeps the carried flag it has ([beats](#beats)).
-  A carried relay is otherwise like any other.
+  set in the app makes it not carried at once. A carried node takes each
+  fix as its position, so its neighbours route to it where it is. A
+  sleepy node without an anchor, fixed, takes each far fix
+  ([position](#position)) as its position, since it may have moved, and
+  stands at its place again at a fix that is not far. A relay that is
+  not carried keeps the place it stands, so that no later fix, true or
+  spoofed, moves it (roadmap D63). A sleepy node with an anchor takes no
+  fix: its position is its anchor's, and it keeps the carried flag it has
+  ([beats](#beats)). A carried relay is otherwise like any other.
 
 Holding mail for sleepy nodes, owning a destination by its position
 ([owner](#owner)) and being a sleepy node's anchor
@@ -408,17 +410,21 @@ fixes for minutes, the **carried radius**: five allowances, clearing the
 
 **Fixed and carried.** Every node measures from its fixes whether it
 moves, but a sleepy node with an anchor, which takes none and keeps the
-flag it has ([beats](#beats)):
+flag it has ([beats](#beats)). A node that has a place keeps it until an
+accepted fix lies beyond the carried radius of it: a still node's fixes
+wander that far, and a new place changes the node's address
+([node identity](#node-identity)), which every contact then holds stale
+(roadmap D219).
 
 | | |
 |---|---|
-| the place it stands | its first accepted fix, its map point, or the fix it had when last made fixed |
+| the place it stands | its first accepted fix, its map point, or the place it took when last made fixed |
 | far fix | an accepted fix more than the carried radius from that place |
 | carried | after 72 s of far fixes with none near between, counting only time in which the GPS gave fixes; 72 s is the time a walker at 1.4 m/s takes to cross the allowance's width, 2 × 50 m, at the L76K's one fix a second. For a sleepy node without an anchor, which fixes once a delivery TTL ([beats](#beats)), it is two far fixes at least 72 s apart |
 | time without fixes | while the GPS runs and gives no fix that passes the checks, the driver says so, and the time until the next fix does not count; a search ends at a fix, so a sleepy node's time between searches counts |
-| fixed again | after four hours of fixes within the carried radius of one place; it keeps the fix it has then. A node that stopped for less would take mail for new sleepy nodes and strand it (roadmap D70) |
+| fixed again | after four hours of fixes within the carried radius of one place; it takes the place it stood as a fixed node if the fix it has then lies within the carried radius of it, and else that fix. It keeps that place in RAM only, so a node booted carried has none. A node that stopped for less would take mail for new sleepy nodes and strand it (roadmap D70) |
 | map point | fixed at once; cleared, the next accepted fix is the place |
-| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place, and else keeps the fix it has, since a sleepy node's last fix may be hours old (roadmap D85) |
+| power | a carried node plugged in is a carried relay until it has stayed four hours (roadmap D72); a fixed one stands at its position, and takes its first accepted fix within a search's limit, 60 s ([beats](#beats)), as its place if that fix is far, since a sleepy node's last fix may be hours and kilometres old (roadmap D85, D219) |
 
 A node whose position changes heartbeats the new one
 ([node identity](#node-identity)). At its first far fix a relay that
@@ -1091,7 +1097,7 @@ originated:
 | parent | `src_hop` and `aux` of the packet that created the record: the ID and home channel of the node the message first came from; none at the origin. The channel is used only if that node is no longer in the neighbour table ([return to parent](#return-to-parent)) |
 | handed | the neighbours that have had the message from this relay or offered it one: those that took a hand-over of it, a forward or a return, by ACKing it ([hand-over](#hand-over)), those that answered seen, and those whose copy this relay answered seen ([the ACK](#the-ack)), as one bit per neighbour-table slot |
 | last packet | `src_hop` and `hops` of the last DATA of the message it received, and whether it was answered seen: the same pair again is a retransmission, answered as the first was ([receiving DATA](#receiving-data)) |
-| highest hops | the largest `hops` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that was taken or answered seen |
+| highest counts | the largest `hops` and the largest `wrong` ([hop count](#hop-count)) received for the message, or sent in a hand-over of it that was taken or answered seen |
 | arrived | whether the message has reached its owner: this node owns the destination ([owner](#owner)), or the node it is addressed to took it from this one |
 | last active | when it last received or sent the message |
 
@@ -1114,7 +1120,7 @@ of recent IDs.
 its place; a new record then replaces the least recently active one whose
 message the relay does not hold. A relay holds a message while it is in
 its send queue ([send queue](#send-queue)), the hand-over included, or set
-aside for a full delivery queue. The table holds 667 records
+aside for a full delivery queue. The table holds 649 records
 ([bounds](#bounds)), so a message is never lost for want of room for its
 record (roadmap D31).
 
@@ -1278,15 +1284,16 @@ delivery that goes first have spent it since its packet was taken
 ([delivery](#delivery)).
 
 A packet received with count h that the regular room refuses takes the
-highest free hop place numbered h or lower, and keeps it until it leaves
-the queue. A hop place holds its packet whatever the bucket holds; the
-bucket still decides when it is sent. A packet received at 255 ends at
-the cap ([hop count](#hop-count)), so 254 hop places are enough. Of the
-254 places, 64 can be held at once: a place is free when its number is
-unheld and fewer than 64 places are held, and with 64 held the relay
-refuses the packet as any other refusal ([bans](#bans)). Packets with
-counts up to c hold at most c places, so while fewer than 64 are held the
-places behave as if all 254 were there (roadmap D155).
+highest free hop place numbered min(h, 254) or lower, and keeps it until
+it leaves the queue. A hop place holds its packet whatever the bucket
+holds; the bucket still decides when it is sent. Of the 254 places, 64
+can be held at once: a place is free when its number is unheld and fewer
+than 64 places are held, and with 64 held the relay refuses the packet as
+any other refusal ([bans](#bans)). Packets with counts up to c hold at
+most c places, so while fewer than 64 are held the places behave as if
+there were one for every count (roadmap D155): a packet with a count of
+64 or more always finds one at or below its count, so numbers above 254
+would change nothing. A place's number fits a byte.
 
 A message entering the network, a sleepy node's own with count 0 or a
 node's own app's, takes no hop place, so overload stops new messages
@@ -1424,8 +1431,8 @@ The packet is one of the following, tested in this order:
    goes on to its next candidate at once.
 
 In every case the relay records the packet's sender and count as the last
-packet, with whether it was answered seen, raises its highest count if
-the packet's is higher, and updates its last-active time.
+packet, with whether it was answered seen, raises its highest counts
+where the packet's are higher, and updates its last-active time.
 
 No case ends the last copy of a message: it has arrived, the packet was
 answered when it first came, another copy goes on, or, seen, the copy
@@ -1470,7 +1477,10 @@ clear ([hand-over](#hand-over) step 2, roadmap D111).
 
 #### Hop count
 
-`hops` in the DATA header counts hand-overs:
+The DATA header carries two counts: `hops`, the hand-overs so far, and
+`wrong`, the search's wrong hops (below).
+
+`hops` counts hand-overs:
 
 - A sleepy node with an anchor sends its own message with 0
   ([a sleepy node's own message](#a-sleepy-nodes-own-message)): the node
@@ -1480,7 +1490,7 @@ clear ([hand-over](#hand-over) step 2, roadmap D111).
   the message at 0, since 0 means "a sleepy node's own, start the search
   here"; not higher, as fresh work must not take hop place 1 at its first
   hop ([send queue](#send-queue)).
-- A relay sends its record's highest count plus one
+- A relay sends its record's highest `hops` plus one
   ([message records](#message-records)), whether forwarding or returning
   to its parent.
 
@@ -1500,15 +1510,50 @@ tells a retransmission by the sender and the count
 ([receiving DATA](#receiving-data), case 3). The count also numbers the
 hop places of the send queue.
 
-A relay that would have to send a count above 255, the largest the
-one-byte field holds, drops the message, except an owner delivering it to
-its node ([delivery](#delivery)), which sends 255: the search has ended
-there. The cap ends a search that has lost its way because a record was
-replaced or the message split, and it ends the chain of hop places
-([overload waits](#overload-waits)). The longest straight route across
-the city of [capacity and sizing](#capacity-and-sizing), ≈30 km at
-≈750 m a hop, is about 40 hand-overs, leaving about 200 for routing
-around gaps.
+`hops` takes one byte below 128, two below 16 384 and three up to
+2 097 151 ([packet formats](#packet-formats)). It limits no path on
+Earth: the farthest point is 20 000 km away, which 2 097 151 hand-overs
+reach at 10 m a hop, where two bytes' 32 767 reached 24 600 km only on a
+straight path of the 750 m hops of
+[capacity and sizing](#capacity-and-sizing). Limiting how far a message
+travels is `wrong`'s job. A relay that would have to send a count above
+2 097 151 drops the message, except an owner delivering it to its node
+([delivery](#delivery)), which sends 2 097 151: the search has ended
+there.
+
+`wrong` is the search's budget. The sender of a hand-over adds one to its
+record's highest `wrong` when the receiver is no closer to the
+destination position than the sender: when the receiver's position, as
+the sender's neighbour table has it, is not strictly nearer to `dst_pos`
+than the sender's own, or the sender does not know it, as for a return to
+a parent no longer in its table. Both distances are measured in the plane
+centred on `dst_pos` ([positions on the wire](#positions-on-the-wire)), so
+every node judges a pair of positions alike. A return to the parent is
+judged by the same rule. Three hand-overs add nothing:
+
+- one to the node the message is addressed to, which ends the search
+  wherever that node is;
+- an owner's delivery to its node ([delivery](#delivery));
+- a sleepy node's own message to its anchor, sent with `wrong` 0, since
+  the search starts at the anchor.
+
+`wrong` is set and repeated with `hops`, and only grows, as `hops` does.
+A relay that would have to send a `wrong` above its cap drops the message
+as at the largest `hops`. The cap is 64, a node's setting, not a limit of
+the byte, which holds 255. It is the lowest cap measured in the simulated
+scenarios that delivers every text the earlier rule, a cap of 255
+hand-overs, delivered, with leeway over the 45 wrong hops the longest way
+round a gap needed there, and with about the earlier rule's air spent on
+lost texts in the simulated city (roadmap D220).
+
+A hand-over that is no wrong hop brings the message strictly nearer its
+destination, so a loop of such hand-overs cannot form while no node
+moves, and every loop spends the budget. The caps end a search that has
+lost its way because a record was replaced or the message split, and the
+largest `hops` ends one that loops through a node that moved between its
+heartbeat and the hand-over, which can make a step that seemed nearer
+not be. The caps end the chain of hop places too
+([overload waits](#overload-waits)).
 
 #### Overload waits
 
@@ -1536,7 +1581,7 @@ A message ends only:
   ([delivery queue](#delivery-queue)), or when the relay holding it comes
   to own its destination while it is queued and finds that queue full
   ([owner](#owner));
-- at the hop cap ([hop count](#hop-count));
+- at the wrong-hop cap or the largest hop count ([hop count](#hop-count));
 - when a node holding it dies (roadmap D31, D44, D106).
 
 Never by age on its way: at its owner the delivery queue keeps it by its
@@ -1548,8 +1593,8 @@ under a long overload the messages already taken outrank new ones
 The hop places keep waiting from locking relays up (roadmap D29): the
 message with the highest count held anywhere, k, is sent with k + 1 or
 more; at the neighbour it is offered to the gate lets it in, as every
-queued message there holds k or less, and place k + 1 is free, so it
-moves, then the next highest, down to the regular room. With 64 places
+queued message there holds k or less, and a place at or below k + 1 is
+free ([send queue](#send-queue)), so it moves, then the next highest, down to the regular room. With 64 places
 held at a relay the argument stops: it refuses, and the stall is bounded
 by the gate's budget (roadmap D155). The most travelled message goes
 first so that the message offered when a ban ends is one the next
@@ -1567,19 +1612,19 @@ the origin without a loop; and a relay met again answers seen, so it is
 neither searched twice nor skipped. So the message makes a depth-first
 traversal of the relays reachable from the origin through neighbours
 that answer, nearest to the destination first: it finds an owner if a
-path to one exists and the traversal fits in the 255 hand-overs of
-[hop count](#hop-count), and otherwise returns to the origin.
+path to one exists and the traversal takes no more wrong hops than the
+cap of [hop count](#hop-count), and otherwise returns to the origin.
 
 What breaks it:
 
 - **A lost record.** A message returning to a relay whose record has
   been replaced is new there; the search ends early, or wanders until
-  the hop cap ends it.
+  the wrong-hop cap ends it: every loop it walks holds a wrong hop.
 - **A split.** A hand-over whose ACKs were all lost looks failed, so two
   copies search at once. They share the relays' records, each answered
   seen where the other has been. A copy ends where it meets the other
   held at a relay (case 4), where the message has arrived (case 1), at
-  the origin, at the hop cap, or as a return to a parent that gave the
+  the origin, at a cap, or as a return to a parent that gave the
   child up and answers seen (case 6). Only the last can end the last
   copy, and it takes every ACK of three hand-overs on one link lost.
 - **Links that change** during the search, including a parent that moves
@@ -1589,13 +1634,13 @@ What breaks it:
 
 | | |
 |---|---|
-| hand-overs per message | at most 256 that succeed (the first, at count 0, and 255 more, [hop count](#hop-count)) |
+| hand-overs per message | at most 2 097 152 that succeed (the first, at count 0, and 2 097 151 more, [hop count](#hop-count)); with no node moving, at most (c + 1)(R − 1) + c for a wrong-hop cap c and R relays reachable, since between two wrong hops each hand-over brings the message nearer and so meets a relay at most once |
 | a hand-over | at most 3.15 s: three attempts of 738.6 ms (500 ms of listen-before-talk, a 138.6 ms frame, the 100 ms ACK timeout) and the retry waits, 311 + 622 ms ([hand-over](#hand-over)); a channel that stays busy adds its wait but no airtime |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages: until it leaves the table 390 s after its last heartbeat or answer, with bans of 1.58, 3.16, 6.3, 12.7, 25.3 and 50.6 s, 100 s, and then 61 s |
 | a message held on one neighbour that does not answer | at most 14.2 s: two bans, 1.58 and 3.16 s, and three hand-overs, since the third failure in a row demotes the neighbour and moves the message on; later messages a hand-over each until the demotion lapses. One that answers this relay between failures holds it while its bans last ([bans](#bans)) |
 | life | no bound by time on its way: it ends as [overload waits](#overload-waits) lists; then in its owner's delivery queue until its node takes it or, once stale, its place is needed ([delivery queue](#delivery-queue)) |
-| cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer; a split adds a round trip; within the hop cap a search explores about 64 to 128 links beyond the route into the gap (roadmap D36) |
-| message records | at most 667 per relay, below |
+| cost of a search | each link between two relays at most two hand-overs that succeed from each end, a send and a return, or one frame and its seen answer; a split adds a round trip; the wrong-hop cap ends a search after 64 hand-overs away from its destination (roadmap D36, D220) |
+| message records | at most 649 per relay, below |
 | state per relay | the RAM budget of [implementation notes](#implementation-notes) |
 
 *The records.* A message sent on can come back, and its record must
@@ -1604,12 +1649,12 @@ takes to drain, each of its 103 places (39 regular and 64 hop places)
 waiting out one ban of 1.58 s: 162.9 s. Any 162.9 s carries at most
 6 s + 9.83% × 162.9 s = 22.0 s of airtime
 ([duty cycle cap](#duty-cycle-cap)), and every message costs at least an
-ACK (18 bytes, 17.0 ms) and a DATA with no payload (28 bytes, 22.1 ms),
-39.0 ms, so a relay handles at most 564 messages in that time. The
+ACK (18 bytes, 17.0 ms) and a DATA with no payload (29 bytes, 23.4 ms),
+40.3 ms, so a relay handles at most 546 messages in that time. The
 records of held messages are never evicted, so the table has room for
-the 103 a send queue holds on top: 667. A longer wait, after silence or
-a long refusal, may outlast a record, and the hop cap then ends a search
-that loses its way (roadmap D42).
+the 103 a send queue holds on top: 649. A longer wait, after silence or
+a long refusal, may outlast a record, and the wrong-hop cap then ends a
+search that loses its way (roadmap D42).
 
 ## Sleepy nodes
 
@@ -1634,9 +1679,9 @@ stay longer while nothing needs their place.
 power at once (roadmap D71). A sleepy node plugged in is a relay at once:
 
 - it leaves its anchor;
-- its address becomes its own position: the place it has, or its first
-  fix within a search's limit if one comes ([position](#position)), which
-  it keeps from then on unless it is carried;
+- its address becomes its own position, or its first fix within a
+  search's limit if that is far ([position](#position)), which it keeps
+  from then on unless it is carried;
 - it heartbeats as a relay, the first time at once
   ([heartbeat](#heartbeat)), on the node's home channel, its anchor's
   until then, where its old anchor hears it and hands over what it holds
@@ -1886,8 +1931,8 @@ inside half a short position's period; a node carried farther while it
 hears no relay is open item O19. It takes no fix, runs no search
 and measures nothing of its motion: it keeps the carried flag it had when
 it took the anchor until it is anchorless or a relay again
-([position](#position); roadmap D80, D91). Its own place, the last it had
-by its own fixes, is what it stands at when plugged in
+([position](#position); roadmap D80, D91). Its own position, the last it
+had by its own fixes, is what it stands at when plugged in
 ([sleepy nodes](#sleepy-nodes)).
 
 Without an anchor a sleepy node runs its GPS (roadmap D80): it searches
@@ -1970,7 +2015,7 @@ period, and the rest are refused.
 last heartbeat had the leaving flag, where the message may end, addressed
 to it or to a position it may own ([next hop](#next-hop)), waits in the
 queue for that neighbour, by the same rules of age and place: sent round
-it, a message that can end only there would wander to the hop cap. Once
+it, a message that can end only there would wander to the wrong-hop cap. Once
 its heartbeat comes without the flag, as after its swap, or its entry is
 gone, the message goes into the send queue as a forward received with its
 count, and is routed as any. Where the queue has no place, it goes round
@@ -2266,8 +2311,8 @@ and its characteristics in the order of this table:
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
 | Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) | 18 |
-| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–227) | 13–240 |
-| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–227), empty when none; a guest's: number(3) msg_id(4) payload(0–227) | 0, 4–231, 7–234 |
+| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–224) | 13–237 |
+| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–224), empty when none; a guest's: number(3) msg_id(4) payload(0–224) | 0, 4–228, 7–231 |
 | | | write | msg_id(4) | 4 |
 | Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
 | Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
@@ -2676,14 +2721,40 @@ drops a payload of a version or form it does not know.
 
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
-| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 42 |
+| 0, boxed | a contact | `siv` (16), ciphertext, under the pair's keys (below) | 18 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 50 |
-| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 42 |
-| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3), the count of items still unsent (2) and the item; the nonce is not sent | 23 |
+| 2, fetch | the person's home node | `siv` (16), ciphertext, under the mailbox key's keys (below) | 18 |
+| 3, summary | the person's current address, from their home node | `crypto_secretbox_easy` output under the reply key ([mailbox](#mailbox)) of the round's items (1) and the items still unsent after it (2); the nonce is not sent | 21 in all |
+| 4, boxed item | the same | the place (1), then a kept boxed payload after its format byte and recipient tag, under the reply key's stream | 1 over the item |
+| 5, introduction item | the same | the same, for a kept introduction | 1 over the item |
 
-Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
-227 − 23 = 204 bytes, so that its mailbox can send any payload on as a
+Forms 2 to 5 are the [mailbox](#mailbox)'s. The app writes at most
+224 − 1 = 223 bytes, so that its mailbox can send any payload on as a
 reply.
+
+*One value as nonce and proof.* Forms 0 and 2 carry one 16-byte value,
+`siv`, in place of a random nonce and a tag (roadmap D221). From a
+shared key, `crypto_box_beforenm` of the two identities for a boxed
+payload and the mailbox key for a fetch, come two keys:
+`crypto_kdf_derive_from_key(shared, 1, "bark-mac")`, the MAC key, and
+`crypto_kdf_derive_from_key(shared, 2, "bark-enc")`, the encryption key.
+The sender makes `siv`, `crypto_generichash` to 16 bytes keyed with the
+MAC key, of the format byte and the plaintext, and the ciphertext,
+`crypto_secretbox_detached` of the plaintext under the encryption key
+with `siv` and 8 zero bytes as the nonce, its tag dropped: the plaintext
+XORed with XSalsa20's keystream from its 33rd byte. The receiver runs the
+same call over the ciphertext, which gives the plaintext, computes `siv`
+again over the format byte and that plaintext, compares the two in
+constant time, and neither keeps nor acts on the plaintext unless they
+match. The recipient tag is not hashed: it differs from node to node and
+a mailbox replaces it ([mailbox](#mailbox)). Two rules make it sound: the
+two keys are separate, and nothing of the plaintext is used before the
+check. The value saves 24 of the 40 bytes a nonce and a tag took, and a
+repeated nonce can no longer expose two messages, as a nonce is the hash
+of its own message; identical messages encrypt identically, which
+`sent`, later on each phone than any before, makes rare. Both people of
+a pair have the same keys, so the direction bit (below) tells a message
+reflected back to its sender.
 
 *Recipient tag.* The first byte of `crypto_generichash` of the
 destination's node ID to 16 bytes, its shortest output, keyed with the
@@ -2697,8 +2768,8 @@ and it differs from node to node. One byte lets two people at a node
 share a tag with odds of 1 in 256; a phone handed a payload not its own
 fails to open it and drops it.
 
-A boxed payload names no sender: the receiver tries the key of each
-contact, `crypto_box_beforenm` of each made once, until one opens it. An
+A boxed payload names no sender: the receiver tries the keys of each
+contact, made once from `crypto_box_beforenm`, until one opens it. An
 introduction carries the sender's card; its sender is shown as
 unverified until a boxed payload from that identity opens. It is used
 until a payload from the receiver, of either form, has opened at the
@@ -2739,8 +2810,9 @@ each a message of its own with its own `sent`, delivered as a text is.
 The parts take consecutive `sent`, so a part's `sent` less its number and
 one is the first part's, which names the text: the receiver puts parts
 together in any order of arrival and knows from the count which have not
-come. A part holds 155 bytes of text in a box without an address; 16
-parts hold about 2.5 KB (roadmap D137).
+come. A part holds 223 − 18 − 5 − 2 = 198 bytes of text in a box
+without an address, the box, the header and the record's two bytes
+taken; 16 parts hold 3 168 bytes (roadmap D137, D221, D222).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
 flags (1), bit 0 set when a home address follows, bit 1 when the node's
@@ -2767,8 +2839,8 @@ A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). The app must
 make every payload unique, or a second message identical to one a relay
 still has a record of is not delivered
-([message records](#message-records)); the random nonce, the
-introduction's ephemeral key and a reply's round do that.
+([message records](#message-records)); `sent`, which `siv` hashes, the
+introduction's ephemeral key and a reply's round and place do that.
 
 ## Mailbox
 
@@ -2791,9 +2863,13 @@ erases the oldest page when the ring is full; an item leaves the ring
 only so ([receiving](#receiving)). The board's ring holds 1024 items
 (roadmap D139). A slot's mark is a byte, a bit for each of the node's
 eight records ([pairing](#pairing)): a bit set says the item is that
-record's and not yet sent to it. An item is written with the bits of the
-records whose tag it carries set and the rest clear, so a guest's item,
-which no record claims, has every bit clear and no fetch sends it. A bit
+record's and not yet sent to it. An item a reply can carry, a boxed
+payload or an introduction of at most 223 bytes ([the payload](#the-payload)),
+is written with the bits of the records whose tag it carries set and the
+rest clear, so a guest's item, which no record claims, has every bit
+clear and no fetch sends it. Any other item, such as a mailbox's reply
+delivered to this node, is written with every bit clear too: the phones
+read it at the node through Inbox, and no fetch counts or sends it. A bit
 is cleared without an erase, so the item stays: when a reply carries the
 item (below), and when the record's phone confirms it through Inbox. So
 one person's reading marks nothing of another's. A record's bit in the
@@ -2810,33 +2886,46 @@ the last fetch's that record took, which the node keeps for each; the
 record's items are those with its tag. A fetch is sent only when the
 person asks, so that a mailbox costs air only then (roadmap D128).
 
-**The answer.** The node answers a fetch once, to the fetch's address:
-one reply for each of the newest 32 of the record's items whose bit is
-set, newest first, one at a time through its send slot, or, when there is
-none, one reply that says nothing is new, so the person can tell "no
-mail" from a loss. It clears the item's bit when it hands the item's
+**The answer.** The node answers a fetch once, to the fetch's address,
+one reply at a time through its send slot: first a summary, then one
+reply for each of the newest 32 of the record's items whose bit is set,
+newest first. The summary says how many items the round carries and how
+many of the record's items stay unsent after them, both as the fetch was
+taken; with no item it says nothing is new, so the person can tell "no
+mail" from a loss. The node clears an item's bit when it hands the item's
 reply to the core; nothing confirms it, and a reply lost on the way stays
 in the ring for the phone to read at home. A record has one round at a
 time, which a later fetch of its own ends; the rounds of several records
 run at once, the node handing their replies to its send slot in turn. An
 item that arrives after the fetch waits for the next one.
 
-Each reply is a form 3 payload with the fetch's recipient tag, sealed
-under the record's mailbox key with the nonce: the fetch's `sent` (4),
-the reply's place (3), 17 zero bytes. An item's place is its rank in the
-round, 1 to 32, and its plaintext is its number (3), the count of the
-record's items still unsent after the round's when the fetch was taken
-(2), and the item; an item longer than the app writes goes empty. The
-reply that says nothing is new has place 0 and an empty plaintext,
-18 bytes; none remains. The requester tries places 1 to 32 on a reply
-that carries an item. A reboot ends a round, so that no place seals two
+Every reply carries the fetch's recipient tag and is under the record's
+**reply key**, `crypto_kdf_derive_from_key(mailbox key, 3, "bark-rpl")`,
+so that the mailbox key itself encrypts nothing, with the nonce: the
+fetch's `sent` (4), the reply's place (1), 19 zero bytes (roadmap D222). The summary is a form 3 payload at
+place 0, sealed with its tag. An item's place is its rank in the round,
+1 to 32, sent in the clear; the reply is form 4 for a boxed payload and
+form 5 for an introduction, then the place, then the item without its
+format byte and recipient tag, encrypted as a boxed payload's
+ciphertext is, by `crypto_secretbox_detached` with its tag dropped
+([the payload](#the-payload)), under the reply key and the reply's
+nonce: no tag, as the item proves itself, and still encrypted, so that
+the bytes seen at the home are not those seen at the requester's node. The requester rebuilds the item, its
+format byte from the reply's form and the reply's recipient tag, and
+opens it as any boxed payload or introduction; it tries its latest
+rounds in turn, and the round under which the item opens is the reply's.
+The item's number is not sent. A round whose summary is lost still
+delivers its items. A reboot ends a round, so that no place carries two
 items: what it had not handed over stays unsent.
 
-A batch of 32 fits the 33 full frames a full bucket sends with the reply
-reserve left ([send queue](#send-queue)), so it leaves at the pace of the
-hand-overs and within the fetch address's life, the delivery TTL; the
-count tells the person what is left. A reply the requester's node has
-no room for is refused and waits at its sender ([receiving](#receiving)),
+A batch of 32 and its summary fit what a full bucket sends with the
+reply reserve left, 33 full frames ([send queue](#send-queue)): the
+summary's frame, at most 255 − 224 = 31 bytes of DATA header and its 21,
+and its ACK take 34.9 + 17.0 = 51.9 ms, less than a full frame's
+155.5 ms. So the batch leaves at the pace of the hand-overs and within
+the fetch address's life, the delivery TTL; the summary's count tells
+the person what is left. A reply the requester's node has no room for
+is refused and waits at its sender ([receiving](#receiving)),
 and one the home node's neighbours refuse is given back to the mailbox
 and goes again.
 
@@ -2876,17 +2965,17 @@ collision domain, the area within which transmissions interfere, is
 
 One 125 kHz channel at SF5 carries 1.95 kB/s raw (15.6 kbps) and
 ≈680 B/s with listen-before-talk (≈35% usable). A 100-byte text over 8
-hops with ACKs takes ≈0.72 s of channel time: per hop a 128-byte DATA
-packet (73.3 ms) and its ACK (17.0 ms).
+hops with ACKs takes ≈0.73 s of channel time: per hop a 129-byte DATA
+packet (74.6 ms) and its ACK (17.0 ms).
 
 | Plan | Heartbeat load per channel | City-wide data | Texts/s | Texts per user per day at 300k users |
 |---|---|---|---|---|
-| Single channel, 60 s heartbeats | 270 × 14.4 ms / 60 s = 6.5% | ≈6 kB/s | 14 × 0.285 / 0.72 s ≈ 6 | ≈2 |
+| Single channel, 60 s heartbeats | 270 × 14.4 ms / 60 s = 6.5% | ≈6 kB/s | 14 × 0.285 / 0.73 s ≈ 5 | ≈1.5 |
 | 7-colour fixed grid, 10 s heartbeats on all colours | 270 × 14.4 ms / 10 s = 39%, over the 35 % a channel can use | none | none | none |
-| **13 channels, measured selection, rotating heartbeat (this design)** | **270 × 14.4 ms / (10 s × 13) = 3.0%** | **≈80 kB/s** | **14 × 13 × 0.32 / 0.72 s ≈ 80** | **≈23** |
+| **13 channels, measured selection, rotating heartbeat (this design)** | **270 × 14.4 ms / (10 s × 13) = 3.0%** | **≈80 kB/s** | **14 × 13 × 0.32 / 0.73 s ≈ 80** | **≈23** |
 
 Each row is the 14 domains times the row's channels times what of a
-channel's 35 % the heartbeats leave, over 0.72 s a text, and a day of
+channel's 35 % the heartbeats leave, over 0.73 s a text, and a day of
 that over the 300 000 users. 23 texts a user a day is the **design rate**
 the rest of this document uses. The city centre is the hot spot, and the
 per-relay 10% cap ([duty cycle cap](#duty-cycle-cap)) binds there first.
@@ -3318,9 +3407,15 @@ ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           in the answered packet's aux
           from, to = the IDs of the answering and the answered node
 DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
-          hops(1) payload                                                   = 28 + payload
+          wrong(1) hops(1 to 3) payload                                     = 29 + payload,
+                                                                              30 from 128 hops,
+                                                                              31 from 16 384
           dst_hop, src_hop = IDs of the receiving and the sending node;
-          aux = sender's home channel, so the receiver knows where to ACK
+          aux = sender's home channel, so the receiver knows where to ACK;
+          wrong, hops = the counts of [hop count](#hop-count); hops is the
+          count in groups of 7 bits, the most significant first, one a
+          byte, each byte's top bit set if another follows: one byte below
+          128, two below 16 384, three up to 2 097 151
 PIECE     first(1) format(1) version(4) block(1) index(1) piece(247)        = 255
           aux = 15; version = the image's; index = which coded piece of the block, 0 to 254
 ASK       first(1) format(1) to(6) from(6)                                  = 14
@@ -3333,7 +3428,9 @@ STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
 ```
 
 Multi-byte numbers in the section and the status, the versions, are
-big-endian.
+big-endian. A DATA count in more bytes than it needs, its first group 0,
+or with a third byte whose top bit is set, is rejected, so every count
+has one form.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
@@ -3345,8 +3442,9 @@ acknowledges. The app must keep payloads unique
 `dst_hop` lets every node on a channel discard packets not addressed to
 it after 8 bytes. `src_hop` and `aux` name the sender and its home
 channel, where the ACK goes and where a return is sent
-([routing](#routing)). The payload is at most 255 − 28 = 227 bytes; the
-sender's address is inside it, encrypted.
+([routing](#routing)). The payload is at most 255 − 31 = 224 bytes, so
+that a full frame has room for the count's longest form, which a message
+may reach on its way; the sender's address is inside it, encrypted.
 
 ### Positions on the wire
 
@@ -3469,9 +3567,10 @@ those of the bring-up order, `roadmap.md` Phase 2.
 - Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
   hash (Vol 3 Part G §7.3).
 - libsodium documentation: "Public-key authenticated encryption"
-  (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
-  (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic
-  hashing" (`crypto_generichash`).
+  (`crypto_box`, `crypto_box_beforenm`), "Sealed boxes", "Secret-key
+  authenticated encryption" (`crypto_secretbox`, its detached mode),
+  "Key derivation" (`crypto_kdf`) and "Generic hashing"
+  (`crypto_generichash`).
 - RFC 4648, "The Base16, Base32, and Base64 Data Encodings": base32.
 - FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum and
   an image's hash and name.

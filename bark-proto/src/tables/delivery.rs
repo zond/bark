@@ -66,7 +66,9 @@ pub struct Queued {
     pub relay_home: Option<Channel>,
     /// The count it arrived with, which it goes on from if the node turns
     /// sleepy before it is delivered (spec "Hop count", "Sleepy nodes").
-    pub hops: u8,
+    pub hops: crate::wire::Hops,
+    /// The wrong-hop count it arrived with, likewise.
+    pub wrong: u8,
     len: u8,
     payload: [u8; MAX_PAYLOAD],
 }
@@ -92,6 +94,7 @@ impl Queued {
             flushed: false,
             relay_home: None,
             hops: 0,
+            wrong: 0,
             len: payload.len() as u8,
             payload: [0; MAX_PAYLOAD],
         };
@@ -164,6 +167,7 @@ impl<const N: usize> DeliveryQueue<N> {
             flushed: false,
             relay_home: None,
             hops: 0,
+            wrong: 0,
             len: 0,
             payload: [0; MAX_PAYLOAD],
         };

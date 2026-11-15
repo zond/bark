@@ -95,18 +95,12 @@ void main() {
       [TextRecord(m['text'] as String)],
     );
     expect(hex(plain), m['plaintext']);
-    final ab = s.crypto.box.precalculate(
-      publicKey: bob.identity,
-      secretKey: alice.pair.secretKey,
-    );
-    final payload = sealBox(ab, tag(bob, home), h(m, 'nonce'), plain);
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    final payload = sealBox(ab, tag(bob, home), plain);
     expect(hex(payload), m['payload']);
     expect(payload[0], 0x20);
     expect(payload[1], at('bob')['recipient_home']);
-    final ba = s.crypto.box.precalculate(
-      publicKey: alice.identity,
-      secretKey: bob.pair.secretKey,
-    );
+    final ba = SivKeys.pair(s, alice.identity, bob.pair.secretKey);
     final (hd, rs) = readPlain(openBox(ba, h(m, 'payload')));
     expect(hd.sent, m['sent']);
     expect(hd.greater, greater(alice.identity, bob.identity));
@@ -116,10 +110,7 @@ void main() {
   test('boxed: a UTF-8 text, and reactions up to the longest emoji', () {
     for (final name in ['box_utf8', 'box_reaction', 'box_heart', 'box_kiss']) {
       final m = at(name);
-      final ab = s.crypto.box.precalculate(
-        publicKey: bob.identity,
-        secretKey: alice.pair.secretKey,
-      );
+      final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
       final plain = openBox(ab, h(m, 'payload'));
       expect(hex(plain), m['plaintext']);
       expect(h(m, 'payload')[1], at('alice')['recipient_away']);
@@ -179,13 +170,75 @@ void main() {
 
   test('another pair does not open a box', () {
     final carol = Keys.fromSeed(s, List.filled(16, 3));
-    final cb = s.crypto.box.precalculate(
-      publicKey: carol.identity,
-      secretKey: bob.pair.secretKey,
-    );
+    final cb = SivKeys.pair(s, carol.identity, bob.pair.secretKey);
     expect(
       () => openBox(cb, h(at('box_1251'), 'payload')),
       throwsA(isA<BadPayload>()),
+    );
+  });
+
+  test(
+    'the pair keys are the Rust ones from either side, and the mailbox\'s',
+    () {
+      final m = at('keys');
+      for (final k in [
+        SivKeys.pair(s, bob.identity, alice.pair.secretKey),
+        SivKeys.pair(s, alice.identity, bob.pair.secretKey),
+      ]) {
+        expect(hex(k.mac.extractBytes()), m['pair_mac']);
+        expect(hex(k.enc.extractBytes()), m['pair_enc']);
+      }
+      final mbx = SivKeys.of(s, alice.mailbox);
+      expect(hex(mbx.mac.extractBytes()), m['mailbox_mac']);
+      expect(hex(mbx.enc.extractBytes()), m['mailbox_enc']);
+      expect(
+        hex(replyKey(s, alice.mailbox).extractBytes()),
+        m['mailbox_reply'],
+      );
+      // A public key of small order has no shared key.
+      expect(
+        () => SivKeys.pair(s, List.filled(keyLen, 0), alice.pair.secretKey),
+        throwsA(isA<BadPayload>()),
+      );
+    },
+  );
+
+  test('a box: one plaintext makes one payload, the same both ways', () {
+    final m = at('box_1251');
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    final ba = SivKeys.pair(s, alice.identity, bob.pair.secretKey);
+    final plain = h(m, 'plaintext');
+    expect(
+      hex(sealBox(ba, tag(bob, home), plain)),
+      hex(sealBox(ab, tag(bob, home), plain)),
+    );
+    // Bob to Alice opens under Alice's pair with Bob, the same keys.
+    expect(
+      hex(openBox(ab, h(at('box_utf8'), 'payload'))),
+      at('box_utf8')['plaintext'],
+    );
+  });
+
+  test('a forged siv, a flipped bit and another pair are refused', () {
+    final m = at('box_refused');
+    final ba = SivKeys.pair(s, alice.identity, bob.pair.secretKey);
+    for (final k in ['forged_siv', 'flipped', 'other_pair']) {
+      expect(() => openBox(ba, h(m, k)), throwsA(isA<BadPayload>()), reason: k);
+    }
+    final carol = Keys.fromSeed(s, h(m, 'carol_seed'));
+    final bc = SivKeys.pair(s, carol.identity, bob.pair.secretKey);
+    expect(hex(openBox(bc, h(m, 'other_pair'))), at('box_1251')['plaintext']);
+    final f = at('fetch_refused');
+    for (final k in ['forged_siv', 'flipped', 'other_key']) {
+      expect(
+        () => Fetch.open(s, alice.mailbox, h(f, k)),
+        throwsA(isA<BadPayload>()),
+        reason: k,
+      );
+    }
+    expect(
+      Fetch.open(s, bob.mailbox, h(f, 'other_key')).sent,
+      at('fetch')['sent'],
     );
   });
 
@@ -210,9 +263,9 @@ void main() {
     expect(f.recipient, m['recipient']);
     final homeTag = tag(alice, home);
     expect(homeTag, m['home']);
-    expect(hex(f.seal(s, alice.mailbox, homeTag, h(m, 'nonce'))), m['payload']);
+    expect(hex(f.seal(s, alice.mailbox, homeTag)), m['payload']);
     expect(h(m, 'payload').length, Fetch.len);
-    expect(Fetch.len, 60);
+    expect(Fetch.len, boxOverhead + Fetch.plainLen);
     final g = Fetch.open(s, alice.mailbox, h(m, 'payload'));
     expect(
       (g.sent, g.address.toString(), g.recipient),
@@ -224,55 +277,70 @@ void main() {
     );
   });
 
-  test('a reply: made, opened in its round only, its number inside', () {
-    final m = at('reply');
-    final round = m['round'] as int;
-    final place = m['place'] as int;
-    final n = m['number'] as int;
-    final left = m['remaining'] as int;
-    expect(hex(replyNonce(round, place)), m['nonce']);
-    // The reply carries the tag the fetch asked for.
+  test('a summary: made, opened in its round only, nothing new its zero', () {
     final to = at('fetch')['recipient'] as int;
-    expect(
-      hex(sealReply(s, alice.mailbox, to, round, place, n, left, h(m, 'item'))),
-      m['payload'],
-    );
-    expect(h(m, 'payload')[1], to);
-    final o = openReply(s, alice.mailbox, round, h(m, 'payload'))!;
-    expect(
-      (o.number, o.place, o.remaining, hex(o.item!)),
-      (n, place, left, m['item']),
-    );
-    expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
-    expect(openReply(s, bob.mailbox, round, h(m, 'payload')), isNull);
-  });
-
-  test('a reply opens at every place of a batch, and tells what remains', () {
-    for (final place in [1, maxReplies]) {
-      final p = sealReply(s, alice.mailbox, 9, 7, place, 5, 1000, [1, 2]);
-      final o = openReply(s, alice.mailbox, 7, p)!;
-      expect((o.number, o.place, o.remaining), (5, place, 1000));
+    for (final (name, items) in [('summary', 2), ('nothing_new', 0)]) {
+      final m = at(name);
+      final round = m['round'] as int;
+      expect(hex(replyNonce(round, 0)), m['nonce']);
+      final want = RoundSummary(items, m['remaining'] as int? ?? 0);
+      expect(hex(sealSummary(s, alice.mailbox, to, round, want)), m['payload']);
+      expect(h(m, 'payload').length, summaryLen);
+      final o = openSummary(s, alice.mailbox, round, h(m, 'payload'))!;
+      expect((o.items, o.remaining, o.nothingNew), (items, 0, items == 0));
+      expect(openSummary(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
+      expect(openSummary(s, bob.mailbox, round, h(m, 'payload')), isNull);
+      final flipped = h(m, 'payload')..[summaryLen - 1] ^= 1;
+      expect(openSummary(s, alice.mailbox, round, flipped), isNull);
     }
-    final beyond = sealReply(s, alice.mailbox, 9, 7, maxReplies + 1, 5, 0, [
-      1,
-      2,
-    ]);
-    expect(openReply(s, alice.mailbox, 7, beyond), isNull);
   });
 
-  test('nothing new: made, opened in its round only', () {
-    final m = at('nothing_new');
-    final round = m['round'] as int;
-    expect(hex(replyNonce(round, 0)), m['nonce']);
+  test('an item reply: made and opened as the Rust side does, and it opens '
+      'only in its round', () {
     final to = at('fetch')['recipient'] as int;
-    expect(hex(sealNothingNew(s, alice.mailbox, to, round)), m['payload']);
-    expect(h(m, 'payload').length, nothingNewLen);
-    expect(nothingNewLen, 18);
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    for (final name in ['reply_box', 'reply_intro']) {
+      final m = at(name);
+      final round = m['round'] as int;
+      final place = m['place'] as int;
+      expect(hex(replyNonce(round, place)), m['nonce']);
+      expect(
+        hex(sealItem(s, alice.mailbox, to, round, place, h(m, 'item'))),
+        m['payload'],
+      );
+      expect(h(m, 'payload').length, h(m, 'item').length + replyOverhead);
+      final item = openItem(s, alice.mailbox, round, h(m, 'payload'))!;
+      expect(hex(item), m['opened']);
+      expect(item[1], to);
+      expect(item[0], h(m, 'item')[0]);
+      Uint8List open(List<int> p) =>
+          name == 'reply_box' ? openBox(ab, p) : openIntro(s, alice, p);
+      final (_, rs) = readPlain(open(item));
+      expect(rs.last, isA<TextRecord>());
+      // Another round, or another key, gives what does not open.
+      for (final (key, r) in [
+        (alice.mailbox, round + 1),
+        (bob.mailbox, round),
+      ]) {
+        expect(
+          () => open(openItem(s, key, r, h(m, 'payload'))!),
+          throwsA(isA<BadPayload>()),
+        );
+      }
+    }
+    // No place 0 nor past the batch, and no other form, goes as an item.
+    final box = h(at('reply_box'), 'item');
+    for (final place in [0, maxReplies + 1]) {
+      expect(
+        () => sealItem(s, alice.mailbox, to, 1, place, box),
+        throwsA(isA<BadPayload>()),
+      );
+    }
     expect(
-      openReply(s, alice.mailbox, round, h(m, 'payload'))!.nothingNew,
-      isTrue,
+      () => sealItem(s, alice.mailbox, to, 1, 1, h(at('fetch'), 'payload')),
+      throwsA(isA<BadPayload>()),
     );
-    expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
+    expect(openItem(s, alice.mailbox, 1, h(at('summary'), 'payload')), isNull);
   });
 
   test('windows-1251 when it holds the text', () {
@@ -288,18 +356,12 @@ void main() {
     // The room of a whole text in a box without an address, as the Rust
     // side has it: one byte more than a part's.
     expect(room + 1, maxAppPayload - boxOverhead - 5 - 1);
-    expect((maxAppPayload, room + 1), (204, 156));
+    expect((maxAppPayload, room + 1), (223, 199));
     expect(splitText(m['text'] as String, room + 1), [
       for (final p in parts) p['text'],
     ]);
-    final ab = s.crypto.box.precalculate(
-      publicKey: bob.identity,
-      secretKey: alice.pair.secretKey,
-    );
-    final ba = s.crypto.box.precalculate(
-      publicKey: alice.identity,
-      secretKey: bob.pair.secretKey,
-    );
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    final ba = SivKeys.pair(s, alice.identity, bob.pair.secretKey);
     for (final (i, p) in parts.indexed) {
       final hd = Header(
         greater(alice.identity, bob.identity),
@@ -309,10 +371,7 @@ void main() {
         TextRecord(p['text'] as String, i + 1, parts.length),
       ]);
       expect(hex(plain), p['plaintext']);
-      expect(
-        hex(sealBox(ab, tag(bob, home), h(p, 'nonce'), plain)),
-        p['payload'],
-      );
+      expect(hex(sealBox(ab, tag(bob, home), plain)), p['payload']);
       final (got, rs) = readPlain(openBox(ba, h(p, 'payload')));
       final t = rs.single as TextRecord;
       expect(

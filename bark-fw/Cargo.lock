@@ -50,7 +50,10 @@ dependencies = [
  "blake2",
  "crypto_box",
  "crypto_secretbox",
+ "curve25519-dalek",
+ "salsa20",
  "sha2",
+ "subtle",
  "unicode-segmentation",
 ]
 

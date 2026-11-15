@@ -303,8 +303,9 @@ pub(crate) struct Take {
     pub(crate) from: NodeId,
     /// Its sender's home channel.
     pub(crate) home: Channel,
-    /// Its count.
-    pub(crate) hops: u8,
+    /// Its counts.
+    pub(crate) hops: crate::wire::Hops,
+    pub(crate) wrong: u8,
     /// It came from the node this one was handing the message to: a return,
     /// known only on arrival, since that hand-over then ends
     /// (spec "Receiving DATA", case 5).
@@ -319,6 +320,7 @@ impl Take {
             from: d.src_hop,
             home: d.sender_home,
             hops: d.hops,
+            wrong: d.wrong,
             returned,
         }
     }
@@ -331,6 +333,7 @@ impl Take {
             src_hop: self.from,
             dst_pos: self.message.dst_pos,
             dst_id: self.message.dst_id,
+            wrong: self.wrong,
             hops: self.hops,
             payload: self.message.payload(),
         }
@@ -845,6 +848,7 @@ mod tests {
             from: ack(9).from,
             home: out.channel,
             hops: out.hops,
+            wrong: out.wrong,
             returned: false,
         };
         let mut a = Replies::new();

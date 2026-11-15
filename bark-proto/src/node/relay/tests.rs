@@ -483,6 +483,7 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     let dst = r.config.position;
     let short = Duration::from_millis(20);
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: node,
         src_hop: r.me(),
@@ -496,7 +497,7 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
     let spend = r.radio.budget().available(now) - need;
     r.radio.budget_mut().record(spend, now);
     let id = MsgId::of(dst, node, b"later");
-    let mut record = crate::tables::records::Record::new(id, None, 0, now);
+    let mut record = crate::tables::records::Record::new(id, None, (0, 0), now);
     record.set_arrived();
     let at = r.record_place().unwrap();
     r.records.put(at, record);
@@ -566,6 +567,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
         let mut payload = [0u8; MAX_PAYLOAD];
         payload[0] = k;
         let d = Data {
+            wrong: 0,
             sender_home: r.home,
             dst_hop: NodeId::NONE,
             src_hop: r.me(),
@@ -583,6 +585,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
         r.queue.push(out).unwrap();
     }
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: node,
         src_hop: r.me(),
@@ -599,7 +602,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     let spend = r.radio.budget().available(now) - need;
     r.radio.budget_mut().record(spend, now);
     let id = MsgId::of(dst, node, b"ahead");
-    let mut record = crate::tables::records::Record::new(id, None, 0, now);
+    let mut record = crate::tables::records::Record::new(id, None, (0, 0), now);
     record.set_arrived();
     let at = r.record_place().unwrap();
     r.records.put(at, record);
@@ -642,6 +645,7 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     assert!(!r.booting());
     let (a_home, b_home) = (Channel::new(5).unwrap(), Channel::new(6).unwrap());
     let packet = |home: Channel, from: u32, text: &'static [u8]| Data {
+        wrong: 0,
         sender_home: home,
         dst_hop: r.me(),
         src_hop: name(from),
@@ -879,9 +883,10 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
         ..r.config.position
     };
     let home = Channel::new(5).unwrap();
-    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u8| {
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u32| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
+            wrong: 0,
             sender_home: home,
             dst_hop: r.me(),
             src_hop: name(tag.into()),
@@ -956,9 +961,10 @@ fn a_waiting_message_keeps_its_record() {
         lat: r.config.position.lat + 100_000,
         ..r.config.position
     };
-    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u8| {
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u32| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
+            wrong: 0,
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
             src_hop: name(1),
@@ -990,7 +996,8 @@ fn a_waiting_message_keeps_its_record() {
     let later = now + Duration::from_secs(1);
     for i in 1..RECORDS as u32 {
         let at = r.records.place(|_| false).unwrap();
-        r.records.put(at, Record::new(MsgId(i), None, 0, later));
+        r.records
+            .put(at, Record::new(MsgId(i), None, (0, 0), later));
     }
     assert!(r.records.is_full());
     now = later + Duration::from_secs(1);
@@ -1071,6 +1078,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
     for tag in 0..4u8 {
         let payload = [tag];
         let d = Data {
+            wrong: 0,
             sender_home: home,
             dst_hop: name(0),
             src_hop: r.me(),
@@ -1081,7 +1089,8 @@ fn waiting_entries_keep_arrival_order_through_bans() {
         };
         let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
-        r.records.put(at, Record::new(d.msg_id(), parent, 1, now));
+        r.records
+            .put(at, Record::new(d.msg_id(), parent, (1, 0), now));
         r.queue
             .push(Outgoing::of(&d, home, MIN_PREAMBLE_SYMBOLS, Kind::Forward))
             .unwrap();
@@ -1207,9 +1216,10 @@ fn a_message_that_waited_keeps_its_turn() {
     // K, M and A, queued in this order.
     let home = r.home;
     let mut ids = Vec::new();
-    for (tag, dst_pos, hops) in [(0u8, east, 1u8), (1, east, 2), (2, north, 9)] {
+    for (tag, dst_pos, hops) in [(0u8, east, 1u32), (1, east, 2), (2, north, 9)] {
         let payload = [tag];
         let data = Data {
+            wrong: 0,
             sender_home: home,
             dst_hop: name(0),
             src_hop: r.me(),
@@ -1221,7 +1231,7 @@ fn a_message_that_waited_keeps_its_turn() {
         let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
         r.records
-            .put(at, Record::new(data.msg_id(), parent, 1, now));
+            .put(at, Record::new(data.msg_id(), parent, (1, 0), now));
         r.queue
             .push(Outgoing::of(
                 &data,
@@ -1334,6 +1344,7 @@ fn the_offer_keeps_the_mark() {
     let home = r.home;
     let payload = [0];
     let data = Data {
+        wrong: 0,
         sender_home: home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -1348,7 +1359,7 @@ fn the_offer_keeps_the_mark() {
     let at = r.record_place().unwrap();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     r.records
-        .put(at, Record::new(data.msg_id(), parent, 1, now));
+        .put(at, Record::new(data.msg_id(), parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -1423,6 +1434,7 @@ fn an_answer_to_another_sender_is_not_ours() {
     };
     hear(&mut r, now, &Packet::Heartbeat(hb));
     let data = Data {
+        wrong: 0,
         sender_home: home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -1434,7 +1446,7 @@ fn an_answer_to_another_sender_is_not_ours() {
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
-    r.records.put(at, Record::new(id, parent, 1, now));
+    r.records.put(at, Record::new(id, parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -1566,6 +1578,7 @@ fn a_neighbour_that_answers_stays_live() {
     let answer = |r: &mut Relay, now: &mut Instant, tag: u8, refused: bool| {
         let payload = [tag];
         let data = Data {
+            wrong: 0,
             sender_home: home,
             dst_hop: name(0),
             src_hop: r.me(),
@@ -1577,7 +1590,7 @@ fn a_neighbour_that_answers_stays_live() {
         let id = data.msg_id();
         let parent = Some((name(7), Channel::new(6).unwrap()));
         let at = r.record_place().unwrap();
-        r.records.put(at, Record::new(id, parent, 1, *now));
+        r.records.put(at, Record::new(id, parent, (1, 0), *now));
         r.queue
             .push(Outgoing::of(
                 &data,
@@ -1667,7 +1680,7 @@ fn offer_data(
     now: &mut Instant,
     dst: Position,
     tag: u8,
-    hops: u8,
+    hops: u32,
 ) -> (Option<u8>, Option<crate::event::DropReason>) {
     let (place, refused, _) = offer_dropped(r, now, dst, tag, hops);
     (place, refused)
@@ -1680,7 +1693,7 @@ fn offer_dropped(
     now: &mut Instant,
     dst: Position,
     tag: u8,
-    hops: u8,
+    hops: u32,
 ) -> (
     Option<u8>,
     Option<crate::event::DropReason>,
@@ -1689,6 +1702,7 @@ fn offer_dropped(
     use crate::wire::{Data, MAX_PAYLOAD};
     let payload = [tag; MAX_PAYLOAD];
     let d = Data {
+        wrong: 0,
         sender_home: Channel::new(5).unwrap(),
         dst_hop: r.me(),
         src_hop: name(1),
@@ -1789,6 +1803,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
         ..me
     });
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -1800,7 +1815,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
-    r.records.put(at, Record::new(id, parent, 1, now));
+    r.records.put(at, Record::new(id, parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -1810,9 +1825,12 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
         ))
         .unwrap();
     // A copy with a higher count arrived since it was queued.
-    r.records.get_mut(id).unwrap().received(name(8), 6, now);
+    r.records
+        .get_mut(id)
+        .unwrap()
+        .received(name(8), (6, 0), now);
 
-    let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u8> {
+    let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u32> {
         sent.iter()
             .filter_map(|(_, f)| match Packet::decode(f.payload()) {
                 Ok(Packet::Data(d)) if d.dst_hop == id_of(to) => Some(d.hops),
@@ -1832,7 +1850,10 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
     }
     assert_eq!(counts(&sent, nearest), [7, 7, 7], "stamped, then repeated");
     // Another copy arrives during the last attempt.
-    r.records.get_mut(id).unwrap().received(name(8), 9, now);
+    r.records
+        .get_mut(id)
+        .unwrap()
+        .received(name(8), (9, 0), now);
     while counts(&sent, near).is_empty() {
         let until = now + Duration::from_millis(10);
         sent.extend(drive(&mut r, &mut now, until));
@@ -1867,8 +1888,9 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
 fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
     use crate::wire::Data;
     let (mut r, mut now, far) = with_every_neighbour_banned();
-    let offer = |r: &mut Relay, now: &mut Instant, from: u32, hops: u8| {
+    let offer = |r: &mut Relay, now: &mut Instant, from: u32, hops: u32| {
         let d = Data {
+            wrong: 0,
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
             src_hop: name(from),
@@ -1925,6 +1947,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
         ..me
     };
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -1936,7 +1959,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
-    r.records.put(at, Record::new(id, parent, 1, now));
+    r.records.put(at, Record::new(id, parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -2051,6 +2074,7 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
         hear(&mut r, &mut now, &Packet::Heartbeat(hb));
     }
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -2062,7 +2086,7 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let at = r.record_place().unwrap();
-    r.records.put(at, Record::new(id, parent, 1, now));
+    r.records.put(at, Record::new(id, parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -2113,7 +2137,7 @@ fn until_sent(r: &mut Relay, now: &mut Instant, mut pending: Vec<Action>) -> Vec
 }
 
 /// The receiver and count of each DATA frame in `sent`.
-fn data_to(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u8)> {
+fn data_to(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u32)> {
     sent.iter()
         .filter_map(|(_, f)| match Packet::decode(f.payload()) {
             Ok(Packet::Data(d)) => Some((d.dst_hop, d.hops)),
@@ -2181,6 +2205,7 @@ fn a_return_answered_seen_is_dropped() {
     let parent = name(7);
     let home = Channel::new(6).unwrap();
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: parent,
         src_hop: r.me(),
@@ -2192,7 +2217,7 @@ fn a_return_answered_seen_is_dropped() {
     let id = data.msg_id();
     let at = r.record_place().unwrap();
     r.records
-        .put(at, Record::new(id, Some((parent, home)), 1, now));
+        .put(at, Record::new(id, Some((parent, home)), (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -2248,6 +2273,7 @@ fn a_return_from_the_node_handed_to_is_taken_without_a_slot() {
     let parent = name(7);
     let home = Channel::new(6).unwrap();
     let back = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: parent,
         src_hop: r.me(),
@@ -2259,7 +2285,7 @@ fn a_return_from_the_node_handed_to_is_taken_without_a_slot() {
     let id = back.msg_id();
     let at = r.record_place().unwrap();
     r.records
-        .put(at, Record::new(id, Some((parent, home)), 1, now));
+        .put(at, Record::new(id, Some((parent, home)), (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &back,
@@ -2334,6 +2360,7 @@ fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
         let until = now + Duration::from_secs(2);
         drive(&mut r, &mut now, until);
         let d = Data {
+            wrong: 0,
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
             src_hop: name(1),
@@ -2457,6 +2484,7 @@ fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
     drive(&mut r, &mut now, from + Duration::from_millis(1));
     let payload = [0u8; crate::wire::MAX_PAYLOAD];
     let other = Packet::Data(Data {
+        wrong: 0,
         sender_home: home,
         dst_hop: NOBODY,
         src_hop: name(4),
@@ -2532,6 +2560,7 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
     assert!(!demoted(&r, now), "a refusal is an answer");
 
     let offer = |to: NodeId, payload: &'static [u8]| Data {
+        wrong: 0,
         sender_home: Channel::new(5).unwrap(),
         dst_hop: to,
         src_hop: d,
@@ -2699,9 +2728,10 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
         .map(|n| n.position)
         .min_by_key(|p| p.lat);
     let near = near.unwrap();
-    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u8, dst: Position| {
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u32, dst: Position| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
+            wrong: 0,
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
             src_hop: name(1),
@@ -2785,6 +2815,7 @@ fn refusals_at_the_gate_are_told_a_line() {
     let offer = |r: &mut Relay, now: &mut Instant, tag: u8| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
+            wrong: 0,
             sender_home: Channel::new(5).unwrap(),
             dst_hop: r.me(),
             src_hop: name(u32::from(tag)),
@@ -2926,6 +2957,7 @@ fn handing_between_with(
     }
     hear(&mut r, &mut now, &beat(d_pos, 5, Peer::Relay));
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -2937,7 +2969,7 @@ fn handing_between_with(
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let place = r.record_place().unwrap();
-    r.records.put(place, Record::new(id, parent, 1, now));
+    r.records.put(place, Record::new(id, parent, (1, 0), now));
     prep(&mut r, now);
     r.queue
         .push(Outgoing::of(
@@ -3155,6 +3187,7 @@ fn owner_with(c_live: bool) -> (Option<NodeId>, bool) {
         hear(&mut r, &mut now, &Packet::Heartbeat(hb));
     }
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -3166,7 +3199,7 @@ fn owner_with(c_live: bool) -> (Option<NodeId>, bool) {
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(6).unwrap()));
     let place = r.record_place().unwrap();
-    r.records.put(place, Record::new(id, parent, 1, now));
+    r.records.put(place, Record::new(id, parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -3339,6 +3372,7 @@ fn the_inbox_keeps_messages_by_the_delivery_queue_s_rule() {
     let offer = |r: &mut Relay, now: &mut Instant, tag: u8| {
         let payload = [tag; 8];
         let d = Data {
+            wrong: 0,
             sender_home: Channel::new(5).unwrap(),
             dst_hop: me,
             src_hop: name(1),
@@ -3471,7 +3505,7 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
     let dst = r.config.position;
     // Held with count 0, its node's own: no hop place takes it.
     let id = MsgId::of(dst, node, b"held");
-    let mut record = crate::tables::records::Record::new(id, None, 0, now);
+    let mut record = crate::tables::records::Record::new(id, None, (0, 0), now);
     record.set_arrived();
     let at = r.record_place().unwrap();
     r.records.put(at, record);
@@ -3481,6 +3515,7 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
     for k in 0..SEND_QUEUE {
         let payload = [k as u8];
         let d = Data {
+            wrong: 0,
             sender_home: r.home,
             dst_hop: NodeId::NONE,
             src_hop: r.me(),
@@ -3824,6 +3859,7 @@ fn first_hop_among(
         hear(&mut r, &mut now, &Packet::Heartbeat(hb));
     }
     let data = Data {
+        wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
         src_hop: r.me(),
@@ -3835,7 +3871,7 @@ fn first_hop_among(
     let id = data.msg_id();
     let parent = Some((name(7), Channel::new(2).unwrap()));
     let place = r.record_place().unwrap();
-    r.records.put(place, Record::new(id, parent, 1, now));
+    r.records.put(place, Record::new(id, parent, (1, 0), now));
     r.queue
         .push(Outgoing::of(
             &data,
@@ -3912,4 +3948,213 @@ fn a_node_s_heartbeat_says_it_is_leaving() {
     assert!(!leaving(&r), "open again");
     r.mode = Mode::Relay(Power::Leaving(now));
     assert!(leaving(&r), "turning sleepy");
+}
+
+/// What a relay whose record of a message holds `wrong` wrong hops does
+/// with it, with a wrong-hop cap of `cap`, the message addressed to
+/// `dst_id` far to the north, and neighbours at `lats` counts north of it:
+/// the first hand-over's receiver and counts, and the traces.
+fn first_hand_over(
+    lats: &[i32],
+    dst_id: Option<i32>,
+    cap: u8,
+    wrong: u8,
+) -> (Option<(NodeId, u32, u8)>, Vec<Trace>) {
+    first_hand_over_from(lats, dst_id, cap, (3, wrong))
+}
+
+/// [`first_hand_over`] with the record's highest counts `(hops, wrong)`.
+fn first_hand_over_from(
+    lats: &[i32],
+    dst_id: Option<i32>,
+    cap: u8,
+    (held, wrong): (u32, u8),
+) -> (Option<(NodeId, u32, u8)>, Vec<Trace>) {
+    use crate::tables::records::Record;
+    use crate::tables::send_queue::{Kind, Outgoing};
+    use crate::wire::Data;
+    let hour = Duration::from_secs(3600);
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        home_override: Channel::new(3),
+        sweep_interval: hour,
+        heartbeat_min: hour,
+        heartbeat_max: hour,
+        wrong_hop_cap: cap,
+        ..Config::default()
+    };
+    let mut r = Relay::new(config, 1);
+    let mut now = Instant::ZERO;
+    drive(&mut r, &mut now, Instant::ZERO + Duration::from_secs(2));
+    let me = r.config.position;
+    let at = |k: i32| Position {
+        lat: me.lat + k,
+        ..me
+    };
+    for &k in lats {
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: Channel::new(5).unwrap(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving: false,
+            id: id_of(at(k)),
+            short: at(k).short(),
+        };
+        r.neighbours.heard(&hb, at(k), -80, &r.plane, now);
+    }
+    let data = Data {
+        wrong,
+        sender_home: r.home,
+        dst_hop: name(0),
+        src_hop: r.me(),
+        dst_pos: at(100_000),
+        dst_id: dst_id.map_or(NOBODY, |k| id_of(at(k))),
+        hops: 4,
+        payload: b"wrong",
+    };
+    let id = data.msg_id();
+    let parent = Some((name(7), Channel::new(6).unwrap()));
+    let place = r.record_place().unwrap();
+    r.records
+        .put(place, Record::new(id, parent, (held, wrong), now));
+    r.queue
+        .push(Outgoing::of(
+            &data,
+            r.home,
+            MIN_PREAMBLE_SYMBOLS,
+            Kind::Forward,
+        ))
+        .unwrap();
+    let mut sent = Vec::new();
+    let mut traces = Vec::new();
+    let mut pending = Vec::new();
+    r.handle(Event::Wakeup, now, &mut |a| pending.push(a));
+    let until = now + Duration::from_secs(1);
+    drive_all(&mut r, &mut now, until, pending, &mut |_, a| match a {
+        Action::Transmit(f) => sent.push(f),
+        Action::Trace(t) => traces.push(t),
+        _ => {}
+    });
+    let first = sent.iter().find_map(|f| match Packet::decode(f.payload()) {
+        Ok(Packet::Data(d)) => Some((d.dst_hop, d.hops, d.wrong)),
+        _ => None,
+    });
+    (first, traces)
+}
+
+/// A hand-over to a node closer to the destination keeps the wrong-hop
+/// count; one to a node no closer, a tie included, adds one
+/// (spec "Hop count").
+#[test]
+fn a_hand_over_away_from_the_destination_is_a_wrong_hop() {
+    let me = Relay::new(Config::default(), 1).config.position;
+    let id = |k: i32| {
+        id_of(Position {
+            lat: me.lat + k,
+            ..me
+        })
+    };
+    assert_eq!(
+        first_hand_over(&[5_000], None, 255, 3).0,
+        Some((id(5_000), 4, 3)),
+        "closer"
+    );
+    assert_eq!(
+        first_hand_over(&[-5_000], None, 255, 3).0,
+        Some((id(-5_000), 4, 4)),
+        "farther"
+    );
+    assert_eq!(
+        first_hand_over(&[0], None, 255, 3).0,
+        Some((id(0), 4, 4)),
+        "as far: a tie is wrong"
+    );
+}
+
+/// At the wrong-hop cap a hop that is not wrong still goes, and so does
+/// one to the node the message is addressed to, which ends the search;
+/// a wrong one ends the message (spec "Hop count").
+#[test]
+fn a_wrong_hop_past_the_cap_ends_the_message() {
+    let me = Relay::new(Config::default(), 1).config.position;
+    let id = |k: i32| {
+        id_of(Position {
+            lat: me.lat + k,
+            ..me
+        })
+    };
+    let (sent, traces) = first_hand_over(&[-5_000], None, 3, 3);
+    assert_eq!(sent, None);
+    assert!(traces.iter().any(|t| matches!(
+        t,
+        Trace::Dropped {
+            reason: crate::event::DropReason::WrongHopCap,
+            ..
+        }
+    )));
+    assert_eq!(
+        first_hand_over(&[5_000], None, 3, 3).0,
+        Some((id(5_000), 4, 3)),
+        "closer, at the cap"
+    );
+    assert_eq!(
+        first_hand_over(&[-5_000], Some(-5_000), 3, 3).0,
+        Some((id(-5_000), 4, 3)),
+        "the addressed node, though farther"
+    );
+    let (sent, _) = first_hand_over(&[-5_000], None, 4, 3);
+    assert_eq!(sent, Some((id(-5_000), 4, 4)), "within the cap");
+}
+
+/// A return to a parent this relay no longer has in its table is a wrong
+/// hop: its position is not known (spec "Hop count").
+#[test]
+fn a_return_to_a_parent_out_of_the_table_is_a_wrong_hop() {
+    assert_eq!(
+        first_hand_over(&[], None, 255, 3).0,
+        Some((name(7), 4, 4)),
+        "returned to its parent, name 7"
+    );
+    let (sent, traces) = first_hand_over(&[], None, 3, 3);
+    assert_eq!(sent, None);
+    assert!(traces.iter().any(|t| matches!(
+        t,
+        Trace::Dropped {
+            reason: crate::event::DropReason::WrongHopCap,
+            ..
+        }
+    )));
+}
+
+/// A message received at the largest hop count goes no further, however
+/// few its wrong hops (spec "Hop count").
+#[test]
+fn the_largest_hop_count_ends_a_search() {
+    use crate::wire::MAX_HOPS;
+    let (sent, traces) = first_hand_over_from(&[5_000], None, 255, (MAX_HOPS, 0));
+    assert_eq!(sent, None);
+    assert!(traces.iter().any(|t| matches!(
+        t,
+        Trace::Dropped {
+            reason: crate::event::DropReason::HopCap,
+            ..
+        }
+    )));
+    let (sent, _) = first_hand_over_from(&[5_000], None, 255, (MAX_HOPS - 1, 0));
+    assert_eq!(
+        sent.map(|(_, h, _)| h),
+        Some(MAX_HOPS),
+        "the largest is sent"
+    );
+}
+
+/// The default cap is the setting roadmap D220 chose, below what the byte
+/// holds.
+#[test]
+fn the_default_wrong_hop_cap() {
+    assert_eq!(Config::default().wrong_hop_cap, crate::node::WRONG_HOP_CAP);
+    assert_eq!(crate::node::WRONG_HOP_CAP, 64);
 }

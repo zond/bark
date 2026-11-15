@@ -108,12 +108,13 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                     short: pos.short(),
                 }),
                 false => Packet::Data(Data {
+                    wrong: 0,
                     sender_home: nhome,
                     dst_hop: relay.id(),
                     src_hop: NodeId::from_u64(pos.short().0 as u64),
                     dst_pos: far,
                     dst_id: NodeId([9; 6]),
-                    hops: 1 + (seq % 20) as u8,
+                    hops: 1 + seq % 20,
                     payload: &payload,
                 }),
             };

@@ -1,7 +1,9 @@
 //! A node that moves: whether it is fixed or carried, measured from its
 //! fixes, and which fixes it takes as its position (spec "Position",
 //! "Nodes"). A relay that is not carried keeps its place as its position,
-//! so no later fix, true or spoofed, moves it.
+//! so no later fix, true or spoofed, moves it. A node keeps the place it
+//! has until a fix lies beyond the carried radius of it: a still board's
+//! fixes wander that far, and each new place changes its address.
 
 use super::gps::mark;
 use super::Node;
@@ -22,9 +24,12 @@ pub(super) struct Motion {
     /// It has a place (spec "Position"); a board built without one has
     /// none until its first accepted fix.
     placed: bool,
-    /// Until when its next accepted fix is its place, in whole seconds as
-    /// the GPS keeps its times; 0 for never, `u32::MAX` for good.
-    first_fix: u32,
+    /// Its next accepted fix is its place: it has none, or its map point
+    /// was cleared.
+    first_fix: bool,
+    /// Plugged in: until when its next accepted fix, if far, is its place,
+    /// in whole seconds as the GPS keeps its times; 0 for never.
+    plugged: u32,
     /// Fixed: since when its fixes have been far, moved on by the time the
     /// GPS gave no fix.
     far_since: Option<Instant>,
@@ -35,6 +40,9 @@ pub(super) struct Motion {
     /// they have stayed near it.
     still_at: Position,
     still_since: Instant,
+    /// Carried: the place it stood as a fixed node, kept in RAM only, as
+    /// a carried node's stored place is none (spec "Position").
+    stood: Option<Position>,
 }
 
 /// What a fix does beyond the node's motion ([`Motion::fix`]).
@@ -44,9 +52,10 @@ pub(super) enum Fixed {
     Not,
     /// The node's place, fixed there at once.
     Place,
-    /// Measured; `turned`: the carried flag if it changed.
+    /// Measured; `takes`: the position it takes, if any; `turned`: the
+    /// carried flag if it changed.
     Measured {
-        takes: bool,
+        takes: Option<Position>,
         far_began: bool,
         turned: Option<bool>,
     },
@@ -59,12 +68,14 @@ impl Motion {
             carried: false,
             map_point: false,
             placed: true,
-            first_fix: 0,
+            first_fix: false,
+            plugged: 0,
             far_since: None,
             far_last: Instant::ZERO,
             far_lost: false,
             still_at: at,
             still_since: Instant::ZERO,
+            stood: None,
         }
     }
 
@@ -82,7 +93,7 @@ impl Motion {
                 None => false,
             },
             placed,
-            first_fix: if placed { 0 } else { u32::MAX },
+            first_fix: !placed,
             ..Motion::fixed(config.position)
         }
     }
@@ -92,12 +103,14 @@ impl Motion {
             carried: true,
             map_point: false,
             placed: true,
-            first_fix: 0,
+            first_fix: false,
+            plugged: 0,
             far_since: None,
             far_last: Instant::ZERO,
             far_lost: false,
             still_at: at,
             still_since: now,
+            stood: None,
         }
     }
 
@@ -142,7 +155,7 @@ impl Motion {
             return false;
         }
         self.map_point = false;
-        self.first_fix = u32::MAX;
+        self.first_fix = true;
         true
     }
 
@@ -160,31 +173,53 @@ impl Motion {
         if self.map_point {
             return Fixed::Not;
         }
-        if mark(now) <= self.first_fix && !self.carried {
-            return Fixed::Place;
+        let near = |p: Position| plane.distance2(at, p) <= CARRY_RADIUS_M * CARRY_RADIUS_M;
+        let far = !near(self.still_at);
+        if !self.carried {
+            if self.first_fix {
+                return Fixed::Place;
+            }
+            // Only the first fix after a plug-in, far, is the place: a later
+            // one is of a node that does not see the sky, as likely a stray
+            // as a move.
+            let plugged = core::mem::take(&mut self.plugged);
+            if far && mark(now) <= plugged {
+                return Fixed::Place;
+            }
         }
         // With an anchor a sleepy node asks for no fix; one that comes all
         // the same, the search it ended still running, is not taken.
         if anchored {
             return Fixed::Not;
         }
-        let far = plane.distance2(at, self.still_at) > CARRY_RADIUS_M * CARRY_RADIUS_M;
-        let takes = sleepy || self.carried;
+        if self.carried {
+            let mut takes = Some(at);
+            let mut turned = None;
+            if far {
+                self.still_at = at;
+                self.still_since = now;
+            } else if now.since(self.still_since) >= fixed_after {
+                // Back within the radius of where it stood, it stands there
+                // again, and its address with it.
+                let place = self.stood.filter(|&p| near(p)).unwrap_or(at);
+                *self = Motion::fixed(place);
+                takes = Some(place);
+                turned = Some(false);
+            }
+            return Fixed::Measured {
+                takes,
+                far_began: false,
+                turned,
+            };
+        }
+        // A sleepy node's address is its own position: a far fix may be a
+        // move, a near one is its place.
+        let takes = sleepy.then_some(if far { at } else { self.still_at });
         let measured = |far_began, turned| Fixed::Measured {
             takes,
             far_began,
             turned,
         };
-        if self.carried {
-            if far {
-                self.still_at = at;
-                self.still_since = now;
-            } else if now.since(self.still_since) >= fixed_after {
-                *self = Motion::fixed(at);
-                return measured(false, Some(false));
-            }
-            return measured(false, None);
-        }
         if !far {
             self.far_since = None;
             return measured(false, None);
@@ -201,8 +236,16 @@ impl Motion {
         if now.since(since) < CARRY_AFTER {
             return measured(began, None);
         }
-        *self = Motion::carried_at(at, now);
-        measured(began, Some(true))
+        let stood = self.still_at;
+        *self = Motion {
+            stood: Some(stood),
+            ..Motion::carried_at(at, now)
+        };
+        Fixed::Measured {
+            takes: Some(at),
+            far_began: began,
+            turned: Some(true),
+        }
     }
 
     /// The running GPS gave no usable fix: the time until the next fix does
@@ -212,15 +255,15 @@ impl Motion {
     }
 
     /// Plugged in at `at` (spec "Position", power): a fixed node takes a
-    /// fix within a search's limit as its place, since a sleepy node's last
-    /// fix may be hours old.
+    /// far fix within a search's limit as its place, since a sleepy node's
+    /// last fix may be hours and kilometres old.
     pub(super) fn plugged_in(&mut self, at: Position, now: Instant) {
         if !self.carried {
-            let map_point = self.map_point;
             *self = Motion {
-                map_point,
+                map_point: self.map_point,
                 placed: self.placed,
-                first_fix: if map_point {
+                first_fix: self.first_fix,
+                plugged: if self.map_point {
                     0
                 } else {
                     mark(now + SEARCH_LIMIT)
@@ -269,8 +312,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// A GPS fix that passed the driver's checks (spec "Position").
-    /// Returns whether the node took it as its position.
-    pub(super) fn fix(&mut self, at: Position, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
+    pub(super) fn fix(&mut self, at: Position, now: Instant, emit: &mut dyn FnMut(Action)) {
         let sleepy = self.sleepy();
         let fixed = self.motion.fix(
             at,
@@ -289,26 +331,19 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if fixed == Fixed::Place {
                 self.place_at(at, now);
             }
-            return fixed == Fixed::Place;
+            return;
         };
-        if takes {
-            self.set_position(at);
+        if let Some(p) = takes {
+            self.set_position(p);
         }
         if far_began {
             emit(Action::Trace(Trace::FarFix));
             // A sleepy node holds nothing to flush.
             self.forwarding.feed_due |= !sleepy;
         }
-        match turned {
-            Some(carried) => {
-                if carried {
-                    self.set_position(at);
-                }
-                self.changed();
-                emit(Action::Trace(Trace::Carried { carried }));
-                true
-            }
-            None => takes,
+        if let Some(carried) = turned {
+            self.changed();
+            emit(Action::Trace(Trace::Carried { carried }));
         }
     }
 

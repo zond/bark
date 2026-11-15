@@ -128,7 +128,7 @@ the actions `Action::Offered`, `Action::StorePiece` and `Action::Serve`, the que
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
 `AppCommand::Send` originates a message to `(dst_pos, dst_id)` with an opaque payload of
-at most 227 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
+at most 224 bytes (§7). The driver offers one only while `accepts_send(now)` is true, and
 asks again after every `handle`, so an application waits for its node; a firmware's async
 send awaits it. The core reports nothing back about the message but a give-back (below), not even the first hop's
 ACK, which a user could read as delivered: from the moment it is taken the node is either
@@ -180,9 +180,9 @@ D84). `AppCommand::Fix` hands the core a GPS fix that passed the checks of spec
 and the distance to the relays the node knows, which it asks of the core with
 `fix_in_reach(position)`: within the hearing radius, 3 km (`gps::HEARING_RADIUS_M`), of
 one of them, or any fix while the node knows none or has no place. The driver hands each
-fix that passes, and none while a map point is set, and the core takes none then. A node decides from the fixes whether it is carried; a carried node, or a
-sleepy one without an anchor, takes each fix, a fixed relay keeps its position, and a
-sleepy node with an anchor takes none and keeps the flag it had: its position is its
+fix that passes, and none while a map point is set, and the core takes none then. A node decides from the fixes whether it is carried; a carried node takes each fix, a
+fixed sleepy one without an anchor each far fix and its place at a near one, a fixed relay
+keeps its position, and a sleepy node with an anchor takes none and keeps the flag it had: its position is its
 anchor's, which it beats and rebuilds the short positions it hears near, and
 `Node::address` gives it (roadmap D70, D72, D91). A node's address changes with its
 position, and a relay's sleepy nodes' with it (spec "Node identity").
@@ -389,22 +389,22 @@ test in `tables/mod.rs`:
 |---|---|---|
 | Neighbours (spec "Neighbour table") | 64 × 128 B, and 4 × 12 B for the images their sections name | 8.1 KiB |
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
-| Delivery queue (spec "Delivery queue") | 41 × 264 B | 10.6 KiB |
-| Message records (spec "Message records") | 667 × 40 B | 26.1 KiB |
+| Delivery queue (spec "Delivery queue") | 41 × 272 B | 10.9 KiB |
+| Message records (spec "Message records") | 649 × 48 B | 30.4 KiB |
 | Send queue (spec "Send queue") | (39 + 64) × 296 B | 29.8 KiB |
-| Inbox (spec "Delivery queue", "Phone link") | 23 × 264 B | 5.9 KiB |
+| Inbox (spec "Delivery queue", "Phone link") | 23 × 272 B | 6.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate"), a histogram of readings for each channel | 16 B + 2 064 B | 2.0 KiB |
-| **All** | | **91.2 KiB** |
+| **All** | | **96.1 KiB** |
 
-The send queue's 39 regular places follow from the duty bucket, and its 254 hop places, one
-for each hop count a message can be sent on with, keep overload from dropping messages
+The send queue's 39 regular places follow from the duty bucket, and its 254 hop places,
+numbered in a byte and taken at min(count, 254), keep overload from dropping messages
 (spec "Send queue", roadmap D31); 64 of them can be held at once (roadmap D155). The records
-hold the 564 messages a relay can handle in the 162.9 s a full send queue takes to drain at one
+hold the 546 messages a relay can handle in the 162.9 s a full send queue takes to drain at one
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-96 392 B (94.1 KiB): the tables and, in under 1 KiB around them, the
+101 392 B (99.0 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
@@ -413,12 +413,12 @@ battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
 of the update, 1 880 B, with 16 B of each neighbour's entry for its heartbeats' section and
 when it was heard, and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 77 376 B (75.6 KiB), without the heard table and the delivery
-queue, 18.6 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
+`SleepyNode` is 82 048 B (80.1 KiB), without the heard table and the delivery
+queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 63 384 B,
-`bark-fw/scripts/uf2.py --stack` on the open release build of 2026-11-13 with roadmap D216,
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 60 208 B,
+`bark-fw/scripts/uf2.py --stack` on the open release build of 2026-11-15 with roadmap D220,
 against a floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
@@ -463,8 +463,9 @@ action at a time, and the core never allocates.
   - A sleepy node's own DATA has `hops` zero. A relay sending for its own application
     sends `hops` 1, as if it had received the message from the application at 0: a
     receiver takes `hops` 0 for a sleepy node's own message (spec "Packet sender").
-  - Application payload at most 227 bytes, what remains of 255 after the 28-byte DATA
-    header; the decoder rejects anything longer.
+  - Application payload at most 224 bytes, what remains of 255 after the longest DATA
+    header, 31 bytes; the decoder rejects anything longer. `hops` is one to three bytes of
+    7-bit groups, and a form longer than its count needs is rejected (spec "Packet formats").
   - A DATA's `aux` 15 is the update's piece, 16 and 17 a neighbour's status asked and
     told, and 13, 14 and 18 to 63 are rejected (spec "Packet formats"); a piece is always a
     full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 30. A
