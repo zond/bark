@@ -66,7 +66,7 @@ static WRITE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// flash's bus speed on the board.
 pub fn open() {
     let t0 = Instant::now();
-    let m = Mailbox::new(FlashRing::open(Ring));
+    let m = Mailbox::new(FlashRing::open(Ring), crate::node_id());
     let ms = t0.elapsed().as_millis();
     let m = HOME_CELL.init(m);
     HOME.lock(|c| *c.borrow_mut() = Some(m));

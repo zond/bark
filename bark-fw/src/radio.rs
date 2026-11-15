@@ -55,7 +55,10 @@ pub const MIN_TX_DBM: i8 = -9;
 /// The private sync word (spec "Physical layer") in the two-byte form
 /// the SX126x writes, 0x1424 for the legacy 0x12; LoRaWAN's public one is
 /// 0x3444.
+#[cfg(not(feature = "bench"))]
 const SYNC_WORD: u16 = 0x1424;
+#[cfg(feature = "bench")]
+const SYNC_WORD: u16 = crate::bench::SYNC_WORD;
 
 /// The TCXO's supply on DIO3 (`board.rs`).
 const TCXO_VOLTAGE: TcxoCtrlVoltage = TcxoCtrlVoltage::Ctrl1V8;

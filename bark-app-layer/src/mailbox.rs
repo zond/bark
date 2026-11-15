@@ -10,7 +10,7 @@
 
 use core::cell::Cell;
 
-use bark_proto::MsgId;
+use bark_proto::{MsgId, NodeId};
 
 use crate::keys::KEY_LEN;
 use crate::seal::{self, Fetch, Form, MAX_REPLIES};
@@ -194,6 +194,9 @@ struct Unread {
 /// The mailbox of a node.
 pub struct Mailbox<R: Ring> {
     ring: R,
+    /// The node's own ID: a fetch opens only at the node it was sealed
+    /// for.
+    node: NodeId,
     people: [Option<Person>; PEOPLE],
     replies: [Option<Reply>; PEOPLE],
     /// The person whose round last handed a reply to the core: the next
@@ -209,11 +212,12 @@ pub struct Mailbox<R: Ring> {
 }
 
 impl<R: Ring> Mailbox<R> {
-    /// The mailbox in `ring`, as it was before a reboot; its people come
-    /// from their records ([`Mailbox::set_person`]).
-    pub fn new(ring: R) -> Mailbox<R> {
+    /// The mailbox of the node `node` in `ring`, as it was before a
+    /// reboot; its people come from their records ([`Mailbox::set_person`]).
+    pub fn new(ring: R, node: NodeId) -> Mailbox<R> {
         let mut m = Mailbox {
             ring,
+            node,
             people: [None; PEOPLE],
             replies: [None; PEOPLE],
             turn: PEOPLE - 1,
@@ -521,7 +525,7 @@ impl<R: Ring> Mailbox<R> {
     fn fetch(&mut self, payload: &[u8]) -> Arrival {
         let opened = (0..PEOPLE).find_map(|i| {
             let key = self.people[i]?.key?;
-            Fetch::open(&key, payload).ok().map(|f| (i, f))
+            Fetch::open(&key, self.node, payload).ok().map(|f| (i, f))
         });
         match opened {
             Some((i, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {

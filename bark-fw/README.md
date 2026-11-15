@@ -1667,7 +1667,11 @@ steps 4 and 5 from the host and reads their logs
 Built with `--features bench`, which no release sets: the node image,
 which also takes commands on the serial port, for the acceptance and
 stress tests on the bench (`docs/bench-suite-2026-11-13.md`). It logs
-`bench build: commands on the serial port` as the node starts. Each
+`bench build: commands on the serial port` as the node starts. Its
+radio uses its own sync word, 0x21 (0x2414), so bench boards and nodes
+running a release in range of each other drop each other's frames: each
+is noise to the other, and neither takes the other as a neighbour, relays
+through it or gathers its image (roadmap D223). Each
 command is echoed as `bench> <line>`, and what it does is logged in
 `bench:` lines.
 

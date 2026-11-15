@@ -131,6 +131,13 @@ class Resets(unittest.TestCase):
     def test_after_the_firmwares_own_reboot(self):
         self.assertEqual(checks.resets(self.boots("reboot"), []), [])
 
+    def test_a_line_logged_after_the_reboot(self):
+        def log(at: float) -> checks.Log:
+            return board_log("x", [(1000.0, at, "reboot"), (1001.0, 51.0, "gps: fix"), (1010.0, 0.3, "stored None")])
+
+        self.assertEqual(checks.resets(log(51.0 - checks.REBOOT_LAG_S), []), [])
+        self.assertEqual(len(checks.resets(log(50.9 - checks.REBOOT_LAG_S), [])), 1)
+
     def test_a_touch_counts_only_where_no_run_says(self):
         log = self.boots("touch: 1200 baud, resetting into the bootloader")
         self.assertEqual(checks.resets(log, None), [])
@@ -191,6 +198,28 @@ class Heartbeats(unittest.TestCase):
         for tx, offset in [("tx ch=4 airtime_us=14400", -0.2), ("tx ch=3 airtime_us=14400", -1.0)]:
             got = checks.heartbeats(self.two(tx, offset))
             self.assertEqual([f.kind for f in got], [checks.FAIL], tx)
+
+    def noisy(self, *lines: str) -> list[checks.Log]:
+        """As `two`, B sending elsewhere, with A's own lines 0.1 s before
+        its skip."""
+        a, b = self.two("tx ch=4 airtime_us=14400", -0.2)
+        skip = (1025.1, 25.0, "HeartbeatSkipped { channel: Channel(3) }")
+        own = [(1025.0, 24.9, x) for x in lines]
+        a = board_log("a", sorted(uptimes(1010.0, 10.0, 3) + own + [skip], key=lambda x: x[1]))
+        return [a, b]
+
+    def test_explained_by_noise_the_boards_checks_read(self):
+        logs = self.noisy("lbt ch=3 preamble=false dbm=-84", "lbt ch=3 preamble=false dbm=-85")
+        self.assertEqual(checks.heartbeats(logs), [])
+
+    def test_a_check_without_a_reading_explains_nothing(self):
+        for lines in [
+            ("lbt ch=3 preamble=false dbm=-84", "lbt ch=3 preamble=false dbm=0"),
+            ("lbt ch=3 preamble=false dbm=-84", "bench: no reading ch=3 wake_us=1"),
+            ("lbt ch=5 preamble=false dbm=-84",),
+        ]:
+            got = checks.heartbeats(self.noisy(*lines))
+            self.assertEqual([f.kind for f in got], [checks.FAIL], lines)
 
     def test_unchecked_while_no_board_logs_its_frames(self):
         got = checks.heartbeats(self.two(None, 0))
