@@ -47,6 +47,11 @@ pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYM
 /// datasheet gives no settle time (SX1261/2 DS §13.5.4), the bench found one.
 pub const RSSI_DWELL: Duration = RSSI_SETTLE;
 
+/// How long a reading kept from a start on the resting channel stands
+/// for it: one round of the busy sweep, each channel read every 13 s (spec
+/// "Busy estimate"). An older one belongs to the round before.
+pub const KEPT_FOR: Duration = Duration::from_secs(CHANNELS as u64);
+
 /// RSSI reported for a failed reading: the top of the scale (GetRssiInst
 /// gives −raw/2 dBm, raw ≥ 0; DS §13.5.4), so the core takes the channel as
 /// busy rather than transmit on a reading it never got.
@@ -138,8 +143,13 @@ pub trait Radio {
     /// listen-before-talk.
     const DEAF_TO: Option<NodeId> = None;
 
-    /// Listen on `channel` from whatever state the radio is in.
-    async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error>;
+    /// Listen on `channel` from whatever state the radio is in. Whether
+    /// the receiver started: not if it listened there already.
+    async fn listen(&mut self, channel: Channel) -> Result<bool, Self::Error>;
+
+    /// Start the receiver on `channel` from whatever state the radio is
+    /// in, even where it listens already.
+    async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Self::Error>;
 
     /// Receive duty-cycled on `channel` from whatever state the radio is
     /// in (core-interface §3 rule 10). It ends with the first packet that
@@ -169,6 +179,23 @@ pub trait Radio {
     /// Bring the radio back as at boot before its next operation, as what
     /// it reads is no longer trusted ([`BusyRun`]). Leaves it not listening.
     fn recover(&mut self) {}
+
+    /// The driver hands the core `dbm` for `Action::Rssi` on `channel`,
+    /// kept from the receiver's last start there if `kept` says so. Only a
+    /// bench build's radio does anything with it: it logs it.
+    async fn handed(&mut self, channel: Channel, dbm: i16, kept: Option<Kept>) {
+        let _ = (channel, dbm, kept);
+    }
+}
+
+/// How a reading handed to the core was kept ([`Radio::handed`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kept {
+    /// How long ago it was read.
+    pub age: Duration,
+    /// How long the receiver has listened since it last started there,
+    /// if the driver knows.
+    pub running: Option<Duration>,
 }
 
 /// A monotonic clock in the core's units.
@@ -388,6 +415,14 @@ impl BusyRun {
     }
 }
 
+/// A reading of a channel and when it was read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Reading {
+    channel: Channel,
+    dbm: i16,
+    at: Instant,
+}
+
 /// The loop: one core, one radio, one clock, one application.
 pub struct Driver<C, R, K, A> {
     core: C,
@@ -424,6 +459,15 @@ pub struct Driver<C, R, K, A> {
     sniffing: bool,
     /// When a packet began on `listening` that has not yet ended.
     receiving: Option<Instant>,
+    /// Where and when the receiver last started, as far as the driver
+    /// knows.
+    started: Option<(Channel, Instant)>,
+    /// When the reading of the receiver's last start falls due,
+    /// [`RSSI_DWELL`] after it; `None` once taken or once the radio left.
+    keep_at: Option<Instant>,
+    /// The latest reading taken [`RSSI_DWELL`] after a start, not yet
+    /// handed to the core.
+    kept: Option<Reading>,
     /// The excursion the core asked for and is waiting on.
     excursion: Option<Action>,
     /// When the outstanding check began waiting for a reception to end.
@@ -458,6 +502,9 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             listening: None,
             sniffing: false,
             receiving: None,
+            started: None,
+            keep_at: None,
+            kept: None,
             excursion: None,
             held_since: None,
             busy: BusyRun::default(),
@@ -522,7 +569,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         self.listen_resting().await?;
         let now = self.clock.now();
         if let Some(action) = self.excursion {
-            if !self.holds(&action, now) {
+            if !self.awaits_keep(&action, now) && !self.holds(&action, now) {
                 self.excursion = None;
                 self.held_since = None;
                 let done = self.perform(action).await;
@@ -545,7 +592,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let hold_end = self.held_since.map(|t| t + MAX_AIRTIME);
         let deadline = earlier(
             earlier(earlier(wake, hold_end), self.radio_due()),
-            self.battery_at,
+            earlier(self.battery_at, self.keep_at),
         );
         let clock = &self.clock;
         let timer = async {
@@ -571,10 +618,13 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let listening = self.listening;
         let result = match woke {
             // Late is allowed, early is not (core-interface §2).
-            Either3::First(()) => match wake {
-                Some(w) if start >= w => self.deliver(Event::Wakeup).await,
-                _ => self.listen_resting().await,
-            },
+            Either3::First(()) => {
+                self.keep(start).await?;
+                match wake {
+                    Some(w) if start >= w => self.deliver(Event::Wakeup).await,
+                    _ => self.listen_resting().await,
+                }
+            }
             Either3::Second(Ok(())) => self.service().await,
             Either3::Second(Err(e)) => Err(self.failed(e)),
             Either3::Third(Ready::Driver) => self.serve_app(start).await,
@@ -598,8 +648,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     fn holds(&mut self, action: &Action, now: Instant) -> bool {
         let leaves = match action {
             Action::Lbt(_) => true,
-            // A duty-cycled radio reads no RSSI: it must listen first.
-            Action::Rssi(c) => self.listening != Some(*c) || self.sniffing,
+            Action::Rssi(c) => self.kept_for(*c, now).is_none(),
             _ => false,
         };
         if !leaves || self.receiving.is_none() {
@@ -611,6 +660,53 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             now
         });
         now < since + MAX_AIRTIME
+    }
+
+    /// Whether `action` is a reading that waits for the one the receiver's
+    /// start is about to give, rather than start the receiver again.
+    fn awaits_keep(&self, action: &Action, now: Instant) -> bool {
+        let Action::Rssi(c) = *action else {
+            return false;
+        };
+        self.keep_at.is_some()
+            && self.started.is_some_and(|(s, _)| s == c)
+            && self.kept_for(c, now).is_none()
+    }
+
+    /// The reading kept for `c` that a reading of it now is given: while
+    /// the radio listens there, not duty-cycled, as a duty-cycled one
+    /// keeps none, and for at most [`KEPT_FOR`].
+    fn kept_for(&self, c: Channel, now: Instant) -> Option<Reading> {
+        let listens = self.listening == Some(c) && !self.sniffing;
+        self.kept
+            .filter(|k| listens && k.channel == c && now.since(k.at) < KEPT_FOR)
+    }
+
+    /// Take the reading of the receiver's last start if it is due. Not
+    /// inside a packet, which the reading would take for the channel's
+    /// level: the reading before stands.
+    async fn keep(&mut self, now: Instant) -> Result<(), R::Error> {
+        if self.keep_at.is_none_or(|t| now < t) {
+            return Ok(());
+        }
+        self.keep_at = None;
+        let Some((channel, _)) = self.started else {
+            return Ok(());
+        };
+        if self.receiving.is_some() {
+            return Ok(());
+        }
+        match self.radio.rssi().await {
+            Ok(dbm) => {
+                self.kept = Some(Reading {
+                    channel,
+                    dbm,
+                    at: now,
+                });
+                Ok(())
+            }
+            Err(e) => Err(self.failed(e)),
+        }
     }
 
     async fn service(&mut self) -> Result<(), R::Error> {
@@ -906,28 +1002,28 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 self.busy.check(busy, dbm);
                 Event::LbtDone { channel, busy, dbm }
             }
+            // Every reading is taken a dwell after the receiver starts on
+            // its channel: one that has run a while can read a fixed level
+            // whatever the channel's (roadmap D225).
             Action::Rssi(channel) => {
-                if self.listening != Some(channel) || self.sniffing {
-                    self.deaf();
-                    match self.radio.listen(channel).await {
-                        Ok(()) => {
-                            self.listening = Some(channel);
-                            self.clock.at(self.clock.now() + RSSI_DWELL).await;
-                        }
-                        Err(e) => {
-                            self.failed(e);
-                        }
+                let now = self.clock.now();
+                let dbm = match self.kept_for(channel, now) {
+                    Some(k) => {
+                        self.kept = None;
+                        let running = self
+                            .started
+                            .filter(|&(s, _)| s == channel)
+                            .map(|(_, t)| now.since(t));
+                        let age = now.since(k.at);
+                        let kept = Kept { age, running };
+                        self.radio.handed(channel, k.dbm, Some(kept)).await;
+                        k.dbm
                     }
-                }
-                let dbm = match self.listening == Some(channel) {
-                    true => match self.radio.rssi().await {
-                        Ok(dbm) => dbm,
-                        Err(e) => {
-                            self.failed(e);
-                            FAILED_RSSI_DBM
-                        }
-                    },
-                    false => FAILED_RSSI_DBM,
+                    None => {
+                        let dbm = self.read_afresh(channel).await;
+                        self.radio.handed(channel, dbm, None).await;
+                        dbm
+                    }
                 };
                 Event::RssiSample { channel, dbm }
             }
@@ -973,6 +1069,26 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         done
     }
 
+    /// Start the receiver on `channel` and read it a dwell later.
+    async fn read_afresh(&mut self, channel: Channel) -> i16 {
+        self.deaf();
+        if let Err(e) = self.radio.listen_afresh(channel).await {
+            self.failed(e);
+            return FAILED_RSSI_DBM;
+        }
+        let start = self.clock.now();
+        self.listening = Some(channel);
+        self.started = Some((channel, start));
+        self.clock.at(start + RSSI_DWELL).await;
+        match self.radio.rssi().await {
+            Ok(dbm) => dbm,
+            Err(e) => {
+                self.failed(e);
+                FAILED_RSSI_DBM
+            }
+        }
+    }
+
     /// Put the radio where the core wants it: on the resting channel,
     /// duty-cycled until the sniff's end, else listening. Not while an
     /// excursion waits: it would only delay it, and the excursion ends here.
@@ -997,15 +1113,21 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             }
         }
         let result = match sniff {
-            true => self.radio.sniff(c).await,
+            true => self.radio.sniff(c).await.map(|()| true),
             false => self.radio.listen(c).await,
         };
         match result {
-            Ok(()) => {
+            Ok(started) => {
                 self.listening = Some(c);
                 self.sniffing = sniff;
                 self.receiving = None;
                 self.stats.sniffs += u32::from(sniff);
+                if started {
+                    let now = self.clock.now();
+                    self.started = Some((c, now));
+                    // A duty-cycled radio reads no RSSI.
+                    self.keep_at = (!sniff).then_some(now + RSSI_DWELL);
+                }
                 Ok(())
             }
             Err(e) => Err(self.failed(e)),
@@ -1030,6 +1152,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         self.listening = None;
         self.sniffing = false;
         self.receiving = None;
+        self.keep_at = None;
     }
 
     /// Note a radio failure; the radio's state is unknown, so it is set

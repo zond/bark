@@ -397,8 +397,10 @@ pub async fn serve<C: Core, K: Clock, A: bark_driver::App>(
         driver.set_tx_dbm(dbm);
         log::info!("bench: tx_dbm={}", dbm);
     }
-    let radio = driver.radio_mut();
-    if let Some(floor) = floor.filter(|&f| radio.cold().delay < f) {
+    // Lent only to change it: the driver takes a lent radio as having
+    // left its channel, and would lose the reading its start is due.
+    if let Some(floor) = floor.filter(|&f| driver.radio().cold().delay < f) {
+        let radio = driver.radio_mut();
         let was = radio.cold().delay;
         radio.set_cold_delay(floor);
         log::info!(
@@ -472,15 +474,15 @@ type NoReading = (LbtTiming, Beside);
 /// what the node read (`scripts/checks.py`). A check that got no reading
 /// inside its CAD also says why: a read woken after the CAD's sampling was
 /// not made, one in time the chip answered with none; and how the
-/// oscillator started for it.
+/// oscillator started for it. Each reading the core is given is logged,
+/// and one of the home channel beside a read of the receiver as it runs,
+/// which can read a fixed level once it has run a while (roadmap D225).
 pub struct Logged<R> {
     radio: R,
     /// The last listen-before-talk, logged once the frame it let through
     /// is sent, or at the next: a line between the two would delay the
     /// frame. Its phases, and what ran beside it, if it got no reading.
     checked: Option<(Channel, bool, i16, Option<NoReading>)>,
-    /// The channel last listened on, which a reading is of.
-    listening: Option<Channel>,
 }
 
 impl<R> Logged<R> {
@@ -488,7 +490,6 @@ impl<R> Logged<R> {
         Logged {
             radio,
             checked: None,
-            listening: None,
         }
     }
 
@@ -525,6 +526,18 @@ impl<R> Logged<R> {
     }
 }
 
+/// Milliseconds, or `-` for none.
+struct Ms(Option<Duration>);
+
+impl core::fmt::Display for Ms {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Some(d) => write!(f, "{}", d.as_micros() / 1000),
+            None => f.write_str("-"),
+        }
+    }
+}
+
 /// Microseconds, or `-` for none.
 struct Us(Option<Duration>);
 
@@ -555,9 +568,12 @@ impl<'a> bark_driver::Radio for Logged<Radio<'a>> {
     type Error = <Radio<'a> as bark_driver::Radio>::Error;
     const DEAF_TO: Option<NodeId> = <Radio<'a> as bark_driver::Radio>::DEAF_TO;
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
-        self.listening = Some(channel);
+    async fn listen(&mut self, channel: Channel) -> Result<bool, Self::Error> {
         self.radio.listen(channel).await
+    }
+
+    async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        self.radio.listen_afresh(channel).await
     }
 
     async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error> {
@@ -588,11 +604,7 @@ impl<'a> bark_driver::Radio for Logged<Radio<'a>> {
     }
 
     async fn rssi(&mut self) -> Result<i16, Self::Error> {
-        let read = self.radio.rssi().await;
-        if let (Ok(dbm), Some(channel)) = (&read, self.listening) {
-            log::info!("rssi ch={} dbm={}", channel.index(), dbm);
-        }
-        read
+        self.radio.rssi().await
     }
 
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Self::Error> {
@@ -610,5 +622,28 @@ impl<'a> bark_driver::Radio for Logged<Radio<'a>> {
 
     fn recover(&mut self) {
         self.radio.recover()
+    }
+
+    async fn handed(&mut self, channel: Channel, dbm: i16, kept: Option<bark_driver::Kept>) {
+        log::info!("rssi ch={} dbm={}", channel.index(), dbm);
+        let Some(kept) = kept else {
+            return;
+        };
+        // The receiver keeps listening: the read is a register's.
+        let running = match self.radio.rssi().await {
+            Ok(dbm) => dbm,
+            Err(e) => {
+                log::warn!("bench: home reading: {}", e);
+                return;
+            }
+        };
+        log::info!(
+            "bench: home ch={} kept_dbm={} kept_age_ms={} running_dbm={} running_ms={}",
+            channel.index(),
+            dbm,
+            kept.age.as_micros() / 1000,
+            running,
+            Ms(kept.running)
+        );
     }
 }

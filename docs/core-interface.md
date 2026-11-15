@@ -80,11 +80,16 @@ Rules:
    sampling and the return, about 3 ms (spec "Heartbeat").
 6. **Duty cycle is the core's job.** The core keeps the duty-cycle budget (spec "Duty cycle cap") and
    defers; the driver never drops a frame.
-7. **`Rssi` on the resting channel is not an excursion.** The radio keeps receiving while it
-   reads its own channel, so the core may issue it at any time; it still completes with
-   `RssiSample`. `Rssi` on another channel is an excursion: a retune, a wait of
-   `radio::RSSI_SETTLE` (four symbol periods, 1.02 ms) after the receiver starts there, the
-   read and a retune back, 1.9 ms (spec "Busy estimate").
+7. **`Rssi` on the resting channel is not an excursion.** Every reading is taken
+   `radio::RSSI_SETTLE` (four symbol periods, 1.02 ms) after the receiver starts on its
+   channel (spec "Busy estimate"). Each time the receiver starts listening on the resting
+   channel the driver takes one then, unless a reception is in progress, and answers `Rssi`
+   there with the latest; the radio keeps receiving, so the core may issue it at any time, and
+   it still completes with `RssiSample`. A kept reading answers one `Rssi`, within
+   `bark_driver::KEPT_FOR`, one sweep round, 13 s; an `Rssi` that comes while one is due waits
+   for it. With none, or while the radio receives duty-cycled, the driver starts the receiver
+   again and reads it `RSSI_SETTLE` later, an excursion. `Rssi` on another channel is an
+   excursion: a retune, `RSSI_SETTLE`, the read and a retune back, 1.9 ms.
 8. **The driver may hold an `Lbt` or `Rssi` excursion while a reception is in progress**, by at
    most the airtime of a full frame with the long preamble, 372.8 ms, so that a sweep does not
    cut a packet short (spec "Busy estimate").
@@ -369,7 +374,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | `Listen` | update the per-channel listener set | standby, frequency and receive, each only if the chip does not hold it already (`bark-driver/src/sx1262.rs`) |
 | `Sniff` | receives a frame only if a window of the cycle, started at the `Sniff` and again after each frame it takes, holds four symbols of its preamble; the time is counted | SetRxDutyCycle(240, 14 952), or the periods for a longer probed delay, from STDBY_RC with that delay, the receive timer stopped at the header and not at the preamble, the receiver programmed for the long preamble; started again after each packet; the chip woken by NSS before any other command and its whole configuration sent again after (`bark-driver/src/sx1262.rs`) |
 | `Lbt` | deaf for the preparation, the CAD's sampling and the return; the CAD's result from the reception model, the reading the dB sum at the node `rssi_dwell_us` into the sampling | standby, frequency, CAD; `GetRssiInst` four symbol periods in, less the offset measured at boot; the result read and cleared; frequency and receive with the short oscillator delay (`bark-driver/src/sx1262.rs`) |
-| `Rssi` | on another channel deaf for retune, `RSSI_SETTLE`, read and retune back, dB-sum at the node | `GetRssiInst`, on another channel `RSSI_SETTLE` after the retune |
+| `Rssi` | on another channel deaf for retune, `RSSI_SETTLE`, read and retune back, dB-sum at the node | `GetRssiInst` `RSSI_SETTLE` after the receiver starts on the channel; on the resting channel the reading kept from its last start there (§3 rule 7) |
 | `Transmit` | deaf for airtime, deliveries to hearers via the reception model | standby, frequency and packet parameters if they differ, the payload, transmit; then packet parameters and receive |
 | `Received` | reception model | `rx` with CRC check |
 | Seed | per-run seed → per-node stream | nRF RNG at boot |

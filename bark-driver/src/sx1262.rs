@@ -863,8 +863,9 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     /// Listen on `channel` from any state, sending only what differs
     /// from what the chip holds; after a reset, the boot's measurements
-    /// first.
-    pub async fn listen(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
+    /// first. Whether the receiver started: not if it listened there
+    /// already.
+    pub async fn listen(&mut self, channel: Channel) -> Result<bool, Error<C::Error>> {
         self.ready().await?;
         if self.remeasure {
             self.measure(channel).await?;
@@ -872,17 +873,30 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.receive(channel).await
     }
 
-    /// Listen on `channel` from any state, with what was measured.
-    async fn receive(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
+    /// Start the receiver on `channel` from any state, even where it
+    /// listens already.
+    pub async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
+        self.ready().await?;
+        if self.remeasure {
+            self.measure(channel).await?;
+        }
+        self.standby_xosc().await?;
+        self.receive(channel).await.map(drop)
+    }
+
+    /// Listen on `channel` from any state, with what was measured; whether
+    /// the receiver started.
+    async fn receive(&mut self, channel: Channel) -> Result<bool, Error<C::Error>> {
         self.ready().await?;
         if self.held.mode == Mode::Rx && self.held.freq == Some(channel) {
-            return Ok(());
+            return Ok(false);
         }
+        // A probe that is due ends receiving on `channel`, started.
         self.reprobe_if_due(channel).await?;
         if self.held.mode == Mode::Rx && self.held.freq == Some(channel) {
-            return Ok(());
+            return Ok(true);
         }
-        self.start_rx(channel).await
+        self.start_rx(channel).await.map(|()| true)
     }
 
     /// From a standby, receiving on `channel`. A failed start can leave the
@@ -1376,8 +1390,12 @@ impl<C: Chip, K: Clock> crate::Radio for Sx1262<C, K> {
     type Error = Error<C::Error>;
     const DEAF_TO: Option<bark_proto::NodeId> = crate::BENCH_DEAF_TO;
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
+    async fn listen(&mut self, channel: Channel) -> Result<bool, Self::Error> {
         Sx1262::listen(self, channel).await
+    }
+
+    async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        Sx1262::listen_afresh(self, channel).await
     }
 
     async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error> {

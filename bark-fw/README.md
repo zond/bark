@@ -1704,7 +1704,15 @@ busy.
 Each listen-before-talk is logged `lbt ch=<k> preamble=<bool> dbm=<n>`,
 after the frame it let through or at the next one, so that the line
 delays no frame. Each reading of the busy sweep is logged `rssi ch=<k>
-dbm=<n>`.
+dbm=<n>`. A reading of the home channel, the one taken a dwell after the
+receiver last started there (spec "Busy estimate"), is followed by
+`bench: home ch=<k> kept_dbm=<n> kept_age_ms=<n> running_dbm=<n>
+running_ms=<n|->`: the reading given to the core and how long ago it was
+taken, then a read of the receiver as it runs now and how long it has
+run since that start, `-` where the driver does not know. A receiver
+that has run a while can read one fixed level, about −77 dBm, whatever
+the channel's (roadmap D225): the line shows how often and after how
+long the running read does so, and that the kept one does not.
 
 The bench build times the work beside the radio (`timing.rs`, Work
 beside the radio, above) in the processor's cycles: each task's polls,
