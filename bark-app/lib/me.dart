@@ -254,9 +254,9 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// A reply of the fetch of `round` has come: if it is the latest
+  /// The summary of the fetch of `round` has come: if it is the latest
   /// fetch's, its count of the items the home has not sent is current.
-  Future<void> gotReply(int round, Opened o) async {
+  Future<void> gotSummary(int round, RoundSummary o) async {
     if (rounds.isEmpty || round != rounds.first) return;
     remaining = o.remaining;
     await _changed();

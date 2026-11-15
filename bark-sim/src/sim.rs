@@ -4734,7 +4734,7 @@ impl Sim {
         if !self.with_mailboxes {
             return false;
         }
-        if Form::of(payload) == Ok(Form::Reply) {
+        if Form::of(payload).is_ok_and(Form::is_reply) {
             self.replies.push((node, payload.to_vec()));
             return true;
         }
@@ -5706,7 +5706,7 @@ mod tests {
     /// the home's application send slot (spec "Mailbox").
     #[test]
     fn a_fetch_from_another_node_gets_the_mailbox_items() {
-        use bark_app_layer::seal::{self, Fetch, Opened};
+        use bark_app_layer::seal::{self, Fetch, Form};
         use bark_app_layer::Address;
         let mut sc = Scenario::new("mailbox", 1, 1800.0)
             .point("A", RoleSpec::Relay, 0.0, 0.0)
@@ -5730,6 +5730,7 @@ mod tests {
         let items: Vec<Vec<u8>> = (1..=3)
             .map(|i| {
                 let mut b = format!("item {i}").into_bytes();
+                b[0] = Form::Boxed.format();
                 b[1] = tag;
                 b
             })
@@ -5756,28 +5757,42 @@ mod tests {
         send(&mut sim, 2, &fetch(7));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
+        // The summary counts three; each item comes back as it was kept,
+        // but for the recipient tag the fetch asked for.
+        let mut summaries = Vec::new();
         let mut got = Vec::new();
         for (node, r) in sim.replies.drain(..) {
             assert_eq!(node, 2);
-            let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
-            match seal::open_reply(&key, 7, &r, &mut out) {
-                Ok(Opened::Item { number, len, .. }) => got.push((number, out[..len].to_vec())),
-                o => panic!("not an item of round 7: {o:?}"),
+            if Form::of(&r) == Ok(Form::Summary) {
+                summaries.push(seal::open_summary(&key, 7, &r).unwrap());
+                continue;
             }
+            let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
+            let n = seal::open_item(&key, 7, &r, &mut out).unwrap();
+            got.push(out[..n].to_vec());
         }
+        summaries.dedup();
+        assert_eq!(summaries, [(3, 0)]);
         got.sort();
         got.dedup();
-        assert_eq!(got, (1..=3).zip(items).collect::<Vec<_>>());
+        let want: Vec<Vec<u8>> = items
+            .iter()
+            .map(|i| {
+                let mut b = i.clone();
+                b[1] = 0;
+                b
+            })
+            .collect();
+        assert_eq!(got, want);
         // Asked again, the home has nothing new and says so.
         send(&mut sim, 2, &fetch(8));
         let t = sim.now + Duration::from_secs(300);
         sim.run_until(t);
-        let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
         let answers: Vec<_> = sim
             .replies
             .iter()
-            .map(|(_, r)| seal::open_reply(&key, 8, r, &mut out))
+            .map(|(_, r)| seal::open_summary(&key, 8, r))
             .collect();
-        assert_eq!(answers, [Ok(Opened::NothingNew)]);
+        assert_eq!(answers, [Ok((0, 0))]);
     }
 }

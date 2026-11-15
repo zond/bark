@@ -230,7 +230,6 @@ pub fn json() -> String {
             ("other_pair", h(&boxed(&carol, &f.bob, f.home.node, &p))),
         ],
     ));
-    let box_payload = payload;
 
     // A text in UTF-8, from Bob to Alice.
     let words = "ok 👍";
@@ -387,32 +386,67 @@ pub fn json() -> String {
         ],
     ));
 
-    // Her home node sends her item 6, the first text above, the first of
-    // the round, with none unsent after it.
-    let mut out = [0u8; MAX_PAYLOAD];
-    let n = seal::seal_reply(
-        &f.alice.mailbox,
-        fetch.recipient,
-        fetch.sent,
-        1,
-        6,
-        0,
-        &box_payload,
-        &mut out,
-    )
-    .unwrap();
+    // Her home answers: first the summary, two items and none left after
+    // them, then a box and an introduction from Bob that waited for her
+    // there, at places 1 and 2.
+    let round = fetch.sent;
+    let to = fetch.recipient;
     parts.push(entry(
-        "reply",
+        "summary",
         &[
-            ("round", format!("{}", fetch.sent)),
-            ("place", "1".into()),
-            ("number", "6".into()),
+            ("round", format!("{round}")),
+            ("items", "2".into()),
             ("remaining", "0".into()),
-            ("nonce", h(&seal::reply_nonce(fetch.sent, 1))),
-            ("item", h(&box_payload)),
-            ("payload", h(&out[..n])),
+            ("nonce", h(&seal::reply_nonce(round, 0))),
+            (
+                "payload",
+                h(&seal::seal_summary(&f.alice.mailbox, to, round, 2, 0)),
+            ),
         ],
     ));
+    let header = Header {
+        greater: plain::greater(&f.bob.identity, &f.alice.identity),
+        sent: 1_000_400,
+        address: None,
+    };
+    let p = plaintext(&header, &[text_record("Waiting at home.", &mut tb)]);
+    let boxed_item = boxed(&f.bob, &f.alice, f.home.node, &p);
+    let p = plaintext(
+        &header,
+        &[
+            Record::Card(bob_card),
+            text_record("Hi, Bob here.", &mut tb),
+        ],
+    );
+    let mut ib = [0u8; MAX_PAYLOAD];
+    let n = seal::seal_intro(
+        &PublicKey::from(f.alice.identity.0),
+        seal::recipient(&f.alice.identity, f.home.node),
+        &SecretKey::from([0x55u8; 32]),
+        &p,
+        &mut ib,
+    )
+    .unwrap();
+    for (name, place, item) in [
+        ("reply_box", 1u8, &boxed_item[..]),
+        ("reply_intro", 2, &ib[..n]),
+    ] {
+        let mut out = [0u8; MAX_PAYLOAD];
+        let len = seal::seal_item(&f.alice.mailbox, to, round, place, item, &mut out).unwrap();
+        let mut opened = [0u8; MAX_PAYLOAD];
+        let m = seal::open_item(&f.alice.mailbox, round, &out[..len], &mut opened).unwrap();
+        parts.push(entry(
+            name,
+            &[
+                ("round", format!("{round}")),
+                ("place", format!("{place}")),
+                ("nonce", h(&seal::reply_nonce(round, place))),
+                ("item", h(item)),
+                ("payload", h(&out[..len])),
+                ("opened", h(&opened[..m])),
+            ],
+        ));
+    }
 
     // Her next fetch finds nothing new.
     let round = fetch.sent + 60;
@@ -423,11 +457,7 @@ pub fn json() -> String {
             ("nonce", h(&seal::reply_nonce(round, 0))),
             (
                 "payload",
-                h(&seal::seal_nothing_new(
-                    &f.alice.mailbox,
-                    fetch.recipient,
-                    round,
-                )),
+                h(&seal::seal_summary(&f.alice.mailbox, to, round, 0, 0)),
             ),
         ],
     ));

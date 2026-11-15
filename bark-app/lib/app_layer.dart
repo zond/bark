@@ -38,13 +38,21 @@ const int headLen = 2;
 const int boxOverhead = headLen + sivLen;
 const int introOverhead = headLen + keyLen + tagLen;
 
-/// A reply's count of the items still unsent after its batch.
-const int remainingLen = 2;
-const int replyOverhead = headLen + tagLen + numberLen + remainingLen;
+/// A reply's place in its round, in the clear before the item it carries.
+const int placeLen = 1;
 
-/// The reply that says nothing is new: the format byte, the recipient
-/// tag and the tag.
-const int nothingNewLen = headLen + tagLen;
+/// What a reply adds to the item it carries: its own format byte and
+/// recipient tag stand for the item's, and the place is added.
+const int replyOverhead = placeLen;
+
+/// The summary's counts: the round's items, and those still unsent after
+/// them.
+const int itemsLen = 1;
+const int remainingLen = 2;
+
+/// The summary: the format byte, the recipient tag, the tag and the two
+/// counts.
+const int summaryLen = headLen + tagLen + itemsLen + remainingLen;
 
 /// `crypto_generichash`'s shortest output, of which the recipient tag is
 /// the first byte.
@@ -146,7 +154,18 @@ Uint8List? seedOfPhrase(String text) {
   return bits[seedLen] >> 4 == _checksum(seed) ? seed : null;
 }
 
-enum Form { boxed, introduction, fetch, reply }
+/// The forms, by number: the mailbox sends a round's summary, then each
+/// boxed payload or introduction it kept as a form of its own.
+enum Form {
+  boxed,
+  introduction,
+  fetch,
+  summary,
+  boxedItem,
+  introductionItem;
+
+  bool get isReply => index >= summary.index;
+}
 
 int formatByte(Form f) => formatVersion << 4 | f.index;
 
@@ -314,8 +333,6 @@ Uint8List openIntro(Sodium s, Keys me, List<int> payload) {
   }
 }
 
-const int numberLen = 3;
-
 /// A fetch: send the newest batch of the items not yet sent to
 /// [address], for the requester's [recipient] tag at that address's node,
 /// which the home cannot make as it does not know the identity.
@@ -363,106 +380,129 @@ class Fetch {
   }
 }
 
-/// The most items a fetch is answered with, its batch, so the most places
-/// tried: what passes each relay on the way from its bucket as it stands
-/// (spec "Mailbox", The answer).
+/// The most items a fetch is answered with, its batch: what passes each
+/// relay on the way from its bucket as it stands (spec "Mailbox", The
+/// answer).
 const int maxReplies = 32;
 
 /// A reply's nonce, never sent: the fetch's `sent`, the reply's place in
-/// the round (0 for nothing new), zeros.
+/// the round (0 for the summary), zeros.
 Uint8List replyNonce(int round, int place) => Uint8List.fromList([
   ...be(round, 4),
-  ...be(place, numberLen),
-  ...List.filled(17, 0),
+  ...be(place, placeLen),
+  ...List.filled(nonceLen - 4 - placeLen, 0),
 ]);
 
-Uint8List _sealReply(
+/// What a round's summary says: how many items it carries, and how many
+/// stay unsent at home after them; no items is nothing new.
+class RoundSummary {
+  final int items;
+  final int remaining;
+  const RoundSummary(this.items, this.remaining);
+  bool get nothingNew => items == 0;
+}
+
+/// The summary of the fetch of [round], as the home sends it for the
+/// fetch's [recipient] tag, sealed under the mailbox key at place 0.
+Uint8List sealSummary(
   Sodium s,
   SecureKey key,
   int recipient,
   int round,
-  int place,
-  List<int> plain,
+  RoundSummary summary,
 ) => Uint8List.fromList([
-  formatByte(Form.reply),
+  formatByte(Form.summary),
   recipient,
   ...s.crypto.secretBox.easy(
-    message: Uint8List.fromList(plain),
-    nonce: replyNonce(round, place),
+    message: Uint8List.fromList([
+      ...be(summary.items, itemsLen),
+      ...be(summary.remaining, remainingLen),
+    ]),
+    nonce: replyNonce(round, 0),
     key: key,
   ),
 ]);
 
-/// Item [number] at [place] in [round], with [remaining] items still
-/// unsent after the round's batch, as the home node sends it for the
-/// fetch's [recipient] tag.
-Uint8List sealReply(
+/// The summary of the fetch of [round], or null if it is not one of its.
+RoundSummary? openSummary(
+  Sodium s,
+  SecureKey key,
+  int round,
+  List<int> payload,
+) {
+  if (formOf(payload) != Form.summary || payload.length != summaryLen) {
+    return null;
+  }
+  try {
+    final p = s.crypto.secretBox.openEasy(
+      cipherText: Uint8List.fromList(payload.sublist(headLen)),
+      nonce: replyNonce(round, 0),
+      key: key,
+    );
+    return RoundSummary(
+      fromBe(p.sublist(0, itemsLen)),
+      fromBe(p.sublist(itemsLen)),
+    );
+  } on SodiumException {
+    return null;
+  }
+}
+
+/// A kept boxed payload or introduction at [place] in [round], as the home
+/// sends it for the fetch's [recipient] tag: its form says the item's, and
+/// the item without its format byte and tag goes under the mailbox key's
+/// stream alone, as it proves itself.
+Uint8List sealItem(
   Sodium s,
   SecureKey key,
   int recipient,
   int round,
   int place,
-  int number,
-  int remaining,
   List<int> item,
-) => _sealReply(s, key, recipient, round, place, [
-  ...be(number, numberLen),
-  ...be(remaining, remainingLen),
-  ...item,
-]);
-
-/// The reply that says the mailbox holds nothing the fetch of [round]
-/// asks for, for its [recipient] tag.
-Uint8List sealNothingNew(Sodium s, SecureKey key, int recipient, int round) =>
-    _sealReply(s, key, recipient, round, 0, const []);
-
-/// What a reply says: an item, its number, its place in the round and
-/// the items still unsent after the round's batch, or nothing new, and so
-/// none unsent, when [item] is null. An empty item is one the home could
-/// not send.
-class Opened {
-  final int number;
-  final int place;
-  final int remaining;
-  final Uint8List? item;
-  const Opened(this.number, this.place, this.remaining, this.item);
-  bool get nothingNew => item == null;
+) {
+  final form = switch (formOf(item)) {
+    Form.boxed => Form.boxedItem,
+    Form.introduction => Form.introductionItem,
+    _ => throw const BadPayload('not an item a reply carries'),
+  };
+  if (place < 1 || place > maxReplies || item.length > maxAppPayload) {
+    throw const BadPayload('not an item a reply carries');
+  }
+  return Uint8List.fromList([
+    formatByte(form),
+    recipient,
+    place,
+    ...stream(s, key, replyNonce(round, place), item.sublist(headLen)),
+  ]);
 }
 
-/// A reply to the fetch of [round], or null if it is not one of its.
-Opened? openReply(Sodium s, SecureKey key, int round, List<int> payload) {
-  if (formOf(payload) != Form.reply || payload.length > maxPayload) {
+/// The item a reply of [round] carries, its format byte from the reply's
+/// form and the reply's recipient tag in place of its own; null if it is
+/// not an item reply. Under another round the bytes are noise: only the
+/// item opening says it was this round's.
+Uint8List? openItem(Sodium s, SecureKey key, int round, List<int> payload) {
+  final form = switch (formOf(payload)) {
+    Form.boxedItem => Form.boxed,
+    Form.introductionItem => Form.introduction,
+    _ => null,
+  };
+  if (form == null ||
+      payload.length < headLen + placeLen ||
+      payload.length > maxPayload) {
     return null;
   }
-  Uint8List? at(int place) {
-    try {
-      return s.crypto.secretBox.openEasy(
-        cipherText: Uint8List.fromList(payload.sublist(headLen)),
-        nonce: replyNonce(round, place),
-        key: key,
-      );
-    } on SodiumException {
-      return null;
-    }
-  }
-
-  if (payload.length == nothingNewLen) {
-    return at(0) == null ? null : const Opened(0, 0, 0, null);
-  }
-  if (payload.length < replyOverhead) return null;
-  for (var place = 1; place <= maxReplies; place++) {
-    final p = at(place);
-    if (p != null) {
-      const head = numberLen + remainingLen;
-      return Opened(
-        fromBe(p.sublist(0, numberLen)),
-        place,
-        fromBe(p.sublist(numberLen, head)),
-        p.sublist(head),
-      );
-    }
-  }
-  return null;
+  final place = payload[headLen];
+  if (place < 1 || place > maxReplies) return null;
+  return Uint8List.fromList([
+    formatByte(form),
+    payload[1],
+    ...stream(
+      s,
+      key,
+      replyNonce(round, place),
+      payload.sublist(headLen + placeLen),
+    ),
+  ]);
 }
 
 List<int> be(int v, int n) => [

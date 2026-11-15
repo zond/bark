@@ -1,4 +1,4 @@
-//! The payload's four forms, their format byte and the recipient tag
+//! The payload's forms, their format byte and the recipient tag
 //! (spec "The payload").
 
 use blake2::digest::consts::{U10, U16, U24};
@@ -23,10 +23,15 @@ pub enum Form {
     Boxed = 0,
     /// To someone who may not know the sender, a sealed box.
     Introduction = 1,
-    /// To one's own mailbox, `crypto_secretbox` under the mailbox key.
+    /// To one's own mailbox, under the mailbox key's keys.
     Fetch = 2,
-    /// From the mailbox to the person, under the mailbox key.
-    Reply = 3,
+    /// From the mailbox, first in a round: what the round carries and
+    /// what stays, `crypto_secretbox` under the mailbox key.
+    Summary = 3,
+    /// From the mailbox, a boxed payload it kept.
+    BoxedItem = 4,
+    /// From the mailbox, an introduction it kept.
+    IntroductionItem = 5,
 }
 
 impl Form {
@@ -45,9 +50,19 @@ impl Form {
             0 => Ok(Form::Boxed),
             1 => Ok(Form::Introduction),
             2 => Ok(Form::Fetch),
-            3 => Ok(Form::Reply),
+            3 => Ok(Form::Summary),
+            4 => Ok(Form::BoxedItem),
+            5 => Ok(Form::IntroductionItem),
             _ => Err(Error::Malformed),
         }
+    }
+
+    /// Whether the mailbox sent this form: a summary or an item.
+    pub fn is_reply(self) -> bool {
+        matches!(
+            self,
+            Form::Summary | Form::BoxedItem | Form::IntroductionItem
+        )
     }
 }
 
@@ -81,13 +96,6 @@ pub const SIV_LEN: usize = 16;
 pub const BOX_OVERHEAD: usize = HEAD_LEN + SIV_LEN;
 /// Bytes an introduction adds to its plaintext.
 pub const INTRO_OVERHEAD: usize = HEAD_LEN + KEY_LEN + TAG_LEN;
-/// Bytes of a reply's count of the items still unsent after its batch.
-pub const REMAINING_LEN: usize = 2;
-/// Bytes a reply adds to the item it carries: the format byte, the
-/// recipient tag, the tag, the item's number and the items remaining.
-pub const REPLY_OVERHEAD: usize = HEAD_LEN + TAG_LEN + NUMBER_LEN + REMAINING_LEN;
-/// Bytes of the reply that says nothing is new.
-pub const NOTHING_NEW_LEN: usize = HEAD_LEN + TAG_LEN;
 
 /// The longest plaintext of a boxed payload.
 pub const MAX_BOX_PLAIN: usize = MAX_APP_PAYLOAD - BOX_OVERHEAD;
@@ -391,149 +399,160 @@ impl Fetch {
     }
 }
 
-/// Bytes of an item's number in a reply.
-pub const NUMBER_LEN: usize = 3;
-/// The largest number an item takes.
-pub const MAX_NUMBER: u32 = (1 << (8 * NUMBER_LEN)) - 1;
-
 fn secretbox(key: &[u8; KEY_LEN]) -> XSalsa20Poly1305 {
     XSalsa20Poly1305::new(key.into())
 }
 
-/// The most items a fetch is answered with, so the most places a requester
-/// tries: under the 33 full frames a relay's full bucket sends with the
-/// reply reserve left, so a batch never waits for a refill
-/// (spec "Send queue", "Mailbox").
-pub const MAX_REPLIES: u32 = 32;
+/// The most items a fetch is answered with: under the 33 full frames a
+/// relay's full bucket sends with the reply reserve left, so a batch never
+/// waits for a refill (spec "Send queue", "Mailbox").
+pub const MAX_REPLIES: u8 = 32;
+
+/// Bytes of a reply's place in its round, sent in the clear before an
+/// item.
+pub const PLACE_LEN: usize = 1;
+
+/// Bytes of a summary's count of the round's items.
+pub const ITEMS_LEN: usize = 1;
+/// Bytes of a summary's count of the items still unsent after the round.
+pub const REMAINING_LEN: usize = 2;
+
+/// Bytes of the summary: the format byte, the recipient tag, the tag, the
+/// round's items and the items remaining.
+pub const SUMMARY_LEN: usize = HEAD_LEN + TAG_LEN + ITEMS_LEN + REMAINING_LEN;
+
+/// Bytes a reply adds to the item it carries: its own format byte and
+/// recipient tag stand for the item's, and the place is added.
+pub const REPLY_OVERHEAD: usize = PLACE_LEN;
 
 /// A reply's nonce: the round (the fetch's `sent`), the place, then zeros.
-/// Never sent; unique under the mailbox key while rounds rise. Place 0
-/// says nothing is new; an item keeps its place when its round sends it
-/// again.
-pub fn reply_nonce(round: u32, place: u32) -> [u8; NONCE_LEN] {
+/// Never sent; unique under the mailbox key while rounds rise. Place 0 is
+/// the summary's; an item keeps its place when its round sends it again.
+pub fn reply_nonce(round: u32, place: u8) -> [u8; NONCE_LEN] {
     let mut n = [0u8; NONCE_LEN];
     n[..4].copy_from_slice(&round.to_be_bytes());
-    n[4..4 + NUMBER_LEN].copy_from_slice(&place.to_be_bytes()[1..]);
+    n[4] = place;
     n
 }
 
-/// A reply (form 3) carrying item `number` at `place` in the round, with
-/// `remaining` items still unsent after the round's batch, sealed under
-/// the mailbox `key` for the fetch of `round`, for its `recipient` tag,
-/// into `out`; its length.
-#[allow(clippy::too_many_arguments)]
-pub fn seal_reply(
+/// Whether the mailbox can send `item` on: a boxed payload or an
+/// introduction of this version that fits a reply.
+pub fn forwardable(item: &[u8]) -> bool {
+    matches!(Form::of(item), Ok(Form::Boxed | Form::Introduction))
+        && (HEAD_LEN..=MAX_APP_PAYLOAD).contains(&item.len())
+}
+
+/// The summary of the fetch of `round`, for its `recipient` tag: how many
+/// items the round carries and how many of the person's stay unsent
+/// after it, sealed under the mailbox `key` at place 0. Zero items says
+/// nothing is new.
+pub fn seal_summary(
     key: &[u8; KEY_LEN],
     recipient: u8,
     round: u32,
-    place: u32,
-    number: u32,
+    items: u8,
     remaining: u16,
-    item: &[u8],
-    out: &mut [u8],
-) -> Result<usize, Error> {
-    if item.len() > MAX_APP_PAYLOAD || number > MAX_NUMBER || !(1..=MAX_REPLIES).contains(&place) {
-        return Err(Error::TooLong);
-    }
-    const HEAD: usize = NUMBER_LEN + REMAINING_LEN;
-    let mut plain = [0u8; HEAD + MAX_APP_PAYLOAD];
-    plain[..NUMBER_LEN].copy_from_slice(&number.to_be_bytes()[1..]);
-    plain[NUMBER_LEN..HEAD].copy_from_slice(&remaining.to_be_bytes());
-    plain[HEAD..HEAD + item.len()].copy_from_slice(item);
-    let head: [u8; HEAD_LEN] = head(Form::Reply, recipient, &[]);
-    seal_into(
-        &secretbox(key),
-        &reply_nonce(round, place),
-        &head,
-        &plain[..HEAD + item.len()],
-        out,
-    )
-}
-
-/// The reply that says the mailbox holds nothing the fetch of `round`
-/// asks for, for its `recipient` tag: form 3 sealing nothing at place 0,
-/// [`NOTHING_NEW_LEN`] bytes.
-pub fn seal_nothing_new(key: &[u8; KEY_LEN], recipient: u8, round: u32) -> [u8; NOTHING_NEW_LEN] {
-    let mut out = [0u8; NOTHING_NEW_LEN];
-    let head: [u8; HEAD_LEN] = head(Form::Reply, recipient, &[]);
-    // Nothing to seal cannot be too long.
+) -> [u8; SUMMARY_LEN] {
+    let mut out = [0u8; SUMMARY_LEN];
+    let mut plain = [0u8; ITEMS_LEN + REMAINING_LEN];
+    plain[0] = items;
+    plain[ITEMS_LEN..].copy_from_slice(&remaining.to_be_bytes());
+    let head: [u8; HEAD_LEN] = head(Form::Summary, recipient, &[]);
+    // Three bytes fit their own length.
     let _ = seal_into(
         &secretbox(key),
         &reply_nonce(round, 0),
         &head,
-        &[],
+        &plain,
         &mut out,
     );
     out
 }
 
-/// What a reply says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Opened {
-    /// Item `number`, its `len` bytes written out.
-    Item {
-        /// The item's number in the ring.
-        number: u32,
-        /// Its place in the round.
-        place: u32,
-        /// Items still unsent after the round's batch, when the fetch was
-        /// taken.
-        remaining: u16,
-        /// Its length.
-        len: usize,
-    },
-    /// The mailbox holds no item it has not sent, so none remains.
-    NothingNew,
+/// A summary of the fetch of `round`, if it is one under `key`: the
+/// round's items and the items remaining after it.
+pub fn open_summary(key: &[u8; KEY_LEN], round: u32, payload: &[u8]) -> Result<(u8, u16), Error> {
+    if Form::of(payload)? != Form::Summary || payload.len() != SUMMARY_LEN {
+        return Err(Error::Malformed);
+    }
+    let mut plain = [0u8; ITEMS_LEN + REMAINING_LEN];
+    open_into(
+        &secretbox(key),
+        &reply_nonce(round, 0),
+        &payload[HEAD_LEN..],
+        &mut plain,
+    )?;
+    Ok((
+        plain[0],
+        u16::from_be_bytes([plain[ITEMS_LEN], plain[ITEMS_LEN + 1]]),
+    ))
 }
 
-/// A reply to the fetch of `round`, the item into `out`; [`Error::Open`]
-/// if it is not one of that round's. The length tells nothing new from an
-/// item, and an item's place is tried from 1 to [`MAX_REPLIES`].
-pub fn open_reply(
+/// A reply carrying `item` at `place` in the round of `round`, for the
+/// fetch's `recipient` tag, into `out`; its length. Its form says the
+/// item's, the place goes in the clear, and the item without its format
+/// byte and recipient tag goes under the mailbox `key`'s stream alone:
+/// the item proves itself.
+pub fn seal_item(
+    key: &[u8; KEY_LEN],
+    recipient: u8,
+    round: u32,
+    place: u8,
+    item: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Error> {
+    let form = match Form::of(item) {
+        Ok(Form::Boxed) => Form::BoxedItem,
+        Ok(Form::Introduction) => Form::IntroductionItem,
+        _ => return Err(Error::Malformed),
+    };
+    if !forwardable(item) || !(1..=MAX_REPLIES).contains(&place) {
+        return Err(Error::TooLong);
+    }
+    let at = HEAD_LEN + PLACE_LEN;
+    let len = at + item.len() - HEAD_LEN;
+    if out.len() < len {
+        return Err(Error::TooLong);
+    }
+    out[0] = form.format();
+    out[RECIPIENT_AT] = recipient;
+    out[HEAD_LEN] = place;
+    out[at..len].copy_from_slice(&item[HEAD_LEN..]);
+    stream(key, &reply_nonce(round, place), &mut out[at..len]);
+    Ok(len)
+}
+
+/// The item a reply carries, as the mailbox's round of `round` sent it,
+/// into `out`: its format byte from the reply's form and the reply's
+/// recipient tag in place of the item's, which no receiver checks; its
+/// length. Nothing here tells one round from another: the item does, by
+/// opening under the receiver's keys or not.
+pub fn open_item(
     key: &[u8; KEY_LEN],
     round: u32,
     payload: &[u8],
     out: &mut [u8],
-) -> Result<Opened, Error> {
-    if Form::of(payload)? != Form::Reply || payload.len() > MAX_PAYLOAD {
+) -> Result<usize, Error> {
+    let form = match Form::of(payload)? {
+        Form::BoxedItem => Form::Boxed,
+        Form::IntroductionItem => Form::Introduction,
+        _ => return Err(Error::Malformed),
+    };
+    let at = HEAD_LEN + PLACE_LEN;
+    if payload.len() < at || payload.len() > MAX_PAYLOAD {
         return Err(Error::Malformed);
     }
-    let cipher = secretbox(key);
-    if payload.len() == NOTHING_NEW_LEN {
-        open_into(
-            &cipher,
-            &reply_nonce(round, 0),
-            &payload[HEAD_LEN..],
-            &mut [],
-        )?;
-        return Ok(Opened::NothingNew);
+    let place = payload[HEAD_LEN];
+    if !(1..=MAX_REPLIES).contains(&place) {
+        return Err(Error::Malformed);
     }
-    let len = payload
-        .len()
-        .checked_sub(REPLY_OVERHEAD)
-        .ok_or(Error::Malformed)?;
+    let len = payload.len() - REPLY_OVERHEAD;
     if out.len() < len {
         return Err(Error::TooLong);
     }
-    let mut plain = [0u8; MAX_PAYLOAD];
-    for place in 1..=MAX_REPLIES {
-        if open_into(
-            &cipher,
-            &reply_nonce(round, place),
-            &payload[HEAD_LEN..],
-            &mut plain,
-        )
-        .is_ok()
-        {
-            const HEAD: usize = NUMBER_LEN + REMAINING_LEN;
-            out[..len].copy_from_slice(&plain[HEAD..HEAD + len]);
-            return Ok(Opened::Item {
-                number: be(&plain[..NUMBER_LEN]),
-                place,
-                remaining: u16::from_be_bytes([plain[NUMBER_LEN], plain[NUMBER_LEN + 1]]),
-                len,
-            });
-        }
-    }
-    Err(Error::Open)
+    out[0] = form.format();
+    out[RECIPIENT_AT] = payload[RECIPIENT_AT];
+    out[HEAD_LEN..len].copy_from_slice(&payload[at..]);
+    stream(key, &reply_nonce(round, place), &mut out[HEAD_LEN..len]);
+    Ok(len)
 }

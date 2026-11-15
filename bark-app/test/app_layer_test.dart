@@ -273,55 +273,70 @@ void main() {
     );
   });
 
-  test('a reply: made, opened in its round only, its number inside', () {
-    final m = at('reply');
-    final round = m['round'] as int;
-    final place = m['place'] as int;
-    final n = m['number'] as int;
-    final left = m['remaining'] as int;
-    expect(hex(replyNonce(round, place)), m['nonce']);
-    // The reply carries the tag the fetch asked for.
+  test('a summary: made, opened in its round only, nothing new its zero', () {
     final to = at('fetch')['recipient'] as int;
-    expect(
-      hex(sealReply(s, alice.mailbox, to, round, place, n, left, h(m, 'item'))),
-      m['payload'],
-    );
-    expect(h(m, 'payload')[1], to);
-    final o = openReply(s, alice.mailbox, round, h(m, 'payload'))!;
-    expect(
-      (o.number, o.place, o.remaining, hex(o.item!)),
-      (n, place, left, m['item']),
-    );
-    expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
-    expect(openReply(s, bob.mailbox, round, h(m, 'payload')), isNull);
-  });
-
-  test('a reply opens at every place of a batch, and tells what remains', () {
-    for (final place in [1, maxReplies]) {
-      final p = sealReply(s, alice.mailbox, 9, 7, place, 5, 1000, [1, 2]);
-      final o = openReply(s, alice.mailbox, 7, p)!;
-      expect((o.number, o.place, o.remaining), (5, place, 1000));
+    for (final (name, items) in [('summary', 2), ('nothing_new', 0)]) {
+      final m = at(name);
+      final round = m['round'] as int;
+      expect(hex(replyNonce(round, 0)), m['nonce']);
+      final want = RoundSummary(items, m['remaining'] as int? ?? 0);
+      expect(hex(sealSummary(s, alice.mailbox, to, round, want)), m['payload']);
+      expect(h(m, 'payload').length, summaryLen);
+      final o = openSummary(s, alice.mailbox, round, h(m, 'payload'))!;
+      expect((o.items, o.remaining, o.nothingNew), (items, 0, items == 0));
+      expect(openSummary(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
+      expect(openSummary(s, bob.mailbox, round, h(m, 'payload')), isNull);
+      final flipped = h(m, 'payload')..[summaryLen - 1] ^= 1;
+      expect(openSummary(s, alice.mailbox, round, flipped), isNull);
     }
-    final beyond = sealReply(s, alice.mailbox, 9, 7, maxReplies + 1, 5, 0, [
-      1,
-      2,
-    ]);
-    expect(openReply(s, alice.mailbox, 7, beyond), isNull);
   });
 
-  test('nothing new: made, opened in its round only', () {
-    final m = at('nothing_new');
-    final round = m['round'] as int;
-    expect(hex(replyNonce(round, 0)), m['nonce']);
+  test('an item reply: made and opened as the Rust side does, and it opens '
+      'only in its round', () {
     final to = at('fetch')['recipient'] as int;
-    expect(hex(sealNothingNew(s, alice.mailbox, to, round)), m['payload']);
-    expect(h(m, 'payload').length, nothingNewLen);
-    expect(nothingNewLen, 18);
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    for (final name in ['reply_box', 'reply_intro']) {
+      final m = at(name);
+      final round = m['round'] as int;
+      final place = m['place'] as int;
+      expect(hex(replyNonce(round, place)), m['nonce']);
+      expect(
+        hex(sealItem(s, alice.mailbox, to, round, place, h(m, 'item'))),
+        m['payload'],
+      );
+      expect(h(m, 'payload').length, h(m, 'item').length + replyOverhead);
+      final item = openItem(s, alice.mailbox, round, h(m, 'payload'))!;
+      expect(hex(item), m['opened']);
+      expect(item[1], to);
+      expect(item[0], h(m, 'item')[0]);
+      Uint8List open(List<int> p) =>
+          name == 'reply_box' ? openBox(ab, p) : openIntro(s, alice, p);
+      final (_, rs) = readPlain(open(item));
+      expect(rs.last, isA<TextRecord>());
+      // Another round, or another key, gives what does not open.
+      for (final (key, r) in [
+        (alice.mailbox, round + 1),
+        (bob.mailbox, round),
+      ]) {
+        expect(
+          () => open(openItem(s, key, r, h(m, 'payload'))!),
+          throwsA(isA<BadPayload>()),
+        );
+      }
+    }
+    // No place 0 nor past the batch, and no other form, goes as an item.
+    final box = h(at('reply_box'), 'item');
+    for (final place in [0, maxReplies + 1]) {
+      expect(
+        () => sealItem(s, alice.mailbox, to, 1, place, box),
+        throwsA(isA<BadPayload>()),
+      );
+    }
     expect(
-      openReply(s, alice.mailbox, round, h(m, 'payload'))!.nothingNew,
-      isTrue,
+      () => sealItem(s, alice.mailbox, to, 1, 1, h(at('fetch'), 'payload')),
+      throwsA(isA<BadPayload>()),
     );
-    expect(openReply(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
+    expect(openItem(s, alice.mailbox, 1, h(at('summary'), 'payload')), isNull);
   });
 
   test('windows-1251 when it holds the text', () {
@@ -337,7 +352,7 @@ void main() {
     // The room of a whole text in a box without an address, as the Rust
     // side has it: one byte more than a part's.
     expect(room + 1, maxAppPayload - boxOverhead - 5 - 1);
-    expect((maxAppPayload, room + 1), (202, 178));
+    expect((maxAppPayload, room + 1), (224, 200));
     expect(splitText(m['text'] as String, room + 1), [
       for (final p in parts) p['text'],
     ]);

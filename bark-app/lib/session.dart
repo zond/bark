@@ -1164,9 +1164,10 @@ class Session extends ChangeNotifier {
   /// What the home node's answer said, to tell the person once.
   String? fetchNews;
 
-  /// A reply of the fetch of `round` came: the fetch is answered. The
-  /// first to come tells the person what `remaining` the home holds
-  /// beyond its batch, so that they can fetch again.
+  /// A reply of the fetch of `round` came: the fetch is answered. Its
+  /// summary, which may come after an item, tells the person what
+  /// `remaining` the home holds beyond its batch, so that they can fetch
+  /// again.
   Future<void> fetchAnswered(
     int round, {
     required bool nothingNew,
@@ -1178,7 +1179,7 @@ class Session extends ChangeNotifier {
     if (nothingNew) {
       note('Fetch $round: no new mail');
       fetchNews = 'No new mail';
-    } else if (remaining > 0 && o != null && !o.answered) {
+    } else if (remaining > 0 && o != null) {
       note('Fetch $round: $remaining more at home');
       fetchNews = '$remaining more at home: fetch again for them';
     }

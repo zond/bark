@@ -8,7 +8,7 @@ use crypto_box::{PublicKey, SecretKey};
 use crate::card::{self, Card};
 use crate::keys::{self, Keys};
 use crate::plain::{self, Header, Part, Record, Writer};
-use crate::seal::{self, Fetch, Form, Opened};
+use crate::seal::{self, Fetch, Form};
 use crate::text::{self, Encoding};
 use crate::vectors::{self, fixture, hex};
 use crate::{Error, MAX_APP_PAYLOAD, MAX_PAYLOAD};
@@ -29,19 +29,19 @@ fn vectors_file_is_current() {
 
 #[test]
 fn the_sizes_are_the_notes() {
-    assert_eq!(MAX_APP_PAYLOAD, 202);
+    assert_eq!(MAX_APP_PAYLOAD, 224);
     assert_eq!(seal::BOX_OVERHEAD, 18);
     assert_eq!(seal::INTRO_OVERHEAD, 50);
-    assert_eq!(seal::REPLY_OVERHEAD, 23);
-    assert_eq!(seal::NOTHING_NEW_LEN, 18);
+    assert_eq!(seal::REPLY_OVERHEAD, 1);
+    assert_eq!(seal::SUMMARY_LEN, 21);
     assert_eq!(Fetch::LEN, 36);
     assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 100);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
-    // The longest text: 202 less the box, the header and the record's type.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 178);
+    // The longest text: 224 less the box, the header and the record's type.
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 200);
     // A part's: one byte more, its number and the count.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 177);
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 199);
 }
 
 #[test]
@@ -240,17 +240,15 @@ fn too_long_is_refused() {
     );
     let n = seal::seal_box(&pair, 7, &plain[1..], &mut out).unwrap();
     assert_eq!(n, MAX_APP_PAYLOAD);
+    // The longest box goes on as a reply of the longest payload.
+    let item = out;
+    let mut reply = [0u8; MAX_PAYLOAD];
+    let r = seal::seal_item(&f.alice.mailbox, 7, 1, 1, &item[..n], &mut reply);
+    assert_eq!(r, Ok(MAX_PAYLOAD));
+    let mut long = [0u8; MAX_APP_PAYLOAD + 1];
+    long[0] = Form::Boxed.format();
     assert_eq!(
-        seal::seal_reply(
-            &f.alice.mailbox,
-            7,
-            1,
-            1,
-            1,
-            0,
-            &[0; MAX_APP_PAYLOAD + 1],
-            &mut out
-        ),
+        seal::seal_item(&f.alice.mailbox, 7, 1, 1, &long, &mut reply),
         Err(Error::TooLong)
     );
 }
@@ -352,61 +350,109 @@ fn a_forged_siv_opens_nothing() {
 }
 
 #[test]
-fn a_reply_opens_in_its_round_only_and_tells_its_number_and_what_remains() {
+fn a_summary_opens_in_its_round_only_and_tells_what_comes_and_what_remains() {
     let k = fixture().alice.mailbox;
-    let mut out = [0u8; MAX_PAYLOAD];
-    let n = seal::seal_reply(
-        &k,
-        7,
-        10,
-        seal::MAX_REPLIES,
-        0x12_3456,
-        1000,
-        b"item",
-        &mut out,
-    )
-    .unwrap();
-    assert_eq!(n, 4 + seal::REPLY_OVERHEAD);
-    let p = out[..n].to_vec();
-    let mut got = [0u8; MAX_PAYLOAD];
+    let p = seal::seal_summary(&k, 7, 10, seal::MAX_REPLIES, 1000);
     assert_eq!(
-        seal::open_reply(&k, 10, &p, &mut got),
-        Ok(Opened::Item {
-            number: 0x12_3456,
-            place: seal::MAX_REPLIES,
-            remaining: 1000,
-            len: 4
-        })
+        (p[0], seal::recipient_of(&p)),
+        (Form::Summary.format(), Some(7))
     );
-    assert_eq!(&got[..4], b"item");
-    assert_eq!(seal::open_reply(&k, 11, &p, &mut got), Err(Error::Open));
-    let other = fixture().bob.mailbox;
-    assert_eq!(seal::open_reply(&other, 10, &p, &mut got), Err(Error::Open));
-    for place in [0, seal::MAX_REPLIES + 1] {
-        assert_eq!(
-            seal::seal_reply(&k, 7, 10, place, 1, 0, b"item", &mut out),
-            Err(Error::TooLong)
-        );
-    }
-}
-
-#[test]
-fn nothing_new_opens_in_its_round_only() {
-    let k = fixture().alice.mailbox;
-    let p = seal::seal_nothing_new(&k, 7, 10);
-    assert_eq!(p[0], Form::Reply.format());
-    assert_eq!(seal::recipient_of(&p), Some(7));
-    let mut got = [0u8; MAX_PAYLOAD];
     assert_eq!(
-        seal::open_reply(&k, 10, &p, &mut got),
-        Ok(Opened::NothingNew)
+        seal::open_summary(&k, 10, &p),
+        Ok((seal::MAX_REPLIES, 1000))
     );
-    assert_eq!(seal::open_reply(&k, 11, &p, &mut got), Err(Error::Open));
-    // Between nothing new and the shortest item: no reply.
+    assert_eq!(seal::open_summary(&k, 11, &p), Err(Error::Open));
     assert_eq!(
-        seal::open_reply(&k, 10, &[p[0]; seal::REPLY_OVERHEAD - 1], &mut got),
+        seal::open_summary(&fixture().bob.mailbox, 10, &p),
+        Err(Error::Open)
+    );
+    let mut q = p;
+    q[seal::SUMMARY_LEN - 1] ^= 1;
+    assert_eq!(seal::open_summary(&k, 10, &q), Err(Error::Open));
+    assert_eq!(
+        seal::open_summary(&k, 10, &p[..seal::SUMMARY_LEN - 1]),
         Err(Error::Malformed)
     );
+}
+
+/// A reply gives back the item the mailbox kept, its form from the
+/// reply's, its tag the reply's; at another round or place, or under
+/// another key, it gives bytes that do not open.
+#[test]
+fn a_reply_gives_back_its_item_which_proves_itself() {
+    let f = fixture();
+    let k = f.alice.mailbox;
+    let item = boxed_text(&f.bob, &f.alice, "kept");
+    let alice = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key()).unwrap();
+    let mut out = [0u8; MAX_PAYLOAD];
+    let n = seal::seal_item(&k, 9, 10, seal::MAX_REPLIES, &item, &mut out).unwrap();
+    assert_eq!(n, item.len() + seal::REPLY_OVERHEAD);
+    let reply = out[..n].to_vec();
+    assert_eq!(
+        (Form::of(&reply), seal::recipient_of(&reply)),
+        (Ok(Form::BoxedItem), Some(9))
+    );
+    let mut got = [0u8; MAX_PAYLOAD];
+    let m = seal::open_item(&k, 10, &reply, &mut got).unwrap();
+    assert_eq!(got[0], item[0]);
+    assert_eq!(got[seal::RECIPIENT_AT], 9);
+    assert_eq!(got[seal::HEAD_LEN..m], item[seal::HEAD_LEN..]);
+    let mut plain = [0u8; MAX_PAYLOAD];
+    assert!(seal::open_box(&alice, &got[..m], &mut plain).is_ok());
+    let other_place = {
+        let mut r = reply.clone();
+        r[seal::HEAD_LEN] = 1;
+        r
+    };
+    for (key, round, r) in [
+        (k, 11, &reply),
+        (f.bob.mailbox, 10, &reply),
+        (k, 10, &other_place),
+    ] {
+        let m = seal::open_item(&key, round, r, &mut got).unwrap();
+        assert_eq!(
+            seal::open_box(&alice, &got[..m], &mut plain),
+            Err(Error::Open)
+        );
+    }
+    // Place 0 is the summary's, and no place passes the batch.
+    for place in [0, seal::MAX_REPLIES + 1] {
+        assert_eq!(
+            seal::seal_item(&k, 9, 10, place, &item, &mut out),
+            Err(Error::TooLong)
+        );
+        let mut r = reply.clone();
+        r[seal::HEAD_LEN] = place;
+        assert_eq!(seal::open_item(&k, 10, &r, &mut got), Err(Error::Malformed));
+    }
+    // An introduction goes as its own form; nothing else goes at all.
+    let mut intro = [0u8; MAX_PAYLOAD];
+    let i = seal::seal_intro(
+        &PublicKey::from(f.alice.identity.0),
+        7,
+        &SecretKey::from([5; 32]),
+        b"abc",
+        &mut intro,
+    )
+    .unwrap();
+    let n = seal::seal_item(&k, 9, 10, 2, &intro[..i], &mut out).unwrap();
+    assert_eq!(Form::of(&out[..n]), Ok(Form::IntroductionItem));
+    let m = seal::open_item(&k, 10, &out[..n], &mut got).unwrap();
+    assert!(seal::open_intro(&f.alice.secret_key(), &got[..m], &mut plain).is_ok());
+    let summary = seal::seal_summary(&k, 9, 10, 1, 0);
+    let fetch = Fetch {
+        sent: 1,
+        address: f.away,
+        recipient: 9,
+    }
+    .seal(&k, 7);
+    for not in [&summary[..], &fetch[..], b"item"] {
+        assert!(!seal::forwardable(not));
+        assert_eq!(
+            seal::seal_item(&k, 9, 10, 1, not, &mut out),
+            Err(Error::Malformed)
+        );
+    }
 }
 
 #[test]
@@ -716,7 +762,7 @@ mod mailbox {
     use bark_proto::MsgId;
 
     use crate::mailbox::{Arrival, Mailbox, Person, RamRing, Ring};
-    use crate::seal::{self, Fetch, Opened};
+    use crate::seal::{self, Fetch, Form};
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
 
@@ -771,29 +817,30 @@ mod mailbox {
     /// What a requester gets from a reply.
     #[derive(Debug, PartialEq)]
     enum Got {
-        /// The item's number, the items unsent after the batch, the item.
-        Item(u32, u16, Vec<u8>),
-        NothingNew,
+        /// The summary: the round's items and those unsent after them.
+        Summary(u8, u16),
+        /// The item's number, as the node handed it over, and the item as
+        /// the requester rebuilds it.
+        Item(u32, Vec<u8>),
     }
 
     fn open(key: &[u8; 32], round: u32, reply: &[u8], number: u32) -> Got {
-        let mut item = [0u8; MAX_PAYLOAD];
-        match seal::open_reply(key, round, reply, &mut item) {
-            Ok(Opened::Item {
-                number: n,
-                remaining,
-                len,
-                ..
-            }) => {
-                assert_eq!(n, number);
-                Got::Item(n, remaining, item[..len].to_vec())
-            }
-            Ok(Opened::NothingNew) => {
-                assert_eq!(number, 0);
-                Got::NothingNew
-            }
-            Err(e) => panic!("a reply the requester cannot open: {e:?}"),
+        if Form::of(reply) == Ok(Form::Summary) {
+            assert_eq!(number, 0);
+            let (items, remaining) = seal::open_summary(key, round, reply).unwrap();
+            return Got::Summary(items, remaining);
         }
+        let mut item = [0u8; MAX_PAYLOAD];
+        let len = seal::open_item(key, round, reply, &mut item).unwrap();
+        Got::Item(number, item[..len].to_vec())
+    }
+
+    /// Item `i` as the requester rebuilds it: with the fetch's recipient
+    /// tag in place of the one it was kept with.
+    fn opened(i: u32) -> Vec<u8> {
+        let mut b = item(i);
+        b[seal::RECIPIENT_AT] = 9;
+        b
     }
 
     /// Every reply due now, opened as Alice opens them, in order.
@@ -904,7 +951,7 @@ mod mailbox {
         let f = fetch(&fixture().alice.mailbox, 50);
         assert_eq!(m.arrive(MsgId(9), &f), Arrival::Fetch(0));
         assert_eq!(m.person(0).map(|p| p.last_fetch), Some(50));
-        assert_eq!(numbers(&drain(&mut m, 50)), [0]);
+        assert_eq!(drain(&mut m, 50), [Got::Summary(0, 0)]);
     }
 
     /// One person's reading and fetching clears their own bit alone: the
@@ -965,7 +1012,19 @@ mod mailbox {
         while let Some(o) = m.next(&mut out) {
             order.push((o.person, o.number));
         }
-        assert_eq!(order, [(1, 3), (4, 3), (1, 2), (4, 2), (1, 1), (4, 1)]);
+        assert_eq!(
+            order,
+            [
+                (1, 0),
+                (4, 0),
+                (1, 3),
+                (4, 3),
+                (1, 2),
+                (4, 2),
+                (1, 1),
+                (4, 1)
+            ]
+        );
     }
 
     /// A record made anew claims nothing kept before it for a fetch: a
@@ -1022,6 +1081,7 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 6)),
             Arrival::Fetch(6)
         );
+        assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 0)));
         assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 1)));
     }
 
@@ -1057,37 +1117,41 @@ mod mailbox {
         assert_eq!(m.unread_head(0), None);
     }
 
+    /// The numbers of the items a round's replies carried, the summary
+    /// left out.
     fn numbers(got: &[Got]) -> Vec<u32> {
         got.iter()
-            .map(|g| match g {
-                Got::Item(n, ..) => *n,
-                Got::NothingNew => 0,
+            .filter_map(|g| match g {
+                Got::Item(n, _) => Some(*n),
+                Got::Summary(..) => None,
             })
             .collect()
     }
 
+    /// A boxed payload for Alice's tag, `t`, numbered `i`.
     fn item(i: u32) -> Vec<u8> {
-        std::format!("item {i}").into_bytes()
+        let mut b = std::format!("item {i}").into_bytes();
+        b[0] = Form::Boxed.format();
+        b
     }
 
-    /// The items unsent after the batch, as every reply of it says.
+    /// The items unsent after the batch, as its summary, first, says.
     fn remaining(got: &[Got]) -> u16 {
-        let counts: Vec<u16> = got
-            .iter()
-            .map(|g| match g {
-                Got::Item(_, r, _) => *r,
-                Got::NothingNew => 0,
-            })
-            .collect();
-        assert!(counts.windows(2).all(|w| w[0] == w[1]));
-        counts[0]
+        match got.first() {
+            Some(Got::Summary(_, r)) => *r,
+            g => panic!("no summary first: {g:?}"),
+        }
     }
 
-    /// A fetch from Alice as `round`, and every reply it gets.
+    /// A fetch from Alice as `round`, and every reply it gets: the summary
+    /// first, counting the items after it.
     fn fetch_all<R: Ring>(m: &mut Mailbox<R>, round: u32) -> Vec<Got> {
         let k = fixture().alice.mailbox;
         assert_eq!(m.arrive(MsgId(0), &fetch(&k, round)), Arrival::Fetch(0));
-        drain(m, round)
+        let got = drain(m, round);
+        let items = numbers(&got).len();
+        assert!(matches!(got[0], Got::Summary(n, _) if usize::from(n) == items));
+        got
     }
 
     #[test]
@@ -1099,22 +1163,23 @@ mod mailbox {
         assert_eq!(
             fetch_all(&mut m, 100),
             [
-                Got::Item(5, 0, item(5)),
-                Got::Item(4, 0, item(4)),
-                Got::Item(3, 0, item(3)),
-                Got::Item(2, 0, item(2)),
-                Got::Item(1, 0, item(1))
+                Got::Summary(5, 0),
+                Got::Item(5, opened(5)),
+                Got::Item(4, opened(4)),
+                Got::Item(3, opened(3)),
+                Got::Item(2, opened(2)),
+                Got::Item(1, opened(1))
             ]
         );
         // Sent, they stay in the ring.
         assert_eq!(m.oldest(), 1);
-        assert_eq!(fetch_all(&mut m, 101), [Got::NothingNew]);
+        assert_eq!(fetch_all(&mut m, 101), [Got::Summary(0, 0)]);
     }
 
     #[test]
     fn a_fetch_with_nothing_new_gets_one_reply_that_says_so() {
         let mut m = home();
-        assert_eq!(fetch_all(&mut m, 100), [Got::NothingNew]);
+        assert_eq!(fetch_all(&mut m, 100), [Got::Summary(0, 0)]);
         // And nothing after it.
         let mut out = [0u8; MAX_PAYLOAD];
         assert_eq!(m.next(&mut out), None);
@@ -1127,6 +1192,7 @@ mod mailbox {
         let k = fixture().alice.mailbox;
         m.arrive(MsgId(0), &fetch(&k, 100));
         let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.next(&mut out).map(|o| o.number), Some(0));
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(1));
         m.arrive(MsgId(2), &item(2));
         assert_eq!(m.next(&mut out), None);
@@ -1135,17 +1201,32 @@ mod mailbox {
         assert_eq!(numbers(&fetch_all(&mut m, 101)), [3, 2]);
     }
 
+    /// What no reply carries, a box longer than the app writes, a
+    /// mailbox's reply delivered here or a payload of another version, is
+    /// kept and read at the node, as a guest's item is, and no fetch
+    /// counts or sends it.
     #[test]
-    fn an_item_that_cannot_be_sealed_goes_empty() {
+    fn an_item_no_reply_carries_is_read_at_the_node_alone() {
         let mut m = home();
         m.arrive(MsgId(1), &item(1));
         let mut long = [0x42; MAX_PAYLOAD];
+        long[0] = Form::Boxed.format();
         long[seal::RECIPIENT_AT] = ITEM_TAG;
-        m.arrive(MsgId(2), &long);
+        let summary = seal::seal_summary(&fixture().alice.mailbox, ITEM_TAG, 5, 1, 0);
+        let mut other = item(4);
+        other[0] = 0x30;
+        for (n, p) in [(2, &long[..]), (3, &summary[..]), (4, &other[..])] {
+            assert!(!seal::forwardable(p));
+            assert_eq!(m.arrive(MsgId(n), p), Arrival::Kept(n));
+        }
+        assert_eq!(m.unread_count(0), 4);
         assert_eq!(
             fetch_all(&mut m, 100),
-            [Got::Item(2, 0, Vec::new()), Got::Item(1, 0, item(1))]
+            [Got::Summary(1, 0), Got::Item(1, opened(1))]
         );
+        let mut b = [0u8; MAX_PAYLOAD];
+        m.confirm_read(0, 1);
+        assert_eq!(m.unread(0, &mut b), Some((2, MsgId(2), MAX_PAYLOAD)));
     }
 
     #[test]
@@ -1251,6 +1332,7 @@ mod mailbox {
         let k = fixture().alice.mailbox;
         m.arrive(MsgId(0), &fetch(&k, 100));
         let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.next(&mut out).map(|o| o.number), Some(0));
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(3));
         let kept = m.person(0);
         let mut m = Mailbox::new(Box::new(clone_ring(m.ring())));
@@ -1340,7 +1422,13 @@ mod mailbox {
         let k = fixture().alice.mailbox;
         m.arrive(MsgId(0), &fetch(&k, 100));
         let mut out = [0u8; MAX_PAYLOAD];
+        // The summary first, again first when given back.
+        let summary = m.next(&mut out).unwrap();
+        assert_eq!(summary.number, 0);
+        m.given_back(summary.msg_id);
+        assert_eq!(m.next(&mut out), Some(summary));
         let first = m.next(&mut out).unwrap();
+        assert_eq!(first.number, 2);
         m.given_back(first.msg_id);
         let again = m.next(&mut out).unwrap();
         assert_eq!(again, first);
@@ -1437,8 +1525,11 @@ mod flash_ring {
 
     type Home<'a> = Mailbox<FlashRing<&'a Ram>>;
 
+    /// A boxed payload for Alice's tag, `t`, numbered `i`.
     fn item(i: u32) -> Vec<u8> {
-        std::format!("item {i}").into_bytes()
+        let mut b = std::format!("item {i}").into_bytes();
+        b[0] = crate::seal::Form::Boxed.format();
+        b
     }
 
     fn fetch(sent: u32) -> [u8; Fetch::LEN] {
@@ -1692,7 +1783,7 @@ mod flash_ring {
         let mut out = [0u8; MAX_PAYLOAD];
         let mut sent = Vec::new();
         while let Some(o) = m.next(&mut out) {
-            sent.push(o.number);
+            sent.extend((o.number != 0).then_some(o.number));
             ops.extend(take_ops(&mut m));
         }
         assert_eq!(sent, (9..=40).rev().collect::<Vec<_>>());
@@ -1712,6 +1803,7 @@ mod flash_ring {
         assert_eq!(&b[..item(40).len()], item(40).as_slice());
         m.arrive(MsgId(0), &fetch(101));
         let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.next(&mut out).map(|o| o.number), Some(0));
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(8));
     }
 
@@ -1726,6 +1818,7 @@ mod flash_ring {
         assert!(!m.ring().idle());
         m.arrive(MsgId(0), &fetch(100));
         let mut out = [0u8; MAX_PAYLOAD];
+        assert_eq!(m.next(&mut out).map(|o| o.number), Some(0));
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(2));
         assert_eq!(m.next(&mut out), None);
     }

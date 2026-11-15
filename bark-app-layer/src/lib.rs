@@ -4,10 +4,11 @@
 //! simulator and the vectors the app's tests read (`vectors.json`).
 //!
 //! The cryptography makes the same bytes as libsodium, which the app uses:
-//! `crypto_box` between identities, the sealed box for a first message,
-//! `crypto_secretbox` between a person and their mailbox, and the BLAKE2b
+//! `crypto_box_beforenm` between identities, keyed `crypto_generichash`
+//! and XSalsa20 for boxes and fetches, the sealed box for a first
+//! message, `crypto_secretbox` for what a mailbox sends, and the BLAKE2b
 //! key derivation. Nothing allocates and nothing draws random numbers:
-//! callers hand in every nonce and ephemeral key.
+//! callers hand in every ephemeral key.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -40,7 +41,7 @@ pub const VERSION: u8 = 2;
 pub const MAX_PAYLOAD: usize = bark_proto::wire::MAX_PAYLOAD;
 
 /// The longest payload the app writes: what a mailbox can still send on
-/// as a reply, which adds [`seal::REPLY_OVERHEAD`].
+/// as a reply, which adds [`seal::REPLY_OVERHEAD`], its place.
 pub const MAX_APP_PAYLOAD: usize = MAX_PAYLOAD - seal::REPLY_OVERHEAD;
 
 /// `sent` counts seconds from 2026-01-01 00:00 UTC, this Unix time.

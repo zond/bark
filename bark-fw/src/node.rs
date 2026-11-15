@@ -238,7 +238,7 @@ impl App for LinkApp<'_> {
             let out = crate::mailbox::with(|m| m.next(payload)).flatten()?;
             if out.number == 0 {
                 log::info!(
-                    "mailbox: reply id={:08x} len={} nothing new, taken",
+                    "mailbox: reply id={:08x} len={} summary, taken",
                     out.msg_id.0,
                     out.len
                 );
