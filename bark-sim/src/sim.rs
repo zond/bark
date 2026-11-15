@@ -5751,8 +5751,7 @@ mod tests {
                 address,
                 recipient: 0,
             }
-            .seal(&key, 0, &[sent as u8; 24])
-            .unwrap()
+            .seal(&key, 0)
         };
         send(&mut sim, 2, &fetch(7));
         let t = sim.now + Duration::from_secs(300);

@@ -283,10 +283,7 @@ class FakeNode implements NodeLink {
 
   Address get _own => Address(_mapPoint ?? _fix, nodeId);
 
-  late final PrecalculatedBox _pair = sodium.crypto.box.precalculate(
-    publicKey: app,
-    secretKey: friend.pair.secretKey,
-  );
+  late final SivKeys _pair = SivKeys.pair(sodium, app, friend.pair.secretKey);
 
   /// A header of the fake friend's next message: their clock, as a phone's
   /// `sent`, and the node they write from, which has moved since the
@@ -361,7 +358,6 @@ class FakeNode implements NodeLink {
           sealBox(
             _pair,
             _appTag,
-            sodium.randombytes.buf(nonceLen),
             writePlain(
               Header(greater(friend.identity, app), first + i, friendAway),
               [TextRecord(p, i + 1, n)],

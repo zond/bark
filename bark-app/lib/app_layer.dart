@@ -4,11 +4,13 @@
 // against.
 
 import 'dart:convert';
+import 'dart:ffi' show UnsignedChar;
 import 'dart:typed_data';
 
 import 'package:characters/characters.dart';
 import 'package:crypto/crypto.dart' as hash;
 import 'package:sodium/sodium.dart';
+import 'package:sodium/sodium.ffi.dart' show LibSodiumFFI, SodiumPointer;
 
 import 'link.dart';
 import 'words.dart';
@@ -21,13 +23,19 @@ const int formatVersion = 2;
 /// with [replyOverhead] more.
 const int maxAppPayload = maxPayload - replyOverhead;
 
+/// XSalsa20's nonce, which every form's stream takes.
 const int nonceLen = 24;
 const int tagLen = 16;
 const int keyLen = 32;
 
+/// `siv`: a boxed payload's or a fetch's nonce and its proof in one.
+const int sivLen = 16;
+
 /// Bytes before a form's own: the format byte and the recipient tag.
 const int headLen = 2;
-const int boxOverhead = headLen + nonceLen + tagLen;
+
+/// What a boxed payload or a fetch adds to its plaintext.
+const int boxOverhead = headLen + sivLen;
 const int introOverhead = headLen + keyLen + tagLen;
 
 /// A reply's count of the items still unsent after its batch.
@@ -149,39 +157,130 @@ Form? formOf(List<int> p) {
   return f < Form.values.length ? Form.values[f] : null;
 }
 
-/// A boxed payload: to a contact, under the pair's key, with their
+/// XSalsa20 over `m` under `key` with `nonce`, as
+/// `crypto_secretbox_detached` encrypts, its tag dropped: the keystream
+/// from its 33rd byte. Its own inverse.
+Uint8List stream(Sodium s, SecureKey key, Uint8List nonce, List<int> m) => s
+    .crypto
+    .secretBox
+    .detached(message: Uint8List.fromList(m), nonce: nonce, key: key)
+    .cipherText;
+
+/// The two keys a boxed payload or a fetch is made with, derived from one
+/// shared key: `siv` is hashed under [mac], the stream runs under [enc]
+/// (spec "Phone link", The payload).
+class SivKeys {
+  final Sodium s;
+  final SecureKey mac;
+  final SecureKey enc;
+  SivKeys._(this.s, this.mac, this.enc);
+
+  /// The keys derived from `shared`: a pair's, or the mailbox key.
+  factory SivKeys.of(Sodium s, SecureKey shared) {
+    SecureKey sub(int id, String context) => s.crypto.kdf.deriveFromKey(
+      masterKey: shared,
+      context: context,
+      subkeyId: BigInt.from(id),
+      subkeyLen: keyLen,
+    );
+    return SivKeys._(s, sub(1, 'bark-mac'), sub(2, 'bark-enc'));
+  }
+
+  /// The keys of the pair of `them` and the person's secret key, from
+  /// `crypto_box_beforenm`: the same both ways.
+  factory SivKeys.pair(Sodium s, List<int> them, SecureKey secret) {
+    final shared = _beforenm(s, them, secret);
+    try {
+      return SivKeys.of(s, shared);
+    } finally {
+      shared.dispose();
+    }
+  }
+
+  Uint8List _siv(int format, List<int> plain) => s.crypto.genericHash(
+    message: Uint8List.fromList([format, ...plain]),
+    outLen: sivLen,
+    key: mac,
+  );
+
+  static Uint8List _nonce(List<int> siv) =>
+      Uint8List.fromList([...siv, ...List.filled(nonceLen - sivLen, 0)]);
+
+  /// `plain` as a payload of `form` for the `recipient` tag: the format
+  /// byte, the tag, `siv`, the ciphertext.
+  Uint8List seal(Form form, int recipient, List<int> plain) {
+    final siv = _siv(formatByte(form), plain);
+    return Uint8List.fromList([
+      formatByte(form),
+      recipient,
+      ...siv,
+      ...stream(s, enc, _nonce(siv), plain),
+    ]);
+  }
+
+  /// The plaintext of `payload`, which is given only once its `siv`
+  /// checks; null if it does not.
+  Uint8List? open(List<int> payload) {
+    if (payload.length < boxOverhead) return null;
+    final siv = payload.sublist(headLen, boxOverhead);
+    final plain = stream(s, enc, _nonce(siv), payload.sublist(boxOverhead));
+    final want = _siv(payload[0], plain);
+    var d = 0;
+    for (var i = 0; i < sivLen; i++) {
+      d |= want[i] ^ siv[i];
+    }
+    if (d == 0) return plain;
+    plain.fillRange(0, plain.length, 0);
+    return null;
+  }
+
+  void dispose() {
+    mac.dispose();
+    enc.dispose();
+  }
+}
+
+/// `crypto_box_beforenm` of `them` and `secret`: the sodium package keeps
+/// it inside its precalculated box, so it is called through the package's
+/// binding of libsodium itself.
+SecureKey _beforenm(Sodium s, List<int> them, SecureKey secret) {
+  const lib = LibSodiumFFI();
+  final k = SodiumPointer<UnsignedChar>.alloc(lib, count: keyLen);
+  final pk = SodiumPointer<UnsignedChar>.alloc(lib, count: keyLen);
+  final sk = SodiumPointer<UnsignedChar>.alloc(lib, count: keyLen);
+  try {
+    if (them.length != keyLen) throw const BadPayload('not a public key');
+    pk.fill(them);
+    secret.runUnlockedSync(sk.fill);
+    if (lib.crypto_box_beforenm(k.ptr, pk.ptr, sk.ptr) != 0) {
+      throw const BadPayload('no shared key with that public key');
+    }
+    return SecureKey.fromList(s, Uint8List.fromList(k.asListView()));
+  } finally {
+    sk.zeroMemory();
+    k.zeroMemory();
+    k.dispose();
+    pk.dispose();
+    sk.dispose();
+  }
+}
+
+/// A boxed payload: to a contact, under the pair's keys, with their
 /// `recipient` tag at the node it goes to.
-Uint8List sealBox(
-  PrecalculatedBox pair,
-  int recipient,
-  Uint8List nonce,
-  List<int> plain,
-) {
+Uint8List sealBox(SivKeys pair, int recipient, List<int> plain) {
   if (boxOverhead + plain.length > maxAppPayload) {
     throw const BadPayload('too long');
   }
-  return Uint8List.fromList([
-    formatByte(Form.boxed),
-    recipient,
-    ...nonce,
-    ...pair.easy(message: Uint8List.fromList(plain), nonce: nonce),
-  ]);
+  return pair.seal(Form.boxed, recipient, plain);
 }
 
 /// The plaintext of a boxed payload, or throws if the pair is not the
 /// one.
-Uint8List openBox(PrecalculatedBox pair, List<int> payload) {
-  if (formOf(payload) != Form.boxed || payload.length < boxOverhead) {
+Uint8List openBox(SivKeys pair, List<int> payload) {
+  if (formOf(payload) != Form.boxed || payload.length > maxPayload) {
     throw const BadPayload('not boxed');
   }
-  try {
-    return pair.openEasy(
-      cipherText: Uint8List.fromList(payload.sublist(headLen + nonceLen)),
-      nonce: Uint8List.fromList(payload.sublist(headLen, headLen + nonceLen)),
-    );
-  } on SodiumException {
-    throw const BadPayload('does not open');
-  }
+  return pair.open(payload) ?? (throw const BadPayload('does not open'));
 }
 
 /// A first message to `to`, in a sealed box, with their `recipient` tag
@@ -229,37 +328,31 @@ class Fetch {
   static const plainLen = 4 + Address.len + 1;
   static const len = boxOverhead + plainLen;
 
-  /// The fetch as a payload under the mailbox key, for `home`, the
-  /// requester's recipient tag at its home node.
-  Uint8List seal(Sodium s, SecureKey key, int home, Uint8List nonce) =>
-      Uint8List.fromList([
-        formatByte(Form.fetch),
-        home,
-        ...nonce,
-        ...s.crypto.secretBox.easy(
-          message: Uint8List.fromList([
-            ...be(sent, 4),
-            ...address.encode(),
-            recipient,
-          ]),
-          nonce: nonce,
-          key: key,
-        ),
+  /// The fetch as a payload under the mailbox key's keys, for `home`,
+  /// the requester's recipient tag at its home node.
+  Uint8List seal(Sodium s, SecureKey key, int home) {
+    final keys = SivKeys.of(s, key);
+    try {
+      return keys.seal(Form.fetch, home, [
+        ...be(sent, 4),
+        ...address.encode(),
+        recipient,
       ]);
+    } finally {
+      keys.dispose();
+    }
+  }
 
   static Fetch open(Sodium s, SecureKey key, List<int> payload) {
     if (formOf(payload) != Form.fetch || payload.length != len) {
       throw const BadPayload('not a fetch');
     }
+    final keys = SivKeys.of(s, key);
     final Uint8List b;
     try {
-      b = s.crypto.secretBox.openEasy(
-        cipherText: Uint8List.fromList(payload.sublist(headLen + nonceLen)),
-        nonce: Uint8List.fromList(payload.sublist(headLen, headLen + nonceLen)),
-        key: key,
-      );
-    } on SodiumException {
-      throw const BadPayload('does not open');
+      b = keys.open(payload) ?? (throw const BadPayload('does not open'));
+    } finally {
+      keys.dispose();
     }
     final a = b.sublist(4, 4 + Address.len);
     return Fetch(

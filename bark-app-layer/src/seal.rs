@@ -1,7 +1,7 @@
 //! The payload's four forms, their format byte and the recipient tag
 //! (spec "The payload").
 
-use blake2::digest::consts::{U16, U24};
+use blake2::digest::consts::{U10, U16, U24};
 use blake2::digest::Mac;
 use blake2::{Blake2b, Blake2bMac, Digest};
 use crypto_box::aead::generic_array::GenericArray;
@@ -9,8 +9,10 @@ use crypto_box::aead::AeadCore;
 use crypto_box::aead::{AeadInPlace, KeyInit};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
 use crypto_secretbox::XSalsa20Poly1305;
+use curve25519_dalek::montgomery::MontgomeryPoint;
+use subtle::ConstantTimeEq;
 
-use crate::keys::KEY_LEN;
+use crate::keys::{kdf, KEY_LEN};
 use crate::{be, Address, Error, Identity, MAX_APP_PAYLOAD, MAX_PAYLOAD, VERSION};
 use bark_proto::NodeId;
 
@@ -67,13 +69,16 @@ pub fn recipient_of(payload: &[u8]) -> Option<u8> {
     payload.get(RECIPIENT_AT).copied()
 }
 
-/// Bytes of a nonce.
+/// Bytes of a nonce of XSalsa20, the stream every form uses.
 pub const NONCE_LEN: usize = 24;
 /// Bytes of a tag.
 pub const TAG_LEN: usize = 16;
+/// Bytes of `siv`, the one value that is a boxed payload's or a fetch's
+/// nonce and its proof.
+pub const SIV_LEN: usize = 16;
 
-/// Bytes a boxed payload adds to its plaintext.
-pub const BOX_OVERHEAD: usize = HEAD_LEN + NONCE_LEN + TAG_LEN;
+/// Bytes a boxed payload or a fetch adds to its plaintext.
+pub const BOX_OVERHEAD: usize = HEAD_LEN + SIV_LEN;
 /// Bytes an introduction adds to its plaintext.
 pub const INTRO_OVERHEAD: usize = HEAD_LEN + KEY_LEN + TAG_LEN;
 /// Bytes of a reply's count of the items still unsent after its batch.
@@ -89,10 +94,110 @@ pub const MAX_BOX_PLAIN: usize = MAX_APP_PAYLOAD - BOX_OVERHEAD;
 /// The longest plaintext of an introduction.
 pub const MAX_INTRO_PLAIN: usize = MAX_APP_PAYLOAD - INTRO_OVERHEAD;
 
-/// The shared key of two identities, which `crypto_box_beforenm` makes
-/// once per contact: the receiver tries each contact's.
-pub fn pair(their: &PublicKey, mine: &SecretKey) -> SalsaBox {
-    SalsaBox::new(their, mine)
+/// The two keys a boxed payload or a fetch is made with, both derived
+/// from one shared key: `siv` is hashed under one and the stream runs
+/// under the other (spec "The payload").
+#[derive(Clone)]
+pub struct SivKeys {
+    pub(crate) mac: [u8; KEY_LEN],
+    pub(crate) enc: [u8; KEY_LEN],
+}
+
+impl SivKeys {
+    /// The keys derived from `shared`: a pair's shared key, or the
+    /// mailbox key.
+    pub fn of(shared: &[u8; KEY_LEN]) -> SivKeys {
+        SivKeys {
+            mac: kdf(shared, 1, b"bark-mac"),
+            enc: kdf(shared, 2, b"bark-enc"),
+        }
+    }
+
+    /// The hash keyed with the MAC key, as `crypto_generichash` makes it
+    /// to 16 bytes: `siv`.
+    fn siv(&self, format: u8, plain: &[u8]) -> [u8; SIV_LEN] {
+        let mut mac = <Blake2bMac<U16> as Mac>::new_from_slice(&self.mac)
+            .expect("a 32-byte key is BLAKE2b's");
+        mac.update(&[format]);
+        mac.update(plain);
+        mac.finalize().into_bytes().into()
+    }
+
+    /// `siv` and zeros as the stream's nonce.
+    fn nonce(siv: &[u8]) -> [u8; NONCE_LEN] {
+        let mut n = [0u8; NONCE_LEN];
+        n[..SIV_LEN].copy_from_slice(siv);
+        n
+    }
+}
+
+/// The shared key of two identities, `crypto_box_beforenm`: X25519 of
+/// the two keys, then HSalsa20 of it over 16 zero bytes. A public key
+/// of small order gives the zero point, which libsodium refuses.
+pub(crate) fn beforenm(their: &PublicKey, mine: &SecretKey) -> Result<[u8; KEY_LEN], Error> {
+    let shared = MontgomeryPoint(*their.as_bytes()).mul_clamped(mine.to_bytes());
+    if bool::from(shared.as_bytes().ct_eq(&[0u8; KEY_LEN])) {
+        return Err(Error::Malformed);
+    }
+    Ok(salsa20::hsalsa::<U10>(shared.as_bytes().into(), &GenericArray::default()).into())
+}
+
+/// The keys of two identities' boxed payloads, made once per contact
+/// from `crypto_box_beforenm`: the receiver tries each contact's. Both
+/// directions of a pair have the same keys.
+pub fn pair(their: &PublicKey, mine: &SecretKey) -> Result<SivKeys, Error> {
+    beforenm(their, mine).map(|k| SivKeys::of(&k))
+}
+
+/// XSalsa20 over `buf` under `key` with `nonce`, as
+/// `crypto_secretbox_detached` encrypts, its tag discarded: the keystream
+/// from its 33rd byte, the first 32 being the tag's key. Its own inverse.
+pub fn stream(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], buf: &mut [u8]) {
+    // Nothing to authenticate: only a longer message than XSalsa20 counts
+    // fails, and a payload is far shorter.
+    let _ = secretbox(key).encrypt_in_place_detached(GenericArray::from_slice(nonce), &[], buf);
+}
+
+/// `plain` as a payload of `form` under `keys`, for the `recipient` tag,
+/// into `out`: the format byte, the tag, `siv`, the ciphertext; its length.
+fn siv_seal(
+    keys: &SivKeys,
+    form: Form,
+    recipient: u8,
+    plain: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Error> {
+    let at = HEAD_LEN + SIV_LEN;
+    let len = at + plain.len();
+    if out.len() < len {
+        return Err(Error::TooLong);
+    }
+    let siv = keys.siv(form.format(), plain);
+    out[0] = form.format();
+    out[RECIPIENT_AT] = recipient;
+    out[HEAD_LEN..at].copy_from_slice(&siv);
+    out[at..len].copy_from_slice(plain);
+    stream(&keys.enc, &SivKeys::nonce(&siv), &mut out[at..len]);
+    Ok(len)
+}
+
+/// The plaintext of `payload` under `keys`, into `out`; its length. The
+/// plaintext is taken only once `siv` checks, and is wiped if it does not.
+fn siv_open(keys: &SivKeys, payload: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+    let at = HEAD_LEN + SIV_LEN;
+    let len = payload.len().checked_sub(at).ok_or(Error::Malformed)?;
+    if out.len() < len {
+        return Err(Error::TooLong);
+    }
+    let siv = &payload[HEAD_LEN..at];
+    let plain = &mut out[..len];
+    plain.copy_from_slice(&payload[at..]);
+    stream(&keys.enc, &SivKeys::nonce(siv), plain);
+    if !bool::from(keys.siv(payload[0], plain).ct_eq(siv)) {
+        plain.fill(0);
+        return Err(Error::Open);
+    }
+    Ok(len)
 }
 
 /// Writes `plain` sealed into `out` after `head`, the tag first as
@@ -142,16 +247,6 @@ fn open_into<A: AeadInPlace + AeadCore<NonceSize = U24>>(
     Ok(len)
 }
 
-fn nonce_at(payload: &[u8]) -> Result<[u8; NONCE_LEN], Error> {
-    let mut n = [0u8; NONCE_LEN];
-    n.copy_from_slice(
-        payload
-            .get(HEAD_LEN..HEAD_LEN + NONCE_LEN)
-            .ok_or(Error::Malformed)?,
-    );
-    Ok(n)
-}
-
 /// A form's head: its format byte, the recipient tag and `rest`.
 fn head<const N: usize>(form: Form, recipient: u8, rest: &[u8]) -> [u8; N] {
     let mut head = [0u8; N];
@@ -161,34 +256,27 @@ fn head<const N: usize>(form: Form, recipient: u8, rest: &[u8]) -> [u8; N] {
     head
 }
 
-/// A boxed payload (form 0) of `plain` under a pair's key, for the
-/// `recipient` tag, with a random `nonce`, into `out`; its length.
+/// A boxed payload (form 0) of `plain` under a pair's keys, for the
+/// `recipient` tag, into `out`; its length.
 pub fn seal_box(
-    pair: &SalsaBox,
+    pair: &SivKeys,
     recipient: u8,
-    nonce: &[u8; NONCE_LEN],
     plain: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Error> {
     if plain.len() > MAX_BOX_PLAIN {
         return Err(Error::TooLong);
     }
-    let head: [u8; HEAD_LEN + NONCE_LEN] = head(Form::Boxed, recipient, nonce);
-    seal_into(pair, nonce, &head, plain, out)
+    siv_seal(pair, Form::Boxed, recipient, plain, out)
 }
 
-/// The plaintext of a boxed payload under a pair's key, into `out`; its
+/// The plaintext of a boxed payload under a pair's keys, into `out`; its
 /// length, or [`Error::Open`] if the pair is not the one.
-pub fn open_box(pair: &SalsaBox, payload: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+pub fn open_box(pair: &SivKeys, payload: &[u8], out: &mut [u8]) -> Result<usize, Error> {
     if Form::of(payload)? != Form::Boxed || payload.len() > MAX_PAYLOAD {
         return Err(Error::Malformed);
     }
-    open_into(
-        pair,
-        &nonce_at(payload)?,
-        &payload[HEAD_LEN + NONCE_LEN..],
-        out,
-    )
+    siv_open(pair, payload, out)
 }
 
 /// `crypto_box_seal`'s nonce: BLAKE2b-192 of the ephemeral key and the
@@ -273,33 +361,28 @@ impl Fetch {
         b
     }
 
-    /// The fetch as a payload (form 2) under the mailbox `key`, with a
-    /// random `nonce`, for `home`, the requester's recipient tag at its
-    /// home node.
-    pub fn seal(
-        &self,
-        key: &[u8; KEY_LEN],
-        home: u8,
-        nonce: &[u8; NONCE_LEN],
-    ) -> Result<[u8; Self::LEN], Error> {
-        let head: [u8; HEAD_LEN + NONCE_LEN] = head(Form::Fetch, home, nonce);
+    /// The fetch as a payload (form 2) under the keys of the mailbox
+    /// `key`, for `home`, the requester's recipient tag at its home node.
+    pub fn seal(&self, key: &[u8; KEY_LEN], home: u8) -> [u8; Self::LEN] {
         let mut out = [0u8; Self::LEN];
-        seal_into(&secretbox(key), nonce, &head, &self.plain(), &mut out)?;
-        Ok(out)
+        // A plaintext of its own length fits.
+        let _ = siv_seal(
+            &SivKeys::of(key),
+            Form::Fetch,
+            home,
+            &self.plain(),
+            &mut out,
+        );
+        out
     }
 
-    /// The fetch in `payload`, if it is one under `key`.
+    /// The fetch in `payload`, if it is one under the mailbox `key`.
     pub fn open(key: &[u8; KEY_LEN], payload: &[u8]) -> Result<Fetch, Error> {
         if Form::of(payload)? != Form::Fetch || payload.len() != Self::LEN {
             return Err(Error::Malformed);
         }
         let mut b = [0u8; Self::PLAIN_LEN];
-        open_into(
-            &secretbox(key),
-            &nonce_at(payload)?,
-            &payload[HEAD_LEN + NONCE_LEN..],
-            &mut b,
-        )?;
+        siv_open(&SivKeys::of(key), payload, &mut b)?;
         Ok(Fetch {
             sent: be(&b[..4]),
             address: Address::decode(&b[4..])?,

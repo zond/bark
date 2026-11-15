@@ -104,11 +104,8 @@ void main() {
       p.contacts.byKey(hex(node.friend.identity))!;
 
   /// The box key between the phone and the fake friend.
-  PrecalculatedBox friendPair(Phone p, FakeNode node) =>
-      sodium.crypto.box.precalculate(
-        publicKey: p.me.identity,
-        secretKey: node.friend.pair.secretKey,
-      );
+  SivKeys friendPair(Phone p, FakeNode node) =>
+      SivKeys.pair(sodium, p.me.identity, node.friend.pair.secretKey);
 
   /// A boxed message from the fake friend to the phone.
   Uint8List fromFriend(
@@ -120,7 +117,6 @@ void main() {
   ]) => sealBox(
     friendPair(p, node),
     0,
-    sodium.randombytes.buf(nonceLen),
     writePlain(
       Header(greater(node.friend.identity, p.me.identity), sent, from),
       rs,

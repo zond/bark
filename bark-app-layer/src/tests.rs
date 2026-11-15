@@ -2,6 +2,7 @@ use std::format;
 use std::string::String;
 use std::vec::Vec;
 
+use crypto_box::aead::{AeadInPlace, KeyInit};
 use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
@@ -29,18 +30,18 @@ fn vectors_file_is_current() {
 #[test]
 fn the_sizes_are_the_notes() {
     assert_eq!(MAX_APP_PAYLOAD, 202);
-    assert_eq!(seal::BOX_OVERHEAD, 42);
+    assert_eq!(seal::BOX_OVERHEAD, 18);
     assert_eq!(seal::INTRO_OVERHEAD, 50);
     assert_eq!(seal::REPLY_OVERHEAD, 23);
     assert_eq!(seal::NOTHING_NEW_LEN, 18);
-    assert_eq!(Fetch::LEN, 60);
+    assert_eq!(Fetch::LEN, 36);
     assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 100);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
     // The longest text: 202 less the box, the header and the record's type.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 154);
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 178);
     // A part's: one byte more, its number and the count.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 153);
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 177);
 }
 
 #[test]
@@ -111,9 +112,9 @@ fn boxed_text(from: &Keys, to: &Keys, s: &str) -> Vec<u8> {
     })
     .unwrap();
     let len = w.finish();
-    let pair = seal::pair(&PublicKey::from(to.identity.0), &from.secret_key());
+    let pair = seal::pair(&PublicKey::from(to.identity.0), &from.secret_key()).unwrap();
     let mut out = [0u8; MAX_PAYLOAD];
-    let m = seal::seal_box(&pair, 7, &[9; 24], &b[..len], &mut out).unwrap();
+    let m = seal::seal_box(&pair, 7, &b[..len], &mut out).unwrap();
     out[..m].to_vec()
 }
 
@@ -123,7 +124,8 @@ fn a_box_opens_for_its_pair_only() {
     let carol = Keys::from_seed(&[3; 16]);
     let payload = boxed_text(&f.alice, &f.bob, "hi");
     let mut out = [0u8; MAX_PAYLOAD];
-    let bob_from_alice = seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key());
+    let bob_from_alice =
+        seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key()).unwrap();
     let n = seal::open_box(&bob_from_alice, &payload, &mut out).unwrap();
     let (h, mut r) = plain::read(&out[..n]).unwrap();
     assert_eq!(
@@ -138,7 +140,8 @@ fn a_box_opens_for_its_pair_only() {
             bytes: b"hi"
         }))
     );
-    let bob_from_carol = seal::pair(&PublicKey::from(carol.identity.0), &f.bob.secret_key());
+    let bob_from_carol =
+        seal::pair(&PublicKey::from(carol.identity.0), &f.bob.secret_key()).unwrap();
     assert_eq!(
         seal::open_box(&bob_from_carol, &payload, &mut out),
         Err(Error::Open)
@@ -168,7 +171,7 @@ fn a_header_names_where_its_sender_writes_from_not_their_cards_home() {
 #[test]
 fn a_changed_byte_does_not_open() {
     let f = fixture();
-    let pair = seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key());
+    let pair = seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key()).unwrap();
     let payload = boxed_text(&f.alice, &f.bob, "hi");
     // The recipient tag is not sealed: changed, it only sends the payload
     // to a phone that cannot open it.
@@ -190,7 +193,8 @@ fn the_direction_bit_tells_a_reflected_message() {
     // Alice's message to Bob, sent back to Alice, opens under the same
     // pair key; its bit says its sender was Alice.
     let payload = boxed_text(&f.alice, &f.bob, "hi");
-    let alice_from_bob = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key());
+    let alice_from_bob =
+        seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key()).unwrap();
     let mut out = [0u8; MAX_PAYLOAD];
     let n = seal::open_box(&alice_from_bob, &payload, &mut out).unwrap();
     let (h, _) = plain::read(&out[..n]).unwrap();
@@ -227,14 +231,14 @@ fn our_sealed_box_is_the_librarys() {
 #[test]
 fn too_long_is_refused() {
     let f = fixture();
-    let pair = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key());
+    let pair = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key()).unwrap();
     let mut out = [0u8; MAX_PAYLOAD];
     let plain = [0u8; seal::MAX_BOX_PLAIN + 1];
     assert_eq!(
-        seal::seal_box(&pair, 7, &[0; 24], &plain, &mut out),
+        seal::seal_box(&pair, 7, &plain, &mut out),
         Err(Error::TooLong)
     );
-    let n = seal::seal_box(&pair, 7, &[0; 24], &plain[1..], &mut out).unwrap();
+    let n = seal::seal_box(&pair, 7, &plain[1..], &mut out).unwrap();
     assert_eq!(n, MAX_APP_PAYLOAD);
     assert_eq!(
         seal::seal_reply(
@@ -259,10 +263,92 @@ fn a_fetch_opens_under_its_key_only() {
         address: f.away,
         recipient: 9,
     };
-    let p = fetch.seal(&f.alice.mailbox, 7, &[1; 24]).unwrap();
+    let p = fetch.seal(&f.alice.mailbox, 7);
     assert_eq!(seal::recipient_of(&p), Some(7));
     assert_eq!(Fetch::open(&f.alice.mailbox, &p), Ok(fetch));
     assert_eq!(Fetch::open(&f.bob.mailbox, &p), Err(Error::Open));
+    // A bit changed anywhere but the recipient tag, `siv` too, is refused.
+    for i in (1..p.len()).filter(|&i| i != seal::RECIPIENT_AT) {
+        let mut q = p;
+        q[i] ^= 0x80;
+        assert_eq!(Fetch::open(&f.alice.mailbox, &q), Err(Error::Open), "{i}");
+    }
+}
+
+/// Our `crypto_box_beforenm` is the one the crypto_box crate, checked
+/// against libsodium, keeps inside: its box and a secretbox under our key
+/// make the same bytes.
+#[test]
+fn our_shared_key_is_crypto_box_s() {
+    let f = fixture();
+    let (theirs, mine) = (PublicKey::from(f.bob.identity.0), f.alice.secret_key());
+    let key = seal::beforenm(&theirs, &mine).unwrap();
+    let nonce = [7u8; seal::NONCE_LEN];
+    let mut a = *b"the same bytes";
+    let mut b = a;
+    let ta = crypto_box::SalsaBox::new(&theirs, &mine)
+        .encrypt_in_place_detached((&nonce).into(), &[], &mut a)
+        .unwrap();
+    let tb = crypto_secretbox::XSalsa20Poly1305::new((&key).into())
+        .encrypt_in_place_detached((&nonce).into(), &[], &mut b)
+        .unwrap();
+    assert_eq!((a, ta), (b, tb));
+}
+
+/// Both people of a pair derive the same two keys, and they differ from
+/// each other and from the shared key.
+#[test]
+fn both_sides_of_a_pair_have_the_same_keys() {
+    let f = fixture();
+    let ab = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key()).unwrap();
+    let ba = seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key()).unwrap();
+    assert_eq!((ab.mac, ab.enc), (ba.mac, ba.enc));
+    let shared = seal::beforenm(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key()).unwrap();
+    assert!(ab.mac != ab.enc && ab.mac != shared && ab.enc != shared);
+}
+
+/// A public key of small order gives no shared key, as libsodium's
+/// `crypto_box_beforenm` refuses it.
+#[test]
+fn a_public_key_of_small_order_has_no_pair() {
+    let me = fixture().alice.secret_key();
+    for small in [[0u8; 32], {
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        one
+    }] {
+        assert!(seal::pair(&PublicKey::from(small), &me).is_err());
+    }
+}
+
+/// One plaintext makes one payload: no randomness enters. The direction
+/// bit makes a message and its reflection two plaintexts.
+#[test]
+fn a_box_is_its_plaintext_s_alone() {
+    let f = fixture();
+    assert_eq!(
+        boxed_text(&f.alice, &f.bob, "hi"),
+        boxed_text(&f.alice, &f.bob, "hi")
+    );
+    let ab = boxed_text(&f.alice, &f.bob, "hi");
+    let ba = boxed_text(&f.bob, &f.alice, "hi");
+    assert_ne!(
+        ab[seal::HEAD_LEN..seal::BOX_OVERHEAD],
+        ba[seal::HEAD_LEN..seal::BOX_OVERHEAD]
+    );
+}
+
+/// A box that does not check leaves nothing of its plaintext behind.
+#[test]
+fn a_forged_siv_opens_nothing() {
+    let f = fixture();
+    let pair = seal::pair(&PublicKey::from(f.alice.identity.0), &f.bob.secret_key()).unwrap();
+    let mut p = boxed_text(&f.alice, &f.bob, "hi");
+    p[seal::HEAD_LEN] ^= 1;
+    let mut out = [0xaau8; MAX_PAYLOAD];
+    assert_eq!(seal::open_box(&pair, &p, &mut out), Err(Error::Open));
+    let len = p.len() - seal::BOX_OVERHEAD;
+    assert!(out[..len].iter().all(|&b| b == 0));
 }
 
 #[test]
@@ -597,24 +683,25 @@ fn a_part_out_of_its_count_is_refused() {
 #[test]
 fn the_longest_parts_fill_a_box() {
     let f = fixture();
-    let pair = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key());
+    let pair = seal::pair(&PublicKey::from(f.bob.identity.0), &f.alice.secret_key()).unwrap();
     let h = Header {
         greater: true,
         sent: 1,
         address: None,
     };
-    for (len, fits) in [(153, true), (154, false)] {
+    let part = seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2;
+    for (len, fits) in [(part, true), (part + 1, false)] {
         let mut b = [0u8; MAX_PAYLOAD];
         let mut w = Writer::new(&mut b, &h).unwrap();
         w.push(&Record::Text {
             encoding: Encoding::Utf8,
             part: Some(Part { number: 1, of: 2 }),
-            bytes: &[b'a'; 154][..len],
+            bytes: &[b'a'; MAX_PAYLOAD][..len],
         })
         .unwrap();
         let n = w.finish();
         let mut out = [0u8; MAX_PAYLOAD];
-        let r = seal::seal_box(&pair, 7, &[0; 24], &b[..n], &mut out);
+        let r = seal::seal_box(&pair, 7, &b[..n], &mut out);
         assert_eq!(
             r.map(|m| m == MAX_APP_PAYLOAD),
             if fits { Ok(true) } else { Err(Error::TooLong) }
@@ -678,8 +765,7 @@ mod mailbox {
             address: fixture().away,
             recipient: 9,
         }
-        .seal(key, 7, &[sent as u8; 24])
-        .unwrap()
+        .seal(key, 7)
     }
 
     /// What a requester gets from a reply.
@@ -1361,8 +1447,7 @@ mod flash_ring {
             address: fixture().away,
             recipient: 9,
         }
-        .seal(&fixture().alice.mailbox, 7, &[sent as u8; 24])
-        .unwrap()
+        .seal(&fixture().alice.mailbox, 7)
     }
 
     fn alice() -> Person {

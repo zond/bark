@@ -37,14 +37,12 @@ class Messenger {
 
   /// `crypto_box_beforenm` of each contact, made once; keyed by both
   /// identities, so a restored identity makes its own.
-  final Map<String, PrecalculatedBox> _pairs = {};
+  final Map<String, SivKeys> _pairs = {};
 
-  PrecalculatedBox _pair(List<int> them) => _pairs.putIfAbsent(
+  SivKeys _pair(List<int> them) => _pairs.putIfAbsent(
     '${me.key}/${hex(them)}',
-    () => sodium.crypto.box.precalculate(
-      publicKey: Uint8List.fromList(them),
-      secretKey: me.keys.pair.secretKey,
-    ),
+    () =>
+        SivKeys.pair(sodium, Uint8List.fromList(them), me.keys.pair.secretKey),
   );
 
   /// Seals `records` to `c` at `dst`: boxed once `c` holds the person's
@@ -80,12 +78,7 @@ class Messenger {
       return (sealIntro(sodium, c.card.identity, to, plain), sent);
     }
     return (
-      sealBox(
-        _pair(c.card.identity),
-        to,
-        sodium.randombytes.buf(nonceLen),
-        writePlain(header, records),
-      ),
+      sealBox(_pair(c.card.identity), to, writePlain(header, records)),
       sent,
     );
   }
@@ -212,7 +205,6 @@ class Messenger {
       sodium,
       me.keys.mailbox,
       recipientTag(sodium, me.identity, home.id),
-      sodium.randombytes.buf(nonceLen),
     );
     await me.fetched(sent);
     await session.queue(
