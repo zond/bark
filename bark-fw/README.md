@@ -1311,9 +1311,10 @@ Receiving; `bark-image/src/layout.rs`; `bark_app_layer::mailbox`,
 own person's from the ring, by the tag its record keeps, after the last
 it confirmed; a guest reads its own by tag after the number it keeps. A
 slot's mark is a byte, a bit for each of the eight records, written set
-for the records whose tag the item carries; a fetch that opens under one
-record's mailbox key is answered with a batch of that record's items
-whose bit is set, sealed again, through the core's one application send
+for the records whose tag the item carries when a reply can carry it; a
+fetch that opens under one record's mailbox key is answered with a
+summary and a batch of that record's items whose bit is set, encrypted
+again, through the core's one application send
 slot, the phone's own message first (`src/node.rs`, `LinkApp::take`),
 the rounds of several records in turn. An item sent to a record, or
 confirmed by its phone, has that record's bit cleared, a program of
