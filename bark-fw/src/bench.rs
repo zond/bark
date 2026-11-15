@@ -551,9 +551,14 @@ impl<'a> bark_driver::Radio for Logged<Radio<'a>> {
     type Error = <Radio<'a> as bark_driver::Radio>::Error;
     const DEAF_TO: Option<NodeId> = <Radio<'a> as bark_driver::Radio>::DEAF_TO;
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), Self::Error> {
+    async fn listen(&mut self, channel: Channel) -> Result<bool, Self::Error> {
         self.listening = Some(channel);
         self.radio.listen(channel).await
+    }
+
+    async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        self.listening = Some(channel);
+        self.radio.listen_afresh(channel).await
     }
 
     async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error> {

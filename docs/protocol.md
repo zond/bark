@@ -254,7 +254,7 @@ peers, since what hurts a node is busy time at its own receiver.
 |---|---|
 | reading | 1 if RSSI > the floor of all channels + 6 dB (≈−112 dBm), else 0 |
 | a reading of another channel | taken four symbol periods, 1.02 ms, after the receiver starts on it |
-| a reading of the home channel | taken as the radio listens, without a restart |
+| a reading of the home channel | taken four symbol periods after the receiver last started there and kept until asked for, for one reading and at most 13 s; with none, the receiver is started again for it |
 | sweep | one channel a second, channels in turn: each channel every 13 s |
 | window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
 | a channel's noise floor | the 10th percentile of that channel's readings in 1 dB bins, each bin halved whenever they hold two windows of the channel's readings, about an hour; while it has none, the floor of all channels; −118 dBm before the first reading (open item O11) |
@@ -279,9 +279,19 @@ no packet the carrier does not already.
 
 The receiver's RSSI reads nothing for about 150 µs after it starts, then
 climbs a step a symbol period, and reads a strong signal as one fixed
-value until about 1 ms; from four symbol periods it reads the level, as
-the settled home channel does. Read sooner, every other channel looks
-quieter than home (roadmap D86, `bench-2026-10-30.md`).
+value until about 1 ms; from four symbol periods it reads the level.
+Read sooner, every other channel looks quieter than home (roadmap D86,
+`bench-2026-10-30.md`). A receiver that has run a while can instead read
+one fixed level, about −77 dBm whatever the channel's, until it is
+started again. On the bench on 2026-11-15 it did so in 1 % of home
+readings taken within 30 ms of a start and in 20 % and more of those
+taken over a second after one, each a busy reading: home looked 5 to 30
+points busier than the rest, and every relay moved every 30 to 45
+minutes. Every reading, home's too, is
+therefore taken the same four symbol periods after the receiver starts
+on its channel. Home's costs no start of its own: the receiver starts
+there after each reading of another channel, about once a second, and
+after each transmission (roadmap D225).
 
 A reading of another channel takes 1.9 ms off the home channel (roadmap
 D88): retune there (standby, frequency, receive) 0.39 ms, four symbol
@@ -306,11 +316,11 @@ D55):
 - Whether a reading fell in the node's own packet is known only when
   that packet ends, so a home reading is held until the next, 13 s
   later, longer than any packet (roadmap D24).
-- The radio keeps receiving while it reads its own channel
-  (`core-interface.md`, Radio, rules 7 and 8): a home reading inside a
-  packet addressed to the node is discarded, one inside any other
-  counts. A packet for the node that fails its CRC cannot be told from
-  someone else's, and counts.
+- The radio keeps receiving while the node is given its home reading
+  (`core-interface.md`, Radio, rules 7 and 8), and the reading is judged
+  by when it is given: one given inside a packet addressed to the node is
+  discarded, one inside any other counts. A packet for the node that
+  fails its CRC cannot be told from someone else's, and counts.
 
 ### Channel at boot
 

@@ -13,7 +13,8 @@ use std::rc::Rc;
 use std::task::Poll;
 
 use bark_driver::{
-    App, Clock, Driver, Gps, Heard, Outgoing, Radio, Ready, Request, MAX_AIRTIME, RSSI_DWELL,
+    App, Clock, Driver, Gps, Heard, Kept, Outgoing, Radio, Ready, Request, KEPT_FOR, MAX_AIRTIME,
+    RSSI_DWELL,
 };
 use bark_proto::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::update::{Image, Piece};
@@ -70,6 +71,11 @@ struct Inner {
     ops: Vec<(Instant, Op)>,
     /// The power of the last transmit.
     dbm: Option<i8>,
+    /// From how long after it starts the receiver reads [`STUCK_DBM`]
+    /// whatever the channel's level, if it does.
+    stuck_after: Option<Duration>,
+    /// The readings the driver handed the core, as it told the radio.
+    handed: Handed,
 }
 
 #[derive(Clone, Default)]
@@ -235,10 +241,16 @@ impl FakeRadio {
 impl Radio for FakeRadio {
     type Error = Infallible;
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), Infallible> {
+    // Starts again whatever it did: the driver asks only when it takes
+    // the radio as not listening there.
+    async fn listen(&mut self, channel: Channel) -> Result<bool, Infallible> {
         self.world.op(Op::Listen(channel));
         self.rx(channel, false);
-        Ok(())
+        Ok(true)
+    }
+
+    async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Infallible> {
+        self.listen(channel).await.map(drop)
     }
 
     // Hears every frame: which ones a cycle catches is the chip's affair
@@ -286,7 +298,18 @@ impl Radio for FakeRadio {
             (w.listening.expect("listening"), w.listening_since)
         };
         self.world.op(Op::Rssi(ch));
-        Ok(climb(self.world.now().since(since)))
+        let running = self.world.now().since(since);
+        let stuck = self.world.0.borrow().stuck_after;
+        match stuck {
+            Some(after) if running >= after => Ok(STUCK_DBM),
+            _ => Ok(climb(running)),
+        }
+    }
+
+    async fn handed(&mut self, channel: Channel, dbm: i16, kept: Option<Kept>) {
+        let mut w = self.world.0.borrow_mut();
+        let now = w.now;
+        w.handed.push((now, channel, dbm, kept));
     }
 
     async fn transmit(&mut self, frame: &Frame, dbm: i8) -> Result<(), Infallible> {
@@ -316,6 +339,10 @@ fn climb(since: Duration) -> i16 {
         _ => -80,
     }
 }
+
+/// What a receiver that has run a while can read on any channel until it
+/// is started again (roadmap D225).
+const STUCK_DBM: i16 = -77;
 
 #[derive(Default)]
 struct TestApp {
@@ -476,6 +503,27 @@ fn run_until<C: Core, R: Radio<Error = Infallible>>(
     }
 }
 
+/// When the driver reads the receiver that started at `t`.
+fn dwell(t: Instant) -> Instant {
+    t + RSSI_DWELL
+}
+
+/// The radio's operations but the driver's own readings of the resting
+/// channel's receiver a dwell after it starts.
+fn asked_ops(world: &World, home: Channel) -> Vec<(Instant, Op)> {
+    let ops = world.ops();
+    let own = |i: usize| match ops[i] {
+        (t, Op::Rssi(c)) if c == home => ops[..i]
+            .iter()
+            .any(|&(s, ref o)| *o == Op::Listen(home) && dwell(s) == t),
+        _ => false,
+    };
+    (0..ops.len())
+        .filter(|&i| !own(i))
+        .map(|i| ops[i].clone())
+        .collect()
+}
+
 fn ch(k: u8) -> Channel {
     Channel::new(k).expect("in the plan")
 }
@@ -618,7 +666,13 @@ fn wakeups_fire_when_due() {
             ],
             "timer early by {early:?}"
         );
-        assert_eq!(world.ops(), [(Instant::ZERO, Op::Listen(ch(3)))]);
+        assert_eq!(
+            world.ops(),
+            [
+                (Instant::ZERO, Op::Listen(ch(3))),
+                (dwell(Instant::ZERO), Op::Rssi(ch(3)))
+            ]
+        );
     }
 }
 
@@ -651,8 +705,12 @@ impl Radio for DeafRadio {
     type Error = Infallible;
     const DEAF_TO: Option<NodeId> = Some(DEAF);
 
-    async fn listen(&mut self, channel: Channel) -> Result<(), Infallible> {
+    async fn listen(&mut self, channel: Channel) -> Result<bool, Infallible> {
         self.0.listen(channel).await
+    }
+
+    async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Infallible> {
+        self.0.listen_afresh(channel).await
     }
 
     async fn sniff(&mut self, channel: Channel) -> Result<(), Infallible> {
@@ -792,8 +850,10 @@ fn a_transmit_goes_out_and_completes() {
         world.ops(),
         [
             (Instant::ZERO, Op::Listen(ch(3))),
+            (dwell(Instant::ZERO), Op::Rssi(ch(3))),
             (at_ms(10), Op::Transmit(frame(ch(5), b"out"))),
             (done, Op::Listen(ch(3))),
+            (dwell(done), Op::Rssi(ch(3))),
         ]
     );
 }
@@ -826,6 +886,7 @@ fn the_radio_lent_listens_again_at_the_next_step() {
         [
             (Instant::ZERO, Op::Listen(ch(3))),
             (Instant::ZERO, Op::Listen(ch(3))),
+            (dwell(Instant::ZERO), Op::Rssi(ch(3))),
         ]
     );
 }
@@ -856,12 +917,13 @@ fn a_check_waits_for_the_packet_in_progress() {
             (400_000, "wakeup"),
         ]
     );
-    assert_eq!(world.ops()[1], (end, Op::Lbt(ch(3))));
+    assert_eq!(asked_ops(&world, ch(3))[1], (end, Op::Lbt(ch(3))));
     assert_eq!(d.stats().held, 1);
 }
 
 /// A reading of another channel waits for the receiver to settle (300 µs
-/// reads 10 dB low); one of the resting channel is read without a restart.
+/// reads 10 dB low); one of the resting channel is the one the driver
+/// took a dwell after the receiver last started there, with no restart.
 #[test]
 fn a_reading_waits_for_the_receiver_to_settle() {
     assert_eq!(climb(Duration::from_micros(300)), -90);
@@ -871,15 +933,16 @@ fn a_reading_waits_for_the_receiver_to_settle() {
     core.then.push((at_ms(20), Action::Rssi(ch(3))));
     let mut d = driver(core, &world, Duration::ZERO);
     run_until(&mut d, &world, at_ms(100));
-    let read = at_ms(10) + RSSI_DWELL;
+    let read = dwell(at_ms(10));
     assert_eq!(
         world.ops(),
         [
             (Instant::ZERO, Op::Listen(ch(3))),
+            (dwell(Instant::ZERO), Op::Rssi(ch(3))),
             (at_ms(10), Op::Listen(ch(5))),
             (read, Op::Rssi(ch(5))),
             (read, Op::Listen(ch(3))),
-            (at_ms(20), Op::Rssi(ch(3))),
+            (dwell(read), Op::Rssi(ch(3))),
         ]
     );
     let samples: Vec<_> = seen(&d)
@@ -890,6 +953,135 @@ fn a_reading_waits_for_the_receiver_to_settle() {
     assert!(
         samples.iter().all(|(_, s)| s.ends_with("dbm: -80 }")),
         "{samples:?}"
+    );
+}
+
+/// The reading of the resting channel the core is given is the one taken
+/// a dwell after the receiver last started there, not one of the receiver
+/// as it runs, which can read a fixed level.
+#[test]
+fn a_home_reading_is_the_one_a_dwell_after_the_last_start() {
+    let world = World::default();
+    world.0.borrow_mut().stuck_after = Some(Duration::from_millis(5));
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(20), at_ms(40), at_ms(100)]);
+    core.send.push(at_ms(10));
+    core.then.push((at_ms(40), Action::Rssi(ch(3))));
+    let mut d = driver(core, &world, Duration::ZERO);
+    run_until(&mut d, &world, at_ms(100));
+    let back = at_ms(10) + time_on_air(3, MIN_PREAMBLE_SYMBOLS);
+    let kept = Kept {
+        age: at_ms(40).since(dwell(back)),
+        running: Some(at_ms(40).since(back)),
+    };
+    assert_eq!(
+        world.0.borrow().handed,
+        [(at_ms(40), ch(3), -80, Some(kept))]
+    );
+    assert!(seen(&d).contains(&(40_000, "RssiSample { channel: Channel(3), dbm: -80 }")));
+    assert!(
+        !world.ops().contains(&(at_ms(40), Op::Rssi(ch(3)))),
+        "the running receiver is not read"
+    );
+}
+
+/// A start during which a packet arrives keeps no reading of it: the
+/// energy would be the packet's. The reading before stands.
+#[test]
+fn a_start_with_a_packet_keeps_the_reading_before() {
+    let world = World::default();
+    let mut core = Scripted::new(ch(3), &[at_ms(10), at_ms(100), at_ms(200)]);
+    core.send.push(at_ms(10));
+    core.then.push((at_ms(100), Action::Rssi(ch(3))));
+    let mut d = driver(core, &world, Duration::ZERO);
+    let back = at_ms(10) + time_on_air(3, MIN_PREAMBLE_SYMBOLS);
+    // Its preamble starts inside the dwell after the return home.
+    let start = back + Duration::from_micros(300);
+    let airtime = time_on_air(20, MIN_PREAMBLE_SYMBOLS);
+    world.send(start + airtime, ch(3), &[5; 20]);
+    run_until(&mut d, &world, at_ms(200));
+    let handed = world.0.borrow().handed.clone();
+    let (_, _, _, kept) = handed[0];
+    assert_eq!(
+        kept.map(|k| k.age),
+        Some(at_ms(100).since(dwell(Instant::ZERO))),
+        "the boot's reading"
+    );
+    assert!(!world.ops().contains(&(dwell(back), Op::Rssi(ch(3)))));
+}
+
+/// The readings the driver handed the core, as it told the radio.
+type Handed = Vec<(Instant, Channel, i16, Option<Kept>)>;
+
+/// The readings the driver hands the core when it asks for the resting
+/// channel at each of `asks`, with no other radio work, and the radio's
+/// operations.
+fn home_readings(asks: &[Instant]) -> (Handed, Vec<(Instant, Op)>) {
+    let world = World::default();
+    let last = *asks.last().expect("one ask at least") + Duration::from_millis(10);
+    let mut wakes = asks.to_vec();
+    wakes.push(last);
+    let mut core = Scripted::new(ch(3), &wakes);
+    for &t in asks {
+        core.then.push((t, Action::Rssi(ch(3))));
+    }
+    let mut d = driver(core, &world, Duration::ZERO);
+    run_until(&mut d, &world, last);
+    let handed = world.0.borrow().handed.clone();
+    (handed, world.ops())
+}
+
+/// A reading of the resting channel asked for before the start's own is
+/// due waits for it, rather than start the receiver again.
+#[test]
+fn a_home_reading_waits_for_the_starts_own() {
+    let (handed, ops) = home_readings(&[Instant::from_micros(500)]);
+    let kept = Kept {
+        age: Duration::ZERO,
+        running: Some(RSSI_DWELL),
+    };
+    assert_eq!(handed, [(dwell(Instant::ZERO), ch(3), -80, Some(kept))]);
+    assert_eq!(
+        ops,
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (dwell(Instant::ZERO), Op::Rssi(ch(3))),
+        ]
+    );
+}
+
+/// A kept reading stands for less than a round of the sweep, and for one
+/// reading: past either, the receiver is started again and read a dwell
+/// later, as on another channel.
+#[test]
+fn a_kept_reading_is_handed_once_and_not_too_old() {
+    let boot = dwell(Instant::ZERO);
+    let last_in_time = boot + KEPT_FOR - Duration::from_micros(1);
+    let (handed, _) = home_readings(&[last_in_time]);
+    assert_eq!(
+        handed[0].3.map(|k| k.age),
+        Some(KEPT_FOR - Duration::from_micros(1))
+    );
+
+    let stale = boot + KEPT_FOR;
+    let again = stale + Duration::from_millis(10);
+    let (handed, ops) = home_readings(&[stale, again]);
+    assert_eq!(
+        handed,
+        [
+            (dwell(stale), ch(3), -80, None),
+            (dwell(again), ch(3), -80, None),
+        ]
+    );
+    assert_eq!(
+        ops,
+        [
+            (Instant::ZERO, Op::Listen(ch(3))),
+            (boot, Op::Rssi(ch(3))),
+            (stale, Op::Listen(ch(3))),
+            (dwell(stale), Op::Rssi(ch(3))),
+            (again, Op::Listen(ch(3))),
+            (dwell(again), Op::Rssi(ch(3))),
+        ]
     );
 }
 
@@ -911,7 +1103,10 @@ fn a_hold_is_bounded() {
         started: false,
     });
     run_until(&mut d, &world, at_ms(1000));
-    assert_eq!(world.ops()[1], (at_ms(50) + MAX_AIRTIME, Op::Lbt(ch(3))));
+    assert_eq!(
+        asked_ops(&world, ch(3))[1],
+        (at_ms(50) + MAX_AIRTIME, Op::Lbt(ch(3)))
+    );
     assert_eq!(world.0.borrow().lost, 1, "cut short by the check");
 }
 
@@ -1087,7 +1282,7 @@ fn a_sniff_runs_until_its_end() {
     let mut d = driver(sniffing(at_ms(200), &[at_ms(500)]), &world, Duration::ZERO);
     run_until(&mut d, &world, at_ms(500));
     assert_eq!(
-        world.ops(),
+        asked_ops(&world, ch(3)),
         [
             (Instant::ZERO, Op::Listen(ch(3))),
             (at_ms(10), Op::Sniff(ch(3))),
@@ -1121,7 +1316,7 @@ fn a_sniff_starts_again_after_each_frame() {
         ]
     );
     assert_eq!(
-        world.ops(),
+        asked_ops(&world, ch(3)),
         [
             (Instant::ZERO, Op::Listen(ch(3))),
             (at_ms(10), Op::Sniff(ch(3))),
@@ -1143,21 +1338,29 @@ fn the_next_radio_action_ends_a_sniff() {
     let cases = [
         (
             Action::Lbt(ch(3)),
-            vec![(t, Op::Lbt(ch(3))), (cad_done, Op::Listen(ch(3)))],
+            vec![
+                (t, Op::Lbt(ch(3))),
+                (cad_done, Op::Listen(ch(3))),
+                (dwell(cad_done), Op::Rssi(ch(3))),
+            ],
         ),
         (
             Action::Transmit(frame(ch(5), b"out")),
             vec![
                 (t, Op::Transmit(frame(ch(5), b"out"))),
                 (tx_done, Op::Listen(ch(3))),
+                (dwell(tx_done), Op::Rssi(ch(3))),
             ],
         ),
-        (Action::Listen(ch(4)), vec![(t, Op::Listen(ch(4)))]),
-        // On the resting channel: listening, then the reading once the
-        // receiver has settled.
+        (
+            Action::Listen(ch(4)),
+            vec![(t, Op::Listen(ch(4))), (dwell(t), Op::Rssi(ch(4)))],
+        ),
+        // On the resting channel, which a duty-cycled receiver kept no
+        // reading of: listening, then the reading once it has settled.
         (
             Action::Rssi(ch(3)),
-            vec![(t, Op::Listen(ch(3))), (t + RSSI_DWELL, Op::Rssi(ch(3)))],
+            vec![(t, Op::Listen(ch(3))), (dwell(t), Op::Rssi(ch(3)))],
         ),
     ];
     for (action, after) in cases {
@@ -1168,6 +1371,7 @@ fn the_next_radio_action_ends_a_sniff() {
         run_until(&mut d, &world, at_ms(400));
         let mut ops = vec![
             (Instant::ZERO, Op::Listen(ch(3))),
+            (dwell(Instant::ZERO), Op::Rssi(ch(3))),
             (at_ms(10), Op::Sniff(ch(3))),
         ];
         ops.extend(after);
@@ -1191,7 +1395,7 @@ fn a_sniff_ends_after_the_packet_under_way() {
     run_until(&mut d, &world, at_ms(500));
     assert!(seen(&d).contains(&(240_000, "rx 3 [7]")), "{:?}", seen(&d));
     assert_eq!(
-        world.ops(),
+        asked_ops(&world, ch(3)),
         [
             (Instant::ZERO, Op::Listen(ch(3))),
             (at_ms(10), Op::Sniff(ch(3))),
@@ -1215,7 +1419,7 @@ fn a_packet_that_never_ends_starts_the_cycle_again() {
     });
     run_until(&mut d, &world, at_ms(5000));
     assert_eq!(
-        world.ops(),
+        asked_ops(&world, ch(3)),
         [
             (Instant::ZERO, Op::Listen(ch(3))),
             (at_ms(10), Op::Sniff(ch(3))),
@@ -1247,7 +1451,10 @@ fn a_check_that_ends_a_sniff_waits_for_the_packet() {
         steps += 1;
         assert!(steps < 100, "the loop spins");
     }
-    assert_eq!(world.ops()[2], (at_ms(50) + MAX_AIRTIME, Op::Lbt(ch(3))));
+    assert_eq!(
+        asked_ops(&world, ch(3))[2],
+        (at_ms(50) + MAX_AIRTIME, Op::Lbt(ch(3)))
+    );
 }
 
 /// The power the application tells reaches the core right after the boot
@@ -1430,6 +1637,10 @@ fn a_placed_relay_on_usb_tracks() {
     assert_eq!(d.app().gps.last(), Some(&Gps::Track), "{:?}", d.app().gps);
 }
 
+/// The step that takes the reading of the receiver started at boot, a
+/// dwell after it.
+const BOOT_READING: u32 = 1;
+
 /// Steps until the clock reaches `until`, at most `max`: a loop that never
 /// waits takes steps without moving the clock and runs out of them.
 fn run_bounded<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant, max: u32) {
@@ -1456,9 +1667,10 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
     let mut d = driver(core, &world, Duration::ZERO);
     d.app_mut().eager = true;
     world.send(at_ms(150), ch(3), &[1, 2, 3]);
-    // The boot, then per clock or radio event (five, the frame's start
-    // and end among them) one step and one for the empty readiness.
-    run_bounded(&mut d, &world, at_ms(300), 1 + 2 * 5);
+    // The boot, then per clock or radio event (six, the boot's reading
+    // and the frame's start and end among them) one step and one for the
+    // empty readiness.
+    run_bounded(&mut d, &world, at_ms(300), 1 + 2 * 6);
     assert_eq!(
         seen(&d),
         [
@@ -1471,10 +1683,10 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
     );
     assert_eq!(
         d.app().readies,
-        5,
+        6,
         "after the boot and each event but the last"
     );
-    assert_eq!(d.stats().empty_readies, 5);
+    assert_eq!(d.stats().empty_readies, 6);
 }
 
 /// A readiness for the application's own turn ends the step at once and
@@ -1493,7 +1705,7 @@ fn a_ready_for_the_application_itself_ends_the_step() {
         assert_eq!(world.now(), Instant::ZERO, "not woken by the clock");
     }
     d.app_mut().own = false;
-    run_bounded(&mut d, &world, at_ms(100), 1);
+    run_bounded(&mut d, &world, at_ms(100), 1 + BOOT_READING);
     assert_eq!(seen(&d), [(0, "boot"), (100_000, "wakeup")]);
     assert_eq!(d.stats().own_readies, 2);
     assert_eq!(d.stats().empty_readies, 0);
@@ -1553,7 +1765,7 @@ fn a_waiting_message_goes_without_a_signal() {
     // The core takes none until its wakeup at 100 ms.
     d.app_mut().outgoing = Some((out(), vec![6]));
     d.app_mut().signal();
-    run_bounded(&mut d, &world, at_ms(100), 1);
+    run_bounded(&mut d, &world, at_ms(100), 1 + BOOT_READING);
     step(&mut d, &world);
     assert_eq!(d.app().outgoing, None, "taken");
     // With no signal at all.
@@ -1576,7 +1788,7 @@ fn a_signal_with_nothing_behind_it_is_no_readiness() {
     d.app_mut().power = Some(true);
     step(&mut d, &world);
     d.app_mut().signal();
-    run_bounded(&mut d, &world, at_ms(100), 1);
+    run_bounded(&mut d, &world, at_ms(100), 1 + BOOT_READING);
     d.app_mut().set_power(true);
     run_bounded(&mut d, &world, at_ms(200), 1);
     assert_eq!(
@@ -1604,7 +1816,7 @@ fn a_reply_that_becomes_due_goes_without_a_signal() {
     core.then.push((at_ms(100), Action::App(fetch)));
     let mut d = driver(core, &world, Duration::ZERO);
     d.app_mut().reply = Some((out(), vec![4, 5]));
-    run_bounded(&mut d, &world, at_ms(100), 2);
+    run_bounded(&mut d, &world, at_ms(100), 2 + BOOT_READING);
     step(&mut d, &world);
     assert_eq!(d.app().messages, [fetch]);
     assert_eq!(sends(&d), [100_000]);
