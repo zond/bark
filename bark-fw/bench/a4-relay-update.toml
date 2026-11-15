@@ -8,9 +8,9 @@
 # each takes its place from its fixes, as a field node does.
 
 about = "two relays install the image a third holds"
-# 35 blocks of 64 pieces, a piece every 4.3 s to each relay, took one
-# relay 2 h 51 min (2026-11-13); an hour over for pieces lost.
-duration_s = 14400.0
+# 37 blocks took one relay 3 h 44 min and would have taken the other
+# 4.8 h at its 470 s a block (2026-11-15); an hour over that.
+duration_s = 21600.0
 
 [[boards]]
 name = "A"
