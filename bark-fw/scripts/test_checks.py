@@ -192,6 +192,28 @@ class Heartbeats(unittest.TestCase):
             got = checks.heartbeats(self.two(tx, offset))
             self.assertEqual([f.kind for f in got], [checks.FAIL], tx)
 
+    def noisy(self, *lines: str) -> list[checks.Log]:
+        """As `two`, B sending elsewhere, with A's own lines 0.1 s before
+        its skip."""
+        a, b = self.two("tx ch=4 airtime_us=14400", -0.2)
+        skip = (1025.1, 25.0, "HeartbeatSkipped { channel: Channel(3) }")
+        own = [(1025.0, 24.9, x) for x in lines]
+        a = board_log("a", sorted(uptimes(1010.0, 10.0, 3) + own + [skip], key=lambda x: x[1]))
+        return [a, b]
+
+    def test_explained_by_noise_the_boards_checks_read(self):
+        logs = self.noisy("lbt ch=3 preamble=false dbm=-84", "lbt ch=3 preamble=false dbm=-85")
+        self.assertEqual(checks.heartbeats(logs), [])
+
+    def test_a_check_without_a_reading_explains_nothing(self):
+        for lines in [
+            ("lbt ch=3 preamble=false dbm=-84", "lbt ch=3 preamble=false dbm=0"),
+            ("lbt ch=3 preamble=false dbm=-84", "bench: no reading ch=3 wake_us=1"),
+            ("lbt ch=5 preamble=false dbm=-84",),
+        ]:
+            got = checks.heartbeats(self.noisy(*lines))
+            self.assertEqual([f.kind for f in got], [checks.FAIL], lines)
+
     def test_unchecked_while_no_board_logs_its_frames(self):
         got = checks.heartbeats(self.two(None, 0))
         self.assertEqual([f.kind for f in got], [checks.UNCHECKED])

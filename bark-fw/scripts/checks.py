@@ -397,10 +397,38 @@ def transmissions(log: Log) -> list[tuple[float, float, int]]:
     return out
 
 
+# A bench build's line for a listen-before-talk's check, its channel and
+# what it read; 0 dBm where it got no reading, and a second line says so
+# (bark-fw/src/bench.rs, `Logged`).
+LBT = re.compile(r"^lbt ch=(\d+) preamble=\w+ dbm=(-?\d+)$")
+NO_READING = re.compile(r"^bench: no reading ch=(\d+) ")
+
+
+def heard(boot: Boot, skip: Line, ch: int) -> bool:
+    """Whether every check the board logged for this skip read the
+    channel: the skip is then noise the board measured, on a desk beside
+    laptops, not a check that failed."""
+    lo = skip.board - LBT_SPAN_S - CLOCK_SLACK_S
+    read = 0
+    for x in boot.lines:
+        if not lo <= x.board <= skip.board:
+            continue
+        m = NO_READING.match(x.text)
+        if m and int(m.group(1)) == ch:
+            return False
+        m = LBT.match(x.text)
+        if m and int(m.group(1)) == ch:
+            if int(m.group(2)) == 0:
+                return False
+            read += 1
+    return read > 0
+
+
 def heartbeats(logs: list[Log]) -> list[Finding]:
-    """A heartbeat skipped for a busy channel while no other board sent on
-    it: no transmission of another board on that channel overlaps the
-    skip's checks, the LBT_SPAN_S before it.
+    """A heartbeat skipped for a busy channel that nothing explains: no
+    transmission of another board on that channel overlaps the skip's
+    checks, the LBT_SPAN_S before it, and the board's own checks did not
+    all read the channel.
 
     Needs every board's transmissions (TX, a bench build's line) and the
     host's clock."""
@@ -420,8 +448,8 @@ def heartbeats(logs: list[Log]) -> list[Finding]:
         ch = int(SKIPPED.match(x.text).group(1))
         lo, hi = t - LBT_SPAN_S - CLOCK_SLACK_S, t + CLOCK_SLACK_S
         busy = any(c == ch and s < hi and e > lo for name, txs in sent.items() if name != log.name for s, e, c in txs)
-        if not busy:
-            out.append(Finding("heartbeat", FAIL, log.name, f"skipped on channel {ch}, which no other board sent on", x.n))
+        if not busy and not heard(boot, x, ch):
+            out.append(Finding("heartbeat", FAIL, log.name, f"skipped on channel {ch}, which no other board sent on and its checks did not read", x.n))
     return out
 
 

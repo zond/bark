@@ -41,7 +41,9 @@ and any one fails the run:
 
 - a reset the scenario did not ask for;
 - a radio error, or a message dropped;
-- a heartbeat skipped for a busy channel while no other board sent there;
+- a heartbeat skipped for a busy channel while no other board sent there,
+  unless each of the board's checks before it read the channel: that is
+  noise the board measured;
 - the stack's free room below its margin (`core-interface.md`, Memory);
 - a gap in a board's log longer than its status line's period.
 
