@@ -34,7 +34,7 @@ const int attMtu = 247;
 const int defaultAttMtu = 23;
 
 /// The longest payload a DATA frame holds (spec "Packet formats").
-const int maxPayload = 225;
+const int maxPayload = 224;
 
 /// One random UUID, its second 16 bits counting the service and its
 /// characteristics in the order of the spec's table.

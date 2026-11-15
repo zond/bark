@@ -114,7 +114,7 @@ fn run(stop: u64) -> (Vec<(Kind, u128)>, Relay) {
                     src_hop: NodeId::from_u64(pos.short().0 as u64),
                     dst_pos: far,
                     dst_id: NodeId([9; 6]),
-                    hops: 1 + (seq % 20) as u16,
+                    hops: 1 + seq % 20,
                     payload: &payload,
                 }),
             };

@@ -883,7 +883,7 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
         ..r.config.position
     };
     let home = Channel::new(5).unwrap();
-    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u16| {
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u32| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
             wrong: 0,
@@ -961,7 +961,7 @@ fn a_waiting_message_keeps_its_record() {
         lat: r.config.position.lat + 100_000,
         ..r.config.position
     };
-    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u16| {
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u32| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
             wrong: 0,
@@ -1216,7 +1216,7 @@ fn a_message_that_waited_keeps_its_turn() {
     // K, M and A, queued in this order.
     let home = r.home;
     let mut ids = Vec::new();
-    for (tag, dst_pos, hops) in [(0u8, east, 1u16), (1, east, 2), (2, north, 9)] {
+    for (tag, dst_pos, hops) in [(0u8, east, 1u32), (1, east, 2), (2, north, 9)] {
         let payload = [tag];
         let data = Data {
             wrong: 0,
@@ -1680,7 +1680,7 @@ fn offer_data(
     now: &mut Instant,
     dst: Position,
     tag: u8,
-    hops: u16,
+    hops: u32,
 ) -> (Option<u8>, Option<crate::event::DropReason>) {
     let (place, refused, _) = offer_dropped(r, now, dst, tag, hops);
     (place, refused)
@@ -1693,7 +1693,7 @@ fn offer_dropped(
     now: &mut Instant,
     dst: Position,
     tag: u8,
-    hops: u16,
+    hops: u32,
 ) -> (
     Option<u8>,
     Option<crate::event::DropReason>,
@@ -1830,7 +1830,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
         .unwrap()
         .received(name(8), (6, 0), now);
 
-    let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u16> {
+    let counts = |sent: &[(Instant, Frame)], to: Position| -> Vec<u32> {
         sent.iter()
             .filter_map(|(_, f)| match Packet::decode(f.payload()) {
                 Ok(Packet::Data(d)) if d.dst_hop == id_of(to) => Some(d.hops),
@@ -1888,7 +1888,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
 fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
     use crate::wire::Data;
     let (mut r, mut now, far) = with_every_neighbour_banned();
-    let offer = |r: &mut Relay, now: &mut Instant, from: u32, hops: u16| {
+    let offer = |r: &mut Relay, now: &mut Instant, from: u32, hops: u32| {
         let d = Data {
             wrong: 0,
             sender_home: Channel::new(5).unwrap(),
@@ -2137,7 +2137,7 @@ fn until_sent(r: &mut Relay, now: &mut Instant, mut pending: Vec<Action>) -> Vec
 }
 
 /// The receiver and count of each DATA frame in `sent`.
-fn data_to(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u16)> {
+fn data_to(sent: &[(Instant, Frame)]) -> Vec<(NodeId, u32)> {
     sent.iter()
         .filter_map(|(_, f)| match Packet::decode(f.payload()) {
             Ok(Packet::Data(d)) => Some((d.dst_hop, d.hops)),
@@ -2728,7 +2728,7 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
         .map(|n| n.position)
         .min_by_key(|p| p.lat);
     let near = near.unwrap();
-    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u16, dst: Position| {
+    let offer = |r: &mut Relay, now: &mut Instant, tag: u8, hops: u32, dst: Position| {
         let payload = [tag; MAX_PAYLOAD];
         let d = Data {
             wrong: 0,
@@ -3959,7 +3959,7 @@ fn first_hand_over(
     dst_id: Option<i32>,
     cap: u8,
     wrong: u8,
-) -> (Option<(NodeId, u16, u8)>, Vec<Trace>) {
+) -> (Option<(NodeId, u32, u8)>, Vec<Trace>) {
     first_hand_over_from(lats, dst_id, cap, (3, wrong))
 }
 
@@ -3968,8 +3968,8 @@ fn first_hand_over_from(
     lats: &[i32],
     dst_id: Option<i32>,
     cap: u8,
-    (held, wrong): (u16, u8),
-) -> (Option<(NodeId, u16, u8)>, Vec<Trace>) {
+    (held, wrong): (u32, u8),
+) -> (Option<(NodeId, u32, u8)>, Vec<Trace>) {
     use crate::tables::records::Record;
     use crate::tables::send_queue::{Kind, Outgoing};
     use crate::wire::Data;

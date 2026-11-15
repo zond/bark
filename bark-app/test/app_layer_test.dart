@@ -288,7 +288,7 @@ void main() {
     // The room of a whole text in a box without an address, as the Rust
     // side has it: one byte more than a part's.
     expect(room + 1, maxAppPayload - boxOverhead - 5 - 1);
-    expect((maxAppPayload, room + 1), (202, 154));
+    expect((maxAppPayload, room + 1), (201, 153));
     expect(splitText(m['text'] as String, room + 1), [
       for (final p in parts) p['text'],
     ]);

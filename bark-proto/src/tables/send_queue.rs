@@ -26,7 +26,7 @@ use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::tables::budget::DEPTH;
 use crate::tables::fixed::FixedVec;
 use crate::time::{Duration, Instant};
-use crate::wire::{data_header_len, Data, Hops, Packet, ACK_LEN, DATA_HEADER_MAX, MAX_PAYLOAD};
+use crate::wire::{data_header_len, Data, Hops, Packet, ACK_LEN, MAX_PAYLOAD};
 
 /// A full frame and the ACK that takes it, µs.
 const HAND_OVER_US: u64 = time_on_air(MAX_FRAME as u8, MIN_PREAMBLE_SYMBOLS).as_micros()
@@ -163,12 +163,6 @@ impl Message {
     /// Its ID.
     pub fn id(&self) -> MsgId {
         MsgId::of(self.dst_pos, self.dst_id, self.payload())
-    }
-
-    /// The airtime of a DATA carrying it with `preamble` symbols, at any
-    /// count.
-    pub fn airtime(&self, preamble: u16) -> Duration {
-        time_on_air((DATA_HEADER_MAX + self.payload().len()) as u8, preamble)
     }
 }
 
