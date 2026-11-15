@@ -145,6 +145,7 @@ pub fn json() -> String {
             ("pair_enc", h(&pair.enc)),
             ("mailbox_mac", h(&mbx.mac)),
             ("mailbox_enc", h(&mbx.enc)),
+            ("mailbox_reply", h(&seal::reply_key(&f.alice.mailbox))),
         ],
     ));
 

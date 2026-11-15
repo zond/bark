@@ -742,7 +742,7 @@ pub struct Kept {
     pub dst_pos: bark_proto::Position,
     pub dst_id: bark_proto::NodeId,
     pub payload: Vec<u8>,
-    pub hops: u16,
+    pub hops: u32,
     pub wrong: u8,
     pub at: bark_proto::HeldAt,
 }

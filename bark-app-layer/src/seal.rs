@@ -26,7 +26,7 @@ pub enum Form {
     /// To one's own mailbox, under the mailbox key's keys.
     Fetch = 2,
     /// From the mailbox, first in a round: what the round carries and
-    /// what stays, `crypto_secretbox` under the mailbox key.
+    /// what stays, `crypto_secretbox` under the reply key.
     Summary = 3,
     /// From the mailbox, a boxed payload it kept.
     BoxedItem = 4,
@@ -163,7 +163,7 @@ pub fn pair(their: &PublicKey, mine: &SecretKey) -> Result<SivKeys, Error> {
 pub fn stream(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], buf: &mut [u8]) {
     // It fails only for a message longer than XSalsa20's counter reaches,
     // and a payload is far shorter.
-    let _ =secretbox(key).encrypt_in_place_detached(GenericArray::from_slice(nonce), &[], buf);
+    let _ = secretbox(key).encrypt_in_place_detached(GenericArray::from_slice(nonce), &[], buf);
 }
 
 /// `plain` as a payload of `form` under `keys`, for the `recipient` tag,
@@ -425,8 +425,15 @@ pub const SUMMARY_LEN: usize = HEAD_LEN + TAG_LEN + ITEMS_LEN + REMAINING_LEN;
 /// recipient tag stand for the item's, and the place is added.
 pub const REPLY_OVERHEAD: usize = PLACE_LEN;
 
+/// The key a mailbox's replies are under, the summary's and the items'
+/// stream, derived from the mailbox key as the fetch's two are, so that
+/// the mailbox key itself encrypts nothing.
+pub fn reply_key(mailbox: &[u8; KEY_LEN]) -> [u8; KEY_LEN] {
+    kdf(mailbox, 3, b"bark-rpl")
+}
+
 /// A reply's nonce: the round (the fetch's `sent`), the place, then zeros.
-/// Never sent; unique under the mailbox key while rounds rise. Place 0 is
+/// Never sent; unique under the reply key while rounds rise. Place 0 is
 /// the summary's; an item keeps its place when its round sends it again.
 pub fn reply_nonce(round: u32, place: u8) -> [u8; NONCE_LEN] {
     let mut n = [0u8; NONCE_LEN];
@@ -460,7 +467,7 @@ pub fn seal_summary(
     let head: [u8; HEAD_LEN] = head(Form::Summary, recipient, &[]);
     // Three bytes fit their own length.
     let _ = seal_into(
-        &secretbox(key),
+        &secretbox(&reply_key(key)),
         &reply_nonce(round, 0),
         &head,
         &plain,
@@ -477,7 +484,7 @@ pub fn open_summary(key: &[u8; KEY_LEN], round: u32, payload: &[u8]) -> Result<(
     }
     let mut plain = [0u8; ITEMS_LEN + REMAINING_LEN];
     open_into(
-        &secretbox(key),
+        &secretbox(&reply_key(key)),
         &reply_nonce(round, 0),
         &payload[HEAD_LEN..],
         &mut plain,
@@ -491,7 +498,7 @@ pub fn open_summary(key: &[u8; KEY_LEN], round: u32, payload: &[u8]) -> Result<(
 /// A reply carrying `item` at `place` in the round of `round`, for the
 /// fetch's `recipient` tag, into `out`; its length. Its form says the
 /// item's, the place goes in the clear, and the item without its format
-/// byte and recipient tag goes under the mailbox `key`'s stream alone:
+/// byte and recipient tag goes under the reply key's stream alone:
 /// the item proves itself.
 pub fn seal_item(
     key: &[u8; KEY_LEN],
@@ -518,7 +525,11 @@ pub fn seal_item(
     out[RECIPIENT_AT] = recipient;
     out[HEAD_LEN] = place;
     out[at..len].copy_from_slice(&item[HEAD_LEN..]);
-    stream(key, &reply_nonce(round, place), &mut out[at..len]);
+    stream(
+        &reply_key(key),
+        &reply_nonce(round, place),
+        &mut out[at..len],
+    );
     Ok(len)
 }
 
@@ -553,6 +564,10 @@ pub fn open_item(
     out[0] = form.format();
     out[RECIPIENT_AT] = payload[RECIPIENT_AT];
     out[HEAD_LEN..len].copy_from_slice(&payload[at..]);
-    stream(key, &reply_nonce(round, place), &mut out[HEAD_LEN..len]);
+    stream(
+        &reply_key(key),
+        &reply_nonce(round, place),
+        &mut out[HEAD_LEN..len],
+    );
     Ok(len)
 }

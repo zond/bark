@@ -385,6 +385,25 @@ class Fetch {
 /// answer).
 const int maxReplies = 32;
 
+/// The key a mailbox's replies are under, derived from the mailbox key as
+/// the fetch's two are, so that the mailbox key itself encrypts nothing.
+SecureKey replyKey(Sodium s, SecureKey mailbox) => s.crypto.kdf.deriveFromKey(
+  masterKey: mailbox,
+  context: 'bark-rpl',
+  subkeyId: BigInt.from(3),
+  subkeyLen: keyLen,
+);
+
+/// `f` of the reply key of `mailbox`, which is wiped after.
+T _underReplyKey<T>(Sodium s, SecureKey mailbox, T Function(SecureKey) f) {
+  final k = replyKey(s, mailbox);
+  try {
+    return f(k);
+  } finally {
+    k.dispose();
+  }
+}
+
 /// A reply's nonce, never sent: the fetch's `sent`, the reply's place in
 /// the round (0 for the summary), zeros.
 Uint8List replyNonce(int round, int place) => Uint8List.fromList([
@@ -403,7 +422,7 @@ class RoundSummary {
 }
 
 /// The summary of the fetch of [round], as the home sends it for the
-/// fetch's [recipient] tag, sealed under the mailbox key at place 0.
+/// fetch's [recipient] tag, sealed under the reply key at place 0.
 Uint8List sealSummary(
   Sodium s,
   SecureKey key,
@@ -413,13 +432,17 @@ Uint8List sealSummary(
 ) => Uint8List.fromList([
   formatByte(Form.summary),
   recipient,
-  ...s.crypto.secretBox.easy(
-    message: Uint8List.fromList([
-      ...be(summary.items, itemsLen),
-      ...be(summary.remaining, remainingLen),
-    ]),
-    nonce: replyNonce(round, 0),
-    key: key,
+  ..._underReplyKey(
+    s,
+    key,
+    (k) => s.crypto.secretBox.easy(
+      message: Uint8List.fromList([
+        ...be(summary.items, itemsLen),
+        ...be(summary.remaining, remainingLen),
+      ]),
+      nonce: replyNonce(round, 0),
+      key: k,
+    ),
   ),
 ]);
 
@@ -434,10 +457,14 @@ RoundSummary? openSummary(
     return null;
   }
   try {
-    final p = s.crypto.secretBox.openEasy(
-      cipherText: Uint8List.fromList(payload.sublist(headLen)),
-      nonce: replyNonce(round, 0),
-      key: key,
+    final p = _underReplyKey(
+      s,
+      key,
+      (k) => s.crypto.secretBox.openEasy(
+        cipherText: Uint8List.fromList(payload.sublist(headLen)),
+        nonce: replyNonce(round, 0),
+        key: k,
+      ),
     );
     return RoundSummary(
       fromBe(p.sublist(0, itemsLen)),
@@ -450,7 +477,7 @@ RoundSummary? openSummary(
 
 /// A kept boxed payload or introduction at [place] in [round], as the home
 /// sends it for the fetch's [recipient] tag: its form says the item's, and
-/// the item without its format byte and tag goes under the mailbox key's
+/// the item without its format byte and tag goes under the reply key's
 /// stream alone, as it proves itself.
 Uint8List sealItem(
   Sodium s,
@@ -472,7 +499,11 @@ Uint8List sealItem(
     formatByte(form),
     recipient,
     place,
-    ...stream(s, key, replyNonce(round, place), item.sublist(headLen)),
+    ..._underReplyKey(
+      s,
+      key,
+      (k) => stream(s, k, replyNonce(round, place), item.sublist(headLen)),
+    ),
   ]);
 }
 
@@ -496,11 +527,15 @@ Uint8List? openItem(Sodium s, SecureKey key, int round, List<int> payload) {
   return Uint8List.fromList([
     formatByte(form),
     payload[1],
-    ...stream(
+    ..._underReplyKey(
       s,
       key,
-      replyNonce(round, place),
-      payload.sublist(headLen + placeLen),
+      (k) => stream(
+        s,
+        k,
+        replyNonce(round, place),
+        payload.sublist(headLen + placeLen),
+      ),
     ),
   ]);
 }

@@ -29,7 +29,7 @@ fn vectors_file_is_current() {
 
 #[test]
 fn the_sizes_are_the_notes() {
-    assert_eq!(MAX_APP_PAYLOAD, 224);
+    assert_eq!(MAX_APP_PAYLOAD, 223);
     assert_eq!(seal::BOX_OVERHEAD, 18);
     assert_eq!(seal::INTRO_OVERHEAD, 50);
     assert_eq!(seal::REPLY_OVERHEAD, 1);
@@ -38,10 +38,10 @@ fn the_sizes_are_the_notes() {
     assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 100);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
-    // The longest text: 224 less the box, the header and the record's type.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 200);
+    // The longest text: 223 less the box, the header and the record's type.
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 1, 199);
     // A part's: one byte more, its number and the count.
-    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 199);
+    assert_eq!(seal::MAX_BOX_PLAIN - plain::HEADER_LEN - 2, 198);
 }
 
 #[test]
@@ -365,6 +365,18 @@ fn a_summary_opens_in_its_round_only_and_tells_what_comes_and_what_remains() {
     assert_eq!(
         seal::open_summary(&fixture().bob.mailbox, 10, &p),
         Err(Error::Open)
+    );
+    // Under its own key, derived: the mailbox key itself encrypts nothing.
+    let r = seal::reply_key(&k);
+    let fetch = seal::SivKeys::of(&k);
+    assert!(r != k && r != fetch.mac && r != fetch.enc);
+    assert_eq!(
+        seal::open_summary(&r, 10, &seal::seal_summary(&r, 7, 10, 1, 0)),
+        Ok((1, 0))
+    );
+    assert_ne!(
+        seal::seal_summary(&r, 7, 10, 1, 0),
+        seal::seal_summary(&k, 7, 10, 1, 0)
     );
     let mut q = p;
     q[seal::SUMMARY_LEN - 1] ^= 1;

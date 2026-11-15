@@ -46,7 +46,7 @@ void main() {
       () => encodeSend(dst, List.filled(maxPayload + 1, 0)),
       throwsA(isA<Malformed>()),
     );
-    expect(encodeSend(dst, List.filled(maxPayload, 0)).length, 238);
+    expect(encodeSend(dst, List.filled(maxPayload, 0)).length, 237);
   });
 
   test('FNV-1a as published', () {

@@ -1373,7 +1373,7 @@ fn a_sleepy_node_s_own_message_starts_with_no_wrong_hop() {
     );
     let id = send(&mut h, s, u, b"away from my anchor");
     assert!(h.run_until(h.now + secs(30), |h| delivered_at(h, u, id).is_some()));
-    let counts = |i: usize| -> Vec<(u16, u8)> {
+    let counts = |i: usize| -> Vec<(u32, u8)> {
         h.nodes[i]
             .sent
             .iter()

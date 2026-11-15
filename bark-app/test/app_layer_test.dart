@@ -191,6 +191,10 @@ void main() {
       final mbx = SivKeys.of(s, alice.mailbox);
       expect(hex(mbx.mac.extractBytes()), m['mailbox_mac']);
       expect(hex(mbx.enc.extractBytes()), m['mailbox_enc']);
+      expect(
+        hex(replyKey(s, alice.mailbox).extractBytes()),
+        m['mailbox_reply'],
+      );
       // A public key of small order has no shared key.
       expect(
         () => SivKeys.pair(s, List.filled(keyLen, 0), alice.pair.secretKey),
@@ -352,7 +356,7 @@ void main() {
     // The room of a whole text in a box without an address, as the Rust
     // side has it: one byte more than a part's.
     expect(room + 1, maxAppPayload - boxOverhead - 5 - 1);
-    expect((maxAppPayload, room + 1), (224, 200));
+    expect((maxAppPayload, room + 1), (223, 199));
     expect(splitText(m['text'] as String, room + 1), [
       for (final p in parts) p['text'],
     ]);

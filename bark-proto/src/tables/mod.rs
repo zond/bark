@@ -103,8 +103,8 @@ pub(crate) mod sizes {
     fn table_sizes() {
         assert_eq!(size_of::<Option<neighbours::Neighbour>>(), 128);
         assert_eq!(size_of::<heard::HeardNode>(), 32);
-        assert_eq!(size_of::<delivery::Queued>(), 264);
-        assert_eq!(size_of::<records::Record>(), 40);
+        assert_eq!(size_of::<delivery::Queued>(), 272);
+        assert_eq!(size_of::<records::Record>(), 48);
         assert_eq!(size_of::<crate::event::Frame>(), 260);
         assert_eq!(size_of::<send_queue::Outgoing>(), OUTGOING);
         // (spec "Send queue", "Delivery queue")
@@ -138,17 +138,17 @@ pub(crate) mod sizes {
             (
                 "delivery",
                 size_of::<delivery::DeliveryQueue>(),
-                delivery::DELIVERY_QUEUE * 264,
+                delivery::DELIVERY_QUEUE * 272,
             ),
             (
                 "inbox",
                 size_of::<delivery::DeliveryQueue<{ delivery::INBOX }>>(),
-                delivery::INBOX * 264,
+                delivery::INBOX * 272,
             ),
             (
                 "records",
                 size_of::<records::Records>(),
-                records::RECORDS * 40,
+                records::RECORDS * 48,
             ),
             (
                 "send queue",

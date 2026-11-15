@@ -22,7 +22,8 @@
     "pair_mac": "a6bfb89f5f38183d49dcf7c20ddc85f9b9bf0e15dafd24e203d41bb61699c751",
     "pair_enc": "38f638db6f5275dd8b893475dd6380a05cf43a8d5c814c1c4ca71690c86da472",
     "mailbox_mac": "8b4c653b4122de6a899c5a313ad15badecb64444b74fc387478887eea1297d7f",
-    "mailbox_enc": "65ed504d5f2f4da0b90f3cba1cf2be7457411eaddfb1b97fb14cf869f87ae6ed"
+    "mailbox_enc": "65ed504d5f2f4da0b90f3cba1cf2be7457411eaddfb1b97fb14cf869f87ae6ed",
+    "mailbox_reply": "070351ead11a434391e470c633f53ae4819bbc6c115f4065cacf2d20ccceab7f"
   },
   "card": {
     "identity": "2b7194e5d7c6a977d201b4a197ecabdcc8a0217ceaeb78e002b579471da66973",
@@ -88,7 +89,7 @@
   },
   "box_parts": {
     "text": "Привіт! Ми на місці біля старої школи, вода є, світла немає з ранку. Генератор працює дві години ввечері, тож заряджаємо телефони по черзі. Приходьте до сьомої, візьміть ковдри й ліхтарик. Дорогою обходьте міст — там ями 🙏",
-    "room": 199,
+    "room": 198,
     "parts": [
       {"text": "Привіт! Ми на місці біля старої школи, вода є, світла немає з ранку. Генератор працює дві години ввечері, тож заряджаємо телефони по черзі. Приходьте до сьомої, візьміть ковдри й ліхтарик. Дорогою ", "sent": 1000200, "plaintext": "00000f43080601cff0e8e2b3f22120cce820ede020ecb3f1f6b320e1b3ebff20f1f2e0f0eebf20f8eaeeebe82c20e2eee4e020ba2c20f1e2b3f2ebe020ede5ece0ba20e720f0e0edeaf32e20c3e5ede5f0e0f2eef020eff0e0f6feba20e4e2b320e3eee4e8ede820e2e2e5f7e5f0b32c20f2eee620e7e0f0ffe4e6e0baecee20f2e5ebe5f4eeede820efee20f7e5f0e7b32e20cff0e8f5eee4fcf2e520e4ee20f1fceeeceebf2c20e2b3e7fcecb3f2fc20eaeee2e4f0e820e920ebb3f5f2e0f0e8ea2e20c4eef0eee3eefe20", "payload": "20885bed0352dd4de2d5b0e03b8372c5cae0e3bf2c0bc396757a9b4d0f3e22353485871ada58bc93e7f1b73e3f05f16cfcadb925afc3e82abad3a39d82d10c7ba2b45ea76cc4c94b019ef7459064e5fb7d2464abd2b79feb31b059b99442421724a01ffc41f6861474ad6b4a291b0a80c5fb28faa74518bd232af01833235659e8a29117294fd50de07c80bfb5b7299f1bf9ff571f1a9a67d3ba7ae66d2ebc4e00ff563e110b26916f9b8eaebcdb572ac6af07a6ea287ac1f7132a096a27a927f738ed53686b5c346b5a0b8a5b050ca4357011e83cb6a02ccc6bee4a2716"},
       {"text": "обходьте міст — там ями 🙏", "sent": 1000201, "plaintext": "00000f43090511d0bed0b1d185d0bed0b4d18cd182d0b520d0bcd196d181d18220e2809420d182d0b0d0bc20d18fd0bcd0b820f09f998f", "payload": "20880eb7c72b66d67a6315e6d21c3723c50044318fd3c3e4e1656510363c7b4d121b24105130ceb9fdaab4305364ced3d50fdeed4a021713a80208d5e18f921a47b51f422758249d71"}
@@ -118,14 +119,14 @@
     "items": 2,
     "remaining": 0,
     "nonce": "000f44340000000000000000000000000000000000000000",
-    "payload": "23cff493f72606752eee6c4a1ed4ab4eb958f948c3"
+    "payload": "23cf55cc9fe8d9ba1dc006f9f17407637259583b7a"
   },
   "reply_box": {
     "round": 1000500,
     "place": 1,
     "nonce": "000f44340100000000000000000000000000000000000000",
     "item": "20aa84acf1b67e1d65ca5fd8d17b7b5a76ca750aabb259af74fb0ceabbee46ea1c081e375082485d",
-    "payload": "24cf018d6f7eb3ad2161b639e693fb3b13976f27e2555a3ccd3d4237fdb0881f80d78196ebe801e013",
+    "payload": "24cf0131e99ace60270f96dcd7032a01e5473034addfee53f49f8ecbf5a255164dfa4aa8b039ffc515",
     "opened": "20cf84acf1b67e1d65ca5fd8d17b7b5a76ca750aabb259af74fb0ceabbee46ea1c081e375082485d"
   },
   "reply_intro": {
@@ -133,12 +134,12 @@
     "place": 2,
     "nonce": "000f44340200000000000000000000000000000000000000",
     "item": "21aa38ab664bd86f77d7e66bdd9ae0792913a94fd8b33a1260027e4b46c1f4884c6763ce4cd42efc728c367c5236a40958d2d00df9f0a257b94198062cae383e0250df4fc1958d3a5fa3507b2716460e7a6ce49a441e7a0b6e082f4bd2c55e61ff39f7e1f29173f1e35b79be2dcd3a07faccad1cb1ab6bd82db15f89762e6ef359",
-    "payload": "25cf02c85f27f85723422fe5f6ec035de71d961d034694c896134eb9c77f8ff98397345e54b90c883d33fe9eaf51d6610d74a7db7a6213ed04cffa2d76efcbf506f85b165bfc5988ffbe9b882dd0dc9bf23162fd2363e91f94d725e9891d50ce48a610ebdb2321d17c6a91b5406812eb5a7c59de86dd97f702200de40056fdcc7735",
+    "payload": "25cf02dfed9402570fbf3bae7a72a37a8d038d9d95ce9686adb2cad494720c09ba311efc3db67927f54253bfd06764ba2d7729ce55d706d37ee48f31069e40897721d6c4ae6fc59e7dd787f3c29077b25d12ffcb5ffed745790ea1ed567a82f1489656b7fc25c0445d10e272c0643082180cd056983845305454a1687cb331c8840c",
     "opened": "21cf38ab664bd86f77d7e66bdd9ae0792913a94fd8b33a1260027e4b46c1f4884c6763ce4cd42efc728c367c5236a40958d2d00df9f0a257b94198062cae383e0250df4fc1958d3a5fa3507b2716460e7a6ce49a441e7a0b6e082f4bd2c55e61ff39f7e1f29173f1e35b79be2dcd3a07faccad1cb1ab6bd82db15f89762e6ef359"
   },
   "nothing_new": {
     "round": 1000560,
     "nonce": "000f44700000000000000000000000000000000000000000",
-    "payload": "23cf4bbf384c55935895759b4a477a272bf48fc135"
+    "payload": "23cf29b6b948992422f501f80aa97176b5d9b35018"
   }
 }

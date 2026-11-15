@@ -1510,12 +1510,16 @@ tells a retransmission by the sender and the count
 ([receiving DATA](#receiving-data), case 3). The count also numbers the
 hop places of the send queue.
 
-`hops` takes one byte below 128 and two from 128
-([packet formats](#packet-formats)), up to 32 767. It does not limit how
-far a message travels; that is `wrong`'s job. A relay that would have to
-send a count above 32 767 drops the message, except an owner delivering
-it to its node ([delivery](#delivery)), which sends 32 767: the search has
-ended there.
+`hops` takes one byte below 128, two below 16 384 and three up to
+2 097 151 ([packet formats](#packet-formats)). It limits no path on
+Earth: the farthest point is 20 000 km away, which 2 097 151 hand-overs
+reach at 10 m a hop, where two bytes' 32 767 reached 24 600 km only on a
+straight path of the 750 m hops of
+[capacity and sizing](#capacity-and-sizing). Limiting how far a message
+travels is `wrong`'s job. A relay that would have to send a count above
+2 097 151 drops the message, except an owner delivering it to its node
+([delivery](#delivery)), which sends 2 097 151: the search has ended
+there.
 
 `wrong` is the search's budget. The sender of a hand-over adds one to its
 record's highest `wrong` when the receiver is no closer to the
@@ -1630,7 +1634,7 @@ What breaks it:
 
 | | |
 |---|---|
-| hand-overs per message | at most 32 768 that succeed (the first, at count 0, and 32 767 more, [hop count](#hop-count)); with no node moving, at most (c + 1)(R − 1) + c for a wrong-hop cap c and R relays reachable, since between two wrong hops each hand-over brings the message nearer and so meets a relay at most once |
+| hand-overs per message | at most 2 097 152 that succeed (the first, at count 0, and 2 097 151 more, [hop count](#hop-count)); with no node moving, at most (c + 1)(R − 1) + c for a wrong-hop cap c and R relays reachable, since between two wrong hops each hand-over brings the message nearer and so meets a relay at most once |
 | a hand-over | at most 3.15 s: three attempts of 738.6 ms (500 ms of listen-before-talk, a 138.6 ms frame, the 100 ms ACK timeout) and the retry waits, 311 + 622 ms ([hand-over](#hand-over)); a channel that stays busy adds its wait but no airtime |
 | a neighbour that does not answer | at most 11 failed hand-overs, 33 frames, at a relay, whatever the messages: until it leaves the table 390 s after its last heartbeat or answer, with bans of 1.58, 3.16, 6.3, 12.7, 25.3 and 50.6 s, 100 s, and then 61 s |
 | a message held on one neighbour that does not answer | at most 14.2 s: two bans, 1.58 and 3.16 s, and three hand-overs, since the third failure in a row demotes the neighbour and moves the message on; later messages a hand-over each until the demotion lapses. One that answers this relay between failures holds it while its bans last ([bans](#bans)) |
@@ -2307,8 +2311,8 @@ and its characteristics in the order of this table:
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
 | Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) | 18 |
-| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–225) | 13–238 |
-| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–225), empty when none; a guest's: number(3) msg_id(4) payload(0–225) | 0, 4–229, 7–232 |
+| Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–224) | 13–237 |
+| Inbox | `28bc0005-…` | read | msg_id(4) payload(0–224), empty when none; a guest's: number(3) msg_id(4) payload(0–224) | 0, 4–228, 7–231 |
 | | | write | msg_id(4) | 4 |
 | Given back | `28bc0006-…` | read, notify | msg_id(4) wait(2), empty when none | 0, 6 |
 | Map point | `28bc0007-…` | write | 0 to clear; 1 then position(7) to set | 1, 8 |
@@ -2720,12 +2724,12 @@ drops a payload of a version or form it does not know.
 | 0, boxed | a contact | `siv` (16), ciphertext, under the pair's keys (below) | 18 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 50 |
 | 2, fetch | the person's home node | `siv` (16), ciphertext, under the mailbox key's keys (below) | 18 |
-| 3, summary | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the round's items (1) and the items still unsent after it (2); the nonce is not sent | 21 in all |
-| 4, boxed item | the same | the place (1), then a kept boxed payload after its format byte and recipient tag, under the mailbox key's stream | 1 over the item |
+| 3, summary | the person's current address, from their home node | `crypto_secretbox_easy` output under the reply key ([mailbox](#mailbox)) of the round's items (1) and the items still unsent after it (2); the nonce is not sent | 21 in all |
+| 4, boxed item | the same | the place (1), then a kept boxed payload after its format byte and recipient tag, under the reply key's stream | 1 over the item |
 | 5, introduction item | the same | the same, for a kept introduction | 1 over the item |
 
 Forms 2 to 5 are the [mailbox](#mailbox)'s. The app writes at most
-225 − 1 = 224 bytes, so that its mailbox can send any payload on as a
+224 − 1 = 223 bytes, so that its mailbox can send any payload on as a
 reply.
 
 *One value as nonce and proof.* Forms 0 and 2 carry one 16-byte value,
@@ -2806,9 +2810,9 @@ each a message of its own with its own `sent`, delivered as a text is.
 The parts take consecutive `sent`, so a part's `sent` less its number and
 one is the first part's, which names the text: the receiver puts parts
 together in any order of arrival and knows from the count which have not
-come. A part holds 224 − 18 − 5 − 2 = 199 bytes of text in a box
+come. A part holds 223 − 18 − 5 − 2 = 198 bytes of text in a box
 without an address, the box, the header and the record's two bytes
-taken; 16 parts hold 3 184 bytes (roadmap D137, D221, D222).
+taken; 16 parts hold 3 168 bytes (roadmap D137, D221, D222).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
 flags (1), bit 0 set when a home address follows, bit 1 when the node's
@@ -2860,7 +2864,7 @@ only so ([receiving](#receiving)). The board's ring holds 1024 items
 (roadmap D139). A slot's mark is a byte, a bit for each of the node's
 eight records ([pairing](#pairing)): a bit set says the item is that
 record's and not yet sent to it. An item a reply can carry, a boxed
-payload or an introduction of at most 224 bytes ([the payload](#the-payload)),
+payload or an introduction of at most 223 bytes ([the payload](#the-payload)),
 is written with the bits of the records whose tag it carries set and the
 rest clear, so a guest's item, which no record claims, has every bit
 clear and no fetch sends it. Any other item, such as a mailbox's reply
@@ -2896,14 +2900,15 @@ run at once, the node handing their replies to its send slot in turn. An
 item that arrives after the fetch waits for the next one.
 
 Every reply carries the fetch's recipient tag and is under the record's
-mailbox key with the nonce: the fetch's `sent` (4), the reply's place
-(1), 19 zero bytes (roadmap D222). The summary is a form 3 payload at
+**reply key**, `crypto_kdf_derive_from_key(mailbox key, 3, "bark-rpl")`,
+so that the mailbox key itself encrypts nothing, with the nonce: the
+fetch's `sent` (4), the reply's place (1), 19 zero bytes (roadmap D222). The summary is a form 3 payload at
 place 0, sealed with its tag. An item's place is its rank in the round,
 1 to 32, sent in the clear; the reply is form 4 for a boxed payload and
 form 5 for an introduction, then the place, then the item without its
 format byte and recipient tag, encrypted as a boxed payload's
 ciphertext is, by `crypto_secretbox_detached` with its tag dropped
-([the payload](#the-payload)), under the mailbox key and the reply's
+([the payload](#the-payload)), under the reply key and the reply's
 nonce: no tag, as the item proves itself, and still encrypted, so that
 the bytes seen at the home are not those seen at the requester's node. The requester rebuilds the item, its
 format byte from the reply's form and the reply's recipient tag, and
@@ -2915,7 +2920,7 @@ items: what it had not handed over stays unsent.
 
 A batch of 32 and its summary fit what a full bucket sends with the
 reply reserve left, 33 full frames ([send queue](#send-queue)): the
-summary's frame, at most 255 − 225 = 30 bytes of DATA header and its 21,
+summary's frame, at most 255 − 224 = 31 bytes of DATA header and its 21,
 and its ACK take 34.9 + 17.0 = 51.9 ms, less than a full frame's
 155.5 ms. So the batch leaves at the pace of the hand-overs and within
 the fetch address's life, the delivery TTL; the summary's count tells
@@ -3402,13 +3407,15 @@ ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           in the answered packet's aux
           from, to = the IDs of the answering and the answered node
 DATA      first(1) format(1) dst_hop(6) src_hop(6) dst_pos(7) dst_id(6)
-          wrong(1) hops(1 or 2) payload                                     = 29 + payload,
-                                                                              30 from 128 hops
+          wrong(1) hops(1 to 3) payload                                     = 29 + payload,
+                                                                              30 from 128 hops,
+                                                                              31 from 16 384
           dst_hop, src_hop = IDs of the receiving and the sending node;
           aux = sender's home channel, so the receiver knows where to ACK;
-          wrong, hops = the counts of [hop count](#hop-count); hops below
-          128 is one byte, from 128 two, big-endian, the first byte's top
-          bit set and the other 15 bits the count, up to 32 767
+          wrong, hops = the counts of [hop count](#hop-count); hops is the
+          count in groups of 7 bits, the most significant first, one a
+          byte, each byte's top bit set if another follows: one byte below
+          128, two below 16 384, three up to 2 097 151
 PIECE     first(1) format(1) version(4) block(1) index(1) piece(247)        = 255
           aux = 15; version = the image's; index = which coded piece of the block, 0 to 254
 ASK       first(1) format(1) to(6) from(6)                                  = 14
@@ -3421,8 +3428,9 @@ STATUS    first(1) format(1) to(6) from(6) flags(1) battery(1) heard(1)
 ```
 
 Multi-byte numbers in the section and the status, the versions, are
-big-endian. A DATA count below 128 in the two-byte form is rejected, so
-every count has one form.
+big-endian. A DATA count in more bytes than it needs, its first group 0,
+or with a third byte whose top bit is set, is rejected, so every count
+has one form.
 
 The **message ID** is a 32-bit FNV-1a hash of
 `dst_pos || dst_id || payload`, computed by every node that handles the
@@ -3434,8 +3442,8 @@ acknowledges. The app must keep payloads unique
 `dst_hop` lets every node on a channel discard packets not addressed to
 it after 8 bytes. `src_hop` and `aux` name the sender and its home
 channel, where the ACK goes and where a return is sent
-([routing](#routing)). The payload is at most 255 − 30 = 225 bytes, so
-that a full frame has room for the count's two-byte form, which a message
+([routing](#routing)). The payload is at most 255 − 31 = 224 bytes, so
+that a full frame has room for the count's longest form, which a message
 may reach on its way; the sender's address is inside it, encrypted.
 
 ### Positions on the wire

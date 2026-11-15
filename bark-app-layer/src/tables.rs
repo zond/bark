@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 pub const HEADER_LEN: usize = crate::carry::SLOT_LEN;
 
 /// The most the tables take: the header, a full neighbour table and every
-/// record. 26 619 bytes.
+/// record. 27 917 bytes.
 pub const MAX_LEN: usize = HEADER_LEN + NEIGHBOURS * NEIGHBOUR_LEN + RECORDS * RECORD_LEN;
 
 const MAGIC: [u8; 4] = *b"tabl";
@@ -199,6 +199,6 @@ mod tests {
 
     #[test]
     fn the_most_it_takes() {
-        assert_eq!(MAX_LEN, 256 + 64 * 57 + 649 * 35);
+        assert_eq!(MAX_LEN, 256 + 64 * 57 + 649 * 37);
     }
 }
