@@ -1453,9 +1453,12 @@ Before each part the user waits with a timer for any program or erase on
 the chip, whoever started it, which a read would otherwise wait out on
 the processor, up to 12 ms. The update over the mesh's store, the
 serving of a piece, the hash of an image staged from the mesh or the
-phone, the mailbox's writes and the phone's staging all go so; the
-code's points are weighed 16 rows a step, 0.1 ms, and the running
-image's hash yields every 256 bytes. The update's task awaits after each
+phone, the mailbox's writes and the phone's staging all go so. A read
+of the store's and the sums it goes into are a step each; the code's
+points are weighed 4 rows a step, about 0.12 ms; a piece served from the
+running image is summed 64 bytes at a time; and a hash takes one block of
+SHA-256 a step, block 1's header and block 0's table among them, the
+running image's two hashes in turns. The update's task awaits after each
 part of its pass, a piece served, a block's line, an offer taken, so that
 none runs on into the next step within one poll.
 
@@ -1494,8 +1497,34 @@ A piece served from the running image measured 0.55 ms at its longest
 poll, the update's offer 0.64 ms, each with a log line in the poll; the
 bench build now counts a log line's time at its own place, `log`.
 
+A log line holds its caller's poll about 0.17 ms with one value (the
+night's polls that did little but log `uptime` or the watchdog's line,
+0.17 to 0.18 ms), and some 30 µs more for each value it formats: the
+GPS's fix line, twelve, 0.6 to 0.8 ms. Nearly all of it is the
+formatting, which runs in the caller before the logger sees a byte; the
+logger then copies the line into its ring, a few hundred instructions.
+So nothing in the logger bounds a line: each line goes in a poll of its
+own, and a long one is formatted in parts with an await between and then
+logged whole, as the fix's is (`bark_driver::gnss::FixLine`).
+
+The night's four hours on three boards (2026-11-15) showed what else was
+over the bound, each poll's longest place: the fix's line, every minute;
+the update's weighing of 16 rows, 0.39 to 0.47 ms; a read of the store's
+and its sums in one step, 0.28 to 0.34 ms (`sum`); block 0's table
+hashed in one step, 0.75 ms, once an image; a piece served, its last
+weighing and a piece's sums in one poll, up to 0.95 ms, or the data
+pieces it did not want passed over with its line, 0.72 ms; the offer's
+two lines in one poll, 0.66 ms; and at boot the running image's hash,
+eight blocks of SHA-256 a poll, up to 2.7 ms. Each now goes as above.
+
+Six hours on the same boards with these changes (2026-11-15) brought the
+longest poll of a minute near the bound, not under it: the GPS task's
+0.24 to 0.26 ms at the median and 0.29 ms at most, the update task's 0.21
+to 0.34 ms at the median and 0.36 ms at the 95th percentile. No channel
+check went without its reading.
+
 This bounds what the update does, not every task. Known stretches over
-the bound, left as they are (2026-11-14; measured where it says so, else
+the bound, left as they are (2026-11-15; measured where it says so, else
 worked out from the bus and the datasheets):
 
 | Where | How long | Why it stays |
@@ -1505,10 +1534,12 @@ worked out from the bus and the datasheets):
 | the phone link's host while a phone is linked | 1.4 to 1.75 ms a poll, measured | not yet known what |
 | a phone link's slot while a phone is linked | up to 9 ms a poll, measured | not yet known what |
 | the screen's pictures at boot | 0.9 and 3.3 ms, measured | the first two of a boot; no other was drawn in 2 h |
-| the MPSL's interrupt (RTC0) on the board serving the image | 10.6 ms once in 2 h, measured | most likely an erase part of the internal flash (below) |
+| the end of the running image's hash at boot (`update/mesh.rs`, `finish`): the last block, the table's own entry, the firmware's hash | some ten blocks of SHA-256, up to 2.7 ms, worked out | once a boot |
+| the GPS's line on a first fix whose satellites give no C/N0 | about 0.3 ms, worked out | once a search, only on a sky that gives none |
+| the MPSL's interrupt (RTC0) | 10.6 ms, measured, once as a board finished its image | most likely an erase part of the internal flash (below) |
 | the mailbox's reads (`mailbox.rs`, `Ring::read`), from the phone link's task, `home_now` | 4 ms for an item, up to 63 ms after a page erase; a read during a write waits it out, up to 12 ms | the ring reads blocking through `bark-app-layer`; parts there are a larger change |
 | the same reads from the radio's own task between its steps | as above | they delay its next step, not its reading inside a CAD |
-| the MPSL's flash timeslots for the internal flash (`store.rs`) | 41 µs a word written, 328 µs a record; an erase in parts of up to 10 ms | the processor stops while the internal flash writes, inside the MPSL's interrupt: no task can shorten it, and it can make a reading inside a CAD late |
+| the MPSL's flash timeslots for the internal flash (`store.rs`) | 41 µs a word written, 328 µs a record; an erase in nine parts of 10 ms, a length fixed in `nrf_mpsl::Flash` | the processor stops while the internal flash writes, inside the MPSL's interrupt: no task can shorten it, and it can make a reading inside a CAD late |
 | the phone link's pairing, P-256 in software | tens of ms | once a pairing |
 
 A wholly bounded radio would run its task on an interrupt executor above
@@ -1691,7 +1722,8 @@ which embassy-nrf binds itself, count as the time of the task they come
 in. A task's place is what it last said it was doing (`crate::at`): a
 step of the update's store (`slot`, `erase`, `find`, `weigh`, `sum`,
 `write`, `scan`, `open`, `clear`, `wait` for the chip, …), `fill` for a
-piece served, `verify` and `hash` for the running image at boot, `stage`,
+piece served, `verify`, `hash` and `finish` for the running image at
+boot, `offer`, `stage`,
 `commit`, `read`, `program`, `log` for a log line, or `-`; a poll's
 place is the one it spent longest at.
 

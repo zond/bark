@@ -270,6 +270,24 @@ PANIC = re.compile(r"^previous boot panicked")
 RESET_AFTER_S = 120.0
 
 
+# Another task may log between the firmware's `reboot` and the reset: a
+# GPS fix line did, 6 ms after it (run of 2026-11-15).
+REBOOT_LAG_S = 1.0
+
+
+def said_reboot(boot: Boot) -> bool:
+    """Whether the boot's last second holds the firmware's `reboot`."""
+    if not boot.lines:
+        return False
+    end = boot.lines[-1].board
+    for x in reversed(boot.lines):
+        if end - x.board > REBOOT_LAG_S:
+            return False
+        if REBOOT.match(x.text):
+            return True
+    return False
+
+
 def resets(log: Log, asked: list[float] | None = None) -> list[Finding]:
     """A reset the scenario did not ask for.
 
@@ -286,7 +304,7 @@ def resets(log: Log, asked: list[float] | None = None) -> list[Finding]:
             out.append(Finding("reset", FAIL, log.name, panic.text, panic.n))
             continue
         tail = prev.lines[-1].text if prev.lines else ""
-        if REBOOT.match(tail):
+        if said_reboot(prev):
             continue
         t = boot.first_host()
         if asked is None:
