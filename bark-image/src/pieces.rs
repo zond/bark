@@ -40,10 +40,10 @@
 //!
 //! **Pacing.** [`Store::poll`] does one step: it sees whether the chip is
 //! done with a program or an erase, its own or another user's, and if so
-//! starts one, reads [`CHUNK`] bytes and adds them in, weighs
+//! starts one, reads [`CHUNK`] bytes or adds them in, weighs
 //! [`WEIGH_ROWS`] of a decode's points or hashes [`HASH_PART`] bytes of
 //! it. So no step holds
-//! the processor longer than a read of [`CHUNK`] bytes and its sums, which
+//! the processor much longer than a read of [`CHUNK`] bytes, which
 //! the firmware checks against its bound (`bark-fw/README.md`, "Work
 //! beside the radio"). The firmware calls it until [`Poll::Idle`]. It must
 //! not stage
@@ -52,7 +52,7 @@
 //! ([`crate::boot::swap_requested`]): both write the same slot. Checking
 //! the signature and recording the image for the loader is the firmware's.
 //!
-//! **RAM.** 3 928 B in the node image (`llvm-nm`, 2026-11-08), 1.5 KiB of
+//! **RAM.** 3 968 B in the node image (`llvm-nm`, 2026-11-15), 1.5 KiB of
 //! it the lanes' sets of pieces held. Decoding two data pieces at a time,
 //! not eight, keeps 1.5 KB for the stack for 6 s more of reads a block.
 
@@ -464,10 +464,22 @@ impl Tabling {
     /// Feed the next bytes of the packed image into `table`: its header,
     /// then its firmware.
     pub fn feed(&mut self, table: &mut Table, bytes: &[u8]) {
+        self.firmware(bytes);
+        self.blocks(table, bytes);
+    }
+
+    /// [`Tabling::feed`]'s first half, the firmware's hash, so that a
+    /// caller can await between the two hashes' work.
+    pub fn firmware(&mut self, bytes: &[u8]) {
         let past_header = (HEADER_LEN as u32).saturating_sub(self.fed) as usize;
         if past_header < bytes.len() {
             self.firmware.update(&bytes[past_header..]);
         }
+    }
+
+    /// [`Tabling::feed`]'s second half, the blocks' hashes, of the bytes
+    /// [`Tabling::firmware`] took last.
+    pub fn blocks(&mut self, table: &mut Table, bytes: &[u8]) {
         self.hash(table, bytes);
     }
 
@@ -677,6 +689,9 @@ struct Decode {
     /// read.
     next: u8,
     part: u8,
+    /// The part at `part` is read into `bytes` and waits for its sums.
+    read: bool,
+    bytes: [u8; CHUNK],
     /// A data piece of the group is not among the pieces used.
     lacking: bool,
     /// Bytes of the group hashed.
@@ -686,8 +701,8 @@ struct Decode {
     /// The factors for each data piece of the group.
     at: [Option<At>; GROUP],
     sha: Sha256,
-    /// Block 1's header hashed to the name.
-    header_ok: bool,
+    /// Block 1's header hashed to the name; `None` until it is hashed.
+    header_ok: Option<bool>,
     out: [[u8; PIECE]; GROUP],
 }
 
@@ -704,6 +719,7 @@ impl Decode {
         self.group = group;
         self.next = 0;
         self.part = 0;
+        self.read = false;
         self.hashed = 0;
         self.wrote = 0;
         self.out = [[0; PIECE]; GROUP];
@@ -1266,12 +1282,14 @@ impl Store {
             group: 0,
             next: 0,
             part: 0,
+            read: false,
+            bytes: [0; CHUNK],
             lacking: false,
             hashed: 0,
             wrote: 0,
             at: [None; GROUP],
             sha: Sha256::new(),
-            header_ok: block != 1,
+            header_ok: (block != 1).then_some(true),
             out: [[0; PIECE]; GROUP],
         });
     }
@@ -1337,15 +1355,19 @@ impl Store {
         }
         let n = usize::from(d.n);
         let count = d.count();
-        // Read the next part of the next piece the group wants and add it
-        // in.
+        // Read the next part of the next piece the group wants, then add it
+        // in: a step each, since the read alone is most of a stretch.
         if let Some(j) = (usize::from(d.next)..n).find(|&j| d.wants(j)) {
             let from = usize::from(d.part);
             let len = CHUNK.min(PIECE - from);
-            let mut part = [0u8; CHUNK];
-            let part = &mut part[..len];
-            let slot = usize::from(d.slots[j]);
-            flash.read(slot_address(usize::from(d.lane), slot) + from as u32, part)?;
+            let part = &mut d.bytes[..len];
+            if !d.read {
+                let slot = usize::from(d.slots[j]);
+                flash.read(slot_address(usize::from(d.lane), slot) + from as u32, part)?;
+                d.read = true;
+                return Ok(Poll::Again);
+            }
+            d.read = false;
             for (out, at) in d.out.iter_mut().zip(&d.at).take(count) {
                 if let Some(at) = at {
                     mul_add_part(&mut out[from..from + len], d.points.factor(at, j), part);
@@ -1359,16 +1381,25 @@ impl Store {
         }
         let more = d.first() + count < n;
         if !d.writing {
-            // The group hashed a part a step.
+            // Block 1's header, a step of its own, before the group's
+            // first part is hashed.
+            if d.header_ok.is_none() {
+                let signed = &d.out.as_flattened()[..SIGNED_LEN];
+                // The name block 0 carried, the table's start.
+                d.header_ok =
+                    Some(<[u8; HASH_LEN]>::from(Sha256::digest(signed))[..] == table[..HASH_LEN]);
+                return Ok(Poll::Again);
+            }
+            // The group hashed a part a step: block 0, one group, up to its
+            // own entry, at its end, which checks what precedes it.
+            let own = table_len(image.blocks) - ENTRY;
+            let end = match d.block {
+                0 => own,
+                _ => count * PIECE,
+            };
             let hashed = usize::from(d.hashed);
-            if d.block != 0 && hashed < count * PIECE {
-                if d.block == 1 && d.group == 0 && hashed == 0 {
-                    let signed = &d.out.as_flattened()[..SIGNED_LEN];
-                    // The name block 0 carried, the table's start.
-                    d.header_ok =
-                        <[u8; HASH_LEN]>::from(Sha256::digest(signed))[..] == table[..HASH_LEN];
-                }
-                let to = (count * PIECE).min(hashed + HASH_PART);
+            if hashed < end {
+                let to = end.min(hashed + HASH_PART);
                 d.sha.update(&d.out.as_flattened()[hashed..to]);
                 d.hashed = to as u16;
                 return Ok(Poll::Again);
@@ -1380,19 +1411,12 @@ impl Store {
                 d.start_group(d.group + 1);
                 return Ok(Poll::Again);
             }
-            let ok = match d.block {
-                // The table's own entry, at its end, checks what precedes
-                // it.
-                0 => {
-                    let own = table_len(image.blocks) - ENTRY;
-                    Sha256::digest(&table[..own])[..ENTRY] == table[own..own + ENTRY]
-                }
-                b => {
-                    let at = HASH_LEN + ENTRY * usize::from(b - 1);
-                    let hash = core::mem::take(&mut d.sha).finalize();
-                    d.header_ok && hash[..ENTRY] == table[at..at + ENTRY]
-                }
+            let at = match d.block {
+                0 => own,
+                b => HASH_LEN + ENTRY * usize::from(b - 1),
             };
+            let hash = core::mem::take(&mut d.sha).finalize();
+            let ok = d.header_ok == Some(true) && hash[..ENTRY] == table[at..at + ENTRY];
             if ok {
                 d.writing = true;
                 d.start_group(0);

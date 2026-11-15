@@ -14,8 +14,9 @@
 //! instruction timings). A coded piece takes `n` of them, about 3.5 ms; a
 //! block of 64 given back from none of its data pieces 64 × 64, about
 //! 220 ms. Before either, the points' weights take `n × n` logarithms,
-//! about 6 cycles each, 0.4 ms for 64, so they are worked out
-//! [`WEIGH_ROWS`] at a time ([`Points::weigh`]). Not measured on the chip.
+//! so they are worked out [`WEIGH_ROWS`] at a time ([`Points::weigh`]).
+//! A logarithm, taken for 6 cycles, measured 27 on the chip
+//! ([`WEIGH_ROWS`]); the sums are not measured alone.
 
 /// Bytes of a piece: a full frame's 255 less its 8-byte header.
 pub const PIECE: usize = 247;
@@ -136,11 +137,12 @@ pub struct Points {
     weighed: usize,
 }
 
-/// The weights [`Points::weigh`] works out at once: 16 rows of up to 64
-/// logarithms, about 6 cycles each, 0.1 ms at 64 MHz, within the
-/// firmware's bound on a stretch of work (`bark-fw/README.md`, "Work
-/// beside the radio").
-pub const WEIGH_ROWS: usize = 16;
+/// The weights [`Points::weigh`] works out at once: 4 rows of up to 64
+/// logarithms. 16 rows took 0.39 to 0.47 ms on the boards (2026-11-14,
+/// the bench build's `weigh`), about 27 cycles a logarithm, so 4 rows
+/// about 0.12 ms, within the firmware's bound on a stretch of work
+/// (`bark-fw/README.md`, "Work beside the radio").
+pub const WEIGH_ROWS: usize = 4;
 
 /// A point at which [`Points::factor`] gives the factors.
 #[derive(Clone, Copy, Debug)]

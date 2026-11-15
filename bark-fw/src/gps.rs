@@ -20,9 +20,10 @@
 //! (`main.rs`).
 
 use core::cell::Cell;
+use core::fmt::Write as _;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bark_driver::gnss::{Fix, Nmea, OUTPUT};
+use bark_driver::gnss::{Fix, FixLine, Nmea, OUTPUT};
 use bark_driver::Gps;
 use bark_proto::Position;
 use embassy_futures::select::{select3, Either3};
@@ -53,7 +54,7 @@ const READ: usize = 1024;
 
 /// Bytes parsed between two awaits: a second's sentences took 1.5 to
 /// 1.9 ms with its fix's line on the boards (2026-11-14, the bench build's
-/// `gps`), about 2.4 µs a byte, so 64 bytes about 0.15 ms, within the
+/// `gps`), at most 2.4 µs a byte, so 64 bytes at most 0.15 ms, within the
 /// bound on a stretch of work (`README.md`, "Work beside the radio").
 const PARSED_AT_ONCE: usize = 64;
 
@@ -204,14 +205,18 @@ async fn work(mut p: Parts) {
                     }
                     let mut first = None;
                     for part in buf[..n].chunks(PARSED_AT_ONCE) {
-                        nmea.feed(part, &mut |f| {
+                        // A fix comes at an RMC, once a second, and a part
+                        // is less than a second's sentences: one at most.
+                        let mut heard = None;
+                        nmea.feed(part, &mut |f| heard = Some(f));
+                        embassy_futures::yield_now().await;
+                        if let Some(f) = heard {
                             let was = state;
-                            state = fixed(f, state);
+                            state = fixed(f, state).await;
                             if was != State::Fixed && state == State::Fixed {
                                 first = Some(f);
                             }
-                        });
-                        embassy_futures::yield_now().await;
+                        }
                     }
                     // A first fix with satellites but none of their C/N0
                     // found: the sentences, once a search, for the bench.
@@ -238,6 +243,8 @@ async fn work(mut p: Parts) {
         drop((tx, rx));
         wake.set_low();
         AWAKE.store(false, Ordering::Relaxed);
+        // The line in a poll of its own, as every line of the task.
+        embassy_futures::yield_now().await;
         let found = if state == State::Fixed {
             ""
         } else {
@@ -254,20 +261,6 @@ fn lose(state: State) {
     if state == State::Fixed && !LOAD_ONLY {
         news(|n| n.lost = true);
         crate::node::WAKE.gps_has_news();
-    }
-}
-
-/// A value the receiver may leave out, `-` if it did, in tenths if the
-/// flag says so.
-struct Given(Option<u16>, bool);
-
-impl core::fmt::Display for Given {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Given(None, _) => f.write_str("-"),
-            Given(Some(v), false) => write!(f, "{v}"),
-            Given(Some(v), true) => write!(f, "{}.{}", v / 10, v % 10),
-        }
     }
 }
 
@@ -291,18 +284,22 @@ fn note(state: &'static str) {
 
 /// Take a second's [`Fix`]: keep its time, hand its position to the node
 /// if its satellites look like a real sky's, and log it and a change of
-/// state.
-fn fixed(f: Fix, state: State) -> State {
+/// state. Each line is in a poll of its own: a line holds the processor
+/// some 0.2 ms, and more with each value it formats (README, "Work
+/// beside the radio").
+async fn fixed(f: Fix, state: State) -> State {
     let Some(position) = f.position else {
         if state != State::Searching {
             log::info!("gps: no fix, searching");
             note("searching");
         }
         lose(state);
+        embassy_futures::yield_now().await;
         return State::Searching;
     };
     if let Some(s) = f.utc_s {
         crate::utc::gps(s);
+        embassy_futures::yield_now().await;
     }
     let c = f.cn0;
     if !c.real() {
@@ -314,30 +311,21 @@ fn fixed(f: Fix, state: State) -> State {
             );
         }
         lose(state);
+        embassy_futures::yield_now().await;
         return State::Dropped;
     }
     // Every fix, for the bench: how a still board's fixes wander, with
     // what quality, and what speed its receiver measures meanwhile,
     // decides the carried rule (spec "Open items", O16, O18;
-    // `docs/gps-bench-2026-11-06.md`).
-    log::info!(
-        "gps: fix at {} sats={} hdop={}.{} mode={} speed={}cm/s course={} c/n0 n={} min={} mean={} max={} dB-Hz",
-        position,
-        f.satellites,
-        f.hdop_tenths / 10,
-        f.hdop_tenths % 10,
-        if f.mode.is_ascii_graphic() {
-            f.mode as char
-        } else {
-            '-'
-        },
-        Given(f.speed_cm_s, false),
-        Given(f.course_tenths, true),
-        c.count,
-        c.min,
-        c.mean,
-        c.max
-    );
+    // `docs/gps-bench-2026-11-06.md`). Formatted a part at a time.
+    let line = FixLine { fix: f, position };
+    let mut text = heapless::String::<{ FixLine::LEN }>::new();
+    for k in 0..FixLine::PARTS {
+        let _ = write!(text, "{}", line.part(k));
+        embassy_futures::yield_now().await;
+    }
+    log::info!("gps: fix at {}", text);
+    embassy_futures::yield_now().await;
     if state != State::Fixed {
         note("fix");
     }

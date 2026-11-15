@@ -357,8 +357,10 @@ async fn answer(flash: &super::Flash, named: Named) {
 
 /// Piece `index` of block `block` of the image of `version` into `FILLED`:
 /// coded from the block's data pieces, read one at a time, those of the
-/// external flash [`CHUNK`] bytes at a time; the executor runs between
-/// each and the next, and between the steps that weigh the code's points.
+/// external flash [`CHUNK`] bytes at a time and those of the running image
+/// summed [`SUMMED_AT_ONCE`] bytes at a time; the executor runs between
+/// each and the next, between the steps that weigh the code's points, and
+/// before the piece's line.
 async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool {
     let running = RUNNING.lock(|r| {
         r.borrow()
@@ -375,16 +377,19 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
     let Ok(mut encoder) = Encoder::start(n, index) else {
         return false;
     };
-    crate::at("fill");
-    while !encoder.weigh() {
-        embassy_futures::yield_now().await;
+    loop {
         crate::at("fill");
+        let weighed = encoder.weigh();
+        embassy_futures::yield_now().await;
+        if weighed {
+            break;
+        }
     }
     for i in 0..n {
-        crate::at("fill");
         if !encoder.wants(i) {
             continue;
         }
+        crate::at("fill");
         if from_store {
             for from in (0..PIECE).step_by(CHUNK) {
                 let mut part = [0u8; CHUNK];
@@ -407,12 +412,15 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
             if !running_piece(flash, block, i, &mut piece) {
                 return false;
             }
-            encoder.add(i, &piece);
-            // A copy from the memory-mapped flash and a piece's sums,
-            // about 54 µs (`bark_image::code`).
-            embassy_futures::yield_now().await;
+            for from in (0..PIECE).step_by(SUMMED_AT_ONCE) {
+                crate::at("fill");
+                let to = PIECE.min(from + SUMMED_AT_ONCE);
+                encoder.add_part(i, from, &piece[from..to]);
+                embassy_futures::yield_now().await;
+            }
         }
     }
+    crate::at("fill");
     let out = encoder.finish();
     FILLED.out.lock(|o| *o.borrow_mut() = out);
     let (last, count) = STANDING.lock(Cell::get).serving;
@@ -426,6 +434,12 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
     );
     true
 }
+
+/// Bytes of a piece of the running image added into a coded one between
+/// two awaits. A whole piece's sums are 3 500 cycles by
+/// `bark_image::code`'s count, which the weights there took four and a
+/// half times on the chip: some 0.25 ms, so a quarter at a time.
+const SUMMED_AT_ONCE: usize = 64;
 
 /// Data piece `i` of block `block` of the running image: the table's, or
 /// the packed image's, its header then the active slot, padded with zeros.
@@ -485,37 +499,45 @@ async fn running(flash: &super::Flash) -> Option<Image> {
     };
     let mut tabling = Tabling::new();
     let mut done = 0;
-    // The header, then the slot, a few words at a time from flash.
+    // The header, then the slot, a block of SHA-256 at a time from flash,
+    // each of the two hashes in a poll of its own.
     let total = HEADER_LEN as u32 + h.length;
+    let mut buf = [0u8; HASHED_AT_ONCE];
     while done < total {
         crate::at("hash");
+        let n = (total - done).min(HASHED_AT_ONCE as u32) as usize;
         let read = RUNNING.lock(|r| {
-            let mut r = r.borrow_mut();
-            let r = r.as_mut()?;
-            let mut buf = [0u8; 64];
-            let n = (total - done).min(buf.len() as u32) as usize;
+            let r = r.borrow();
+            let r = r.as_ref()?;
             if done < HEADER_LEN as u32 {
                 let n = n.min(HEADER_LEN - done as usize);
                 buf[..n].copy_from_slice(&r.header[done as usize..done as usize + n]);
-                tabling.feed(&mut r.table, &buf[..n]);
                 return Some(n);
             }
             let at = ACTIVE.start + done - HEADER_LEN as u32;
             flash
                 .lock(|f| f.borrow_mut().read(at, &mut buf[..n]))
                 .ok()?;
-            tabling.feed(&mut r.table, &buf[..n]);
             Some(n)
         });
         let Some(n) = read else {
             RUNNING.lock(|r| *r.borrow_mut() = None);
             return None;
         };
+        tabling.firmware(&buf[..n]);
+        embassy_futures::yield_now().await;
+        crate::at("hash");
+        RUNNING.lock(|r| {
+            if let Some(r) = r.borrow_mut().as_mut() {
+                tabling.blocks(&mut r.table, &buf[..n]);
+            }
+        });
         done += n as u32;
-        if done.is_multiple_of(HASHED_AT_ONCE) {
-            embassy_futures::yield_now().await;
-        }
+        embassy_futures::yield_now().await;
     }
+    // The last block, the table's own entry and the firmware's hash: some
+    // ten blocks of SHA-256 in one poll, once a boot.
+    crate::at("finish");
     let ok = RUNNING.lock(|r| {
         let mut r = r.borrow_mut();
         let r = r.as_mut()?;
@@ -533,10 +555,12 @@ async fn running(flash: &super::Flash) -> Option<Image> {
     Some(core_image(&image))
 }
 
-/// Bytes of the running image hashed between two awaits: 4 KiB took
-/// about a millisecond, so 256 bytes about 64 µs, a quarter of
-/// `radio::STRETCH`.
-const HASHED_AT_ONCE: u32 = 256;
+/// Bytes of the running image hashed by one of its two hashes between two
+/// awaits: one block of SHA-256 (FIPS 180-4, §6.2), some 0.15 ms
+/// (`bark_image::pieces`, the store's hash). With 256 bytes by both, eight
+/// blocks, the longest poll at boot was 2.7 ms (2026-11-14, the bench
+/// build's `hash`).
+const HASHED_AT_ONCE: usize = 64;
 
 fn core_image(i: &pieces::Image) -> Image {
     Image {
@@ -590,6 +614,7 @@ async fn tell(r: Request) {
 
 async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> ! {
     let held = running(flash).await;
+    embassy_futures::yield_now().await;
     match held {
         Some(image) => {
             // The name is the build's, known here alone: the mesh names an
@@ -607,6 +632,9 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
         }
         None => set_phase(Phase::Idle),
     }
+    // The hash's end, the line above and the store's opening, each a
+    // stretch of its own.
+    embassy_futures::yield_now().await;
     let idle = || match held {
         Some(i) => Phase::Holds(i.version),
         None => Phase::Idle,
@@ -712,6 +740,8 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     Some(Phase::Gathering { held, .. }) => held,
                     _ => 0,
                 };
+                // The line apart from the step.
+                embassy_futures::yield_now().await;
                 log::info!(
                     "update: block {} decoded and written, {} of {}",
                     b,
@@ -722,9 +752,11 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 embassy_futures::yield_now().await;
             }
             Poll::Failed(b) => {
+                embassy_futures::yield_now().await;
                 log::warn!("update: block {} failed its check; gathered again", b);
                 failed = failed.saturating_add(1);
                 if failed == KEEP_FAILING {
+                    embassy_futures::yield_now().await;
                     log::warn!(
                         "update: blocks of version {} keep failing their check: two builds under one number?",
                         gather.map_or(0, |i| i.version)
@@ -751,7 +783,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 .await;
                 match wait {
                     Either4::First(image) => {
-                        if let Some(i) = offer(flash, &image, refused) {
+                        if let Some(i) = offer(flash, &image, refused).await {
                             gather = Some(i);
                             told = false;
                             failed = 0;
@@ -786,8 +818,8 @@ fn gathering(i: &pieces::Image) -> Phase {
 }
 
 /// A neighbour offers `image`: the image to gather, if the policy takes
-/// it and the store can.
-fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pieces::Image> {
+/// it and the store can. Each line in a poll of its own.
+async fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pieces::Image> {
     crate::at("offer");
     let o = policy::Offer {
         version: image.version,
@@ -811,6 +843,8 @@ fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pi
     if !takes {
         return None;
     }
+    embassy_futures::yield_now().await;
+    crate::at("offer");
     let i = store_image(image);
     match STORE.lock(|s| s.borrow_mut().begin(i)) {
         Begin::Unfit => {

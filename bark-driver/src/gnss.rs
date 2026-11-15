@@ -119,6 +119,93 @@ pub struct Fix {
     pub cn0: Cn0,
 }
 
+/// A fix's log line after its `gps: fix at`, for the bench
+/// (spec "Open items", O16, O18): the position, the satellites, dilution
+/// and mode, speed and course, and the C/N0. It is written in
+/// [`FixLine::PARTS`] parts of a few values each, so that the firmware can
+/// await between them: formatted at once it held the processor 0.6 to
+/// 0.8 ms (`bark-fw/README.md`, "Work beside the radio").
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FixLine {
+    /// The second's fix.
+    pub fix: Fix,
+    /// Its position.
+    pub position: Position,
+}
+
+impl FixLine {
+    /// The parts [`FixLine::part`] gives.
+    pub const PARTS: usize = 4;
+
+    /// The longest line: a position of 22 characters, `-90.000000
+    /// -180.000000`, and every field at its type's largest.
+    pub const LEN: usize = 122;
+
+    /// Part `k`, below [`FixLine::PARTS`].
+    pub fn part(&self, k: usize) -> FixPart<'_> {
+        FixPart(self, k)
+    }
+}
+
+impl core::fmt::Display for FixLine {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        (0..Self::PARTS).try_for_each(|k| write!(f, "{}", self.part(k)))
+    }
+}
+
+/// A part of a [`FixLine`].
+pub struct FixPart<'a>(&'a FixLine, usize);
+
+impl core::fmt::Display for FixPart<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let FixLine { fix, position } = self.0;
+        match self.1 {
+            0 => write!(f, "{position}"),
+            1 => write!(
+                f,
+                " sats={} hdop={}.{} mode={}",
+                fix.satellites,
+                fix.hdop_tenths / 10,
+                fix.hdop_tenths % 10,
+                if fix.mode.is_ascii_graphic() {
+                    fix.mode as char
+                } else {
+                    '-'
+                }
+            ),
+            2 => write!(
+                f,
+                " speed={}cm/s course={}",
+                Given(fix.speed_cm_s, false),
+                Given(fix.course_tenths, true)
+            ),
+            3 => {
+                let c = fix.cn0;
+                write!(
+                    f,
+                    " c/n0 n={} min={} mean={} max={} dB-Hz",
+                    c.count, c.min, c.mean, c.max
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A value the receiver may leave out, `-` if it did, in tenths if the
+/// flag says so.
+struct Given(Option<u16>, bool);
+
+impl core::fmt::Display for Given {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Given(None, _) => f.write_str("-"),
+            Given(Some(v), false) => write!(f, "{v}"),
+            Given(Some(v), true) => write!(f, "{}.{}", v / 10, v % 10),
+        }
+    }
+}
+
 /// The parser's state between bytes, keeping `KEPT` raw sentences for
 /// the bench.
 pub struct Nmea<const KEPT: usize = RAW> {
@@ -531,6 +618,78 @@ mod tests {
             s("GNRMC,123519.000,A,5027.0060,N,03031.4040,E,0.0,0.0,051126,,,A,V"),
         ]
         .concat()
+    }
+
+    #[test]
+    fn a_fix_line_is_its_parts() {
+        let fix = Fix {
+            position: None,
+            utc_s: None,
+            satellites: 10,
+            hdop_tenths: 11,
+            mode: b'A',
+            speed_cm_s: Some(50),
+            course_tenths: Some(21),
+            cn0: Cn0 {
+                count: 10,
+                min: 19,
+                mean: 24,
+                max: 30,
+                listed: 10,
+                in_view: 12,
+            },
+        };
+        let line = FixLine {
+            fix,
+            position: Position::from_degrees(59.214887, 18.212875),
+        };
+        let whole = std::format!("{line}");
+        assert_eq!(
+            whole,
+            "59.214887 18.212875 sats=10 hdop=1.1 mode=A speed=50cm/s course=2.1 \
+             c/n0 n=10 min=19 mean=24 max=30 dB-Hz"
+        );
+        let parts: std::string::String = (0..FixLine::PARTS)
+            .map(|k| std::format!("{}", line.part(k)))
+            .collect();
+        assert_eq!(parts, whole);
+        let unknown = FixLine {
+            fix: Fix {
+                mode: 0,
+                speed_cm_s: None,
+                course_tenths: None,
+                ..fix
+            },
+            ..line
+        };
+        assert!(std::format!("{unknown}").contains(" mode=- speed=-cm/s course=- "));
+    }
+
+    #[test]
+    fn the_longest_fix_line_is_len() {
+        let line = FixLine {
+            fix: Fix {
+                position: None,
+                utc_s: Some(u64::MAX),
+                satellites: u8::MAX,
+                hdop_tenths: u16::MAX,
+                mode: b'N',
+                speed_cm_s: Some(u16::MAX),
+                course_tenths: Some(u16::MAX),
+                cn0: Cn0 {
+                    count: u8::MAX,
+                    min: u8::MAX,
+                    mean: u8::MAX,
+                    max: u8::MAX,
+                    listed: u8::MAX,
+                    in_view: u8::MAX,
+                },
+            },
+            position: Position::from_degrees(-90.0, -180.0),
+        };
+        let text = std::format!("{line}");
+        assert!(text.starts_with("-90.000000 -180.000000 "), "{text}");
+        assert_eq!(text.len(), FixLine::LEN, "{text}");
     }
 
     #[test]

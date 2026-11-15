@@ -87,7 +87,8 @@ bark-link = { path = "../bark-link" }
 bark-app-layer = { path = "../bark-app-layer" }
 # What the e-paper shows, built and tested on the host (src/display.rs).
 bark-screen = { path = "../bark-screen" }
-# The GATT values' storage, the version trouble-host uses.
+# The GATT values' storage, the version trouble-host uses; the GPS's fix
+# line formatted a part at a time (src/gps.rs).
 heapless = "=0.9.3"
 # The clock the external flash's driver waits by (src/ext_flash.rs).
 embedded-hal = "=1.0.0"
