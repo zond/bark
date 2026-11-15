@@ -632,8 +632,9 @@ bytes the node holds, then commits and reboots (`bark-app/README.md`,
 "Updating a node"). The node stages through the MPSL's flash timeslots
 for the record and the state page, as the store writes, and through the
 external flash's driver with the executor free while the chip erases or
-programs, as the mailbox writes; the commit's hash reads 256 bytes at a
-time and lets the executor run between, about 3 s for the whole image.
+programs, as the mailbox writes; the commit's hash reads 16 bytes at a
+time and lets the executor run between, about 6 s for the whole image
+(Work beside the radio, below).
 What is staged stays across connections until the node resets. The log
 has a line for each change, none for a piece:
 
@@ -708,19 +709,21 @@ confirmed itself.
   the node gathers it if the version is above its own, the key the
   heartbeat names is one it holds, and neither the phone's update nor a
   swap holds the staged slot (`bark_image::policy::takes`). The pieces go
-  into the store on the external flash (`bark_image::pieces`), one flash
-  operation or one piece read a step, the executor free between and the
-  chip's erases and programs waited out with a timer. A reset keeps what
+  into the store on the external flash (`bark_image::pieces`), a step at
+  a time of at most 16 bytes over the bus, the executor free between and
+  the chip's erases and programs waited out with a timer (Work beside the
+  radio, below). A reset keeps what
   was gathered, and the node goes on with it unless it is no longer
   newer than the running image.
 - *What it serves.* A piece of the running image is coded from the
   slot's bytes, memory-mapped in the internal flash; one of a block it
-  gathered and decoded, from the external flash. A piece not filled
+  gathered and decoded, from the external flash, 16 bytes at a time. A
+  piece not filled
   within 372.8 ms, the longest a check of the channel may be held
   (`docs/core-interface.md` §3 rule 8), is not sent: it would go on an
   older check than the core allows for. The task fills pieces between
   the store's steps, so one asked for while a whole image is checked and
-  staged, about 3 s, is not sent. The 10 s line counts them,
+  staged, about 6 s, is not sent. The 10 s line counts them,
   `unserved=`.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
@@ -1325,8 +1328,9 @@ and fetched are kept with the records (Phone link, above).
 The mailbox reads a slot when asked, about a millisecond on the
 external flash's bus, and never waits on a write: its writes and erases
 are queued and done by a task of their own, on the external flash with
-the executor free while the chip erases (10 ms) or programs a slot
-(1.3 ms). A read that meets an erase under way waits for it, up to
+the executor free while the chip erases (10 ms) or programs a slot, in
+16 parts of 16 bytes (Work beside the radio, below). A read that meets
+an erase under way waits for it, up to
 12 ms; the mailbox's users all run in thread mode, so that wait masks
 no interrupt. At boot the mailbox opens once the radio has raised the
 rail: it reads all 1024 slots, 256 KiB, and logs how long that took,
@@ -1418,6 +1422,107 @@ confirmation takes.
 | console | 18 080 B | 243 024 B |
 
 (2026-11-11, `size -A`, `uf2.py --stack`.)
+
+## Work beside the radio
+
+Every task runs on one executor, so a task that does not await holds up
+all the others, the radio's among them. Two moments of the radio's task
+cannot wait long (Radio driver, below): the reading inside a
+listen-before-talk's CAD is due 1 024 µs into it and must be made before
+its sampling ends at 2 048 µs, or the check counts as busy and a
+heartbeat is skipped; and the receive after a CAD must start within
+1 ms of it for the oscillator to restart warm, or it is a cold start, the
+oscillator's longer delay.
+
+No other task may run longer between two awaits than a quarter of the
+restart's window, `radio::STRETCH`, 250 µs: the radio's wake can then
+wait out four such stretches and still be in time. The reading inside a
+CAD waits for no task at all (below).
+
+The external flash's software bus moves a byte in 8 µs (roadmap, Phase
+2, "The external flash's bus"), so a read of a 256-byte slot took 2 ms;
+a block's decode was a run of them, and 82 of 88 checks that got no
+reading in four hours on a board that gathered an image fell within 20 s
+before one of its blocks was written (2026-11-14). Now every
+asynchronous user of the chip moves at most 16 bytes between two awaits,
+`bark_image::ext_flash::CHUNK`: a read of them takes 187 µs and a
+program's start 184 µs, which the build checks against `STRETCH`. A page
+is programmed in parts of 16 bytes, each waited out with a timer and
+looked at every 50 µs, since the datasheet gives a page's time alone.
+Before each part the user waits with a timer for any program or erase on
+the chip, whoever started it, which a read would otherwise wait out on
+the processor, up to 12 ms. The update over the mesh's store, the
+serving of a piece, the hash of an image staged from the mesh or the
+phone, the mailbox's writes and the phone's staging all go so; the
+code's points are weighed 16 rows a step, 0.1 ms, and the running
+image's hash yields every 256 bytes. The update's task awaits after each
+part of its pass, a piece served, a block's line, an offer taken, so that
+none runs on into the next step within one poll.
+
+The parts cost time: a block decoded from none of its data pieces reads
+for about 12 s instead of 8, a slot is written in 16 programs, and the
+hash of a staged image takes about 6 s instead of 3. Until a board
+measures how long a short program takes, a phone's update may take up
+to twice its 20 s.
+
+The parts were not enough for the reading: in four hours on a board
+gathering an image with them, 23 checks got no reading, 14 of them
+within 20 s before a block was written (2026-11-14). The reading's wake
+waited out what ran at two awaits, the command's wait for BUSY and the
+reading's own timer, and the two together had the 1 024 µs, not each:
+in 17 of the 23 the CAD's result came less than its 2 ms after the start
+the driver saw, so the driver saw the start late and read after the CAD
+had ended, the two waits 1 ms or more together; in 5 the reading's wake
+alone was 1.4 to 2.3 ms late, longer than any poll of the update or the
+phone link measured that minute, so something not then timed held the
+processor. So from
+`SetCAD` to the reading the radio's task keeps the processor, waiting
+for BUSY and for the reading's time without an await
+(`sx1262::Chip::hold`, `bark_driver::Clock::hold`): about 1.1 ms a
+check, more by the oscillator's delay when the CAD starts it, a few a
+minute. Only an interrupt can make the reading late now. In the next
+2 h 12 min on three boards, one serving and two gathering, no check went
+without a reading (2026-11-14, evening).
+
+Timed with the interrupts taken out (Bench build, below), that run also
+showed what else held the processor longer than the bound. The GPS's
+task parsed a second's sentences in one poll, 1.5 to 1.9 ms every
+minute on every board; it now parses 64 bytes between awaits
+(`gps::PARSED_AT_ONCE`). The store's check hashed a decoded piece a
+step, 0.5 to 0.7 ms; it now hashes one 64-byte block of SHA-256 a step.
+A piece served from the running image measured 0.55 ms at its longest
+poll, the update's offer 0.64 ms, each with a log line in the poll; the
+bench build now counts a log line's time at its own place, `log`.
+
+This bounds what the update does, not every task. Known stretches over
+the bound, left as they are (2026-11-14; measured where it says so, else
+worked out from the bus and the datasheets):
+
+| Where | How long | Why it stays |
+|---|---|---|
+| `sign::verify`, a header's Ed25519 signature: once a boot for the running image, at each image staged | 45.6 ms at boot, measured | one call into the library; once a boot and once an update |
+| the phone link's start, its host's key pair | 286 ms, measured, 1.4 s after boot, the radio up | once a boot |
+| the phone link's host while a phone is linked | 1.4 to 1.75 ms a poll, measured | not yet known what |
+| a phone link's slot while a phone is linked | up to 9 ms a poll, measured | not yet known what |
+| the screen's pictures at boot | 0.9 and 3.3 ms, measured | the first two of a boot; no other was drawn in 2 h |
+| the MPSL's interrupt (RTC0) on the board serving the image | 10.6 ms once in 2 h, measured | most likely an erase part of the internal flash (below) |
+| the mailbox's reads (`mailbox.rs`, `Ring::read`), from the phone link's task, `home_now` | 4 ms for an item, up to 63 ms after a page erase; a read during a write waits it out, up to 12 ms | the ring reads blocking through `bark-app-layer`; parts there are a larger change |
+| the same reads from the radio's own task between its steps | as above | they delay its next step, not its reading inside a CAD |
+| the MPSL's flash timeslots for the internal flash (`store.rs`) | 41 µs a word written, 328 µs a record; an erase in parts of up to 10 ms | the processor stops while the internal flash writes, inside the MPSL's interrupt: no task can shorten it, and it can make a reading inside a CAD late |
+| the phone link's pairing, P-256 in software | tens of ms | once a pairing |
+
+A wholly bounded radio would run its task on an interrupt executor above
+thread mode, so that no task could delay any of its wakes, not only the
+reading's. That costs more than it looks: what the radio's task shares
+with the others, the update's store and requests, the mailbox, the phone
+link's notes, is held in `ThreadModeRawMutex` cells today, which an
+interrupt cannot take, and each would need a critical section or a
+channel; the MPSL's flash, whose users must stay in thread mode; and the
+external flash, which both the radio's task and the others read. It is
+the answer if the bench shows the restart or a frame's service late.
+
+The bench build times every task's polls and every interrupt, once a
+minute and over each check without a reading (Bench build, below).
 
 ## Radio power
 
@@ -1562,17 +1667,47 @@ busy.
 
 Each listen-before-talk is logged `lbt ch=<k> preamble=<bool> dbm=<n>`,
 after the frame it let through or at the next one, so that the line
-delays no frame. One that got no reading inside its CAD, and so `dbm=0`,
-is followed by `bench: no reading ch=<k> wake_us=<n> late=<bool>
-start=<running|restart|cold> off_us=<n> delay_us=<n> cad_us=<n>`:
-`wake_us` is when the wait for the read ended, from the CAD's start;
-`late=true`, past the CAD's 2 048 µs of sampling, means no read was made,
-another task having held the processor, and `late=false` that the chip
+delays no frame. Each reading of the busy sweep is logged `rssi ch=<k>
+dbm=<n>`.
+
+The bench build times the work beside the radio (`timing.rs`, Work
+beside the radio, above) in the processor's cycles: each task's polls,
+less the interrupts that came during them, and each interrupt bound in
+`main.rs`, from its first handler to its last, one that comes inside
+another counted in the other's. GPIOTE's and the clock's interrupts,
+which embassy-nrf binds itself, count as the time of the task they come
+in. A task's place is what it last said it was doing (`crate::at`): a
+step of the update's store (`slot`, `erase`, `find`, `weigh`, `sum`,
+`write`, `scan`, `open`, `clear`, `wait` for the chip, …), `fill` for a
+piece served, `verify` and `hash` for the running image at boot, `stage`,
+`commit`, `read`, `program`, `log` for a log line, or `-`; a poll's
+place is the one it spent longest at.
+
+A check that got no reading inside its CAD, and so `dbm=0`, is followed
+by `bench: no reading ch=<k> wake_us=<n> late=<bool>
+start=<running|restart|cold> off_us=<n> delay_us=<n> cad_us=<n>
+entered_us=<n> read_us=<n> tasks_us=<n> task=<task>:<place>:<us>
+irq_us=<n> irq=<interrupt>:<us>`. `wake_us` is when the wait for the
+read ended, from the CAD's start; `late=true`, past the CAD's 2 048 µs of
+sampling, means no read was made, and `late=false` that the chip
 answered with no reading. `start` is the oscillator's start for the CAD,
 `running` from receive, with how long it had been off and the delay
-programmed, `-` where none; `cad_us` is from the CAD's start to its result read. Each reading of the busy sweep is logged `rssi ch=<k> dbm=<n>`. Once a minute `bench: busy home=<k> tenths=[…]
-floor_dbm=[…]` gives each channel's busy estimate in tenths of a percent
-and its noise floor (spec "Busy estimate").
+programmed, `-` where none; `entered_us` is from `SetCAD` to the CAD's
+start as the driver saw it, `read_us` the read's own time, and `cad_us`
+from the CAD's start to its result read. The rest is what ran from the
+check's start to its end: the tasks' time, the longest of their polls,
+the interrupts' time and the longest of them.
+
+Once a minute `bench: busy home=<k> tenths=[…] floor_dbm=[…]` gives each
+channel's busy estimate in tenths of a percent and its noise floor (spec
+"Busy estimate"), followed by `bench: longest poll task=<task> us=<n>
+at=<place>` for each task but the radio's, its longest poll since the
+last line less the interrupts in it, and `bench: interrupts us=<n>
+longest=<interrupt>:<us>`, the time in interrupts since the last line and
+the longest. The tasks are `update`, `phone` (the phone link's host),
+`link` (its links' slots), `gps`, `screen`, `store`, `mailbox`, `log`,
+`usb`, `mpsl`, `trial`, `led`, `button`, `touch` and `watchdog`. A poll
+under 250 µs holds the radio up by no more than its bound.
 
 `txpower`, `tcxo` and `carrier` run in the node's loop between two of the
 driver's steps; `text` and `power` reach the core at its next step.

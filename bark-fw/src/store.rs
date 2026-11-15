@@ -91,7 +91,12 @@ pub fn keep_phones() {
 #[cfg(not(feature = "console"))]
 /// Write what the node and the phone link hand, for ever.
 #[embassy_executor::task]
-pub async fn run(mut flash: Flash) -> ! {
+pub fn run(flash: Flash) -> impl core::future::Future<Output = ()> {
+    timed!(STORE, work(flash))
+}
+
+#[cfg(not(feature = "console"))]
+async fn work(mut flash: Flash) {
     loop {
         let w = &TO_WRITE;
         match select3(w.stored.wait(), w.offset.wait(), w.phones.wait()).await {

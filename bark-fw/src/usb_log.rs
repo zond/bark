@@ -92,14 +92,16 @@ impl Logger {
             self.drops.count();
             return false;
         }
-        let whole = self.line.lock(|line| {
-            let Ok(mut line) = line.try_borrow_mut() else {
-                return false;
-            };
-            line.clear();
-            crate::log_line(record, &mut line);
-            put_whole(line.finish(), self.ring.free_capacity(), PIECE, |b| {
-                self.ring.try_write(b).unwrap_or(0)
+        let whole = crate::during("log", || {
+            self.line.lock(|line| {
+                let Ok(mut line) = line.try_borrow_mut() else {
+                    return false;
+                };
+                line.clear();
+                crate::log_line(record, &mut line);
+                put_whole(line.finish(), self.ring.free_capacity(), PIECE, |b| {
+                    self.ring.try_write(b).unwrap_or(0)
+                })
             })
         });
         if !whole {

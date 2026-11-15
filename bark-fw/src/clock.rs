@@ -152,4 +152,9 @@ impl bark_driver::Clock for &Clock {
             Timer::after_ticks(ticks as u64).await;
         }
     }
+
+    fn hold(&self, t: Instant) {
+        let t = t.as_micros().saturating_sub(EPOCH.as_micros());
+        while self.now_us() < t {}
+    }
 }

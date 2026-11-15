@@ -28,6 +28,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 
 use crate::radio::{Radio, MAX_TX_DBM, MIN_TX_DBM};
+use crate::timing::Beside;
 
 const _: () = assert!(
     !cfg!(feature = "console"),
@@ -233,6 +234,7 @@ pub fn log_busy(busy: &bark_proto::tables::busy::BusyEstimator, home: Channel) {
         tenths,
         floors
     );
+    crate::timing::log_minute();
 }
 
 /// The node's application under the bench's commands: a text is offered
@@ -449,6 +451,9 @@ async fn send_carrier(radio: &mut Logged<Radio<'_>>, channel: Channel, seconds: 
     );
 }
 
+/// A check without a reading: its phases, and what ran beside it.
+type NoReading = (LbtTiming, Beside);
+
 /// The radio with each transmission logged as it ends, its channel and
 /// its time on air, and each listen-before-talk with its reading: the
 /// bench's check of a skipped heartbeat asks which board sent then, and
@@ -460,8 +465,8 @@ pub struct Logged<R> {
     radio: R,
     /// The last listen-before-talk, logged once the frame it let through
     /// is sent, or at the next: a line between the two would delay the
-    /// frame. Its phases if it got no reading.
-    checked: Option<(Channel, bool, i16, Option<LbtTiming>)>,
+    /// frame. Its phases, and what ran beside it, if it got no reading.
+    checked: Option<(Channel, bool, i16, Option<NoReading>)>,
     /// The channel last listened on, which a reading is of.
     listening: Option<Channel>,
 }
@@ -485,21 +490,24 @@ impl<R> Logged<R> {
             preamble,
             dbm
         );
-        if let Some(t) = none {
+        if let Some((t, beside)) = none {
             let (start, off, delay) = match t.start {
                 Start::Running => ("running", None, None),
                 Start::Restart { gap, delay } => ("restart", Some(gap), Some(delay)),
                 Start::Cold { gap, delay } => ("cold", gap, Some(delay)),
             };
             log::info!(
-                "bench: no reading ch={} wake_us={} late={} start={} off_us={} delay_us={} cad_us={}",
+                "bench: no reading ch={} wake_us={} late={} start={} off_us={} delay_us={} cad_us={} entered_us={} read_us={} {}",
                 channel.index(),
                 t.wake.as_micros(),
                 t.wake > bark_driver::sx1262::CAD_SAMPLING,
                 start,
                 Us(off),
                 Us(delay),
-                t.cad.as_micros()
+                t.cad.as_micros(),
+                t.entered.as_micros(),
+                t.read.as_micros(),
+                beside
             );
         }
     }
@@ -558,9 +566,11 @@ impl<'a> bark_driver::Radio for Logged<Radio<'a>> {
     async fn lbt(&mut self, channel: Channel) -> Result<(bool, i16), Self::Error> {
         self.log_checked();
         // As the radio's own listen-before-talk, its phases kept.
+        crate::timing::check_begins();
         let t = Sx1262::lbt(&mut self.radio, channel).await?;
+        let beside = crate::timing::check_ends();
         let inside = matches!(self.radio.lbt_read(), LbtRead::Inside { .. });
-        let none = (inside && t.inside_dbm.is_none()).then_some(t);
+        let none = (inside && t.inside_dbm.is_none()).then_some((t, beside));
         self.checked = Some((channel, t.busy, t.dbm, none));
         Ok((t.busy, t.dbm))
     }

@@ -6,9 +6,11 @@
 //! serves, and stages a gathered image as the phone's update does, to
 //! reboot into it at a quiet moment.
 //!
-//! Its task steps the store one flash operation or one piece read at a
-//! time and lets the executor run between, waiting out the chip's erases
-//! and programs with a timer. The radio's task hands pieces straight into
+//! Its task steps the store one flash operation or one part of a piece
+//! at a time and lets the executor run between, waiting out the chip's
+//! erases and programs with a timer, so that no stretch of its work is
+//! longer than `radio::STRETCH` (`README.md`, "Work beside the radio").
+//! The radio's task hands pieces straight into
 //! the store's queue, and asks this task for the bytes of a piece to
 //! serve, which it reads from the running image, memory-mapped in the
 //! internal flash, or from the blocks of the gathered image on the
@@ -18,6 +20,7 @@ use core::cell::{Cell, RefCell};
 
 use bark_driver::Request;
 use bark_image::code::{Encoder, PIECE};
+use bark_image::ext_flash::POLL_US;
 use bark_image::layout::{ACTIVE, RECORD, STATE};
 use bark_image::pieces::{self, Begin, Poll, Store, Table, Tabling};
 use bark_image::policy;
@@ -35,7 +38,7 @@ use embassy_time::{with_timeout, Duration, Timer};
 use embedded_storage::nor_flash::ReadNorFlash;
 
 use super::{Power, BARK_IMAGE_VERSION, BARK_SIGNING_KEYS};
-use crate::ext_flash::Dfu;
+use crate::ext_flash::{Dfu, CHUNK};
 use crate::store::SharedFlash;
 
 const _: () = assert!(PIECE == PIECE_BYTES);
@@ -342,15 +345,20 @@ pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -
 /// Fill the piece the radio's task asks for. Between the store's steps,
 /// in the same future as they, so that its state shares room with the
 /// staging's: a piece asked for while a whole image is checked and
-/// staged, about 3 s, is not filled in time.
+/// staged, about 6 s, is not filled in time.
 async fn answer(flash: &super::Flash, named: Named) {
     let (version, block, index) = named;
     let ok = fill(flash, version, block, index).await;
     FILLED.served.signal((named, ok));
+    // The piece's end and its line, a stretch of their own: what follows
+    // is a step of the store or the next piece.
+    embassy_futures::yield_now().await;
 }
 
 /// Piece `index` of block `block` of the image of `version` into `FILLED`:
-/// coded from the block's data pieces, read one at a time.
+/// coded from the block's data pieces, read one at a time, those of the
+/// external flash [`CHUNK`] bytes at a time; the executor runs between
+/// each and the next, and between the steps that weigh the code's points.
 async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool {
     let running = RUNNING.lock(|r| {
         r.borrow()
@@ -364,28 +372,44 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
         (_, Some(i)) if i.version == version => (i.pieces(block), true),
         _ => return false,
     };
-    let Ok(mut encoder) = Encoder::new(n, index) else {
+    let Ok(mut encoder) = Encoder::start(n, index) else {
         return false;
     };
+    crate::at("fill");
+    while !encoder.weigh() {
+        embassy_futures::yield_now().await;
+        crate::at("fill");
+    }
     for i in 0..n {
+        crate::at("fill");
         if !encoder.wants(i) {
             continue;
         }
-        let mut piece = [0u8; PIECE];
-        let read = match from_store {
-            true => crate::ext_flash::with(|chip| {
-                STORE.lock(|s| s.borrow().data_piece(chip, block, i, &mut piece))
-            })
-            .and_then(Result::ok)
-            .unwrap_or(false),
-            false => running_piece(flash, block, i, &mut piece),
-        };
-        if !read {
-            return false;
-        }
-        encoder.add(i, &piece);
-        // A piece of the external flash is a 2 ms read.
         if from_store {
+            for from in (0..PIECE).step_by(CHUNK) {
+                let mut part = [0u8; CHUNK];
+                let part = &mut part[..CHUNK.min(PIECE - from)];
+                crate::ext_flash::free().await;
+                crate::at("fill");
+                let read = crate::ext_flash::with(|chip| {
+                    STORE.lock(|s| s.borrow().data_piece_part(chip, block, i, from, part))
+                })
+                .and_then(Result::ok)
+                .unwrap_or(false);
+                if !read {
+                    return false;
+                }
+                encoder.add_part(i, from, part);
+                embassy_futures::yield_now().await;
+            }
+        } else {
+            let mut piece = [0u8; PIECE];
+            if !running_piece(flash, block, i, &mut piece) {
+                return false;
+            }
+            encoder.add(i, &piece);
+            // A copy from the memory-mapped flash and a piece's sums,
+            // about 54 µs (`bark_image::code`).
             embassy_futures::yield_now().await;
         }
     }
@@ -446,6 +470,7 @@ async fn running(flash: &super::Flash) -> Option<Image> {
         }
         // The key the section names: one this firmware checks it with,
         // else the first slot's.
+        crate::at("verify");
         let key = sign::verify(&header, &BARK_SIGNING_KEYS).unwrap_or(header[sign::SIGNED_LEN]);
         let image = pieces::held(h.length, h.version, key)?;
         RUNNING.lock(|r| {
@@ -463,6 +488,7 @@ async fn running(flash: &super::Flash) -> Option<Image> {
     // The header, then the slot, a few words at a time from flash.
     let total = HEADER_LEN as u32 + h.length;
     while done < total {
+        crate::at("hash");
         let read = RUNNING.lock(|r| {
             let mut r = r.borrow_mut();
             let r = r.as_mut()?;
@@ -486,8 +512,7 @@ async fn running(flash: &super::Flash) -> Option<Image> {
             return None;
         };
         done += n as u32;
-        // A yield every 4 KiB: hashing them takes about a millisecond.
-        if done.is_multiple_of(4096) {
+        if done.is_multiple_of(HASHED_AT_ONCE) {
             embassy_futures::yield_now().await;
         }
     }
@@ -507,6 +532,11 @@ async fn running(flash: &super::Flash) -> Option<Image> {
     }
     Some(core_image(&image))
 }
+
+/// Bytes of the running image hashed between two awaits: 4 KiB took
+/// about a millisecond, so 256 bytes about 64 µs, a quarter of
+/// `radio::STRETCH`.
+const HASHED_AT_ONCE: u32 = 256;
 
 fn core_image(i: &pieces::Image) -> Image {
     Image {
@@ -528,6 +558,7 @@ fn store_image(i: &Image) -> pieces::Image {
 
 /// One step of the store: `None` without the chip.
 fn step() -> Option<Result<Poll, bark_image::ext_flash::Error>> {
+    crate::at(STORE.lock(|s| s.borrow().doing()));
     crate::ext_flash::with(|chip| STORE.lock(|s| s.borrow_mut().poll(chip)))
 }
 
@@ -580,9 +611,16 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
         Some(i) => Phase::Holds(i.version),
         None => Phase::Idle,
     };
-    match crate::ext_flash::with(|chip| STORE.lock(|s| s.borrow_mut().reopen(chip))) {
-        Some(Ok(())) => {}
-        _ => log::error!("update: the store's head could not be read"),
+    STORE.lock(|s| s.borrow_mut().reopen());
+    while !STORE.lock(|s| s.borrow().opened()) {
+        match step() {
+            Some(Ok(Poll::Busy)) => Timer::after_micros(POLL_US.into()).await,
+            Some(Ok(_)) => embassy_futures::yield_now().await,
+            _ => {
+                log::error!("update: the store's head could not be read");
+                break;
+            }
+        }
     }
     // What a reset left: gone on with if it is still wanted, else given
     // up, as after the swap into it.
@@ -615,6 +653,8 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
     let mut refused: Option<u32> = None;
     // Blocks of the image gathered that failed their check.
     let mut failed: u8 = 0;
+    // Each part of a pass ends in an await, so that none runs on into the
+    // next within one poll (`README.md`, "Work beside the radio").
     loop {
         if let Some(i) = gather.filter(|_| !told) {
             if STORE.lock(|s| s.borrow().ready()) {
@@ -626,6 +666,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 .await;
                 told = true;
                 set_phase(gathering(&i));
+                embassy_futures::yield_now().await;
             }
         }
         if let Some(i) = gather.filter(|_| told && STORE.lock(|s| s.borrow().whole())) {
@@ -643,6 +684,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             }
             gather = None;
             told = false;
+            embassy_futures::yield_now().await;
         }
         if let Some(named) = TO_TASK.serve.try_take() {
             answer(flash, named).await;
@@ -658,9 +700,9 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
         };
         match polled {
             Poll::Again => embassy_futures::yield_now().await,
-            // The shortest operation's typical time, then again: an erase
-            // is looked at about eight times.
-            Poll::Busy => Timer::after_micros(bark_image::ext_flash::PROGRAM_TYP_US.into()).await,
+            // A program of a part may end well before a page's typical
+            // time, which is all the datasheet gives.
+            Poll::Busy => Timer::after_micros(POLL_US.into()).await,
             Poll::Decoded(b) => {
                 let p = gather.map(|i| gathering(&i));
                 if let Some(p) = p {
@@ -677,6 +719,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     gather.map_or(0, |i| i.blocks)
                 );
                 tell(Request::Block { index: b, ok: true }).await;
+                embassy_futures::yield_now().await;
             }
             Poll::Failed(b) => {
                 log::warn!("update: block {} failed its check; gathered again", b);
@@ -692,6 +735,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     ok: false,
                 })
                 .await;
+                embassy_futures::yield_now().await;
             }
             Poll::Idle => {
                 // Staged, it only serves until the reboot.
@@ -712,6 +756,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                             told = false;
                             failed = 0;
                         }
+                        embassy_futures::yield_now().await;
                     }
                     Either4::Fourth(named) => answer(flash, named).await,
                     _ => {}
@@ -743,6 +788,7 @@ fn gathering(i: &pieces::Image) -> Phase {
 /// A neighbour offers `image`: the image to gather, if the policy takes
 /// it and the store can.
 fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pieces::Image> {
+    crate::at("offer");
     let o = policy::Offer {
         version: image.version,
         key: image.key,
@@ -787,11 +833,16 @@ fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pi
 /// it and ask for the swap, as the phone's update does (`super::commit`).
 async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<(), ()> {
     set_phase(Phase::Installing(i.version));
-    let header = crate::ext_flash::with(|chip| STORE.lock(|s| s.borrow().header(chip)));
-    let Some(Ok(Some(header))) = header else {
+    let mut header = [0u8; HEADER_LEN];
+    let at = STORE.lock(|s| s.borrow().header_at());
+    let read = match at {
+        Some(at) => crate::ext_flash::read(at, &mut header).await.is_ok(),
+        None => false,
+    };
+    if !read {
         log::error!("update: version {} whole, its header unread", i.version);
         return Err(());
-    };
+    }
     // The record is erased as the staging begins, so the power is checked
     // first, as the phone's commit would.
     let mut told = false;
@@ -805,6 +856,7 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
         Timer::after_secs(60).await;
     }
     let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
+    crate::at("stage");
     let written = bark_image::boot::Stager::written(
         part(RECORD),
         part(STATE),
@@ -822,6 +874,7 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
         }
     };
     let power: Power = super::power();
+    crate::at("commit");
     match super::commit(&mut staging, power).await {
         Ok(h) => {
             log::info!(

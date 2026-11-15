@@ -1144,7 +1144,23 @@ fn host(controller: SoftdeviceController<'static>) -> &'static Stack {
 /// of its own, so that its future lies in its own static storage, and the
 /// stack holds one poll at a time.
 #[embassy_executor::task(pool_size = LINKS)]
-async fn slot(
+fn slot(
+    i: usize,
+    stack: &'static Stack,
+    advertising: &'static Advertising,
+    server: &'static Server<'static>,
+    gatt: &'static Gatt,
+    name: &'static str,
+    update: &'static Update,
+) -> impl core::future::Future<Output = ()> {
+    timed!(
+        LINK,
+        serve(i, stack, advertising, server, gatt, name, update)
+    )
+}
+
+/// [`slot`]'s work.
+async fn serve(
     i: usize,
     stack: &'static Stack,
     advertising: &'static Advertising,

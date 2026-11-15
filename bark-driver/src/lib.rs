@@ -178,6 +178,10 @@ pub trait Clock {
 
     /// Resolves once `now() >= t`, possibly later. Cancel-safe.
     async fn at(&self, t: Instant);
+
+    /// Returns once `now() >= t`, possibly later, keeping the processor
+    /// meanwhile: no other task runs, only interrupts.
+    fn hold(&self, t: Instant);
 }
 
 /// A message the application wants to send.

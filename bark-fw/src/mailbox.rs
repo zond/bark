@@ -125,7 +125,11 @@ pub fn unread(i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<(u32, MsgId, usiz
 /// Write what the mailbox queues, for ever, one op at a time, on the
 /// external flash.
 #[embassy_executor::task]
-pub async fn run() -> ! {
+pub fn run() -> impl core::future::Future<Output = ()> {
+    timed!(MAILBOX, work())
+}
+
+async fn work() {
     let mut marks = Marks::default();
     loop {
         WRITE.wait().await;

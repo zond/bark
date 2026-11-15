@@ -51,6 +51,12 @@ const BAUD: uarte::Baudrate = uarte::Baudrate::Baud9600;
 /// late to start the next.
 const READ: usize = 1024;
 
+/// Bytes parsed between two awaits: a second's sentences took 1.5 to
+/// 1.9 ms with its fix's line on the boards (2026-11-14, the bench build's
+/// `gps`), about 2.4 µs a byte, so 64 bytes about 0.15 ms, within the
+/// bound on a stretch of work (`README.md`, "Work beside the radio").
+const PARSED_AT_ONCE: usize = 64;
+
 /// What the node last asked of the GPS.
 static WANT: Signal<CriticalSectionRawMutex, Gps> = Signal::new();
 /// What the receiver has for the node, until the node takes it.
@@ -150,7 +156,11 @@ fn runs(gps: Gps) -> bool {
 }
 
 #[embassy_executor::task]
-pub async fn run(mut p: Parts) -> ! {
+pub fn run(p: Parts) -> impl core::future::Future<Output = ()> {
+    timed!(GPS, work(p))
+}
+
+async fn work(mut p: Parts) {
     let mut wake = Output::new(p.pins.standby, Level::Low, OutputDrive::Standard);
     let mut config = uarte::Config::default();
     config.baudrate = BAUD;
@@ -193,13 +203,16 @@ pub async fn run(mut p: Parts) -> ! {
                         told = tx.write_from_ram(&out).await.is_ok();
                     }
                     let mut first = None;
-                    nmea.feed(&buf[..n], &mut |f| {
-                        let was = state;
-                        state = fixed(f, state);
-                        if was != State::Fixed && state == State::Fixed {
-                            first = Some(f);
-                        }
-                    });
+                    for part in buf[..n].chunks(PARSED_AT_ONCE) {
+                        nmea.feed(part, &mut |f| {
+                            let was = state;
+                            state = fixed(f, state);
+                            if was != State::Fixed && state == State::Fixed {
+                                first = Some(f);
+                            }
+                        });
+                        embassy_futures::yield_now().await;
+                    }
                     // A first fix with satellites but none of their C/N0
                     // found: the sentences, once a search, for the bench.
                     if let Some(f) = first.filter(|f| f.satellites > 0 && f.cn0.count == 0) {

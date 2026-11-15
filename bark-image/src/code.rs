@@ -5,14 +5,17 @@
 //! point `k`. So pieces `0..n` are the data themselves, and any `n`
 //! distinct pieces give the block back by Lagrange interpolation.
 //!
-//! [`Encoder`] and [`Points`] take pieces one at a time, as they are read
-//! from flash; [`encode_piece`] and [`decode`] take them in RAM.
+//! [`Encoder`] and [`Points`] take pieces one at a time, and a piece a
+//! part at a time, as they are read from flash; [`encode_piece`] and
+//! [`decode`] take them in RAM.
 //!
 //! **Cost.** Everything is [`mul_add`], 247 table look-ups, about 14
 //! cycles each at 64 MHz (Cortex-M4 Technical Reference Manual,
 //! instruction timings). A coded piece takes `n` of them, about 3.5 ms; a
 //! block of 64 given back from none of its data pieces 64 × 64, about
-//! 220 ms. Not measured on the chip.
+//! 220 ms. Before either, the points' weights take `n × n` logarithms,
+//! about 6 cycles each, 0.4 ms for 64, so they are worked out
+//! [`WEIGH_ROWS`] at a time ([`Points::weigh`]). Not measured on the chip.
 
 /// Bytes of a piece: a full frame's 255 less its 8-byte header.
 pub const PIECE: usize = 247;
@@ -89,11 +92,17 @@ pub fn mul(a: u8, b: u8) -> u8 {
 
 /// `acc += factor × piece`, a byte at a time.
 pub fn mul_add(acc: &mut [u8; PIECE], factor: u8, piece: &[u8; PIECE]) {
+    mul_add_part(acc, factor, piece);
+}
+
+/// [`mul_add`] on a part of a piece: `acc` and `part` the same bytes of
+/// the two.
+pub fn mul_add_part(acc: &mut [u8], factor: u8, part: &[u8]) {
     if factor == 0 {
         return;
     }
     let f = log(factor);
-    for (a, &b) in acc.iter_mut().zip(piece) {
+    for (a, &b) in acc.iter_mut().zip(part) {
         *a ^= exp(f + log(b));
     }
 }
@@ -116,13 +125,22 @@ pub enum CodeError {
 /// The value at `x` is the sum over `j` of the value at `x_j` times
 /// `L_j(x) = P(x) / ((x − x_j) w_j)`, `P(x)` the product of `x − x_m` over
 /// every point and `w_j` that of `x_j − x_m` over every other; subtraction
-/// is XOR. The `w_j` are kept as logarithms.
+/// is XOR. The `w_j` are kept as logarithms, worked out by
+/// [`Points::weigh`] before any factor is asked for.
 #[derive(Clone, Debug)]
 pub struct Points {
     x: [u8; DATA],
     log_w: [u8; DATA],
     len: usize,
+    /// The `w_j` worked out so far.
+    weighed: usize,
 }
+
+/// The weights [`Points::weigh`] works out at once: 16 rows of up to 64
+/// logarithms, about 6 cycles each, 0.1 ms at 64 MHz, within the
+/// firmware's bound on a stretch of work (`bark-fw/README.md`, "Work
+/// beside the radio").
+pub const WEIGH_ROWS: usize = 16;
 
 /// A point at which [`Points::factor`] gives the factors.
 #[derive(Clone, Copy, Debug)]
@@ -138,37 +156,63 @@ impl Points {
         x: [0; DATA],
         log_w: [0; DATA],
         len: 0,
+        weighed: 0,
     };
 
-    /// The points, each a piece index below [`CODED`], all distinct.
+    /// The points, each a piece index below [`CODED`], all distinct,
+    /// weighed.
     pub fn new(points: &[u8]) -> Result<Points, CodeError> {
+        let mut p = Points::start(points)?;
+        while !p.weigh(WEIGH_ROWS) {}
+        Ok(p)
+    }
+
+    /// The points as [`Points::new`] takes them, none weighed yet.
+    pub fn start(points: &[u8]) -> Result<Points, CodeError> {
         if points.len() > DATA {
             return Err(CodeError::Count);
         }
         let mut x = [0u8; DATA];
-        let mut log_w = [0u8; DATA];
+        let mut seen = [0u64; 4];
         for (j, &p) in points.iter().enumerate() {
             if usize::from(p) >= CODED {
                 return Err(CodeError::Index(p));
             }
-            if points[..j].contains(&p) {
+            let (word, bit) = (usize::from(p / 64), p % 64);
+            if seen[word] >> bit & 1 == 1 {
                 return Err(CodeError::Duplicate(p));
             }
+            seen[word] |= 1 << bit;
             x[j] = p;
         }
-        for (j, &xj) in points.iter().enumerate() {
+        Ok(Points {
+            x,
+            log_w: [0; DATA],
+            len: points.len(),
+            weighed: 0,
+        })
+    }
+
+    /// Whether every weight is worked out.
+    pub fn weighed(&self) -> bool {
+        self.weighed == self.len
+    }
+
+    /// Work out up to `rows` more weights; whether all are.
+    pub fn weigh(&mut self, rows: usize) -> bool {
+        let end = self.len.min(self.weighed + rows);
+        let points = &self.x[..self.len];
+        for j in self.weighed..end {
+            let xj = points[j];
             let sum: usize = points
                 .iter()
                 .filter(|&&xm| xm != xj)
                 .map(|&xm| log(xj ^ xm))
                 .sum();
-            log_w[j] = (sum % ORDER) as u8;
+            self.log_w[j] = (sum % ORDER) as u8;
         }
-        Ok(Points {
-            x,
-            log_w,
-            len: points.len(),
-        })
+        self.weighed = end;
+        end == self.len
     }
 
     /// How many points.
@@ -200,8 +244,10 @@ impl Points {
         At { x, p }
     }
 
-    /// The factor of the value at point `j` in the value at `at`.
+    /// The factor of the value at point `j` in the value at `at`, once
+    /// weight `j` is worked out.
     pub fn factor(&self, at: &At, j: usize) -> u8 {
+        debug_assert!(j < self.weighed, "a factor before its weight");
         match at.p {
             Err(hit) => u8::from(hit == j),
             Ok(log_p) => {
@@ -213,7 +259,7 @@ impl Points {
 }
 
 /// Coded piece `k` of a block of `n` data pieces, from the data pieces
-/// fed to it one at a time in any order.
+/// fed to it one at a time in any order, each whole or in parts.
 pub struct Encoder {
     points: Points,
     at: At,
@@ -223,6 +269,14 @@ pub struct Encoder {
 impl Encoder {
     /// Piece `k` of a block of `n` data pieces.
     pub fn new(n: usize, k: u8) -> Result<Encoder, CodeError> {
+        let mut e = Encoder::start(n, k)?;
+        while !e.weigh() {}
+        Ok(e)
+    }
+
+    /// [`Encoder::new`], its points not yet weighed: call
+    /// [`Encoder::weigh`] until it says they are, before anything else.
+    pub fn start(n: usize, k: u8) -> Result<Encoder, CodeError> {
         if n == 0 || n > DATA {
             return Err(CodeError::Count);
         }
@@ -233,13 +287,19 @@ impl Encoder {
         for (i, d) in data.iter_mut().enumerate() {
             *d = i as u8;
         }
-        let points = Points::new(&data[..n])?;
+        let points = Points::start(&data[..n])?;
         let at = points.at(k);
         Ok(Encoder {
             points,
             at,
             acc: [0; PIECE],
         })
+    }
+
+    /// Work out [`WEIGH_ROWS`] more of the points' weights; whether all
+    /// are.
+    pub fn weigh(&mut self) -> bool {
+        self.points.weigh(WEIGH_ROWS)
     }
 
     /// Whether data piece `i` counts towards this piece: for a data piece
@@ -252,6 +312,14 @@ impl Encoder {
     pub fn add(&mut self, i: usize, piece: &[u8; PIECE]) {
         if i < self.points.len() {
             mul_add(&mut self.acc, self.points.factor(&self.at, i), piece);
+        }
+    }
+
+    /// Feed the bytes of data piece `i` from byte `from` on, each once.
+    pub fn add_part(&mut self, i: usize, from: usize, part: &[u8]) {
+        if i < self.points.len() {
+            let acc = &mut self.acc[from..from + part.len()];
+            mul_add_part(acc, self.points.factor(&self.at, i), part);
         }
     }
 

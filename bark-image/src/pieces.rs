@@ -13,8 +13,8 @@
 //! | 0, the head | the image gathered and its check; a byte for each block, cleared once it is decoded and written; the block table; the header |
 //! | 1 to 192 | [`LANES`], 48, lanes of four sectors, 64 slots: block `b`'s pieces in lane `b` |
 //!
-//! A slot is one page program of 256 bytes: the piece, its block, its
-//! index and a CRC-32 of those 249 bytes. A slot cut short by a power cut
+//! A slot is a page of 256 bytes: the piece, its block, its index and a
+//! CRC-32 of those 249 bytes. A slot cut short by a power cut
 //! is neither erased nor passes its check, and holds nothing; slots are
 //! written in order, so the first after the last not erased is the next.
 //! The decoded image goes into [`DFU`] from its start, the header also
@@ -27,20 +27,26 @@
 //! and gathered again ([`Poll::Failed`]). The second pass writes it. So
 //! every byte written is the one that belongs there, and a write done
 //! again after a power cut writes the same bytes. A block none of whose
-//! data pieces came reads 4 096 pieces at 2 ms each over the bus
-//! (`docs/roadmap.md`, "The external flash's bus"), about 8.3 s, and does
-//! 0.4 s of sums, in steps of 0.11 ms: under 3 % of the 5.5 minutes its
-//! 80 pieces take to arrive a gap apart.
+//! data pieces came reads 4 096 pieces at 3 ms each over the bus
+//! ([`ext_flash::read_us`] of 16 parts), about 12 s, and does 0.4 s of
+//! sums: under 4 % of the 5.5 minutes its 80 pieces take to arrive a gap
+//! apart.
 //!
 //! **What a reset keeps**: the head, the decoded blocks in [`DFU`], and
-//! every slot written whole. [`Store::open`] reads the head and
-//! [`Store::poll`] then reads every slot, erasing any lane that holds a
+//! every slot written whole. [`Store::reopen`]'s steps read the head and
+//! then every slot, erasing any lane that holds a
 //! block done, a block in another's lane, or too few whole slots. Lost and
 //! done again: pieces queued in RAM, a decode and an erase under way.
 //!
-//! **Pacing.** [`Store::poll`] does one step: it starts a program or an
-//! erase, sees whether the chip is done, or reads one slot. The firmware
-//! calls it between radio events until [`Poll::Idle`]. It must not stage
+//! **Pacing.** [`Store::poll`] does one step: it sees whether the chip is
+//! done with a program or an erase, its own or another user's, and if so
+//! starts one, reads [`CHUNK`] bytes and adds them in, weighs
+//! [`WEIGH_ROWS`] of a decode's points or hashes [`HASH_PART`] bytes of
+//! it. So no step holds
+//! the processor longer than a read of [`CHUNK`] bytes and its sums, which
+//! the firmware checks against its bound (`bark-fw/README.md`, "Work
+//! beside the radio"). The firmware calls it until [`Poll::Idle`]. It must
+//! not stage
 //! from the phone while a gathering's image is in [`DFU`], nor gather while
 //! a swap is asked for or the image is on trial
 //! ([`crate::boot::swap_requested`]): both write the same slot. Checking
@@ -54,8 +60,8 @@ use core::cmp::min;
 
 use sha2::{Digest, Sha256};
 
-use crate::code::{mul_add, At, Points, CODED, DATA, PIECE};
-use crate::ext_flash::{self, Bus, Chip, PROGRAM_PAGE};
+use crate::code::{mul_add_part, At, Points, CODED, DATA, PIECE, WEIGH_ROWS};
+use crate::ext_flash::{self, Bus, Chip, CHUNK, PROGRAM_PAGE};
 use crate::layout::external::{DFU, PIECES, SECTOR};
 use crate::layout::ACTIVE;
 use crate::sign::SIGNED_LEN;
@@ -120,6 +126,8 @@ const LANES_START: u32 = HEAD + SECTOR;
 const BLOCK_AT: usize = PIECE;
 const INDEX_AT: usize = PIECE + 1;
 const CHECK_AT: usize = PIECE + 2;
+/// The slot's bytes programmed; the rest stay erased.
+const WRITTEN: usize = CHECK_AT + 4;
 
 /// Bytes of a whole block.
 const BLOCK_BYTES: u32 = (DATA * PIECE) as u32;
@@ -166,6 +174,11 @@ const QUEUE: usize = 2;
 /// times a pass for a block of 64 none of whose data pieces came.
 const GROUP: usize = 2;
 
+/// Bytes of a decoded group hashed a step: one block of SHA-256 (FIPS
+/// 180-4, §6.2). A whole piece took 0.5 to 0.7 ms on the board
+/// (2026-11-14, the bench build's `sum`), so a block about 0.15 ms.
+const HASH_PART: usize = 64;
+
 /// A slot's piece index that is no piece.
 const NONE: u8 = CODED as u8;
 
@@ -185,14 +198,85 @@ const _: () = {
 /// CRC-32, ISO-HDLC (ISO/IEC 13239; IEEE 802.3's): reflected polynomial
 /// `0xEDB88320`, all ones in and out.
 fn crc32(bytes: &[u8]) -> u32 {
-    let mut c = !0u32;
+    !crc32_on(!0, bytes)
+}
+
+/// [`crc32`] over more bytes, from the register `c` before them, all ones
+/// at the start; the check is the register inverted.
+fn crc32_on(mut c: u32, bytes: &[u8]) -> u32 {
     for &b in bytes {
         c ^= u32::from(b);
         for _ in 0..8 {
             c = (c >> 1) ^ (0xEDB8_8320 & (c & 1).wrapping_neg());
         }
     }
-    !c
+    c
+}
+
+/// What a slot held, read [`CHUNK`] bytes a step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slot {
+    /// Not erased.
+    written: bool,
+    /// Its check passes and it names a piece.
+    whole: bool,
+    block: u8,
+    index: u8,
+}
+
+/// A slot being read, [`CHUNK`] bytes a step.
+#[derive(Clone, Copy, Debug)]
+struct SlotRead {
+    /// Bytes read.
+    at: u16,
+    /// The check's register over the bytes before [`CHECK_AT`].
+    crc: u32,
+    written: bool,
+    /// The bytes from [`BLOCK_AT`] on.
+    tail: [u8; SLOT as usize - BLOCK_AT],
+}
+
+impl SlotRead {
+    const START: SlotRead = SlotRead {
+        at: 0,
+        crc: !0,
+        written: false,
+        tail: [0; SLOT as usize - BLOCK_AT],
+    };
+
+    /// Read the next bytes of the slot at `address`; what it held, once
+    /// read whole.
+    fn step<F: Flash>(&mut self, flash: &mut F, address: u32) -> Result<Option<Slot>, F::Error> {
+        let from = usize::from(self.at);
+        let n = CHUNK.min(SLOT as usize - from);
+        let mut bytes = [0u8; CHUNK];
+        let bytes = &mut bytes[..n];
+        flash.read(address + from as u32, bytes)?;
+        self.written |= bytes.iter().any(|&b| b != 0xff);
+        let checked = CHECK_AT.saturating_sub(from).min(n);
+        self.crc = crc32_on(self.crc, &bytes[..checked]);
+        for (o, &b) in bytes.iter().enumerate() {
+            if let Some(t) = (from + o).checked_sub(BLOCK_AT) {
+                self.tail[t] = b;
+            }
+        }
+        self.at += n as u16;
+        if usize::from(self.at) < SLOT as usize {
+            return Ok(None);
+        }
+        let t = &self.tail;
+        let c = CHECK_AT - BLOCK_AT;
+        let check = u32::from_le_bytes([t[c], t[c + 1], t[c + 2], t[c + 3]]);
+        let (block, index) = (t[0], t[INDEX_AT - BLOCK_AT]);
+        let slot = Slot {
+            written: self.written,
+            whole: !self.crc == check && index != NONE,
+            block,
+            index,
+        };
+        *self = SlotRead::START;
+        Ok(Some(slot))
+    }
 }
 
 /// An image to gather, as a neighbour's heartbeat describes it; block 0
@@ -485,6 +569,11 @@ pub enum Begin {
 enum Mode {
     /// No image.
     Empty,
+    /// Reading the head's record after a reset.
+    Open,
+    /// Reading the head's done bytes and then the table, this many bytes
+    /// read.
+    Head(u16),
     /// Erasing the head, the lanes and the image's sectors of [`DFU`],
     /// this many done.
     Clear(u32),
@@ -541,12 +630,16 @@ impl Lane {
 struct Queued {
     lane: u8,
     slot: u8,
-    bytes: [u8; SLOT as usize],
+    /// Bytes programmed.
+    wrote: u16,
+    bytes: [u8; WRITTEN],
 }
 
 /// A flash operation started and not yet seen done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Op {
+    /// A part of a program that goes on.
+    Part,
     Slot {
         lane: u8,
     },
@@ -555,7 +648,6 @@ enum Op {
     },
     Clear,
     Record,
-    Write,
     Mark {
         block: u8,
     },
@@ -581,8 +673,14 @@ struct Decode {
     writing: bool,
     /// The group: data pieces from `group * GROUP`.
     group: u8,
-    /// The next of the pieces used to read for this group.
+    /// The next of the pieces used to read for this group, and its bytes
+    /// read.
     next: u8,
+    part: u8,
+    /// A data piece of the group is not among the pieces used.
+    lacking: bool,
+    /// Bytes of the group hashed.
+    hashed: u16,
     /// Bytes of the group written.
     wrote: u16,
     /// The factors for each data piece of the group.
@@ -605,6 +703,8 @@ impl Decode {
     fn start_group(&mut self, group: u8) {
         self.group = group;
         self.next = 0;
+        self.part = 0;
+        self.hashed = 0;
         self.wrote = 0;
         self.out = [[0; PIECE]; GROUP];
         let first = self.first();
@@ -612,17 +712,14 @@ impl Decode {
         for (o, at) in self.at.iter_mut().enumerate() {
             *at = (o < count).then(|| self.points.at((first + o) as u8));
         }
+        self.lacking = (first..first + count).any(|i| self.points.position(i as u8).is_none());
     }
 
     /// Whether piece `j` counts towards this group: every piece if a data
     /// piece of the group is not held, else only those of the group.
     fn wants(&self, j: usize) -> bool {
         let first = self.first();
-        let group = first..first + self.count();
-        let lacking = group
-            .clone()
-            .any(|i| self.points.position(i as u8).is_none());
-        lacking || group.contains(&usize::from(self.points.point(j)))
+        self.lacking || (first..first + self.count()).contains(&usize::from(self.points.point(j)))
     }
 }
 
@@ -639,6 +736,8 @@ pub struct Store {
     queue: [Option<Queued>; QUEUE],
     op: Option<Op>,
     decode: Option<Decode>,
+    /// The slot being read, after a reset or for a decode.
+    slot_read: SlotRead,
 }
 
 fn lane_address(lane: usize) -> u32 {
@@ -662,42 +761,83 @@ impl Store {
         queue: [None; QUEUE],
         op: None,
         decode: None,
+        slot_read: SlotRead::START,
     };
 
     /// The store as the flash holds it after a reset: the image and what
     /// is done from the head; its slots are read by the steps that follow.
     pub fn open<F: Flash>(flash: &mut F) -> Result<Store, F::Error> {
         let mut s = Store::EMPTY;
-        s.reopen(flash)?;
+        s.reopen();
+        while !s.opened() {
+            s.poll(flash)?;
+        }
         Ok(s)
     }
 
-    /// [`Store::open`], in place.
-    pub fn reopen<F: Flash>(&mut self, flash: &mut F) -> Result<(), F::Error> {
+    /// [`Store::open`], in place, its head read by the steps that follow
+    /// until [`Store::opened`].
+    pub fn reopen(&mut self) {
         self.drop_all();
         self.op = None;
+        self.mode = Mode::Open;
+    }
+
+    /// Whether the head is read, and so whether [`Store::image`] says what
+    /// a reset left.
+    pub fn opened(&self) -> bool {
+        !matches!(self.mode, Mode::Open | Mode::Head(_))
+    }
+
+    /// Read the record from the head.
+    fn open_step<F: Flash>(&mut self, flash: &mut F) -> Result<Poll, F::Error> {
+        const _: () = assert!(RECORD_LEN <= CHUNK);
         let mut record = [0u8; RECORD_LEN];
         flash.read(HEAD, &mut record)?;
         let Some(image) = Image::from_record(&record) else {
-            return Ok(());
+            self.mode = Mode::Empty;
+            return Ok(Poll::Idle);
         };
         self.image = Some(image);
-        let mut done = [0xffu8; MAX_BLOCKS];
+        self.mode = Mode::Head(0);
+        Ok(Poll::Again)
+    }
+
+    /// Read the next bytes of the head's done bytes, then of the table if
+    /// block 0 is done.
+    fn head_step<F: Flash>(
+        &mut self,
+        flash: &mut F,
+        image: Image,
+        at: u16,
+    ) -> Result<Poll, F::Error> {
         let blocks = usize::from(image.blocks);
-        flash.read(HEAD + DONE_AT, &mut done[..blocks])?;
-        for (b, &d) in done[..blocks].iter().enumerate() {
-            // A byte cut short is cleared only once its block was written.
-            if d != 0xff {
-                self.done |= 1 << b;
+        let at = usize::from(at);
+        if at < blocks {
+            let mut done = [0xffu8; CHUNK];
+            let n = CHUNK.min(blocks - at);
+            flash.read(HEAD + DONE_AT + at as u32, &mut done[..n])?;
+            for (o, &d) in done[..n].iter().enumerate() {
+                // A byte cut short is cleared only once its block was
+                // written.
+                if d != 0xff {
+                    self.done |= 1 << (at + o);
+                }
             }
+            self.mode = Mode::Head((at + n) as u16);
+            return Ok(Poll::Again);
         }
-        if self.is_done(0) {
-            let len = image.pieces(0) * PIECE;
-            flash.read(HEAD + TABLE_AT, &mut self.table[..len])?;
-            self.table_known = true;
+        let len = image.pieces(0) * PIECE;
+        let t = at - blocks;
+        if !self.is_done(0) || t >= len {
+            self.table_known = self.is_done(0);
+            self.mode = Mode::Scan { lane: 0, slot: 0 };
+            return Ok(Poll::Again);
         }
-        self.mode = Mode::Scan { lane: 0, slot: 0 };
-        Ok(())
+        let n = CHUNK.min(len - t);
+        flash.read(HEAD + TABLE_AT + t as u32, &mut self.table[t..t + n])?;
+        self.mode = Mode::Head((at + n) as u16);
+        Ok(Poll::Again)
     }
 
     /// Gather `image`: go on with it if it is the one gathered, else clear
@@ -732,6 +872,7 @@ impl Store {
         self.lanes.fill(Lane::FREE);
         self.queue.fill(None);
         self.decode = None;
+        self.slot_read = SlotRead::START;
     }
 
     /// The image gathered.
@@ -760,23 +901,43 @@ impl Store {
         i: usize,
         out: &mut [u8; PIECE],
     ) -> Result<bool, F::Error> {
+        for from in (0..PIECE).step_by(CHUNK) {
+            let to = PIECE.min(from + CHUNK);
+            if !self.data_piece_part(flash, block, i, from, &mut out[from..to])? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The bytes of [`Store::data_piece`] from byte `from` on, as many as
+    /// `out` takes, so that a caller reads a piece a part at a time.
+    pub fn data_piece_part<F: Flash>(
+        &self,
+        flash: &mut F,
+        block: u8,
+        i: usize,
+        from: usize,
+        out: &mut [u8],
+    ) -> Result<bool, F::Error> {
         let Some(image) = self.image else {
             return Ok(false);
         };
-        if !self.is_done(block) || i >= image.pieces(block) {
+        if !self.is_done(block) || i >= image.pieces(block) || from + out.len() > PIECE {
             return Ok(false);
         }
         if block == 0 {
-            out.copy_from_slice(&self.table[i * PIECE..(i + 1) * PIECE]);
+            let at = i * PIECE + from;
+            out.copy_from_slice(&self.table[at..at + out.len()]);
             return Ok(true);
         }
-        let at = piece_offset(block, i);
+        let at = piece_offset(block, i) + from as u32;
         // The header's part lies in the head, the rest in the staged slot.
-        let head = (HEADER_LEN as u32).saturating_sub(at).min(PIECE as u32) as usize;
+        let head = (HEADER_LEN as u32).saturating_sub(at).min(out.len() as u32) as usize;
         if head > 0 {
             flash.read(HEAD + HEADER_AT + at, &mut out[..head])?;
         }
-        if head < PIECE {
+        if head < out.len() {
             let from = at + head as u32 - HEADER_LEN as u32;
             flash.read(DFU.start + from, &mut out[head..])?;
         }
@@ -792,6 +953,30 @@ impl Store {
     pub fn lacks(&self) -> Option<u8> {
         let image = self.image?;
         (0..image.blocks).find(|&b| !self.is_done(b))
+    }
+
+    /// What the next step does, a word for the log.
+    pub fn doing(&self) -> &'static str {
+        if self.op.is_some() {
+            return "wait";
+        }
+        match self.mode {
+            Mode::Empty => "idle",
+            Mode::Open | Mode::Head(_) => "open",
+            Mode::Clear(_) => "clear",
+            Mode::Record => "record",
+            Mode::Scan { .. } => "scan",
+            Mode::Forget => "forget",
+            Mode::Gather if self.queue[0].is_some() => "slot",
+            Mode::Gather if self.lanes.iter().any(|l| l.erase.is_some()) => "erase",
+            Mode::Gather => match &self.decode {
+                None => "idle",
+                Some(d) if d.found < d.n => "find",
+                Some(d) if !d.points.weighed() => "weigh",
+                Some(d) if !d.writing => "sum",
+                Some(_) => "write",
+            },
+        }
     }
 
     /// How many blocks are decoded and written.
@@ -814,12 +999,18 @@ impl Store {
 
     /// The image's header, once block 1 is decoded.
     pub fn header<F: Flash>(&self, flash: &mut F) -> Result<Option<[u8; HEADER_LEN]>, F::Error> {
-        if self.image.is_none() || !self.is_done(1) {
+        let Some(at) = self.header_at() else {
             return Ok(None);
-        }
+        };
         let mut h = [0u8; HEADER_LEN];
-        flash.read(HEAD + HEADER_AT, &mut h)?;
+        flash.read(at, &mut h)?;
         Ok(Some(h))
+    }
+
+    /// Where on the flash [`Store::header`] lies, for a caller that reads
+    /// it a part at a time.
+    pub fn header_at(&self) -> Option<u32> {
+        (self.image.is_some() && self.is_done(1)).then_some(HEAD + HEADER_AT)
     }
 
     /// Keep piece `index` of block `block`.
@@ -854,7 +1045,7 @@ impl Store {
         let Some(q) = self.queue.iter_mut().find(|q| q.is_none()) else {
             return Offer::Busy;
         };
-        let mut bytes = [0xffu8; SLOT as usize];
+        let mut bytes = [0u8; WRITTEN];
         bytes[..PIECE].copy_from_slice(piece);
         bytes[BLOCK_AT] = block;
         bytes[INDEX_AT] = index;
@@ -863,6 +1054,7 @@ impl Store {
         *q = Some(Queued {
             lane: lane_no as u8,
             slot: next as u8,
+            wrote: 0,
             bytes,
         });
         lane.block = Some(block);
@@ -874,11 +1066,12 @@ impl Store {
 
     /// Do one step.
     pub fn poll<F: Flash>(&mut self, flash: &mut F) -> Result<Poll, F::Error> {
-        if let Some(op) = self.op {
-            if !flash.done()? {
-                return Ok(Poll::Busy);
-            }
-            self.op = None;
+        // Another user's program or erase holds the chip as one of ours
+        // does: a read or a start now would wait it out on the processor.
+        if !flash.done()? {
+            return Ok(Poll::Busy);
+        }
+        if let Some(op) = self.op.take() {
             if let Some(event) = self.finished(op) {
                 return Ok(event);
             }
@@ -888,11 +1081,13 @@ impl Store {
                 flash.start_erase(HEAD)?;
                 return self.started(Op::Forget);
             }
+            (_, Mode::Open) => return self.open_step(flash),
             (Some(image), _) => image,
             _ => return Ok(Poll::Idle),
         };
         match self.mode {
-            Mode::Empty | Mode::Forget => Ok(Poll::Idle),
+            Mode::Empty | Mode::Forget | Mode::Open => Ok(Poll::Idle),
+            Mode::Head(at) => self.head_step(flash, image, at),
             Mode::Clear(done) => {
                 let lanes = u32::from(image.blocks) * LANE_SECTORS;
                 let address = match done {
@@ -952,33 +1147,27 @@ impl Store {
                 return Some(Poll::Decoded(block));
             }
             Op::Forget => self.mode = Mode::Empty,
-            Op::Clear | Op::Write | Op::Orphan => {}
+            Op::Part | Op::Clear | Op::Orphan => {}
         }
         None
     }
 
-    /// Read one slot after a reset.
+    /// Read the next part of a slot after a reset.
     fn scan<F: Flash>(&mut self, flash: &mut F, lane: usize, slot: usize) -> Result<(), F::Error> {
-        let mut bytes = [0u8; SLOT as usize];
-        flash.read(slot_address(lane, slot), &mut bytes)?;
+        let Some(read) = self.slot_read.step(flash, slot_address(lane, slot))? else {
+            return Ok(());
+        };
         let l = &mut self.lanes[lane];
-        if bytes.iter().any(|&b| b != 0xff) {
+        if read.written {
             l.next = slot as u8 + 1;
-            let check = u32::from_le_bytes([
-                bytes[CHECK_AT],
-                bytes[CHECK_AT + 1],
-                bytes[CHECK_AT + 2],
-                bytes[CHECK_AT + 3],
-            ]);
-            let (block, index) = (bytes[BLOCK_AT], bytes[INDEX_AT]);
-            if crc32(&bytes[..CHECK_AT]) == check && index != NONE {
+            if read.whole {
                 match l.block {
-                    None => l.block = Some(block),
-                    Some(b) if b != block => l.mixed = true,
+                    None => l.block = Some(read.block),
+                    Some(b) if b != read.block => l.mixed = true,
                     _ => {}
                 }
-                if !l.holds(index) {
-                    l.hold(index);
+                if !l.holds(read.index) {
+                    l.hold(read.index);
                     l.taken += 1;
                     l.whole += 1;
                 }
@@ -1026,14 +1215,19 @@ impl Store {
     }
 
     fn gather<F: Flash>(&mut self, flash: &mut F, image: Image) -> Result<Poll, F::Error> {
-        if let Some(q) = self.queue[0] {
+        if let Some(q) = self.queue[0].as_mut() {
+            let from = usize::from(q.wrote);
+            let n = CHUNK.min(WRITTEN - from);
+            let address = slot_address(usize::from(q.lane), usize::from(q.slot));
+            flash.start_program(address + from as u32, &q.bytes[from..from + n])?;
+            q.wrote += n as u16;
+            if from + n < WRITTEN {
+                return self.started(Op::Part);
+            }
+            let lane = q.lane;
             self.queue.rotate_left(1);
             self.queue[QUEUE - 1] = None;
-            flash.start_program(
-                slot_address(usize::from(q.lane), usize::from(q.slot)),
-                &q.bytes,
-            )?;
-            return self.started(Op::Slot { lane: q.lane });
+            return self.started(Op::Slot { lane });
         }
         if let Some(lane) = self.lanes.iter().position(|l| l.erase.is_some()) {
             let (sector, _) = self.lanes[lane].erase.unwrap_or_default();
@@ -1071,6 +1265,9 @@ impl Store {
             writing: false,
             group: 0,
             next: 0,
+            part: 0,
+            lacking: false,
+            hashed: 0,
             wrote: 0,
             at: [None; GROUP],
             sha: Sha256::new(),
@@ -1079,8 +1276,8 @@ impl Store {
         });
     }
 
-    /// Read the next slot of the lane decoded for the pieces to use: one
-    /// written whole, of the block, not taken already.
+    /// Read the next part of the next slot of the lane decoded for the
+    /// pieces to use: one written whole, of the block, not taken already.
     fn find_step<F: Flash>(&mut self, flash: &mut F) -> Result<Poll, F::Error> {
         let Some(d) = self.decode.as_mut() else {
             return Ok(Poll::Again);
@@ -1094,32 +1291,20 @@ impl Store {
             return Ok(Poll::Again);
         }
         let slot = usize::from(d.scan);
+        let Some(read) = self.slot_read.step(flash, slot_address(lane, slot))? else {
+            return Ok(Poll::Again);
+        };
         d.scan += 1;
-        let mut bytes = [0u8; SLOT as usize];
-        flash.read(slot_address(lane, slot), &mut bytes)?;
-        let check = u32::from_le_bytes([
-            bytes[CHECK_AT],
-            bytes[CHECK_AT + 1],
-            bytes[CHECK_AT + 2],
-            bytes[CHECK_AT + 3],
-        ]);
-        let index = bytes[INDEX_AT];
         let found = usize::from(d.found);
-        if crc32(&bytes[..CHECK_AT]) == check
-            && bytes[BLOCK_AT] == d.block
-            && index != NONE
-            && !d.indices[..found].contains(&index)
-        {
-            d.indices[found] = index;
+        if read.whole && read.block == d.block && !d.indices[..found].contains(&read.index) {
+            d.indices[found] = read.index;
             d.slots[found] = slot as u8;
             d.found += 1;
         }
         if d.found == d.n {
-            match Points::new(&d.indices[..usize::from(d.n)]) {
-                Ok(points) => {
-                    d.points = points;
-                    d.start_group(0);
-                }
+            // Weighed by the steps that follow.
+            match Points::start(&d.indices[..usize::from(d.n)]) {
+                Ok(points) => d.points = points,
                 // Not reached: the indices are distinct and below `CODED`.
                 Err(_) => {
                     self.lanes[lane].erase = Some((0, Some(d.block)));
@@ -1144,33 +1329,52 @@ impl Store {
         if d.found < d.n {
             return self.find_step(flash);
         }
+        if !d.points.weighed() {
+            if d.points.weigh(WEIGH_ROWS) {
+                d.start_group(0);
+            }
+            return Ok(Poll::Again);
+        }
         let n = usize::from(d.n);
         let count = d.count();
-        // Read the next piece the group wants and add it in.
+        // Read the next part of the next piece the group wants and add it
+        // in.
         if let Some(j) = (usize::from(d.next)..n).find(|&j| d.wants(j)) {
-            let mut piece = [0u8; PIECE];
+            let from = usize::from(d.part);
+            let len = CHUNK.min(PIECE - from);
+            let mut part = [0u8; CHUNK];
+            let part = &mut part[..len];
             let slot = usize::from(d.slots[j]);
-            flash.read(slot_address(usize::from(d.lane), slot), &mut piece)?;
+            flash.read(slot_address(usize::from(d.lane), slot) + from as u32, part)?;
             for (out, at) in d.out.iter_mut().zip(&d.at).take(count) {
                 if let Some(at) = at {
-                    mul_add(out, d.points.factor(at, j), &piece);
+                    mul_add_part(&mut out[from..from + len], d.points.factor(at, j), part);
                 }
             }
-            d.next = j as u8 + 1;
+            match from + len {
+                PIECE => (d.next, d.part) = (j as u8 + 1, 0),
+                to => (d.next, d.part) = (j as u8, to as u8),
+            }
             return Ok(Poll::Again);
         }
         let more = d.first() + count < n;
         if !d.writing {
-            if d.block == 0 {
-                table[..count * PIECE].copy_from_slice(d.out[..count].as_flattened());
-            } else {
-                if d.block == 1 && d.group == 0 {
+            // The group hashed a part a step.
+            let hashed = usize::from(d.hashed);
+            if d.block != 0 && hashed < count * PIECE {
+                if d.block == 1 && d.group == 0 && hashed == 0 {
                     let signed = &d.out.as_flattened()[..SIGNED_LEN];
                     // The name block 0 carried, the table's start.
                     d.header_ok =
                         <[u8; HASH_LEN]>::from(Sha256::digest(signed))[..] == table[..HASH_LEN];
                 }
-                d.sha.update(d.out[..count].as_flattened());
+                let to = (count * PIECE).min(hashed + HASH_PART);
+                d.sha.update(&d.out.as_flattened()[hashed..to]);
+                d.hashed = to as u16;
+                return Ok(Poll::Again);
+            }
+            if d.block == 0 {
+                table[..count * PIECE].copy_from_slice(d.out[..count].as_flattened());
             }
             if more {
                 d.start_group(d.group + 1);
@@ -1198,7 +1402,7 @@ impl Store {
             }
             return Ok(Poll::Again);
         }
-        // Write the group, a page of the destination at a time.
+        // Write the group, up to a page of the destination at a time.
         let bytes = count * PIECE;
         let wrote = usize::from(d.wrote);
         if wrote < bytes {
@@ -1214,11 +1418,12 @@ impl Store {
                 }
             };
             let len = (bytes - wrote)
+                .min(CHUNK)
                 .min(room)
                 .min((PROGRAM_PAGE - address % PROGRAM_PAGE) as usize);
             flash.start_program(address, &d.out.as_flattened()[wrote..wrote + len])?;
             d.wrote += len as u16;
-            *op = Some(Op::Write);
+            *op = Some(Op::Part);
             return Ok(Poll::Again);
         }
         if more {

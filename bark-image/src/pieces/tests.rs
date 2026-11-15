@@ -318,11 +318,18 @@ fn an_image_is_gathered() {
     assert_eq!(feeder.events, decoded);
     // Clearing: the head, the three blocks' lanes and the 5 sectors of the
     // image, 18;
-    // the record; the table's piece, page and byte; block 1's 64 slots and
-    // its byte, block 2's 5 slots and its byte, and 101 writes of the two
-    // blocks' header and image, each group's two pieces split where a page
-    // or the header ends; the lanes of the three blocks erased, 12.
-    assert_eq!(flash.ops, 18 + 1 + 3 + (64 + 1) + (5 + 1) + 101 + 12);
+    // the record; every slot in 16 programs of up to `CHUNK` bytes; the
+    // table's slot, its 16 parts and its byte; block 1's 64 slots and its
+    // byte, block 2's 5 slots and its byte, and 1 096 writes of the two
+    // blocks' header and image, each group's two pieces in parts of up to
+    // `CHUNK` bytes, split also where a page or the header ends; the lanes
+    // of the three blocks erased, 12.
+    let slot = WRITTEN.div_ceil(CHUNK);
+    assert_eq!(slot, 16);
+    assert_eq!(
+        flash.ops,
+        18 + 1 + (slot + 16 + 1) + (64 * slot + 1) + (5 * slot + 1) + 1096 + 12
+    );
 }
 
 #[test]
@@ -370,7 +377,7 @@ fn a_power_cut_at_every_operation_loses_nothing() {
         tested += 1;
         check(&built, &store, &mut flash);
     }
-    assert_eq!(tested, 206);
+    assert_eq!(tested, 2266);
 }
 
 #[test]
@@ -562,6 +569,94 @@ fn a_gatherer_sends_the_blocks_it_decoded() {
             .data_piece(&mut flash, b as u8, past, &mut out)
             .unwrap());
     }
+}
+
+/// A flash that checks each step's work: every step sees first whether
+/// the chip is done, then moves at most one transfer of at most `CHUNK`
+/// bytes over the bus.
+struct Metered {
+    ram: Ram,
+    /// Transfers since the last `done`.
+    since_done: usize,
+    reads: usize,
+    programs: usize,
+}
+
+impl Metered {
+    fn transfer(&mut self, len: usize) {
+        assert!(len <= CHUNK, "a transfer of {len} bytes in a step");
+        self.since_done += 1;
+        assert_eq!(self.since_done, 1, "two transfers in a step");
+    }
+}
+
+impl Flash for Metered {
+    type Error = Cut;
+
+    fn read(&mut self, address: u32, bytes: &mut [u8]) -> Result<(), Cut> {
+        self.transfer(bytes.len());
+        self.reads += 1;
+        self.ram.read(address, bytes)
+    }
+
+    fn start_program(&mut self, address: u32, data: &[u8]) -> Result<(), Cut> {
+        self.transfer(data.len());
+        self.programs += 1;
+        self.ram.start_program(address, data)
+    }
+
+    fn start_erase(&mut self, address: u32) -> Result<(), Cut> {
+        self.transfer(0);
+        self.ram.start_erase(address)
+    }
+
+    fn done(&mut self) -> Result<bool, Cut> {
+        self.since_done = 0;
+        self.ram.done()
+    }
+}
+
+#[test]
+fn every_step_moves_at_most_a_chunk() {
+    // Three blocks, the pieces drawn at random, so that groups lack data
+    // pieces and read every piece of their block; then reopened, so that
+    // the head and every slot are read again.
+    let built = build(2 * DATA * PIECE, 24, None, false);
+    let mut flash = Metered {
+        ram: Ram::new(),
+        since_done: 0,
+        reads: 0,
+        programs: 0,
+    };
+    let mut store = Store::open(&mut flash).unwrap();
+    store.begin(built.image);
+    let mut feeder = Feeder::new(&built, 25);
+    feeder.gather(&built, &mut store, &mut flash).unwrap();
+    assert!(store.whole());
+    let read = flash.reads;
+    let mut again = Store::open(&mut flash).unwrap();
+    assert_eq!(again.begin(built.image), Begin::Resumed);
+    while again.poll(&mut flash).unwrap() != Poll::Idle {}
+    assert!(again.whole());
+    // Some 4 000 slots were read again, a 256-byte slot in 16 steps.
+    assert!(flash.reads - read >= LANES * DATA * 16);
+    assert!(flash.programs > 0);
+}
+
+#[test]
+fn a_step_waits_for_another_users_program() {
+    let built = small();
+    let (mut flash, _) = gathered(&built, 26);
+    let mut store = Store::EMPTY;
+    store.reopen();
+    // The mailbox programs a page meanwhile: the store reads nothing
+    // until it is done (the fake asserts no read while the chip works).
+    flash.start_program(0, &[0xff]).unwrap();
+    assert_eq!(store.poll(&mut flash).unwrap(), Poll::Busy);
+    while !store.opened() {
+        store.poll(&mut flash).unwrap();
+    }
+    assert_eq!(store.image(), Some(built.image));
 }
 
 #[test]

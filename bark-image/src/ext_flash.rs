@@ -78,6 +78,31 @@ pub const ERASE_MAX_US: u32 = 12_000;
 /// program, so the wait overshoots its end by at most 4 %.
 pub const POLL_US: u32 = PROGRAM_TYP_US / 26;
 
+/// A byte over the software bus, rounded up: 1 024 reads of 256 bytes
+/// took 2 088 ms on two boards, 7.8 µs a byte with each read's command
+/// (roadmap, Phase 2, "The external flash's bus").
+pub const BYTE_US: u32 = 8;
+
+/// A [`ReadNorFlash::read`] of `len` bytes: Release and tRES1, the
+/// command and its address, the bytes, Deep Power-down and tDP.
+pub const fn read_us(len: usize) -> u32 {
+    (len as u32 + 6) * BYTE_US + RES1_US + DP_US
+}
+
+/// A [`Chip::start_program`] of `len` bytes: Release and tRES1, Write
+/// Enable, the command and its address, the bytes.
+pub const fn program_us(len: usize) -> u32 {
+    (len as u32 + 6) * BYTE_US + RES1_US
+}
+
+/// The most bytes a user moves over the bus at once where other work
+/// waits on the processor: a read of them takes 187 µs, a program's start
+/// 184 µs, within the firmware's bound on a stretch of work
+/// (`bark-fw/README.md`, "Work beside the radio"). A page programmed in
+/// parts is the same bytes programmed: a Page Program sets only the bytes
+/// it is sent (datasheet, "Page Program (PP)").
+pub const CHUNK: usize = 16;
+
 /// One SPI device: its select line, a byte exchanged, and a clock to
 /// wait by.
 pub trait Bus {
