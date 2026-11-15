@@ -261,15 +261,20 @@ fn a_fetch_opens_under_its_key_only() {
         address: f.away,
         recipient: 9,
     };
-    let p = fetch.seal(&f.alice.mailbox, 7);
+    let p = fetch.seal(&f.alice.mailbox, f.home.node, 7);
     assert_eq!(seal::recipient_of(&p), Some(7));
-    assert_eq!(Fetch::open(&f.alice.mailbox, &p), Ok(fetch));
-    assert_eq!(Fetch::open(&f.bob.mailbox, &p), Err(Error::Open));
+    assert_eq!(Fetch::open(&f.alice.mailbox, f.home.node, &p), Ok(fetch));
+    assert_eq!(Fetch::open(&f.bob.mailbox, f.home.node, &p), Err(Error::Open));
+    // Another node under the same key, an earlier home, cannot take it.
+    assert_eq!(
+        Fetch::open(&f.alice.mailbox, f.away.node, &p),
+        Err(Error::Open)
+    );
     // A bit changed anywhere but the recipient tag, `siv` too, is refused.
     for i in (1..p.len()).filter(|&i| i != seal::RECIPIENT_AT) {
         let mut q = p;
         q[i] ^= 0x80;
-        assert_eq!(Fetch::open(&f.alice.mailbox, &q), Err(Error::Open), "{i}");
+        assert_eq!(Fetch::open(&f.alice.mailbox, f.home.node, &q), Err(Error::Open), "{i}");
     }
 }
 
@@ -457,7 +462,7 @@ fn a_reply_gives_back_its_item_which_proves_itself() {
         address: f.away,
         recipient: 9,
     }
-    .seal(&k, 7);
+    .seal(&k, f.home.node, 7);
     for not in [&summary[..], &fetch[..], b"item"] {
         assert!(!seal::forwardable(not));
         assert_eq!(
@@ -794,7 +799,7 @@ mod mailbox {
     }
 
     fn home() -> Mailbox<Box<Small>> {
-        let mut m = Mailbox::new(Box::new(Small::new()));
+        let mut m = Mailbox::new(Box::new(Small::new()), fixture().home.node);
         m.set_person(0, Some(alice()));
         m
     }
@@ -823,7 +828,7 @@ mod mailbox {
             address: fixture().away,
             recipient: 9,
         }
-        .seal(key, 7)
+        .seal(key, fixture().home.node, 7)
     }
 
     /// What a requester gets from a reply.
@@ -880,7 +885,7 @@ mod mailbox {
     /// opens, and no person's inbox holds it.
     #[test]
     fn a_node_with_no_people_keeps_everything_for_guests() {
-        let mut m = Mailbox::new(Small::new());
+        let mut m = Mailbox::new(Small::new(), fixture().home.node);
         assert_eq!(m.arrive(MsgId(1), &tagged(3, 1)), Arrival::Kept(1));
         assert!(!m.is_home());
         let f = fetch(&fixture().alice.mailbox, 5);
@@ -891,12 +896,30 @@ mod mailbox {
         assert_eq!(m.for_tag(3, 0, &mut out).map(|u| u.0), Some(1));
     }
 
+    /// A fetch sealed for one node is refused at another that holds the
+    /// same person's key, as an earlier home does, and taken at its own:
+    /// two homes never answer one round.
+    #[test]
+    fn a_fetch_for_one_home_is_refused_at_another_with_the_same_key() {
+        let mut earlier = Mailbox::new(Small::new(), fixture().away.node);
+        earlier.set_person(0, Some(alice()));
+        earlier.arrive(MsgId(1), &item(1));
+        let f = fetch(&fixture().alice.mailbox, 5);
+        assert_eq!(earlier.arrive(MsgId(2), &f), Arrival::Refused);
+        assert!(!earlier.reply_due());
+        assert_eq!(earlier.person(0).map(|p| p.last_fetch), Some(0));
+        let mut m = home();
+        m.arrive(MsgId(1), &item(1));
+        assert_eq!(m.arrive(MsgId(2), &f), Arrival::Fetch(0));
+        assert!(m.reply_due());
+    }
+
     /// Each person's inbox holds the items with their tag, read after the
     /// last they confirmed; a guest reads its own by tag, and reading takes
     /// nothing.
     #[test]
     fn each_person_and_each_guest_reads_by_tag() {
-        let mut m = Mailbox::new(Small::new());
+        let mut m = Mailbox::new(Small::new(), fixture().home.node);
         m.set_person(
             0,
             Some(Person {
@@ -970,7 +993,7 @@ mod mailbox {
     /// other person's fetch still sends the item they share.
     #[test]
     fn one_person_s_reading_marks_nothing_of_another_s() {
-        let mut m = Mailbox::new(Small::new());
+        let mut m = Mailbox::new(Small::new(), fixture().home.node);
         let bob = Person {
             number: 2,
             tag: Some(ITEM_TAG),
@@ -999,7 +1022,7 @@ mod mailbox {
     /// Two people's rounds take the send slot in turn.
     #[test]
     fn rounds_take_turns() {
-        let mut m = Mailbox::new(Small::new());
+        let mut m = Mailbox::new(Small::new(), fixture().home.node);
         let bob = Person {
             number: 2,
             tag: Some(ITEM_TAG),
@@ -1069,7 +1092,7 @@ mod mailbox {
     /// fetch opens under the first and clears its bit alone.
     #[test]
     fn two_phones_of_one_person() {
-        let mut m = Mailbox::new(Small::new());
+        let mut m = Mailbox::new(Small::new(), fixture().home.node);
         m.set_person(2, Some(alice()));
         m.set_person(
             6,
@@ -1100,7 +1123,7 @@ mod mailbox {
     #[test]
     fn a_guest_s_item_leaves_only_as_the_ring_wraps() {
         // Two pages of 16.
-        let mut m = Mailbox::new(RamRing::<32>::new());
+        let mut m = Mailbox::new(RamRing::<32>::new(), fixture().home.node);
         for i in 1..=32u8 {
             m.arrive(MsgId(i.into()), &tagged(7, i));
         }
@@ -1115,7 +1138,7 @@ mod mailbox {
     /// 0xFF: a person whose tag that is has no item there.
     #[test]
     fn an_erased_slot_is_nobody_s_item() {
-        let mut m = Mailbox::new(RamRing::<32>::new());
+        let mut m = Mailbox::new(RamRing::<32>::new(), fixture().home.node);
         let ff = Person {
             number: 1,
             tag: Some(0xFF),
@@ -1243,7 +1266,7 @@ mod mailbox {
 
     #[test]
     fn a_backlog_comes_in_batches_newest_first_down_to_none_remaining() {
-        let mut m = Mailbox::new(Box::new(RamRing::<128>::new()));
+        let mut m = Mailbox::new(Box::new(RamRing::<128>::new()), fixture().home.node);
         m.set_person(0, Some(alice()));
         for i in 1..=70 {
             m.arrive(MsgId(i), &item(i));
@@ -1263,7 +1286,7 @@ mod mailbox {
 
     #[test]
     fn a_ring_larger_than_a_batch_sends_its_newest_and_overwrites_by_age() {
-        let mut m = Mailbox::new(Box::new(RamRing::<64>::new()));
+        let mut m = Mailbox::new(Box::new(RamRing::<64>::new()), fixture().home.node);
         m.set_person(0, Some(alice()));
         for i in 1..=70 {
             m.arrive(MsgId(i), &item(i));
@@ -1306,7 +1329,7 @@ mod mailbox {
         assert_eq!(m.arrive(MsgId(0), &fetch(&k, 99)), Arrival::Refused);
         let kept = m.person(0);
         let ring = Box::new(clone_ring(m.ring()));
-        let mut m = Mailbox::new(ring);
+        let mut m = Mailbox::new(ring, fixture().home.node);
         m.set_person(0, kept);
         assert!(m.is_home());
         assert_eq!(m.newest(), 1);
@@ -1316,7 +1339,7 @@ mod mailbox {
 
     #[test]
     fn a_reboot_between_two_fetches_keeps_the_marks() {
-        let mut m = Mailbox::new(Box::new(RamRing::<64>::new()));
+        let mut m = Mailbox::new(Box::new(RamRing::<64>::new()), fixture().home.node);
         m.set_person(0, Some(alice()));
         for i in 1..=40 {
             m.arrive(MsgId(i), &item(i));
@@ -1325,7 +1348,7 @@ mod mailbox {
         assert_eq!(numbers(&got), (9..=40).rev().collect::<Vec<_>>());
         assert_eq!(remaining(&got), 8);
         let kept = m.person(0);
-        let mut m = Mailbox::new(Box::new(clone_ring(m.ring())));
+        let mut m = Mailbox::new(Box::new(clone_ring(m.ring())), fixture().home.node);
         m.set_person(0, kept);
         assert_eq!(m.newest(), 40);
         let got = fetch_all(&mut m, 101);
@@ -1347,7 +1370,7 @@ mod mailbox {
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(0));
         assert_eq!(m.next(&mut out).map(|o| o.number), Some(3));
         let kept = m.person(0);
-        let mut m = Mailbox::new(Box::new(clone_ring(m.ring())));
+        let mut m = Mailbox::new(Box::new(clone_ring(m.ring())), fixture().home.node);
         m.set_person(0, kept);
         assert!(!m.reply_due());
         assert_eq!(numbers(&fetch_all(&mut m, 101)), [2, 1]);
@@ -1521,7 +1544,7 @@ mod flash_ring {
         }
 
         fn open(&self) -> Home<'_> {
-            Mailbox::new(FlashRing::open(self))
+            Mailbox::new(FlashRing::open(self), fixture().home.node)
         }
     }
 
@@ -1550,7 +1573,7 @@ mod flash_ring {
             address: fixture().away,
             recipient: 9,
         }
-        .seal(&fixture().alice.mailbox, 7)
+        .seal(&fixture().alice.mailbox, fixture().home.node, 7)
     }
 
     fn alice() -> Person {

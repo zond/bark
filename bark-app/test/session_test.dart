@@ -633,7 +633,7 @@ void main() {
         final o = p.session.outbox.last;
         expect(o.kind, OutKind.fetch);
         expect(o.dst.toString(), home.toString());
-        final f = Fetch.open(sodium, p.me.keys.mailbox, o.payload);
+        final f = Fetch.open(sodium, p.me.keys.mailbox, home.id, o.payload);
         expect(f.address.toString(), elsewhere.toString());
         // Each a later round, so that the home takes it.
         expect(f.sent, greaterThan(lastSent));

@@ -365,7 +365,7 @@ pub fn json() -> String {
         recipient: seal::recipient(&f.alice.identity, f.away.node),
     };
     let home = seal::recipient(&f.alice.identity, f.home.node);
-    let payload = fetch.seal(&f.alice.mailbox, home);
+    let payload = fetch.seal(&f.alice.mailbox, f.home.node, home);
     parts.push(entry(
         "fetch",
         &[
@@ -377,13 +377,21 @@ pub fn json() -> String {
         ],
     ));
     // What her home must refuse under her key: that fetch with a bit of
-    // `siv` or of the ciphertext flipped, and the same fetch under Bob's.
+    // `siv` or of the ciphertext flipped, the same fetch under Bob's, and
+    // the same fetch under hers sealed for another node.
     parts.push(entry(
         "fetch_refused",
         &[
             ("forged_siv", h(&flipped(&payload, seal::HEAD_LEN))),
             ("flipped", h(&flipped(&payload, payload.len() - 1))),
-            ("other_key", h(&fetch.seal(&f.bob.mailbox, home))),
+            (
+                "other_key",
+                h(&fetch.seal(&f.bob.mailbox, f.home.node, home)),
+            ),
+            (
+                "other_node",
+                h(&fetch.seal(&f.alice.mailbox, f.away.node, home)),
+            ),
         ],
     ));
 

@@ -2723,7 +2723,7 @@ drops a payload of a version or form it does not know.
 |---|---|---|---|
 | 0, boxed | a contact | `siv` (16), ciphertext, under the pair's keys (below) | 18 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 50 |
-| 2, fetch | the person's home node | `siv` (16), ciphertext, under the mailbox key's keys (below) | 18 |
+| 2, fetch | the person's home node | `siv` (16), ciphertext, under the mailbox key's keys, bound to the home node's ID (below) | 18 |
 | 3, summary | the person's current address, from their home node | `crypto_secretbox_easy` output under the reply key ([mailbox](#mailbox)) of the round's items (1) and the items still unsent after it (2); the nonce is not sent | 21 in all |
 | 4, boxed item | the same | the place (1), then a kept boxed payload after its format byte and recipient tag, under the reply key's stream | 1 over the item |
 | 5, introduction item | the same | the same, for a kept introduction | 1 over the item |
@@ -2739,15 +2739,20 @@ payload and the mailbox key for a fetch, come two keys:
 `crypto_kdf_derive_from_key(shared, 1, "bark-mac")`, the MAC key, and
 `crypto_kdf_derive_from_key(shared, 2, "bark-enc")`, the encryption key.
 The sender makes `siv`, `crypto_generichash` to 16 bytes keyed with the
-MAC key, of the format byte and the plaintext, and the ciphertext,
+MAC key, of the format byte, for a fetch the home node's ID (6), and the
+plaintext, and the ciphertext,
 `crypto_secretbox_detached` of the plaintext under the encryption key
 with `siv` and 8 zero bytes as the nonce, its tag dropped: the plaintext
 XORed with XSalsa20's keystream from its 33rd byte. The receiver runs the
 same call over the ciphertext, which gives the plaintext, computes `siv`
-again over the format byte and that plaintext, compares the two in
-constant time, and neither keeps nor acts on the plaintext unless they
-match. The recipient tag is not hashed: it differs from node to node and
-a mailbox replaces it ([mailbox](#mailbox)). Two rules make it sound: the
+again over the same bytes, a fetch's with its own node ID, compares the
+two in constant time, and neither keeps nor acts on the plaintext unless
+they match. The recipient tag is not hashed: it differs from node to node
+and a mailbox replaces it ([mailbox](#mailbox)). The home's ID is not
+sent: the phone knows it from the address it sends the fetch to, and the
+node knows its own. So a fetch opens only at the node it is meant for,
+and an earlier home still holding the key cannot answer it too, under
+the same reply key and nonces as the home (roadmap D224). Two rules make it sound: the
 two keys are separate, and nothing of the plaintext is used before the
 check. The value saves 24 of the 40 bytes a nonce and a tag took, and a
 repeated nonce can no longer expose two messages, as a nonce is the hash
@@ -2881,9 +2886,9 @@ still reads those with its tag ([receiving](#receiving)).
 `sent` (4), the requester's current address (13) and its recipient tag at
 that address's node (1), which the home cannot make, as it does not know
 the identity ([the payload](#the-payload)). The node takes it only if it
-opens under one of its records' mailbox keys and its `sent` is later than
-the last fetch's that record took, which the node keeps for each; the
-record's items are those with its tag. A fetch is sent only when the
+opens under one of its records' mailbox keys and its own node ID and its
+`sent` is later than the last fetch's that record took, which the node
+keeps for each; the record's items are those with its tag. A fetch is sent only when the
 person asks, so that a mailbox costs air only then (roadmap D128).
 
 **The answer.** The node answers a fetch once, to the fetch's address,

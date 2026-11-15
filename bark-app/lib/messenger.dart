@@ -204,6 +204,7 @@ class Messenger {
     final p = f.seal(
       sodium,
       me.keys.mailbox,
+      home.id,
       recipientTag(sodium, me.identity, home.id),
     );
     await me.fetched(sent);

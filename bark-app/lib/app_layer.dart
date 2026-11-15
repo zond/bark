@@ -216,19 +216,27 @@ class SivKeys {
     }
   }
 
-  Uint8List _siv(int format, List<int> plain) => s.crypto.genericHash(
-    message: Uint8List.fromList([format, ...plain]),
-    outLen: sivLen,
-    key: mac,
-  );
+  Uint8List _siv(int format, List<int> bound, List<int> plain) =>
+      s.crypto.genericHash(
+        message: Uint8List.fromList([format, ...bound, ...plain]),
+        outLen: sivLen,
+        key: mac,
+      );
 
   static Uint8List _nonce(List<int> siv) =>
       Uint8List.fromList([...siv, ...List.filled(nonceLen - sivLen, 0)]);
 
   /// `plain` as a payload of `form` for the `recipient` tag: the format
-  /// byte, the tag, `siv`, the ciphertext.
-  Uint8List seal(Form form, int recipient, List<int> plain) {
-    final siv = _siv(formatByte(form), plain);
+  /// byte, the tag, `siv`, the ciphertext. `bound` is hashed into `siv`
+  /// and not sent: what the receiver knows itself, so that the payload
+  /// opens there alone.
+  Uint8List seal(
+    Form form,
+    int recipient,
+    List<int> plain, {
+    List<int> bound = const [],
+  }) {
+    final siv = _siv(formatByte(form), bound, plain);
     return Uint8List.fromList([
       formatByte(form),
       recipient,
@@ -237,13 +245,13 @@ class SivKeys {
     ]);
   }
 
-  /// The plaintext of `payload`, which is given only once its `siv`
-  /// checks; null if it does not.
-  Uint8List? open(List<int> payload) {
+  /// The plaintext of `payload`, sealed with `bound`, which is given only
+  /// once its `siv` checks; null if it does not.
+  Uint8List? open(List<int> payload, {List<int> bound = const []}) {
     if (payload.length < boxOverhead) return null;
     final siv = payload.sublist(headLen, boxOverhead);
     final plain = stream(s, enc, _nonce(siv), payload.sublist(boxOverhead));
-    final want = _siv(payload[0], plain);
+    final want = _siv(payload[0], bound, plain);
     var d = 0;
     for (var i = 0; i < sivLen; i++) {
       d |= want[i] ^ siv[i];
@@ -345,29 +353,35 @@ class Fetch {
   static const plainLen = 4 + Address.len + 1;
   static const len = boxOverhead + plainLen;
 
-  /// The fetch as a payload under the mailbox key's keys, for `home`,
-  /// the requester's recipient tag at its home node.
-  Uint8List seal(Sodium s, SecureKey key, int home) {
+  /// The fetch as a payload under the mailbox key's keys, for the home
+  /// node of ID `home`, with `tag`, the requester's recipient tag there.
+  /// The home's ID is hashed into `siv`, so that no other node holding the
+  /// key, an earlier home, can take it.
+  Uint8List seal(Sodium s, SecureKey key, List<int> home, int tag) {
     final keys = SivKeys.of(s, key);
     try {
-      return keys.seal(Form.fetch, home, [
+      return keys.seal(Form.fetch, tag, [
         ...be(sent, 4),
         ...address.encode(),
         recipient,
-      ]);
+      ], bound: home);
     } finally {
       keys.dispose();
     }
   }
 
-  static Fetch open(Sodium s, SecureKey key, List<int> payload) {
+  /// The fetch in `payload` under the mailbox `key`, at the node of ID
+  /// `me`.
+  static Fetch open(Sodium s, SecureKey key, List<int> me, List<int> payload) {
     if (formOf(payload) != Form.fetch || payload.length != len) {
       throw const BadPayload('not a fetch');
     }
     final keys = SivKeys.of(s, key);
     final Uint8List b;
     try {
-      b = keys.open(payload) ?? (throw const BadPayload('does not open'));
+      b =
+          keys.open(payload, bound: me) ??
+          (throw const BadPayload('does not open'));
     } finally {
       keys.dispose();
     }
