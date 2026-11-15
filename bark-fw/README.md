@@ -1517,6 +1517,12 @@ pieces it did not want passed over with its line, 0.72 ms; the offer's
 two lines in one poll, 0.66 ms; and at boot the running image's hash,
 eight blocks of SHA-256 a poll, up to 2.7 ms. Each now goes as above.
 
+Six hours on the same boards with these changes (2026-11-15) brought the
+longest poll of a minute near the bound, not under it: the GPS task's
+0.24 to 0.26 ms at the median and 0.29 ms at most, the update task's 0.21
+to 0.34 ms at the median and 0.36 ms at the 95th percentile. No channel
+check went without its reading.
+
 This bounds what the update does, not every task. Known stretches over
 the bound, left as they are (2026-11-15; measured where it says so, else
 worked out from the bus and the datasheets):
