@@ -373,13 +373,14 @@ class FakeNode implements NodeLink {
 
   /// The home away's answer to a fetch, as its mailbox gives it: the
   /// summary, how many come and how many stay unsent, then the newest
-  /// batch of the items it has not sent, newest first.
-  void _answerFetch(Uint8List payload) {
+  /// batch of the items it has not sent, newest first. `home` is the
+  /// node it was sent to.
+  void _answerFetch(List<int> home, Uint8List payload) {
     final key = mailbox;
     if (key == null || formOf(payload) != Form.fetch) return;
     final Fetch f;
     try {
-      f = Fetch.open(sodium, key, payload);
+      f = Fetch.open(sodium, key, home, payload);
     } on BadPayload {
       return;
     }
@@ -575,7 +576,7 @@ class FakeNode implements NodeLink {
     } else {
       _freeAfter(handOver);
       if (p != this) return;
-      _answerFetch(payload);
+      _answerFetch(dst.id, payload);
       final got = _textTo(payload);
       final text = got == null ? null : _whole(got.$1, got.$2);
       if (text != null) _echo('Echo: $text');

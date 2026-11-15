@@ -74,10 +74,11 @@ impl Wake {
         self.gps.signal(());
     }
 
-    /// The mailbox's queued writes are done, or a phone's home, the
-    /// records or the links changed: the loop confirms what was kept and
-    /// publishes the change. A reply due needs no wake: the driver offers
-    /// before every wait.
+    /// The mailbox's queued writes are done, the records were kept, or a
+    /// phone's home, the records or the links changed: the loop confirms
+    /// what was kept and publishes the change. A reply due needs no wake
+    /// but after the records were kept (`store::phones_kept`): the driver
+    /// offers before every wait.
     pub fn mailbox_changed(&self) {
         self.mailbox.signal(());
     }
@@ -160,7 +161,11 @@ impl App for LinkApp<'_> {
                 Either6::Third(()) => crate::gps::waiting().then_some(Ready::Driver),
                 Either6::Fourth(()) => {
                     publish_ring(crate::ble::LINK.lock(|l| l.borrow().status));
-                    self.placed().map(|_| Ready::Driver)
+                    // A reply held until the records were kept goes now.
+                    let reply = offer
+                        && crate::store::phones_kept()
+                        && crate::mailbox::with(|m| m.reply_due()).unwrap_or(false);
+                    (self.placed().is_some() || reply).then_some(Ready::Driver)
                 }
                 Either6::Fifth(()) => Some(Ready::Driver),
                 // A press an earlier step took leaves its signal behind.
@@ -235,6 +240,9 @@ impl App for LinkApp<'_> {
             return Some(out);
         }
         self.phone_message(payload).or_else(|| {
+            if !crate::store::phones_kept() {
+                return None;
+            }
             let out = crate::mailbox::with(|m| m.next(payload)).flatten()?;
             if out.number == 0 {
                 log::info!(

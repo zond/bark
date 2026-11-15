@@ -122,11 +122,12 @@ impl SivKeys {
     }
 
     /// The hash keyed with the MAC key, as `crypto_generichash` makes it
-    /// to 16 bytes: `siv`.
-    fn siv(&self, format: u8, plain: &[u8]) -> [u8; SIV_LEN] {
+    /// to 16 bytes, of the format byte, `bound` and the plaintext: `siv`.
+    fn siv(&self, format: u8, bound: &[u8], plain: &[u8]) -> [u8; SIV_LEN] {
         let mut mac = <Blake2bMac<U16> as Mac>::new_from_slice(&self.mac)
             .expect("a 32-byte key is BLAKE2b's");
         mac.update(&[format]);
+        mac.update(bound);
         mac.update(plain);
         mac.finalize().into_bytes().into()
     }
@@ -168,10 +169,13 @@ pub fn stream(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], buf: &mut [u8]) {
 
 /// `plain` as a payload of `form` under `keys`, for the `recipient` tag,
 /// into `out`: the format byte, the tag, `siv`, the ciphertext; its length.
+/// `bound` is hashed into `siv` and not sent: what the receiver knows
+/// itself, so that the payload opens there alone.
 fn siv_seal(
     keys: &SivKeys,
     form: Form,
     recipient: u8,
+    bound: &[u8],
     plain: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Error> {
@@ -180,7 +184,7 @@ fn siv_seal(
     if out.len() < len {
         return Err(Error::TooLong);
     }
-    let siv = keys.siv(form.format(), plain);
+    let siv = keys.siv(form.format(), bound, plain);
     out[0] = form.format();
     out[RECIPIENT_AT] = recipient;
     out[HEAD_LEN..at].copy_from_slice(&siv);
@@ -189,9 +193,15 @@ fn siv_seal(
     Ok(len)
 }
 
-/// The plaintext of `payload` under `keys`, into `out`; its length. The
-/// plaintext is taken only once `siv` checks, and is wiped if it does not.
-fn siv_open(keys: &SivKeys, payload: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+/// The plaintext of `payload` under `keys`, sealed with `bound`, into
+/// `out`; its length. The plaintext is taken only once `siv` checks, and
+/// is wiped if it does not.
+fn siv_open(
+    keys: &SivKeys,
+    bound: &[u8],
+    payload: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Error> {
     let at = HEAD_LEN + SIV_LEN;
     let len = payload.len().checked_sub(at).ok_or(Error::Malformed)?;
     if out.len() < len {
@@ -201,7 +211,7 @@ fn siv_open(keys: &SivKeys, payload: &[u8], out: &mut [u8]) -> Result<usize, Err
     let plain = &mut out[..len];
     plain.copy_from_slice(&payload[at..]);
     stream(&keys.enc, &SivKeys::nonce(siv), plain);
-    if !bool::from(keys.siv(payload[0], plain).ct_eq(siv)) {
+    if !bool::from(keys.siv(payload[0], bound, plain).ct_eq(siv)) {
         plain.fill(0);
         return Err(Error::Open);
     }
@@ -275,7 +285,7 @@ pub fn seal_box(
     if plain.len() > MAX_BOX_PLAIN {
         return Err(Error::TooLong);
     }
-    siv_seal(pair, Form::Boxed, recipient, plain, out)
+    siv_seal(pair, Form::Boxed, recipient, &[], plain, out)
 }
 
 /// The plaintext of a boxed payload under a pair's keys, into `out`; its
@@ -284,7 +294,7 @@ pub fn open_box(pair: &SivKeys, payload: &[u8], out: &mut [u8]) -> Result<usize,
     if Form::of(payload)? != Form::Boxed || payload.len() > MAX_PAYLOAD {
         return Err(Error::Malformed);
     }
-    siv_open(pair, payload, out)
+    siv_open(pair, &[], payload, out)
 }
 
 /// `crypto_box_seal`'s nonce: BLAKE2b-192 of the ephemeral key and the
@@ -370,27 +380,32 @@ impl Fetch {
     }
 
     /// The fetch as a payload (form 2) under the keys of the mailbox
-    /// `key`, for `home`, the requester's recipient tag at its home node.
-    pub fn seal(&self, key: &[u8; KEY_LEN], home: u8) -> [u8; Self::LEN] {
+    /// `key`, for the home node `home`, with `tag`, the requester's
+    /// recipient tag there. The home's ID is hashed into `siv`, so that
+    /// another node holding the same key, an earlier home, cannot take it
+    /// and answer the round a second time under the same reply nonces.
+    pub fn seal(&self, key: &[u8; KEY_LEN], home: NodeId, tag: u8) -> [u8; Self::LEN] {
         let mut out = [0u8; Self::LEN];
         // A plaintext of its own length fits.
         let _ = siv_seal(
             &SivKeys::of(key),
             Form::Fetch,
-            home,
+            tag,
+            &home.0,
             &self.plain(),
             &mut out,
         );
         out
     }
 
-    /// The fetch in `payload`, if it is one under the mailbox `key`.
-    pub fn open(key: &[u8; KEY_LEN], payload: &[u8]) -> Result<Fetch, Error> {
+    /// The fetch in `payload`, if it is one under the mailbox `key` for
+    /// the node `me`.
+    pub fn open(key: &[u8; KEY_LEN], me: NodeId, payload: &[u8]) -> Result<Fetch, Error> {
         if Form::of(payload)? != Form::Fetch || payload.len() != Self::LEN {
             return Err(Error::Malformed);
         }
         let mut b = [0u8; Self::PLAIN_LEN];
-        siv_open(&SivKeys::of(key), payload, &mut b)?;
+        siv_open(&SivKeys::of(key), &me.0, payload, &mut b)?;
         Ok(Fetch {
             sent: be(&b[..4]),
             address: Address::decode(&b[4..])?,

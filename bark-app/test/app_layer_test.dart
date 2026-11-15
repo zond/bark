@@ -229,15 +229,19 @@ void main() {
     final bc = SivKeys.pair(s, carol.identity, bob.pair.secretKey);
     expect(hex(openBox(bc, h(m, 'other_pair'))), at('box_1251')['plaintext']);
     final f = at('fetch_refused');
-    for (final k in ['forged_siv', 'flipped', 'other_key']) {
+    for (final k in ['forged_siv', 'flipped', 'other_key', 'other_node']) {
       expect(
-        () => Fetch.open(s, alice.mailbox, h(f, k)),
+        () => Fetch.open(s, alice.mailbox, home.id, h(f, k)),
         throwsA(isA<BadPayload>()),
         reason: k,
       );
     }
     expect(
-      Fetch.open(s, bob.mailbox, h(f, 'other_key')).sent,
+      Fetch.open(s, bob.mailbox, home.id, h(f, 'other_key')).sent,
+      at('fetch')['sent'],
+    );
+    expect(
+      Fetch.open(s, alice.mailbox, away.id, h(f, 'other_node')).sent,
       at('fetch')['sent'],
     );
   });
@@ -263,16 +267,16 @@ void main() {
     expect(f.recipient, m['recipient']);
     final homeTag = tag(alice, home);
     expect(homeTag, m['home']);
-    expect(hex(f.seal(s, alice.mailbox, homeTag)), m['payload']);
+    expect(hex(f.seal(s, alice.mailbox, home.id, homeTag)), m['payload']);
     expect(h(m, 'payload').length, Fetch.len);
     expect(Fetch.len, boxOverhead + Fetch.plainLen);
-    final g = Fetch.open(s, alice.mailbox, h(m, 'payload'));
+    final g = Fetch.open(s, alice.mailbox, home.id, h(m, 'payload'));
     expect(
       (g.sent, g.address.toString(), g.recipient),
       (f.sent, f.address.toString(), f.recipient),
     );
     expect(
-      () => Fetch.open(s, bob.mailbox, h(m, 'payload')),
+      () => Fetch.open(s, bob.mailbox, home.id, h(m, 'payload')),
       throwsA(isA<BadPayload>()),
     );
   });

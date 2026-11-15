@@ -1245,7 +1245,7 @@ impl Sim {
         let mut mailboxes: Vec<Option<Box<HomeMailbox>>> = (0..n).map(|_| None).collect();
         for m in &sc.mailboxes {
             let i = resolve(&placed, m)?;
-            let mut mb = Box::new(Mailbox::new(RamRing::new()));
+            let mut mb = Box::new(Mailbox::new(RamRing::new(), ids[i as usize]));
             mb.set_person(
                 0,
                 Some(Person {
@@ -5746,13 +5746,14 @@ mod tests {
             position: sim.relays[2].address(),
             node: sim.node_id(2),
         };
+        let home = sim.node_id(0);
         let fetch = |sent: u32| {
             Fetch {
                 sent,
                 address,
                 recipient: 0,
             }
-            .seal(&key, 0)
+            .seal(&key, home, 0)
         };
         send(&mut sim, 2, &fetch(7));
         let t = sim.now + Duration::from_secs(300);

@@ -48,6 +48,8 @@ use bark_image::layout::STORE;
 use bark_link::phones::{self, Load};
 use bark_proto::store::{Stored, RECORD_LEN};
 #[cfg(not(feature = "console"))]
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
+#[cfg(not(feature = "console"))]
 use embassy_futures::select::{select3, Either3};
 #[cfg(not(feature = "console"))]
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -82,10 +84,27 @@ pub fn keep_offset(offset_min: i16) {
     TO_WRITE.offset.signal(offset_min);
 }
 
+/// The phones' changes asked to be kept, and of those the ones on flash:
+/// equal when every change is kept.
+#[cfg(not(feature = "console"))]
+static PHONES_ASKED: AtomicU32 = AtomicU32::new(0);
+#[cfg(not(feature = "console"))]
+static PHONES_KEPT: AtomicU32 = AtomicU32::new(0);
+
 #[cfg(not(feature = "console"))]
 /// The phones' side (`phones.rs`): keep what changed in their records.
 pub fn keep_phones() {
+    PHONES_ASKED.fetch_add(1, Relaxed);
     TO_WRITE.phones.signal(());
+}
+
+#[cfg(not(feature = "console"))]
+/// Whether every change to the phones' records is on flash. A mailbox
+/// reply waits for it: a reboot before a fetch's `sent` is kept would let
+/// the same fetch be taken again and its round's places carry other items
+/// under the same nonces (spec "Mailbox").
+pub fn phones_kept() -> bool {
+    PHONES_ASKED.load(Relaxed) == PHONES_KEPT.load(Relaxed)
 }
 
 #[cfg(not(feature = "console"))]
@@ -102,7 +121,14 @@ async fn work(mut flash: Flash) {
         match select3(w.stored.wait(), w.offset.wait(), w.phones.wait()).await {
             Either3::First(stored) => flash.keep(&stored).await,
             Either3::Second(offset_min) => flash.keep_offset(offset_min).await,
-            Either3::Third(()) => flash.keep_phones().await,
+            Either3::Third(()) => {
+                // Read before the write takes what changed: a change
+                // after it is not counted as kept until the next write.
+                let asked = PHONES_ASKED.load(Relaxed);
+                flash.keep_phones().await;
+                PHONES_KEPT.store(asked, Relaxed);
+                crate::node::WAKE.mailbox_changed();
+            }
         }
     }
 }
