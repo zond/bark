@@ -2888,8 +2888,12 @@ that address's node (1), which the home cannot make, as it does not know
 the identity ([the payload](#the-payload)). The node takes it only if it
 opens under one of its records' mailbox keys and its own node ID and its
 `sent` is later than the last fetch's that record took, which the node
-keeps for each; the record's items are those with its tag. A fetch is sent only when the
-person asks, so that a mailbox costs air only then (roadmap D128).
+keeps for each; the record's items are those with its tag. The node has
+that `sent` on flash before it hands the round's first reply to the
+core, so a fetch it answered is refused after a reboot, and no round is
+answered twice with other items at its places (roadmap D224). A fetch
+is sent only when the person asks, so that a mailbox costs air only then
+(roadmap D128).
 
 **The answer.** The node answers a fetch once, to the fetch's address,
 one reply at a time through its send slot: first a summary, then one
