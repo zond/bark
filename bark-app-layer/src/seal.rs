@@ -19,7 +19,7 @@ use bark_proto::NodeId;
 /// The forms, the format byte's low four bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Form {
-    /// To a contact, `crypto_box`.
+    /// To a contact, under the keys of the pair's `crypto_box_beforenm`.
     Boxed = 0,
     /// To someone who may not know the sender, a sealed box.
     Introduction = 1,
@@ -161,9 +161,9 @@ pub fn pair(their: &PublicKey, mine: &SecretKey) -> Result<SivKeys, Error> {
 /// `crypto_secretbox_detached` encrypts, its tag discarded: the keystream
 /// from its 33rd byte, the first 32 being the tag's key. Its own inverse.
 pub fn stream(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], buf: &mut [u8]) {
-    // Nothing to authenticate: only a longer message than XSalsa20 counts
-    // fails, and a payload is far shorter.
-    let _ = secretbox(key).encrypt_in_place_detached(GenericArray::from_slice(nonce), &[], buf);
+    // It fails only for a message longer than XSalsa20's counter reaches,
+    // and a payload is far shorter.
+    let _ =secretbox(key).encrypt_in_place_detached(GenericArray::from_slice(nonce), &[], buf);
 }
 
 /// `plain` as a payload of `form` under `keys`, for the `recipient` tag,
