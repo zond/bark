@@ -2717,14 +2717,38 @@ drops a payload of a version or form it does not know.
 
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
-| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 42 |
+| 0, boxed | a contact | `siv` (16), ciphertext, under the pair's keys (below) | 18 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 50 |
-| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 42 |
+| 2, fetch | the person's home node | `siv` (16), ciphertext, under the mailbox key's keys (below) | 18 |
 | 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3), the count of items still unsent (2) and the item; the nonce is not sent | 23 |
 
 Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
 225 − 23 = 202 bytes, so that its mailbox can send any payload on as a
 reply.
+
+*One value as nonce and proof.* Forms 0 and 2 carry one 16-byte value,
+`siv`, in place of a random nonce and a tag (roadmap D221). From a
+shared key, `crypto_box_beforenm` of the two identities for a boxed
+payload and the mailbox key for a fetch, come two keys:
+`crypto_kdf_derive_from_key(shared, 1, "bark-mac")`, the MAC key, and
+`crypto_kdf_derive_from_key(shared, 2, "bark-enc")`, the encryption key.
+The sender makes `siv`, `crypto_generichash` to 16 bytes keyed with the
+MAC key, of the format byte and the plaintext, and the ciphertext,
+`crypto_secretbox_detached` of the plaintext under the encryption key
+with `siv` and 8 zero bytes as the nonce, its tag dropped: the plaintext
+XORed with XSalsa20's keystream from its 33rd byte. The receiver runs the
+same call over the ciphertext, which gives the plaintext, computes `siv`
+again over the format byte and that plaintext, compares the two in
+constant time, and neither keeps nor acts on the plaintext unless they
+match. The recipient tag is not hashed: it differs from node to node and
+a mailbox replaces it ([mailbox](#mailbox)). Two rules make it sound: the
+two keys are separate, and nothing of the plaintext is used before the
+check. The value saves 24 of the 40 bytes a nonce and a tag took, and a
+repeated nonce can no longer expose two messages, as a nonce is the hash
+of its own message; identical messages encrypt identically, which
+`sent`, later on each phone than any before, makes rare. Both people of
+a pair have the same keys, so the direction bit (below) tells a message
+reflected back to its sender.
 
 *Recipient tag.* The first byte of `crypto_generichash` of the
 destination's node ID to 16 bytes, its shortest output, keyed with the
@@ -2738,8 +2762,8 @@ and it differs from node to node. One byte lets two people at a node
 share a tag with odds of 1 in 256; a phone handed a payload not its own
 fails to open it and drops it.
 
-A boxed payload names no sender: the receiver tries the key of each
-contact, `crypto_box_beforenm` of each made once, until one opens it. An
+A boxed payload names no sender: the receiver tries the keys of each
+contact, made once from `crypto_box_beforenm`, until one opens it. An
 introduction carries the sender's card; its sender is shown as
 unverified until a boxed payload from that identity opens. It is used
 until a payload from the receiver, of either form, has opened at the
@@ -2780,8 +2804,9 @@ each a message of its own with its own `sent`, delivered as a text is.
 The parts take consecutive `sent`, so a part's `sent` less its number and
 one is the first part's, which names the text: the receiver puts parts
 together in any order of arrival and knows from the count which have not
-come. A part holds 153 bytes of text in a box without an address; 16
-parts hold about 2.5 KB (roadmap D137).
+come. A part holds 202 − 18 − 5 − 2 = 177 bytes of text in a box
+without an address, the box, the header and the record's two bytes
+taken; 16 parts hold 2 832 bytes (roadmap D137, D221).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
 flags (1), bit 0 set when a home address follows, bit 1 when the node's
@@ -2808,7 +2833,7 @@ A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). The app must
 make every payload unique, or a second message identical to one a relay
 still has a record of is not delivered
-([message records](#message-records)); the random nonce, the
+([message records](#message-records)); `sent`, which `siv` hashes, the
 introduction's ephemeral key and a reply's round do that.
 
 ## Mailbox
@@ -3516,9 +3541,10 @@ those of the bring-up order, `roadmap.md` Phase 2.
 - Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
   hash (Vol 3 Part G §7.3).
 - libsodium documentation: "Public-key authenticated encryption"
-  (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
-  (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic
-  hashing" (`crypto_generichash`).
+  (`crypto_box`, `crypto_box_beforenm`), "Sealed boxes", "Secret-key
+  authenticated encryption" (`crypto_secretbox`, its detached mode),
+  "Key derivation" (`crypto_kdf`) and "Generic hashing"
+  (`crypto_generichash`).
 - RFC 4648, "The Base16, Base32, and Base64 Data Encodings": base32.
 - FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum and
   an image's hash and name.

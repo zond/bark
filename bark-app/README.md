@@ -120,8 +120,9 @@ is a prototype for the bench, not the app people will carry.
   goes again. The chip's tooltip names it, and a tap on it explains it
   with the bubble's other marks. Nothing answers by itself (roadmap
   D126, D185, D187). A sent text's long press still selects its words.
-  A text longer than one message holds, 156 bytes in a box without an
-  address, goes as parts of up to 155 bytes, 16 at most (roadmap D137):
+  A text longer than one message holds, 178 bytes in a box without an
+  address, goes as parts of up to 177 bytes, 16 at most (roadmap D137;
+  spec "Phone link", Long texts):
   once the text in the field needs more than one, a line under it says
   how many, "2 parts", counted in the bytes that will go, one a letter
   for Cyrillic. Send splits it between two characters, after a space
