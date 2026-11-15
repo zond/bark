@@ -532,6 +532,15 @@ fn a_holder_makes_the_blocks_a_gatherer_takes() {
     }
     let hash = tabling.finish(&mut table);
     assert_eq!(hash, sha(&built.stream[HEADER_LEN..HEADER_LEN + firmware]));
+    // Fed by halves, a part at a time, as the firmware feeds it.
+    let mut halves = Table::new(image, &name(header));
+    let mut tabling = Tabling::new();
+    for chunk in built.stream[..HEADER_LEN + firmware].chunks(64) {
+        tabling.firmware(chunk);
+        tabling.blocks(&mut halves, chunk);
+    }
+    assert_eq!(tabling.finish(&mut halves), hash);
+    assert_eq!(halves.bytes, table.bytes);
     assert_eq!(table.image(), image);
     for (i, piece) in built.blocks[0].iter().enumerate() {
         assert_eq!(table.piece(i), Some(piece));
