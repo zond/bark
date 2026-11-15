@@ -39,6 +39,13 @@ pub fn force_waiting() -> bool {
     FORCE.load(Ordering::Relaxed)
 }
 
+/// A long press, from the bench's command.
+#[cfg(feature = "bench")]
+pub fn hold() {
+    FORCE.store(true, Ordering::Relaxed);
+    crate::node::WAKE.button_held();
+}
+
 /// Wait for presses of the user button forever. Each wait is on the
 /// GPIOTE PORT event, so the button wakes nothing while untouched.
 pub async fn run(pin: Peri<'static, P1_10>) -> ! {

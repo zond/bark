@@ -167,6 +167,10 @@ fn execute(line: &str) -> Then {
                 log::info!("bench: tcxo floor {} us", floor.as_micros());
             }
             Command::Carrier { channel, seconds } => a.carrier = Some((channel, seconds)),
+            Command::Flip => {
+                log::info!("bench: flipping the role");
+                crate::button::hold();
+            }
             Command::Reboot | Command::Status | Command::Forget => {}
         }
     });

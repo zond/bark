@@ -2,10 +2,12 @@
 # a sleepy node installs the image and is sleepy again on it.
 #
 # R, a relay, holds the run's newest image and serves it; S takes it. A
-# node is sleepy by the power it is on, not by its image, so S cannot be
-# built sleepy: the image it installs is R's. S is told it is on battery
-# by the bench build's power command, at every boot, its first boot on
-# the new image among them.
+# node is sleepy by its power, its battery and its motion, not by its
+# image, so S cannot be built sleepy: the image it installs is R's. Told
+# it is on battery, a still node on the bench's USB relays on, as its
+# cell never reads low (run of 2026-11-14). So S's role is flipped as a
+# long press flips it, at every boot, its first on the new image among
+# them.
 
 about = "a sleepy node installs a relay's image and is sleepy again on it"
 duration_s = 36000.0
@@ -13,7 +15,7 @@ duration_s = 36000.0
 [[boards]]
 name = "S"
 place_m = 0.0
-on_boot = ["power battery"]
+on_boot = ["flip"]
 
 # After S, so its version is higher.
 [[boards]]
@@ -42,6 +44,12 @@ why = "running it at the end"
 
 [[pass]]
 board = "S"
-line = '^Role \{ sleepy: true'
+line = '^Forced \{ sleepy: true'
 last_boot = true
 why = "sleepy again on it"
+
+[[pass]]
+board = "S"
+line = '^(Forced|Role) \{ sleepy: false'
+absent = true
+why = "S stays sleepy"

@@ -58,6 +58,8 @@ pub enum Command<'a> {
         channel: Channel,
         seconds: u32,
     },
+    /// Flip the role, as a long press of the button does.
+    Flip,
     Reboot,
     Status,
     /// Drop what the node keeps of images other than its own, and reboot.
@@ -66,7 +68,7 @@ pub enum Command<'a> {
 
 /// The commands, for a line that is none of them.
 pub const HELP: &str = "commands: text <id> <lat> <lon> <words> | power <usb|battery|real> | \
-txpower <dbm> | tcxo <us> | carrier <k> <seconds> | reboot | status | forget";
+txpower <dbm> | tcxo <us> | carrier <k> <seconds> | flip | reboot | status | forget";
 
 pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim();
@@ -103,6 +105,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
                 .ok_or("carrier: seconds, 1 to the longest")?;
             Command::Carrier { channel, seconds }
         }
+        "flip" => Command::Flip,
         "reboot" => Command::Reboot,
         "status" => Command::Status,
         "forget" => Command::Forget,
@@ -289,6 +292,7 @@ mod tests {
         assert_eq!(parse(" reboot "), Ok(Command::Reboot));
         assert_eq!(parse("status"), Ok(Command::Status));
         assert_eq!(parse("forget"), Ok(Command::Forget));
+        assert_eq!(parse("flip"), Ok(Command::Flip));
         for line in [
             "power",
             "power mains",
