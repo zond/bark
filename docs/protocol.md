@@ -2721,14 +2721,40 @@ drops a payload of a version or form it does not know.
 
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
-| 0, boxed | a contact | nonce (24, random), `crypto_box_easy` output (tag 16, ciphertext) | 42 |
+| 0, boxed | a contact | `siv` (16), ciphertext, under the pair's keys (below) | 18 |
 | 1, introduction | someone who may not know the sender | `crypto_box_seal` output (ephemeral key 32, tag 16, ciphertext) | 50 |
-| 2, fetch | the person's home node | nonce (24, random), `crypto_secretbox_easy` output under the mailbox key | 42 |
-| 3, reply | the person's current address, from their home node | `crypto_secretbox_easy` output under the mailbox key of the item's number (3), the count of items still unsent (2) and the item; the nonce is not sent | 23 |
+| 2, fetch | the person's home node | `siv` (16), ciphertext, under the mailbox key's keys (below) | 18 |
+| 3, summary | the person's current address, from their home node | `crypto_secretbox_easy` output under the reply key ([mailbox](#mailbox)) of the round's items (1) and the items still unsent after it (2); the nonce is not sent | 21 in all |
+| 4, boxed item | the same | the place (1), then a kept boxed payload after its format byte and recipient tag, under the reply key's stream | 1 over the item |
+| 5, introduction item | the same | the same, for a kept introduction | 1 over the item |
 
-Forms 2 and 3 are the [mailbox](#mailbox)'s. The app writes at most
-224 − 23 = 201 bytes, so that its mailbox can send any payload on as a
+Forms 2 to 5 are the [mailbox](#mailbox)'s. The app writes at most
+224 − 1 = 223 bytes, so that its mailbox can send any payload on as a
 reply.
+
+*One value as nonce and proof.* Forms 0 and 2 carry one 16-byte value,
+`siv`, in place of a random nonce and a tag (roadmap D221). From a
+shared key, `crypto_box_beforenm` of the two identities for a boxed
+payload and the mailbox key for a fetch, come two keys:
+`crypto_kdf_derive_from_key(shared, 1, "bark-mac")`, the MAC key, and
+`crypto_kdf_derive_from_key(shared, 2, "bark-enc")`, the encryption key.
+The sender makes `siv`, `crypto_generichash` to 16 bytes keyed with the
+MAC key, of the format byte and the plaintext, and the ciphertext,
+`crypto_secretbox_detached` of the plaintext under the encryption key
+with `siv` and 8 zero bytes as the nonce, its tag dropped: the plaintext
+XORed with XSalsa20's keystream from its 33rd byte. The receiver runs the
+same call over the ciphertext, which gives the plaintext, computes `siv`
+again over the format byte and that plaintext, compares the two in
+constant time, and neither keeps nor acts on the plaintext unless they
+match. The recipient tag is not hashed: it differs from node to node and
+a mailbox replaces it ([mailbox](#mailbox)). Two rules make it sound: the
+two keys are separate, and nothing of the plaintext is used before the
+check. The value saves 24 of the 40 bytes a nonce and a tag took, and a
+repeated nonce can no longer expose two messages, as a nonce is the hash
+of its own message; identical messages encrypt identically, which
+`sent`, later on each phone than any before, makes rare. Both people of
+a pair have the same keys, so the direction bit (below) tells a message
+reflected back to its sender.
 
 *Recipient tag.* The first byte of `crypto_generichash` of the
 destination's node ID to 16 bytes, its shortest output, keyed with the
@@ -2742,8 +2768,8 @@ and it differs from node to node. One byte lets two people at a node
 share a tag with odds of 1 in 256; a phone handed a payload not its own
 fails to open it and drops it.
 
-A boxed payload names no sender: the receiver tries the key of each
-contact, `crypto_box_beforenm` of each made once, until one opens it. An
+A boxed payload names no sender: the receiver tries the keys of each
+contact, made once from `crypto_box_beforenm`, until one opens it. An
 introduction carries the sender's card; its sender is shown as
 unverified until a boxed payload from that identity opens. It is used
 until a payload from the receiver, of either form, has opened at the
@@ -2784,8 +2810,9 @@ each a message of its own with its own `sent`, delivered as a text is.
 The parts take consecutive `sent`, so a part's `sent` less its number and
 one is the first part's, which names the text: the receiver puts parts
 together in any order of arrival and knows from the count which have not
-come. A part holds 152 bytes of text in a box without an address; 16
-parts hold about 2.5 KB (roadmap D137).
+come. A part holds 223 − 18 − 5 − 2 = 198 bytes of text in a box
+without an address, the box, the header and the record's two bytes
+taken; 16 parts hold 3 168 bytes (roadmap D137, D221, D222).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
 flags (1), bit 0 set when a home address follows, bit 1 when the node's
@@ -2812,8 +2839,8 @@ A message has no ID field: the network identifies it by a hash of its
 destination and payload ([packet formats](#packet-formats)). The app must
 make every payload unique, or a second message identical to one a relay
 still has a record of is not delivered
-([message records](#message-records)); the random nonce, the
-introduction's ephemeral key and a reply's round do that.
+([message records](#message-records)); `sent`, which `siv` hashes, the
+introduction's ephemeral key and a reply's round and place do that.
 
 ## Mailbox
 
@@ -2836,9 +2863,13 @@ erases the oldest page when the ring is full; an item leaves the ring
 only so ([receiving](#receiving)). The board's ring holds 1024 items
 (roadmap D139). A slot's mark is a byte, a bit for each of the node's
 eight records ([pairing](#pairing)): a bit set says the item is that
-record's and not yet sent to it. An item is written with the bits of the
-records whose tag it carries set and the rest clear, so a guest's item,
-which no record claims, has every bit clear and no fetch sends it. A bit
+record's and not yet sent to it. An item a reply can carry, a boxed
+payload or an introduction of at most 223 bytes ([the payload](#the-payload)),
+is written with the bits of the records whose tag it carries set and the
+rest clear, so a guest's item, which no record claims, has every bit
+clear and no fetch sends it. Any other item, such as a mailbox's reply
+delivered to this node, is written with every bit clear too: the phones
+read it at the node through Inbox, and no fetch counts or sends it. A bit
 is cleared without an erase, so the item stays: when a reply carries the
 item (below), and when the record's phone confirms it through Inbox. So
 one person's reading marks nothing of another's. A record's bit in the
@@ -2855,33 +2886,46 @@ the last fetch's that record took, which the node keeps for each; the
 record's items are those with its tag. A fetch is sent only when the
 person asks, so that a mailbox costs air only then (roadmap D128).
 
-**The answer.** The node answers a fetch once, to the fetch's address:
-one reply for each of the newest 32 of the record's items whose bit is
-set, newest first, one at a time through its send slot, or, when there is
-none, one reply that says nothing is new, so the person can tell "no
-mail" from a loss. It clears the item's bit when it hands the item's
+**The answer.** The node answers a fetch once, to the fetch's address,
+one reply at a time through its send slot: first a summary, then one
+reply for each of the newest 32 of the record's items whose bit is set,
+newest first. The summary says how many items the round carries and how
+many of the record's items stay unsent after them, both as the fetch was
+taken; with no item it says nothing is new, so the person can tell "no
+mail" from a loss. The node clears an item's bit when it hands the item's
 reply to the core; nothing confirms it, and a reply lost on the way stays
 in the ring for the phone to read at home. A record has one round at a
 time, which a later fetch of its own ends; the rounds of several records
 run at once, the node handing their replies to its send slot in turn. An
 item that arrives after the fetch waits for the next one.
 
-Each reply is a form 3 payload with the fetch's recipient tag, sealed
-under the record's mailbox key with the nonce: the fetch's `sent` (4),
-the reply's place (3), 17 zero bytes. An item's place is its rank in the
-round, 1 to 32, and its plaintext is its number (3), the count of the
-record's items still unsent after the round's when the fetch was taken
-(2), and the item; an item longer than the app writes goes empty. The
-reply that says nothing is new has place 0 and an empty plaintext,
-18 bytes; none remains. The requester tries places 1 to 32 on a reply
-that carries an item. A reboot ends a round, so that no place seals two
+Every reply carries the fetch's recipient tag and is under the record's
+**reply key**, `crypto_kdf_derive_from_key(mailbox key, 3, "bark-rpl")`,
+so that the mailbox key itself encrypts nothing, with the nonce: the
+fetch's `sent` (4), the reply's place (1), 19 zero bytes (roadmap D222). The summary is a form 3 payload at
+place 0, sealed with its tag. An item's place is its rank in the round,
+1 to 32, sent in the clear; the reply is form 4 for a boxed payload and
+form 5 for an introduction, then the place, then the item without its
+format byte and recipient tag, encrypted as a boxed payload's
+ciphertext is, by `crypto_secretbox_detached` with its tag dropped
+([the payload](#the-payload)), under the reply key and the reply's
+nonce: no tag, as the item proves itself, and still encrypted, so that
+the bytes seen at the home are not those seen at the requester's node. The requester rebuilds the item, its
+format byte from the reply's form and the reply's recipient tag, and
+opens it as any boxed payload or introduction; it tries its latest
+rounds in turn, and the round under which the item opens is the reply's.
+The item's number is not sent. A round whose summary is lost still
+delivers its items. A reboot ends a round, so that no place carries two
 items: what it had not handed over stays unsent.
 
-A batch of 32 fits the 33 full frames a full bucket sends with the reply
-reserve left ([send queue](#send-queue)), so it leaves at the pace of the
-hand-overs and within the fetch address's life, the delivery TTL; the
-count tells the person what is left. A reply the requester's node has
-no room for is refused and waits at its sender ([receiving](#receiving)),
+A batch of 32 and its summary fit what a full bucket sends with the
+reply reserve left, 33 full frames ([send queue](#send-queue)): the
+summary's frame, at most 255 − 224 = 31 bytes of DATA header and its 21,
+and its ACK take 34.9 + 17.0 = 51.9 ms, less than a full frame's
+155.5 ms. So the batch leaves at the pace of the hand-overs and within
+the fetch address's life, the delivery TTL; the summary's count tells
+the person what is left. A reply the requester's node has no room for
+is refused and waits at its sender ([receiving](#receiving)),
 and one the home node's neighbours refuse is given back to the mailbox
 and goes again.
 
@@ -3523,9 +3567,10 @@ those of the bring-up order, `roadmap.md` Phase 2.
 - Bluetooth Core Specification 5.1 (Bluetooth SIG, 2019): the database
   hash (Vol 3 Part G §7.3).
 - libsodium documentation: "Public-key authenticated encryption"
-  (`crypto_box`), "Sealed boxes", "Secret-key authenticated encryption"
-  (`crypto_secretbox`), "Key derivation" (`crypto_kdf`) and "Generic
-  hashing" (`crypto_generichash`).
+  (`crypto_box`, `crypto_box_beforenm`), "Sealed boxes", "Secret-key
+  authenticated encryption" (`crypto_secretbox`, its detached mode),
+  "Key derivation" (`crypto_kdf`) and "Generic hashing"
+  (`crypto_generichash`).
 - RFC 4648, "The Base16, Base32, and Base64 Data Encodings": base32.
 - FIPS 180-4, Secure Hash Standard: SHA-256, the backup's checksum and
   an image's hash and name.

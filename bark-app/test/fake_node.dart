@@ -283,10 +283,7 @@ class FakeNode implements NodeLink {
 
   Address get _own => Address(_mapPoint ?? _fix, nodeId);
 
-  late final PrecalculatedBox _pair = sodium.crypto.box.precalculate(
-    publicKey: app,
-    secretKey: friend.pair.secretKey,
-  );
+  late final SivKeys _pair = SivKeys.pair(sodium, app, friend.pair.secretKey);
 
   /// A header of the fake friend's next message: their clock, as a phone's
   /// `sent`, and the node they write from, which has moved since the
@@ -361,7 +358,6 @@ class FakeNode implements NodeLink {
           sealBox(
             _pair,
             _appTag,
-            sodium.randombytes.buf(nonceLen),
             writePlain(
               Header(greater(friend.identity, app), first + i, friendAway),
               [TextRecord(p, i + 1, n)],
@@ -376,9 +372,8 @@ class FakeNode implements NodeLink {
   });
 
   /// The home away's answer to a fetch, as its mailbox gives it: the
-  /// newest batch of the items it has not sent, newest first, each with
-  /// the count of those still unsent after it, or one reply that says
-  /// nothing is new.
+  /// summary, how many come and how many stay unsent, then the newest
+  /// batch of the items it has not sent, newest first.
   void _answerFetch(Uint8List payload) {
     final key = mailbox;
     if (key == null || formOf(payload) != Form.fetch) return;
@@ -395,21 +390,16 @@ class FakeNode implements NodeLink {
     final batch = unsent.take(maxReplies).toList();
     _homeSent.addAll(batch);
     final replies = [
+      sealSummary(
+        sodium,
+        key,
+        f.recipient,
+        f.sent,
+        RoundSummary(batch.length, unsent.length - batch.length),
+      ),
       for (final (i, n) in batch.indexed)
-        sealReply(
-          sodium,
-          key,
-          f.recipient,
-          f.sent,
-          i + 1,
-          n,
-          unsent.length - batch.length,
-          homeRing[n - 1],
-        ),
+        sealItem(sodium, key, f.recipient, f.sent, i + 1, homeRing[n - 1]),
     ];
-    if (replies.isEmpty) {
-      replies.add(sealNothingNew(sodium, key, f.recipient, f.sent));
-    }
     _after(fetchAnswerAfter, () {
       for (final r in replies) {
         _place(_message(r));

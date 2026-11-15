@@ -104,11 +104,8 @@ void main() {
       p.contacts.byKey(hex(node.friend.identity))!;
 
   /// The box key between the phone and the fake friend.
-  PrecalculatedBox friendPair(Phone p, FakeNode node) =>
-      sodium.crypto.box.precalculate(
-        publicKey: p.me.identity,
-        secretKey: node.friend.pair.secretKey,
-      );
+  SivKeys friendPair(Phone p, FakeNode node) =>
+      SivKeys.pair(sodium, p.me.identity, node.friend.pair.secretKey);
 
   /// A boxed message from the fake friend to the phone.
   Uint8List fromFriend(
@@ -120,7 +117,6 @@ void main() {
   ]) => sealBox(
     friendPair(p, node),
     0,
-    sodium.randombytes.buf(nonceLen),
     writePlain(
       Header(greater(node.friend.identity, p.me.identity), sent, from),
       rs,
@@ -627,7 +623,8 @@ void main() {
       ]);
       p.me.setHome(home);
       // The home's ring holds items 1 to 70, none sent; it answers as
-      // its mailbox does, and the replies come in any order.
+      // its mailbox does, and the replies come in any order: here each
+      // round's summary after its items.
       final news = <String?>[];
       var lastSent = 0;
       for (final (top, bottom) in [(70, 39), (38, 7), (6, 1)]) {
@@ -643,19 +640,27 @@ void main() {
         lastSent = f.sent;
         for (var n = bottom; n <= top; n++) {
           final inner = fromFriend(node, p, 1000 + n, [TextRecord('t$n')]);
-          final reply = sealReply(
+          final reply = sealItem(
             sodium,
             p.me.keys.mailbox,
             f.recipient,
             f.sent,
             top - n + 1,
-            n,
-            bottom - 1,
             inner,
           );
           p.messenger.receive(InboxMessage(n, reply));
           async.flushMicrotasks();
         }
+        expect(o.answered, isTrue);
+        final summary = sealSummary(
+          sodium,
+          p.me.keys.mailbox,
+          f.recipient,
+          f.sent,
+          RoundSummary(top - bottom + 1, bottom - 1),
+        );
+        p.messenger.receive(InboxMessage(500 + top, summary));
+        async.flushMicrotasks();
         expect(o.answered, isTrue);
         expect(p.me.remaining, bottom - 1);
         news.add(p.session.fetchNews);
@@ -677,9 +682,14 @@ void main() {
       expect(p.session.received.where((r) => r.body == 't6').length, 1);
       // A reply under another key opens for nobody.
       final other = Keys.fromSeed(sodium, List.filled(16, 7));
-      final stray = sealReply(sodium, other.mailbox, 0, lastSent, 4, 74, 0, [
-        1,
-      ]);
+      final stray = sealItem(
+        sodium,
+        other.mailbox,
+        0,
+        lastSent,
+        4,
+        fromFriend(node, p, 2000, [TextRecord('stray')]),
+      );
       p.messenger.receive(InboxMessage(200, stray));
       async.flushMicrotasks();
       expect(p.session.received.last.from, isNull);
@@ -1024,7 +1034,13 @@ void main() {
       again.messenger.receive(
         InboxMessage(
           1,
-          sealNothingNew(sodium, again.me.keys.mailbox, 0, o.sent),
+          sealSummary(
+            sodium,
+            again.me.keys.mailbox,
+            0,
+            o.sent,
+            const RoundSummary(0, 0),
+          ),
         ),
       );
       async.flushMicrotasks();

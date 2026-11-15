@@ -779,7 +779,7 @@ impl PublicWrite {
 }
 
 /// Bytes of an item's number in the ring, which counts to 2^24 − 1
-/// (`bark_app_layer::seal::NUMBER_LEN`).
+/// (`bark_app_layer::mailbox::NUMBER_LEN`).
 const NUMBER: usize = 3;
 
 /// Guest, write: the number of the last item the guest took; its next

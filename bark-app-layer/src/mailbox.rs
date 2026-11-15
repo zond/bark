@@ -13,8 +13,13 @@ use core::cell::Cell;
 use bark_proto::MsgId;
 
 use crate::keys::KEY_LEN;
-use crate::seal::{self, Fetch, Form, MAX_NUMBER, MAX_REPLIES};
-use crate::{be, Address, MAX_APP_PAYLOAD, MAX_PAYLOAD};
+use crate::seal::{self, Fetch, Form, MAX_REPLIES};
+use crate::{be, Address, MAX_PAYLOAD};
+
+/// Bytes of an item's number in its slot.
+pub const NUMBER_LEN: usize = 3;
+/// The largest number an item takes.
+pub const MAX_NUMBER: u32 = (1 << (8 * NUMBER_LEN)) - 1;
 
 /// Bytes of a slot: an erase page of 4096 holds 16.
 pub const SLOT_LEN: usize = 256;
@@ -25,7 +30,7 @@ pub const SLOTS_PER_PAGE: u32 = 4096 / SLOT_LEN as u32;
 /// but the mark, which is read as erased.
 const CHECK_AT: usize = SLOT_LEN - 4;
 /// Where a slot's payload starts: after its number (3) and length (1).
-const PAYLOAD_AT: usize = seal::NUMBER_LEN + 1;
+const PAYLOAD_AT: usize = NUMBER_LEN + 1;
 /// Where a slot's message ID sits: the four bytes before the check.
 const ID_AT: usize = CHECK_AT - 4;
 /// The slot's mark: a bit for each person, set while the item is theirs
@@ -131,13 +136,15 @@ struct Reply {
     next: u32,
     /// The batch's oldest item.
     bottom: u32,
+    /// The batch's items when the fetch was taken, as the summary says.
+    items: u8,
     /// Replies with an item handed to the core: the last one's place.
-    handed: u32,
+    handed: u8,
     /// The person's items unsent after the batch when the fetch was taken.
     remaining: u16,
     /// An item given back, with its place, to send again.
-    again: Option<(u32, u32)>,
-    /// A reply of the round has been handed to the core.
+    again: Option<(u32, u8)>,
+    /// The summary has been handed to the core.
     answered: bool,
 }
 
@@ -153,10 +160,10 @@ struct InFlight {
     msg_id: MsgId,
     /// Whose round it is of.
     person: usize,
-    /// The item, or 0 for the reply that says nothing is new.
+    /// The item, or 0 for the summary.
     number: u32,
     /// Its place in the round.
-    place: u32,
+    place: u8,
 }
 
 /// A reply to offer: send `payload[..len]` to `address`.
@@ -164,7 +171,7 @@ struct InFlight {
 pub struct Outgoing {
     /// The fetch's address.
     pub address: Address,
-    /// The item it carries, or 0 when it says nothing is new.
+    /// The item it carries, or 0 for the summary.
     pub number: u32,
     /// Its length in the buffer handed in.
     pub len: usize,
@@ -395,8 +402,8 @@ impl<R: Ring> Mailbox<R> {
         let mut b = [0u8; SLOT_LEN];
         self.ring.read(s, &mut b);
         let check = be(&b[CHECK_AT..]);
-        let len = usize::from(b[seal::NUMBER_LEN]);
-        let n = be(&b[..seal::NUMBER_LEN]);
+        let len = usize::from(b[NUMBER_LEN]);
+        let n = be(&b[..NUMBER_LEN]);
         (slot_check(&b) == check && len <= MAX_PAYLOAD && n != 0).then_some((n, len))
     }
 
@@ -487,13 +494,15 @@ impl<R: Ring> Mailbox<R> {
                 u.set(None);
             }
         }
-        let tag = seal::recipient_of(payload);
+        // An item no reply can carry, as a reply delivered here, is read
+        // only at the node, as a guest's is.
+        let tag = seal::recipient_of(payload).filter(|_| seal::forwardable(payload));
         let mark = (0..PEOPLE)
             .filter(|&i| tag.is_some() && self.people[i].is_some_and(|p| p.tag == tag))
             .fold(0u8, |m, i| m | 1 << i);
         let mut b = [0xffu8; SLOT_LEN];
-        b[..seal::NUMBER_LEN].copy_from_slice(&n.to_be_bytes()[1..]);
-        b[seal::NUMBER_LEN] = payload.len() as u8;
+        b[..NUMBER_LEN].copy_from_slice(&n.to_be_bytes()[1..]);
+        b[NUMBER_LEN] = payload.len() as u8;
         b[PAYLOAD_AT..PAYLOAD_AT + payload.len()].copy_from_slice(payload);
         b[ID_AT..CHECK_AT].copy_from_slice(&msg_id.0.to_be_bytes());
         let check = slot_check(&b);
@@ -525,7 +534,7 @@ impl<R: Ring> Mailbox<R> {
 
     fn take(&mut self, i: usize, f: Fetch) {
         let lowest = self.lowest();
-        let mut count = 0;
+        let mut count: u8 = 0;
         let mut bottom = self.newest + 1;
         let mut n = self.newest;
         while count < MAX_REPLIES && n >= lowest {
@@ -545,6 +554,7 @@ impl<R: Ring> Mailbox<R> {
             recipient: f.recipient,
             next: self.newest,
             bottom,
+            items: count,
             handed: 0,
             remaining: u16::try_from(remaining).unwrap_or(u16::MAX),
             again: None,
@@ -587,8 +597,17 @@ impl<R: Ring> Mailbox<R> {
         let key = self.people[i]?.key?;
         let mut r = self.replies[i]?;
         let mut sealed = None;
-        if let Some((n, place)) = r.again.take() {
-            sealed = self.seal_item(&key, &r, n, place, out);
+        // The summary first, so that the phone counts what is on its way.
+        if !r.answered {
+            let s = seal::seal_summary(&key, r.recipient, r.round, r.items, r.remaining);
+            out[..s.len()].copy_from_slice(&s);
+            sealed = Some((0, 0, s.len()));
+            r.answered = true;
+        }
+        if sealed.is_none() {
+            if let Some((n, place)) = r.again.take() {
+                sealed = self.seal_item(&key, &r, n, place, out);
+            }
         }
         while sealed.is_none() && r.next >= r.bottom {
             let n = r.next;
@@ -599,13 +618,6 @@ impl<R: Ring> Mailbox<R> {
                 self.mark(i, n);
             }
         }
-        if sealed.is_none() && !r.answered {
-            let nothing = seal::seal_nothing_new(&key, r.recipient, r.round);
-            out[..nothing.len()].copy_from_slice(&nothing);
-            sealed = Some((0, 0, nothing.len()));
-        }
-        // Kept with nothing to send too, so that no reply is due after.
-        r.answered |= sealed.is_some();
         self.replies[i] = Some(r);
         let (number, place, len) = sealed?;
         let msg_id = MsgId::of(r.address.position, r.address.node, &out[..len]);
@@ -626,31 +638,21 @@ impl<R: Ring> Mailbox<R> {
 
     /// Item `n` at `place` in `r`'s round, sealed into `out`: its number,
     /// place and length; `None` once the ring has overwritten it, so that
-    /// a place never seals two plaintexts. One longer than the app writes
-    /// goes empty, so that its number still arrives.
+    /// a place never carries two items, or if no reply can carry it, which
+    /// its mark rules out for every item kept since it was written.
     fn seal_item(
         &self,
         key: &[u8; KEY_LEN],
         r: &Reply,
         n: u32,
-        place: u32,
+        place: u8,
         out: &mut [u8; MAX_PAYLOAD],
-    ) -> Option<(u32, u32, usize)> {
+    ) -> Option<(u32, u8, usize)> {
         let mut item = [0u8; MAX_PAYLOAD];
         let len = self.item(n, &mut item)?;
-        let len = if len > MAX_APP_PAYLOAD { 0 } else { len };
-        seal::seal_reply(
-            key,
-            r.recipient,
-            r.round,
-            place,
-            n,
-            r.remaining,
-            &item[..len],
-            out,
-        )
-        .ok()
-        .map(|m| (n, place, m))
+        seal::seal_item(key, r.recipient, r.round, place, &item[..len], out)
+            .ok()
+            .map(|m| (n, place, m))
     }
 
     /// The core gave the message back: if it is the last reply, it goes

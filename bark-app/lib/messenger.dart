@@ -37,14 +37,12 @@ class Messenger {
 
   /// `crypto_box_beforenm` of each contact, made once; keyed by both
   /// identities, so a restored identity makes its own.
-  final Map<String, PrecalculatedBox> _pairs = {};
+  final Map<String, SivKeys> _pairs = {};
 
-  PrecalculatedBox _pair(List<int> them) => _pairs.putIfAbsent(
+  SivKeys _pair(List<int> them) => _pairs.putIfAbsent(
     '${me.key}/${hex(them)}',
-    () => sodium.crypto.box.precalculate(
-      publicKey: Uint8List.fromList(them),
-      secretKey: me.keys.pair.secretKey,
-    ),
+    () =>
+        SivKeys.pair(sodium, Uint8List.fromList(them), me.keys.pair.secretKey),
   );
 
   /// Seals `records` to `c` at `dst`: boxed once `c` holds the person's
@@ -80,12 +78,7 @@ class Messenger {
       return (sealIntro(sodium, c.card.identity, to, plain), sent);
     }
     return (
-      sealBox(
-        _pair(c.card.identity),
-        to,
-        sodium.randombytes.buf(nonceLen),
-        writePlain(header, records),
-      ),
+      sealBox(_pair(c.card.identity), to, writePlain(header, records)),
       sent,
     );
   }
@@ -212,7 +205,6 @@ class Messenger {
       sodium,
       me.keys.mailbox,
       recipientTag(sodium, me.identity, home.id),
-      sodium.randombytes.buf(nonceLen),
     );
     await me.fetched(sent);
     await session.queue(
@@ -237,8 +229,10 @@ class Messenger {
     required bool mailbox,
   }) async {
     switch (formOf(p)) {
-      case Form.reply:
-        return _reply(m, p);
+      case Form.summary:
+        return _summary(p);
+      case Form.boxedItem || Form.introductionItem:
+        return _item(m, p);
       case Form.boxed:
         for (final c in [...contacts.list, null]) {
           final them = c?.card.identity ?? me.identity;
@@ -262,26 +256,33 @@ class Messenger {
     }
   }
 
-  Future<bool> _reply(InboxMessage m, List<int> p) async {
+  /// A round's summary: the fetch is answered, and the latest round's
+  /// count of what stays at home is what the inbox button shows.
+  Future<bool> _summary(List<int> p) async {
     for (final round in me.rounds) {
-      final o = openReply(sodium, me.keys.mailbox, round, p);
+      final o = openSummary(sodium, me.keys.mailbox, round, p);
       if (o == null) continue;
       await session.fetchAnswered(
         round,
         nothingNew: o.nothingNew,
         remaining: round == me.rounds.first ? o.remaining : 0,
       );
-      await me.gotReply(round, o);
-      final item = o.item;
-      // An empty item is one the home could not send: only its number came.
-      if (item == null || item.isEmpty) return true;
-      // An item that opens for nobody here is still one the mailbox has
-      // delivered: it is kept as received.
-      if (!await _open(m, item, mailbox: true)) {
-        await session.addReceived(
-          Received(m.msgId, item, now(), mailbox: true),
-        );
-      }
+      await me.gotSummary(round, o);
+      return true;
+    }
+    return false;
+  }
+
+  /// An item from the mailbox: it carries no proof of its round, so each
+  /// round's stream is tried until the item opens, which answers that
+  /// round's fetch too, should its summary be lost. One that opens under
+  /// no round is kept as any payload that opens for nobody.
+  Future<bool> _item(InboxMessage m, List<int> p) async {
+    for (final round in me.rounds) {
+      final item = openItem(sodium, me.keys.mailbox, round, p);
+      if (item == null) return false;
+      if (!await _open(m, item, mailbox: true)) continue;
+      await session.fetchAnswered(round, nothingNew: false);
       return true;
     }
     return false;

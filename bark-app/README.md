@@ -120,8 +120,9 @@ is a prototype for the bench, not the app people will carry.
   goes again. The chip's tooltip names it, and a tap on it explains it
   with the bubble's other marks. Nothing answers by itself (roadmap
   D126, D185, D187). A sent text's long press still selects its words.
-  A text longer than one message holds, 153 bytes in a box without an
-  address, goes as parts of up to 152 bytes, 16 at most (roadmap D137):
+  A text longer than one message holds, 199 bytes in a box without an
+  address, goes as parts of up to 198 bytes, 16 at most (roadmap D137;
+  spec "Phone link", Long texts):
   once the text in the field needs more than one, a line under it says
   how many, "2 parts", counted in the bytes that will go, one a letter
   for Cyrillic. Send splits it between two characters, after a space
@@ -955,8 +956,9 @@ it, carries
 the time it was written as its `sent`, and holds a text or a part of
 one, a reaction or a card. A fetch to your home node is sealed with a
 key from your identity that only your phones and your home node have,
-and the node's replies are opened with it: one for each item newer than
-the last this phone has, or one that says nothing is new (spec
+and the node's replies are opened with it: first one that says how many
+items come and how many stay at home, the count the inbox button shows,
+then one for each item, which opens as the message it is (spec
 "Mailbox"). A payload
 that opens for nobody is kept for the debug screen only. Each payload's
 second byte, in the clear, is its recipient's tag at the node it goes
@@ -1200,7 +1202,8 @@ a phone (Trying it).
    mailbox. Connected to another node, **Fetch my mail** on the first
    screen says "Fetching your mail" and brings them there, or "No new
    mail"; the home's log shows `mailbox: fetch … taken` and a
-   `mailbox: reply …` line for each reply.
+   `mailbox: reply … summary` line and a `mailbox: reply … item` line
+   for each item.
 10. Two phones on one node, its log open. With the
     first phone paired and its name set, pair the second with the same
     node, its name set too: it asks for the code, the node's screen shows
