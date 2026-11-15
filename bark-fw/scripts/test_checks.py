@@ -131,6 +131,13 @@ class Resets(unittest.TestCase):
     def test_after_the_firmwares_own_reboot(self):
         self.assertEqual(checks.resets(self.boots("reboot"), []), [])
 
+    def test_a_line_logged_after_the_reboot(self):
+        def log(at: float) -> checks.Log:
+            return board_log("x", [(1000.0, at, "reboot"), (1001.0, 51.0, "gps: fix"), (1010.0, 0.3, "stored None")])
+
+        self.assertEqual(checks.resets(log(51.0 - checks.REBOOT_LAG_S), []), [])
+        self.assertEqual(len(checks.resets(log(50.9 - checks.REBOOT_LAG_S), [])), 1)
+
     def test_a_touch_counts_only_where_no_run_says(self):
         log = self.boots("touch: 1200 baud, resetting into the bootloader")
         self.assertEqual(checks.resets(log, None), [])
