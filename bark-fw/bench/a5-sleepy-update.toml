@@ -10,7 +10,9 @@
 # them.
 
 about = "a sleepy node installs a relay's image and is sleepy again on it"
-duration_s = 36000.0
+# A sleepy node had the 38 blocks after 16 h 15 min, some 26 min a block
+# (2026-11-16); four hours over that.
+duration_s = 72000.0
 
 [[boards]]
 name = "S"

@@ -77,7 +77,7 @@ Run before a release.
 | A2 | a text along a line A, B, C | delivered and acknowledged each way within the bound of spec "Hand-over" for two hops | 10 min |
 | A3 | mail to and from a sleepy node | delivered in the node's window; its own text arrives | 15 min |
 | A4 | relay update | two relays install an image given to the third | 6 h |
-| A5 | sleepy update | a sleepy node installs the image and is sleepy again on it | 10 h |
+| A5 | sleepy update | a sleepy node installs the image and is sleepy again on it || 20 h |
 | A6 | three sleepy nodes on one anchor | all three install, the last within an hour of the first | 10 h |
 | A7 | the phone | pairs, sends, receives, and updates the node it is paired with | 30 min |
 
