@@ -314,7 +314,8 @@ pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
 /// making it carried (spec "Position"): beyond a still board's wander, at
 /// most 218 m measured (`docs/gps-bench-2026-11-06.md`). A place is one fix,
 /// so the radius must hold the wander's whole width, not its distance from
-/// a mean.
+/// a mean: five allowances, the fewest whole ones above 218 m (roadmap
+/// D136).
 pub const CARRY_RADIUS_M: f32 = 5.0 * OWNER_RADIUS_M;
 
 /// How long a fixed node's fixes must all lie beyond [`CARRY_RADIUS_M`]
