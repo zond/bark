@@ -5,13 +5,15 @@
 //! The parts live in `relay/`: `boot.rs` (spec "Home channel selection"),
 //! `sweep.rs` (spec "Busy estimate", "Channel moves"), `heartbeat.rs`
 //! (spec "Heartbeat"), `anchor.rs` (spec "Sleepy nodes"), `forward.rs`
-//! (spec "Forwarding"), `delivery.rs`, `power.rs`, `motion.rs`, `gps.rs`.
+//! (spec "Forwarding"), `delivery.rs`, `power.rs`, `battery.rs`,
+//! `motion.rs`, `gps.rs`, `radio.rs`, `status.rs` (spec "Neighbour status"),
+//! `update.rs`, `drain.rs` and `remember.rs` (spec "Updates over the mesh").
 //!
-//! Each use of the radio is a job, one excursion at a time
-//! (`mac::Excursion`, `docs/core-interface.md` §3 rule 1). When the radio
-//! is free the first ready job in `JOBS` starts. While a hand-over waits
-//! for its ACK only an owed reply uses the radio: the others could take the
-//! node off its home channel, where the ACK arrives.
+//! Each use of the radio is a job, one excursion at a time (`mac::Excursion`,
+//! `docs/core-interface.md`, "Radio", rule 1). When the radio is free the
+//! first ready job in `JOBS` starts. While a hand-over waits for its ACK only
+//! an owed reply uses the radio: the others could take the node off its home
+//! channel, where the ACK arrives.
 
 mod anchor;
 mod battery;
@@ -212,7 +214,7 @@ pub struct NeighbourCounts {
 pub type SleepyNode = Node<0, 0>;
 
 /// The node, with room for `H` sleepy nodes heard and `Q` messages for
-/// them (`docs/core-interface.md` §6).
+/// them (`docs/core-interface.md`, "Memory").
 ///
 /// Laid out as declared, what an event reads first and the tables after,
 /// so an event touches few memory pages: in a city-sized simulation the
@@ -263,7 +265,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A relay with empty tables, not set up, built at compile time so a
     /// driver can keep it in a static and set it up in place with
     /// [`Relay::reset`]: a relay is 150 KiB, and [`Relay::new`] needs as much
-    /// again on the stack (`docs/core-interface.md` §6).
+    /// again on the stack (`docs/core-interface.md`, "Memory").
     pub const UNSET: Self = {
         let config = Config::DEFAULT;
         let channel = match Channel::new(0) {
@@ -727,7 +729,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn ready_at(&self, job: Job) -> Option<Instant> {
         let free = self.radio.idle();
         match job {
-            Job::Reply => self.radio.replies().wake_at().filter(|_| free),
+            // Owed, a reply is ready at once: a time past is now.
+            Job::Reply => (free && self.radio.replies().pending()).then_some(Instant::ZERO),
             Job::Heartbeat => {
                 if !free || self.awaiting_ack() || !self.heartbeats() {
                     return None;
@@ -764,13 +767,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     // --- Reception ---
 
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.set_aside_own(bytes, now);
+        let decoded = Packet::decode(bytes);
+        self.set_aside_own(decoded.ok(), bytes.len(), now);
         if let Some(s) = self.sleep_mut().filter(|s| s.dark) {
             // Back in reach: its anchor's rotations count from here.
             s.dark = false;
             s.misses = 0;
         }
-        let decoded = Packet::decode(bytes);
         // A decoded frame proves this image works with another node's
         // (spec "Updates over the mesh"); a piece names no sender, but no
         // node hears its own.
@@ -792,7 +795,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => {
                 self.spread.beat_heard(now);
-                self.heard(hb, rssi, now, emit);
+                self.heard(hb, bytes.len(), rssi, now, emit);
                 if let Some(section) = crate::wire::decode_section(bytes) {
                     self.section_heard(hb.id, section, now, emit);
                 }
@@ -804,7 +807,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
             Ok(Packet::Status(f)) => self.status_heard(f, now, emit),
-            Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
+            Ok(Packet::Data(d)) if d.dst_hop == self.id => {
                 // It chose this node from heartbeats it heard: it hears us
                 // (spec "Neighbour table").
                 self.answer_from(d.src_hop, now, emit);
@@ -861,8 +864,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
 impl<const H: usize, const Q: usize> Core for Node<H, Q> {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
-        // Any use of the radio ends a sniff (core-interface §3 rule 10),
-        // and an excursion takes it away from listening.
+        // Any use of the radio ends a sniff (`docs/core-interface.md`,
+        // "Radio", rule 10), and an excursion takes it away from listening.
         let woke = core::cell::Cell::new(false);
         let away = core::cell::Cell::new(false);
         let mut wake = |a: Action| {
@@ -879,7 +882,12 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             self.start(now, emit);
         }
         // A frame received now took the radio since it started; a
-        // heartbeat due meanwhile is counted first, against that.
+        // heartbeat due meanwhile is counted first, against that. The
+        // receiver is not told the preamble's length, so the start assumes
+        // the shortest. A frame with the long preamble, which goes only
+        // where nothing else reaches, began that much earlier, and a
+        // heartbeat missed under it only pulls that neighbour's level
+        // toward the floor a little more than it should.
         if let Event::Received { bytes, .. } = event {
             let started = now - time_on_air(bytes.len() as u8, MIN_PREAMBLE_SYMBOLS);
             self.radio.received_from(started);
@@ -946,8 +954,8 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::App(cmd) => self.app(cmd, now, emit),
         }
         if !matches!(event, Event::Wakeup | Event::App(_)) {
-            // The excursion or the reception is over, unless a held
-            // excursion is still out (core-interface §3 rule 8).
+            // The excursion or the reception is over, unless a held excursion
+            // is still out (`docs/core-interface.md`, "Radio", rule 8).
             self.radio.back(now);
         }
         self.fire(now, emit);

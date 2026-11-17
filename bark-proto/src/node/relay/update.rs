@@ -25,8 +25,11 @@ use crate::update::{
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
 /// How long after its slot heartbeat, or a piece of its run, a relay may
-/// still start the check for the next frame for its sleepy nodes: at
-/// once, or the sleepy nodes' [`SLOT_LISTEN`] would not cover it.
+/// still start the check for the next frame for its sleepy nodes: at once.
+/// The bench's 8.0 to 19.4 ms from one piece's end to the next's start were
+/// of checks started in the event that ended the transmission; a later
+/// start adds to them, and [`SLOT_LISTEN`]'s 25 ms leaves 5.6 ms beyond the
+/// longest. 1 ms is well within that.
 const SLOT_START: Duration = Duration::from_millis(1);
 
 /// Other senders' pieces a node remembers, to count them against its own
@@ -92,7 +95,7 @@ impl Gather {
 }
 
 /// What the node keeps of the images spreading
-/// (spec "Updates over the mesh", `docs/core-interface.md` §6).
+/// (spec "Updates over the mesh", `docs/core-interface.md`, "Memory").
 pub(super) struct Spread {
     own: Option<Image>,
     /// The version of the last image offered to the driver.
@@ -591,13 +594,14 @@ impl Spread {
             .map_or(0, |u| u.complete)
     }
 
-    /// Whether this node streams to the gatherer `n` on `n`'s channel:
-    /// to a sleepy node only as its anchor, the one relay whose slot
-    /// heartbeats it wakes for, known by its address; to another always at
-    /// home; elsewhere only if no relay it hears that is not at
-    /// home there, holds more than `n` and is no farther from `n` is a
-    /// better holder, with more blocks from the first, then a lower ID
-    /// (spec "Updates over the mesh").
+    /// Whether this node streams to the gatherer `n` on `n`'s channel. To
+    /// a sleepy node only as its anchor, the one relay whose slot
+    /// heartbeats it wakes for, known by its address. To another whose home
+    /// is this node's, always. Elsewhere, unless a better holder serves it:
+    /// a relay this node hears, at home on another channel than `n`, that
+    /// holds more blocks from the first than `n`, lies no farther from `n`
+    /// than this node, and holds more of them than this node, or as many
+    /// with a lower ID (spec "Updates over the mesh").
     fn streams_to(&self, v: &View<'_>, n: &Neighbour, image: Image, now: Instant) -> bool {
         if n.sleepy {
             return n.position == v.position;

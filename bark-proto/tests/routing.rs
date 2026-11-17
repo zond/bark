@@ -186,7 +186,8 @@ fn dead_end_returns_to_parent_and_parent_tries_next() {
         vec![name(x), name(y)],
         "nearest first, then the next"
     );
-    // The origin's application is told nothing (core-interface §4).
+    // The origin's application is told nothing (`docs/core-interface.md`,
+    // "Application").
     assert!(h.nodes[o].app.is_empty());
     assert_eq!(messages(&h, d, id), 1);
     for i in [o, x, y, d] {
@@ -1161,7 +1162,7 @@ fn a_split_met_again_merges() {
 
 /// With D unreachable, the same search ends at the origin with a drop
 /// for want of a route (spec "Return to parent"). The origin's application
-/// hears nothing of it (core-interface §4).
+/// hears nothing of it (`docs/core-interface.md`, "Application").
 #[test]
 fn search_without_owner_ends_at_the_origin() {
     let (o, p, q) = (0, 1, 2);
@@ -2383,9 +2384,10 @@ fn duty_budget_defers_forwarding_and_never_drops() {
         *n += 1;
         *n <= LOST
     }));
-    // O's application has a message every 2.5 s. It holds one at a time
-    // and offers it the moment O takes one (core-interface §4); one due
-    // while it still waits is skipped. Latency counts from when it was due.
+    // O's application has a message every 2.5 s. It holds one at a time and
+    // offers it the moment O takes one (`docs/core-interface.md`,
+    // "Application"); one due while it still waits is skipped. Latency counts
+    // from when it was due.
     let end = h.now + DUTY_CYCLE_WINDOW.mul(3);
     let period = Duration::from_millis(2500);
     let (mut k, mut skipped, mut waited, mut longest_wait) = (0u32, 0u32, 0u32, Duration::ZERO);

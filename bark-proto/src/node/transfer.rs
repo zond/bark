@@ -71,7 +71,7 @@ pub(crate) struct HandOver<'a> {
 }
 
 /// The ACK by which `from` takes `me`'s offer of `msg_id`.
-pub(crate) fn expect(msg_id: crate::ids::MsgId, from: NodeId, me: NodeId) -> Ack {
+pub(crate) fn expect(msg_id: MsgId, from: NodeId, me: NodeId) -> Ack {
     Ack {
         msg_id,
         from,
@@ -280,19 +280,6 @@ impl<'a> HandOver<'a> {
     }
 }
 
-/// What a node replies with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Reply {
-    /// An ACK, taking, refusing or seen (spec "The ACK").
-    Ack(Ack),
-}
-
-impl From<Ack> for Reply {
-    fn from(a: Ack) -> Reply {
-        Reply::Ack(a)
-    }
-}
-
 /// A DATA a reply takes, acted on once the reply has gone out, where the
 /// take is final (spec "The ACK").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -340,16 +327,15 @@ impl Take {
     }
 }
 
-/// A reply this node owes.
+/// A reply this node owes, ready at once (spec "The ACK").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Owed {
-    pub(crate) reply: Reply,
+    /// The ACK, taking, refusing or seen.
+    pub(crate) reply: Ack,
     /// The channel the sender listens on.
     pub(crate) channel: Channel,
     /// When the sender stops waiting; an ACK after that is useless.
     deadline: Instant,
-    /// When it was owed; a reply is ready at once (spec "The ACK").
-    ready: Instant,
     /// The DATA the reply takes.
     takes: Option<Take>,
 }
@@ -357,10 +343,7 @@ pub(crate) struct Owed {
 impl Owed {
     /// The message a reply that was not sent leaves untaken, if it took one.
     fn untaken(&self) -> Option<MsgId> {
-        match (self.takes, self.reply) {
-            (Some(_), Reply::Ack(a)) => Some(a.msg_id),
-            _ => None,
-        }
+        self.takes.map(|_| self.reply.msg_id)
     }
 }
 
@@ -377,7 +360,7 @@ pub(crate) const REPLIES: usize = 1;
 ///
 /// `sending` says whether the first owed reply is on the radio now: a
 /// packet can arrive meanwhile, as the driver may hold a check while a
-/// reception ends (core-interface §3 rule 8).
+/// reception ends (`docs/core-interface.md`, "Radio", rule 8).
 #[derive(Clone)]
 pub(crate) struct Replies {
     owed: FixedVec<Owed, REPLIES>,
@@ -392,20 +375,19 @@ pub(crate) struct Replies {
 impl Replies {
     pub(crate) const fn new() -> Self {
         let none = Owed {
-            reply: Reply::Ack(Ack {
-                msg_id: crate::ids::MsgId(0),
+            reply: Ack {
+                msg_id: MsgId(0),
                 from: NodeId::NONE,
                 to: NodeId::NONE,
                 refused: false,
                 wait: 0,
                 seen: false,
-            }),
+            },
             channel: match Channel::new(0) {
                 Some(c) => c,
                 None => unreachable!(),
             },
             deadline: Instant::ZERO,
-            ready: Instant::ZERO,
             takes: None,
         };
         Replies {
@@ -420,17 +402,16 @@ impl Replies {
     /// packet.
     pub(crate) fn can_owe(
         &mut self,
-        reply: impl Into<Reply>,
+        reply: Ack,
         channel: Channel,
         sending: bool,
         now: Instant,
     ) -> bool {
-        let reply = reply.into();
         self.forget_late(sending, now);
         !self.owed.is_full() || self.owes(reply, channel)
     }
 
-    fn owes(&self, reply: Reply, channel: Channel) -> bool {
+    fn owes(&self, reply: Ack, channel: Channel) -> bool {
         self.owed
             .as_slice()
             .iter()
@@ -439,13 +420,14 @@ impl Replies {
 
     /// Owe `reply` on `channel` until `deadline`; `renews` says whether it
     /// takes a DATA for this node, `takes` is the DATA to act on once it has
-    /// gone out. A reply owed already answers this copy too. With no place
-    /// left, the oldest not yet started gives way; if that one is being
-    /// sent, `reply` is not owed.
+    /// gone out. A reply owed already answers this copy too, and takes its
+    /// `renews`. With no place left, the oldest not yet started gives way;
+    /// if that one is being sent, `reply` is not owed and the one on the
+    /// radio keeps its own.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn owe(
         &mut self,
-        reply: impl Into<Reply>,
+        reply: Ack,
         channel: Channel,
         deadline: Instant,
         renews: bool,
@@ -453,10 +435,9 @@ impl Replies {
         sending: bool,
         now: Instant,
     ) {
-        let reply = reply.into();
-        self.renew = renews;
         self.forget_late(sending, now);
         if self.owes(reply, channel) {
+            self.renew = renews;
             return;
         }
         if self.owed.is_full() {
@@ -465,11 +446,11 @@ impl Replies {
             }
             self.give_up(0);
         }
+        self.renew = renews;
         let _ = self.owed.push(Owed {
             reply,
             channel,
             deadline,
-            ready: now,
             takes,
         });
     }
@@ -503,20 +484,11 @@ impl Replies {
         self.untaken.take()
     }
 
-    /// The reply to start sending now, if the first owed is ready; asked
-    /// only while the radio is free.
+    /// The reply to start sending now, the first owed; asked only while
+    /// the radio is free.
     pub(crate) fn due(&mut self, now: Instant) -> Option<Owed> {
         self.forget_late(false, now);
-        self.owed
-            .as_slice()
-            .first()
-            .filter(|o| o.ready <= now)
-            .copied()
-    }
-
-    /// When the first owed reply is ready to send, once the radio is free.
-    pub(crate) fn wake_at(&self) -> Option<Instant> {
-        self.owed.as_slice().first().map(|o| o.ready)
+        self.owed.as_slice().first().copied()
     }
 
     /// Whether a reply is owed.
@@ -800,13 +772,14 @@ mod tests {
         a.owe(ack(1), ch, at(110), false, None, false, at(10));
         assert!(!a.can_owe(ack(2), ch, false, at(10)), "one place");
         assert!(!a.can_owe(ack(1), Channel::new(4).unwrap(), false, at(10)));
-        assert_eq!(a.due(at(10)).unwrap().reply, Reply::Ack(ack(1)));
+        assert_eq!(a.due(at(10)).unwrap().reply, ack(1));
         // It is on the radio: a packet that arrives meanwhile is
-        // answered after it, or not at all.
-        a.owe(ack(2), ch, at(111), false, None, true, at(11));
+        // answered after it, or not at all, and does not change whether
+        // the node listens on after the one on the radio.
+        a.owe(ack(2), ch, at(111), true, None, true, at(11));
         assert_eq!(
             a.due(at(11)).unwrap().reply,
-            Reply::Ack(ack(1)),
+            ack(1),
             "the reply being sent keeps its place"
         );
         assert!(!a.sent().0);
@@ -815,7 +788,7 @@ mod tests {
         // Not started: a newer one takes the place.
         a.owe(ack(3), ch, at(300), false, None, false, at(200));
         a.owe(ack(4), ch, at(301), true, None, false, at(200));
-        assert_eq!(a.due(at(201)).unwrap().reply, Reply::Ack(ack(4)));
+        assert_eq!(a.due(at(201)).unwrap().reply, ack(4));
         // A lapsed one frees the place.
         assert!(!a.can_owe(ack(5), ch, false, at(300)));
         assert!(a.can_owe(ack(5), ch, false, at(301)));

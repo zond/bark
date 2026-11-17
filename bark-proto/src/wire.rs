@@ -11,7 +11,7 @@
 //! ACK        first format msg from to                             = 18
 //! DATA       first format dst_hop src_hop dst_pos dst_id wrong
 //!            hops payload                                         = 29 + payload,
-//!                                                                   30 from 128 hops
+//!                                                    30 from 128 hops, 31 from 16 384
 //! HEARTBEAT  + section: runs version key blocks last complete have = 26
 //! PIECE      first format version block index bytes               = 255
 //! ASK        first format to from                                 = 14
@@ -39,7 +39,6 @@ const SHORT_LEN: usize = 4;
 const MSG_ID_LEN: usize = 4;
 const ID_LEN: usize = NodeId::LEN;
 const WRONG_LEN: usize = 1;
-/// The hop count's short form, and its long form (spec "Hop count").
 /// The hop count's shortest form, and its longest (spec "Hop count").
 const HOPS_SHORT: usize = 1;
 const HOPS_LONG: usize = 3;
@@ -90,6 +89,8 @@ const LEAVING: u8 = 0x10;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
 /// HEARTBEAT length.
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
+/// HEARTBEAT length with the update's section: 26.
+pub const HEARTBEAT_MAX: usize = HEARTBEAT_LEN + SECTION_LEN;
 
 // ACK.
 const ACK_ID: usize = VERSION + FORMAT_LEN;
@@ -505,8 +506,7 @@ pub enum DecodeError {
     /// A DATA or ACK in a format this code does not speak.
     Format(u8),
     /// A DATA hop count in a longer form than it needs, or longer than the
-    /// longest: each
-    /// count has one form.
+    /// longest: each count has one form.
     Hops,
     /// A frame from node to node of a kind reserved for later, DATA `aux`
     /// 13, 14 or 18 to 63.
@@ -748,10 +748,13 @@ impl<'a> Packet<'a> {
         if Channel::new(aux).is_none() {
             return Self::decode_update(aux, b).map(Packet::Update);
         }
-        let (hops, len) = get_hops(b.get(DATA_HOPS..).ok_or(DecodeError::Short)?)?;
-        let header = DATA_HOPS + len;
-        let payload = payload(b, header)?;
+        if b.len() <= VERSION {
+            return Err(DecodeError::Short);
+        }
+        // Another format may lay out the rest otherwise.
         format(b)?;
+        let (hops, len) = get_hops(b.get(DATA_HOPS..).ok_or(DecodeError::Short)?)?;
+        let payload = payload(b, DATA_HOPS + len)?;
         Ok(Packet::Data(Data {
             sender_home: channel(aux)?,
             dst_hop: get_id(b, DATA_DST_HOP),
@@ -1197,6 +1200,17 @@ mod tests {
             };
             assert_eq!(h.format, f);
         }
+        // Another format's DATA is reported as such, whatever its hop count
+        // or length would mean in this one.
+        let mut hops = [0u8; DATA_HEADER_MAX];
+        hops[VERSION] = 2;
+        hops[DATA_HOPS..].copy_from_slice(&[0x81, 0x80, 0x80]);
+        assert_eq!(Packet::decode(&hops), Err(DecodeError::Format(2)));
+        let mut long = [0u8; MAX_FRAME];
+        long[VERSION] = 2;
+        assert_eq!(Packet::decode(&long[..2]), Err(DecodeError::Format(2)));
+        assert_eq!(Packet::decode(&long), Err(DecodeError::Format(2)));
+        assert_eq!(Packet::decode(&long[..1]), Err(DecodeError::Short));
     }
 
     #[test]

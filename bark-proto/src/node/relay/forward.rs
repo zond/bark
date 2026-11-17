@@ -27,9 +27,9 @@ use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::geo::{LocalPlane, Point};
 use crate::ids::{MsgId, NodeId};
-use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, Take, IN_FLIGHT};
+use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Take, IN_FLIGHT};
 use crate::node::Rng;
-use crate::node::{heartbeat_interval, mac};
+use crate::node::{heartbeat_interval, mac, OWNER_RADIUS_M};
 use crate::position::Position;
 use crate::radio::{time_on_air, Channel, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::LONG_PREAMBLE_SYMBOLS;
@@ -43,8 +43,6 @@ use crate::tables::records::{Record, HELD};
 use crate::tables::send_queue::{Kind, Message, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{data_header_len, Ack, Data, Hops, Packet, MAX_HOPS, MAX_PAYLOAD};
-
-pub use crate::node::OWNER_RADIUS_M;
 
 /// What a received DATA packet is (spec "Receiving DATA").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,9 +248,7 @@ fn tried(record: &Record, passed: u64, slot: usize) -> bool {
 
 /// The frame of the owed reply.
 fn reply_frame(o: Owed) -> Frame {
-    match o.reply {
-        Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
-    }
+    mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS)
 }
 
 /// A full DATA frame with the long preamble, 372.8 ms
@@ -331,13 +327,9 @@ impl OwnMessage {
 }
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
-    pub(super) fn me(&self) -> NodeId {
-        self.id
-    }
-
     /// The ACK by which `from` takes this relay's offer of `msg_id`.
     fn expect(&self, msg_id: MsgId, from: NodeId) -> Ack {
-        transfer::expect(msg_id, from, self.me())
+        transfer::expect(msg_id, from, self.id)
     }
 
     /// The send queue's current entry while its hand-over is under way.
@@ -657,7 +649,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         from: Option<NodeId>,
         now: Instant,
     ) -> bool {
-        dst_id == self.me()
+        dst_id == self.id
             || (self.owns(dst_pos, now) && !self.addressed_open(dst_id, record, passed, from, now))
     }
 
@@ -869,7 +861,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         });
         let reply = Ack {
             msg_id: id,
-            from: self.me(),
+            from: self.id,
             to: d.src_hop,
             refused: v.refusal.is_some(),
             wait,
@@ -912,7 +904,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // A sleepy node listens on once it has answered, for the next
         // (spec "Delivery").
-        let renews = d.dst_id == self.me();
+        let renews = d.dst_id == self.id;
         // A packet with work waits for its reply to go out
         // (spec "The ACK"); one with none is acted on now: nothing is lost
         // if its ACK never goes.
@@ -1134,7 +1126,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// now (spec "The ACK"). Should the room be gone after all, the copy
     /// ends here, since its sender is done with it.
     pub(super) fn taken(&mut self, take: Take, now: Instant, emit: &mut dyn FnMut(Action)) {
-        let d = take.data(self.me());
+        let d = take.data(self.id);
         match self.when_taken(&d, take.returned, now) {
             Ok((a, room)) => self.act_on(&d, a, room, now, emit),
             Err(why) => self.drop_msg(d.msg_id(), why, emit),
@@ -1199,7 +1191,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn handing(&self, id: MsgId, to: NodeId) -> bool {
         self.in_flight()
             .filter(|o| o.transmitted())
-            .map(|o| o.expect(self.me()))
+            .map(|o| o.expect(self.id))
             == Some(self.expect(id, to))
     }
 
@@ -1254,7 +1246,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         };
         q.hops = d.hops;
         q.wrong = d.wrong;
-        if node == self.me() {
+        if node == self.id {
             self.delivered.insert(id, now);
             // The inbox keeps it until the application confirms it, by the
             // delivery queue's rule (spec "Delivery queue").
@@ -1290,9 +1282,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// A node that turned sleepy holds mail for nobody: its delivery queue
-    /// goes into its send queue as forwards from here
-    /// (spec "Sleepy nodes"). Each starts a search here, with no parent, so that a copy
-    /// that comes back is searched on and not taken for delivered.
+    /// goes into its send queue as forwards from here (spec "Sleepy nodes").
+    /// Each starts a search here, with no parent, so that a copy that comes
+    /// back is searched on and not taken for delivered.
     pub(super) fn hand_on(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
         loop {
             let Some(q) = self.delivery.iter().next() else {
@@ -1511,13 +1503,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let Some(h) = self.queue.remove(i) else {
             return;
         };
-        self.arrive(h.msg_id(), &h.data(self.me(), self.home), now, emit);
+        self.arrive(h.msg_id(), &h.data(self.id, self.home), now, emit);
     }
 
     /// Whether a message for `node` that ends here at `now` finds a place
     /// (spec "Delivery queue").
     pub(super) fn has_room_for(&self, node: NodeId, now: Instant) -> bool {
-        if node == self.me() {
+        if node == self.id {
             self.inbox.has_room(now)
         } else {
             self.delivery.has_room(now)
@@ -1554,7 +1546,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let d = Data {
             sender_home: self.home,
             dst_hop: NodeId::NONE,
-            src_hop: self.me(),
+            src_hop: self.id,
             dst_pos,
             dst_id,
             wrong: 0,
@@ -1713,10 +1705,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Address the forward `out` from the state as it is now
-    /// (spec "Next hop", "Return to parent"). Nothing of an earlier choice is kept: a
-    /// neighbour that refused or failed it is chosen again while it ranks
-    /// first. Ownership is checked again: a closer neighbour may have been
-    /// demoted since.
+    /// (spec "Next hop", "Return to parent"). Nothing of an earlier choice
+    /// is kept: a neighbour that refused or failed it is chosen again while
+    /// it ranks first. Ownership is checked again: a closer neighbour may
+    /// have been demoted since.
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let id = out.msg_id();
         let dst = (out.message.dst_id, out.message.dst_pos);
@@ -1751,7 +1743,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 if let Some(r) = self.records.get_mut(id) {
                     r.set_arrived();
                 }
-                self.arrive(id, &out.data(self.me(), self.home), now, emit);
+                self.arrive(id, &out.data(self.id, self.home), now, emit);
                 Routed::Done
             }
             Way::SetAside => {
@@ -1970,7 +1962,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             current.hops = out.hops;
             current.wrong = out.wrong;
         }
-        let frame = out.frame(self.me(), self.home);
+        let frame = out.frame(self.id, self.home);
         self.radio.send(Job::HandOver, frame, now, emit);
     }
 
@@ -1982,7 +1974,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) -> Option<Outgoing> {
-        if self.radio.replies().wake_at().is_some_and(|t| t <= now) {
+        if self.radio.replies().pending() {
             if let Some((mut h, _)) = self.handover() {
                 h.hold(now);
             }
@@ -2224,7 +2216,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     // neighbours to be refused by.
                     self.own.refusals = self.own.refusals.saturating_add(1);
                     if !self.goes_elsewhere(by, now) {
-                        // Each offer costs the refuser a reply and hides its ACKs.
+                        // Each offer costs the refuser a reply and hides its
+                        // ACKs.
                         let until = now + wait.max(hold(self.own.refusals));
                         if let Some(current) = self.queue.current_mut() {
                             current.not_before = until;
@@ -2296,7 +2289,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit(Action::Trace(trace));
     }
 
-    /// Every attempt of the current hand-over went unanswered (spec "Hand-over").
+    /// Every attempt of the current hand-over went unanswered
+    /// (spec "Hand-over").
     fn handover_failed(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) {
         let (id, to) = (out.msg_id(), out.to);
         let own_at_anchor = self.sleepy() && out.hops == 0;
@@ -2456,9 +2450,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let frame = reply_frame(o);
         let airtime = mac::airtime(&frame);
         if !self.can_reply(airtime, now) {
-            let Reply::Ack(a) = o.reply;
             emit(Action::Trace(Trace::Silent {
-                msg_id: a.msg_id,
+                msg_id: o.reply.msg_id,
                 owed: false,
             }));
             self.radio.abandon_reply();

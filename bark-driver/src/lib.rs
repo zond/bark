@@ -39,8 +39,9 @@ use bark_proto::{
 };
 use embassy_futures::select::{select3, Either3};
 
-/// Airtime of the longest frame with the long preamble: the longest a
-/// check may be held for a reception in progress (core-interface §3 rule 8).
+/// Airtime of the longest frame with the long preamble: the longest a check
+/// may be held for a reception in progress (`docs/core-interface.md`,
+/// "Radio", rule 8).
 pub const MAX_AIRTIME: Duration = time_on_air(MAX_FRAME as u8, LONG_PREAMBLE_SYMBOLS);
 
 /// Wait between retuning and reading RSSI (spec "Busy estimate"); the
@@ -60,9 +61,10 @@ pub const FAILED_RSSI_DBM: i16 = 0;
 /// Every channel, as a mask of bits by index.
 const ALL_CHANNELS: u16 = (1 << CHANNELS) - 1;
 
-/// How often the battery is read on battery (core-interface §4). A minute
-/// late at the most a board draws (36 mA, a relay with GPS tracking) is
-/// 0.6 mAh, under 0.1 % of an 850 mAh cell and below a reading's noise.
+/// How often the battery is read on battery (`docs/core-interface.md`,
+/// "Application"). A minute late at the most a board draws (36 mA, a relay
+/// with GPS tracking) is 0.6 mAh, under 0.1 % of an 850 mAh cell and below a
+/// reading's noise.
 pub const BATTERY_EVERY: Duration = Duration::from_secs(60);
 
 /// How often an empty readiness is logged: it can recur at every event, so
@@ -151,9 +153,9 @@ pub trait Radio {
     /// in, even where it listens already.
     async fn listen_afresh(&mut self, channel: Channel) -> Result<(), Self::Error>;
 
-    /// Receive duty-cycled on `channel` from whatever state the radio is
-    /// in (core-interface §3 rule 10). It ends with the first packet that
-    /// ends; the driver then starts it again.
+    /// Receive duty-cycled on `channel` from whatever state the radio is in
+    /// (`docs/core-interface.md`, "Radio", rule 10). It ends with the first
+    /// packet that ends; the driver then starts it again.
     async fn sniff(&mut self, channel: Channel) -> Result<(), Self::Error>;
 
     /// While listening, wait until the radio has something to report.
@@ -223,7 +225,7 @@ pub struct Outgoing {
 }
 
 /// What the application asks of the node besides a message to send
-/// (core-interface §4).
+/// (`docs/core-interface.md`, "Application").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     /// It has the inbox's oldest message, this one: the node may forget
@@ -270,8 +272,8 @@ pub enum Request {
     Drain(bool),
 }
 
-/// What the GPS is to do (core-interface §4): rest in standby, search
-/// until an instant for one fix, or run all the time.
+/// What the GPS is to do (`docs/core-interface.md`, "Application"): rest in
+/// standby, search until an instant for one fix, or run all the time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gps {
     /// In standby.
@@ -282,7 +284,8 @@ pub enum Gps {
     Track,
 }
 
-/// What [`App::ready`] resolved for (core-interface §4).
+/// What [`App::ready`] resolved for (`docs/core-interface.md`,
+/// "Application").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ready {
     /// Something for the driver: a request, a change of power or a
@@ -293,13 +296,15 @@ pub enum Ready {
     Own,
 }
 
-/// The application side of the node (core-interface §4).
+/// The application side of the node (`docs/core-interface.md`,
+/// "Application").
 pub trait App {
     /// Resolves when something new arrived since it last resolved: a
     /// [`Request`], a change of power or, if `offer`, a message
     /// ([`Ready::Driver`], only when the driver will get something); or work
     /// for the outer loop ([`Ready::Own`]). `offer` is whether the core
-    /// accepts a message now. Cancel-safe (core-interface §4).
+    /// accepts a message now. Cancel-safe (`docs/core-interface.md`,
+    /// "Application").
     async fn ready(&mut self, offer: bool) -> Ready;
 
     /// The next request waiting, if any. The driver takes every one each
@@ -310,11 +315,12 @@ pub trait App {
     /// returned. Called only while the core accepts a message.
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing>;
 
-    /// What the core tells the application (core-interface §4).
+    /// What the core tells the application (`docs/core-interface.md`,
+    /// "Application").
     fn message(&mut self, event: &AppEvent);
 
     /// Whether USB power is present now, if the node can tell
-    /// (core-interface §4).
+    /// (`docs/core-interface.md`, "Application").
     fn power(&mut self) -> Option<bool>;
 
     /// The battery's uncalibrated voltage in millivolts, or `None` if the
@@ -323,7 +329,7 @@ pub trait App {
     async fn battery(&mut self) -> Option<u16>;
 
     /// Keep `stored` across a reboot, for `Config::stored` at the next
-    /// boot (core-interface §4).
+    /// boot (`docs/core-interface.md`, "Application").
     fn store(&mut self, stored: &Stored);
 
     /// Run the GPS as `gps` says until told otherwise; fixes come back as
@@ -560,7 +566,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     /// error is the radio's; the radio is put back to listening on the
     /// next step.
     pub async fn step(&mut self) -> Result<(), R::Error> {
-        // The first event a core receives is a wakeup (core-interface §2).
+        // The first event a core receives is a wakeup
+        // (`docs/core-interface.md`, "Time").
         if !self.booted {
             self.booted = true;
             self.deliver(Event::Wakeup).await?;
@@ -617,7 +624,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let start = self.clock.now();
         let listening = self.listening;
         let result = match woke {
-            // Late is allowed, early is not (core-interface §2).
+            // Late is allowed, early is not (`docs/core-interface.md`,
+            // "Time").
             Either3::First(()) => {
                 self.keep(start).await?;
                 match wake {
@@ -642,9 +650,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         result
     }
 
-    /// Whether `action` must wait for the packet being received: a check
-    /// that takes the radio off its channel would cut it short (spec "Busy estimate"),
-    /// for at most one longest frame (core-interface §3 rule 8).
+    /// Whether `action` must wait for the packet being received: a check that
+    /// takes the radio off its channel would cut it short
+    /// (spec "Busy estimate"), for at most one longest frame
+    /// (`docs/core-interface.md`, "Radio", rule 8).
     fn holds(&mut self, action: &Action, now: Instant) -> bool {
         let leaves = match action {
             Action::Lbt(_) => true,
@@ -854,7 +863,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
 
     /// Hand the core a fix if it is in reach of the relays the core knows
     /// (spec "Position"); the first such fix ends a search
-    /// (core-interface §4).
+    /// (`docs/core-interface.md`, "Application").
     async fn fix(&mut self, position: Position) -> Result<(), R::Error> {
         let in_reach = self.core.fix_in_reach(position);
         if !in_reach && !self.fix_dropped {
@@ -931,7 +940,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) | Action::Serve(_) => {
                 assert!(
                     excursion.is_none(),
-                    "second excursion outstanding (docs/core-interface.md §3 rule 1)"
+                    "second excursion outstanding (docs/core-interface.md, \"Radio\", rule 1)"
                 );
                 excursion = Some(action);
                 sniff = None;
@@ -986,8 +995,9 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
     }
 
     /// Carry out an excursion and return its completion event. A radio
-    /// failure still completes it (core-interface §3 rule 2), with an answer
-    /// that keeps the core from transmitting into an unchecked channel.
+    /// failure still completes it (`docs/core-interface.md`, "Radio",
+    /// rule 2), with an answer that keeps the core from transmitting into an
+    /// unchecked channel.
     async fn perform(&mut self, action: Action) -> Event<'static> {
         let done = match action {
             Action::Lbt(channel) => {
@@ -1030,7 +1040,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             Action::Transmit(frame) => {
                 assert!(
                     frame.preamble_symbols >= MIN_PREAMBLE_SYMBOLS,
-                    "{}-symbol preamble (docs/core-interface.md §3 rule 4)",
+                    "{}-symbol preamble (docs/core-interface.md, \"Radio\", rule 4)",
                     frame.preamble_symbols
                 );
                 self.deaf();
@@ -1103,9 +1113,9 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
         let sniff = self.sniff_until.is_some();
         if self.listening == Some(c) {
             // A switch waits for a packet under way, as a check does
-            // (core-interface §3 rule 8), for at most one longest frame. One
-            // that outlasts that while sniffing may have stuck the radio, so
-            // the cycle is started again.
+            // (`docs/core-interface.md`, "Radio", rule 8), for at most one
+            // longest frame. One that outlasts that while sniffing may have
+            // stuck the radio, so the cycle is started again.
             let arriving = self.receiving.is_some_and(|t| now < t + MAX_AIRTIME);
             let stuck = self.sniffing && self.receiving.is_some() && !arriving;
             if (self.sniffing == sniff || arriving) && !stuck {

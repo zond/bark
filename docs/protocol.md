@@ -545,7 +545,8 @@ not come.
 heartbeat on its own channel once a rotation, in a window around the
 slot: from the slot less what the last one heard may have waited behind
 its own (the lateness above) and the clocks' drift since, to the slot
-plus that lateness, that drift and the heartbeat's airtime, about 1.8 s.
+plus that lateness, that drift and the airtime of a heartbeat with an
+update's section, about 1.8 s.
 When the window closes without the heartbeat, the relay enters a reading
 at its noise floor ([busy estimate](#busy-estimate)) into the
 neighbour's average ([neighbour table](#neighbour-table)), weighted by
@@ -1534,10 +1535,8 @@ hop places of the send queue.
 `hops` takes one byte below 128, two below 16 384 and three up to
 2 097 151 ([packet formats](#packet-formats)). It limits no path on
 Earth: the farthest point is 20 000 km away, which 2 097 151 hand-overs
-reach at 10 m a hop, where two bytes' 32 767 reached 24 600 km only on a
-straight path of the 750 m hops of
-[capacity and sizing](#capacity-and-sizing). Limiting how far a message
-travels is `wrong`'s job. A relay that would have to send a count above
+reach at 10 m a hop. Limiting how far a message travels is `wrong`'s
+job. A relay that would have to send a count above
 2 097 151 drops the message, except an owner delivering it to its node
 ([delivery](#delivery)), which sends 2 097 151: the search has ended
 there.
@@ -1739,8 +1738,8 @@ curve's own 100 %. A relay's lighter load reads some 10 to 20 mV higher
 at the same charge, which the calibration at full partly scales away.
 A relay keeps a fifth of its cell for its owner when it turns sleepy,
 and relays again only at 30 %, far above a reading's noise and the few
-millivolts a change of load moves it; ±3 % is the SAADC's gain error at gain 1/6 (nRF52840 Product
-Specification, SAADC). On battery a fixed relay draws about 6.4 mA
+millivolts a change of load moves it; ±3 % is the SAADC's gain error at
+gain 1/6 (nRF52840 Product Specification, SAADC). On battery a fixed relay draws about 6.4 mA
 (5.8 mA listening, 32 mA for its airtime), so 80 % of the cell lasts it
 four days.
 
@@ -1864,7 +1863,7 @@ sleeps again as soon as it hears it:
   itself, and twice because a heartbeat held up by a busy anchor may have
   moved the time expected a drift later while its slot was a drift early
   (roadmap D52). As late is the drift, the heartbeat's greatest delay and
-  its airtime more.
+  the airtime of one with an update's section more.
 - A heartbeat of the anchor heard before the watch opens is no slot's: an
   answer to a node without an anchor on its channel, or the one after a
   move ([channel moves](#channel-moves)). It shows the anchor alive and

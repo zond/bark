@@ -32,7 +32,7 @@ pub struct Stored {
     /// on (`relay/power.rs`).
     pub relay: bool,
     /// Its battery readings' scale from its last calibration, in 2^-15
-    /// (`relay/power.rs`).
+    /// (`relay/battery.rs`).
     pub battery_scale: Option<u16>,
     /// The drains it learned on battery, a relay's and a sleepy node's,
     /// each as steps from its seed (`drain.rs`).

@@ -574,7 +574,7 @@ impl Neighbours {
         if new.last_resort() {
             return Heard::Rejected;
         }
-        match victim(self, now).or_else(|| self.near_victim(&new)) {
+        match self.victim(now).or_else(|| self.near_victim(&new)) {
             Some(i) => match self.slots[i].replace(new) {
                 Some(old) => Heard::Replaced(i, old),
                 None => Heard::Added(i),
@@ -1037,24 +1037,22 @@ impl Neighbours {
             .min_by_key(|(_, n)| n.last_heard)
             .map(|(i, _)| i)
     }
-}
 
-/// Which slot of a full table a newcomer takes at `now`, if any, by
-/// eviction steps 1 and 2 (spec "Neighbour table").
-pub fn victim(table: &Neighbours, now: Instant) -> Option<usize> {
-    let oldest = |demoted: bool| {
-        table
-            .slots()
-            .filter(|(_, n)| Some(n.id) != table.pinned && table.is_demoted(n, now) == demoted)
-            .min_by_key(|(_, n)| n.last_heard)
-            .map(|(i, _)| i)
-    };
-    let stale = |i: &usize| {
-        table
-            .slot(*i)
-            .is_some_and(|n| now.since(n.last_heard) >= table.params.stale_after)
-    };
-    oldest(true).or_else(|| oldest(false).filter(stale))
+    /// Which slot of a full table a newcomer takes at `now`, if any, by
+    /// eviction steps 1 and 2 (spec "Neighbour table").
+    fn victim(&self, now: Instant) -> Option<usize> {
+        let oldest = |demoted: bool| {
+            self.slots()
+                .filter(|(_, n)| Some(n.id) != self.pinned && self.is_demoted(n, now) == demoted)
+                .min_by_key(|(_, n)| n.last_heard)
+                .map(|(i, _)| i)
+        };
+        let stale = |i: &usize| {
+            self.slot(*i)
+                .is_some_and(|n| now.since(n.last_heard) >= self.params.stale_after)
+        };
+        oldest(true).or_else(|| oldest(false).filter(stale))
+    }
 }
 
 #[cfg(test)]

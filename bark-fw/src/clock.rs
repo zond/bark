@@ -137,10 +137,10 @@ impl bark_driver::Clock for &Clock {
 
     async fn at(&self, t: Instant) {
         // Round up to the next tick: a tick rounded down would fire before
-        // `t`, and the core must never be woken early (core-interface §2).
-        // The stopwatch, where there is one, runs ahead of or behind the
-        // embassy clock by its own drift, so the wait is checked against it
-        // and taken again if it ended early.
+        // `t`, and the core must never be woken early
+        // (`docs/core-interface.md`, "Time"). The stopwatch, where there is
+        // one, runs ahead of or behind the embassy clock by its own drift, so
+        // the wait is checked against it and taken again if it ended early.
         let t = t.as_micros().saturating_sub(EPOCH.as_micros());
         loop {
             let now = self.now_us();

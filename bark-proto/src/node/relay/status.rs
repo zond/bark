@@ -14,7 +14,7 @@ use crate::time::{Duration, Instant};
 use crate::wire::{Packet, StatusFrame};
 
 /// The status job's state, in 16 bytes: the node's state outside its
-/// tables is held under 1 KiB (`docs/core-interface.md` §6).
+/// tables is held under 1 KiB (`docs/core-interface.md`, "Memory").
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Asking {
     /// The frame under way: to whom, whether it tells, and the checks

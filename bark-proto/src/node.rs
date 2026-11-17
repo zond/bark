@@ -314,7 +314,8 @@ pub const FIX_INTERVAL: Duration = Duration::from_secs(1);
 /// making it carried (spec "Position"): beyond a still board's wander, at
 /// most 218 m measured (`docs/gps-bench-2026-11-06.md`). A place is one fix,
 /// so the radius must hold the wander's whole width, not its distance from
-/// a mean.
+/// a mean: five allowances, the fewest whole ones above 218 m (roadmap
+/// D136).
 pub const CARRY_RADIUS_M: f32 = 5.0 * OWNER_RADIUS_M;
 
 /// How long a fixed node's fixes must all lie beyond [`CARRY_RADIUS_M`]
@@ -400,11 +401,11 @@ pub trait Core {
     /// Whether the core would take an `AppCommand::Send` at `now`; until it
     /// does the application waits, which is how a busy network pushes back
     /// on its user. A `Send` offered while false is ignored
-    /// (`docs/core-interface.md` §4).
+    /// (`docs/core-interface.md`, "Application").
     fn accepts_send(&self, now: Instant) -> bool;
 
     /// The oldest unconfirmed message for this node's application: its ID
-    /// and payload (`docs/core-interface.md` §4).
+    /// and payload (`docs/core-interface.md`, "Application").
     fn inbox(&self) -> Option<(MsgId, &[u8])>;
 
     /// Messages in the inbox.
@@ -415,12 +416,12 @@ pub trait Core {
     fn confirm(&mut self, msg_id: MsgId) -> bool;
 
     /// Whether the GPS is to run all the time now; the driver re-reads it
-    /// after each call (`docs/core-interface.md` §4).
+    /// after each call (`docs/core-interface.md`, "Application").
     fn gps_tracks(&self) -> bool;
 
     /// Whether a fix at `position` passes the check against the relays
     /// the node knows; the driver hands only such a fix
-    /// (`docs/core-interface.md` §4).
+    /// (`docs/core-interface.md`, "Application").
     fn fix_in_reach(&self, position: Position) -> bool;
 }
 
