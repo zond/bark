@@ -244,7 +244,7 @@ pub fn started(flash: &Flash) -> Boot {
             false
         }
         Ok(Started::Refused) => {
-            log::warn!("update: the loader refused the staged image");
+            log::warn!("update: the staged image was refused, or a reset kept it from the loader");
             false
         }
         Err(e) => {
