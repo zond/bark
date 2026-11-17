@@ -15,7 +15,7 @@ use core::cell::RefCell;
 
 use bark_image::boot::{cut, start, swap_requested, Shared, StageError, Stager, Started};
 use bark_image::layout::{LOADER, PAGE};
-use bark_image::sign::{Key, SLOTS};
+use bark_image::sign::{Key, KEYS};
 use bark_image::{Header, HEADER_LEN};
 use bark_proto::BatteryLevels;
 use embassy_nrf::nvmc::Nvmc;
@@ -45,7 +45,7 @@ pub static BARK_IMAGE_VERSION: u32 = match option_env!("BARK_IMAGE_VERSION") {
 /// them from the ELF.
 #[used]
 #[no_mangle]
-pub static BARK_SIGNING_KEYS: [Key; SLOTS] = include!(concat!(env!("OUT_DIR"), "/keys.rs"));
+pub static BARK_SIGNING_KEYS: [Key; KEYS] = include!(concat!(env!("OUT_DIR"), "/keys.rs"));
 
 /// What a bench image does instead of confirming itself, from
 /// `BARK_UPDATE_BENCH` at build time (roadmap Phase 2, the loader's rows).

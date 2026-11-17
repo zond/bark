@@ -513,13 +513,18 @@ as `scripts/uf2.py` lays them:
 | Bytes | Holds |
 |---|---|
 | 0–3 | `bark` |
-| 4 | format, 1 |
+| 4 | format, 2 |
 | 5–7 | zero |
 | 8–11 | version, little-endian, raised with every image |
 | 12–15 | the image's length in bytes, little-endian |
 | 16–47 | SHA-256 of the image (FIPS 180-4) |
-| 48–242 | three signatures of 65 bytes: a byte naming the key, 1 to 255, then an Ed25519 signature (RFC 8032) of bytes 0–47; all zero if empty |
-| 243–255 | zero |
+| 48–79 | SHA-256 of the entries of its block table over the mesh, those of blocks 1 on (`bark-image/src/pieces.rs`, `table_hash`; spec "Updates over the mesh") |
+| 80–209 | two signatures of 65 bytes: a byte naming the key, 1 to 255, then an Ed25519 signature (RFC 8032) of bytes 0–79; all zero if empty |
+| 210–255 | zero |
+
+Two slots, one to sign with and one to bring in the next key, since a
+third does not fit beside 80 signed bytes; a firmware holds up to three
+keys, the project's two and in a bench-only build the bench key.
 
 The firmware's version is `BARK_IMAGE_VERSION` at build time,
 kept under its own symbol, from which `scripts/image.py`
@@ -529,18 +534,20 @@ by UF2, which any staged image replaces and which can itself never be
 staged over another, since `scripts/image.py` packs only a version
 above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
-swap.
+swap. The table hash is checked as the hash is, at the commit, so that a
+node never runs an image whose blocks every node gathering it would
+refuse.
 
 **Signatures.** The running firmware stages an image only if one of
 the header's signatures verifies under one of the up to three public
 keys it was built with, the one its byte names (roadmap D144;
 `bark-image/src/sign.rs`, checked with the `ed25519-compact` crate,
 2.6.0). The loader checks none (D79): no key sits in the one part
-that is never updated. A signature covers bytes 0–47, the hash
+that is never updated. A signature covers bytes 0–79, the hashes
 standing for the image: the firmware hashes the staged bytes anyway, so
-it checks a signature over 48 bytes, not the whole image, and checks
-it as the staging starts, before a byte of the image has come; the hash
-once the last byte has. A header is refused with the reason:
+it checks a signature over 80 bytes, not the whole image, and checks
+it as the staging starts, before a byte of the image has come; the
+hashes once the last byte has. A header is refused with the reason:
 `Signature(Unsigned)`, `Signature(UnknownKey)` when no signature is by a
 key the firmware holds, or `Signature(Bad)`.
 
@@ -749,16 +756,26 @@ confirmed itself.
   slot, tells the core (`Holds`) and serves its pieces. A UF2 made
   without `scripts/uf2.py --header` (below) leaves no header, and a
   swap back leaves the newer image's, so such a node serves nothing until it takes an image over the mesh or the phone.
-- *What it gathers.* When a neighbour's heartbeat names a newer image,
-  the node gathers it if the version is above its own, the key the
-  heartbeat names is one it holds, and neither the phone's update nor a
-  swap holds the staged slot (`bark_image::policy::takes`). The pieces go
-  into the store on the external flash (`bark_image::pieces`), a step at
-  a time of at most 16 bytes over the bus, the executor free between and
-  the chip's erases and programs waited out with a timer (Work beside the
-  radio, below). A reset keeps what
-  was gathered, and the node goes on with it unless it is no longer
-  newer than the running image.
+- *What it gathers.* When the core offers a neighbour's image, the node
+  gathers it if the version is above its own, the key the heartbeat
+  names is one it holds, and neither the phone's update nor a swap holds
+  the staged slot (`bark_image::policy::takes`). The pieces go into the
+  store on the external flash (`bark_image::pieces`), a step at a time of
+  at most 16 bytes over the bus, the executor free between and the
+  chip's erases and programs waited out with a timer (Work beside the
+  radio, below). Once blocks 0 and 1 have decoded the node checks the
+  proof, `pieces::check_proof`: the header is the version offered, above
+  its own, its length gives the blocks offered, a signature verifies
+  under a key it holds, and its table hash is the table's; only then does
+  it tell the core block 1 passed, `update: version N proven by its
+  blocks 0 and 1`. A proof that fails forgets the image, `update: version
+  N not proven by its blocks 0 and 1 (...); forgotten`, and the core holds
+  the version off. The core gives up a gather not yet proven that takes
+  no piece for its bound (spec "Updates over the mesh"),
+  `update: version N given up unproven; forgotten`. A reset keeps what was gathered, and the node goes on with
+  it if it is still newer than the running image and its blocks 0 and 1
+  prove it again; one not yet proven is forgotten, since the core's bound
+  does not outlast a reset.
 - *What it serves.* A piece of the running image is coded from the
   slot's bytes, memory-mapped in the internal flash; one of a block it
   gathered and decoded, from the external flash, 16 bytes at a time. A
@@ -772,7 +789,10 @@ confirmed itself.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for
-  (`Stager::written`, `update::commit`). The node then drains (spec
+  (`Stager::written`, `update::commit`), on the one reading of the power
+  that let the staging start, since the staging erases the record. An
+  image that fails is not taken again until the node reboots, and the
+  core is told (`Request::Rejected`). The node then drains (spec
   "Send queue", "Updates over the mesh"; roadmap D170): while its power
   allows a swap and no phone update is under way, it asks the core to
   take no message, `update: draining for the reboot: the node takes no

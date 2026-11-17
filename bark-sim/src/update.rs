@@ -10,6 +10,9 @@ use bark_proto::wire::PIECE_BYTES;
 use bark_proto::{AppCommand, Instant};
 use std::fmt::Write;
 
+/// The version a forger's sections name: far above any release.
+pub const FORGED: u32 = 0x7fff_ffff;
+
 /// How often a row of the series is taken.
 pub const SAMPLE_US: u64 = 600_000_000;
 
@@ -89,6 +92,32 @@ pub struct UpdateRun {
     gathered: [u64; 3],
     /// The pieces each gathering relay heard, by block and index.
     heard_by: std::collections::HashSet<(u32, u8, u8)>,
+    /// The forger and when it stops (`scenario::UpdateSpec::forger`).
+    pub forger: Option<(u32, Instant)>,
+    /// The image its sections name.
+    pub forged: Image,
+    /// The nodes that heard the forger's section, and those offered its
+    /// image.
+    pub forged_heard: std::collections::BTreeSet<u32>,
+    pub forged_offered: std::collections::BTreeSet<u32>,
+    /// Per node, when it began to gather the forged image, while it does.
+    forged_since: std::collections::HashMap<u32, Instant>,
+    /// The longest any node gathered it at a stretch.
+    pub forged_longest: bark_proto::Duration,
+    /// Its gathers given up unproven.
+    pub forged_given_up: usize,
+    /// A second release, one version up, and per node when it came to hold
+    /// it (`scenario::UpdateSpec::next_at_s`).
+    pub next: Image,
+    pub next_holds_at: Vec<Option<Instant>>,
+    /// Per node, the image it gathers.
+    gathers: Vec<Option<Image>>,
+    /// The release's gathers given up unproven: the node and when.
+    pub dropped: Vec<(u32, Instant)>,
+    /// Per node gathering the release, when it began, until its proof.
+    began: std::collections::HashMap<u32, Instant>,
+    /// How long each gather of the release took to its proof.
+    pub proved_after: Vec<bark_proto::Duration>,
 }
 
 impl UpdateRun {
@@ -130,6 +159,25 @@ impl UpdateRun {
             opens: std::collections::BTreeMap::new(),
             gathered: [0; 3],
             heard_by: std::collections::HashSet::new(),
+            forger: None,
+            forged: Image {
+                version: FORGED,
+                ..image
+            },
+            forged_heard: std::collections::BTreeSet::new(),
+            forged_offered: std::collections::BTreeSet::new(),
+            forged_since: std::collections::HashMap::new(),
+            forged_longest: bark_proto::Duration::ZERO,
+            forged_given_up: 0,
+            next: Image {
+                version: image.version + 1,
+                ..image
+            },
+            next_holds_at: vec![None; nodes],
+            gathers: vec![None; nodes],
+            dropped: Vec::new(),
+            began: std::collections::HashMap::new(),
+            proved_after: Vec::new(),
         }
     }
 
@@ -138,13 +186,87 @@ impl UpdateRun {
         self.holds_at[self.holder as usize] = Some(now);
     }
 
+    /// The second release is given to the first holder.
+    pub fn give_next(&mut self, now: Instant) {
+        self.next_holds_at[self.holder as usize] = Some(now);
+    }
+
     /// The policy takes every image offered.
-    pub fn offered(&mut self, node: u32, image: Image) {
+    pub fn offered(&mut self, node: u32, image: Image, now: Instant) {
+        self.forged_ends(node, now);
+        if image == self.forged {
+            self.forged_offered.insert(node);
+            self.forged_since.insert(node, now);
+            self.began.remove(&node);
+        } else {
+            self.began.insert(node, now);
+        }
+        self.gathers[node as usize] = Some(image);
         self.kept.retain(|k, _| k.0 != node);
         self.has.retain(|k| k.0 != node);
         self.decoded[node as usize] = 0;
         self.owed
             .push((node, AppCommand::Gather { image, from: 0 }));
+    }
+
+    /// The core gave up the image it gathered unproven: its pieces are
+    /// forgotten.
+    pub fn unproven(&mut self, node: u32, version: u32, now: Instant) {
+        if version == self.forged.version {
+            self.forged_ends(node, now);
+            self.forged_given_up += 1;
+        } else {
+            self.dropped.push((node, now));
+            self.began.remove(&node);
+        }
+        self.kept.retain(|k, _| k.0 != node);
+        self.has.retain(|k| k.0 != node);
+        self.decoded[node as usize] = 0;
+    }
+
+    fn forged_ends(&mut self, node: u32, now: Instant) {
+        if let Some(t) = self.forged_since.remove(&node) {
+            self.forged_longest = self.forged_longest.max(now.since(t));
+        }
+    }
+
+    /// The longest any node has gathered the forged image at a stretch,
+    /// those that still do counted to `now`, and how many still do.
+    pub fn forged_gathers(&self, now: Instant) -> (bark_proto::Duration, usize) {
+        let open = self.forged_since.values().map(|&t| now.since(t)).max();
+        (
+            open.map_or(self.forged_longest, |o| o.max(self.forged_longest)),
+            self.forged_since.len(),
+        )
+    }
+
+    /// Node `node` heard the forger's section.
+    pub fn heard_forged(&mut self, node: u32) {
+        self.forged_heard.insert(node);
+    }
+
+    /// A heartbeat of the forger, while it forges, carries the forged
+    /// section in place of its own.
+    pub fn forge(&self, node: u32, f: &mut bark_proto::Frame, now: Instant) {
+        use bark_proto::update::{Section, SECTION_LEN};
+        use bark_proto::wire::{encode_section, Packet, HEARTBEAT_LEN};
+        if self
+            .forger
+            .is_none_or(|(n, until)| n != node || now >= until)
+            || !matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_)))
+        {
+            return;
+        }
+        let section = Section {
+            runs: 1,
+            image: Some(self.forged),
+            complete: bark_proto::update::PROOF_BLOCKS,
+            have: 0,
+        };
+        let mut b = [0u8; SECTION_LEN];
+        encode_section(&section, &mut b);
+        f.bytes[HEARTBEAT_LEN..HEARTBEAT_LEN + SECTION_LEN].copy_from_slice(&b);
+        f.len = (HEARTBEAT_LEN + SECTION_LEN) as u8;
     }
 
     /// A piece kept; a block decodes at its pieces, and the last block
@@ -157,6 +279,12 @@ impl UpdateRun {
         }
         self.kept.remove(&(node, p.block));
         self.has.insert((node, p.block));
+        let proof = (0..bark_proto::update::PROOF_BLOCKS).all(|b| self.has.contains(&(node, b)));
+        if proof {
+            if let Some(t) = self.began.remove(&node) {
+                self.proved_after.push(now.since(t));
+            }
+        }
         let d = &mut self.decoded[node as usize];
         *d += 1;
         let all = usize::from(*d) == self.needs.len();
@@ -168,8 +296,13 @@ impl UpdateRun {
             },
         ));
         if all {
-            self.owed.push((node, AppCommand::Holds(self.image)));
-            self.holds_at[node as usize].get_or_insert(now);
+            let image = self.gathers[node as usize].take().unwrap_or(self.image);
+            self.owed.push((node, AppCommand::Holds(image)));
+            let at = match image == self.next {
+                true => &mut self.next_holds_at,
+                false => &mut self.holds_at,
+            };
+            at[node as usize].get_or_insert(now);
         }
     }
 
@@ -345,6 +478,26 @@ impl UpdateRun {
     /// image: `node,<index>,<seconds after the image was given>`.
     pub fn csv(&self) -> String {
         let mut out = self.series.clone();
+        let mut proved: Vec<u64> = self
+            .proved_after
+            .iter()
+            .map(|d| d.as_micros() / 1_000_000)
+            .collect();
+        proved.sort_unstable();
+        let at =
+            |q: usize| proved.get((proved.len() * q / 100).min(proved.len().saturating_sub(1)));
+        let _ = writeln!(
+            out,
+            "# gathers proven {}, after s: median {:?}, p90 {:?}, p99 {:?}, most {:?}; given up unproven {}; unproven at the end {}, begun at s {:?}",
+            proved.len(),
+            at(50),
+            at(90),
+            at(99),
+            proved.last(),
+            self.dropped.len(),
+            self.began.len(),
+            self.began.values().map(|t| t.as_micros() / 1_000_000).min(),
+        );
         out.push_str("# node,index,holds_after_s\n");
         for (i, t) in self.holds_at.iter().enumerate() {
             if let Some(t) = t {

@@ -152,9 +152,14 @@ fn sha(bytes: &[u8]) -> [u8; HASH_LEN] {
 /// slots changed after it was named.
 fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>, resigned: bool) -> Built {
     let mut rng = Rng(seed);
-    let mut stream: Vec<u8> = (0..HEADER_LEN + firmware)
+    let stream: Vec<u8> = (0..HEADER_LEN + firmware)
         .map(|_| rng.next() as u8)
         .collect();
+    from_stream(stream, name, resigned)
+}
+
+/// An image of `stream`, its header and firmware, as [`build`] makes it.
+fn from_stream(mut stream: Vec<u8>, name: Option<[u8; HASH_LEN]>, resigned: bool) -> Built {
     let name = name.unwrap_or_else(|| sha(&stream[..SIGNED_LEN]));
     if resigned {
         for b in &mut stream[SIGNED_LEN..HEADER_LEN] {
@@ -168,8 +173,10 @@ fn build(firmware: usize, seed: u64, name: Option<[u8; HASH_LEN]>, resigned: boo
         .collect();
     let mut blocks: Vec<Vec<[u8; PIECE]>> = pieces.chunks(DATA).map(|c| c.to_vec()).collect();
     let mut table = name.to_vec();
-    for b in &blocks {
-        table.extend_from_slice(&sha(b.as_flattened())[..ENTRY]);
+    for (b, data) in blocks.iter().enumerate() {
+        // Block 1's entry leaves out the header.
+        let from = if b == 0 { HEADER_LEN } else { 0 };
+        table.extend_from_slice(&sha(&data.as_flattened()[from..])[..ENTRY]);
     }
     let own = sha(&table);
     table.extend_from_slice(&own[..ENTRY]);
@@ -441,13 +448,124 @@ fn a_header_whose_signed_bytes_are_not_the_name_fails_its_block() {
 
 #[test]
 fn an_image_signed_again_keeps_its_name() {
-    // Other signature slots, the same signed bytes: the same name, and
-    // the block passes; the signatures are checked at install.
+    // Other signature slots, the same signed bytes: the same name and the
+    // same table, and the block passes; the signatures are checked once
+    // blocks 0 and 1 are held.
     let first = build(3000, 19, None, false);
     let again = build(3000, 19, None, true);
     assert_eq!(first.image, again.image);
     assert_ne!(first.stream, again.stream);
+    assert_eq!(first.blocks[0], again.blocks[0]);
     gathered(&again, 20);
+}
+
+/// The key the proof's tests sign with.
+fn signer() -> ed25519_compact::KeyPair {
+    ed25519_compact::KeyPair::from_seed(ed25519_compact::Seed::new([3; 32]))
+}
+
+fn proof_keys() -> [Key; KEYS] {
+    let mut k = [Key::NONE; KEYS];
+    k[1] = Key {
+        id: 4,
+        public: *signer().pk,
+    };
+    k
+}
+
+/// An image of random firmware under a header of `version`, `table` its
+/// table hash, signed by [`signer`] in its first slot.
+fn signed(firmware: usize, version: u32, table: Option<[u8; HASH_LEN]>) -> Built {
+    let mut rng = Rng(u64::from(version));
+    let body: Vec<u8> = (0..firmware).map(|_| rng.next() as u8).collect();
+    let mut entries = Entries::new();
+    entries.feed(&[0; HEADER_LEN], |_, _| ());
+    entries.feed(&body, |_, _| ());
+    let mut h = Header {
+        version,
+        length: firmware as u32,
+        hash: sha(&body),
+        table: table.unwrap_or_else(|| entries.finish(firmware as u32, |_, _| ())),
+    }
+    .encode();
+    h[SIGNED_LEN] = 4;
+    let signature = *signer().sk.sign(&h[..SIGNED_LEN], None);
+    h[SIGNED_LEN + 1..SIGNED_LEN + sign::SLOT_LEN].copy_from_slice(&signature);
+    let mut stream = h.to_vec();
+    stream.extend_from_slice(&body);
+    let mut built = from_stream(stream, None, false);
+    built.image.version = version;
+    built.image.key = 4;
+    built
+}
+
+/// Blocks 0 and 1 of an image signed by a held key, whose header names
+/// its table, prove it; a table, a version, a shape or a key not the
+/// header's does not (spec "Updates over the mesh").
+#[test]
+fn the_first_two_blocks_prove_the_image() {
+    let firmware = 2 * DATA * PIECE + 500;
+    let built = signed(firmware, 9, None);
+    let (mut flash, _) = gathered(&built, 31);
+    let store = {
+        let mut s = Store::open(&mut flash).unwrap();
+        s.begin(built.image);
+        while s.poll(&mut flash).unwrap() != Poll::Idle {}
+        s
+    };
+    let header = store.header(&mut flash).unwrap().unwrap();
+    let table = store.table().unwrap();
+    let image = built.image;
+    let keys = proof_keys();
+    let h = check_proof(&header, table, &image, 8, &keys).unwrap();
+    assert_eq!((h.version, h.length), (9, firmware as u32));
+    // The table the holder makes of what it holds hashes the same.
+    let mut made = Table::new(image, &name(&header));
+    let mut tabling = Tabling::new();
+    tabling.feed(&mut made, &built.stream[..HEADER_LEN + firmware]);
+    let hashes = tabling.finish(&mut made);
+    assert_eq!(hashes.table, h.table);
+    assert_eq!(hashes.firmware, h.hash);
+    assert_eq!(&made.bytes[..table.len()], table);
+    // Running it already, or another version than the section's.
+    assert_eq!(
+        check_proof(&header, table, &image, 9, &keys),
+        Err(ProofError::Version(9))
+    );
+    let other = Image {
+        version: 10,
+        ..image
+    };
+    assert_eq!(
+        check_proof(&header, table, &other, 8, &keys),
+        Err(ProofError::Version(9))
+    );
+    let longer = Image {
+        last: image.last - 1,
+        ..image
+    };
+    assert_eq!(
+        check_proof(&header, table, &longer, 8, &keys),
+        Err(ProofError::Shape)
+    );
+    assert_eq!(
+        check_proof(&header, table, &image, 8, &[Key::NONE; KEYS]),
+        Err(ProofError::Signature(SignatureError::UnknownKey))
+    );
+    let mut table2 = table.to_vec();
+    table2[HASH_LEN] ^= 1;
+    assert_eq!(
+        check_proof(&header, &table2, &image, 8, &keys),
+        Err(ProofError::Table)
+    );
+    // Signed, but naming another table.
+    let wrong = signed(firmware, 9, Some([1; HASH_LEN]));
+    let header = &wrong.stream[..HEADER_LEN].try_into().unwrap();
+    let table = &wrong.blocks[0].as_flattened()[..table.len()];
+    assert_eq!(
+        check_proof(header, table, &wrong.image, 8, &keys),
+        Err(ProofError::Table)
+    );
 }
 
 #[test]
@@ -531,7 +649,11 @@ fn a_holder_makes_the_blocks_a_gatherer_takes() {
         tabling.feed(&mut table, chunk);
     }
     let hash = tabling.finish(&mut table);
-    assert_eq!(hash, sha(&built.stream[HEADER_LEN..HEADER_LEN + firmware]));
+    assert_eq!(
+        hash.firmware,
+        sha(&built.stream[HEADER_LEN..HEADER_LEN + firmware])
+    );
+    assert_eq!(hash.table, table_hash(&table.bytes, image.blocks));
     // Fed by halves, a part at a time, as the firmware feeds it.
     let mut halves = Table::new(image, &name(header));
     let mut tabling = Tabling::new();
@@ -741,5 +863,35 @@ fn a_holder_serves_every_piece_of_every_block() {
         let mut out = vec![[0u8; PIECE]; n];
         crate::code::decode(&indices, &coded[CODED - n..], &mut out).unwrap();
         assert_eq!(&out, block, "block {b}");
+    }
+}
+
+/// The table hash as `bark-fw/scripts/uf2.py`'s `table_hash` makes it, of
+/// firmware of bytes `i % 251`: a short last block, two whole blocks, a
+/// byte; `bark-fw/scripts/test_image.py` holds the script to the same.
+#[test]
+fn the_table_hash_is_the_scripts() {
+    let hex = |s: &str| -> [u8; HASH_LEN] {
+        core::array::from_fn(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+    };
+    for (n, want) in [
+        (
+            40_000,
+            "60157232e6c3bf5dec13d14b5770636e0047f1d46b93521762a5db6a55817bb3",
+        ),
+        (
+            2 * DATA * PIECE - HEADER_LEN,
+            "838fcb1a622ac4ac1e1f104a28fbf8e7626d45465169447342cc09d85948b312",
+        ),
+        (
+            1,
+            "42c4462d671587364a6d739226b8c42ff1b1aa9f53399a8b25f723bb7b420efa",
+        ),
+    ] {
+        let firmware: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+        let mut entries = Entries::new();
+        entries.feed(&[0xee; HEADER_LEN], |_, _| ());
+        entries.feed(&firmware, |_, _| ());
+        assert_eq!(entries.finish(n as u32, |_, _| ()), hex(want), "{n} bytes");
     }
 }

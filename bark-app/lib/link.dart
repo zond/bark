@@ -718,7 +718,7 @@ class FirmwareImage {
   static const headerLen = 256;
   static const hashLen = 32;
   static final _magic = 'bark'.codeUnits;
-  static const _format = 1;
+  static const _format = 2;
 
   final Uint8List header;
   final Uint8List bytes;

@@ -2567,7 +2567,7 @@ and its SHA-256, and then its bytes.
    and the read fit, and the read, answered only once the pieces before
    it are written, is the flow control.
 3. With every byte held, the app writes 1 to commit: the node checks the
-   image against the header's hash, and every other check its console's
+   image against the header's hashes, and every other check its console's
    commit makes, and asks the loader for the swap.
 4. The app writes 2 to reboot: the node answers, ends the link and
    resets.
@@ -2584,7 +2584,7 @@ with the ATT error 0x81, refused, and Update says why:
 | 2, version | not above the version the node runs |
 | 3, busy | a swap is asked for already: reboot first |
 | 4, incomplete | not every byte is held |
-| 5, hash | the bytes do not hash to the header's hash, and are forgotten |
+| 5, hash | the bytes do not hash to the header's hashes, of the image and of its block table, and are forgotten |
 | 6, battery | on battery at or below the low level ([implementation notes](#implementation-notes)); the image stays staged, to commit on external power |
 | 7, flash | the flash failed, and the image is forgotten |
 | 8, signature | no signature in the header verifies under a key the node holds |
@@ -3046,8 +3046,9 @@ node's firmware chooses whose images it takes, so that a node of another
 implementation is never overwritten against its will.
 
 **The image.** An image is named by the SHA-256 of its signed header, the
-48 bytes of its header that its signatures cover: magic, format, version,
-length and the image's own SHA-256 (`bark-image`, `sign.rs`). A version
+80 bytes of its header that its signatures cover: magic, format, version,
+length, the image's own SHA-256 and that of its block table, below
+(`bark-image`, `lib.rs`, `sign.rs`). A version
 names one image, as a release takes its version from its tag, so the
 mesh names an image by its version; the 32-byte name stays with the node
 that holds the image. What travels is the image as packed, its 256-byte
@@ -3056,7 +3057,7 @@ header and then its bytes, in **blocks** (`bark-image`, `pieces.rs`):
 | block | content |
 |---|---|
 | 0, the block table | the whole name, the first 8 bytes of the SHA-256 of each other block, then 8 bytes of the SHA-256 of all of that, its own; one piece up to 26 blocks, two up to 48 |
-| 1 and on | the packed image in blocks of 64 pieces of 247 bytes, the last block shorter and its last piece padded; block 1 begins with the signed header, which hashes to the name |
+| 1 and on | the packed image in blocks of 64 pieces of 247 bytes, the last block shorter and its last piece padded; block 1 begins with the signed header, which hashes to the name, and its entry in the table hashes it from the header's end |
 
 Each block is sent as up to 255 coded pieces, and any 64 distinct ones of
 a block, or as many as it has, give it back (a Reed-Solomon code over
@@ -3074,9 +3075,28 @@ build under the same version spoils at most the block it lands in, which
 is gathered again, and is never installed. A node whose blocks fail
 their check twice logs that two builds may carry one number.
 
+**The proof.** A section can name an image nobody holds, by a bug or on
+purpose ([no authentication](#what-the-protocol-omits)), so a node trusts
+an image only once blocks 0 and 1 prove it. The header's signatures cover
+the SHA-256 of the table's entries of blocks 1 on: not the name, which
+hashes the header, nor the table's own entry, which hashes the rest.
+Block 1's entry leaves the header out, since the name and the signatures
+check it, so the table does not depend on the header, and an image signed
+again keeps its table as it keeps its name. Once a node holds blocks 0
+and 1 its firmware checks that the header is of the version offered and
+above its own, that its length gives the blocks offered, that a
+signature verifies under a key it holds, and that its table hash is the
+table's (`bark-image`, `pieces.rs`, `check_proof`); every later block is then the
+signer's by its entry. Only then does the node count block 1 held: it
+holds the image's **proof**. A proof that fails forgets the image. The
+firmware checks the table hash of an image staged from a phone or over
+USB as it checks the image's hash, and that of the image it runs before
+it serves it, so that no node serves what the others would refuse.
+
 A node **holds** an image's blocks once each has decoded and passed its
-hash; it serves those, whether it holds the whole image or some of its
-blocks. A block that failed is never served.
+hash, and block 1 the proof; it serves those, whether it holds the whole
+image or some of its blocks, and only of an image whose proof it holds.
+A block that failed is never served.
 
 **What a node tells.** A heartbeat may carry a **section** after its
 first 13 bytes ([packet formats](#packet-formats)): the version the node
@@ -3122,17 +3142,48 @@ none. No node that runs a newer image gathers the lowest.
 
 **Who sends what.**
 
-1. A node that hears a section naming an image of a version above the one
-   it runs and the one it gathers asks its firmware, once, whether its
-   policy takes the image. If it does, the node gathers it; an image of a
-   higher version heard later replaces it.
+1. A section **offers** the image it names only if its sender holds the
+   image's proof, blocks 0 and 1, so that a node passes on no claim it
+   cannot check; and to a sleepy node only if it is its anchor, the one
+   relay that streams to it. A node that hears an offer of a version above
+   the one it runs and the image it holds asks its firmware, once, whether
+   its policy takes the image, and if it does gathers it.
+
+   A gather that takes pieces holds its place against any claim: no offer
+   replaces it while it has taken a piece within **3 990.9 s**, since a
+   holder that offered it tells its section again at least hourly and
+   streams to it once it hears that, and a lease more rides out a telling
+   lost, 3 600 s + 2 × 195 s + 872.8 ms (`bark-proto`, `update.rs`,
+   `fed_within`). A newer image is taken once the gathered one is
+   installed, since it is then newer than what the node runs, or once
+   that is rejected. Only a gather not fed for that long gives way: an
+   unproven one to an older image, since nobody may hold it, and it is
+   then held off, below; a proven one to a newer image, since its holders
+   may have moved on to that. An unproven gather gives way to a newer
+   image at once.
+
+   The node gives a gather up while it is still unproven, and its firmware
+   forgets the pieces, once it has taken no piece of it for
+   **104 866 s**, 29.1 hours, since a claimant can keep claiming: a
+   worst-case rotation for its section to reach a holder, two sweeps of
+   the largest image at the pace, since a holder sweeps the blocks in
+   order on two channels at most and a gatherer that comes in behind or
+   elsewhere may wait a whole sweep and, a piece lost, another,
+   2 × 3 763 × 13.86 s, and a lease, 195 s + 104 280.3 s + 2 × 195 s +
+   872.8 ms (`unproven_within`). It takes no offer of a version given up
+   so, left unfed for an older one, or whose proof failed, for as long
+   again, so that an image nobody holds keeps it at most half of its time;
+   not for good, since anyone can name a release's version before it
+   comes. A gather not yet proven is forgotten at a reboot, since the
+   node's clock does not outlast one, and at most two blocks are lost; one
+   proven is proven again.
 2. A node that gathers hands its firmware every piece it has not handed
    before of every block it lacks, and no other: at most 48 blocks of 64,
    the lanes the firmware keeps them in. When the firmware says a block
    failed its hash, it takes that block's pieces again, and does not
    count it held.
 3. A relay **helps** a channel where a neighbour's section says it
-   gathers the image the relay gathers or holds and lacks a block the
+   gathers the image the relay holds or has proven and lacks a block the
    relay holds: it **streams** there, at the gap or the pace (below),
    from the blocks it holds, to each gatherer from the first block it
    lacks. It streams to a sleepy gatherer only as its anchor, the relay
@@ -3211,7 +3262,9 @@ pieces it hears in its windows ([delivery](#delivery)) and after its
 anchor's slot heartbeats. While one of its sleepy nodes lacks a
 block the anchor holds, the anchor's slot heartbeat there, the one its
 sleepy nodes listen for ([relay choice](#relay-choice)), carries its
-section every rotation, and a **run** of pieces follows it at once: the
+section every rotation, naming the image it streams them, the one it
+holds whole in place of a gather not yet proven, and a **run** of pieces
+follows it at once: the
 pieces of its stream on that channel that the pace gives it in one
 rotation, 9 in a rotation of 130 s and 14 in one of 195 s, less the pieces
 it heard others send there since its last slot heartbeat, of which it
@@ -3301,7 +3354,7 @@ so never serves it. A release after it has a higher version and is taken
 as usual. The page holds 1 024 versions, and when full is erased and
 starts again with the newest.
 
-**What a node keeps** for an update is 1 880 bytes beside the tables,
+**What a node keeps** for an update is 1 984 bytes beside the tables,
 and 16 bytes in each neighbour's entry for its section and when it was
 heard (`core-interface.md`, Memory).
 
@@ -3329,7 +3382,13 @@ any frame and disrupt its district, within its duty cycle and unnoticed:
 - take a message in a relay's name, and the message is lost;
 - send a heartbeat in an anchor's name and send its sleepy nodes
   elsewhere ([relay choice](#relay-choice));
-- claim the position of a destination and own it ([owner](#owner)).
+- claim the position of a destination and own it ([owner](#owner));
+- name in its section an image nobody holds, which the nodes that hear
+  it gather for an hour before a real release offered takes its place,
+  and give up unproven 29.1 hours on, and as long again not
+  ([updates over the mesh](#updates-over-the-mesh)): it holds back no
+  real image and goes no further than its hearers, but a node that keeps
+  naming one slows the update of those that hear it, as jamming would.
 
 The design resists collisions and overload, not adversaries: a real node
 with a few judicious bugs breaks large parts of the network whether or
@@ -3444,8 +3503,8 @@ HEARTBEAT first(1) format(1) flags(1) id(6) short_pos(4)                    = 13
           version = the newest image it holds or gathers, 0 for none;
           key = which signer's key signed it; blocks = its blocks, 2 to 48; last =
           the pieces of its last block, 1 to 64; complete = the blocks
-          the node holds from the first; have = the pieces it holds of
-          block `complete`
+          the node holds from the first, 2 or more when it offers the
+          image; have = the pieces it holds of block `complete`
 ACK       first(1) format(1) id(4) from(6) to(6)                            = 18
           the answer to a DATA, taken, refused or seen; sent on the channel
           in the answered packet's aux

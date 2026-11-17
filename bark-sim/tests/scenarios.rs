@@ -1028,3 +1028,85 @@ fn nodes_reboot_into_a_staged_image_within_the_bound() {
         accounted(&sim, "mesh-spread installing");
     }
 }
+
+/// A relay whose heartbeats claim an image of a version far above any
+/// release, from the start to an hour into a release given after the
+/// bound: the nodes that hear it gather that image, give it up unproven
+/// within the bound, and no other node is offered it; the release still
+/// comes to every node (spec "Updates over the mesh").
+#[test]
+fn a_forged_section_holds_no_node_and_spreads_no_further() {
+    let config = bark_proto::Config::default();
+    let bound = bark_proto::update::unproven_within(&config);
+    let release = bound + bark_proto::Duration::from_secs(3600);
+    let mut sc = scenario("mesh-spread.toml");
+    sc.duration_s = (release + bark_proto::Duration::from_secs(8 * 3600)).as_micros() as f64 / 1e6;
+    sc.update = Some(bark_sim::scenario::UpdateSpec {
+        at_s: Some(release.as_micros() as f64 / 1e6),
+        // The table and three blocks, the last short.
+        image_bytes: 40_000,
+        forger: Some("R5".into()),
+        forged_until_s: Some(release.as_micros() as f64 / 1e6 + 3600.0),
+        ..Default::default()
+    });
+    let mut sim = Sim::new(&sc).expect("builds");
+    sim.run();
+    let u = sim.update().expect("an update");
+    let end = bark_proto::Instant::ZERO
+        + bark_proto::Duration::from_micros(sc.duration_s as u64 * 1_000_000);
+    // Those that gather it at the end, taken again after a reboot into
+    // the release cleared what they held off, count to the end.
+    let (longest, _) = u.forged_gathers(end);
+    let lacking: Vec<usize> = (0..u.holds_at.len())
+        .filter(|&i| u.holds_at[i].is_none())
+        .collect();
+    println!(
+        "heard the forger {:?}, offered its image {:?}, given up unproven {}, longest gather of it {longest:?}, without the release {lacking:?}",
+        u.forged_heard, u.forged_offered, u.forged_given_up
+    );
+    assert!(!u.forged_offered.is_empty(), "nobody took the forged image");
+    assert!(u.forged_offered.is_subset(&u.forged_heard), "it spread");
+    assert!(u.forged_given_up > 0, "none gave it up at the bound");
+    // On a node's own clock, which runs within 100 ppm of the shared rate.
+    assert!(
+        longest <= bound.mul(10_001).div(10_000),
+        "{longest:?} over {bound:?}"
+    );
+    assert!(lacking.is_empty(), "nodes without the release: {lacking:?}");
+    assert!(
+        u.dropped.is_empty(),
+        "the release given up unproven: {:?}",
+        u.dropped
+    );
+}
+
+/// Two releases in a row, the second given while nodes still gather the
+/// first: every node comes to hold the second
+/// (spec "Updates over the mesh").
+#[test]
+fn a_release_that_follows_another_reaches_every_node() {
+    let mut sc = scenario("mesh-spread.toml");
+    sc.duration_s = 12.0 * 3600.0;
+    sc.update = Some(bark_sim::scenario::UpdateSpec {
+        image_bytes: 40_000,
+        next_at_s: Some(3600.0),
+        ..Default::default()
+    });
+    let mut sim = Sim::new(&sc).expect("builds");
+    sim.run();
+    let u = sim.update().expect("an update");
+    let s = |t: &Option<bark_proto::Instant>| t.map(|t| t.as_micros() / 1_000_000);
+    let first: Vec<_> = u.holds_at.iter().map(s).collect();
+    let next: Vec<_> = u.next_holds_at.iter().map(s).collect();
+    let lacking: Vec<usize> = (0..next.len()).filter(|&i| next[i].is_none()).collect();
+    println!(
+        "the first release held by {} nodes, the second by {}, the last at {:?} s; without it: {lacking:?}",
+        first.iter().flatten().count(),
+        next.iter().flatten().count(),
+        next.iter().flatten().max(),
+    );
+    assert!(
+        lacking.is_empty(),
+        "nodes without the second release: {lacking:?}"
+    );
+}

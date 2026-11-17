@@ -71,6 +71,8 @@ pub(crate) enum Ev {
     /// The update's first relay is given the image
     /// (spec "Updates over the mesh").
     Update,
+    /// The update's first relay is given a second release.
+    UpdateNext,
     /// A row of the update's series.
     UpdateSample,
     /// A node's image, gathered over the mesh, is whole and staged
@@ -1793,14 +1795,19 @@ impl Sim {
             }
         };
         let at = Instant::ZERO + secs(u.at_s.unwrap_or_else(|| sc.settled_s()));
-        self.update = Some(crate::update::UpdateRun::new(
-            u.image_bytes,
-            holder,
-            at,
-            self.xy.len(),
-        ));
+        let mut run = crate::update::UpdateRun::new(u.image_bytes, holder, at, self.xy.len());
+        if let Some(name) = &u.forger {
+            let until = u
+                .forged_until_s
+                .map_or(Instant::MAX, |s| Instant::ZERO + secs(s));
+            run.forger = Some((resolve(placed, name)?, until));
+        }
+        self.update = Some(run);
         self.push(at, Ev::Update);
         self.push(at, Ev::UpdateSample);
+        if let Some(s) = u.next_at_s {
+            self.push(Instant::ZERO + secs(s), Ev::UpdateNext);
+        }
         Ok(())
     }
 
@@ -1840,6 +1847,11 @@ impl Sim {
             count_at(0.99),
             count_at(0.999),
         )
+    }
+
+    /// The update's run, if the scenario has one.
+    pub fn update(&self) -> Option<&crate::update::UpdateRun> {
+        self.update.as_ref()
     }
 
     /// The update's series, and when each node came to hold the image.
@@ -2051,6 +2063,13 @@ impl Sim {
                 if let Some(u) = self.update.as_mut() {
                     let (holder, image) = (u.holder, u.image);
                     u.give(self.now);
+                    self.deliver(holder, Event::App(AppCommand::Holds(image)));
+                }
+            }
+            Ev::UpdateNext => {
+                if let Some(u) = self.update.as_mut() {
+                    let (holder, image) = (u.holder, u.next);
+                    u.give_next(self.now);
                     self.deliver(holder, Event::App(AppCommand::Holds(image)));
                 }
             }
@@ -2280,6 +2299,11 @@ impl Sim {
                 }
                 Ok(Packet::Heartbeat(hb)) => {
                     self.beat_from.insert(node, (key(hb.id), now));
+                    let forger = u.forger.map(|(f, _)| self.relays[f as usize].id());
+                    let section = bark_proto::wire::decode_section(bytes);
+                    if forger == Some(hb.id) && section.and_then(|s| s.image) == Some(u.forged) {
+                        u.heard_forged(node);
+                    }
                 }
                 _ => {}
             }
@@ -2827,7 +2851,12 @@ impl Sim {
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
             Action::Offered(image) => {
                 if let Some(u) = self.update.as_mut() {
-                    u.offered(node, image);
+                    u.offered(node, image, self.now);
+                }
+            }
+            Action::Unproven(version) => {
+                if let Some(u) = self.update.as_mut() {
+                    u.unproven(node, version, self.now);
                 }
             }
             Action::StorePiece(p) => {
@@ -2839,7 +2868,10 @@ impl Sim {
                 }
             }
             // The piece's bytes are the driver's; here there are none.
-            Action::Transmit(f) | Action::Serve(f) => {
+            Action::Transmit(mut f) | Action::Serve(mut f) => {
+                if let Some(u) = self.update.as_ref() {
+                    u.forge(node, &mut f, self.now);
+                }
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
                 let home_beat = f.channel == self.relays[node as usize].home()

@@ -2,7 +2,7 @@
 //! it gathers one, and when it may reboot into one it gathered (spec
 //! "Updates over the mesh"). Pure, so that the host tests it.
 
-use crate::sign::{Key, NONE, SLOTS};
+use crate::sign::{Key, KEYS, NONE};
 
 /// What the node knows when a neighbour's image is offered to it.
 #[derive(Clone, Copy, Debug)]
@@ -20,8 +20,9 @@ pub struct Offer {
 
 /// Whether the node gathers the image: above the version it runs, said to
 /// be signed by a key it holds, and while the phone does not hold the
-/// staged slot. The signature itself is checked once the image is whole.
-pub fn takes(offer: Offer, keys: &[Key; SLOTS]) -> bool {
+/// staged slot. The signature itself is checked once blocks 0 and 1 have
+/// come (`pieces::check_proof`), and again as the whole image is staged.
+pub fn takes(offer: Offer, keys: &[Key; KEYS]) -> bool {
     offer.version > offer.running
         && offer.key != NONE
         && keys.iter().any(|k| k.id == offer.key)
@@ -94,8 +95,8 @@ pub fn quiet(m: Moment) -> bool {
 mod tests {
     use super::*;
 
-    fn keys() -> [Key; SLOTS] {
-        let mut k = [Key::NONE; SLOTS];
+    fn keys() -> [Key; KEYS] {
+        let mut k = [Key::NONE; KEYS];
         k[0].id = 1;
         k[1].id = 2;
         k
@@ -141,7 +142,7 @@ mod tests {
             },
             &keys()
         ));
-        assert!(!takes(offer(), &[Key::NONE; SLOTS]));
+        assert!(!takes(offer(), &[Key::NONE; KEYS]));
     }
 
     #[test]

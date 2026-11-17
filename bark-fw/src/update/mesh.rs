@@ -2,8 +2,9 @@
 //! (spec "Updates over the mesh"; `bark-fw/README.md`, "Updates"): it
 //! tells the core the image it runs, answers each image a neighbour offers by its policy
 //! (`bark_image::policy`), keeps the pieces the core hands it in the store
-//! on the external flash (`bark_image::pieces`), fills the pieces the core
-//! serves, and stages a gathered image as the phone's update does, to
+//! on the external flash (`bark_image::pieces`), checks the image's proof
+//! once blocks 0 and 1 are in (`pieces::check_proof`), fills the pieces the
+//! core serves, and stages a gathered image as the phone's update does, to
 //! reboot into it at a quiet moment.
 //!
 //! Its task steps the store one flash operation or one part of a piece
@@ -25,11 +26,11 @@ use bark_image::layout::{ACTIVE, RECORD, STATE};
 use bark_image::pieces::{self, Begin, Poll, Store, Table, Tabling};
 use bark_image::policy;
 use bark_image::{sign, Header, HEADER_LEN};
-use bark_proto::update::{Image, Piece};
+use bark_proto::update::{Image, Piece, PROOF_BLOCKS};
 use bark_proto::wire::{Packet, Update, PIECE_BYTES, PIECE_HEADER_LEN};
 use bark_proto::Frame;
 use embassy_embedded_hal::flash::partition::Partition;
-use embassy_futures::select::{select4, Either4};
+use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, ThreadModeRawMutex};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::channel::Channel;
@@ -71,6 +72,8 @@ type Named = (u32, u8, u8);
 struct ToTask {
     /// The newest image a neighbour's section offered.
     offered: Signal<CriticalSectionRawMutex, Image>,
+    /// The version the core gave up unproven.
+    unproven: Signal<CriticalSectionRawMutex, u32>,
     /// A piece went into the store's queue, or the store let go of its
     /// image.
     piece_in: Signal<CriticalSectionRawMutex, ()>,
@@ -80,6 +83,7 @@ struct ToTask {
 
 static TO_TASK: ToTask = ToTask {
     offered: Signal::new(),
+    unproven: Signal::new(),
     piece_in: Signal::new(),
     serve: Signal::new(),
 };
@@ -178,6 +182,11 @@ pub fn request() -> Option<Request> {
 /// A neighbour's image newer than this node's (`Action::Offered`).
 pub fn offered(image: &Image) {
     TO_TASK.offered.signal(*image);
+}
+
+/// The core gave up the image gathered, unproven (`Action::Unproven`).
+pub fn unproven(version: u32) {
+    TO_TASK.unproven.signal(version);
 }
 
 /// Keep a piece (`Action::StorePiece`). One the store has no room for
@@ -541,8 +550,10 @@ async fn running(flash: &super::Flash) -> Option<Image> {
     let ok = RUNNING.lock(|r| {
         let mut r = r.borrow_mut();
         let r = r.as_mut()?;
-        let hash = tabling.finish(&mut r.table);
-        r.checked = hash == h.hash;
+        let hashes = tabling.finish(&mut r.table);
+        // A table the header does not name would fail every gatherer's
+        // proof.
+        r.checked = hashes.firmware == h.hash && hashes.table == h.table;
         Some(r.checked)
     });
     if ok != Some(true) {
@@ -650,11 +661,19 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             }
         }
     }
-    // What a reset left: gone on with if it is still wanted, else given
-    // up, as after the swap into it.
+    // What a reset left: gone on with if it is still wanted and proven,
+    // proven again since a reset may have come between the decoding of
+    // blocks 0 and 1 and the proof; else given up, as after the swap into
+    // it. One not yet proven is given up too: the core's bound on it does
+    // not outlast a reset, and at most two blocks are lost.
     let mut gather = STORE.lock(|s| s.borrow().image());
     if let Some(i) = gather {
-        if i.version <= BARK_IMAGE_VERSION || slot_taken(flash) || given_up(flash, i.version) {
+        let unproven = !holds_proof() || proof(&i).await.is_err();
+        if i.version <= BARK_IMAGE_VERSION
+            || slot_taken(flash)
+            || given_up(flash, i.version)
+            || unproven
+        {
             log::info!(
                 "update: version {} gathered before is not wanted; forgotten",
                 i.version
@@ -708,6 +727,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     refused = Some(i.version);
                     STORE.lock(|s| s.borrow_mut().forget());
                     set_phase(idle());
+                    tell(Request::Rejected(i.version)).await;
                 }
             }
             gather = None;
@@ -748,7 +768,37 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     held,
                     gather.map_or(0, |i| i.blocks)
                 );
-                tell(Request::Block { index: b, ok: true }).await;
+                // The block that completes the proof is told only once it
+                // holds: the core passes on only a proven image.
+                let proved = match gather {
+                    Some(i) if b < PROOF_BLOCKS && holds_proof() => Some((i, proof(&i).await)),
+                    _ => None,
+                };
+                match proved {
+                    Some((i, Err(e))) => {
+                        embassy_futures::yield_now().await;
+                        log::warn!(
+                            "update: version {} not proven by its blocks 0 and 1 ({:?}); forgotten",
+                            i.version,
+                            e
+                        );
+                        STORE.lock(|s| s.borrow_mut().forget());
+                        set_phase(idle());
+                        tell(Request::Rejected(i.version)).await;
+                        gather = None;
+                        told = false;
+                    }
+                    _ => {
+                        if let Some((i, Ok(()))) = proved {
+                            embassy_futures::yield_now().await;
+                            log::info!(
+                                "update: version {} proven by its blocks 0 and 1",
+                                i.version
+                            );
+                        }
+                        tell(Request::Block { index: b, ok: true }).await;
+                    }
+                }
                 embassy_futures::yield_now().await;
             }
             Poll::Failed(b) => {
@@ -775,18 +825,28 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     answer(flash, TO_TASK.serve.wait().await).await;
                 }
                 let wait = select4(
-                    TO_TASK.offered.wait(),
+                    select(TO_TASK.offered.wait(), TO_TASK.unproven.wait()),
                     TO_TASK.piece_in.wait(),
                     until_ready(gather, told),
                     TO_TASK.serve.wait(),
                 )
                 .await;
                 match wait {
-                    Either4::First(image) => {
+                    Either4::First(Either::First(image)) => {
                         if let Some(i) = offer(flash, &image, refused).await {
                             gather = Some(i);
                             told = false;
                             failed = 0;
+                        }
+                        embassy_futures::yield_now().await;
+                    }
+                    Either4::First(Either::Second(version)) => {
+                        if gather.is_some_and(|i| i.version == version) {
+                            log::info!("update: version {} given up unproven; forgotten", version);
+                            STORE.lock(|s| s.borrow_mut().forget());
+                            set_phase(idle());
+                            gather = None;
+                            told = false;
                         }
                         embassy_futures::yield_now().await;
                     }
@@ -796,6 +856,35 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
             }
         }
     }
+}
+
+/// Whether the store holds blocks 0 and 1 of the image it gathers.
+fn holds_proof() -> bool {
+    STORE.lock(|s| {
+        let s = s.borrow();
+        s.image().is_some() && s.lacks().is_none_or(|b| b >= PROOF_BLOCKS)
+    })
+}
+
+/// Whether blocks 0 and 1 the store holds prove `i`
+/// (`pieces::check_proof`): its header signed by a key this firmware
+/// holds, and naming the table gathered.
+async fn proof(i: &pieces::Image) -> Result<(), pieces::ProofError> {
+    let mut header = [0u8; HEADER_LEN];
+    let at = STORE.lock(|s| s.borrow().header_at());
+    let read = match at {
+        Some(at) => crate::ext_flash::read(at, &mut header).await.is_ok(),
+        None => false,
+    };
+    if !read {
+        return Err(pieces::ProofError::Unread);
+    }
+    crate::at("verify");
+    STORE.lock(|s| {
+        let s = s.borrow();
+        let table = s.table().ok_or(pieces::ProofError::Unread)?;
+        pieces::check_proof(&header, table, i, BARK_IMAGE_VERSION, &BARK_SIGNING_KEYS).map(|_| ())
+    })
 }
 
 /// While a new image's regions are cleared the store is busy, never
@@ -878,9 +967,14 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
         return Err(());
     }
     // The record is erased as the staging begins, so the power is checked
-    // first, as the phone's commit would.
+    // first, and the same reading goes to the commit: a second, lower one
+    // would refuse it with the record erased.
     let mut told = false;
-    while !super::swap_allowed(super::power()) {
+    let power: Power = loop {
+        let p = super::power();
+        if super::swap_allowed(p) {
+            break p;
+        }
         if !core::mem::replace(&mut told, true) {
             log::info!(
                 "update: version {} whole; waiting for the power a swap needs",
@@ -888,7 +982,7 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
             );
         }
         Timer::after_secs(60).await;
-    }
+    };
     let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
     crate::at("stage");
     let written = bark_image::boot::Stager::written(
@@ -907,7 +1001,6 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
             return Err(());
         }
     };
-    let power: Power = super::power();
     crate::at("commit");
     match super::commit(&mut staging, power).await {
         Ok(h) => {

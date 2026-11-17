@@ -2,8 +2,9 @@
 //! before it stages an image.
 //!
 //! A signature covers the header's first [`SIGNED_LEN`] bytes, which hold
-//! the image's SHA-256, so it is checked before a byte of the image has
-//! come.
+//! the image's SHA-256 and that of its block table, so it is checked
+//! before a byte of the image has come, and over the mesh once the table
+//! and the header have.
 
 #[cfg(feature = "verify")]
 use ed25519_compact::{PublicKey, Signature};
@@ -11,7 +12,7 @@ use ed25519_compact::{PublicKey, Signature};
 use crate::HEADER_LEN;
 
 /// The header's bytes a signature covers.
-pub const SIGNED_LEN: usize = 48;
+pub const SIGNED_LEN: usize = 80;
 
 /// Bytes of a public key (RFC 8032, 5.1.5).
 pub const KEY_LEN: usize = 32;
@@ -22,14 +23,20 @@ pub const SIGNATURE_LEN: usize = 64;
 /// Bytes of a slot: the byte naming the key, then the signature.
 pub const SLOT_LEN: usize = 1 + SIGNATURE_LEN;
 
-/// Slots in a header, and keys a firmware holds: one to sign with, and
-/// room to bring in the next before the last is retired.
-pub const SLOTS: usize = 3;
+/// Slots in a header: one to sign with, and one to bring in the next key
+/// while the nodes in the field still hold only the one before. A third
+/// does not fit beside the signed bytes.
+pub const HEADER_SLOTS: usize = 2;
+
+/// Keys a firmware holds: the project's two, one in use and the next, and
+/// a bench key in a bench build.
+pub const KEYS: usize = 3;
 
 /// The byte of an empty slot, or of no key.
 pub const NONE: u8 = 0;
 
-const _: () = assert!(SIGNED_LEN + SLOTS * SLOT_LEN <= HEADER_LEN);
+const _: () = assert!(SIGNED_LEN + HEADER_SLOTS * SLOT_LEN <= HEADER_LEN);
+const _: () = assert!(SIGNED_LEN + (HEADER_SLOTS + 1) * SLOT_LEN > HEADER_LEN);
 
 /// A public key and the byte that names it in a slot. Laid out as 33
 /// bytes, the byte first, so that the build scripts read a firmware's keys
@@ -65,14 +72,14 @@ pub enum SignatureError {
 /// The id of the first key of `keys` under which a signature in `header`
 /// verifies.
 #[cfg(feature = "verify")]
-pub fn verify(header: &[u8; HEADER_LEN], keys: &[Key; SLOTS]) -> Result<u8, SignatureError> {
+pub fn verify(header: &[u8; HEADER_LEN], keys: &[Key; KEYS]) -> Result<u8, SignatureError> {
     let message = &header[..SIGNED_LEN];
     let mut found = SignatureError::Unsigned;
     for slot in header[SIGNED_LEN..]
         .as_chunks::<SLOT_LEN>()
         .0
         .iter()
-        .take(SLOTS)
+        .take(HEADER_SLOTS)
     {
         let id = slot[0];
         if id == NONE {
@@ -121,6 +128,7 @@ mod tests {
             version: 7,
             length: 167_996,
             hash: [0x5a; HASH_LEN],
+            table: [0xa5; HASH_LEN],
         }
         .encode()
     }
@@ -132,8 +140,8 @@ mod tests {
         header[at + 1..at + SLOT_LEN].copy_from_slice(&signature);
     }
 
-    fn keys(list: &[Key]) -> [Key; SLOTS] {
-        let mut k = [Key::NONE; SLOTS];
+    fn keys(list: &[Key]) -> [Key; KEYS] {
+        let mut k = [Key::NONE; KEYS];
         k[..list.len()].copy_from_slice(list);
         k
     }
@@ -149,7 +157,7 @@ mod tests {
     fn any_slot_and_any_held_key_will_do() {
         let mut h = header();
         sign(&mut h, 0, 9, 9);
-        sign(&mut h, 2, 2, 2);
+        sign(&mut h, 1, 2, 2);
         assert_eq!(verify(&h, &keys(&[key(1, 1), key(2, 2)])), Ok(2));
     }
 
@@ -202,10 +210,10 @@ mod tests {
 
     /// The keys a firmware built from `bark-fw/keys/` holds, as `build.rs`
     /// takes them: the project's, and the bench key in a bench-only build.
-    fn built(bench_only: bool) -> [Key; SLOTS] {
+    fn built(bench_only: bool) -> [Key; KEYS] {
         let project = include_str!("../../bark-fw/keys/project.pub");
         let bench = include_str!("../../bark-fw/keys/bench.pub");
-        let mut held = [Key::NONE; SLOTS];
+        let mut held = [Key::NONE; KEYS];
         let lines = project.lines().chain(bench.lines().filter(|_| bench_only));
         for (k, line) in held.iter_mut().zip(lines.filter(|l| !l.trim().is_empty())) {
             let (id, public) = line.trim().split_once(':').unwrap();
@@ -221,26 +229,8 @@ mod tests {
         let mut h = header();
         h[SIGNED_LEN] = 255;
         hex(
-            "2440a85feda31b832383d539ed36e67a91cd0b75c57df61a38829278da3d8523\
-             5886b3a397da3512671993bc28bdb0780650ae3384681e163ea9550795c90604",
-            &mut h[SIGNED_LEN + 1..SIGNED_LEN + SLOT_LEN],
-        );
-        h
-    }
-
-    /// The header of the release v7's `bark-fw-7.img`, signed by the
-    /// project's key 1 in the release workflow.
-    fn release_signed() -> [u8; HEADER_LEN] {
-        let mut h = [0; HEADER_LEN];
-        hex(
-            "6261726b010000000700000038bd0600898ba1317fa7e5e564f2230e\
-             329d0dfcbc6d80c248bc312b1e63264c9ff36939",
-            &mut h[..SIGNED_LEN],
-        );
-        h[SIGNED_LEN] = 1;
-        hex(
-            "64bc9ed9fe50e5de724f4b1e6a332d8623473fb783f904837cf5ba801a1ea557\
-             15a175194776d74f072bff35902332edcdd262a3b628f89f31868b186e841108",
+            "4669022553081e366a2fb438ce233a36b20bcf8ac46048f685c90af3f94ca1bc\
+             06399087014ff51dcd3e25b0d2fe2c936899fad485c7e8c02d6b3d3619bafc08",
             &mut h[SIGNED_LEN + 1..SIGNED_LEN + SLOT_LEN],
         );
         h
@@ -252,13 +242,6 @@ mod tests {
         assert_eq!(verify(&h, &built(true)), Ok(255));
         h[8] ^= 1;
         assert_eq!(verify(&h, &built(true)), Err(SignatureError::Bad));
-    }
-
-    /// A node of any build takes the project's release.
-    #[test]
-    fn a_release_is_taken_by_every_build() {
-        assert_eq!(verify(&release_signed(), &built(true)), Ok(1));
-        assert_eq!(verify(&release_signed(), &built(false)), Ok(1));
     }
 
     #[test]
@@ -278,6 +261,6 @@ mod tests {
 
     #[test]
     fn a_key_is_its_byte_then_its_public_key() {
-        assert_eq!(core::mem::size_of::<[Key; SLOTS]>(), SLOTS * (1 + KEY_LEN));
+        assert_eq!(core::mem::size_of::<[Key; KEYS]>(), KEYS * (1 + KEY_LEN));
     }
 }

@@ -284,6 +284,9 @@ impl Tracer {
             Action::StorePiece(p) => {
                 let _ = write!(what, "store piece {} of block {}", p.index, p.block);
             }
+            Action::Unproven(version) => {
+                let _ = write!(what, "image version {version} unproven, given up");
+            }
             Action::Lbt(_) | Action::Rssi(_) => return,
         }
         self.line(t, node, &what);

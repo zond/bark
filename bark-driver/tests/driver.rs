@@ -458,6 +458,8 @@ impl App for TestApp {
         self.pieces.push(*piece);
     }
 
+    fn unproven(&mut self, _: u32) {}
+
     async fn serve(&mut self, frame: &mut Frame) -> bool {
         let Some(b) = self.fill else {
             return false;

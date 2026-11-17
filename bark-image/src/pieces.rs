@@ -4,7 +4,12 @@
 //! "Updates over the mesh"; `docs/mesh-update-2026-10-25.md`).
 //!
 //! The image's name is the SHA-256 of the header's first [`SIGNED_LEN`]
-//! bytes, so an image signed again with another key keeps its name.
+//! bytes, so an image signed again with another key keeps its name. Block
+//! 1's entry in the table hashes the block from the header's end, which
+//! the name and the signatures check instead, so the table does not change
+//! either, and the header can carry the table's hash ([`table_hash`]):
+//! once blocks 0 and 1 are held, [`check_proof`] proves every entry, and
+//! so every block, the signer's.
 //!
 //! **Where it goes**, in [`PIECES`]' 193 sectors:
 //!
@@ -64,8 +69,8 @@ use crate::code::{mul_add_part, At, Points, CODED, DATA, PIECE, WEIGH_ROWS};
 use crate::ext_flash::{self, Bus, Chip, CHUNK, PROGRAM_PAGE};
 use crate::layout::external::{DFU, PIECES, SECTOR};
 use crate::layout::ACTIVE;
-use crate::sign::SIGNED_LEN;
-use crate::{HASH_LEN, HEADER_LEN};
+use crate::sign::{self, Key, SignatureError, KEYS, SIGNED_LEN};
+use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN};
 
 /// A NOR flash that erases and programs while the processor goes on: the
 /// external chip ([`Chip`]), addressed from its start.
@@ -133,7 +138,7 @@ const WRITTEN: usize = CHECK_AT + 4;
 const BLOCK_BYTES: u32 = (DATA * PIECE) as u32;
 
 /// Bytes of a block's entry in the table.
-const ENTRY: usize = 8;
+pub const ENTRY: usize = 8;
 
 /// The most blocks an image can have, the table among them: a lane each,
 /// and no more than fit the running slot behind its header.
@@ -356,6 +361,135 @@ pub fn name(header: &[u8; HEADER_LEN]) -> [u8; HASH_LEN] {
     Sha256::digest(&header[..SIGNED_LEN]).into()
 }
 
+/// The table hash a header carries of the table `table` of an image of
+/// `blocks`: the SHA-256 of its entries of blocks 1 on, not its name,
+/// which hashes the header, nor its own entry, which hashes what precedes
+/// it.
+pub fn table_hash(table: &[u8], blocks: u8) -> [u8; HASH_LEN] {
+    let end = HASH_LEN + ENTRY * usize::from(blocks.saturating_sub(1));
+    Sha256::digest(&table[HASH_LEN.min(table.len())..end.min(table.len())]).into()
+}
+
+/// The entries of an image's table, made from its packed bytes fed in
+/// order, and their SHA-256, the header's table hash. Block 1's entry
+/// leaves out the header.
+pub struct Entries {
+    block: Sha256,
+    all: Sha256,
+    /// Bytes fed.
+    fed: u32,
+}
+
+impl Entries {
+    /// Before any byte is fed.
+    pub fn new() -> Entries {
+        Entries {
+            block: Sha256::new(),
+            all: Sha256::new(),
+            fed: 0,
+        }
+    }
+
+    /// Feed the next packed bytes; each block's entry, once fed whole, is
+    /// handed to `entry` with the block.
+    pub fn feed(&mut self, mut bytes: &[u8], mut entry: impl FnMut(u8, &[u8; ENTRY])) {
+        while !bytes.is_empty() {
+            let room = BLOCK_BYTES - self.fed % BLOCK_BYTES;
+            let n = bytes.len().min(room as usize);
+            let header = (HEADER_LEN as u32).saturating_sub(self.fed) as usize;
+            if header < n {
+                self.block.update(&bytes[header..n]);
+            }
+            self.fed += n as u32;
+            bytes = &bytes[n..];
+            if self.fed.is_multiple_of(BLOCK_BYTES) {
+                self.entry(&mut entry);
+            }
+        }
+    }
+
+    /// Once every byte of an image of `length` bytes of firmware was fed:
+    /// its last piece padded with zeros, the last block's entry, and the
+    /// table hash.
+    pub fn finish(
+        mut self,
+        length: u32,
+        mut entry: impl FnMut(u8, &[u8; ENTRY]),
+    ) -> [u8; HASH_LEN] {
+        let end = (HEADER_LEN as u32 + length).next_multiple_of(PIECE as u32);
+        let zeros = [0u8; PIECE];
+        while self.fed < end {
+            let n = (end - self.fed).min(PIECE as u32) as usize;
+            self.feed(&zeros[..n], &mut entry);
+        }
+        if !self.fed.is_multiple_of(BLOCK_BYTES) {
+            self.entry(&mut entry);
+        }
+        self.all.finalize().into()
+    }
+
+    fn entry(&mut self, entry: &mut impl FnMut(u8, &[u8; ENTRY])) {
+        let block = 1 + (self.fed - 1) / BLOCK_BYTES;
+        let hash = core::mem::take(&mut self.block).finalize();
+        let mut e = [0u8; ENTRY];
+        e.copy_from_slice(&hash[..ENTRY]);
+        self.all.update(e);
+        entry(block as u8, &e);
+    }
+}
+
+impl Default for Entries {
+    fn default() -> Self {
+        Entries::new()
+    }
+}
+
+/// Why the first two blocks of an image gathered do not prove it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProofError {
+    /// Not a header this firmware reads.
+    Header(HeaderError),
+    /// Not the version the section named, or not above the running one.
+    Version(u32),
+    /// Its length does not give the blocks the section named.
+    Shape,
+    /// No signature verifies under a key this firmware holds.
+    Signature(SignatureError),
+    /// The table does not hash to the header's table hash.
+    Table,
+    /// The header or the table could not be read from the store.
+    Unread,
+}
+
+/// Whether `header` and `table`, blocks 1 and 0 of `image` as gathered,
+/// prove it: a header of the image's version, above `running`, whose
+/// length gives the image's blocks, signed by one of `keys`, whose table
+/// hash is the table's. Block 1's check already holds the header to the
+/// table's name, so every later block is the signer's by its entry
+/// (spec "Updates over the mesh").
+pub fn check_proof(
+    header: &[u8; HEADER_LEN],
+    table: &[u8],
+    image: &Image,
+    running: u32,
+    keys: &[Key; KEYS],
+) -> Result<Header, ProofError> {
+    let h = Header::decode(header).map_err(ProofError::Header)?;
+    if h.version != image.version || h.version <= running {
+        return Err(ProofError::Version(h.version));
+    }
+    let shape = held(h.length, h.version, image.key)
+        .is_some_and(|i| (i.blocks, i.last) == (image.blocks, image.last));
+    if !shape {
+        return Err(ProofError::Shape);
+    }
+    sign::verify(header, keys).map_err(ProofError::Signature)?;
+    if table_hash(table, image.blocks) != h.table {
+        return Err(ProofError::Table);
+    }
+    Ok(h)
+}
+
 /// The image of a header with `length` bytes of firmware behind it, as
 /// a holder tells and sends it: `None` if it has more blocks than a lane
 /// each.
@@ -432,6 +566,13 @@ impl Table {
         self.image
     }
 
+    fn set(&mut self, block: u8, entry: &[u8; ENTRY]) {
+        let at = HASH_LEN + ENTRY * usize::from(block - 1);
+        if let Some(e) = self.bytes.get_mut(at..at + ENTRY) {
+            e.copy_from_slice(entry);
+        }
+    }
+
     /// Data piece `i` of block 0.
     pub fn piece(&self, i: usize) -> Option<&[u8; PIECE]> {
         if i >= self.image.pieces(0) {
@@ -442,20 +583,30 @@ impl Table {
 }
 
 /// The making of a [`Table`] from the packed image's bytes, fed in order,
-/// and the SHA-256 of its firmware, to check against its header's. It
-/// holds only the hashes, so that the table can lie where it is kept.
+/// and the SHA-256 of its firmware and of its entries, to check against
+/// its header's. It holds only the hashes, so that the table can lie where
+/// it is kept.
 pub struct Tabling {
-    block: Sha256,
+    entries: Entries,
     firmware: Sha256,
-    /// Bytes fed.
+    /// Bytes fed to the firmware's hash.
     fed: u32,
+}
+
+/// What a [`Tabling`] gives: the hashes its header must hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hashes {
+    /// SHA-256 of the firmware, the header's `hash`.
+    pub firmware: [u8; HASH_LEN],
+    /// The header's `table`.
+    pub table: [u8; HASH_LEN],
 }
 
 impl Tabling {
     /// Before any byte is fed.
     pub fn new() -> Tabling {
         Tabling {
-            block: Sha256::new(),
+            entries: Entries::new(),
             firmware: Sha256::new(),
             fed: 0,
         }
@@ -475,52 +626,26 @@ impl Tabling {
         if past_header < bytes.len() {
             self.firmware.update(&bytes[past_header..]);
         }
+        self.fed += bytes.len() as u32;
     }
 
     /// [`Tabling::feed`]'s second half, the blocks' hashes, of the bytes
     /// [`Tabling::firmware`] took last.
     pub fn blocks(&mut self, table: &mut Table, bytes: &[u8]) {
-        self.hash(table, bytes);
+        self.entries.feed(bytes, |b, e| table.set(b, e));
     }
 
-    fn hash(&mut self, table: &mut Table, mut bytes: &[u8]) {
-        while !bytes.is_empty() {
-            let room = BLOCK_BYTES - self.fed % BLOCK_BYTES;
-            let n = bytes.len().min(room as usize);
-            self.block.update(&bytes[..n]);
-            self.fed += n as u32;
-            bytes = &bytes[n..];
-            if self.fed.is_multiple_of(BLOCK_BYTES) {
-                self.entry(table);
-            }
-        }
-    }
-
-    /// Once every byte was fed: the last block padded into `table`, and
-    /// the SHA-256 of the firmware fed.
-    pub fn finish(mut self, table: &mut Table) -> [u8; HASH_LEN] {
-        let end = table.image.len();
-        let zeros = [0u8; PIECE];
-        while self.fed < end {
-            let n = (end - self.fed).min(PIECE as u32) as usize;
-            self.hash(table, &zeros[..n]);
-        }
-        if !self.fed.is_multiple_of(BLOCK_BYTES) {
-            self.entry(table);
-        }
+    /// Once every byte was fed: the last block padded into `table`, its
+    /// own entry, and the hashes the header must hold.
+    pub fn finish(self, table: &mut Table) -> Hashes {
+        let length = table.image.len().saturating_sub(HEADER_LEN as u32);
+        let hash = self.entries.finish(length, |b, e| table.set(b, e));
         let own = table_len(table.image.blocks) - ENTRY;
         let check = Sha256::digest(&table.bytes[..own]);
         table.bytes[own..own + ENTRY].copy_from_slice(&check[..ENTRY]);
-        self.firmware.finalize().into()
-    }
-
-    /// The block just fed whole: its entry.
-    fn entry(&mut self, table: &mut Table) {
-        let block = (self.fed - 1) / BLOCK_BYTES;
-        let at = HASH_LEN + ENTRY * block as usize;
-        let hash = core::mem::take(&mut self.block).finalize();
-        if let Some(entry) = table.bytes.get_mut(at..at + ENTRY) {
-            entry.copy_from_slice(&hash[..ENTRY]);
+        Hashes {
+            firmware: self.firmware.finalize().into(),
+            table: hash,
         }
     }
 }
@@ -720,7 +845,11 @@ impl Decode {
         self.next = 0;
         self.part = 0;
         self.read = false;
-        self.hashed = 0;
+        // Block 1's entry leaves out the header, which the name checks.
+        self.hashed = match (self.block, group) {
+            (1, 0) => HEADER_LEN as u16,
+            _ => 0,
+        };
         self.wrote = 0;
         self.out = [[0; PIECE]; GROUP];
         let first = self.first();
