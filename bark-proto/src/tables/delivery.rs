@@ -202,11 +202,6 @@ impl<const N: usize> DeliveryQueue<N> {
         self.entries.as_slice().iter()
     }
 
-    /// Number of messages queued for `node`.
-    pub fn count_for(&self, node: NodeId) -> usize {
-        self.iter().filter(|q| q.node == node).count()
-    }
-
     /// Queue a message, unless it is queued already or the queue is full.
     pub fn push(&mut self, q: Queued) -> Pushed {
         if self.iter().any(|e| e.msg_id == q.msg_id) {
@@ -233,12 +228,6 @@ impl<const N: usize> DeliveryQueue<N> {
     pub fn reset(&mut self, config: &Config) {
         self.ttl = config.delivery_ttl;
         self.entries.clear();
-    }
-
-    /// Take the oldest message for `node`.
-    pub fn pop_for(&mut self, node: NodeId) -> Option<Queued> {
-        let i = self.iter().position(|q| q.node == node)?;
-        Some(self.entries.remove(i))
     }
 
     /// Take the message `msg_id`, e.g. once its delivery is acknowledged.
@@ -306,17 +295,16 @@ mod tests {
     }
 
     #[test]
-    fn fifo_per_node_and_dedup() {
+    fn dedup_and_remove() {
         let mut q = DeliveryQueue::<DELIVERY_QUEUE>::from_config(&Config::default());
         assert_eq!(q.push(msg(1, 1, 0)), Pushed::Queued);
         assert_eq!(q.push(msg(2, 2, 1)), Pushed::Queued);
         assert_eq!(q.push(msg(3, 1, 2)), Pushed::Queued);
         assert_eq!(q.push(msg(3, 1, 3)), Pushed::Duplicate);
-        assert_eq!(q.count_for(leaf(1)), 2);
-        assert_eq!(q.pop_for(leaf(1)).unwrap().msg_id, MsgId(1));
-        assert_eq!(q.pop_for(leaf(1)).unwrap().msg_id, MsgId(3));
-        assert_eq!(q.pop_for(leaf(1)), None);
         assert_eq!(q.remove(MsgId(2)).unwrap().node, leaf(2));
+        assert_eq!(q.remove(MsgId(2)), None);
+        assert_eq!(q.remove(MsgId(1)).unwrap().node, leaf(1));
+        assert_eq!(q.remove(MsgId(3)).unwrap().node, leaf(1));
         assert!(q.is_empty());
     }
 
