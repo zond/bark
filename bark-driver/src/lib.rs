@@ -259,6 +259,9 @@ pub enum Request {
         /// It matched.
         ok: bool,
     },
+    /// The image gathered, of this version, failed its checks
+    /// (`AppCommand::Rejected`).
+    Rejected(u32),
     /// Ask this neighbour for its status (`AppCommand::Ask`); its answer
     /// comes back to [`App::message`] as `AppEvent::Status`.
     Ask(NodeId),
@@ -330,10 +333,14 @@ pub trait App {
     /// [`Request::Fix`].
     fn gps(&mut self, gps: Gps);
 
-    /// A neighbour holds `image`, newer than what the node runs or
-    /// gathers (`Action::Offered`): if the application's policy takes it,
-    /// it answers [`Request::Gather`].
+    /// A neighbour holds `image`'s proof, and it is newer than what the
+    /// node runs or has proven (`Action::Offered`): if the application's
+    /// policy takes it, it answers [`Request::Gather`].
     fn offered(&mut self, image: &Image);
+
+    /// The core gave up the image gathered, of `version`, unproven
+    /// (`Action::Unproven`): forget its pieces.
+    fn unproven(&mut self, version: u32);
 
     /// Keep this piece of the image gathered (`Action::StorePiece`); a
     /// block it completes comes back as [`Request::Block`].
@@ -841,6 +848,10 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                     self.deliver(Event::App(AppCommand::Block { index, ok }))
                         .await?
                 }
+                Request::Rejected(version) => {
+                    self.deliver(Event::App(AppCommand::Rejected(version)))
+                        .await?
+                }
                 Request::Ask(neighbour) => {
                     self.deliver(Event::App(AppCommand::Ask { neighbour }))
                         .await?
@@ -948,6 +959,7 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             }
             Action::Offered(image) => app.offered(&image),
             Action::StorePiece(piece) => app.store_piece(&piece),
+            Action::Unproven(version) => app.unproven(version),
         });
         let took = self.clock.now().since(now);
         self.stats.events += 1;
@@ -1059,7 +1071,8 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
             | Action::Locate(_)
             | Action::Trace(_)
             | Action::Offered(_)
-            | Action::StorePiece(_) => {
+            | Action::StorePiece(_)
+            | Action::Unproven(_) => {
                 unreachable!("only excursions are kept")
             }
         };

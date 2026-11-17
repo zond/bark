@@ -168,6 +168,11 @@ pub enum AppCommand<'a> {
         /// It matched its hash.
         ok: bool,
     },
+    /// The driver gave up the image it gathers, of this version: its
+    /// header, its table or its bytes failed their checks. The node
+    /// gathers it no more, and takes no offer of it for
+    /// [`crate::update::hold_off`] (spec "Updates over the mesh").
+    Rejected(u32),
 }
 
 /// Why a node dropped a message, or refused one (spec "Forwarding"), for
@@ -312,13 +317,22 @@ pub enum Action {
     /// A protocol event for logs and the simulator's metrics; a driver may
     /// ignore it.
     Trace(Trace),
-    /// A neighbour's heartbeat named an image newer than this node runs or
-    /// gathers, once an image: if the driver's policy takes it, the driver
-    /// answers [`AppCommand::Gather`]; else nothing.
+    /// A neighbour that holds an image's proof named it, newer than the
+    /// image this node runs or has proven, once an image: if the driver's
+    /// policy takes it, the driver answers [`AppCommand::Gather`]; else
+    /// nothing. Once the node holds blocks 0 and 1 the driver checks them
+    /// before it answers [`AppCommand::Block`] for the second, and answers
+    /// [`AppCommand::Rejected`] if they fail.
     Offered(Image),
     /// Keep this piece of the block the node gathers until the block
     /// decodes; then answer [`AppCommand::Block`]. Each piece comes once.
     StorePiece(Piece),
+    /// The image the node gathers, of this version, is given up unproven:
+    /// no section offered it within [`crate::update::vouched_within`], or
+    /// it took no piece within [`crate::update::unproven_within`]. The node
+    /// gathers it no more, and the driver forgets its pieces
+    /// (spec "Updates over the mesh").
+    Unproven(u32),
     /// Transmit this piece frame as [`Action::Transmit`] does, after
     /// writing into it, from [`crate::wire::PIECE_HEADER_LEN`] on, the
     /// bytes of the piece its header names, of the image the node holds;

@@ -65,6 +65,14 @@ impl Section {
         self.image
             .is_some_and(|i| i.version == version && self.complete < i.blocks)
     }
+
+    /// The image it offers: the one it names, if it holds its proof, the
+    /// first [`PROOF_BLOCKS`]. A node that gathers names what it lacks too,
+    /// for the holders that stream to it, and offers nothing until it holds
+    /// what proves the image.
+    pub fn offers(&self) -> Option<Image> {
+        self.image.filter(|_| self.complete >= PROOF_BLOCKS)
+    }
 }
 
 /// The most blocks an image has, the table's among them: the lanes the
@@ -153,10 +161,77 @@ pub const PIECE_LOSS_PERCENT: u64 = 20;
 
 /// The pieces a helper sends of a block that a neighbour lacks `lacks`
 /// of: enough at [`PIECE_LOSS_PERCENT`] lost.
-pub fn sweep_pieces(lacks: u8) -> u8 {
-    (u64::from(lacks) * 100)
-        .div_ceil(100 - PIECE_LOSS_PERCENT)
-        .min(PIECES as u64) as u8
+pub const fn sweep_pieces(lacks: u8) -> u8 {
+    let n = (lacks as u64 * 100).div_ceil(100 - PIECE_LOSS_PERCENT);
+    if n < PIECES as u64 {
+        n as u8
+    } else {
+        PIECES as u8
+    }
+}
+
+/// The blocks that prove an image: block 0, the table, and block 1, which
+/// begins with the signed header. Once a node holds both, its driver has
+/// checked the header's signature and that the header names the table, so
+/// every later block is the signer's by its entry
+/// (spec "Updates over the mesh").
+pub const PROOF_BLOCKS: u8 = 2;
+
+/// The pieces of the largest image a helper sends to a gatherer that
+/// lacks it all, with the loss margin: the table's 2 pieces and 47 whole
+/// blocks of 64, 3 + 47 × 80 = 3 763.
+pub const SWEEP_PIECES: u64 = {
+    let table = (32 + 8 * MAX_BLOCKS).div_ceil(crate::wire::PIECE_BYTES) as u8;
+    sweep_pieces(table) as u64 + (MAX_BLOCKS as u64 - 1) * sweep_pieces(BLOCK_PIECES as u8) as u64
+};
+
+const _: () = assert!(SWEEP_PIECES == 3763);
+
+/// How long a node gathers an image unproven without taking a piece of
+/// it, from the moment it began, before it gives it up: a section can
+/// name an image nobody holds, again and again. A
+/// holder sweeps the blocks in order, on two channels at most, and stays
+/// while a neighbour there lacks a block, so a gatherer that comes in
+/// behind its sweep, or elsewhere, waits for a whole sweep, and one more
+/// if it loses a piece of the proof's last. So a worst-case rotation for
+/// the gatherer's section to reach a holder, two sweeps of the largest
+/// image at the pace, 2 × [`SWEEP_PIECES`] × 13.86 s, and a lease for the
+/// restatements a holder may miss: 195 s + 104 280.3 s + 2 × 195 s +
+/// 872.8 ms = 104 866 s, 29.1 h, at the design's timing
+/// (spec "Updates over the mesh").
+pub const fn unproven_within(config: &crate::Config) -> Duration {
+    let rotation = config.heartbeat_max.mul(crate::radio::CHANNELS as u64);
+    Duration::from_micros(
+        rotation.as_micros()
+            + PACE.mul(2 * SWEEP_PIECES).as_micros()
+            + rotation.mul(LEASE_ROTATIONS).as_micros()
+            + crate::node::heartbeat_lag(config).as_micros(),
+    )
+}
+
+/// How long a node gathers an image unproven without hearing a section
+/// that offers it, before it gives it up: a holder tells its section once
+/// on every channel at least every [`SECTION_EVERY`], and a lease more
+/// rides out a telling lost, 3 600 s + 2 × 195 s + 872.8 ms = 3 990.9 s at
+/// the design's timing (spec "Updates over the mesh"). So a section heard
+/// once, of a node that then says otherwise or is gone, holds a node no
+/// longer.
+pub const fn vouched_within(config: &crate::Config) -> Duration {
+    let rotation = config.heartbeat_max.mul(crate::radio::CHANNELS as u64);
+    Duration::from_micros(
+        SECTION_EVERY.as_micros()
+            + rotation.mul(LEASE_ROTATIONS).as_micros()
+            + crate::node::heartbeat_lag(config).as_micros(),
+    )
+}
+
+/// How long a node takes no offer of a version it gave up for want of
+/// pieces, left unproven for another, or whose proof failed: as long as
+/// [`unproven_within`], so that sections naming an image nobody holds keep
+/// a node at most half of its time, and the image that took its place has
+/// a whole bound to be proven.
+pub const fn hold_off(config: &crate::Config) -> Duration {
+    unproven_within(config)
 }
 
 /// How long a sleepy node that gathers listens after its anchor's slot

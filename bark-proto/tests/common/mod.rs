@@ -122,6 +122,8 @@ pub struct Updates {
     pub fail_once: Option<u8>,
     /// When each block passed.
     pub passed: Vec<Option<Instant>>,
+    /// The images the core gave up unproven, and when.
+    pub unproven: Vec<(Instant, u32)>,
 }
 
 /// Decides whether a frame is lost: `(now, from, to, bytes)`.
@@ -565,7 +567,7 @@ impl<C: Core> Harness<C> {
             Action::Store(s) => self.nodes[i].stored = Some(s),
             Action::Locate(until) => self.nodes[i].located.push((now, until)),
             Action::Trace(t) => self.nodes[i].traces.push((now, t)),
-            Action::Offered(_) | Action::StorePiece(_) => {}
+            Action::Offered(_) | Action::StorePiece(_) | Action::Unproven(_) => {}
             Action::Lbt(_) | Action::Rssi(_) | Action::Transmit(_) | Action::Serve(_) => {
                 let n = &self.nodes[i];
                 assert!(
@@ -662,6 +664,15 @@ impl Updates {
                 self.kept.clear();
                 self.decoded = 0;
                 Some([Some(AppCommand::Gather { image, from: 0 }), None])
+            }
+            Action::Unproven(version) => {
+                self.unproven.push((now, version));
+                if self.gathering.is_some_and(|i| i.version == version) {
+                    self.gathering = None;
+                    self.kept.clear();
+                    self.decoded = 0;
+                }
+                None
             }
             Action::StorePiece(p) => {
                 self.pieces.push((now, p));

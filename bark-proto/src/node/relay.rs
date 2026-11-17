@@ -659,6 +659,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.gps.fire(&gps, &self.config, now, emit);
         self.forward_timers(now, emit);
         self.delivery_timers(now);
+        self.expire_update(now, emit);
     }
 
     /// When the core next needs a wakeup: the earliest deadline of any part
@@ -674,6 +675,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.delivery_wakeup(),
             self.own.app_ready_at,
             self.next_slot_edge(),
+            self.spread.expires_at(&self.config),
         ]
         .into_iter()
         .flatten()
@@ -846,6 +848,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
             AppCommand::Block { index, ok } => self.spread.block_done(index, ok),
+            AppCommand::Rejected(version) => self.spread.rejected(&self.config, version, now),
             AppCommand::Ask { neighbour } => self.ask(neighbour, now),
             AppCommand::Drain(on) => self.drain(on, now),
             AppCommand::SetPosition { position } => {

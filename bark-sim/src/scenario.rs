@@ -681,6 +681,13 @@ pub struct UpdateSpec {
     /// The relay given the image: the one placed as a relay nearest the
     /// centre of the nodes, or the named node.
     pub holder: Option<String>,
+    /// A relay whose heartbeats, until `forged_until_s`, carry in place of
+    /// its own section one that claims the first two blocks of an image of
+    /// a version far above the release, as a forged or mis-built frame
+    /// would; `None` for none (spec "Updates over the mesh").
+    pub forger: Option<String>,
+    /// When the forger stops, seconds; `None` for never.
+    pub forged_until_s: Option<f64>,
 }
 
 impl Default for UpdateSpec {
@@ -689,6 +696,8 @@ impl Default for UpdateSpec {
             at_s: None,
             image_bytes: 420_808,
             holder: None,
+            forger: None,
+            forged_until_s: None,
         }
     }
 }

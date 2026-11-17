@@ -19,8 +19,9 @@ use crate::tables::heard::beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::time::{Duration, Instant};
 use crate::update::{
-    sweep_pieces, Image, Piece, Section, FULL_FRAME, GAP, LEASE_ROTATIONS, MAX_BLOCKS, PACE, PASS,
-    PIECES, SECTION_EVERY, SERVED_CHANNELS, SLOT_LISTEN,
+    hold_off, sweep_pieces, unproven_within, vouched_within, Image, Piece, Section, FULL_FRAME,
+    GAP, LEASE_ROTATIONS, MAX_BLOCKS, PACE, PASS, PIECES, PROOF_BLOCKS, SECTION_EVERY,
+    SERVED_CHANNELS, SLOT_LISTEN,
 };
 use crate::wire::{Packet, Update, PIECE_BYTES};
 
@@ -32,6 +33,11 @@ const SLOT_START: Duration = Duration::from_millis(1);
 /// Other senders' pieces a node remembers, to count them against its own
 /// pace on its home channel.
 const OTHERS: usize = 8;
+
+/// Versions a node holds off at once: one given up unproven or whose
+/// proof failed, and those it left unproven for another while it found
+/// the one whose proof comes.
+const HELD_OFF: usize = 4;
 
 /// What a section tells that starts a rotation of it when it changes: the
 /// version the node runs, its newest image and the blocks of it held from
@@ -54,11 +60,24 @@ struct Gather {
     seen: [[u8; PIECES.div_ceil(8)]; MAX_BLOCKS],
     /// The blocks that decoded and passed their hash, a bit each.
     done: u64,
+    /// When it began or last took a piece, for [`unproven_within`].
+    fed: Instant,
+    /// When it began or last heard a section offering it, for
+    /// [`vouched_within`].
+    vouched: Instant,
+    /// A piece of it was taken.
+    took: bool,
 }
 
 impl Gather {
     fn holds(&self, b: u8) -> bool {
         b < 64 && self.done >> b & 1 == 1
+    }
+
+    /// Whether it holds the blocks that prove the image, which its driver
+    /// checked before it said the second of them passed.
+    fn proven(&self) -> bool {
+        (0..PROOF_BLOCKS).all(|b| self.holds(b))
     }
 
     /// Whether piece `index` of block `b` is new for a block it lacks; it
@@ -71,6 +90,7 @@ impl Gather {
         let seen = &mut self.seen[usize::from(b)];
         let new = seen[byte] & bit == 0;
         seen[byte] |= bit;
+        self.took |= new;
         new
     }
 
@@ -98,6 +118,9 @@ pub(super) struct Spread {
     /// The version of the last image offered to the driver.
     offered: Option<u32>,
     gather: Option<Gather>,
+    /// Versions offered no more until a time: given up unproven, left
+    /// unproven for another, or refused by the driver.
+    held_off: [Option<(u32, Instant)>; HELD_OFF],
     /// The last channels it sent a piece on, and when: the only ones that
     /// can still be within their pace, since a pace holds at most this
     /// many.
@@ -157,6 +180,7 @@ impl Spread {
             own: None,
             offered: None,
             gather: None,
+            held_off: [None; HELD_OFF],
             sent: [None; SERVED_CHANNELS],
             passed: 0,
             cur: [u8::MAX; CHANNELS as usize],
@@ -272,17 +296,19 @@ impl Spread {
         })
     }
 
-    /// The image it streams: the one it gathers once it holds a block of
-    /// it, else the one it holds whole.
+    /// The image it streams: the one it gathers once it is proven, else
+    /// the one it holds whole. Nothing of an image that may be forged goes
+    /// on.
     fn streams(&self) -> Option<Image> {
-        self.gather
-            .filter(|g| g.done != 0)
-            .map(|g| g.image)
-            .or(self.own)
+        self.proven().map(|g| g.image).or(self.own)
+    }
+
+    fn proven(&self) -> Option<Gather> {
+        self.gather.filter(Gather::proven)
     }
 
     fn holds_block(&self, b: u8) -> bool {
-        match self.gather.filter(|g| g.done != 0) {
+        match self.proven() {
             Some(g) => g.holds(b),
             None => self.own.is_some_and(|o| b < o.blocks),
         }
@@ -310,17 +336,34 @@ impl Spread {
         channel: Channel,
     ) -> Option<Section> {
         let version = v.config.version;
+        if self.serves_sleepy(v, now, channel) {
+            return self.streamed(version);
+        }
         let due = self.rotation_due(version, now)
             || self.section_to & bit(channel) != 0
-            || self.restates_on(v, now) == Some(channel)
-            || self.serves_sleepy(v, now, channel);
+            || self.restates_on(v, now) == Some(channel);
         self.section(version).filter(|_| due)
+    }
+
+    /// Its section as the image it streams names it: the image it holds
+    /// whole in place of a gather not yet proven, which its sleepy nodes
+    /// could take nothing of.
+    fn streamed(&self, version: u32) -> Option<Section> {
+        match (self.gather, self.own) {
+            (Some(g), Some(own)) if !g.proven() => Some(Section {
+                image: Some(own),
+                complete: own.blocks,
+                have: 0,
+                ..self.section(version)?
+            }),
+            _ => self.section(version),
+        }
     }
 
     /// Whether a heartbeat on `channel` is the one its sleepy nodes hear
     /// while one of them lacks a block it holds: it then says what it
-    /// holds, since they hear no other of its heartbeats and listen for
-    /// the piece after this one only if they know.
+    /// streams them, since they hear no other of its heartbeats and listen
+    /// for the piece after this one only if they know.
     fn serves_sleepy(&self, v: &View<'_>, now: Instant, channel: Channel) -> bool {
         channel == v.home && self.needs(v, now)[usize::from(v.home.index())].sleepy > 0
     }
@@ -404,16 +447,33 @@ impl Spread {
     }
 
     /// `AppCommand::Gather`: the node gathers `image`, holding the blocks
-    /// before `from` already.
-    pub(super) fn gather(&mut self, image: Image, from: u8, rng: &mut Rng, now: Instant) {
+    /// before `from` already, proven if they are the proof's. An image it
+    /// gathered unproven before is held off, so that two offers do not
+    /// take turns.
+    pub(super) fn gather(
+        &mut self,
+        config: &Config,
+        image: Image,
+        from: u8,
+        rng: &mut Rng,
+        now: Instant,
+    ) {
         if usize::from(image.blocks) > MAX_BLOCKS {
             return;
+        }
+        if let Some(old) = self.gather.filter(|g| !g.proven()) {
+            if old.image.version != image.version {
+                self.hold_off(config, old.image.version, now);
+            }
         }
         let mut g = Gather {
             image,
             block: 0,
             seen: [[0; PIECES.div_ceil(8)]; MAX_BLOCKS],
             done: 0,
+            fed: now,
+            vouched: now,
+            took: false,
         };
         for b in 0..from.min(image.blocks) {
             g.decoded(b, true);
@@ -440,13 +500,91 @@ impl Spread {
         }
     }
 
-    /// A heartbeat carried `section` (spec "Updates over the mesh"): a
-    /// newer image is offered to the driver's policy once, and a neighbour
-    /// that lags is answered with a rotation of this node's section.
+    /// The node gathers the image of `version` no more, and it may be
+    /// offered again.
+    fn drop_gather(&mut self, version: u32, now: Instant) {
+        if self.gather.is_some_and(|g| g.image.version == version) {
+            self.gather = None;
+            self.helper = None;
+            self.section_at = now;
+        }
+        if self.offered == Some(version) {
+            self.offered = None;
+        }
+    }
+
+    /// `AppCommand::Rejected`: its proof or its staging failed, and it takes
+    /// no offer of it for [`hold_off`].
+    pub(super) fn rejected(&mut self, config: &Config, version: u32, now: Instant) {
+        self.drop_gather(version, now);
+        self.hold_off(config, version, now);
+    }
+
+    /// When the gather, if unproven, is given up.
+    pub(super) fn expires_at(&self, config: &Config) -> Option<Instant> {
+        let g = self.gather.filter(|g| !g.proven())?;
+        Some((g.vouched + vouched_within(config)).min(g.fed + unproven_within(config)))
+    }
+
+    /// An unproven gather is given up, and the driver told to forget its
+    /// pieces, once no section has offered it for [`vouched_within`], so
+    /// that a claim made once lasts no longer than its claimant says so;
+    /// or once it has taken no piece for [`unproven_within`], since a
+    /// claimant can keep claiming, and that version is held off.
+    pub(super) fn expire(&mut self, config: &Config, now: Instant, emit: &mut dyn FnMut(Action)) {
+        let Some(g) = self.gather.filter(|g| !g.proven()) else {
+            return;
+        };
+        let version = g.image.version;
+        let starved = now >= g.fed + unproven_within(config);
+        if now < g.vouched + vouched_within(config) && !starved {
+            return;
+        }
+        self.drop_gather(version, now);
+        if starved {
+            self.hold_off(config, version, now);
+        }
+        emit(Action::Unproven(version));
+    }
+
+    fn hold_off(&mut self, config: &Config, version: u32, now: Instant) {
+        let until = now + hold_off(config);
+        let slot = self
+            .held_off
+            .iter()
+            .position(|h| h.is_none_or(|(v, end)| v == version || end <= now))
+            .unwrap_or_else(|| {
+                let first = self.held_off.iter().flatten().map(|h| h.1).min();
+                self.held_off
+                    .iter()
+                    .position(|h| h.map(|h| h.1) == first)
+                    .unwrap_or(0)
+            });
+        self.held_off[slot] = Some((version, until));
+        // Offered again once the hold-off ends.
+        if self.offered == Some(version) {
+            self.offered = None;
+        }
+    }
+
+    fn held_off(&self, version: u32, now: Instant) -> bool {
+        self.held_off
+            .iter()
+            .flatten()
+            .any(|&(v, end)| v == version && now < end)
+    }
+
+    /// A heartbeat carried `section` (spec "Updates over the mesh"): an
+    /// image its sender holds the proof of is offered to the driver's
+    /// policy once if it is newer than what this node holds or has proven,
+    /// and a neighbour that lags is answered with a rotation of this
+    /// node's section. Only a sender that may stream to it offers: any
+    /// relay, but to a sleepy node its anchor alone.
     pub(super) fn section_heard(
         &mut self,
         v: &View<'_>,
         section: Section,
+        streams_here: bool,
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) {
@@ -460,22 +598,34 @@ impl Spread {
         if lags && !rotated {
             self.answer = true;
         }
-        let Some(image) = section.image else {
+        let Some(image) = section.offers().filter(|_| streams_here) else {
             return;
         };
-        let newest = self
+        if let Some(g) = self
             .gather
+            .as_mut()
+            .filter(|g| g.image.version == image.version)
+        {
+            g.vouched = now;
+        }
+        let newest = self
+            .proven()
             .map(|g| g.image.version)
             .max(self.own.map(|o| o.version))
             .unwrap_or(0);
-        if self.offered == Some(image.version) {
+        if self.offered == Some(image.version)
+            || image.version <= newest
+            || usize::from(image.blocks) > MAX_BLOCKS
+            || self.held_off(image.version, now)
+        {
             return;
         }
-        if image.version <= newest {
-            return;
-        }
-        if usize::from(image.blocks) > MAX_BLOCKS {
-            return;
+        // An unproven gather gives way to another image, unless it takes
+        // pieces and the other is older: those come from a holder.
+        if let Some(g) = self.gather.filter(|g| !g.proven()) {
+            if g.image.version == image.version || g.took && image.version < g.image.version {
+                return;
+            }
         }
         self.offered = Some(image.version);
         emit(Action::Offered(image));
@@ -571,6 +721,7 @@ impl Spread {
         if !g.take(block, index) {
             return run;
         }
+        g.fed = now;
         let mut piece = Piece {
             block,
             index,
@@ -1103,7 +1254,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn gather(&mut self, image: Image, from: u8, now: Instant) {
-        self.spread.gather(image, from, &mut self.rng, now);
+        self.spread
+            .gather(&self.config, image, from, &mut self.rng, now);
     }
 
     /// A heartbeat of `from` carried `section`: the neighbour table keeps
@@ -1116,8 +1268,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         emit: &mut dyn FnMut(Action),
     ) {
         self.neighbours.section_heard(from, section, now);
+        let streams_here = !self.sleepy() || self.anchor().is_some_and(|a| a.id == from);
         let v = view!(self);
-        self.spread.section_heard(&v, section, now, emit);
+        self.spread
+            .section_heard(&v, section, streams_here, now, emit);
+    }
+
+    /// An unproven gather nobody offers, or fed nothing for the bound, is
+    /// given up ([`Spread::expire`]).
+    pub(super) fn expire_update(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) {
+        self.spread.expire(&self.config, now, emit);
     }
 
     /// Its slot heartbeat went on its home channel
@@ -1221,6 +1381,65 @@ mod tests {
             x + PACE.mul(2),
             "another heard: shared"
         );
+    }
+
+    /// What a gather lets through of the images offered: an unproven one
+    /// gives way to another, but one that takes pieces only to a newer
+    /// one, and the one left is held off; a proven one only to a newer
+    /// one; and only a holder of the proof offers
+    /// (spec "Updates over the mesh").
+    #[test]
+    fn what_a_gather_lets_through() {
+        let mut r = crate::Relay::new(Config::default(), 1);
+        let now = Instant::ZERO + Duration::from_secs(10);
+        let image = |version| Image {
+            version,
+            blocks: 3,
+            last: 7,
+            key: 1,
+        };
+        let holder = |version| Section {
+            runs: 1,
+            image: Some(image(version)),
+            complete: 2,
+            have: 0,
+        };
+        let offered = |r: &mut crate::Relay, s: Section| {
+            let mut got = None;
+            let v = view!(r);
+            r.spread.section_heard(&v, s, true, now, &mut |a| {
+                if let Action::Offered(i) = a {
+                    got = Some(i.version);
+                }
+            });
+            got
+        };
+        let gather = |r: &mut crate::Relay, version, from| r.gather(image(version), from, now);
+        // Only a holder of blocks 0 and 1 offers.
+        let lacking = Section {
+            complete: 1,
+            ..holder(9)
+        };
+        assert_eq!(offered(&mut r, lacking), None);
+        gather(&mut r, 9, 0);
+        // Unproven and taking nothing, it gives way to an older image,
+        // and is held off.
+        assert_eq!(offered(&mut r, holder(5)), Some(5));
+        gather(&mut r, 5, 0);
+        assert_eq!(offered(&mut r, holder(9)), None, "held off");
+        // Unproven and taking pieces, only to a newer one.
+        r.spread.gather.as_mut().unwrap().took = true;
+        assert_eq!(offered(&mut r, holder(4)), None);
+        assert_eq!(offered(&mut r, holder(6)), Some(6));
+        // Proven, as today: only a newer one.
+        gather(&mut r, 6, 2);
+        assert_eq!(offered(&mut r, holder(4)), None);
+        assert_eq!(offered(&mut r, holder(7)), Some(7));
+        // Leaving a proven gather holds nothing off.
+        gather(&mut r, 7, 0);
+        assert!(!r.spread.held_off(6, now));
+        assert!(r.spread.held_off(9, now) && r.spread.held_off(5, now));
+        assert!(!r.spread.held_off(9, now + hold_off(&r.config)));
     }
 
     /// A helper streams to a gatherer only within the lease since its last

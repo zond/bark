@@ -744,16 +744,26 @@ confirmed itself.
   slot, tells the core (`Holds`) and serves its pieces. A UF2 made
   without `scripts/uf2.py --header` (below) leaves no header, and a
   swap back leaves the newer image's, so such a node serves nothing until it takes an image over the mesh or the phone.
-- *What it gathers.* When a neighbour's heartbeat names a newer image,
-  the node gathers it if the version is above its own, the key the
-  heartbeat names is one it holds, and neither the phone's update nor a
-  swap holds the staged slot (`bark_image::policy::takes`). The pieces go
-  into the store on the external flash (`bark_image::pieces`), a step at
-  a time of at most 16 bytes over the bus, the executor free between and
-  the chip's erases and programs waited out with a timer (Work beside the
-  radio, below). A reset keeps what
-  was gathered, and the node goes on with it unless it is no longer
-  newer than the running image.
+- *What it gathers.* When the core offers a neighbour's image, the node
+  gathers it if the version is above its own, the key the heartbeat
+  names is one it holds, and neither the phone's update nor a swap holds
+  the staged slot (`bark_image::policy::takes`). The pieces go into the
+  store on the external flash (`bark_image::pieces`), a step at a time of
+  at most 16 bytes over the bus, the executor free between and the
+  chip's erases and programs waited out with a timer (Work beside the
+  radio, below). Once blocks 0 and 1 have decoded the node checks the
+  proof, `pieces::check_proof`: the header is the version offered, above
+  its own, its length gives the blocks offered, a signature verifies
+  under a key it holds, and its table hash is the table's; only then does
+  it tell the core block 1 passed, `update: version N proven by its
+  blocks 0 and 1`. A proof that fails forgets the image, `update: version
+  N not proven by its blocks 0 and 1 (...); forgotten`, and the core holds
+  the version off. The core gives up a gather not yet proven that nobody
+  offers any more or that takes no piece (spec "Updates over the mesh"),
+  `update: version N given up unproven; forgotten`. A reset keeps what was gathered, and the node goes on with
+  it if it is still newer than the running image and its blocks 0 and 1
+  prove it again; one not yet proven is forgotten, since the core's bound
+  does not outlast a reset.
 - *What it serves.* A piece of the running image is coded from the
   slot's bytes, memory-mapped in the internal flash; one of a block it
   gathered and decoded, from the external flash, 16 bytes at a time. A

@@ -323,6 +323,10 @@ impl App for LinkApp<'_> {
         crate::update::mesh::store_piece(piece);
     }
 
+    fn unproven(&mut self, version: u32) {
+        crate::update::mesh::unproven(version);
+    }
+
     async fn serve(&mut self, frame: &mut bark_proto::Frame) -> bool {
         crate::update::mesh::serve(frame).await
     }

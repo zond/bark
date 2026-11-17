@@ -782,3 +782,213 @@ fn a_gatherer_does_not_flee_the_pieces_sent_to_it() {
     assert_eq!(moves, 0, "the gatherer moved");
     assert!(most < percent(1), "the gatherer counts its own pieces");
 }
+
+/// A version far above any release, as a forged or mis-built section
+/// names it.
+const FORGED: u32 = 0x7fff_ffff;
+
+/// A line: node 0 holds [`IMAGE`] once told, node 1 hears it and node 2,
+/// node 2 hears only node 1. Each relay has the update's driver side.
+fn line() -> Harness<Relay> {
+    let mut h = Harness::new(vec![
+        relay_on(0.0, 1, 3),
+        relay_on(100.0, 2, 5),
+        relay_on(200.0, 3, 7),
+    ]);
+    h.link(0, 1);
+    h.link(1, 2);
+    for n in &mut h.nodes {
+        n.updates = Some(Updates {
+            needs: NEEDS.to_vec(),
+            ..Updates::default()
+        });
+    }
+    h.run_until(at(400), |_| false);
+    h
+}
+
+/// A section naming [`FORGED`] and the blocks `complete`.
+fn forged(complete: u8) -> bark_proto::update::Section {
+    bark_proto::update::Section {
+        runs: 1,
+        image: Some(Image {
+            version: FORGED,
+            ..IMAGE
+        }),
+        complete,
+        have: 0,
+    }
+}
+
+/// Node `i`'s last heartbeat with `section` in place of its own, put on
+/// the air on node 1's home channel until node 1 has heard it once.
+fn forge(h: &mut Harness<Relay>, i: usize, section: bark_proto::update::Section) {
+    let (_, sent) = h.nodes[i]
+        .sent
+        .iter()
+        .rev()
+        .find(|(_, f)| matches!(Packet::decode(f.payload()), Ok(Packet::Heartbeat(_))))
+        .expect("a heartbeat");
+    let mut f = *sent;
+    let mut b = [0u8; bark_proto::update::SECTION_LEN];
+    bark_proto::wire::encode_section(&section, &mut b);
+    f.len = 13 + b.len() as u8;
+    f.bytes[13..usize::from(f.len)].copy_from_slice(&b);
+    f.channel = h.nodes[1].core.home();
+    let before = h.nodes[1].received.len();
+    let heard = |h: &Harness<Relay>| {
+        h.nodes[1].received[before..]
+            .iter()
+            .any(|r| r.1 == f.payload())
+    };
+    for _ in 0..100 {
+        h.inject(i, f);
+        h.run_for(secs(1));
+        if heard(h) {
+            return;
+        }
+    }
+    panic!("node 1 never heard the forged heartbeat");
+}
+
+fn offered_forged(h: &Harness<Relay>, i: usize) -> bool {
+    let u = h.nodes[i].updates.as_ref().unwrap();
+    u.offered.iter().any(|o| o.1.version == FORGED)
+}
+
+/// Every relay but the first holder came to hold the release within six
+/// hours of node 0's, and gathers nothing.
+fn release_everywhere(h: &mut Harness<Relay>) {
+    let done = h.run_until(h.now + secs(6 * 3600), |h| {
+        h.nodes[1..]
+            .iter()
+            .all(|n| n.updates.as_ref().unwrap().holds_at.is_some())
+    });
+    assert!(done, "the release did not reach every relay");
+    for (i, n) in h.nodes.iter().enumerate() {
+        assert_eq!(n.core.image(), Some(IMAGE), "node {i}");
+        assert_eq!(n.core.gathering(), None, "node {i} gathers");
+    }
+}
+
+/// A section naming a version far above the release, from a node that
+/// holds none of its blocks, offers nothing
+/// (spec "Updates over the mesh").
+#[test]
+fn a_section_of_a_node_that_holds_no_block_offers_nothing() {
+    let mut h = line();
+    forge(&mut h, 2, forged(0));
+    h.run_for(secs(60));
+    h.deliver_app(0, AppCommand::Holds(IMAGE));
+    release_everywhere(&mut h);
+    assert!(!offered_forged(&h, 1), "offered the forged version");
+}
+
+/// A forged section that claims the first two blocks of a version far
+/// above the release is offered, but holds nothing back: the release that
+/// follows still reaches every relay, and no relay passes the forged
+/// version on (spec "Updates over the mesh").
+#[test]
+fn a_forged_holder_does_not_hold_the_release_back() {
+    let mut h = line();
+    forge(&mut h, 2, forged(2));
+    h.run_for(secs(60));
+    assert!(offered_forged(&h, 1));
+    h.deliver_app(0, AppCommand::Holds(IMAGE));
+    release_everywhere(&mut h);
+    // Node 0 hears only node 1, which never held a block of it.
+    assert!(!offered_forged(&h, 0), "the forged version spread");
+}
+
+/// An image nobody holds, claimed again and again, is given up once it
+/// has taken no piece for the bound, its driver told to forget it, and not
+/// taken again until the hold-off has passed (spec "Updates over the mesh").
+#[test]
+fn an_image_nobody_holds_is_given_up_and_held_off() {
+    let mut h = line();
+    forge(&mut h, 2, forged(2));
+    let (began, _) = *h.nodes[1].updates.as_ref().unwrap().offered.last().unwrap();
+    assert_eq!(
+        h.nodes[1].core.gathering().map(|g| g.0.version),
+        Some(FORGED)
+    );
+    let bound = bark_proto::update::unproven_within(&Config::default());
+    let unproven = |h: &Harness<Relay>| h.nodes[1].updates.as_ref().unwrap().unproven.clone();
+    // Claimed every half hour, within the bound on a claim.
+    while h.now + secs(1800) < began + bound {
+        h.run_for(secs(1800));
+        forge(&mut h, 2, forged(2));
+    }
+    h.run_until(began + bound - secs(1), |_| false);
+    assert!(unproven(&h).is_empty(), "given up early");
+    assert!(h.run_until(began + bound + secs(1), |h| !unproven(h).is_empty()));
+    let (gave_up, version) = unproven(&h)[0];
+    assert_eq!(version, FORGED);
+    assert!(gave_up >= began + bound);
+    assert_eq!(h.nodes[1].core.gathering(), None);
+    // Told again within the hold-off it is not taken; after it, it is.
+    let offers = |h: &Harness<Relay>| h.nodes[1].updates.as_ref().unwrap().offered.len();
+    forge(&mut h, 2, forged(2));
+    h.run_for(secs(60));
+    assert_eq!(offers(&h), 1, "taken again within the hold-off");
+    h.run_until(
+        gave_up + bark_proto::update::hold_off(&Config::default()),
+        |_| false,
+    );
+    forge(&mut h, 2, forged(2));
+    h.run_for(secs(60));
+    assert_eq!(offers(&h), 2, "not taken after the hold-off");
+}
+
+/// An image claimed once and not again is given up once no section has
+/// offered it for the bound, and taken again at once when a node claims it
+/// again: a claimant gone is no sign of a forgery
+/// (spec "Updates over the mesh").
+#[test]
+fn an_image_nobody_offers_any_more_is_given_up_and_not_held_off() {
+    let mut h = line();
+    forge(&mut h, 2, forged(2));
+    let claimed = h.now;
+    assert!(h.nodes[1].core.gathering().is_some());
+    h.kill(2);
+    let bound = bark_proto::update::vouched_within(&Config::default());
+    let unproven = |h: &Harness<Relay>| h.nodes[1].updates.as_ref().unwrap().unproven.clone();
+    h.run_until(claimed + bound - secs(2), |_| false);
+    assert!(unproven(&h).is_empty(), "given up early");
+    assert!(h.run_until(claimed + bound + secs(1), |h| !unproven(h).is_empty()));
+    assert_eq!(h.nodes[1].core.gathering(), None);
+    forge(&mut h, 2, forged(2));
+    h.run_for(secs(60));
+    let u = h.nodes[1].updates.as_ref().unwrap();
+    assert_eq!(u.offered.len(), 2, "held off");
+}
+
+/// An image the driver rejects, its proof failed, is gathered no more and
+/// held off (spec "Updates over the mesh").
+#[test]
+fn an_image_whose_proof_fails_is_held_off() {
+    let mut h = line();
+    forge(&mut h, 2, forged(2));
+    assert!(h.nodes[1].core.gathering().is_some());
+    h.deliver_app(1, AppCommand::Rejected(FORGED));
+    assert_eq!(h.nodes[1].core.gathering(), None);
+    forge(&mut h, 2, forged(2));
+    h.run_for(secs(60));
+    let u = h.nodes[1].updates.as_ref().unwrap();
+    assert_eq!(u.offered.len(), 1, "taken again");
+    assert!(u.unproven.is_empty());
+}
+
+/// The bound on a gather unproven is two sweeps of the largest image at
+/// the pace, a rotation and a lease: 104 866 s at the design's timing
+/// (spec "Updates over the mesh").
+#[test]
+fn the_unproven_bound_is_two_sweeps_a_rotation_and_a_lease() {
+    let c = Config::default();
+    let s = |d: bark_proto::Duration| d.as_micros() / 1_000_000;
+    assert_eq!(s(bark_proto::update::unproven_within(&c)), 104_866);
+    assert_eq!(
+        bark_proto::update::hold_off(&c),
+        bark_proto::update::unproven_within(&c)
+    );
+}

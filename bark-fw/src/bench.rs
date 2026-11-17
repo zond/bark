@@ -378,6 +378,10 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
         self.inner.store_piece(piece)
     }
 
+    fn unproven(&mut self, version: u32) {
+        self.inner.unproven(version)
+    }
+
     async fn serve(&mut self, frame: &mut Frame) -> bool {
         self.inner.serve(frame).await
     }

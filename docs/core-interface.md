@@ -127,8 +127,9 @@ Every node has the same application interface: the readiness query
 `AppEvent::Message`, `AppEvent::GivenBack`, `AppEvent::Boot` and `AppEvent::Heard`, the store,
 `Action::Store` and `Config::stored`, the GPS: the request `Action::Locate` and
 the queries `gps_tracks` and `fix_in_reach`, and the update: the commands
-`AppCommand::Holds`, `AppCommand::Gather`, `AppCommand::Block` and `AppCommand::Drain`,
-the actions `Action::Offered`, `Action::StorePiece` and `Action::Serve`, the queries
+`AppCommand::Holds`, `AppCommand::Gather`, `AppCommand::Block`, `AppCommand::Rejected` and
+`AppCommand::Drain`, the actions `Action::Offered`, `Action::StorePiece`, `Action::Unproven`
+and `Action::Serve`, the queries
 `drained`, `held` and `remembered` and the call `remember`, and a neighbour's status: the
 command `AppCommand::Ask` and the event `AppEvent::Status`.
 
@@ -274,12 +275,22 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   it runs or one staged after its signature passed, with its name, version, block
   count, the pieces of its last block and its key; at boot and after each change. The
   core tells it in its heartbeats' section and serves it.
-- `Action::Offered(image)`: a neighbour's heartbeat named an image above the version the
-  node runs and the one it gathers; once for each image. The driver answers
+- `Action::Offered(image)`: a neighbour that holds blocks 0 and 1 of an image named it,
+  above the version the node runs, the image it holds and the one it has proven; once for
+  each image, and not while the core holds the version off. The driver answers
   `AppCommand::Gather { image, from }` if its policy takes it, `from` the first block it
   lacks, 0 unless it gathered some before a reboot, which it may also say at boot
-  unasked; else it answers nothing. The keys and the signatures stay out of the core,
-  which keeps no answer.
+  unasked for a gather it has proven again; else it answers nothing. The keys and the
+  signatures stay out of the core, which keeps no answer.
+- The proof: once blocks 0 and 1 have decoded the driver checks the header's signature
+  and that its table hash is the table's (spec "Updates over the mesh"), and only then
+  answers `Block` for the second of them; a gather holding both is proven. If the proof
+  fails, or the image whole fails at its staging, it answers `AppCommand::Rejected(version)`:
+  the core gathers it no more and holds the version off for `update::hold_off`. A gather
+  not yet proven that no section has offered for `update::vouched_within`, or that has
+  taken no piece for `update::unproven_within`, the core gives up with
+  `Action::Unproven(version)`, the latter held off as well, and the driver forgets its
+  pieces.
 - `Action::StorePiece(piece)`: keep this piece. The core hands pieces of every block
   the node lacks, each once, of an image of at most 48 blocks, so the driver holds at
   most a lane of 64 a block, 48 lanes (`bark-image`, `pieces.rs`). When a
@@ -326,10 +337,10 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   least `remembered_within(config)`, the swap and the tables' write before the boot
   (`bark-fw/src/clock.rs`).
 
-`bark-driver` hands these to its application, `App::offered`, `App::store_piece` and
-`App::serve`, and the application's answers come back as `Request::Holds`,
-`Request::Gather`, `Request::Block` and `Request::Drain`, which the driver delivers as the
-commands.
+`bark-driver` hands these to its application, `App::offered`, `App::store_piece`,
+`App::unproven` and `App::serve`, and the application's answers come back as
+`Request::Holds`, `Request::Gather`, `Request::Block`, `Request::Rejected` and
+`Request::Drain`, which the driver delivers as the commands.
 The firmware's application is `bark-fw/src/update/mesh.rs` (§5).
 
 **A neighbour's status** (spec "Neighbour status"). `AppCommand::Ask { neighbour }` asks
@@ -382,7 +393,7 @@ simulator keeps the last one across a `restart` and drops it at a `wipe`.
 | Battery (§4), on battery | `[battery]`'s cells, read once a minute (`bark-sim/src/battery.rs`) | the SAADC on AIN2 behind the board's 2:1 divider, eight samples averaged, its offset calibrated before each reading (`bark-fw/src/battery.rs`) |
 | GPS (§4) | `Action::Locate` starts a search, one at or before now ends it; a fix after a hot or a cold start under the sky, none indoors for the share `[gps] no_sky`; `gps_tracks` read after each call, its time counted at the receiver's current, a walking relay handed a fix at each heartbeat while it holds; with `[gps] checks`, `fix_in_reach` asked of each fix (`bark-sim/src/gps.rs`, `sim.rs`) | `bark-driver` keeps the search's end and tells the application to rest, search or track after each call (`bark_driver::Gps`), ends a search at the first fix in reach, and asks `fix_in_reach` of each fix; the L76K's NMEA over UARTE1, its WAKEUP line high to run and low for standby, the UART off at rest (`bark-fw/src/gps.rs`) |
 | Store (§4) | the last `Stored` per node, kept across `restart`, dropped at `wipe` | a log of records in the flash page `STORE`, written after the step that asked, through the MPSL's flash timeslots (`bark-fw/src/store.rs`, `bark-image/src/layout.rs`) |
-| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces; a piece's bytes are not written (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment; at its first boot the image confirms itself at `AppEvent::Heard`, or, with none within `update::heard_within` of its start, resets for the swap back, and the image back gives it up (`bark-fw/src/update/mesh.rs`, `update.rs` `trial`, `bark-fw/README.md` "Updates") |
+| Update (§4) | the policy takes every image offered; a piece kept is counted, and a block decodes at its count of pieces, the release's proof passing; a piece's bytes are not written; a scenario's forger puts a section naming an image nobody holds in its heartbeats (`bark-sim/src/update.rs`) | `Holds` for the running image if the record's header is its version's and the slot hashes to it; the policy of `bark_image::policy`; the pieces in the external flash's store, a step at a time; a piece served coded from the slot or the decoded blocks, or not sent if not filled within 372.8 ms; the image checked and staged as from the phone, and a reboot at a quiet moment; at its first boot the image confirms itself at `AppEvent::Heard`, or, with none within `update::heard_within` of its start, resets for the swap back, and the image back gives it up (`bark-fw/src/update/mesh.rs`, `update.rs` `trial`, `bark-fw/README.md` "Updates") |
 | Inbox (§4) | the application reads and confirms each message at once | the node keeps the oldest in its mailbox's ring and confirms it once its slot is written; the phones read their own from the ring (`bark-fw/src/node.rs`, spec "Phone link", Receiving) |
 
 ## 6. Memory
@@ -415,7 +426,7 @@ a neighbour's status asked or told, 16 B, with two marks in each neighbour's ent
 its padding (roadmap D157),
 and its stored state as handed back and as last kept, 80 B, what it learns of its
 battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
-of the update, 1 880 B, with 16 B of each neighbour's entry for its heartbeats' section and
+of the update, 1 984 B, with 16 B of each neighbour's entry for its heartbeats' section and
 when it was heard, and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
 `SleepyNode` is 82 048 B (80.1 KiB), without the heard table and the delivery
