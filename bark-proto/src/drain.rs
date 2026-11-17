@@ -210,8 +210,10 @@ impl Drain {
         running: Option<Running>,
         now_s: u32,
     ) -> Option<Step> {
-        if level.is_none() && self.low_since_s == 0 {
-            self.low_since_s = now_s.max(1);
+        match level {
+            None if self.low_since_s == 0 => self.low_since_s = now_s.max(1),
+            None => {}
+            Some(_) => self.low_since_s = 0,
         }
         let (Some(level), Some(running)) = (level, running) else {
             self.interrupt(now_s);
@@ -410,6 +412,18 @@ mod tests {
         let low = hours(d.left(None, false, 3600 + 10 * 3600));
         assert!((low - (20.0 / sleepy - 10.0)).abs() < 0.01, "{low}");
         assert_eq!(d.left(None, false, 400 * 3600), None);
+        // A reading above the low level ends the time at it: a later low
+        // counts from the next low reading.
+        let mut d = Drain::NEW;
+        d.read(None, Some(Running::Sleepy), 3600);
+        d.read(
+            Some(BATTERY_LOW_PERCENT + 1),
+            Some(Running::Sleepy),
+            2 * 3600,
+        );
+        d.read(None, Some(Running::Sleepy), 50 * 3600);
+        let low = hours(d.left(None, false, 60 * 3600));
+        assert!((low - (20.0 / sleepy - 10.0)).abs() < 0.01, "{low}");
     }
 
     /// What is kept comes back within a step.
