@@ -105,6 +105,10 @@ RUNS = bench.OUT / "runs"
 # boot, and the first 10 s report, which repeats the banner's version for a
 # host that reopened the port late (bark-fw/src/boot.rs); with room.
 BOOT_S = 60.0
+# A board answers `forget` within a second of reading it, and a second
+# boot comes within 3 s of the first; said at most four times.
+FORGET_S = 15.0
+FORGET_TRIES = 4
 VERSION = re.compile(r"(?:image version |\bimage_version=)(\d+)\b")
 # The bench build's answer to `forget` (bark-fw/README.md, "Bench build").
 FORGOT = re.compile(r"^bench: (forgot the image gathered|forget refused: (?P<why>.*))")
@@ -651,10 +655,16 @@ class Live:
         build", `forget`). It reboots, and is silenced again."""
         node = self.ids[b.name]
         self.flash(b)
-        t = time.time()
-        bench.say(node, "forget")
-        self.note(board=b.name, do="say", command="forget", resets=True, t=t)
-        got = self.cap.wait(node, FORGOT, t, BOOT_S)
+        # A board may boot twice after a UF2 and lose a command said in
+        # between (f4f5 and 3112, 2026-11-17): said again until answered.
+        got = None
+        for _ in range(FORGET_TRIES):
+            t = time.time()
+            bench.say(node, "forget")
+            self.note(board=b.name, do="say", command="forget", resets=True, t=t)
+            got = self.cap.wait(node, FORGOT, t, FORGET_S)
+            if got is not None:
+                break
         if got is None or got[1].group("why"):
             sys.exit(f"{b.name}: forget: {got[1].group('why') if got else 'no answer'}")
         rebooted = self.cap.wait(node, checks.REBOOT, got[0], BOOT_S)
