@@ -4,7 +4,7 @@
 
 /// The help for a row, by its label: two to four plain sentences.
 const Map<String, String> factHelp = {
-  // Spec "Nodes", "Sleepy nodes".
+  // Spec "Nodes", "Sleepy nodes", A forced role.
   'Role':
       'A relay has outside power, such as USB, and listens all the time, '
       'passing on texts for the nodes around it: the more relays, the '
@@ -12,7 +12,8 @@ const Map<String, String> factHelp = {
       'sleeps and wakes only in short windows, and sends and receives '
       'through one relay near it, its anchor. A fixed relay that loses '
       'its power keeps relaying on battery until the battery runs low, '
-      'and then turns sleepy.',
+      'and then turns sleepy. Holding the node\'s button switches its '
+      'role until its power next changes.',
   // Spec "Nodes", "Position", Fixed and carried.
   'Moving':
       'The node tells this itself from its GPS: after a little over a '
@@ -56,7 +57,7 @@ const Map<String, String> factHelp = {
   'Last heard':
       'Every node sends a short heartbeat now and then, saying who and '
       'where it is. A relay sends one every 5 to 15 seconds, each on the '
-      'next of 13 channels, so this node hears it about once every two '
+      'next of 13 channels, so this node hears it about once every one '
       'to three minutes; a sleepy node wakes to send one every two and a '
       'half to five minutes. A relay not heard for six and a half '
       'minutes, or a sleepy node for ten, leaves the list.',
@@ -88,15 +89,15 @@ const Map<String, String> factHelp = {
       'link works both ways: it hears this node, as well as being heard.',
   // Spec "Neighbour table", Demotion.
   'Demoted':
-      'Its last three hand-overs from this node went unanswered, so it '
-      'may no longer hear this node. Until it answers again, or for six '
-      'and a half minutes, it is tried only after every other neighbour '
-      'with a good enough link.',
+      'It did not answer this node\'s last three tries to pass it a text, '
+      'so it may no longer hear this node. Until it answers again, or for '
+      'six and a half minutes, it is tried only after every other '
+      'neighbour with a good enough link.',
   // Spec "Bans".
-  'Banned':
-      'It turned a text down, asking for a wait, or a hand-over to it '
-      'failed. Nothing is sent to it until the ban ends; texts go round '
-      'it meanwhile, and wait for it only where there is no other way.',
+  'Avoided':
+      'It turned a text down, asking for a wait, or did not answer one. '
+      'Nothing is sent to it for a while; texts go round it meanwhile, '
+      'and wait for it only where there is no other way.',
   // Spec "Phone link", Sending, Receiving.
   'Paired':
       'This phone is paired with this node: the node sends your texts '

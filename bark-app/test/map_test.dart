@@ -395,7 +395,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(BottomSheet),
-        matching: find.text('for now: it refused or failed a hand-over'),
+        matching: find.text('for now: it turned a text down or did not answer'),
       ),
       findsOneWidget,
     );
@@ -923,7 +923,7 @@ void main() {
     Navigator.pop(t.element(find.byType(BottomSheet).last));
     await t.pumpAndSettle();
     expect(find.text('Demoted'), findsOneWidget);
-    expect(find.text('its last hand-overs failed'), findsOneWidget);
+    expect(find.text('it did not answer its last texts'), findsOneWidget);
     expect(icon('distance'), findsOneWidget);
     await closeSheet(t);
     await t.pumpAndSettle();

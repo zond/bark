@@ -281,7 +281,7 @@ is a prototype for the bench, not the app people will carry.
   icon, such as `V18 · getting V19 14/32` while it gathers an image)
   and Exchanged (a ticked box) if it has taken a message from this
   node; then this node's own view of it: Anchor, `this node's anchor`,
-  for the relay this sleepy node sends through, Demoted or Banned. Each
+  for the relay this sleepy node sends through, Demoted or Avoided. Each
   icon is named for a screen reader. A tap anywhere on a row opens a
   few plain sentences on what that fact is, how the node knows it and
   what it means for the person, all in `lib/ui/fact_help.dart`. Its power, neighbours and version
