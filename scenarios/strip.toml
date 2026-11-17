@@ -25,7 +25,7 @@ relays_s = 600.0
 sleepy_s = 1800.0
 
 [clocks]
-drift_ppm = 50.0
+drift_ppm = 100.0
 
 [movement]
 fraction = 0.2

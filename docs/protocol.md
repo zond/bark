@@ -495,13 +495,24 @@ air; with an update's section, 26 bytes, 22.08 ms
 | lateness | none early; at most 872.8 ms after its slot: an attempt under way (a full frame with the long preamble, 372.8 ms, and the ACK timeout, 100 ms) and two backoffs of 200 ms before its last check. A check held for a reception in progress waits at most that frame |
 | deaf time | 19 ms per heartbeat, 0.2 % |
 
+**Clocks.** Each node's clock is taken to run within ±100 ppm of a rate
+all nodes share, so two part by up to 200 ppm. The shared rate need not
+be true time: boards built alike run fast or slow together, and what
+counts is how far two part. Their 32.768 kHz crystals differ by their
+tolerance, ±20 ppm at 25 °C, and slow as they leave their turnover,
+20 to 30 °C, by up to 0.04 ppm/°C² (a 32.768 kHz crystal of the
+board's size; the board's own part is not named). So a node at
+−30 °C and one at its turnover part by at most 2 × 20 + 0.04 × 60² =
+184 ppm, and by some 100 ppm for a typical crystal (roadmap D230).
+
 The 256 intervals are 39.1 ms apart, more than two heartbeats' airtime,
 2 × 14.4 = 28.8 ms, so two nodes with different intervals slide past
 each other and meet at most once in a row; 10 s / 28.8 ms = 347 steps
 would do, and 256 is the largest power of two below it, one byte. Two
 nodes that share an interval and are in step are unlocked by clock
-drift: crystals of about ±50 ppm part by up to 1 ms a heartbeat, so an
-overlap of 28.8 ms ends within 29 heartbeats (roadmap D47).
+drift: two nodes' clocks part by up to 200 ppm, 2 ms a heartbeat, so an
+overlap of 28.8 ms ends within 15 heartbeats, later for clocks that run
+alike (roadmap D47, D230).
 
 **Procedure.** Retune to channel k, listen before talking (one check,
 3.1 ms), up to three checks a random 0–200 ms apart; if every check is
@@ -1846,10 +1857,10 @@ It listens from as early as the heartbeat can come to as late, and
 sleeps again as soon as it hears it:
 
 - It keeps the time it expects from the earliest heartbeat heard, moved
-  later only by the drift of two clocks, ±50 ppm each, since a late one
-  says only that the anchor was busy.
+  later only by the drift of two clocks ([heartbeat](#heartbeat)), since
+  a late one says only that the anchor was busy.
 - As early is the time expected less three times the drift since the
-  last heartbeat heard, at most 59 ms over a rotation: once for the drift
+  last heartbeat heard, at most 117 ms over a rotation: once for the drift
   itself, and twice because a heartbeat held up by a busy anchor may have
   moved the time expected a drift later while its slot was a drift early
   (roadmap D52). As late is the drift, the heartbeat's greatest delay and
@@ -2101,7 +2112,7 @@ usually goes at once; one the bucket cannot spare waits for the node's
 next beat, a mean of about two minutes, at most a beat period.
 
 A node listens 3.39 s after each beat, 54 s an hour, 3.15 s after each
-message it takes, and for its anchor's heartbeat, under a second a
+message it takes, and for its anchor's heartbeat, about a second a
 rotation, and receives duty-cycled between. A sleepy node with an anchor
 draws 0.56 mA at the design rate in the simulator, three quarters of it
 listening, 63 days on the 850 mAh battery; without an anchor at most
@@ -3597,6 +3608,8 @@ those of the bring-up order, `roadmap.md` Phase 2.
   Ed25519, an image's signature.
 - Nordic nRF52840 Product Specification: the radio's transmit and
   receive currents.
+- NDK NX2012SE 32.768 kHz crystal datasheet (MU01260): tolerance at
+  25 °C, turnover temperature and parabolic coefficient.
 - Apple, Accessory Design Guidelines for Apple Devices, "Advertising
   Interval", and Technical Q&A QA1931: the advertising intervals an
   iPhone finds quickly.

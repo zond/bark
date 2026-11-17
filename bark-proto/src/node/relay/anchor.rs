@@ -22,13 +22,16 @@ use crate::wire::HEARTBEAT_LEN;
 /// of two-heartbeat means under 4 dB fading (spec "Relay choice").
 pub const SWITCH_MARGIN_DB: f32 = 8.0;
 
-/// The most a node's clock may run fast or slow, ppm: a common 32.768 kHz
-/// watch crystal's tolerance, which the low-frequency clock runs from
-/// (nRF52840 product specification, LFXO). To be measured on the boards.
-pub const CLOCK_DRIFT_PPM: u64 = 50;
+/// The most a node's clock may run fast or slow of a rate all nodes
+/// share, ppm, so that two part by up to twice it (spec "Heartbeat",
+/// roadmap D230). Boards built alike share an offset from true time, which
+/// cancels; the 32.768 kHz crystal's tolerance and its slowing in the cold,
+/// up to 0.04 ppm/°C² from a 20–30 °C turnover (NDK NX2012SE datasheet),
+/// do not.
+pub const CLOCK_DRIFT_PPM: u64 = 100;
 
-/// How far two clocks, each off by up to [`CLOCK_DRIFT_PPM`], drift apart
-/// over `d`.
+/// How far two clocks, each within [`CLOCK_DRIFT_PPM`] of the shared rate,
+/// drift apart over `d`.
 pub(super) fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
 }

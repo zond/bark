@@ -3,7 +3,7 @@
 **Status:** design, 2026-11-13. The runner, the standing checks, the
 bench build, the phone test and scenarios A1 to A5, S2 and S3 are built.
 A1, A2 and A3 have passed on the boards; the others and the phone test
-have not run yet. Every board of a run runs the bench build, which logs
+have not run yet. The anchor and clock checks came on 2026-11-17. Every board of a run runs the bench build, which logs
 each transmission, as the heartbeat check needs. The bench build has a sync word of
 its own, so nodes running a release in range take no part in a run. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
@@ -46,7 +46,20 @@ and any one fails the run:
   unless each of the board's checks before it read the channel: that is
   noise the board measured;
 - the stack's free room below its margin (`core-interface.md`, Memory);
-- a gap in a board's log longer than its status line's period.
+- a gap in a board's log longer than its status line's period;
+- a sleepy node that hears fewer of the anchor heartbeats it wakes for
+  than a node that loses one in ten would hear, but for one run in a
+  thousand: a listening receiver loses about one in ten
+  (spec "Channel at boot"), and a node whose window is right loses no
+  more;
+- two boards whose clocks part by more than the 200 ppm the core allows
+  two nodes' (spec "Heartbeat"), in boots of an hour or more. Each
+  board's rate is measured against the host's clock, as how the least
+  delay of a line, over a minute's lines at each end of the boot, moves,
+  and the host's own rate cancels in the difference; boards built alike
+  may all be far from the host's and pass. The report gives every
+  board's rate and the source of its 32.768 kHz clock (roadmap D229,
+  D230).
 
 The checks are functions of log lines, tested on the host against
 recorded logs.
