@@ -20,6 +20,12 @@ use embassy_time::{with_timeout, Duration, Timer};
 /// for its neighbours, and short enough to hold on purpose.
 const LONG_PRESS: Duration = Duration::from_secs(3);
 
+/// How long the button must stay pressed to count, and released before
+/// the next: a choice. Tactile switches' datasheets give their contacts'
+/// bounce as 5 to 10 ms at most; this is four times that, and well under
+/// the 100 ms or so of a quick press.
+const DEBOUNCE: Duration = Duration::from_millis(40);
+
 /// How often, and how many times, the button looks whether the core has
 /// taken its flip before it shows the lines: up to 200 ms, far longer
 /// than a step of the core (`longest_handle_us` in the node's log).
@@ -83,9 +89,3 @@ pub async fn run(pin: Peri<'static, P1_10>) -> ! {
         Timer::after(DEBOUNCE).await;
     }
 }
-
-/// How long the button must stay pressed to count, and released before
-/// the next: a choice. Tactile switches' datasheets give their contacts'
-/// bounce as 5 to 10 ms at most; this is four times that, and well under
-/// the 100 ms or so of a quick press.
-const DEBOUNCE: Duration = Duration::from_millis(40);

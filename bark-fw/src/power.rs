@@ -1,9 +1,9 @@
 //! Whether USB power is present, from the nRF52840's VBUS detection: the
 //! USBREGSTATUS register's VBUSDETECT field, and the USBDETECTED and
 //! USBREMOVED events at each change (nRF52840 Product Specification,
-//! POWER, USB supply). The core takes its role from it, a relay on USB and
-//! sleepy on battery (spec "Nodes", roadmap D71); the LED and the 32 MHz
-//! crystal follow it too (`main.rs`).
+//! POWER, USB supply). A node on USB is a relay, and on battery its motion
+//! and its battery decide (spec "Nodes", roadmap D71); the LED and the
+//! 32 MHz crystal follow it too (`main.rs`).
 //!
 //! The USB driver enables the two events and its own handler clears them
 //! (embassy-nrf `vbus_detect`); the handler here, bound to the same

@@ -155,7 +155,7 @@ pub mod external {
     const DISCHARGE_SECTORS: u32 = 8;
 
     /// Sectors for the tables kept across a reboot into a new image
-    /// (`bark_app_layer::tables`): 25 248 bytes at most, 6.2 sectors; the 8
+    /// (`bark_app_layer::tables`): 27 917 bytes at most, 6.8 sectors; the 8
     /// the chip had left.
     const TABLES_SECTORS: u32 = 8;
 

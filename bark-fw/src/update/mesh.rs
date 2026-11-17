@@ -1,6 +1,6 @@
-//! The node's side of an update over the mesh
-//! (spec "Updates over the mesh"; `bark-fw/README.md`, "Updates"): it
-//! tells the core the image it runs, answers each image a neighbour offers by its policy
+//! The node's side of an update over the mesh (spec "Updates over the mesh";
+//! `bark-fw/README.md`, "Updates"): it tells the core the image it runs,
+//! answers each image a neighbour offers by its policy
 //! (`bark_image::policy`), keeps the pieces the core hands it in the store
 //! on the external flash (`bark_image::pieces`), checks the image's proof
 //! once blocks 0 and 1 are in (`pieces::check_proof`), fills the pieces the
@@ -11,11 +11,10 @@
 //! at a time and lets the executor run between, waiting out the chip's
 //! erases and programs with a timer, so that no stretch of its work is
 //! longer than `radio::STRETCH` (`README.md`, "Work beside the radio").
-//! The radio's task hands pieces straight into
-//! the store's queue, and asks this task for the bytes of a piece to
-//! serve, which it reads from the running image, memory-mapped in the
-//! internal flash, or from the blocks of the gathered image on the
-//! external one.
+//! The radio's task hands pieces straight into the store's queue, and asks
+//! this task for the bytes of a piece to serve, which it reads from the
+//! running image, memory-mapped in the internal flash, or from the blocks
+//! of the gathered image on the external one.
 
 use core::cell::{Cell, RefCell};
 
@@ -341,7 +340,7 @@ pub async fn forget() -> Result<(), &'static str> {
 
 // The task.
 
-/// Run the mesh's update for ever, once [`START`] is raised.
+/// Run the mesh's update for ever, once the running image is kept.
 pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -> ! {
     super::kept_for_mesh().await;
     if crate::ext_flash::with(|_| ()).is_none() {

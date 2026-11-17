@@ -300,9 +300,9 @@ pub struct MpslParts {
 /// which a running watchdog's hold on the clock does not allow. On the
 /// crystal, its accuracy is taken as ±250 ppm, the tolerance the Product
 /// Specification requires of a crystal for a BLE stack (32.768 kHz
-/// crystal oscillator, fTOL,LFXO,BLE): the fitted
-/// crystal's own is not known, and a figure too small would narrow the
-/// windows in which the controller listens for the phone. On the RC
+/// crystal oscillator, fTOL,LFXO,BLE): the fitted crystal's own is not
+/// known, and a figure too small would narrow the windows in which the
+/// controller listens for the phone. On the RC
 /// oscillator, it is calibrated as often as the MPSL recommends, every 4 s
 /// and at least every 8 s, which holds it to ±500 ppm (Product
 /// Specification, LFRC).
