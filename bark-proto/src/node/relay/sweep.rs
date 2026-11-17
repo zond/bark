@@ -221,15 +221,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Set aside a home reading taken while a packet addressed to this
     /// relay, the reply to its hand-over, or a piece of the image it
     /// gathers was on the air: that energy follows it to any channel
-    /// (spec "Busy estimate").
-    pub(super) fn set_aside_own(&mut self, bytes: &[u8], now: Instant) {
+    /// (spec "Busy estimate"). `packet` is the frame of `len` bytes, if it
+    /// decoded.
+    pub(super) fn set_aside_own(&mut self, packet: Option<Packet<'_>>, len: usize, now: Instant) {
         let me = self.me();
-        let own = match Packet::decode(bytes) {
-            Ok(Packet::Data(d)) => d.dst_hop == me,
-            Ok(Packet::Ack(a)) => self.in_flight().is_some_and(|o| o.answered_by(a, me)),
+        let own = match packet {
+            Some(Packet::Data(d)) => d.dst_hop == me,
+            Some(Packet::Ack(a)) => self.in_flight().is_some_and(|o| o.answered_by(a, me)),
             // A piece names no node: its holder sends it where a gatherer
             // listens.
-            Ok(Packet::Update(Update::Piece { version, .. })) => self
+            Some(Packet::Update(Update::Piece { version, .. })) => self
                 .gathering()
                 .is_some_and(|(image, _)| image.version == version),
             _ => false,
@@ -239,7 +240,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // A frame's preamble is not reported: one addressed to a node
         // that sweeps has the shortest.
-        let len = bytes.len().min(u8::MAX as usize) as u8;
+        let len = len.min(u8::MAX as usize) as u8;
         let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
         self.radio.set_aside_home_reading(airtime, now);
     }

@@ -765,13 +765,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     // --- Reception ---
 
     fn received(&mut self, bytes: &[u8], rssi: i16, now: Instant, emit: &mut dyn FnMut(Action)) {
-        self.set_aside_own(bytes, now);
+        let decoded = Packet::decode(bytes);
+        self.set_aside_own(decoded.ok(), bytes.len(), now);
         if let Some(s) = self.sleep_mut().filter(|s| s.dark) {
             // Back in reach: its anchor's rotations count from here.
             s.dark = false;
             s.misses = 0;
         }
-        let decoded = Packet::decode(bytes);
         // A decoded frame proves this image works with another node's
         // (spec "Updates over the mesh"); a piece names no sender, but no
         // node hears its own.
