@@ -9,7 +9,7 @@
 //! message is back the region is erased; a reset before then puts them
 //! back again, and the network knows each by its ID.
 
-use bark_app_layer::carry::{decode, encode, HELD_MAX, SLOT_LEN};
+use bark_app_layer::carry::{decode, encode, erased, HELD_MAX, SLOT_LEN};
 use bark_driver::Outgoing;
 use bark_image::layout::external::{CARRY, SECTOR};
 use bark_image::layout::Region;
@@ -57,27 +57,29 @@ impl Carry {
     pub async fn put_back(&mut self, core: &mut Role, ago: Duration) {
         let now = crate::clock::core_now();
         let mut s = [0; SLOT_LEN];
-        let st = &mut *self;
         let (mut back, mut lost) = (0, 0);
-        while st.written < SLOTS && read(st.written, &mut s) {
-            let Some(m) = decode(&s) else { break };
-            if m.at == HeldAt::Own {
-                st.own = Some(st.written);
-            } else if core.put_back(&m, ago, now) {
-                back += 1;
-            } else {
-                log::error!("carry: id={:08x} not put back", m.msg_id.0);
-                lost += 1;
+        while self.written < SLOTS && read(self.written, &mut s) && !erased(&s) {
+            match decode(&s) {
+                Some(m) if m.at == HeldAt::Own => self.own = Some(self.written),
+                Some(m) if core.put_back(&m, ago, now) => back += 1,
+                Some(m) => {
+                    log::error!("carry: id={:08x} not put back", m.msg_id.0);
+                    lost += 1;
+                }
+                None => {
+                    log::error!("carry: slot {} fails its check", self.written);
+                    lost += 1;
+                }
             }
-            st.written += 1;
+            self.written += 1;
         }
-        if st.written > 0 {
+        if self.written > 0 {
             log::info!(
                 "carry: {} messages put back, {} not, {} ms away assumed, own to offer: {}",
                 back,
                 lost,
                 ago.as_millis(),
-                st.own.is_some()
+                self.own.is_some()
             );
         }
         self.tidy().await;
@@ -86,20 +88,19 @@ impl Carry {
     /// The application's own message kept, to offer the core, into
     /// `payload`, as `bark_driver::App::take` hands it.
     pub fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
-        let st = self;
-        if core::mem::take(&mut st.offered) {
+        if core::mem::take(&mut self.offered) {
             // Not given back: taken.
-            st.own = None;
+            self.own = None;
         }
         let mut s = [0; SLOT_LEN];
-        let out = st
+        let out = self
             .own
             .filter(|&slot| read(slot, &mut s))
             .and_then(|_| decode(&s))
             .map(|m| {
                 payload[..m.payload.len()].copy_from_slice(m.payload);
                 log::info!("carry: id={:08x} offered again", m.msg_id.0);
-                st.offered = true;
+                self.offered = true;
                 Outgoing {
                     dst_pos: m.dst_pos,
                     dst_id: m.dst_id,
@@ -107,7 +108,7 @@ impl Carry {
                 }
             });
         if out.is_none() {
-            st.own = None;
+            self.own = None;
         }
         out
     }
@@ -130,16 +131,15 @@ impl Carry {
 
     /// Erase the region once every message kept is back.
     pub async fn tidy(&mut self) {
-        let st = &*self;
-        if st.written == 0 || st.own.is_some() {
+        if self.written == 0 || self.own.is_some() {
             return;
         }
-        let sectors = st.written.div_ceil(PER_SECTOR) as u32;
+        let sectors = self.written.div_ceil(PER_SECTOR) as u32;
         let written = Region {
             len: (sectors * SECTOR).min(CARRY.len),
             ..CARRY
         };
-        let kept = st.written;
+        let kept = self.written;
         ext_flash::erase_region(written, "carry").await;
         *self = Carry::new();
         log::info!("carry: every message back; {} kept", kept);
@@ -150,15 +150,20 @@ impl Carry {
 /// by its ID.
 pub async fn keep<'a>(held: impl Iterator<Item = Held<'a>>) {
     ext_flash::erase_region(CARRY, "carry").await;
-    let mut n = 0;
+    let (mut slot, mut kept) = (0, 0);
     for m in held.take(SLOTS) {
         let Some(s) = encode(&m) else { continue };
-        let at = CARRY.start + (n * SLOT_LEN) as u32;
+        let at = CARRY.start + (slot * SLOT_LEN) as u32;
         match ext_flash::program(at, &s).await {
-            Ok(()) => log::info!("carry: id={:08x} kept across the reboot", m.msg_id.0),
+            Ok(()) => {
+                log::info!("carry: id={:08x} kept across the reboot", m.msg_id.0);
+                kept += 1;
+            }
             Err(e) => log::error!("carry: id={:08x} lost: {:?}", m.msg_id.0, e),
         }
-        n += 1;
+        // A failed program may have written part of the slot, so the next
+        // takes a fresh one; the boot skips this one by its check.
+        slot += 1;
     }
-    log::info!("carry: {} messages kept across the reboot", n);
+    log::info!("carry: {} messages kept across the reboot", kept);
 }
