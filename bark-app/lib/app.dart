@@ -128,6 +128,9 @@ class AppModel extends _AppCore
     alerts = Alerts(notifier, contacts);
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
+    // Made first, so that the node's reboot is waited for before the
+    // search hears its link ended.
+    updater.away = _rebooted;
     session.addListener(_nodeAddress);
     session.addListener(_installs);
     session.addListener(_queuedFetch);

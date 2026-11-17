@@ -11,7 +11,7 @@
 // once Android's bond with any node the app does not count as its own
 // is removed as it is heard, but not one whose bond Android keeps until
 // the bond is forgotten, nor any other node while a paired node is away
-// for its install, nor a node that refused the phone over its link
+// for its install or its reboot into the phone's image, nor a node that refused the phone over its link
 // version, until a tap tries it or a link to it is made; and
 // the owner's unpairing, after which Android forgets its bond too; and
 // Pair, which removes a bond Android holds first and tries nothing where
@@ -948,6 +948,89 @@ void main() {
       });
     });
 
+    /// The paired node, linked, is sent version 2 and reboots into it, out
+    /// of reach meanwhile.
+    FakeNode rebooted(FakeAsync async, AppModel app, FakeNodes ble) {
+      async.elapse(round);
+      expect(app.linkDevice, paired);
+      final u = app.updater;
+      u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
+      u.send();
+      async.elapse(const Duration(seconds: 1));
+      expect(u.phase, Phase.committed, reason: u.message);
+      ble.inReach.remove(paired);
+      u.reboot();
+      async.flushMicrotasks();
+      expect(u.phase, Phase.rebooting, reason: u.message);
+      expect(app.session.connected, isFalse);
+      return ble.nodes[paired]!;
+    }
+
+    test('while the paired node reboots into an image the phone sent, the '
+        'search looks for it alone, and the update is judged when it is '
+        'back', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        final node = rebooted(async, app, ble);
+        expect(app.install?.sent, isTrue);
+        expect(
+          connectionLine(app),
+          'ID FA4E00000001 is installing version 2, back in about a minute',
+        );
+        expect(connectionHelp(app), contains('which this phone sent it'));
+        // Past the swap and the two rounds that call a node out of reach.
+        async.elapse(swapAway + lookRound * 3);
+        expect(ble.connects, [paired]);
+        expect(app.ownAway, isFalse);
+        expect(
+          connectionLine(app),
+          'ID FA4E00000001 is installing version 2, not back yet',
+        );
+        ble.inReach.add(paired);
+        async.elapse(lookRound);
+        expect(ble.connects, [paired, paired]);
+        expect(node.image, 2);
+        expect(app.updater.phase, Phase.done, reason: app.updater.message);
+        expect(
+          connectionLine(app),
+          'Connected to ID FA4E00000001, paired, updated to version 2',
+        );
+      });
+    });
+
+    test('a paired node that never comes back from the phone\'s update: '
+        'after the time its firmware may take and two rounds, the search '
+        'goes on as before', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        rebooted(async, app, ble);
+        async.elapse(backWithin);
+        expect(ble.connects, [paired]);
+        expect(app.ownAway, isFalse);
+        expect(
+          app.updater.message,
+          'The node is not back; it may be out of reach',
+        );
+        async.elapse(lookRound * 2 + seenWait);
+        expect(app.ownAway, isTrue);
+        expect(ble.connects.last, strong);
+        expect(app.installingLine, isNull);
+        // Another node is not judged; the update still waits for its own.
+        expect(app.updater.phase, Phase.rebooting);
+      });
+    });
+
+    test('a node the person taps during the wait for the phone\'s update '
+        'connects at once, and is not judged', () {
+      run(withPaired: true, pairedInReach: true, (async, app, ble) {
+        rebooted(async, app, ble);
+        async.elapse(lookRound);
+        app.connectGuest(FoundNode(weak, nodeName(weakId), -70));
+        async.elapse(const Duration(seconds: 1));
+        expect(ble.connects, [paired, weak]);
+        expect(app.session.guest, isTrue);
+        expect(app.updater.phase, Phase.rebooting);
+      });
+    });
+
     test('a node Android holds a bond with that the app does not count as '
         'its own, while the paired node was missed in one round only: the '
         'bond removed as it is heard, and no link until the second', () {
@@ -1856,6 +1939,38 @@ void main() {
         expect(app.install, isNull);
         final log = [for (final l in app.session.log) l.text];
         expect(log.where((l) => l.contains('reboots')), isEmpty);
+      });
+    });
+
+    test('the person\'s link to another paired node ends the wait for the '
+        'home that reboots into the phone\'s image; the home is judged once '
+        'the phone is back on it', () {
+      run((async, app, ble) {
+        async.elapse(round);
+        expect(app.linkDevice, home);
+        final u = app.updater;
+        u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
+        u.send();
+        async.elapse(const Duration(seconds: 1));
+        expect(u.phase, Phase.committed, reason: u.message);
+        ble.inReach.remove(home);
+        u.reboot();
+        async.flushMicrotasks();
+        expect(app.install?.sent, isTrue);
+        app.connectPaired(nodeName(nearId));
+        async.elapse(round);
+        expect(app.linkDevice, near);
+        expect(app.install, isNull);
+        expect(u.phase, Phase.rebooting);
+        // The tapped link is the person's until it drops; then the phone
+        // takes its home, back, and the update is judged.
+        async.elapse(swapAway);
+        ble.inReach.add(home);
+        ble.inReach.remove(near);
+        ble.drop(near);
+        async.elapse(round);
+        expect(app.linkDevice, home);
+        expect(u.phase, Phase.done, reason: u.message);
       });
     });
 

@@ -39,6 +39,18 @@ const Duration hearsNoOneAfter = Duration(
   microseconds: 3 * 13 * 15000000 + 872800,
 );
 
+/// The loader's watchdog period, `bark_image::TRIAL_SECONDS`: it resets an
+/// image that hangs before it confirms itself (`bark-fw/README.md`,
+/// "Updates").
+const Duration trialWatchdog = Duration(seconds: 600);
+
+/// The longest a node is away after a reboot into a new image, by what
+/// its firmware does: the swap ([swapAway]), an image that hangs until
+/// [trialWatchdog] resets it, and the swap back, no longer than the swap
+/// (`bark-fw/README.md`, "Updates"). A node away longer is out of the
+/// phone's reach, or does not boot.
+final Duration backWithin = swapAway + trialWatchdog + swapAway;
+
 /// An image in `file`, its hash checked.
 FirmwareImage parseImage(List<int> file) =>
     FirmwareImage.parse(file, (b) => sha256.convert(b).bytes);
@@ -127,6 +139,10 @@ class Updater extends ChangeNotifier {
   /// The last thing the node said, or what went wrong.
   String? message;
 
+  /// The node the image goes to, from the send that began it: what the
+  /// app does next, and the update's outcome, are that node's alone.
+  List<int>? _target;
+
   /// The version the node ran before the reboot.
   int? _before;
 
@@ -137,6 +153,9 @@ class Updater extends ChangeNotifier {
 
   /// Shows [hearsNoOne] when its time comes.
   Timer? _listening;
+
+  /// Says the node is not back once [backWithin] is over.
+  Timer? _away;
 
   /// The last update finished, while the connected node is the one it
   /// updated and still runs its version.
@@ -177,12 +196,18 @@ class Updater extends ChangeNotifier {
       'phone cannot send an older version.';
 
   /// The app is in an exchange with the node that runs without the
-  /// person: sending the image, waiting for its check, or for its reboot.
-  /// Closing the link then cuts it.
-  bool get underWay =>
-      phase == Phase.sending ||
-      phase == Phase.committing ||
-      phase == Phase.rebooting;
+  /// person: sending the image, or waiting for its check. Closing the link
+  /// then cuts it. Not while the node reboots: its link has ended, and
+  /// closing another cuts nothing.
+  bool get underWay => phase == Phase.sending || phase == Phase.committing;
+
+  /// The link is to the node the update goes to, or to any node before
+  /// the update has one: what the next step needs.
+  bool get atNode {
+    final n = session.connected ? session.node : null;
+    final t = _target;
+    return n != null && (t == null || listEquals(n.id, t));
+  }
 
   /// Whether the chosen image, its progress and its actions are shown:
   /// not once the node runs it, when they say nothing more.
@@ -223,9 +248,23 @@ class Updater extends ChangeNotifier {
   /// The link has closed since the reboot was asked for.
   bool _down = false;
 
+  /// Told once the node is away for its reboot, with its ID and the
+  /// version it reboots into, so that the search waits for it.
+  void Function(List<int> id, int version)? away;
+
+  /// [away] was told of this reboot.
+  bool _awayTold = false;
+
+  void _tellAway() {
+    if (phase != Phase.rebooting || !_down || _awayTold) return;
+    _awayTold = true;
+    away?.call(_target!, image!.version);
+  }
+
   bool _running = false;
 
   void _set(Phase p, [String? m]) {
+    if (p != Phase.rebooting) _away?.cancel();
     phase = p;
     message = m;
     notifyListeners();
@@ -236,6 +275,7 @@ class Updater extends ChangeNotifier {
     image = i;
     from = source;
     held = 0;
+    _target = null;
     _set(Phase.idle);
   }
 
@@ -243,6 +283,10 @@ class Updater extends ChangeNotifier {
     final l = session.link;
     final n = session.node;
     if (l == null || n == null) throw StateError('not connected');
+    final t = _target;
+    if (t != null && !listEquals(n.id, t)) {
+      throw StateError('connected to another node than ${nodeLabel(t)}');
+    }
     if (session.guest) {
       throw StateError('only the phone paired with the node updates it');
     }
@@ -253,6 +297,10 @@ class Updater extends ChangeNotifier {
   Future<void> send() async {
     if (_running || image == null) return;
     _running = true;
+    // A new send, not one that goes on, is to the node connected now.
+    if (phase == Phase.idle || phase == Phase.failed) {
+      _target = session.node?.id;
+    }
     try {
       await _send(image!);
     } on AttException catch (e) {
@@ -358,6 +406,7 @@ class Updater extends ChangeNotifier {
       final link = _link();
       _before = session.node?.image;
       _down = false;
+      _awayTold = false;
       try {
         await link.writeUpdate(encodeReboot());
       } catch (e) {
@@ -367,6 +416,13 @@ class Updater extends ChangeNotifier {
       }
       session.note('Update: reboot asked');
       _set(Phase.rebooting, 'The node restarts, about a minute');
+      _away?.cancel();
+      _away = Timer(backWithin, () {
+        if (phase == Phase.rebooting) {
+          _set(Phase.rebooting, 'The node is not back; it may be out of reach');
+        }
+      });
+      _tellAway();
     } on AttException catch (e) {
       await _refused(e, Phase.committed);
     } catch (e) {
@@ -387,9 +443,13 @@ class Updater extends ChangeNotifier {
     final n = session.node;
     if (n == null) {
       _down = true;
+      _tellAway();
       return;
     }
     if (updated != null && (session.status?.heard ?? 0) > 0) _heard = true;
+    // Another node, as the search may take while this one is away, is
+    // neither sent this image nor judged by its version.
+    if (!atNode) return;
     if (phase == Phase.paused && !_running) {
       unawaited(send());
     } else if (phase == Phase.rebooting && _down) {
@@ -419,6 +479,7 @@ class Updater extends ChangeNotifier {
   @override
   void dispose() {
     _listening?.cancel();
+    _away?.cancel();
     session.removeListener(_onSession);
     super.dispose();
   }
