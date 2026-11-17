@@ -1009,4 +1009,6 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
 }
 
 #[cfg(test)]
+mod handle_time;
+#[cfg(test)]
 mod tests;

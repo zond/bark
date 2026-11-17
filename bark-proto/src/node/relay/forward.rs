@@ -484,7 +484,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// forward routed from the state as it is now. With none to send, the
     /// earliest end of what holds them back is kept for the wakeup. At most
     /// queue entries × neighbour entries per call.
-    fn pick(&mut self, now: Instant) -> Option<usize> {
+    pub(super) fn pick(&mut self, now: Instant) -> Option<usize> {
         const N: usize = SEND_QUEUE + HOP_SLOTS;
         let mut banned = [false; N];
         let mut hints = [None::<u16>; N];
