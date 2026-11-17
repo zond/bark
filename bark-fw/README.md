@@ -1535,6 +1535,16 @@ longest poll of a minute near the bound, not under it: the GPS task's
 to 0.34 ms at the median and 0.36 ms at the 95th percentile. No channel
 check went without its reading.
 
+The processor's instruction cache, off after reset, is on from the first
+line of `main` in every build (roadmap D225). Forty minutes on three
+boards with it on and off (2026-11-17) took the GPS task's longest poll
+of a minute from 220–250 µs to 176–189 µs at the median and from at most
+295 µs to at most 204 µs, and the update task's from 319–358 µs to
+253–285 µs at the 95th percentile. Writes to the internal flash need
+nothing for it: while the NVMC is in write or erase mode the cache is
+invalidated and stays so (Product Specification, NVMC, `CONFIG`), so
+code runs then as it did without the cache.
+
 This bounds what the update does, not every task. Known stretches over
 the bound, left as they are (2026-11-15; measured where it says so, else
 worked out from the bus and the datasheets):

@@ -245,6 +245,14 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    // The instruction cache, off from reset, cuts the longest polls by a
+    // fifth, which the 250 µs bound needs (README, "Work beside the
+    // radio"). Flash writes need nothing more: write and erase modes
+    // invalidate it and keep it invalidated (nRF52840 Product
+    // Specification, NVMC, CONFIG and ICACHECNF).
+    embassy_nrf::pac::NVMC
+        .icachecnf()
+        .write(|w| w.set_cacheen(true));
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
     #[cfg(not(feature = "console"))]
