@@ -11,7 +11,8 @@
 //! Left to itself the queue fills as far as the bucket and the bans let
 //! it. The worst case is then made by hand: the queue topped up to its
 //! whole regular room and some hop places, each entry with its record, as
-//! arrivals would leave them, and one received DATA timed, and the choice of what to send next.
+//! arrivals would leave them, and one received DATA timed, and the choice of what to send next,
+//! also with every neighbour banned, when nothing may go.
 
 extern crate std;
 use std::println;
@@ -214,17 +215,14 @@ impl Bench {
             let src = NodeId::from_u64(pos.short().0 as u64);
             let record = Record::new(message.id(), Some((src, home)), (3, 0), b.now);
             r.records.put(at.expect("a record's place"), record);
-            r.queue
-                .push(Outgoing {
-                    message,
-                    place,
-                    since: b.now,
-                    state: State::Queued,
-                    not_before: Instant::ZERO,
-                    toward: 0,
-                    ..template
-                })
-                .expect("room");
+            let out = Outgoing {
+                message,
+                state: State::Queued,
+                not_before: Instant::ZERO,
+                toward: 0,
+                ..template
+            };
+            assert!(r.push_forward(out, place, b.now), "room");
         };
         while self.relay.queue.regular() < SEND_QUEUE {
             add(self, 0);
@@ -302,12 +300,13 @@ fn handle_time() {
         );
     }
     println!("topped up after 120 s; one call, median and shortest of 8, ns");
-    println!("nb    B  queue      | received median min | pick median min");
-    for payload in [MAX_PAYLOAD, 40] {
+    println!("nb    B  queue      | received median min | pick median min | all banned median min");
+    for (n, payload) in [(64, MAX_PAYLOAD), (64, 40), (3, MAX_PAYLOAD), (3, 40)] {
         for places in [1, 9, 16, 64] {
             let (mut rx, mut pick, mut queue) = (Vec::new(), Vec::new(), (0, 0));
-            for i in 0..16 {
-                let mut b = Bench::new(64, payload);
+            let mut blocked = Vec::new();
+            for i in 0..24 {
+                let mut b = Bench::new(n, payload);
                 b.handle(Event::Wakeup);
                 // Counts of 1, so that the places are those topped up.
                 while b.now < Instant::ZERO + Duration::from_secs(120) {
@@ -315,11 +314,25 @@ fn handle_time() {
                 }
                 b.top_up(places);
                 queue = b.relay.queue_use();
-                if i % 2 == 0 {
+                if i % 3 == 0 {
                     // What each event costs when no hand-over is under way.
                     let start = Wall::now();
                     core::hint::black_box(b.relay.pick(b.now));
                     pick.push(start.elapsed().as_nanos());
+                    continue;
+                }
+                if i % 3 == 1 {
+                    // The same with every neighbour banned: nothing may go,
+                    // and the wakeup needs the end of every wait.
+                    let until = b.now + Duration::from_secs(60);
+                    let ids: Vec<_> = b.relay.neighbours.slots().map(|(_, n)| n.id).collect();
+                    for id in ids {
+                        b.relay.neighbours.refused(id, until);
+                    }
+                    let start = Wall::now();
+                    let p = core::hint::black_box(b.relay.pick(b.now));
+                    blocked.push(start.elapsed().as_nanos());
+                    assert_eq!(p, None, "nothing may go");
                     continue;
                 }
                 let mut frame = [0u8; MAX_FRAME];
@@ -331,11 +344,22 @@ fn handle_time() {
                     bytes: &frame[..len],
                 }));
             }
-            let (r, w) = (spread(rx.clone()), spread(pick.clone()));
-            let (rmin, wmin) = (rx.iter().min().unwrap(), pick.iter().min().unwrap());
+            let (r, w, a) = (
+                spread(rx.clone()),
+                spread(pick.clone()),
+                spread(blocked.clone()),
+            );
+            let min = |v: &Vec<u128>| v.iter().copied().min().unwrap_or(0);
             println!(
-                "64 {payload:>4} {:>3}+{:<3}    | {:>6} {:>6} | {:>6} {:>6}",
-                queue.0, queue.1, r.0, rmin, w.0, wmin
+                "{n:>2} {payload:>4} {:>3}+{:<3}    | {:>6} {:>6} | {:>6} {:>6} | {:>6} {:>6}",
+                queue.0,
+                queue.1,
+                r.0,
+                min(&rx),
+                w.0,
+                min(&pick),
+                a.0,
+                min(&blocked)
             );
         }
     }
