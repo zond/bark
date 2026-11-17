@@ -806,7 +806,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Ok(Packet::Ack(ack)) => self.ack_received(ack, now, emit),
             Ok(Packet::Update(u)) => self.update_heard(u, now, emit),
             Ok(Packet::Status(f)) => self.status_heard(f, now, emit),
-            Ok(Packet::Data(d)) if d.dst_hop == self.me() => {
+            Ok(Packet::Data(d)) if d.dst_hop == self.id => {
                 // It chose this node from heartbeats it heard: it hears us
                 // (spec "Neighbour table").
                 self.answer_from(d.src_hop, now, emit);

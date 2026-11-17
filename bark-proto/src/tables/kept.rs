@@ -1,8 +1,8 @@
 //! Instants as the tables keep them across a reset
-//! (spec "Updates over the mesh"; `Node::remembered`): signed whole milliseconds from the
-//! moment the tables were taken, since the clock after the reset counts
-//! from another epoch. A millisecond is far below anything an instant
-//! times there: a heartbeat's window is about 1.8 s.
+//! (spec "Updates over the mesh"; `Node::remembered`): signed whole
+//! milliseconds from the moment the tables were taken, since the clock
+//! after the reset counts from another epoch. A millisecond is far below
+//! anything an instant times there: a heartbeat's window is about 1.8 s.
 
 use crate::time::{Duration, Instant};
 

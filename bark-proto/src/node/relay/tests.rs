@@ -486,7 +486,7 @@ fn a_delivery_waits_for_the_bucket_within_the_window() {
         wrong: 0,
         sender_home: r.home,
         dst_hop: node,
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: dst,
         dst_id: node,
         hops: 1,
@@ -570,7 +570,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
             wrong: 0,
             sender_home: r.home,
             dst_hop: NodeId::NONE,
-            src_hop: r.me(),
+            src_hop: r.id(),
             dst_pos: dst,
             dst_id: name(99),
             hops: 2,
@@ -588,7 +588,7 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
         wrong: 0,
         sender_home: r.home,
         dst_hop: node,
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: dst,
         dst_id: node,
         hops: 0,
@@ -647,10 +647,10 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
     let packet = |home: Channel, from: u32, text: &'static [u8]| Data {
         wrong: 0,
         sender_home: home,
-        dst_hop: r.me(),
+        dst_hop: r.id(),
         src_hop: name(from),
         dst_pos: r.config.position,
-        dst_id: r.me(),
+        dst_id: r.id(),
         hops: 1,
         payload: text,
     };
@@ -888,7 +888,7 @@ fn a_packet_that_has_travelled_takes_a_hop_place() {
         let d = Data {
             wrong: 0,
             sender_home: home,
-            dst_hop: r.me(),
+            dst_hop: r.id(),
             src_hop: name(tag.into()),
             dst_pos: far,
             dst_id: NOBODY,
@@ -966,7 +966,7 @@ fn a_waiting_message_keeps_its_record() {
         let d = Data {
             wrong: 0,
             sender_home: Channel::new(5).unwrap(),
-            dst_hop: r.me(),
+            dst_hop: r.id(),
             src_hop: name(1),
             dst_pos: far,
             dst_id: NOBODY,
@@ -1081,7 +1081,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
             wrong: 0,
             sender_home: home,
             dst_hop: name(0),
-            src_hop: r.me(),
+            src_hop: r.id(),
             dst_pos: far,
             dst_id: NOBODY,
             hops: 2,
@@ -1120,7 +1120,7 @@ fn waiting_entries_keep_arrival_order_through_bans() {
                     let reply = Packet::Ack(Ack {
                         msg_id: id,
                         from: id_of(b),
-                        to: r.me(),
+                        to: r.id(),
                         refused: offers.len() <= refusals,
                         wait: 0,
                         seen: false,
@@ -1222,7 +1222,7 @@ fn a_message_that_waited_keeps_its_turn() {
             wrong: 0,
             sender_home: home,
             dst_hop: name(0),
-            src_hop: r.me(),
+            src_hop: r.id(),
             dst_pos,
             dst_id: NOBODY,
             hops,
@@ -1280,7 +1280,7 @@ fn a_message_that_waited_keeps_its_turn() {
                     let reply = Packet::Ack(Ack {
                         msg_id: id,
                         from,
-                        to: r.me(),
+                        to: r.id(),
                         refused: from == d,
                         wait: 8,
                         seen: false,
@@ -1347,7 +1347,7 @@ fn the_offer_keeps_the_mark() {
         wrong: 0,
         sender_home: home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: Position {
             lat: me.lat + 100_000,
             ..me
@@ -1437,7 +1437,7 @@ fn an_answer_to_another_sender_is_not_ours() {
         wrong: 0,
         sender_home: home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
@@ -1480,7 +1480,7 @@ fn an_answer_to_another_sender_is_not_ours() {
     let to_me = Ack {
         msg_id: id,
         from: id_of(d_pos),
-        to: r.me(),
+        to: r.id(),
         refused: false,
         wait: 0,
         seen: false,
@@ -1581,7 +1581,7 @@ fn a_neighbour_that_answers_stays_live() {
             wrong: 0,
             sender_home: home,
             dst_hop: name(0),
-            src_hop: r.me(),
+            src_hop: r.id(),
             dst_pos: far,
             dst_id: NOBODY,
             hops: 2,
@@ -1609,7 +1609,7 @@ fn a_neighbour_that_answers_stays_live() {
         let ack = Ack {
             msg_id: id,
             from: id_of(d_pos),
-            to: r.me(),
+            to: r.id(),
             refused,
             wait: 0,
             seen: false,
@@ -1704,7 +1704,7 @@ fn offer_dropped(
     let d = Data {
         wrong: 0,
         sender_home: Channel::new(5).unwrap(),
-        dst_hop: r.me(),
+        dst_hop: r.id(),
         src_hop: name(1),
         dst_pos: dst,
         dst_id: NOBODY,
@@ -1806,7 +1806,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
         wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
@@ -1864,7 +1864,7 @@ fn a_hand_over_stamps_its_count_at_its_first_transmission() {
     let ack = Ack {
         msg_id: id,
         from: id_of(near),
-        to: r.me(),
+        to: r.id(),
         refused: false,
         wait: 0,
         seen: false,
@@ -1892,7 +1892,7 @@ fn a_retransmission_or_a_copy_while_holding_is_only_acked() {
         let d = Data {
             wrong: 0,
             sender_home: Channel::new(5).unwrap(),
-            dst_hop: r.me(),
+            dst_hop: r.id(),
             src_hop: name(from),
             dst_pos: far,
             dst_id: NOBODY,
@@ -1950,7 +1950,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
         wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: addressed,
         dst_id: id_of(addressed),
         hops: 2,
@@ -1992,7 +1992,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
     let ack = Ack {
         msg_id: id,
         from: id_of(addressed),
-        to: r.me(),
+        to: r.id(),
         refused: false,
         wait: 0,
         seen: false,
@@ -2002,7 +2002,7 @@ fn a_copy_after_the_addressed_relay_took_it_is_only_acked() {
     assert!(r.queue.is_empty());
     let copy = Data {
         sender_home: Channel::new(5).unwrap(),
-        dst_hop: r.me(),
+        dst_hop: r.id(),
         src_hop: name(9),
         hops: 5,
         ..data
@@ -2077,7 +2077,7 @@ fn handing_to_the_nearer(text: &[u8]) -> (Relay, Instant, MsgId, Position, Posit
         wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
@@ -2157,7 +2157,7 @@ fn a_seen_ack_tries_the_neighbour_and_sends_on() {
     let seen = Ack {
         msg_id: id,
         from: id_of(d_pos),
-        to: r.me(),
+        to: r.id(),
         refused: false,
         wait: 0,
         seen: true,
@@ -2208,7 +2208,7 @@ fn a_return_answered_seen_is_dropped() {
         wrong: 0,
         sender_home: r.home,
         dst_hop: parent,
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
@@ -2231,7 +2231,7 @@ fn a_return_answered_seen_is_dropped() {
     let seen = Ack {
         msg_id: id,
         from: parent,
-        to: r.me(),
+        to: r.id(),
         refused: false,
         wait: 0,
         seen: true,
@@ -2276,7 +2276,7 @@ fn a_return_from_the_node_handed_to_is_taken_without_a_slot() {
         wrong: 0,
         sender_home: r.home,
         dst_hop: parent,
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: far,
         dst_id: NOBODY,
         hops: 2,
@@ -2302,7 +2302,7 @@ fn a_return_from_the_node_handed_to_is_taken_without_a_slot() {
     now += Duration::from_millis(5);
     let offered = Data {
         sender_home: home,
-        dst_hop: r.me(),
+        dst_hop: r.id(),
         src_hop: parent,
         hops: 4,
         ..back
@@ -2362,10 +2362,10 @@ fn a_message_for_this_node_is_taken_when_its_ack_has_gone_out() {
         let d = Data {
             wrong: 0,
             sender_home: Channel::new(5).unwrap(),
-            dst_hop: r.me(),
+            dst_hop: r.id(),
             src_hop: name(1),
             dst_pos: r.config.position,
-            dst_id: r.me(),
+            dst_id: r.id(),
             hops: 1,
             payload: b"for me",
         };
@@ -2620,7 +2620,7 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
     let refusal = Ack {
         msg_id: id,
         from: d,
-        to: r.me(),
+        to: r.id(),
         refused: true,
         wait: 1,
         seen: false,
@@ -2661,7 +2661,7 @@ fn an_answer_to_this_relay_lifts_a_demotion() {
     };
     hear(&mut r, &mut now, &Packet::Heartbeat(hb));
     assert!(demoted(&r, now), "nor does a heartbeat");
-    let me = r.me();
+    let me = r.id();
     hear(&mut r, &mut now, &Packet::Data(offer(me, b"to us")));
     assert!(!demoted(&r, now), "a DATA to this relay is an answer");
 }
@@ -2676,7 +2676,7 @@ fn a_refused_forward_goes_round_the_refuser() {
     let refusal = Ack {
         msg_id: id,
         from: id_of(d_pos),
-        to: r.me(),
+        to: r.id(),
         refused: true,
         wait: 8,
         seen: false,
@@ -2802,7 +2802,7 @@ fn a_second_message_for_a_banned_neighbour_waits_at_its_sender() {
         let d = Data {
             wrong: 0,
             sender_home: Channel::new(5).unwrap(),
-            dst_hop: r.me(),
+            dst_hop: r.id(),
             src_hop: name(1),
             dst_pos: dst,
             dst_id: NOBODY,
@@ -2886,7 +2886,7 @@ fn refusals_at_the_gate_are_told_a_line() {
         let d = Data {
             wrong: 0,
             sender_home: Channel::new(5).unwrap(),
-            dst_hop: r.me(),
+            dst_hop: r.id(),
             src_hop: name(u32::from(tag)),
             dst_pos: far,
             dst_id: NOBODY,
@@ -3029,7 +3029,7 @@ fn handing_between_with(
         wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: at(500, 0),
         dst_id: if to_e { id_of(e_pos) } else { NOBODY },
         hops: 2,
@@ -3069,7 +3069,7 @@ fn answered(r: &mut Relay, now: &mut Instant, id: MsgId, from: NodeId, seen: boo
     let ack = Ack {
         msg_id: id,
         from,
-        to: r.me(),
+        to: r.id(),
         refused: false,
         wait: 0,
         seen,
@@ -3259,7 +3259,7 @@ fn owner_with(c_live: bool) -> (Option<NodeId>, bool) {
         wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: dst,
         dst_id: c,
         hops: 2,
@@ -3373,7 +3373,7 @@ fn own_refused(lats: &[i32], bans: u8) -> (Relay, Instant, Vec<(Instant, Frame)>
     let refusal = Ack {
         msg_id: id,
         from: nearest,
-        to: r.me(),
+        to: r.id(),
         refused: true,
         wait: bans,
         seen: false,
@@ -3434,7 +3434,7 @@ fn the_inbox_keeps_messages_by_the_delivery_queue_s_rule() {
     use crate::tables::delivery::INBOX;
     use crate::wire::Data;
     let (mut r, mut now, _) = with_every_neighbour_banned();
-    let me = r.me();
+    let me = r.id();
     let at = r.config.position;
     // Offer a message for this node's application; whether it was taken
     // and, refused, why.
@@ -3587,7 +3587,7 @@ fn what_a_node_held_waits_for_room_when_it_turns_sleepy() {
             wrong: 0,
             sender_home: r.home,
             dst_hop: NodeId::NONE,
-            src_hop: r.me(),
+            src_hop: r.id(),
             dst_pos: dst,
             dst_id: NodeId([9; 6]),
             hops: 1,
@@ -3712,7 +3712,7 @@ fn a_status_asked_is_told_on_the_asker_s_channel() {
     use crate::status::{Battery, Status};
     use crate::wire::StatusFrame::{Ask, Tell};
     let (mut r, mut now, a, _) = with_two_neighbours();
-    let me = r.me();
+    let me = r.id();
     let sent = hear(&mut r, &mut now, &Packet::Status(Ask { to: me, from: a }));
     let status = Status {
         placed: true,
@@ -3730,7 +3730,7 @@ fn a_status_asked_is_told_on_the_asker_s_channel() {
     };
     let told = Tell {
         to: a,
-        from: r.me(),
+        from: r.id(),
         status,
     };
     assert_eq!(
@@ -3752,7 +3752,7 @@ fn a_status_asked_of_another_node_is_not_told() {
     let asks = [
         Ask { to: a, from: a },
         Ask {
-            to: r.me(),
+            to: r.id(),
             from: NOBODY,
         },
     ];
@@ -3781,7 +3781,7 @@ fn the_application_asks_and_hears_the_answer() {
     let sent = drive_from(&mut r, &mut now, until, pending);
     let asked = Ask {
         to: s,
-        from: r.me(),
+        from: r.id(),
     };
     assert_eq!(status_frames(&sent), [(7, LONG_PREAMBLE_SYMBOLS, asked)]);
     let status = Status {
@@ -3792,7 +3792,7 @@ fn the_application_asks_and_hears_the_answer() {
         ..Status::default()
     };
     let mut told = Vec::new();
-    for to in [r.me(), a] {
+    for to in [r.id(), a] {
         let f = mac::frame(
             &Packet::Status(Tell {
                 to,
@@ -3931,7 +3931,7 @@ fn first_hop_among(
         wrong: 0,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: at(dst_pos.map_or(100_000, |i| lats[i].0)),
         dst_id: dst_id.map_or(NOBODY, |i| id_of(at(lats[i].0))),
         hops: 2,
@@ -4078,7 +4078,7 @@ fn first_hand_over_from(
         wrong,
         sender_home: r.home,
         dst_hop: name(0),
-        src_hop: r.me(),
+        src_hop: r.id(),
         dst_pos: at(100_000),
         dst_id: dst_id.map_or(NOBODY, |k| id_of(at(k))),
         hops: 4,

@@ -1729,8 +1729,8 @@ curve's own 100 %. A relay's lighter load reads some 10 to 20 mV higher
 at the same charge, which the calibration at full partly scales away.
 A relay keeps a fifth of its cell for its owner when it turns sleepy,
 and relays again only at 30 %, far above a reading's noise and the few
-millivolts a change of load moves it; ±3 % is the SAADC's gain error at gain 1/6 (nRF52840 Product
-Specification, SAADC). On battery a fixed relay draws about 6.4 mA
+millivolts a change of load moves it; ±3 % is the SAADC's gain error at
+gain 1/6 (nRF52840 Product Specification, SAADC). On battery a fixed relay draws about 6.4 mA
 (5.8 mA listening, 32 mA for its airtime), so 80 % of the cell lasts it
 four days.
 

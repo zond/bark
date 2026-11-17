@@ -224,7 +224,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// (spec "Busy estimate"). `packet` is the frame of `len` bytes, if it
     /// decoded.
     pub(super) fn set_aside_own(&mut self, packet: Option<Packet<'_>>, len: usize, now: Instant) {
-        let me = self.me();
+        let me = self.id;
         let own = match packet {
             Some(Packet::Data(d)) => d.dst_hop == me,
             Some(Packet::Ack(a)) => self.in_flight().is_some_and(|o| o.answered_by(a, me)),
