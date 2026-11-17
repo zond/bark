@@ -4,7 +4,8 @@
 // update against the fake node, with lost pieces, a lost link, a low
 // battery and the reboot, its answer lost to the link's end or not, and
 // another node linked meanwhile, which is neither sent the image nor
-// judged; what the finished update shows, whether the node hears anyone after it, and
+// judged; a node not back in the time its firmware takes; what
+// the finished update shows, whether the node hears anyone after it, and
 // when the latest release is offered; and the screen of a finished
 // update.
 
@@ -390,6 +391,23 @@ void main() {
         s.attach(node.connect());
         async.flushMicrotasks();
         expect(u.phase, Phase.committed, reason: u.message);
+      });
+    });
+
+    test('a node not back once its firmware would be is said so, and '
+        'judged when it is', () {
+      run((async, s, node, u) {
+        rebooted(async, u);
+        // Nothing on a link is cut while the node is away.
+        expect(u.underWay, isFalse);
+        async.elapse(backWithin - const Duration(seconds: 1));
+        expect(u.message, 'The node restarts, about a minute');
+        async.elapse(const Duration(seconds: 1));
+        expect(u.phase, Phase.rebooting);
+        expect(u.message, 'The node is not back; it may be out of reach');
+        s.attach(node.connect());
+        async.flushMicrotasks();
+        expect(u.phase, Phase.done, reason: u.message);
       });
     });
 

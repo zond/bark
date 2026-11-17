@@ -860,7 +860,12 @@ image did not start, the node swapped the old one back, and the screen
 says the version it came back on. Only the node the image went to
 decides this, and only it is sent the rest of an image or asked to
 commit or reboot: another node the app links to meanwhile, as a public
-one as a guest while this one swaps, changes nothing of the update. An image from the phone keeps itself
+one as a guest while this one swaps, changes nothing of the update. A
+node not back within about 12 minutes (`backWithin`), the swap, an
+image that hangs until the loader's watchdog resets it after 600 s,
+and the swap back (`bark-fw/README.md`, "Updates"), is out of the
+phone's reach or does not boot: the screen says it is not back and may
+be out of reach, and the app goes on waiting for it. An image from the phone keeps itself
 whatever the node hears, since the node may stand alone
 (spec "Phone link", Updates). So if the node still hears no other node,
 sleepy ones counted, 585.9 s after it came back, as long as an image
