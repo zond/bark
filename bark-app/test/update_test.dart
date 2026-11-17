@@ -373,6 +373,21 @@ void main() {
       });
     }
 
+    for (final lost in [false, true]) {
+      test('the node away for its reboot is told once'
+          '${lost ? ', its answer lost to the link\'s end' : ''}', () {
+        run((async, s, node, u) {
+          final told = <(String, int)>[];
+          u.away = (id, v) => told.add((nodeName(id), v));
+          node.rebootAnswerLost = lost;
+          rebooted(async, u);
+          s.attach(other(async, 1).connectGuest(), guest: true);
+          async.flushMicrotasks();
+          expect(told, [(nodeName(FakeNode.id), 2)]);
+        });
+      });
+    }
+
     test('a lost transfer does not go on into another paired node', () {
       run((async, s, node, u) {
         u.choose(parseImage(imageFile(2, 20001)), 'file');

@@ -5,6 +5,7 @@
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/decision.dart';
 import 'package:bark_app/node_link.dart' show swapAway;
+import 'package:bark_app/updater.dart' show backWithin;
 import 'package:bark_app/nodes.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -495,10 +496,17 @@ void main() {
   final swapping = (
     node: 'home',
     gone: t0.subtract(const Duration(seconds: 20)),
+    away: swapAway,
   );
   final swapped = (
     node: 'home',
     gone: t0.subtract(swapAway + const Duration(seconds: 1)),
+    away: swapAway,
+  );
+  final sent = (
+    node: 'home',
+    gone: t0.subtract(swapAway + const Duration(seconds: 1)),
+    away: backWithin,
   );
   table('the wait for a node that installs', [
     (
@@ -554,6 +562,32 @@ void main() {
         home: 'home',
         nodes: homeAndMine,
         awaited: swapped,
+        missed: 1,
+        heard: [h('cafe', -40)],
+      ),
+      'GiveUp(home)',
+    ),
+    (
+      'away longer, as after an image the phone sent, past the swap: '
+          'still that node alone',
+      at(
+        home: 'home',
+        nodes: homeAndMine,
+        awaited: sent,
+        heard: [h('mine', -50, public: false), h('cafe', -40)],
+      ),
+      'Wait(10 s)',
+    ),
+    (
+      'and missed in the first round after its time away: given up',
+      at(
+        home: 'home',
+        nodes: homeAndMine,
+        awaited: (
+          node: 'home',
+          gone: t0.subtract(backWithin + const Duration(seconds: 1)),
+          away: backWithin,
+        ),
         missed: 1,
         heard: [h('cafe', -40)],
       ),
@@ -633,6 +667,7 @@ void main() {
             awaited: (
               node: 'home',
               gone: t0.subtract(const Duration(seconds: 20)),
+              away: swapAway,
             ),
           ),
         ),

@@ -248,6 +248,19 @@ class Updater extends ChangeNotifier {
   /// The link has closed since the reboot was asked for.
   bool _down = false;
 
+  /// Told once the node is away for its reboot, with its ID and the
+  /// version it reboots into, so that the search waits for it.
+  void Function(List<int> id, int version)? away;
+
+  /// [away] was told of this reboot.
+  bool _awayTold = false;
+
+  void _tellAway() {
+    if (phase != Phase.rebooting || !_down || _awayTold) return;
+    _awayTold = true;
+    away?.call(_target!, image!.version);
+  }
+
   bool _running = false;
 
   void _set(Phase p, [String? m]) {
@@ -393,6 +406,7 @@ class Updater extends ChangeNotifier {
       final link = _link();
       _before = session.node?.image;
       _down = false;
+      _awayTold = false;
       try {
         await link.writeUpdate(encodeReboot());
       } catch (e) {
@@ -408,6 +422,7 @@ class Updater extends ChangeNotifier {
           _set(Phase.rebooting, 'The node is not back; it may be out of reach');
         }
       });
+      _tellAway();
     } on AttException catch (e) {
       await _refused(e, Phase.committed);
     } catch (e) {
@@ -428,6 +443,7 @@ class Updater extends ChangeNotifier {
     final n = session.node;
     if (n == null) {
       _down = true;
+      _tellAway();
       return;
     }
     if (updated != null && (session.status?.heard ?? 0) > 0) _heard = true;
