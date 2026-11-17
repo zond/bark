@@ -1684,6 +1684,7 @@ command is echoed as `bench> <line>`, and what it does is logged in
 | Command | Does |
 |---|---|
 | `text <id> <lat> <lon> <words>` | send the words to node `id`, twelve hex digits, at the position in degrees, as the node's `node id=… at <lat> <lon>` line gives it, as a phone's message: offered to the core after any message of the node's own, and logged `bench: send id=<message ID> len=<bytes> taken` as it is taken, as a phone's is (`ble: send …`). One waits at a time. The message ID is the address's and the words', so the same words to the same node twice are one message |
+| `payload <address> <hex>` | send the bytes, two hex digits each, up to a whole payload, to the address, 26 hex digits as the app writes one (spec "Addresses"); otherwise as `text`, and one of either waits at a time. The phone test's board sends the app's sealed message so |
 | `power <usb\|battery\|real>` | the power the core is told it is on from now on, `real` what USB detection says; the node then turns sleepy or relay by its own rules. The LED, the crystal, the update's battery check and the phone's status still follow the real supply |
 | `flip` | the role flipped, as a long press of the button flips it: a relay on the bench's USB turns sleepy, and stays so until its power changes or it reboots |
 | `txpower <dbm>` | the transmit power, clamped to −9..10 dBm, from the next frame |
@@ -1755,7 +1756,8 @@ the longest. The tasks are `update`, `phone` (the phone link's host),
 under 250 µs holds the radio up by no more than its bound.
 
 `txpower`, `tcxo` and `carrier` run in the node's loop between two of the
-driver's steps; `text` and `power` reach the core at its next step.
+driver's steps; `text`, `payload` and `power` reach the core at its next
+step.
 
 The home channel cannot be pinned at run time: the core takes
 `Config::home_override` only as it starts, and pinning it later needs a

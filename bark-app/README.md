@@ -1405,13 +1405,16 @@ fake node, in `test/phone_steps_test.dart`.
 ```
 cd bark-fw
 scripts/phonetest.py --node <A> --to <B> --node-log <A's log> \
-    --to-log <B's log> --image target/vN+1.img --send '<command>'
+    --to-log <B's log> --image target/vN+1.img \
+    --send 'python3 scripts/bench.py say {to} "payload {dst} {payload}"'
 ```
 
 The logs are as `scripts/bench.py capture` writes them. `--send` is the
 command by which a board sends a payload to an address, with `{dst}`,
-`{dst_id}`, `{payload}` and `{id}` in it; without it the script prints
-what to send. `--pair` is `any`, the default, `bond` or `fresh`. The
+`{dst_id}`, `{payload}`, `{id}`, `{node}` and `{to}` in it; the one above
+has B, a bench build, send it with its `payload` command
+(`bark-fw/README.md`, Bench build). Without it the script prints what to
+send. `--pair` is `any`, the default, `bond` or `fresh`. The
 script installs the test's build over the app, keeping its files: it
 never uninstalls, so over an app signed with another key the install
 fails. It grants the Bluetooth, location and notification permissions,

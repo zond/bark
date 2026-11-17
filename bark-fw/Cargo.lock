@@ -104,6 +104,7 @@ dependencies = [
 name = "bark-fw-logic"
 version = "0.1.0"
 dependencies = [
+ "bark-app-layer",
  "bark-image",
  "bark-proto",
 ]

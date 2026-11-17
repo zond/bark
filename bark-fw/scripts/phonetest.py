@@ -17,8 +17,12 @@ asks for, and prints one line a step:
 --node is the board the phone pairs with, --to the one its text goes to,
 twelve hex digits each. --node-log and --to-log are their logs, one line per
 log line with the host's time first (bench.py capture). --send is a command
-for a board to send the text the test made, with {dst}, {dst_id}, {payload}
-and {id} in it; without it the script says what to send and waits.
+for a board to send the text the test made, with {dst}, {dst_id}, {payload},
+{id}, {node} and {to} in it; with bench builds, run from bark-fw:
+
+    --send 'python3 scripts/bench.py say {to} "payload {dst} {payload}"'
+
+Without it the script says what to send and waits.
 
 Exit status: 0 every step passed, the update skipped without --image; 1 a
 step failed; 2 the run did not come to an end.
@@ -343,7 +347,7 @@ def main() -> None:
 
     def send(f: dict[str, str]) -> None:
         if not a.send:
-            print(f"have a board send to {f['dst']}: {f['payload']}", flush=True)
+            print(f"have a board send it: payload {f['dst']} {f['payload']}", flush=True)
             return
         words = {**f, "dst_id": f["dst"][-12:], "node": a.node, "to": a.to}
         cmd = [w.format(**words) for w in shlex.split(a.send)]
