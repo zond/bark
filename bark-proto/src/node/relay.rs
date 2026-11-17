@@ -5,7 +5,9 @@
 //! The parts live in `relay/`: `boot.rs` (spec "Home channel selection"),
 //! `sweep.rs` (spec "Busy estimate", "Channel moves"), `heartbeat.rs`
 //! (spec "Heartbeat"), `anchor.rs` (spec "Sleepy nodes"), `forward.rs`
-//! (spec "Forwarding"), `delivery.rs`, `power.rs`, `motion.rs`, `gps.rs`.
+//! (spec "Forwarding"), `delivery.rs`, `power.rs`, `battery.rs`,
+//! `motion.rs`, `gps.rs`, `radio.rs`, `status.rs` (spec "Neighbour status"),
+//! `update.rs`, `drain.rs` and `remember.rs` (spec "Updates over the mesh").
 //!
 //! Each use of the radio is a job, one excursion at a time (`mac::Excursion`,
 //! `docs/core-interface.md`, "Radio", rule 1). When the radio is free the
@@ -878,7 +880,12 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             self.start(now, emit);
         }
         // A frame received now took the radio since it started; a
-        // heartbeat due meanwhile is counted first, against that.
+        // heartbeat due meanwhile is counted first, against that. The
+        // receiver is not told the preamble's length, so the start assumes
+        // the shortest. A frame with the long preamble, which goes only
+        // where nothing else reaches, began that much earlier, and a
+        // heartbeat missed under it only pulls that neighbour's level
+        // toward the floor a little more than it should.
         if let Event::Received { bytes, .. } = event {
             let started = now - time_on_air(bytes.len() as u8, MIN_PREAMBLE_SYMBOLS);
             self.radio.received_from(started);
