@@ -50,15 +50,20 @@ listen-before-talk wait, which a line's ends would not. The node logs
 `bench build: deaf to ..` after its `node id=` line. Neither flag is for
 a board that leaves the bench; off, each costs nothing (`size`).
 
-`BARK_OPEN=1` at build time leaves the chip's debug port open, for the
-bench. Without it the image closes the port at its first boot, for good
-(Read-out protection, below), so that no image leaves the bench open by
-mistake; any other value fails the build. `scripts/bench.py` sets it.
+`BARK_BENCH_ONLY=1` at build time makes an image for the bench alone:
+it takes images signed by the bench key as well as the project's
+(Updates, below), writes the codes its screen shows for a pairing or a
+removal to its log (Phone link, below), and is the one build that takes
+`BARK_DISCHARGE_BENCH` (below), a bench loader (Updates, below) and the
+console's `cut`. Without it none of these is there, so that no image
+leaves the bench with them by mistake; any other value fails the
+build. `scripts/bench.py` sets it, and the
+released console is built with it.
 
-`BARK_DISCHARGE_BENCH=1` at build time, in an open node image only,
+`BARK_DISCHARGE_BENCH=1` at build time, in a bench-only node image,
 makes a board that empties its cell in about a day, to learn the
 curve's shape (Discharge log, below; roadmap D190). The build fails
-without `BARK_OPEN=1`, with the console, beside `BARK_ON_BATTERY`, or
+without `BARK_BENCH_ONLY=1`, with the console, beside `BARK_ON_BATTERY`, or
 for any other value. The node logs `bench build: DISCHARGE BENCH ..`
 after its `node id=` line, and its screen says `DISCHARGE BENCH` in
 place of the image's line and of the ID under the code, so that the
@@ -152,9 +157,9 @@ Phase 2:
 Verified on the host:
 
 - `cargo build --release` and `cargo clippy -- -D warnings` pass with
-  each build, plain, with `--features console` and with `BARK_OPEN=1`.
+  each build, plain, with `--features console` and with `BARK_BENCH_ONLY=1`.
 - The ELF's first loadable byte (the vector table) is at `0x06000`, the
-  initial stack pointer is `0x20040000`. The open node image is
+  initial stack pointer is `0x20040000`. The bench-only node image is
   530 784 B of flash (`.vector_table`, `.text`, `.rodata` and `.data`)
   of the 929 792 B slot, and uses 196 120 B of RAM before the stack
   (`.data` and `.bss`), which leaves the stack 64 976 B (2026-11-11,
@@ -375,7 +380,7 @@ the bootloader jumps to `0x01000`, which then holds an old loader, the SoftDevic
 address ranges.
 
 The release profile optimises for size, `opt-level = "z"`, with fat LTO
-and one codegen unit, which keeps the open node image under three
+and one codegen unit, which keeps the bench-only node image under three
 fifths of its slot (Verified and unverified, above;
 `docs/flash-2026-11-06.md` measures the options). The core's slowest
 step shows on the board as `longest_handle_us` in the 10 s line.
@@ -462,30 +467,37 @@ flash, and the items of the old one, inside, are gone.
 ## Read-out protection
 
 A probe on the SWD pads reads the whole internal flash, keys and all,
-unless the chip's access port protection is on (roadmap D138;
-`docs/approtect-2026-11-06.md` has the facts and their sources). First
-thing at every boot, the firmware (`src/protect.rs`) reads the chip's
-build code from `FICR.INFO.VARIANT` and does what the build asks:
+unless the chip's access port protection is on
+(`docs/approtect-2026-11-06.md` has the facts and their sources). The
+firmware leaves it as it finds it, in every build: it writes neither
+UICR.APPROTECT nor the `APPROTECT` registers, and it starts the HAL with
+`Debug::NotConfigured`, as the HAL's default would open the port on build
+code F (roadmap D226). The protection would not keep the keys from
+someone holding the board in any case: they can copy an image of their
+own to the board's drive, and it runs with every key in reach.
 
-| Build | Build code D and earlier | Build code F (revision 3) and later |
-|---|---|---|
-| protected, the default | UICR.APPROTECT `Enabled` | UICR.APPROTECT `Enabled`; `APPROTECT.FORCEPROTECT` at every boot |
-| `BARK_OPEN=1` | nothing: erased UICR is open | UICR.APPROTECT `HwDisabled`; `APPROTECT.DISABLE` at every boot |
+So a board is as its factory and its earlier images made it. From the
+factory, a chip of build code D or earlier is open, and one of build code
+F (revision 3) or later is closed after every reset, unless UICR.APPROTECT
+holds `HwDisabled` and something that runs before the firmware writes
+`SwDisable` to `APPROTECT.DISABLE`.
 
-A UICR value takes effect at the next reset, so after writing one the
-firmware resets the chip at once. A write only clears bits, so `Enabled`
-can never be written back: a board a protected image has run on stays
-closed under any image, and only a probe's erase of the whole chip opens
-it, which also erases the board's bootloader and every key
-(`docs/approtect-2026-11-06.md`, "Recovery"). The log's line after the
-banner, and the `boot:` line, say `protection=on` or `off`, the build
-code and what UICR.APPROTECT holds.
+The images from 2026-11-06 to 2026-11-16 set it (roadmap D138, now
+withdrawn). One built without `BARK_OPEN=1`, that build's name for
+bench-only, wrote UICR.APPROTECT `Enabled`: a flash write only clears
+bits, so a board one of them ran on stays closed under any image, and only
+a probe's erase of the whole chip opens it, which also erases the board's
+bootloader and every key (`docs/approtect-2026-11-06.md`, "Recovery").
+Such a board takes UF2s as before, since the board's bootloader runs on
+the chip and writes its flash through the NVMC, which the protection does
+not touch; it loses only the pads, which the bench has no probe for. One
+built with `BARK_OPEN=1` wrote `HwDisabled` on build code F, which opens
+nothing by itself now.
 
-The bench loses only the pads, which it has no probe for: a closed board
-takes UF2s as before, since the board's bootloader runs on the chip and
-writes its flash through the NVMC, which the protection does not touch.
-For the same reason the protection does not keep the keys from someone
-who copies an image of their own to the board's drive.
+The log's line after the banner, and the `boot:` line, say
+`protection=on` or `off`, the build code and what UICR.APPROTECT holds.
+On build code F, `off` means UICR holds `HwDisabled` and `APPROTECT.DISABLE`
+reads `SwDisable` with `APPROTECT.FORCEPROTECT` unset (`src/protect.rs`).
 
 ## Updates
 
@@ -512,7 +524,7 @@ as `scripts/uf2.py` lays them:
 
 Two slots, one to sign with and one to bring in the next key, since a
 third does not fit beside 80 signed bytes; a firmware holds up to three
-keys, the project's two and in an open build the bench key.
+keys, the project's two and in a bench-only build the bench key.
 
 The firmware's version is `BARK_IMAGE_VERSION` at build time,
 kept under its own symbol, from which `scripts/image.py`
@@ -695,13 +707,13 @@ like.
 From a console build, over its serial port: `stage <header hex>`,
 `chunk <offset> <hex>` for up to 256 bytes at a time, in order,
 `commit` and `reboot`. `scripts/image.py` packs, signs and sends it;
-an open build holds the bench key as well, below:
+a bench-only build holds the bench key as well, below:
 
 ```
-BARK_OPEN=1 BARK_IMAGE_VERSION=2 cargo build --release --features console
+BARK_BENCH_ONLY=1 BARK_IMAGE_VERSION=2 cargo build --release --features console
 scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v2.img
 scripts/image.py sign target/v2.img keys/bench.pem --key-id 255
-BARK_OPEN=1 BARK_IMAGE_VERSION=1 cargo build --release --features console
+BARK_BENCH_ONLY=1 BARK_IMAGE_VERSION=1 cargo build --release --features console
 scripts/uf2.py --loader ../bark-loader/target/thumbv7em-none-eabihf/release/bark-loader target/thumbv7em-none-eabihf/release/bark-fw target/bark.uf2
 # copy target/bark.uf2 to the board, then:
 scripts/image.py stage target/v2.img /dev/ttyACM0 --reboot
@@ -842,7 +854,7 @@ and refuses an image of another version or hash. It combines with
 `--loader`, and the release's UF2s are made this way:
 
 ```
-BARK_OPEN=1 BARK_IMAGE_VERSION=8 cargo build --release
+BARK_BENCH_ONLY=1 BARK_IMAGE_VERSION=8 cargo build --release
 scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v8.img
 scripts/image.py sign target/v8.img keys/bench.pem --key-id 255
 scripts/uf2.py --header target/v8.img target/thumbv7em-none-eabihf/release/bark-fw target/v8.uf2
@@ -851,7 +863,7 @@ scripts/uf2.py --header target/v8.img target/thumbv7em-none-eabihf/release/bark-
 A board given `v8.uf2` boots with no swap asked for and logs `update:
 holds version=8`; a UF2 without `--header` leaves the record erased, and
 the board serves nothing. Both hold the key image 8 is signed with: the project's, ids
-1 and 2, or, in open builds, the bench key, id 255 (roadmap D154). Image
+1 and 2, or, in bench-only builds, the bench key, id 255 (roadmap D154). Image
 8 of 471 064 bytes travels in 31 blocks, the last of 53 pieces:
 
 ```
@@ -887,7 +899,7 @@ running version 8, gathers it (roadmap Phase 2, "An image that hears no
 one"):
 
 ```
-BARK_OPEN=1 BARK_IMAGE_VERSION=9 BARK_UPDATE_BENCH=deaf cargo build --release
+BARK_BENCH_ONLY=1 BARK_IMAGE_VERSION=9 BARK_UPDATE_BENCH=deaf cargo build --release
 scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw target/v9.img
 scripts/image.py sign target/v9.img keys/bench.pem --key-id 255
 scripts/uf2.py --header target/v9.img target/thumbv7em-none-eabihf/release/bark-fw target/v9.uf2
@@ -919,8 +931,8 @@ moment falls in is done only in part, as a power cut would leave it, the
 loader notes the moment and where it fell in the record and resets, and
 the next boot ends the swap. The firmware logs them at its start, as
 `update: bench reset in the swap at 20117355 us: internal erase of page
-117, 43.5 % through`. The build fails without `BARK_OPEN=1`, and
-`scripts/uf2.py` packs such a loader only with an open firmware.
+117, 43.5 % through`. The build fails without `BARK_BENCH_ONLY=1`, and
+`scripts/uf2.py` packs such a loader only with a bench-only firmware.
 `scripts/swapbench.py ID 200` builds one, copies it with a console image
 of version 1 to the board through its bootloader, and runs 200 rounds:
 in turn a console image one version up, to confirm, and a `panic` image
@@ -961,10 +973,10 @@ a byte from 1 to 255 that names the key in a signature, and each 32
 bytes (`build.rs`); they are kept under their own symbol, from which
 the scripts read them. Every build holds the project's keys,
 `keys/project.pub`, one `id:hex` a line, so that a node takes the
-project's releases whichever build it runs (roadmap D154). An open
-build holds the bench key, `keys/bench.pub`, id 255, as well: its
-private key is beside it in `keys/bench.pem` for every bench to sign
-with, and a protected build fails if given it. A fork that signs its
+project's releases whichever build it runs (roadmap D154). A
+bench-only build holds the bench key, `keys/bench.pub`, id 255, as
+well: its private key is beside it in `keys/bench.pem` for every bench
+to sign with, and any other build fails if given it. A fork that signs its
 own images gives its public keys at build time in `BARK_SIGNING_KEYS`,
 `id:hex` comma-separated, in place of the project's.
 
@@ -1209,10 +1221,10 @@ phone in its resolving list; at boot the log says `ble: resolving list
 holds N keys, the 8 records need 8`, an error if N is less, as the
 controller's documentation does not give it.
 
-The log says `ble: pairing, the code shown`, in an open build with the
-code, `ble: pairing, the code shown: 123456`, so that the bench pairs a
-phone without reading the screen, and never in a protected build, whose
-cable must not stand in for being at the node; then `ble: paired,
+The log says `ble: pairing, the code shown`, in a bench-only build with
+the code, `ble: pairing, the code shown: 123456`, so that the bench
+pairs a phone without reading the screen, and never in another build,
+whose cable must not stand in for being at the node; then `ble: paired,
 Added(2), phone ..`, `Again(..)` or `Took(..)`, `ble: pairing refused,
 every record in use; the screen says PHONES FULL` or `ble: pairing
 failed ..`, and at boot `phones: 2 paired, 3 kept, room 5, public true`
@@ -1270,7 +1282,7 @@ node publishes. A reboot asked for answers, ends the link, waits for it
 to close, at most the 32 s of the longest supervision timeout, and
 resets. They cost 14.8 KB of flash and 1.4 KB of static RAM, the
 SHA-256 among it, which the node build did not have before
-(2026-11-07, `llvm-size`, an open build).
+(2026-11-07, `llvm-size`, a bench-only build).
 
 Recipient and Public serve guests on a public node (spec "Phone link",
 Public; roadmap D150). A node is public unless a paired phone writes 0
@@ -1322,7 +1334,7 @@ node is the reading phone's person's home.
 
 Phones lists the records and removes one's bond, home
 or both (spec "Phone link", Phones): a write of 1 draws a fresh code on
-the screen, `REMOVE` and six digits, for 30 s, logged in an open build
+the screen, `REMOVE` and six digits, for 30 s, logged in a bench-only build
 as a pairing's is; a write of 2 with a record's number, the parts and
 that code removes them, within the 30 s and on one try (`bark_link::
 phones::Code`), the removed bond's phone's link closed and the bond
@@ -1575,6 +1587,16 @@ longest poll of a minute near the bound, not under it: the GPS task's
 to 0.34 ms at the median and 0.36 ms at the 95th percentile. No channel
 check went without its reading.
 
+The processor's instruction cache, off after reset, is on from the first
+line of `main` in every build (roadmap D227). Forty minutes on three
+boards with it on and off (2026-11-17) took the GPS task's longest poll
+of a minute from 220–250 µs to 176–189 µs at the median and from at most
+295 µs to at most 204 µs, and the update task's from 319–358 µs to
+253–285 µs at the 95th percentile. Writes to the internal flash need
+nothing for it: while the NVMC is in write or erase mode the cache is
+invalidated and stays so (Product Specification, NVMC, `CONFIG`), so
+code runs then as it did without the cache.
+
 This bounds what the update does, not every task. Known stretches over
 the bound, left as they are (2026-11-15; measured where it says so, else
 worked out from the bus and the datasheets):
@@ -1663,7 +1685,7 @@ retune times.
 | `chunk <offset> <hex>` | write up to 256 bytes of it, at the offset the last chunk ended | `next` |
 | `commit` | check it, record it for the loader and ask for the swap | `version`, `length`, or why it is refused |
 | `reboot` | reset, after the log has reached the host | |
-| `cut <swap\|back> <op\|none>` | an open build's alone: where a bench loader stops the swap just committed, or its swap back, an operation's index or none (Updates) | the command, or why it is refused |
+| `cut <swap\|back> <op\|none>` | a bench-only build's alone: where a bench loader stops the swap just committed, or its swap back, an operation's index or none (Updates) | the command, or why it is refused |
 
 Between commands the radio listens on the home channel and prints every
 frame it hears, CRC failures included. A board that receives a ping on its

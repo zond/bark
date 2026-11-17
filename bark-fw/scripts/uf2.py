@@ -328,9 +328,9 @@ def pack(firmware_elf: bytes, loader_elf: bytes | None, header: bytes | None = N
     room = check_stack(syms)
     lines.append(f"stack:    {room} bytes, the floor {STACK_FLOOR}")
     start = active
-    if loader_elf is not None and bench and symbol_word(firmware, start, syms, "BARK_OPEN") != 1:
+    if loader_elf is not None and bench and symbol_word(firmware, start, syms, "BARK_BENCH_ONLY") != 1:
         # The loader's reset is for the bench alone (roadmap D143).
-        sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with an open firmware (BARK_OPEN=1)")
+        sys.exit("a bench loader (BARK_LOADER_BENCH) goes only with a bench-only firmware (BARK_BENCH_ONLY=1)")
     payloads += blocks(start, firmware)
     lines.append(f"firmware: {len(firmware)} bytes at {start:#x}")
     for key_id, public in signing_keys(firmware, start, syms):

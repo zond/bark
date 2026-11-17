@@ -170,7 +170,7 @@ def take(d: dict, keys: set[str], what: str) -> None:
 
 
 # What the runner builds in from the board's own fields.
-RUNNER_SETS = ("BARK_IMAGE_VERSION", "BARK_IGNORE", "BARK_LAT", "BARK_LON", "BARK_OPEN")
+RUNNER_SETS = ("BARK_IMAGE_VERSION", "BARK_IGNORE", "BARK_LAT", "BARK_LON", "BARK_BENCH_ONLY")
 CONDITION_KEYS = {"board", "boards", "line", "after", "within_s", "count", "absent", "last_boot", "any", "kept", "why"}
 
 

@@ -40,7 +40,7 @@ pub static BARK_IMAGE_VERSION: u32 = match option_env!("BARK_IMAGE_VERSION") {
 };
 
 /// The keys an image to stage must be signed by one of: the project's,
-/// and in an open build the bench key as well (`build.rs`). Kept under
+/// and in a bench-only build the bench key as well (`build.rs`). Kept under
 /// its own symbol so that `scripts/uf2.py` and `scripts/image.py` read
 /// them from the ELF.
 #[used]

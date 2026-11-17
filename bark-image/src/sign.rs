@@ -209,12 +209,12 @@ mod tests {
     }
 
     /// The keys a firmware built from `bark-fw/keys/` holds, as `build.rs`
-    /// takes them: the project's, and the bench key in an open build.
-    fn built(open: bool) -> [Key; KEYS] {
+    /// takes them: the project's, and the bench key in a bench-only build.
+    fn built(bench_only: bool) -> [Key; KEYS] {
         let project = include_str!("../../bark-fw/keys/project.pub");
         let bench = include_str!("../../bark-fw/keys/bench.pub");
         let mut held = [Key::NONE; KEYS];
-        let lines = project.lines().chain(bench.lines().filter(|_| open));
+        let lines = project.lines().chain(bench.lines().filter(|_| bench_only));
         for (k, line) in held.iter_mut().zip(lines.filter(|l| !l.trim().is_empty())) {
             let (id, public) = line.trim().split_once(':').unwrap();
             k.id = id.parse().unwrap();
@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn a_protected_build_refuses_the_bench_key() {
+    fn only_a_bench_only_build_takes_the_bench_key() {
         assert_eq!(
             verify(&bench_signed(), &built(false)),
             Err(SignatureError::UnknownKey)
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn an_open_build_holds_the_project_keys_and_the_bench_key() {
+    fn a_bench_only_build_holds_the_project_keys_and_the_bench_key() {
         let ids = built(true).map(|k| k.id);
         assert_eq!(ids, [1, 2, 255]);
         assert_eq!(built(false).map(|k| k.id), [1, 2, NONE]);

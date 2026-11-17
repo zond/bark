@@ -26,17 +26,18 @@ fn main() {
 /// `keys/project.pub`, one `id:hex` a line, each id a byte from 1 to 255
 /// that names the key in a signature's slot and each key its Ed25519
 /// public key, so that any node takes the project's releases whichever
-/// build it runs; and in an open build the bench key, `keys/bench.pub`,
-/// as well. A fork with keys of its own gives them in `BARK_SIGNING_KEYS`,
-/// `id:hex` comma-separated, in place of the project's. A protected build
-/// refuses the bench key, whose private half is in the repository.
+/// build it runs; and in a bench-only build (`BARK_BENCH_ONLY=1`) the
+/// bench key, `keys/bench.pub`, as well. A fork with keys of its own gives
+/// them in `BARK_SIGNING_KEYS`, `id:hex` comma-separated, in place of the
+/// project's. Any other build refuses the bench key, whose private half is
+/// in the repository.
 fn keys() -> String {
     use bark_image::sign::{KEYS, KEY_LEN};
     println!("cargo:rerun-if-env-changed=BARK_SIGNING_KEYS");
-    println!("cargo:rerun-if-env-changed=BARK_OPEN");
+    println!("cargo:rerun-if-env-changed=BARK_BENCH_ONLY");
     println!("cargo:rerun-if-changed=keys/project.pub");
     println!("cargo:rerun-if-changed=keys/bench.pub");
-    let open = env::var("BARK_OPEN").is_ok_and(|v| v == "1");
+    let bench_only = env::var("BARK_BENCH_ONLY").is_ok_and(|v| v == "1");
     let read = |path: &str| fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     let bench = read("keys/bench.pub");
     let bench = bench.trim();
@@ -48,7 +49,7 @@ fn keys() -> String {
             read("keys/project.pub").replace('\n', ","),
         ),
     };
-    if open {
+    if bench_only {
         list = format!("{list},{bench}");
     }
     let bench_public = bench.split_once(':').expect("keys/bench.pub is id:hex").1;
@@ -68,8 +69,8 @@ fn keys() -> String {
             "{from}: key {id} is not {KEY_LEN} bytes of hex"
         );
         assert!(
-            open || public != bench_public,
-            "{from}: a protected build may not hold the bench key, \
+            bench_only || public != bench_public,
+            "{from}: only a bench-only build may hold the bench key, \
              whose private key is in the repository"
         );
         assert!(

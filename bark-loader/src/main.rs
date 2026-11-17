@@ -56,18 +56,21 @@ const WDT_HZ: u32 = 32_768;
 const CPU_HZ: u64 = 64_000_000;
 
 /// Whether this loader stops each swap and swap back once, from
-/// `BARK_LOADER_BENCH=reset` at build time. Only an open build takes it
-/// (`BARK_OPEN=1`, bark-fw/README.md, "Read-out protection"), so that a
+/// `BARK_LOADER_BENCH=reset` at build time. Only a bench-only build takes
+/// it (`BARK_BENCH_ONLY=1`, bark-fw/README.md), so that a
 /// bench loader never goes out with a board that leaves the bench.
-const CUT: bool = match (option_env!("BARK_LOADER_BENCH"), option_env!("BARK_OPEN")) {
+const CUT: bool = match (
+    option_env!("BARK_LOADER_BENCH"),
+    option_env!("BARK_BENCH_ONLY"),
+) {
     (None, _) => false,
     (Some(b), Some(o)) if same(b, "reset") && same(o, "1") => true,
-    (Some(b), _) if same(b, "reset") => panic!("BARK_LOADER_BENCH=reset needs BARK_OPEN=1"),
+    (Some(b), _) if same(b, "reset") => panic!("BARK_LOADER_BENCH=reset needs BARK_BENCH_ONLY=1"),
     _ => panic!("BARK_LOADER_BENCH is reset or unset"),
 };
 
 /// [`CUT`] as `bark-fw/scripts/uf2.py` reads it from the ELF: it packs a
-/// bench loader only with an open firmware.
+/// bench loader only with a bench-only firmware.
 #[used]
 #[no_mangle]
 static BARK_LOADER_BENCH: u32 = CUT as u32;

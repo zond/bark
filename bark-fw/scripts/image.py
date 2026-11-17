@@ -53,7 +53,7 @@ SIGNED_LEN = uf2.SIGNED_LEN
 SLOTS = uf2.HEADER_SLOTS
 SIGNATURE_LEN = 64
 SLOT_LEN = 1 + SIGNATURE_LEN
-# The bench key pair, which open builds hold beside the project's keys
+# The bench key pair, which bench-only builds hold beside the project's keys
 # (bark-fw/README.md, "Updates").
 KEYS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "keys")
 BENCH_KEY = os.path.join(KEYS, "bench.pem")
