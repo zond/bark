@@ -333,10 +333,10 @@ fn chip_config() -> Config {
     // The 32.768 kHz clock starts on the internal RC oscillator, which
     // assumes nothing about a fitted crystal; the node build then tries the
     // crystal, and the console keeps the RC oscillator. But a watchdog the
-    // loader started holds the clock on its source until a reset
-    // (`bark_image::lfclk`), and init writes LFCLKSRC even while the clock
-    // runs, which the Product Specification does not allow (CLOCK, LFCLK);
-    // given the source the clock runs from, the write changes nothing.
+    // loader started holds the clock running until a reset, and init
+    // writes LFCLKSRC and starts the clock even while it runs, which moves
+    // a held clock to the source written (`bark_image::lfclk`); given the
+    // source the clock runs from, it changes nothing.
     config.lfclk_source = match lfclk::held() {
         Some(lfclk::Source::Crystal) => LfclkSource::ExternalXtal,
         Some(lfclk::Source::Rc) | None => LfclkSource::InternalRC,
@@ -376,7 +376,7 @@ impl Clocks {
         // `lfclk::START_MS`, so the wait counts the CPU's cycles.
         let lf_found = lfclk::probe(&mut ext_flash::Cycles);
         boot::note(|f| f.lfclk = Some(lf_found));
-        let mpsl = ble::mpsl(parts, lf_found.source());
+        let mpsl = ble::mpsl(parts, lf_found.source);
         // The core's seed, before the controller takes the generator.
         let seed = embassy_nrf::rng::Rng::new_blocking(rng).blocking_next_u64();
         Clocks {
@@ -480,24 +480,29 @@ fn log_boot(
     log::info!("{}", protection);
     #[cfg(not(feature = "console"))]
     boot::note(|f| f.protection = Some(protection));
-    match lf_found {
-        Some(lfclk::Found::Crystal { started_ms }) => {
-            log::info!("lfclk: crystal, started in {} ms", started_ms)
-        }
-        Some(lfclk::Found::Rc) => {
-            log::warn!("lfclk: no crystal started; RC oscillator, calibrated")
-        }
-        Some(lfclk::Found::Held(lfclk::Source::Crystal)) => {
-            log::info!("lfclk: crystal, already running")
-        }
-        // A loader that started the watchdog without starting the clock.
-        Some(lfclk::Found::Held(lfclk::Source::Rc)) => {
-            log::warn!("lfclk: RC oscillator, calibrated, already running")
-        }
-        None => {}
+    if let Some(found) = lf_found {
+        log_lfclk(found);
     }
     if let Some(msg) = previous_panic {
         log::error!("previous boot panicked: {}", msg);
+    }
+}
+
+/// The 32.768 kHz clock's source and how it got there, so that one boot
+/// says whether the crystal runs (`bark_image::lfclk`).
+fn log_lfclk(found: lfclk::Found) {
+    use lfclk::Source::{Crystal, Rc};
+    match (found.source, found.started_ms, found.held) {
+        (Crystal, Some(ms), Some(Rc)) => log::info!(
+            "lfclk: crystal, started in {} ms, moved from the RC oscillator the watchdog held",
+            ms
+        ),
+        (Crystal, Some(ms), _) => log::info!("lfclk: crystal, started in {} ms", ms),
+        (Crystal, None, _) => log::info!("lfclk: crystal, already running under the watchdog"),
+        (Rc, _, None) => log::warn!("lfclk: no crystal started; RC oscillator, calibrated"),
+        (Rc, _, Some(_)) => {
+            log::warn!("lfclk: no crystal started under the watchdog; RC oscillator, calibrated")
+        }
     }
 }
 
@@ -619,7 +624,7 @@ fn start_node(
     // The mailbox's writes (`mailbox.rs`); the mailbox opens once the
     // radio has raised the rail its ring's flash is on (`node_radio`).
     spawner.spawn(mailbox::run().expect("spawned once"));
-    utc::init(utc::ppm(clocks.lf_found.source()), offset_min);
+    utc::init(utc::ppm(clocks.lf_found.source), offset_min);
     let config = node::config(stored);
     let core = node::core(config, clocks.seed);
     // Its flash writes in a task of their own (`store.rs`).

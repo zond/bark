@@ -231,5 +231,84 @@ class Heartbeats(unittest.TestCase):
         self.assertAlmostEqual(clock.host(15.0), 1015.01)
 
 
+class Anchor(unittest.TestCase):
+    def watches(self, n: int, heard: int) -> checks.Log:
+        """A sleepy node's `n` windows a rotation apart, `heard` of them
+        with the heartbeat."""
+        lines = []
+        for i in range(n):
+            h = "true, offset_us: -6226" if i < heard else "false, offset_us: 0"
+            lines.append((1000.0 + 75 * i, 75.0 * (i + 1), f"AnchorWatch {{ heard: {h}, listened: Duration(30416) }}"))
+        return board_log("s", lines)
+
+    def test_one_lost_in_ten_passes(self):
+        self.assertEqual(checks.anchor(self.watches(100, 80)), [])
+
+    def test_fewer_caught_than_a_receivers_losses_explain_fails(self):
+        got = checks.anchor(self.watches(100, 79))
+        self.assertEqual([f.kind for f in got], [checks.FAIL])
+        self.assertIn("caught 79 of 100", got[0].what)
+
+    def test_no_windows_no_finding(self):
+        self.assertEqual(checks.anchor(board_log("r", uptimes(1000.0, 10.0, 3))), [])
+
+    def test_the_trace_is_the_cores(self):
+        src = (HERE.parent.parent / "bark-proto/src/event.rs").read_text()
+        body = re.search(r"\n    AnchorWatch \{(.*?)\n    \},", src, re.S).group(1)
+        self.assertEqual(re.findall(r"(\w+):", body), ["heard", "offset_us", "listened"])
+        self.assertIn("\n    AnchorCheck,", src)
+
+
+class Clock(unittest.TestCase):
+    def boot(self, ppm: float, hours: float, lfclk: str = "crystal, started in 105 ms",
+             name: str = "c") -> checks.Log:
+        """A boot whose uptime runs `ppm` fast of the host's clock, its
+        lines read 1 to 3 ms late."""
+        lines = [(1000.002, 0.3, f"lfclk: {lfclk}")]
+        for i in range(1, int(hours * 360) + 1):
+            host = 1000.0 + 10 * i
+            lines.append((host + 0.001 + (i % 3) * 0.001, 0.3 + 10 * i * (1 + ppm * 1e-6), f"uptime {10 * i} s"))
+        return board_log(name, lines)
+
+    def test_the_rate_against_the_hosts_clock(self):
+        (r,) = checks.rates(self.boot(130, 2))
+        self.assertAlmostEqual(r.ppm, 130, delta=1)
+        self.assertEqual(r.lfclk, "crystal, started in 105 ms")
+
+    def test_boards_alike_far_from_the_host_pass(self):
+        # The crystals of 2026-11-17: +114 and +130 ppm against the host.
+        self.assertEqual(checks.clocks([self.boot(114, 2, name="a"), self.boot(130, 2, name="b")]), [])
+
+    def test_a_board_on_the_rc_oscillator_fails_against_the_others(self):
+        rc = self.boot(-543, 2, "RC oscillator, calibrated", name="s")
+        got = checks.clocks([self.boot(114, 2, name="a"), self.boot(130, 2, name="b"), rc])
+        self.assertEqual(sorted(f.board for f in got), ["a", "b", "s", "s"])
+        self.assertTrue(all(f.kind == checks.FAIL for f in got))
+        (f, _) = [f for f in got if f.board == "s"]
+        self.assertIn("-543 ppm against the host, 657 from a board at +114, beyond 200", f.what)
+
+    def test_the_mark_is_twice_the_cores_bound(self):
+        self.assertEqual(checks.clocks([self.boot(-95, 2, name="a"), self.boot(95, 2, name="b")]), [])
+        self.assertEqual(len(checks.clocks([self.boot(-110, 2, name="a"), self.boot(110, 2, name="b")])), 2)
+
+    def test_one_board_alone_is_not_judged(self):
+        self.assertEqual(checks.clocks([self.boot(-543, 2, "RC oscillator, calibrated")]), [])
+
+    def test_a_boot_under_an_hour_is_not_judged(self):
+        self.assertEqual(checks.rates(self.boot(500, 0.9)), [])
+
+    def test_a_capture_that_was_not_live_is_not_judged(self):
+        self.assertEqual(checks.rates(self.boot(200_000, 2)), [])
+
+    def test_the_report_line(self):
+        (line,) = checks.rate_lines([self.boot(-543, 2, "RC oscillator, calibrated")], {"c": "S"})
+        self.assertTrue(line.startswith("clock S: -543 ppm ±"), line)
+        self.assertTrue(line.endswith("RC oscillator, calibrated"), line)
+
+    def test_the_bound_is_the_cores(self):
+        src = (HERE.parent.parent / "bark-proto/src/node/relay/anchor.rs").read_text()
+        self.assertEqual(int(re.search(r"pub const CLOCK_DRIFT_PPM: u64 = (\d+);", src).group(1)), checks.CLOCK_PPM)
+
+
 if __name__ == "__main__":
     unittest.main()

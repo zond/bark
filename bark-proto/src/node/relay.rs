@@ -32,6 +32,7 @@ mod sweep;
 mod update;
 
 use anchor::Listen;
+pub use anchor::CLOCK_DRIFT_PPM;
 use boot::{random_channel, Boot};
 pub use drain::{Held, HeldAt};
 use radio::Radio;

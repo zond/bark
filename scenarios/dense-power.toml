@@ -43,12 +43,12 @@ ids = "random"
 relays_s = 600.0
 sleepy_s = 1800.0
 
-# Each node's clock runs off true time by up to the ±50 ppm of a watch
-# crystal (spec "Heartbeat"), uniformly: the tolerance bounds the error
-# and says nothing of its spread, and a uniform spread puts more clocks
-# near the bound than one that clusters at zero would.
+# Each node's clock runs off true time by up to the ±100 ppm the core
+# takes of a node's (spec "Heartbeat"), uniformly: the bound says nothing
+# of the spread, and a uniform spread puts more clocks near it than one
+# that clusters at zero would.
 [clocks]
-drift_ppm = 50.0
+drift_ppm = 100.0
 
 # A fifth of the people walk somewhere now and then, as people do in a
 # city whose transport has stopped. A walk is a kilometre on average,

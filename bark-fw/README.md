@@ -221,6 +221,11 @@ Unverified, in the order they will fail if wrong:
   Product Specification, ACL).
 - The watchdog: started by the loader for a trial, it resets a firmware
   that never confirms, or hangs, after 600 s.
+- That a clock the watchdog holds on the RC oscillator moves to the
+  crystal when started on it, as it moves the other way at the
+  bootloader's start, and that with a crystal that does not start the
+  watchdog keeps counting and the clock goes back to the RC oscillator
+  (Updates, "The clock under the watchdog"; roadmap D229).
 - An image gathered over the mesh that hears no node resets itself
   585.9 s after its start, and the image back gives it up (roadmap D159;
   the revert in Updates, below); on the host only so far.
@@ -565,8 +570,8 @@ A bench build, version 0, takes any signed version.
    from the reboot to the port back. Then the rail falls again.
 5. On those boots it first starts the 32.768 kHz clock as the firmware
    does, on the crystal if it starts within 1 s (`bark_image::lfclk`),
-   since the watchdog holds the clock on its source until a reset
-   (roadmap D148); then the watchdog, with a period of
+   since the watchdog holds the clock running until a reset (roadmap
+   D148, D229; "The clock under the watchdog", below); then the watchdog, with a period of
    600 s, `bark_image::TRIAL_SECONDS` (Product Specification, WDT: the
    timeout is (CRV + 1) / 32 768 s), counting while the CPU sleeps, and
    feeds it at every flash operation of the swap.
@@ -600,6 +605,33 @@ the header the swap back left in the record, into the given-up page and
 logs `update: version N given up: never gathered again`
 (`bark_image::given_up`). The mesh then never gathers an image of that
 version, and so never serves it; a later release has a higher one.
+
+**The clock under the watchdog.** The watchdog runs from the trial on,
+through every soft reset, until a reset of another kind: a power cut, the
+reset button or the watchdog's own (Product Specification, POWER, reset
+behaviour). While it runs, the 32.768 kHz clock cannot be stopped. The
+board's bootloader, which runs before every boot, starts the clock on the
+RC oscillator; on a held clock that moves it there, and on every board
+that had had a trial it stayed there until a power cut (roadmap D229).
+So the firmware's probe moves a held clock back to the crystal the same
+way, and falls back to the RC oscillator if the crystal does not start
+within 1 s. One line of the boot log says where the clock runs and how it
+got there:
+
+| Line | Meaning |
+|---|---|
+| `lfclk: crystal, started in N ms` | no watchdog runs; the crystal started |
+| `lfclk: crystal, started in N ms, moved from the RC oscillator the watchdog held` | the watchdog runs; the clock was moved to the crystal |
+| `lfclk: crystal, already running under the watchdog` | the watchdog runs and the clock was already on the crystal: the boot of a trial, the loader having started it |
+| `lfclk: no crystal started; RC oscillator, calibrated` | no watchdog runs, and the crystal did not start |
+| `lfclk: no crystal started under the watchdog; RC oscillator, calibrated` | the watchdog runs, and the crystal did not start |
+
+The first report's `boot:` line says the same in short: `lfclk=crystal in
+N ms held=rc`, `lfclk=crystal held=crystal`, `lfclk=rc`. The crystal
+starts in 39 to 110 ms on the four bench boards; a move logged at 0 ms
+would mean the start event did not wait for the crystal, and the clock
+check of a long run (`docs/bench-suite-2026-11-13.md`) tells which
+oscillator runs.
 
 Each update erases each page of the running slot once, twice if it is
 swapped back, and the state page twice: the internal flash's 10 000
