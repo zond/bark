@@ -1,6 +1,6 @@
-// A node's install of an image it gathered over the mesh, as the app
-// follows it, for the line and for the search's wait (spec "Updates over
-// the mesh", the install; roadmap D182).
+// A node's install of an image it gathered over the mesh, or of one the
+// phone sent it, as the app follows it, for the line and for the search's
+// wait (spec "Updates over the mesh", the install; roadmap D182, D228).
 
 part of '../app.dart';
 
@@ -8,14 +8,16 @@ part of '../app.dart';
 /// version: a minute, long enough to be seen when the person looks.
 const Duration updatedShown = Duration(minutes: 1);
 
-/// A node's install of an image it gathered over the mesh, as the app
-/// follows it (spec "Updates over the mesh", the install; roadmap D182):
-/// the node's name, the version, when the link ended for the reboot,
-/// whether the search gave up waiting for it, and when the node came back
-/// on that version.
+/// A node's install of an image it gathered over the mesh, or of one
+/// the phone `sent` it (`updater.dart`), as the app follows it (spec
+/// "Updates over the mesh", the install; roadmap D182, D228): the node's
+/// name, the version, when the link ended for the reboot, whether the
+/// search gave up waiting for it, and when the node came back on that
+/// version.
 typedef Install = ({
   String node,
   int version,
+  bool sent,
   DateTime? gone,
   bool givenUp,
   DateTime? back,
@@ -41,6 +43,7 @@ mixin _Installs on _AppCore {
         install = (
           node: i.node,
           version: i.version,
+          sent: false,
           gone: now(),
           givenUp: false,
           back: null,
@@ -65,6 +68,7 @@ mixin _Installs on _AppCore {
         install = (
           node: name,
           version: version,
+          sent: false,
           gone: null,
           givenUp: false,
           back: null,
@@ -77,17 +81,35 @@ mixin _Installs on _AppCore {
           ? (
               node: name,
               version: i.version,
+              sent: i.sent,
               gone: i.gone,
               givenUp: i.givenUp,
               back: now(),
             )
           : null;
-      session.note(
-        on
-            ? '$name runs version ${i.version}, installed over the mesh'
-            : '$name does not install version ${i.version} now',
-      );
+      // The updater tells of an image the phone sent.
+      if (!i.sent) {
+        session.note(
+          on
+              ? '$name runs version ${i.version}, installed over the mesh'
+              : '$name does not install version ${i.version} now',
+        );
+      }
     }
+  }
+
+  /// The node `id` ended its link to reboot into `version`, which the
+  /// phone sent it: the search waits for it as for one that installs.
+  void _rebooted(List<int> id, int version) {
+    install = (
+      node: nodeName(id),
+      version: version,
+      sent: true,
+      gone: now(),
+      givenUp: false,
+      back: null,
+    );
+    notifyListeners();
   }
 
   /// The node in use tells it drains to install the version [install]
@@ -100,13 +122,16 @@ mixin _Installs on _AppCore {
   }
 
   /// A paired node rebooted to install a version and is not yet back,
-  /// while the search has not given up waiting for it.
+  /// while the search has not given up waiting for it: away for the swap,
+  /// or for as long as its firmware may take after an image the phone
+  /// sent, which the person waits for ([backWithin]).
   @override
   Awaited? get _awaited {
     final i = install;
     final gone = i?.gone;
     if (i == null || gone == null || i.givenUp || i.back != null) return null;
-    return nodes.own.contains(i.node) ? (node: i.node, gone: gone) : null;
+    if (!nodes.own.contains(i.node)) return null;
+    return (node: i.node, gone: gone, away: i.sent ? backWithin : swapAway);
   }
 
   /// The search gives up waiting for the node that installs: it is out of
@@ -117,6 +142,7 @@ mixin _Installs on _AppCore {
     install = (
       node: i.node,
       version: i.version,
+      sent: i.sent,
       gone: i.gone,
       givenUp: true,
       back: null,
@@ -134,8 +160,10 @@ mixin _Installs on _AppCore {
   String? get installingLine {
     if (session.connected || !waitsForInstall(situation())) return null;
     final i = install!;
-    return '${shownName(i.node)} is installing version ${i.version}, back in '
-        'about a minute';
+    // Only an image the phone sent is waited for past its swap.
+    final late = i.sent && now().difference(i.gone!) >= swapAway;
+    return '${shownName(i.node)} is installing version ${i.version}, '
+        '${late ? 'not back yet' : 'back in about a minute'}';
   }
 
   /// Why the node is or was away for an install, for the help; null when
@@ -143,6 +171,11 @@ mixin _Installs on _AppCore {
   String? get installHelp {
     if (!_installsNow && installingLine == null) return null;
     final i = install!;
+    if (i.sent) {
+      return '${shownName(i.node)} restarts into version ${i.version}, which '
+          'this phone sent it, for about a minute. The phone waits for it '
+          'and reconnects by itself.';
+    }
     return '${shownName(i.node)} got version ${i.version} from the nodes '
         'around it. It passes on the texts it holds, at most ten minutes, '
         'then restarts for about a minute. The phone reconnects by itself; '

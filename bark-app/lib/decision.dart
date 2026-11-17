@@ -4,7 +4,6 @@
 // decision out and feeds what came of it back; nothing else decides.
 
 import 'ble_link.dart';
-import 'node_link.dart' show swapAway;
 import 'nodes.dart';
 
 /// How often the app reads a public node's ring for the person's mail
@@ -108,10 +107,11 @@ FoundNode? chooseNode(
 /// made by the person's tap or by the search.
 typedef LinkNow = ({String node, bool guest, bool byTap});
 
-/// A paired node that said it would install a version and ended its link
-/// for the reboot at `gone` (spec "Updates over the mesh", the install;
-/// roadmap D182).
-typedef Awaited = ({String node, DateTime gone});
+/// A paired node that ended its link at `gone` to reboot into a new
+/// image, one it said it would install or one the phone sent, and is
+/// known to be away for up to `away` (spec "Updates over the mesh", the
+/// install; roadmap D182, D228).
+typedef Awaited = ({String node, DateTime gone, Duration away});
 
 /// What the phone knows when the search decides.
 class Situation {
@@ -236,7 +236,7 @@ Mode modeOf(Situation s) {
 }
 
 /// Whether the phone still waits for the node [Situation.awaited]: through
-/// [swapAway] and the first round after it, while the search looks for
+/// its time away and the first round after it, while the search looks for
 /// that node alone. The second of the [ownGone] rounds that call it out of
 /// reach is an ordinary round (roadmap D182, D202). Not once the node,
 /// back, refused the phone over the link version: it is in reach, and of
@@ -244,7 +244,7 @@ Mode modeOf(Situation s) {
 bool waitsForInstall(Situation s) {
   final a = s.awaited;
   if (a == null || s.passed.contains(a.node)) return false;
-  return s.now.difference(a.gone) < swapAway || s.missed < ownGone - 1;
+  return s.now.difference(a.gone) < a.away || s.missed < ownGone - 1;
 }
 
 /// Whether a round decided on in `s` that leaves the phone on none of its
@@ -253,7 +253,7 @@ bool waitsForInstall(Situation s) {
 bool countsMiss(Situation s) {
   final a = s.awaited;
   if (s.own.isEmpty) return false;
-  return a == null || s.now.difference(a.gone) >= swapAway;
+  return a == null || s.now.difference(a.gone) >= a.away;
 }
 
 /// Whether the phone's own nodes were heard in [Situation.heard] and

@@ -843,8 +843,8 @@ windows of seven pieces of 240 bytes, each window followed by a read of
 where the node stands (`lib/updater.dart`); it asks Android for a short
 connection interval first, and an image of 400 KB takes about 20 s, up
 to a minute where Android does not grant it. If the link is lost, the
-screen says how far it got, and when the app connects again it goes on
-from the bytes the node holds, not from the start. Once every byte is
+screen says how far it got, and when the app connects to that node
+again it goes on from the bytes the node holds, not from the start. Once every byte is
 there the app commits: the node checks the image and answers, and the
 screen says it keeps it for its next boot, or why it refused, in words.
 A refusal for a low battery keeps the image on the node, and
@@ -852,12 +852,27 @@ A refusal for a low battery keeps the image on the node, and
 N** then restarts the node, which swaps the image in, about a minute.
 The node answers and ends the link, and Android may report the write
 failed when the end overtakes the answer; a link that ends after such a
-failure is the reboot, not an error. The app looks for the node and
-connects again by itself, and the screen says the node runs version N,
-updated from version M just now, or so many minutes ago; the image,
-its progress and its buttons go until another is picked. If the new
-image did not start, the node swapped the old one back, and the screen
-says the version it came back on. An image from the phone keeps itself
+failure is the reboot, not an error. The search then looks for that
+node alone: it connects to no other paired node and no public node, so
+texts written meanwhile wait on the phone, and the connection line says
+"ID … is installing version N, back in about a minute", and "not back
+yet" once the swap's 55 s (`swapAway`) are over. It waits as long as
+the node's firmware may take, about 12 minutes (`backWithin`): the
+swap, an image that hangs until the loader's watchdog resets it after
+600 s, and the swap back (`bark-fw/README.md`, "Updates"); then one
+more round, as a round with the screen off may miss the node. A node
+not back by then is out of the phone's reach or does not boot: the
+update screen says it is not back and may be out of reach, and the
+search goes on as usual. A node the person taps connects at once, and
+their link to another paired node ends the wait. Once the node is
+back the app connects to it by itself, and the screen says the node
+runs version N, updated from version M just now, or so many minutes
+ago; the image, its progress and its buttons go until another is
+picked. If the new image did not start, the node swapped the old one
+back, and the screen says the version it came back on. Only the node
+the image went to decides this, whenever it is back, and only it is
+sent the rest of an image or asked to commit or reboot: another node
+the app is on meanwhile changes nothing of the update. An image from the phone keeps itself
 whatever the node hears, since the node may stand alone
 (spec "Phone link", Updates). So if the node still hears no other node,
 sleepy ones counted, 585.9 s after it came back, as long as an image
@@ -877,7 +892,8 @@ connection line then says
 passes on the texts it holds, at most ten minutes, then restarts for
 about a minute, and that the phone reconnects by itself. When the node ends the link to reboot, the line says "ID … is
 installing version N, back in about a minute", and the search waits
-for it: for 55 s (`swapAway`), from a reboot into an image of 227 pages
+for it as for a node the phone updated (above), but only for 55 s
+(`swapAway`), from a reboot into an image of 227 pages
 to the node back on the bench, 2026-11-06, the loader's hash and swap
 of about 47 s by the datasheets (`bark-fw/README.md`, "Updates") and
 the boot, and then the first of the two rounds that call a node out of
