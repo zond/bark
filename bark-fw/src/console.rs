@@ -34,7 +34,7 @@
 //! ```
 //!
 //! `scripts/image.py stage` sends an image through `stage` to `reboot`.
-//! `cut`, only in an open build (`BARK_OPEN=1`), writes the moment a bench
+//! `cut`, only in a bench-only build (`BARK_BENCH_ONLY=1`), writes the moment a bench
 //! loader stops a phase of the swap just asked for at, an operation's
 //! index or none (`bark_image::boot::cut::choose`), for
 //! `scripts/cutbench.py`.
@@ -80,7 +80,6 @@ use crate::update::{decimal, ConsoleStager, External, Flash, Power, Refused};
 use bark_fw_logic::line::{Line, LineError};
 use bark_image::boot::cut::{choose, Phase};
 use bark_image::boot::{blocking, CHUNK};
-use bark_image::protect::Build;
 use bark_image::HEADER_LEN;
 use bark_proto::BatteryLevels;
 
@@ -308,10 +307,6 @@ enum Command<'l> {
     Cut(Phase, Option<u32>),
 }
 
-/// Whether the bench's commands are taken: only in an open build, so that
-/// none goes out with a board that leaves the bench.
-const OPEN: bool = matches!(crate::protect::BUILD, Build::Open);
-
 /// Default `rx` wait, ms.
 const RX_DEFAULT_MS: u32 = 10_000;
 /// Most RSSI readings `noise` keeps.
@@ -325,7 +320,7 @@ const ACK_TIMEOUT_US: u32 = 100_000;
 const HELP: &str = "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \
 survey [n] | discharge [erase] | stage <header hex> | chunk <offset> <hex> | commit | reboot";
-const HELP_OPEN: &str = "cut <swap|back> <op|none>";
+const HELP_BENCH_ONLY: &str = "cut <swap|back> <op|none>";
 
 fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim_start_matches('>');
@@ -404,7 +399,7 @@ fn parse(line: &str) -> Result<Command<'_>, &'static str> {
         }
         "commit" => Command::Commit,
         "reboot" => Command::Reboot,
-        "cut" if OPEN => {
+        "cut" if crate::BENCH_ONLY => {
             let phase = match arg() {
                 Some("swap") => Phase::Swap,
                 Some("back") => Phase::Back,
@@ -950,8 +945,8 @@ impl<'a> Console<'a> {
             Command::Discharge(true) => crate::discharge::erase(),
             Command::Help => {
                 log::info!("{}", HELP);
-                if OPEN {
-                    log::info!("{}", HELP_OPEN);
+                if crate::BENCH_ONLY {
+                    log::info!("{}", HELP_BENCH_ONLY);
                 }
             }
             Command::Stage(hex) => {

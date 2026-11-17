@@ -22,7 +22,7 @@ pub struct Facts {
     pub controller: Option<(usize, usize)>,
     /// The GPS's state now (`gps.rs`).
     pub gps: &'static str,
-    /// The debug port's read-out protection (`protect.rs`).
+    /// The debug port's read-out protection as found (`protect.rs`).
     pub protection: Option<crate::protect::State>,
 }
 
