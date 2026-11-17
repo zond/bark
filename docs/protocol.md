@@ -1524,10 +1524,8 @@ hop places of the send queue.
 `hops` takes one byte below 128, two below 16 384 and three up to
 2 097 151 ([packet formats](#packet-formats)). It limits no path on
 Earth: the farthest point is 20 000 km away, which 2 097 151 hand-overs
-reach at 10 m a hop, where two bytes' 32 767 reached 24 600 km only on a
-straight path of the 750 m hops of
-[capacity and sizing](#capacity-and-sizing). Limiting how far a message
-travels is `wrong`'s job. A relay that would have to send a count above
+reach at 10 m a hop. Limiting how far a message travels is `wrong`'s
+job. A relay that would have to send a count above
 2 097 151 drops the message, except an owner delivering it to its node
 ([delivery](#delivery)), which sends 2 097 151: the search has ended
 there.
