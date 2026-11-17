@@ -1,11 +1,17 @@
-//! A node's role by its power: relay on external power, sleepy on battery,
-//! with the grace, the battery levels, the flush of a relay that leaves and
-//! a role a person forced (spec "Nodes", "Sleepy nodes"). The battery's
-//! readings are `relay/battery.rs`'s. A [`SleepyNode`](super::SleepyNode)
-//! has no room for the mail a relay holds, and stays sleepy whatever its
-//! power.
+//! A node's role by its power. On external power it is a relay. On battery
+//! a fixed relay relays on until its battery is low, or, without battery
+//! levels, until its grace ends; a carried one turns sleepy at once
+//! (spec "Nodes", "Sleepy nodes"). Here too are the flush of a relay that
+//! leaves and a role a person forced. The battery's readings are
+//! `relay/battery.rs`'s. A [`SleepyNode`](super::SleepyNode) has no room
+//! for the mail a relay holds, and stays sleepy whatever its power.
 
 use super::{Mode, Node, Power, Sleep, Stage};
+use crate::drain::Running;
+use crate::event::{Action, AppEvent, Trace};
+use crate::node::heartbeat_interval;
+use crate::tables::send_queue::{Outgoing, State};
+use crate::time::{Duration, Instant};
 
 /// The role a person forced on a node (spec "Nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,11 +22,6 @@ pub enum Forced {
     /// Sleepy, whatever its power, until the power changes.
     Sleepy,
 }
-use crate::drain::Running;
-use crate::event::{Action, AppEvent, Trace};
-use crate::node::heartbeat_interval;
-use crate::tables::send_queue::{Outgoing, State};
-use crate::time::{Duration, Instant};
 
 impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Whether this node is sleepy now.

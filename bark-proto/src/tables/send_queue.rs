@@ -123,13 +123,14 @@ pub enum Wait {
 }
 
 /// A message as a node holds it: what its ID is taken of
-/// (spec "Packet formats").
+/// (spec "Packet formats"), and the ID.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Message {
-    /// Its destination's position.
-    pub dst_pos: Position,
-    /// Its destination node.
-    pub dst_id: NodeId,
+    dst_pos: Position,
+    dst_id: NodeId,
+    /// Taken once: routing asks for it of every queued message at every
+    /// arrival, and hashing the payload each time cost most of the call.
+    id: MsgId,
     len: u8,
     payload: [u8; MAX_PAYLOAD],
 }
@@ -140,9 +141,11 @@ impl Message {
     pub fn new(dst_pos: Position, dst_id: NodeId, payload: &[u8]) -> Message {
         debug_assert!(payload.len() <= MAX_PAYLOAD, "{} bytes", payload.len());
         let len = payload.len().min(MAX_PAYLOAD);
+        let dst_pos = Position::decode(&dst_pos.encode());
         let mut m = Message {
-            dst_pos: Position::decode(&dst_pos.encode()),
+            dst_pos,
             dst_id,
+            id: MsgId::of(dst_pos, dst_id, &payload[..len]),
             len: len as u8,
             payload: [0; MAX_PAYLOAD],
         };
@@ -155,6 +158,16 @@ impl Message {
         Message::new(d.dst_pos, d.dst_id, d.payload)
     }
 
+    /// Its destination's position.
+    pub fn dst_pos(&self) -> Position {
+        self.dst_pos
+    }
+
+    /// Its destination node.
+    pub fn dst_id(&self) -> NodeId {
+        self.dst_id
+    }
+
     /// The payload.
     pub fn payload(&self) -> &[u8] {
         &self.payload[..self.len as usize]
@@ -162,7 +175,7 @@ impl Message {
 
     /// Its ID.
     pub fn id(&self) -> MsgId {
-        MsgId::of(self.dst_pos, self.dst_id, self.payload())
+        self.id
     }
 }
 
@@ -269,8 +282,8 @@ impl Outgoing {
             sender_home: home,
             dst_hop: self.to,
             src_hop: me,
-            dst_pos: self.message.dst_pos,
-            dst_id: self.message.dst_id,
+            dst_pos: self.message.dst_pos(),
+            dst_id: self.message.dst_id(),
             wrong: self.wrong,
             hops: self.hops,
             payload: self.message.payload(),
@@ -367,9 +380,11 @@ impl SendQueue {
             Some(c) => c,
             None => unreachable!(),
         };
+        // Fills the room beyond the queue's length, which is never read.
         let message = Message {
             dst_pos: Position { lat: 0, lon: 0 },
             dst_id: NodeId::NONE,
+            id: MsgId(0),
             len: 0,
             payload: [0; MAX_PAYLOAD],
         };
@@ -592,6 +607,15 @@ mod tests {
 
     fn message(tag: u8) -> Message {
         Message::new(Position::default(), NodeId([3; 6]), &[tag])
+    }
+
+    #[test]
+    fn a_message_keeps_the_id_of_what_it_carries() {
+        let p = Position::from_degrees(50.45, 30.52);
+        for payload in [&[][..], b"hello", &[0xa5; MAX_PAYLOAD]] {
+            let m = Message::new(p, NodeId([1, 2, 3, 4, 5, 6]), payload);
+            assert_eq!(m.id(), MsgId::of(m.dst_pos(), m.dst_id(), m.payload()));
+        }
     }
 
     fn entry(tag: u8) -> Outgoing {

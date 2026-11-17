@@ -115,7 +115,7 @@ pub const SELF_CHECK_LIMIT_DB: i16 = 12;
 
 /// The receiver's packet parameters: the longest preamble, as DS §6.1.4
 /// asks where the length varies, and the longest payload
-/// (`docs/core-interface.md` §3 rule 4).
+/// (`docs/core-interface.md`, "Radio", rule 4).
 pub const RX_PACKET: (u16, u8) = (LONG_PREAMBLE_SYMBOLS, MAX_FRAME as u8);
 
 /// The chip, one command at a time. Every method waits for BUSY low, sends

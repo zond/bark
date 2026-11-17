@@ -1593,6 +1593,7 @@ worked out from the bus and the datasheets):
 | the same reads from the radio's own task between its steps | as above | they delay its next step, not its reading inside a CAD |
 | the MPSL's flash timeslots for the internal flash (`store.rs`) | 41 µs a word written, 328 µs a record; an erase in nine parts of 10 ms, a length fixed in `nrf_mpsl::Flash` | the processor stops while the internal flash writes, inside the MPSL's interrupt: no task can shorten it, and it can make a reading inside a CAD late |
 | the phone link's pairing, P-256 in software | tens of ms | once a pairing |
+| the core's `handle` on a relay whose send queue and neighbour table are full: every queued message routed over every live neighbour, at each received DATA (the gate) and at each event while no hand-over is under way (the next to send) | 48 µs on the host with 39 + 64 queued and 64 neighbours, so some 24 ms here, where a call takes about 500 times as long; 3 µs, some 1.5 ms, with 3 neighbours (2026-11-17, `bark-proto/src/node/relay/handle_time.rs`) | the same decisions in less time need each message's route kept between calls, which nothing yet does exactly |
 
 A wholly bounded radio would run its task on an interrupt executor above
 thread mode, so that no task could delay any of its wakes, not only the

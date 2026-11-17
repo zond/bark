@@ -33,7 +33,7 @@ fn chi_square_point(k: u8) -> f32 {
 
 /// A node's GPS: the search under way, and what its role keeps. Times are
 /// whole seconds from the clock's zero, 0 for none, so that the node
-/// stays within the size `docs/core-interface.md` §6 gives it.
+/// stays within the size `docs/core-interface.md`, "Memory", gives it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Gps {
     until: u32,
@@ -290,7 +290,7 @@ impl Gps {
 
     /// The node took an anchor and works by its position: a search under
     /// way ends, unless the node has no place. A `Locate` at or before now
-    /// ends a search (`docs/core-interface.md` §4).
+    /// ends a search (`docs/core-interface.md`, "Application").
     pub(super) fn anchored(&mut self, placed: bool, now: Instant, emit: &mut dyn FnMut(Action)) {
         if Self::searches_anchored(placed) {
             return;

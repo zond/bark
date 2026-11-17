@@ -11,12 +11,13 @@ use super::Job;
 use crate::event::{Action, Frame};
 use crate::ids::MsgId;
 use crate::node::mac::{airtime, Excursion};
-use crate::node::transfer::{Owed, Replies, Reply, Take};
+use crate::node::transfer::{Owed, Replies, Take};
 use crate::node::Config;
 use crate::radio::Channel;
 use crate::tables::budget::Budget;
 use crate::tables::busy::BusyEstimator;
 use crate::time::{Duration, Instant};
+use crate::wire::Ack;
 
 pub(super) struct Radio {
     excursion: Excursion<Job>,
@@ -56,7 +57,7 @@ impl Radio {
         }
     }
 
-    // --- The excursion (`docs/core-interface.md` §3 rule 1) ---
+    // --- The excursion (`docs/core-interface.md`, "Radio", rule 1) ---
 
     pub(super) fn idle(&self) -> bool {
         self.excursion.idle()
@@ -174,9 +175,9 @@ impl Radio {
 
     // --- Away from listening ---
 
-    /// How long the radio has been away in all up to `until` (at most
-    /// `now`), µs, wrapping; only as far as the core knows: a frame it did
-    /// not decode is not reported (`docs/core-interface.md` §3 rule 3).
+    /// How long the radio has been away in all up to `until` (at most `now`),
+    /// µs, wrapping; only as far as the core knows: a frame it did not decode
+    /// is not reported (`docs/core-interface.md`, "Radio", rule 3).
     pub(super) fn away_us(&self, now: Instant, until: Instant) -> u32 {
         let open = self
             .away_since
@@ -217,12 +218,7 @@ impl Radio {
     }
 
     /// Whether `reply` on `channel` can be owed now ([`Replies::can_owe`]).
-    pub(super) fn can_owe(
-        &mut self,
-        reply: impl Into<Reply>,
-        channel: Channel,
-        now: Instant,
-    ) -> bool {
+    pub(super) fn can_owe(&mut self, reply: Ack, channel: Channel, now: Instant) -> bool {
         let sending = self.out_for(Job::Reply);
         self.replies.can_owe(reply, channel, sending, now)
     }
@@ -230,7 +226,7 @@ impl Radio {
     /// Owe `reply` on `channel` until `deadline` ([`Replies::owe`]).
     pub(super) fn owe(
         &mut self,
-        reply: impl Into<Reply>,
+        reply: Ack,
         channel: Channel,
         deadline: Instant,
         renews: bool,

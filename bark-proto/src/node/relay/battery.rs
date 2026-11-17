@@ -14,7 +14,8 @@ use crate::time::{Duration, Instant};
 
 /// What a node's power says of its cell. Times are whole seconds of the
 /// node's clock: half the room of an `Instant` in the node's 1 KiB outside
-/// its tables (core-interface §6), and a u32 of seconds lasts 136 years.
+/// its tables (`docs/core-interface.md`, "Memory"), and a u32 of seconds
+/// lasts 136 years.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Charge {
     /// On external power since then.

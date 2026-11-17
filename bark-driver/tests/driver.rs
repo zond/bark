@@ -1460,7 +1460,8 @@ fn a_check_that_ends_a_sniff_waits_for_the_packet() {
 }
 
 /// The power the application tells reaches the core right after the boot
-/// wakeup, and again when it changes, once each time (core-interface §4).
+/// wakeup, and again when it changes, once each time
+/// (`docs/core-interface.md`, "Application").
 #[test]
 fn the_power_reaches_the_core_at_boot_and_at_each_change() {
     let world = World::default();
@@ -1485,7 +1486,7 @@ fn the_power_reaches_the_core_at_boot_and_at_each_change() {
 
 /// On battery the driver reads the battery at once and then once every
 /// `BATTERY_EVERY`, and reports each reading to the core; on USB it reads
-/// none (core-interface §4).
+/// none (`docs/core-interface.md`, "Application").
 #[test]
 fn the_battery_reaches_the_core_once_a_minute_on_battery() {
     let world = World::default();
@@ -1568,11 +1569,11 @@ fn a_relay_reset_in_zeroed_memory_is_a_new_one() {
     assert_eq!(from_zeros, fresh);
 }
 
-/// The GPS follows the core (core-interface §4): a search from a
-/// `Locate` until its end, ended by the first fix in reach and by a
-/// `Locate` at or before now, and running all the time while the core
-/// says it tracks; a fix beyond reach of every known relay is not handed,
-/// and the core is told once that it has no fix.
+/// The GPS follows the core (`docs/core-interface.md`, "Application"): a
+/// search from a `Locate` until its end, ended by the first fix in reach and
+/// by a `Locate` at or before now, and running all the time while the core
+/// says it tracks; a fix beyond reach of every known relay is not handed, and
+/// the core is told once that it has no fix.
 #[test]
 fn the_gps_follows_the_core() {
     let world = World::default();
@@ -1660,7 +1661,7 @@ fn run_bounded<C: Core>(d: &mut TestDriver<C>, world: &World, until: Instant, ma
 
 /// An application always ready and giving nothing: the loop still waits
 /// for its clock and radio, and asks the application again only after one
-/// of them woke it (core-interface §4).
+/// of them woke it (`docs/core-interface.md`, "Application").
 #[test]
 fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
     let world = World::default();
@@ -1693,7 +1694,7 @@ fn a_ready_that_gives_nothing_does_not_spin_the_loop() {
 
 /// A readiness for the application's own turn ends the step at once and
 /// is no empty readiness; the next does the same, rather than waiting for
-/// the clock or the radio (core-interface §4).
+/// the clock or the radio (`docs/core-interface.md`, "Application").
 #[test]
 fn a_ready_for_the_application_itself_ends_the_step() {
     let world = World::default();
@@ -1715,7 +1716,7 @@ fn a_ready_for_the_application_itself_ends_the_step() {
 
 /// A message the application has goes to the core at once, and so does
 /// one that comes after an empty readiness, at the next step: the driver
-/// offers before it waits (core-interface §4).
+/// offers before it waits (`docs/core-interface.md`, "Application").
 #[test]
 fn a_message_offered_goes_at_once() {
     let world = World::default();
@@ -1835,7 +1836,7 @@ fn image() -> Image {
 }
 
 /// The core's update actions reach the application, and its answers
-/// reach the core as commands (core-interface §4).
+/// reach the core as commands (`docs/core-interface.md`, "Application").
 #[test]
 fn an_update_goes_between_the_core_and_the_application() {
     let world = World::default();
@@ -1876,7 +1877,7 @@ fn an_update_goes_between_the_core_and_the_application() {
 
 /// The application's ask reaches the core as a command, and a
 /// neighbour's status the core hands reaches the application
-/// (core-interface §4).
+/// (`docs/core-interface.md`, "Application").
 #[test]
 fn a_status_goes_between_the_core_and_the_application() {
     let world = World::default();
