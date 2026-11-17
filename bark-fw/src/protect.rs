@@ -1,6 +1,6 @@
 //! The debug port's read-out protection as the boot finds it, for the log
 //! (README, "Read-out protection"). Nothing here writes it: a board stays
-//! as its factory and its earlier images left it (roadmap D224).
+//! as its factory and its earlier images left it (roadmap D226).
 
 use bark_image::protect::{self, Chip, Soft};
 use embassy_nrf::pac;

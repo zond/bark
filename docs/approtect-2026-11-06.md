@@ -1,6 +1,6 @@
 # Read-out protection (2026-11-06)
 
-**Status:** withdrawn 2026-11-17 (roadmap D224, which withdraws D138):
+**Status:** withdrawn 2026-11-17 (roadmap D226, which withdraws D138):
 the firmware no longer writes the protection in any build, and the rule
 and bench checks below describe the images of 2026-11-06 to 2026-11-16.
 The facts about the chip are from the nRF52840 Product Specification and

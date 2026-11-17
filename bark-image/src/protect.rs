@@ -1,6 +1,6 @@
 //! Read-out protection: whether the chip's debug port reads the chip, from
 //! what the boot finds, for the log. The firmware never writes it (roadmap
-//! D224); the reads are in `bark-fw/src/protect.rs`, the reading of them
+//! D226); the reads are in `bark-fw/src/protect.rs`, the reading of them
 //! here, to be tested on the host.
 //!
 //! nRF52840 Product Specification, "Access port protection": on build

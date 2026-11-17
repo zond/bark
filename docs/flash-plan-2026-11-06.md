@@ -87,7 +87,7 @@ Two limits on "inside":
   bench builds (`BARK_OPEN=1`); the firmware, through its HAL, had in
   fact been opening it at every boot on revision 3
   (`docs/approtect-2026-11-06.md`). *2026-11-17:* withdrawn, roadmap
-  D224: no build sets or opens it.
+  D226: no build sets or opens it.
 
 ### The regions
 

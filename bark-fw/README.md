@@ -467,7 +467,7 @@ unless the chip's access port protection is on
 firmware leaves it as it finds it, in every build: it writes neither
 UICR.APPROTECT nor the `APPROTECT` registers, and it starts the HAL with
 `Debug::NotConfigured`, as the HAL's default would open the port on build
-code F (roadmap D224). The protection would not keep the keys from
+code F (roadmap D226). The protection would not keep the keys from
 someone holding the board in any case: they can copy an image of their
 own to the board's drive, and it runs with every key in reach.
 
@@ -1536,7 +1536,7 @@ to 0.34 ms at the median and 0.36 ms at the 95th percentile. No channel
 check went without its reading.
 
 The processor's instruction cache, off after reset, is on from the first
-line of `main` in every build (roadmap D225). Forty minutes on three
+line of `main` in every build (roadmap D227). Forty minutes on three
 boards with it on and off (2026-11-17) took the GPS task's longest poll
 of a minute from 220–250 µs to 176–189 µs at the median and from at most
 295 µs to at most 204 µs, and the update task's from 319–358 µs to

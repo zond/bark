@@ -2237,7 +2237,7 @@ The pairing is LE Secure Connections with passkey entry (Vol 3 Part H
 into the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it
 ([screen and buttons](#screen-and-buttons)); only a build for the bench
-alone also writes it to its USB log (roadmap D224). Being at the node is
+alone also writes it to its USB log (roadmap D226). Being at the node is
 the only guard, for every person who pairs: each paired phone is an
 owner with every owner's setting. The app pairs only once the phone holds
 no bond for the node: it has the phone remove any first, and where the
