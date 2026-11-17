@@ -97,9 +97,9 @@ def full_id(short: str, known: list[str] | None = None) -> str:
 
 def cargo_build(where: Path, env: dict[str, str], features: list[str]) -> None:
     """A release build in `where` with `env` and no other BARK_ variable
-    from the shell. Bench boards stay open to a debug probe (README,
-    "Read-out protection")."""
-    env = {"BARK_OPEN": "1", **env}
+    from the shell. Bench-only, so that the board takes images signed by
+    the bench key and logs the codes its screen shows (README)."""
+    env = {"BARK_BENCH_ONLY": "1", **env}
     e = {k: v for k, v in os.environ.items() if not k.startswith("BARK_")}
     e.update(env)
     cmd = ["cargo", "build", "--release"] + (["--features", ",".join(features)] if features else [])

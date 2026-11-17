@@ -156,6 +156,27 @@ const IMAGE: &str = match console::SURVEY {
 #[cfg(not(feature = "console"))]
 const IMAGE: &str = "node";
 
+/// Built with `BARK_BENCH_ONLY=1`: an image for the bench alone, which
+/// takes images signed by the bench key (`build.rs`), logs the codes the
+/// screen shows, and allows the bench's own build switches and commands.
+/// Any other value fails the build rather than guess.
+pub const BENCH_ONLY: bool = match option_env!("BARK_BENCH_ONLY") {
+    None => false,
+    Some(v) => {
+        assert!(
+            matches!(v.as_bytes(), b"1"),
+            "BARK_BENCH_ONLY is 1 or unset"
+        );
+        true
+    }
+};
+
+/// [`BENCH_ONLY`] as `scripts/uf2.py` reads it from the ELF: it packs a
+/// bench loader only with a bench-only image.
+#[used]
+#[no_mangle]
+pub static BARK_BENCH_ONLY: u32 = BENCH_ONLY as u32;
+
 // A survey is a console; set for a node build the variable would be
 // ignored, and the board would not do what was asked of it.
 #[cfg(not(feature = "console"))]
@@ -224,8 +245,6 @@ const HEARTBEAT_AIRTIME_US: u64 = bark_proto::radio::time_on_air(
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    // First, before any secret is read; a reset here keeps the panic below.
-    let protection = protect::apply();
     // Read before anything else can panic and overwrite it.
     let previous_panic = panic_persist::get_panic_message_utf8();
     #[cfg(not(feature = "console"))]
@@ -253,7 +272,7 @@ async fn main(spawner: Spawner) {
     let lf_found = None;
     #[cfg(not(feature = "console"))]
     let lf_found = Some(clocks.lf_found);
-    log_boot(hex, protection, lf_found, previous_panic);
+    log_boot(hex, lf_found, previous_panic);
     spawner.spawn(touch_task().expect("spawned once"));
     spawner.spawn(watchdog(p.WDT).expect("spawned once"));
     let battery = battery::Battery::new(embassy_nrf::saadc::Saadc::new(
@@ -319,7 +338,9 @@ async fn main(spawner: Spawner) {
 /// every interrupt of ours below the MPSL's radio timing.
 fn chip_config() -> Config {
     let mut config = Config::default();
-    // The debug port is `protect`'s.
+    // Not the default, `Allowed`, which on build code F writes
+    // UICR.APPROTECT and opens the port at every boot: the firmware leaves
+    // the port as the board came (`protect.rs`).
     config.debug = embassy_nrf::config::Debug::NotConfigured;
     // USBD needs the 32 MHz crystal oscillator running (nRF52840 Product
     // Specification, USBD chapter). The console starts it at boot, for its
@@ -456,7 +477,6 @@ fn start_usb_and_log(
 /// node build found, and the previous boot's panic.
 fn log_boot(
     hex: &[u8; 2 * NodeId::LEN],
-    protection: protect::State,
     lf_found: Option<lfclk::Found>,
     previous_panic: Option<&str>,
 ) {
@@ -477,6 +497,7 @@ fn log_boot(
         bark_proto::radio::SYMBOL_TIME.as_micros(),
         HEARTBEAT_AIRTIME_US,
     );
+    let protection = protect::read();
     log::info!("{}", protection);
     #[cfg(not(feature = "console"))]
     boot::note(|f| f.protection = Some(protection));

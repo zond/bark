@@ -1246,12 +1246,12 @@ a phone (Trying it).
     changed confirmed`; the next connection logs neither.
 13. An update from the phone (Updating a node), on a node with the
     loader, version N, on USB with its log open. On
-    the host, from `bark-fw/`, build an image one version up, open for
-    the bench, and copy it to the phone:
-    `BARK_OPEN=1 BARK_IMAGE_VERSION=N+1 cargo build --release &&
+    the host, from `bark-fw/`, build an image one version up, for the
+    bench only, and copy it to the phone:
+    `BARK_BENCH_ONLY=1 BARK_IMAGE_VERSION=N+1 cargo build --release &&
     scripts/image.py pack target/thumbv7em-none-eabihf/release/bark-fw
-    target/vN+1.img`, then sign it with the bench key, which an open
-    build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
+    target/vN+1.img`, then sign it with the bench key, which a
+    bench-only build holds: `scripts/image.py sign target/vN+1.img keys/bench.pem
     --key-id 255`. In **Settings**, **Updates**, **Node firmware** says
     version N. Debug, **Bench**, **Pick a firmware file**, the image:
     "Version N+1".
@@ -1396,10 +1396,10 @@ calls it; one whose earlier step failed is skipped.
    update screen and rebooted into, until the node is back on its
    version.
 
-An open build writes the pairing's code to its log (spec "Phone link",
-Pairing): the script reads it from the board's log once step 1 has
-passed and types it into Android's dialog with `adb shell input`. A
-protected build's code is typed by hand. The steps also run against the
+A bench-only build writes the pairing's code to its log
+(spec "Phone link", Pairing): the script reads it from the board's log
+once step 1 has passed and types it into Android's dialog with
+`adb shell input`. Another build's code is typed by hand. The steps also run against the
 fake node, in `test/phone_steps_test.dart`.
 
 ```

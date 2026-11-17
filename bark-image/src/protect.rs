@@ -1,14 +1,13 @@
-//! Read-out protection: which writes the firmware makes at boot so that
-//! the debug port can or cannot read the chip. The register writes are in
-//! `bark-fw/src/protect.rs`; the choice is here, to be tested on the host.
+//! Read-out protection: whether the chip's debug port reads the chip, from
+//! what the boot finds, for the log. The firmware never writes it (roadmap
+//! D224); the reads are in `bark-fw/src/protect.rs`, the reading of them
+//! here, to be tested on the host.
 //!
 //! nRF52840 Product Specification, "Access port protection": on build
 //! codes D and earlier the port is open unless `UICR.APPROTECT` is
 //! `Enabled`; on F and later it is closed after every reset unless
-//! `UICR.APPROTECT` is `HwDisabled` and the firmware writes `SwDisable` to
-//! `APPROTECT.DISABLE`. A UICR write takes effect at the next reset
-//! (NVMC), and only `CTRL-AP ERASEALL`, erasing flash, UICR and RAM,
-//! clears `Enabled`.
+//! `UICR.APPROTECT` is `HwDisabled` and firmware has written `SwDisable` to
+//! `APPROTECT.DISABLE` since, and not `Force` to `APPROTECT.FORCEPROTECT`.
 
 /// `UICR.APPROTECT`'s values (Product Specification, UICR, `PALL`).
 pub mod uicr {
@@ -20,27 +19,18 @@ pub mod uicr {
     pub const ERASED: u32 = 0xFFFF_FFFF;
 }
 
-/// `APPROTECT.DISABLE`'s `SwDisable`, which opens the port until the next
-/// reset on build codes F and later (Product Specification, APPROTECT).
+/// `APPROTECT.DISABLE`'s `SwDisable` (Product Specification, APPROTECT).
 pub const SW_DISABLE: u32 = 0x5A;
-
-/// What the image was built to be: open for the bench, protected for a
-/// board that leaves it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Build {
-    /// Built with `BARK_OPEN=1`: the debug port reads the chip.
-    Open,
-    /// The default: the debug port reads nothing.
-    Protected,
-}
+/// `APPROTECT.FORCEPROTECT`'s `Force` (Product Specification, APPROTECT).
+pub const FORCE: u32 = 0x00;
 
 /// How the chip protects its debug port, by its build code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chip {
     /// Build codes D and earlier: by UICR alone.
     Hardware,
-    /// Build codes F and later (revision 3): by UICR and by the firmware
-    /// at every boot.
+    /// Build codes F and later (revision 3): by UICR and by firmware at
+    /// every boot.
     HardwareAndSoftware,
 }
 
@@ -63,58 +53,37 @@ impl Chip {
     }
 }
 
-/// The writes at boot, in this order.
+/// The `APPROTECT` peripheral's registers as read, on build codes F and
+/// later; D and earlier have none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Steps {
-    /// The value to program into `UICR.APPROTECT`, if any. A write only
-    /// clears bits, so it can close the port and never reopen it.
-    pub uicr: Option<u32>,
-    /// Write `SwDisable` to `APPROTECT.DISABLE`.
-    pub sw_disable: bool,
-    /// Write `Force` to `APPROTECT.FORCEPROTECT`, which keeps the port
-    /// closed until the next reset whatever is written to `DISABLE`.
-    pub force: bool,
+pub struct Soft {
+    /// `APPROTECT.DISABLE`.
+    pub disable: u32,
+    /// `APPROTECT.FORCEPROTECT`.
+    pub forceprotect: u32,
 }
 
-/// What a build does on a chip.
-///
-/// A protected build programs `Enabled` on both chips, with
-/// `FORCEPROTECT` on F as the Specification advises, so that no later
-/// image or bootloader writing `DISABLE` reopens it; only an erase of the
-/// whole chip does. On D an erased UICR is already open.
-pub fn steps(build: Build, chip: Chip) -> Steps {
-    match (build, chip) {
-        (Build::Protected, Chip::Hardware) => Steps {
-            uicr: Some(uicr::ENABLED),
-            sw_disable: false,
-            force: false,
-        },
-        (Build::Protected, Chip::HardwareAndSoftware) => Steps {
-            uicr: Some(uicr::ENABLED),
-            sw_disable: false,
-            force: true,
-        },
-        (Build::Open, Chip::Hardware) => Steps {
-            uicr: None,
-            sw_disable: false,
-            force: false,
-        },
-        (Build::Open, Chip::HardwareAndSoftware) => Steps {
-            uicr: Some(uicr::HW_DISABLED),
-            sw_disable: true,
-            force: false,
-        },
-    }
+impl Soft {
+    /// The registers' values after a reset (Product Specification,
+    /// APPROTECT), which nothing has written.
+    pub const RESET: Soft = Soft {
+        disable: 0,
+        forceprotect: 0xFFFF_FFFF,
+    };
 }
 
 /// Whether the port is closed, from `UICR.APPROTECT` as of the last reset
-/// and whether `SwDisable` was written since. On D any value but erased is
+/// and, on F, the `APPROTECT` registers. On D any value but erased is
 /// taken as closed, as only `Enabled` and erased are defined.
-pub fn closed(chip: Chip, uicr: u32, sw_disabled: bool) -> bool {
+pub fn closed(chip: Chip, uicr: u32, soft: Soft) -> bool {
     let pall = uicr & 0xFF;
     match chip {
         Chip::Hardware => pall != uicr::ERASED & 0xFF,
-        Chip::HardwareAndSoftware => !(pall == uicr::HW_DISABLED && sw_disabled),
+        Chip::HardwareAndSoftware => {
+            let forced = soft.forceprotect & 0xFF == FORCE;
+            let sw_disabled = soft.disable & 0xFF == SW_DISABLE;
+            !(pall == uicr::HW_DISABLED && sw_disabled && !forced)
+        }
     }
 }
 
@@ -127,6 +96,11 @@ mod tests {
     const REV2: u32 = u32::from_be_bytes(*b"AAD0");
     const REV1: u32 = u32::from_be_bytes(*b"AAC0");
 
+    const SW_DISABLED: Soft = Soft {
+        disable: SW_DISABLE,
+        forceprotect: Soft::RESET.forceprotect,
+    };
+
     #[test]
     fn chip_from_variant() {
         assert_eq!(Chip::build_code(REV3), b'F');
@@ -135,48 +109,26 @@ mod tests {
         assert_eq!(Chip::of(REV1), Chip::Hardware);
     }
 
-    /// What each row of the table leaves after the reset that follows its
-    /// UICR write, from every state a board can be in.
     #[test]
-    fn every_build_on_every_chip() {
-        let states = [
-            (Chip::Hardware, &[uicr::ERASED, uicr::ENABLED][..]),
-            (
-                Chip::HardwareAndSoftware,
-                &[uicr::ERASED, uicr::HW_DISABLED, uicr::ENABLED][..],
-            ),
-        ];
-        for (chip, befores) in states {
-            for &before in befores {
-                for build in [Build::Open, Build::Protected] {
-                    let s = steps(build, chip);
-                    // A flash write only clears bits.
-                    let after = match s.uicr {
-                        Some(v) if before & v == v => v,
-                        _ => before,
-                    };
-                    let shut = closed(chip, after, s.sw_disable) || s.force;
-                    let expect = match build {
-                        Build::Protected => true,
-                        // Open unless a protected image has run before.
-                        Build::Open => before == uicr::ENABLED,
-                    };
-                    assert_eq!(shut, expect, "{build:?} on {chip:?} from {before:#x}");
-                }
-            }
-        }
+    fn d_is_open_while_uicr_is_erased() {
+        assert!(!closed(Chip::Hardware, uicr::ERASED, Soft::RESET));
+        assert!(closed(Chip::Hardware, uicr::ENABLED, Soft::RESET));
     }
 
+    /// A board as the factory makes it is closed on F, and stays so under
+    /// firmware that writes nothing.
     #[test]
-    fn writes_by_chip() {
-        let open_f = steps(Build::Open, Chip::HardwareAndSoftware);
-        assert_eq!(open_f.uicr, Some(uicr::HW_DISABLED));
-        assert!(open_f.sw_disable && !open_f.force);
-        assert_eq!(steps(Build::Open, Chip::Hardware).uicr, None);
-        for chip in [Chip::Hardware, Chip::HardwareAndSoftware] {
-            let s = steps(Build::Protected, chip);
-            assert_eq!(s.uicr, Some(uicr::ENABLED));
-            assert!(!s.sw_disable);
-        }
+    fn f_is_open_only_when_uicr_and_firmware_both_open_it() {
+        let f = Chip::HardwareAndSoftware;
+        assert!(closed(f, uicr::ERASED, Soft::RESET));
+        assert!(closed(f, uicr::ERASED, SW_DISABLED));
+        assert!(closed(f, uicr::HW_DISABLED, Soft::RESET));
+        assert!(!closed(f, uicr::HW_DISABLED, SW_DISABLED));
+        assert!(closed(f, uicr::ENABLED, SW_DISABLED));
+        let forced = Soft {
+            forceprotect: FORCE,
+            ..SW_DISABLED
+        };
+        assert!(closed(f, uicr::HW_DISABLED, forced));
     }
 }
