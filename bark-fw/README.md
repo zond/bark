@@ -777,7 +777,10 @@ confirmed itself.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for
-  (`Stager::written`, `update::commit`). The node then drains (spec
+  (`Stager::written`, `update::commit`), on the one reading of the power
+  that let the staging start, since the staging erases the record. An
+  image that fails is not taken again until the node reboots, and the
+  core is told (`Request::Rejected`). The node then drains (spec
   "Send queue", "Updates over the mesh"; roadmap D170): while its power
   allows a swap and no phone update is under way, it asks the core to
   take no message, `update: draining for the reboot: the node takes no

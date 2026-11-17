@@ -967,9 +967,14 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
         return Err(());
     }
     // The record is erased as the staging begins, so the power is checked
-    // first, as the phone's commit would.
+    // first, and the same reading goes to the commit: a second, lower one
+    // would refuse it with the record erased.
     let mut told = false;
-    while !super::swap_allowed(super::power()) {
+    let power: Power = loop {
+        let p = super::power();
+        if super::swap_allowed(p) {
+            break p;
+        }
         if !core::mem::replace(&mut told, true) {
             log::info!(
                 "update: version {} whole; waiting for the power a swap needs",
@@ -977,7 +982,7 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
             );
         }
         Timer::after_secs(60).await;
-    }
+    };
     let part = |r: bark_image::layout::Region| Partition::new(internal, r.start, r.len);
     crate::at("stage");
     let written = bark_image::boot::Stager::written(
@@ -996,7 +1001,6 @@ async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<()
             return Err(());
         }
     };
-    let power: Power = super::power();
     crate::at("commit");
     match super::commit(&mut staging, power).await {
         Ok(h) => {
