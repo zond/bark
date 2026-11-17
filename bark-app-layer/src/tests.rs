@@ -264,7 +264,10 @@ fn a_fetch_opens_under_its_key_only() {
     let p = fetch.seal(&f.alice.mailbox, f.home.node, 7);
     assert_eq!(seal::recipient_of(&p), Some(7));
     assert_eq!(Fetch::open(&f.alice.mailbox, f.home.node, &p), Ok(fetch));
-    assert_eq!(Fetch::open(&f.bob.mailbox, f.home.node, &p), Err(Error::Open));
+    assert_eq!(
+        Fetch::open(&f.bob.mailbox, f.home.node, &p),
+        Err(Error::Open)
+    );
     // Another node under the same key, an earlier home, cannot take it.
     assert_eq!(
         Fetch::open(&f.alice.mailbox, f.away.node, &p),
@@ -274,7 +277,11 @@ fn a_fetch_opens_under_its_key_only() {
     for i in (1..p.len()).filter(|&i| i != seal::RECIPIENT_AT) {
         let mut q = p;
         q[i] ^= 0x80;
-        assert_eq!(Fetch::open(&f.alice.mailbox, f.home.node, &q), Err(Error::Open), "{i}");
+        assert_eq!(
+            Fetch::open(&f.alice.mailbox, f.home.node, &q),
+            Err(Error::Open),
+            "{i}"
+        );
     }
 }
 
