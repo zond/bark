@@ -27,7 +27,7 @@ use super::{Job, Node};
 use crate::event::{Action, AppEvent, Delivery, DropReason, Frame, Trace, MAX_FRAME};
 use crate::geo::{LocalPlane, Point};
 use crate::ids::{MsgId, NodeId};
-use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Reply, Take, IN_FLIGHT};
+use crate::node::transfer::{self, Check, Flight, HandOver, Missed, Owed, Take, IN_FLIGHT};
 use crate::node::Rng;
 use crate::node::{heartbeat_interval, mac};
 use crate::position::Position;
@@ -250,9 +250,7 @@ fn tried(record: &Record, passed: u64, slot: usize) -> bool {
 
 /// The frame of the owed reply.
 fn reply_frame(o: Owed) -> Frame {
-    match o.reply {
-        Reply::Ack(a) => mac::frame(&Packet::Ack(a), o.channel, MIN_PREAMBLE_SYMBOLS),
-    }
+    mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS)
 }
 
 /// A full DATA frame with the long preamble, 372.8 ms
@@ -1982,7 +1980,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) -> Option<Outgoing> {
-        if self.radio.replies().wake_at().is_some_and(|t| t <= now) {
+        if self.radio.replies().pending() {
             if let Some((mut h, _)) = self.handover() {
                 h.hold(now);
             }
@@ -2456,9 +2454,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let frame = reply_frame(o);
         let airtime = mac::airtime(&frame);
         if !self.can_reply(airtime, now) {
-            let Reply::Ack(a) = o.reply;
             emit(Action::Trace(Trace::Silent {
-                msg_id: a.msg_id,
+                msg_id: o.reply.msg_id,
                 owed: false,
             }));
             self.radio.abandon_reply();

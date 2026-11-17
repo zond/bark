@@ -728,7 +728,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn ready_at(&self, job: Job) -> Option<Instant> {
         let free = self.radio.idle();
         match job {
-            Job::Reply => self.radio.replies().wake_at().filter(|_| free),
+            // Owed, a reply is ready at once: a time past is now.
+            Job::Reply => (free && self.radio.replies().pending()).then_some(Instant::ZERO),
             Job::Heartbeat => {
                 if !free || self.awaiting_ack() || !self.heartbeats() {
                     return None;
