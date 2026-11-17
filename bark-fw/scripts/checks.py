@@ -522,9 +522,10 @@ def anchor(log: Log) -> list[Finding]:
 
 # ---- each board's clock --------------------------------------------------------
 
-# The core's bound on a node's clock (bark-proto relay/anchor.rs,
+# The core's bound on a node's clock against a rate all nodes share, so
+# that two part by up to twice it (bark-proto relay/anchor.rs,
 # CLOCK_DRIFT_PPM); test_checks.py holds it to the source.
-CLOCK_PPM = 50
+CLOCK_PPM = 100
 # The shortest boot whose rate is judged: a line may wait the log's drain
 # and a USB frame before the host reads it, which at either end of an hour
 # moves the rate by under 10 ppm.
@@ -573,15 +574,22 @@ def rates(log: Log) -> list[Rate]:
     return out
 
 
-def clock(log: Log) -> list[Finding]:
-    """A board whose clock is surely off by more than the core assumes of
-    a node's (CLOCK_PPM), against the host's."""
+def clocks(logs: list[Log]) -> list[Finding]:
+    """Each pair of boards whose clocks surely part by more than the core
+    allows two nodes' (2 × CLOCK_PPM), both rates measured against the
+    host's clock, whose own rate cancels in the difference. A board's
+    offset from true time, which boards built alike share, is no fault."""
+    each = [(log, r) for log in logs for r in rates(log)]
     out = []
-    for r in rates(log):
-        if abs(r.ppm) - r.bound_ppm > CLOCK_PPM:
-            on = f", {r.lfclk}" if r.lfclk else ""
-            what = f"{r.ppm:+.0f} ppm over {r.span_s / 3600:.1f} h, beyond ±{CLOCK_PPM}{on}"
-            out.append(Finding("clock", FAIL, log.name, what, r.boot.lines[0].n))
+    for i, (la, a) in enumerate(each):
+        for lb, b in each[i + 1:]:
+            if la.name == lb.name or abs(a.ppm - b.ppm) - a.bound_ppm - b.bound_ppm <= 2 * CLOCK_PPM:
+                continue
+            for (l, r), o in (((la, a), b), ((lb, b), a)):
+                on = f", {r.lfclk}" if r.lfclk else ""
+                what = (f"{r.ppm:+.0f} ppm against the host, {abs(r.ppm - o.ppm):.0f} from a board"
+                        f" at {o.ppm:+.0f}, beyond {2 * CLOCK_PPM}{on}")
+                out.append(Finding("clock", FAIL, l.name, what, r.boot.lines[0].n))
     return out
 
 
@@ -616,8 +624,8 @@ def standing(
         out += stack(log, (rooms or {}).get(log.name))
         out += gaps(log, end, log.name in silent_at_end)
         out += anchor(log)
-        out += clock(log)
     out += heartbeats(logs)
+    out += clocks(logs)
     return out
 
 

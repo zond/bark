@@ -260,25 +260,39 @@ class Anchor(unittest.TestCase):
 
 
 class Clock(unittest.TestCase):
-    def boot(self, ppm: float, hours: float, lfclk: str = "crystal, started in 105 ms") -> checks.Log:
+    def boot(self, ppm: float, hours: float, lfclk: str = "crystal, started in 105 ms",
+             name: str = "c") -> checks.Log:
         """A boot whose uptime runs `ppm` fast of the host's clock, its
         lines read 1 to 3 ms late."""
         lines = [(1000.002, 0.3, f"lfclk: {lfclk}")]
         for i in range(1, int(hours * 360) + 1):
             host = 1000.0 + 10 * i
             lines.append((host + 0.001 + (i % 3) * 0.001, 0.3 + 10 * i * (1 + ppm * 1e-6), f"uptime {10 * i} s"))
-        return board_log("c", lines)
+        return board_log(name, lines)
 
     def test_the_rate_against_the_hosts_clock(self):
         (r,) = checks.rates(self.boot(130, 2))
         self.assertAlmostEqual(r.ppm, 130, delta=1)
         self.assertEqual(r.lfclk, "crystal, started in 105 ms")
 
-    def test_beyond_the_cores_bound_fails(self):
-        got = checks.clock(self.boot(130, 2))
-        self.assertEqual([f.kind for f in got], [checks.FAIL])
-        self.assertIn("+130 ppm", got[0].what)
-        self.assertEqual(checks.clock(self.boot(-40, 2)), [])
+    def test_boards_alike_far_from_the_host_pass(self):
+        # The crystals of 2026-11-17: +114 and +130 ppm against the host.
+        self.assertEqual(checks.clocks([self.boot(114, 2, name="a"), self.boot(130, 2, name="b")]), [])
+
+    def test_a_board_on_the_rc_oscillator_fails_against_the_others(self):
+        rc = self.boot(-543, 2, "RC oscillator, calibrated", name="s")
+        got = checks.clocks([self.boot(114, 2, name="a"), self.boot(130, 2, name="b"), rc])
+        self.assertEqual(sorted(f.board for f in got), ["a", "b", "s", "s"])
+        self.assertTrue(all(f.kind == checks.FAIL for f in got))
+        (f, _) = [f for f in got if f.board == "s"]
+        self.assertIn("-543 ppm against the host, 657 from a board at +114, beyond 200", f.what)
+
+    def test_the_mark_is_twice_the_cores_bound(self):
+        self.assertEqual(checks.clocks([self.boot(-95, 2, name="a"), self.boot(95, 2, name="b")]), [])
+        self.assertEqual(len(checks.clocks([self.boot(-110, 2, name="a"), self.boot(110, 2, name="b")])), 2)
+
+    def test_one_board_alone_is_not_judged(self):
+        self.assertEqual(checks.clocks([self.boot(-543, 2, "RC oscillator, calibrated")]), [])
 
     def test_a_boot_under_an_hour_is_not_judged(self):
         self.assertEqual(checks.rates(self.boot(500, 0.9)), [])

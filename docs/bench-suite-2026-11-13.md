@@ -52,11 +52,14 @@ and any one fails the run:
   thousand: a listening receiver loses about one in ten
   (spec "Channel at boot"), and a node whose window is right loses no
   more;
-- a board's clock off the host's by more than the ±50 ppm the core
-  assumes of a node's (spec "Relay choice"), in any boot of an hour or
-  more. The rate is how the least delay of a line, over a minute's lines
-  at each end of the boot, moves; the report gives every board's rate
-  and the source of its 32.768 kHz clock (roadmap D229).
+- two boards whose clocks part by more than the 200 ppm the core allows
+  two nodes' (spec "Heartbeat"), in boots of an hour or more. Each
+  board's rate is measured against the host's clock, as how the least
+  delay of a line, over a minute's lines at each end of the boot, moves,
+  and the host's own rate cancels in the difference; boards built alike
+  may all be far from the host's and pass. The report gives every
+  board's rate and the source of its 32.768 kHz clock (roadmap D229,
+  D230).
 
 The checks are functions of log lines, tested on the host against
 recorded logs.
