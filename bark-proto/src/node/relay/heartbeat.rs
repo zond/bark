@@ -11,7 +11,7 @@ use crate::sniff::LONG_PREAMBLE_SYMBOLS;
 use crate::tables::heard::beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours, NEIGHBOURS};
 use crate::time::{Duration, Instant};
-use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN};
+use crate::wire::{Heartbeat, Packet, HEARTBEAT_LEN, HEARTBEAT_MAX};
 
 /// The heartbeat job's state.
 pub(super) struct Beacon {
@@ -117,16 +117,16 @@ pub(super) enum Beat {
     Change,
 }
 
-/// How long a heartbeat heard was on the air. A relay's answer to an
-/// anchorless node also has the long preamble, but cannot be told from its
-/// other heartbeats.
-fn heartbeat_airtime(hb: &Heartbeat) -> Duration {
+/// How long a heartbeat of `len` bytes heard was on the air. A relay's
+/// answer to an anchorless node also has the long preamble, but cannot be
+/// told from its other heartbeats.
+fn heartbeat_airtime(hb: &Heartbeat, len: usize) -> Duration {
     let preamble = if hb.anchorless && hb.sleepy {
         LONG_PREAMBLE_SYMBOLS
     } else {
         MIN_PREAMBLE_SYMBOLS
     };
-    time_on_air(HEARTBEAT_LEN as u8, preamble)
+    time_on_air(len as u8, preamble)
 }
 
 fn channel_bit(c: Channel) -> u16 {
@@ -427,10 +427,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             // A channel a slot whether or not the heartbeat went, so that a
             // neighbour that heard one knows when the next comes to its
             // channel.
-            let mut next = self.radio.beacon.next_at + self.slot_gap();
+            let mut next = self.radio.beacon.next_at + self.pass_slot();
             self.radio.beacon.rotation = self.radio.beacon.rotation.next();
             while next <= now {
-                next += self.slot_gap();
+                next += self.pass_slot();
                 self.radio.beacon.rotation = self.radio.beacon.rotation.next();
             }
             self.radio.beacon.next_at = next;
@@ -441,9 +441,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// The time from the slot that has just gone to the next
-    /// (spec "Heartbeat").
-    pub(super) fn slot_gap(&mut self) -> Duration {
+    /// Pass a slot, one fewer of the burst if it is in one, and give the
+    /// time from it to the next (spec "Heartbeat").
+    fn pass_slot(&mut self) -> Duration {
         self.radio.beacon.burst = self.radio.beacon.burst.saturating_sub(1);
         if self.radio.beacon.burst > 0 {
             burst_gap(&self.config)
@@ -452,11 +452,12 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
     }
 
-    /// A heartbeat heard (spec "Neighbour table", "Delivery",
-    /// "Relay choice").
+    /// A heartbeat heard, `len` bytes with its section
+    /// (spec "Neighbour table", "Delivery", "Relay choice").
     pub(super) fn heard(
         &mut self,
         hb: Heartbeat,
+        len: usize,
         rssi: i16,
         now: Instant,
         emit: &mut dyn FnMut(Action),
@@ -484,7 +485,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         // When it started: a heartbeat's slot is its start, give or take
         // the listen-before-talk.
-        let started = now - heartbeat_airtime(&hb);
+        let started = now - heartbeat_airtime(&hb, len);
         // A heartbeat of the anchor heard before the watch opens is in no
         // slot: it shows the anchor alive and moves nothing
         // (spec "Relay choice").
@@ -497,6 +498,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if burst {
             self.neighbours.burst_heard(hb.id);
         } else if !off_slot {
+            // A change, an answer or an announcement is in no slot either,
+            // but retiming by it does no harm: the next slot heartbeat
+            // heard retimes it again, and a lost one still gives one miss.
             self.neighbours.beat_heard(hb.id, self.home, started);
         }
         if let Some(slot) = heard.new_occupant() {
@@ -570,7 +574,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let interval = heartbeat_interval(n.id, &self.config);
         let at = Neighbours::next_beat(n, interval, self.home);
         let lag = heartbeat_lag(&self.config) + drift(at.since(n.beat_at));
-        let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        // It may carry the update's section.
+        let airtime = time_on_air(HEARTBEAT_MAX as u8, MIN_PREAMBLE_SYMBOLS);
         Some((at - lag, at + lag + airtime))
     }
 

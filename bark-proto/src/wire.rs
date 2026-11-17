@@ -89,6 +89,8 @@ const LEAVING: u8 = 0x10;
 const HEARTBEAT_POS: usize = HEARTBEAT_ID + ID_LEN;
 /// HEARTBEAT length.
 pub const HEARTBEAT_LEN: usize = HEARTBEAT_POS + SHORT_LEN;
+/// HEARTBEAT length with the update's section: 26.
+pub const HEARTBEAT_MAX: usize = HEARTBEAT_LEN + SECTION_LEN;
 
 // ACK.
 const ACK_ID: usize = VERSION + FORMAT_LEN;

@@ -793,7 +793,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         match decoded {
             Ok(Packet::Heartbeat(hb)) => {
                 self.spread.beat_heard(now);
-                self.heard(hb, rssi, now, emit);
+                self.heard(hb, bytes.len(), rssi, now, emit);
                 if let Some(section) = crate::wire::decode_section(bytes) {
                     self.section_heard(hb.id, section, now, emit);
                 }

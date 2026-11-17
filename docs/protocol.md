@@ -534,7 +534,8 @@ not come.
 heartbeat on its own channel once a rotation, in a window around the
 slot: from the slot less what the last one heard may have waited behind
 its own (the lateness above) and the clocks' drift since, to the slot
-plus that lateness, that drift and the heartbeat's airtime, about 1.8 s.
+plus that lateness, that drift and the airtime of a heartbeat with an
+update's section, about 1.8 s.
 When the window closes without the heartbeat, the relay enters a reading
 at its noise floor ([busy estimate](#busy-estimate)) into the
 neighbour's average ([neighbour table](#neighbour-table)), weighted by
@@ -1853,7 +1854,7 @@ sleeps again as soon as it hears it:
   itself, and twice because a heartbeat held up by a busy anchor may have
   moved the time expected a drift later while its slot was a drift early
   (roadmap D52). As late is the drift, the heartbeat's greatest delay and
-  its airtime more.
+  the airtime of one with an update's section more.
 - A heartbeat of the anchor heard before the watch opens is no slot's: an
   answer to a node without an anchor on its channel, or the one after a
   move ([channel moves](#channel-moves)). It shows the anchor alive and

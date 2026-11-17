@@ -16,7 +16,7 @@ use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::anchorless_beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours, BEATS};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::HEARTBEAT_LEN;
+use crate::wire::HEARTBEAT_MAX;
 
 /// How much stronger, in averaged RSSI, another node must be to take a
 /// sleepy node from its anchor: two standard deviations of the difference
@@ -148,7 +148,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn watch(&self) -> Option<(Instant, Instant)> {
         let at = self.listen.watch_at?;
         let drift = drift(at.since(self.listen.watch_base));
-        let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        // It may carry the update's section.
+        let airtime = time_on_air(HEARTBEAT_MAX as u8, MIN_PREAMBLE_SYMBOLS);
         Some((
             at - drift.mul(3),
             at + drift + heartbeat_lag(&self.config) + airtime,

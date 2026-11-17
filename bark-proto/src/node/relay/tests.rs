@@ -2519,12 +2519,81 @@ fn a_heartbeat_due_and_not_heard_is_a_reading_at_the_floor() {
     assert_eq!(entry(&r).rssi, heard, "no reading for a heartbeat heard");
 }
 
-/// Half a heartbeat's airtime: the window is centred on the slot, so the
-/// slot that passed is the window's middle less the airtime's half.
+/// Half the airtime of the longest heartbeat: the window is centred on the
+/// slot, so the slot that passed is the window's middle less the airtime's
+/// half.
 fn heartbeat_airtime_half() -> Duration {
     use crate::radio::time_on_air;
-    use crate::wire::HEARTBEAT_LEN;
-    time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS).div(2)
+    use crate::wire::HEARTBEAT_MAX;
+    time_on_air(HEARTBEAT_MAX as u8, MIN_PREAMBLE_SYMBOLS).div(2)
+}
+
+/// A heartbeat that carries the update's section is longer on the air, and
+/// started as early as one without: a relay's slot of it and a sleepy
+/// node's watch of its anchor are the same either way.
+#[test]
+fn a_heartbeat_s_section_does_not_move_its_start() {
+    use crate::radio::time_on_air;
+    use crate::update::{Section, SECTION_LEN};
+    let config = Config {
+        boot_listen: Duration::from_secs(1),
+        ..Config::default()
+    };
+    let other = name(77);
+    // Each node hears the heartbeat that started at `started`, with the
+    // section or without, and gives the neighbour's slot and its watch.
+    let hear = |sleepy: bool, section: bool| {
+        let mut r = Relay::new(config, 6);
+        let mut now = Instant::ZERO;
+        let pending = if sleepy {
+            on_battery(&mut r)
+        } else {
+            Vec::new()
+        };
+        let started = Instant::ZERO + Duration::from_secs(5);
+        drive_from(&mut r, &mut now, started, pending);
+        let hb = Heartbeat {
+            sleepy: false,
+            anchorless: false,
+            carried: false,
+            home: r.home(),
+            format: crate::wire::FORMAT,
+            map_point: false,
+            leaving: false,
+            id: other,
+            short: config.position.short(),
+        };
+        let mut buf = [0; crate::event::MAX_FRAME];
+        let mut len = Packet::Heartbeat(hb).encode(&mut buf).unwrap();
+        if section {
+            let s = Section {
+                runs: 1,
+                image: None,
+                complete: 0,
+                have: 0,
+            };
+            let mut b = [0u8; SECTION_LEN];
+            crate::wire::encode_section(&s, &mut b);
+            buf[len..len + SECTION_LEN].copy_from_slice(&b);
+            len += SECTION_LEN;
+        }
+        let heard = started + time_on_air(len as u8, MIN_PREAMBLE_SYMBOLS);
+        drive(&mut r, &mut now, heard);
+        let event = Event::Received {
+            channel: r.home(),
+            rssi_dbm: -80,
+            snr_db: 5,
+            bytes: &buf[..len],
+        };
+        r.handle(event, heard, &mut |_| {});
+        let n = *r.neighbours.get(other).unwrap();
+        (n.beat_at, r.listen.watch_at())
+    };
+    let relay = hear(false, false);
+    assert_eq!(relay, hear(false, true));
+    let sleepy = hear(true, false);
+    assert!(sleepy.1.is_some(), "the sleepy node watches its anchor");
+    assert_eq!(sleepy, hear(true, true));
 }
 
 /// Any answer to this relay lifts a demotion (spec "Neighbour table"): a
