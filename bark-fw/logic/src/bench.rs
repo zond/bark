@@ -3,6 +3,7 @@
 
 use core::fmt;
 
+use bark_app_layer::Address;
 use bark_proto::radio::Channel;
 use bark_proto::wire::MAX_PAYLOAD;
 use bark_proto::{Config, NodeId, Position};
@@ -14,11 +15,16 @@ pub const CARRIER_MAX_S: u32 = (2
     * (Config::DEFAULT.move_dwell.as_micros() + Config::DEFAULT.move_wait_max.as_micros())
     / 1_000_000) as u32;
 
-/// The longest command: a text's, its words a whole payload behind the
-/// name, an ID, a latitude and a longitude at their longest, and the
-/// spaces between.
-pub const LINE: usize =
+/// The longest command: a payload's, a whole payload in hex behind the
+/// name and an address, and the spaces between. The app's first message
+/// to a person carries its sender's card, over half a payload.
+pub const LINE: usize = "payload".len() + 2 * Address::LEN + 2 * MAX_PAYLOAD + 2;
+
+/// A text's longest: its words a whole payload behind the name, an ID, a
+/// latitude and a longitude at their longest, and the spaces between.
+const TEXT_LINE: usize =
     "text".len() + 2 * NodeId::LEN + "-90.000000".len() + "-180.000000".len() + 4 + MAX_PAYLOAD;
+const _: () = assert!(TEXT_LINE <= LINE);
 
 /// What power the node is told it is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,11 +48,11 @@ impl Power {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command<'a> {
-    /// Send `words` to `to` at `at`, as a phone's message.
-    Text {
+    /// Send `payload` to `to` at `at`, as a phone's message.
+    Send {
         to: NodeId,
         at: Position,
-        words: &'a str,
+        payload: Payload<'a>,
     },
     Power(Power),
     /// The transmit power, dBm conducted, before the radio's limits.
@@ -66,9 +72,34 @@ pub enum Command<'a> {
     Forget,
 }
 
+/// A message's payload as it was typed, checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Payload<'a> {
+    /// The words' UTF-8 bytes.
+    Words(&'a str),
+    /// Bytes, two hex digits each.
+    Hex(&'a str),
+}
+
+impl Payload<'_> {
+    /// The bytes into `out`; how many, none for hex that is not.
+    pub fn write(&self, out: &mut [u8; MAX_PAYLOAD]) -> usize {
+        match *self {
+            Payload::Words(w) => {
+                out[..w.len()].copy_from_slice(w.as_bytes());
+                w.len()
+            }
+            Payload::Hex(h) => {
+                let n = h.len() / 2;
+                hex(h, &mut out[..n]).map_or(0, |()| n)
+            }
+        }
+    }
+}
+
 /// The commands, for a line that is none of them.
-pub const HELP: &str = "commands: text <id> <lat> <lon> <words> | power <usb|battery|real> | \
-txpower <dbm> | tcxo <us> | carrier <k> <seconds> | flip | reboot | status | forget";
+pub const HELP: &str = "commands: text <id> <lat> <lon> <words> | payload <address> <hex> | \
+power <usb|battery|real> | txpower <dbm> | tcxo <us> | carrier <k> <seconds> | flip | reboot | status | forget";
 
 pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let line = line.trim();
@@ -76,6 +107,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, &'static str> {
     let mut args = rest.split_whitespace();
     let command = match name {
         "text" => return text(rest),
+        "payload" => return payload(rest),
         "power" => Command::Power(match args.next() {
             Some("usb") => Power::Usb,
             Some("battery") => Power::Battery,
@@ -138,21 +170,57 @@ fn text(rest: &str) -> Result<Command<'_>, &'static str> {
         return Err("text: longer than a message");
     }
     let at = Position::from_degrees(lat as f64 / 1e6, lon as f64 / 1e6);
-    Ok(Command::Text { to, at, words })
+    Ok(Command::Send {
+        to,
+        at,
+        payload: Payload::Words(words),
+    })
+}
+
+/// `<address> <bytes>`: the address in the app's form, and the payload in
+/// hex, as the phone test asks a board to send them.
+fn payload(rest: &str) -> Result<Command<'_>, &'static str> {
+    const FORM: &str = "payload <address, 26 hex digits> <bytes in hex>";
+    let mut words = rest.split_whitespace();
+    let (Some(address), Some(bytes), None) = (words.next(), words.next(), words.next()) else {
+        return Err(FORM);
+    };
+    let mut a = [0u8; Address::LEN];
+    hex(address, &mut a).ok_or(FORM)?;
+    let to = Address::decode(&a).map_err(|_| FORM)?;
+    if bytes.len() > 2 * MAX_PAYLOAD {
+        return Err("payload: longer than a message");
+    }
+    // Checked here, decoded once, into the message (`Payload::write`).
+    if !bytes.len().is_multiple_of(2) || !bytes.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Err("payload: bytes in hex, two digits each");
+    }
+    Ok(Command::Send {
+        to: to.node,
+        at: to.position,
+        payload: Payload::Hex(bytes),
+    })
 }
 
 /// Twelve hex digits, the form the log gives a node ID in.
-fn node_id(hex: &str) -> Option<NodeId> {
-    let b = hex.as_bytes();
-    if b.len() != 2 * NodeId::LEN {
+fn node_id(digits: &str) -> Option<NodeId> {
+    let mut id = [0u8; NodeId::LEN];
+    hex(digits, &mut id)?;
+    Some(NodeId(id))
+}
+
+/// `digits` into `out`, two hex digits a byte, exactly as many as fill it.
+fn hex(digits: &str, out: &mut [u8]) -> Option<()> {
+    let b = digits.as_bytes();
+    if b.len() != 2 * out.len() {
         return None;
     }
-    let mut id = [0u8; NodeId::LEN];
+    out.fill(0);
     for (i, &c) in b.iter().enumerate() {
         let digit = char::from(c).to_digit(16)? as u8;
-        id[i / 2] = id[i / 2] << 4 | digit;
+        out[i / 2] = out[i / 2] << 4 | digit;
     }
-    Some(NodeId(id))
+    Some(())
 }
 
 /// Degrees with at most six decimals, as the log gives a position, in
@@ -234,12 +302,18 @@ mod tests {
         let c = parse("text 0a1B2c3d4e5f 59.329300 -18.0686 hello  there ").unwrap();
         assert_eq!(
             c,
-            Command::Text {
+            Command::Send {
                 to: NodeId([0x0a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f]),
                 at: Position::from_degrees(59.3293, -18.0686),
-                words: "hello  there",
+                payload: Payload::Words("hello  there"),
             }
         );
+        let Command::Send { payload, .. } = c else {
+            unreachable!()
+        };
+        let mut out = [0; MAX_PAYLOAD];
+        let n = payload.write(&mut out);
+        assert_eq!(&out[..n], b"hello  there");
     }
 
     #[test]
@@ -263,8 +337,65 @@ mod tests {
             "text 0a1b2c3d4e5f -90.000000 -180.000000 {}",
             "x".repeat(MAX_PAYLOAD)
         );
-        assert_eq!(full.len(), LINE);
+        assert_eq!(full.len(), TEXT_LINE);
         assert!(parse(&full).is_ok());
+    }
+
+    /// An address as the app writes it, `Address.toString()`.
+    fn app_address(a: Address) -> String {
+        a.encode().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn a_payload_goes_to_the_address_the_app_wrote() {
+        let to = Address {
+            position: Position::from_degrees(59.3293, -18.0686),
+            node: NodeId([0x25, 0xf1, 0x61, 0xd7, 0x31, 0x12]),
+        };
+        let line = format!("payload {} 02E2ff00", app_address(to));
+        let c = parse(&line).unwrap();
+        assert_eq!(
+            c,
+            Command::Send {
+                to: to.node,
+                at: to.position,
+                payload: Payload::Hex("02E2ff00"),
+            }
+        );
+        let Command::Send { payload, .. } = c else {
+            unreachable!()
+        };
+        let mut out = [0; MAX_PAYLOAD];
+        let n = payload.write(&mut out);
+        assert_eq!(out[..n], [0x02, 0xe2, 0xff, 0x00]);
+    }
+
+    #[test]
+    fn a_payload_with_a_part_missing_or_wrong_is_refused() {
+        let a = "47c0490ad9ff80fa4e00000001";
+        for line in [
+            "payload".to_string(),
+            format!("payload {a}"),
+            format!("payload {a} 02e2 00"),
+            format!("payload {} 02e2", &a[1..]),
+            format!("payload {a}0 02e2"),
+            format!("payload {}g 02e2", &a[1..]),
+            format!("payload {a} 02e"),
+            format!("payload {a} 02g2"),
+            format!("payload {a} +2e2"),
+        ] {
+            assert!(parse(&line).is_err(), "{line}");
+        }
+        let long = format!("payload {a} {}", "ab".repeat(MAX_PAYLOAD + 1));
+        assert_eq!(parse(&long), Err("payload: longer than a message"));
+        let full = format!("payload {a} {}", "ab".repeat(MAX_PAYLOAD));
+        assert_eq!(full.len(), LINE);
+        let Ok(Command::Send { payload, .. }) = parse(&full) else {
+            panic!("{full}")
+        };
+        let mut out = [0; MAX_PAYLOAD];
+        assert_eq!(payload.write(&mut out), MAX_PAYLOAD);
+        assert!(out.iter().all(|&b| b == 0xab));
     }
 
     #[test]

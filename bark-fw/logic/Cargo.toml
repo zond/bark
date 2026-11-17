@@ -13,3 +13,5 @@ bark-image = { path = "../../bark-image", default-features = false }
 # The bench build's commands name nodes, channels and places
 # (`src/bench.rs`).
 bark-proto = { path = "../../bark-proto" }
+# An address as the app writes it, 26 hex digits (spec "Addresses").
+bark-app-layer = { path = "../../bark-app-layer" }

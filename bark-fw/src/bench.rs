@@ -6,8 +6,8 @@
 //! The commands are parsed in `bark_fw_logic::bench`. What they change
 //! reaches the node through the two things it already has: the
 //! application the driver runs, here wrapped in [`App`], which offers a
-//! text as a phone's message is offered and tells the core the power it
-//! is told, and the node's loop between two steps ([`serve`]), which sets
+//! message as a phone's is offered and tells the core the power it is
+//! told, and the node's loop between two steps ([`serve`]), which sets
 //! the transmit power, holds the oscillator's cold delay at its floor and
 //! sends a carrier. `forget` asks the update over the mesh
 //! (`update::mesh::forget`), as the phone's update asks it to give up the
@@ -47,7 +47,7 @@ const _: () = assert!(
 /// part of it is touched from tasks alone, in thread mode.
 struct Asked {
     power: Power,
-    text: Option<Text>,
+    message: Option<Message>,
     tx_dbm: Option<i8>,
     /// The least cold oscillator delay, held from now on.
     tcxo_floor: Option<Duration>,
@@ -55,7 +55,7 @@ struct Asked {
 }
 
 #[derive(Clone, Copy)]
-struct Text {
+struct Message {
     dst_pos: Position,
     dst_id: NodeId,
     len: usize,
@@ -64,7 +64,7 @@ struct Text {
 
 static ASKED: Mutex<ThreadModeRawMutex, RefCell<Asked>> = Mutex::new(RefCell::new(Asked {
     power: Power::Real,
-    text: None,
+    message: None,
     tx_dbm: None,
     tcxo_floor: None,
     carrier: None,
@@ -142,18 +142,18 @@ fn execute(line: &str) -> Then {
     ASKED.lock(|a| {
         let mut a = a.borrow_mut();
         match command {
-            Command::Text { to, at, words } => {
-                if a.text.is_some() {
-                    log::warn!("bench: text refused, the last one waits");
+            Command::Send { to, at, payload } => {
+                if a.message.is_some() {
+                    log::warn!("bench: message refused, the last one waits");
                     return;
                 }
-                let mut payload = [0; MAX_PAYLOAD];
-                payload[..words.len()].copy_from_slice(words.as_bytes());
-                a.text = Some(Text {
+                let mut bytes = [0; MAX_PAYLOAD];
+                let len = payload.write(&mut bytes);
+                a.message = Some(Message {
                     dst_pos: at,
                     dst_id: to,
-                    len: words.len(),
-                    payload,
+                    len,
+                    payload: bytes,
                 });
             }
             Command::Power(p) => {
@@ -249,14 +249,14 @@ pub fn log_busy(busy: &bark_proto::tables::busy::BusyEstimator, home: Channel) {
     crate::timing::log_minute();
 }
 
-/// The node's application under the bench's commands: a text is offered
+/// The node's application under the bench's commands: a message is offered
 /// after whatever the application itself has, and the power the bench
 /// tells it is the core's.
 pub struct App<A> {
     inner: A,
     /// The power last given to the driver.
     reported: Option<bool>,
-    /// The last text taken.
+    /// The last message taken.
     sent: Option<MsgId>,
 }
 
@@ -291,7 +291,7 @@ impl<A> App<A> {
         ASKED.lock(|a| {
             let a = a.borrow();
             let power = a.power.told().or(Some(crate::power::reported()));
-            if power != self.reported || (offer && a.text.is_some()) {
+            if power != self.reported || (offer && a.message.is_some()) {
                 Some(Ready::Driver)
             } else if a.tx_dbm.is_some() || a.carrier.is_some() {
                 Some(Ready::Own)
@@ -322,7 +322,7 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
 
     fn take(&mut self, payload: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
         self.inner.take(payload).or_else(|| {
-            let t = ASKED.lock(|a| a.borrow_mut().text.take())?;
+            let t = ASKED.lock(|a| a.borrow_mut().message.take())?;
             payload[..t.len].copy_from_slice(&t.payload[..t.len]);
             let id = MsgId::of(t.dst_pos, t.dst_id, &t.payload[..t.len]);
             // As a phone's message is logged (`node.rs`), for
@@ -342,7 +342,7 @@ impl<A: bark_driver::App> bark_driver::App for App<A> {
             AppEvent::GivenBack { msg_id, retry_at } if self.sent == Some(*msg_id) => {
                 let wait = retry_at.since(crate::clock::core_now());
                 log::warn!(
-                    "bench: text id={:08x} given back retry_in_ms={}",
+                    "bench: message id={:08x} given back retry_in_ms={}",
                     msg_id.0,
                     wait.as_micros() / 1000
                 );
