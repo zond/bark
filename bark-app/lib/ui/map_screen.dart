@@ -843,14 +843,14 @@ class _NeighbourMarker {
           Icons.trending_down,
           'Demoted',
           'demoted',
-          'its last hand-overs failed',
+          'it did not answer its last texts',
         ),
       if (n.banned)
         const Fact(
           Icons.block,
-          'Banned',
-          'banned',
-          'for now: it refused or failed a hand-over',
+          'Avoided',
+          'avoided',
+          'for now: it turned a text down or did not answer',
         ),
     ];
   }

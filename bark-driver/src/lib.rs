@@ -63,8 +63,8 @@ const ALL_CHANNELS: u16 = (1 << CHANNELS) - 1;
 
 /// How often the battery is read on battery (`docs/core-interface.md`,
 /// "Application"). A minute late at the most a board draws (36 mA, a relay
-/// with GPS tracking) is 0.6 mAh, under 0.1 % of an 850 mAh cell and below a
-/// reading's noise.
+/// with GPS tracking) is 0.6 mAh, under 0.1 % of the 767 mAh a board's cell
+/// gave (spec "Sleepy nodes") and below a reading's noise.
 pub const BATTERY_EVERY: Duration = Duration::from_secs(60);
 
 /// How often an empty readiness is logged: it can recur at every event, so

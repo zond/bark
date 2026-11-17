@@ -2,7 +2,8 @@
 //! console's microsecond stopwatch.
 //!
 //! The embassy clock runs on RTC1 at 32 768 Hz: one tick is 30.5 µs, a
-//! tenth of a lean retune, and its source is the internal RC oscillator.
+//! tenth of a lean retune, and its source is the crystal if it starts,
+//! else the internal RC oscillator (`bark_image::lfclk`).
 //! The console's stopwatch is TIMER1 at 1 MHz, counting the 32 MHz crystal
 //! USB already needs, so readings resolve 1 µs and keep running while the
 //! CPU sleeps in `wfe` (a CPU cycle counter would stop); the console build

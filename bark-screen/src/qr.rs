@@ -3,8 +3,8 @@
 //! threads in the margin, and one line under it.
 //!
 //! The symbol is version 3 at level H, the smallest that holds the
-//! address's 19 bytes at H, whose 24 bytes version 2 does not reach at 14
-//! (ISO/IEC 18004, the data capacity table). Level H restores about 30 %
+//! address's 19 bytes at H: version 3 holds 24 bytes there, version 2 only
+//! 14 (ISO/IEC 18004, the data capacity table). Level H restores about 30 %
 //! of the codewords, so the emblem may cover some modules: it covers about
 //! 7 % of them, which the decoders read through (`scripts/qr.py check`).
 //! The threads stay out of the code and the quiet zone around it.
@@ -97,8 +97,9 @@ pub fn draw(picture: &mut Picture, part: usize) {
     }
 }
 
-/// A web inside the circle the modules leave white: the radials, a spiral of straight
-/// threads between them as an orb web's capture spiral is, and the hub.
+/// A web inside the circle the modules leave white: the radials, a spiral
+/// of straight threads between them as an orb web's capture spiral is, and
+/// the hub.
 fn emblem(picture: &mut Picture) {
     let (hx, hy) = hub();
     let reach = EMBLEM - 3;

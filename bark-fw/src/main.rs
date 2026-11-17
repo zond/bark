@@ -3,9 +3,10 @@
 //! Blinks the green LED at 1 Hz while on USB, logs over USB CDC-ACM,
 //! shows the node ID and the image on the e-paper (`display.rs`), powers
 //! up the SX1262 at bark's modulation and runs the protocol core on it
-//! (`node.rs`), a relay on USB and sleepy on battery (`power.rs`), or
-//! with the `console` feature the bring-up measurement console
-//! (`console.rs`) on the serial port. Reads the battery (`battery.rs`).
+//! (`node.rs`), a relay on USB and on battery what its motion and its
+//! battery make it (`power.rs`), or with the `console` feature the
+//! bring-up measurement console (`console.rs`) on the serial port. Reads
+//! the battery (`battery.rs`).
 //! The node build runs the phone link (`ble.rs`) and the GPS (`gps.rs`);
 //! with the `bench` feature it takes the bench's commands (`bench.rs`).
 
@@ -227,7 +228,6 @@ fn boot_picture(hex: &[u8; 2 * NodeId::LEN]) -> bark_screen::Picture {
     y += bark_screen::line_height(TEXT_SCALE);
     let mut line = bark_screen::Line::<32>::new();
     let _ = write!(line, "V{}", update::BARK_IMAGE_VERSION);
-    #[cfg(feature = "console")]
     if let Some(ch) = console::SURVEY {
         let _ = write!(line, " CH{}", ch.index());
     }

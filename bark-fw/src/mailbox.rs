@@ -181,8 +181,9 @@ impl Marks {
     /// before with bits clear, left the AND of the two, as the marks need:
     /// a slot's mark takes a program for each of the eight records' bits
     /// between erases (spec "Mailbox", The ring). The chip's datasheet is
-    /// not in the repository to say whether it allows that, so the bench
-    /// reads it here: the first mark that reads back right is logged once,
+    /// not in the repository to say whether it allows that; boards 3112 and
+    /// c367 read it back right (logs of 2026-11-10 and 2026-11-13). The check stays, as it costs a
+    /// byte's read: the first mark that reads back right is logged once,
     /// and the wrong ones with their count.
     fn check(&mut self, at: u32, before: u8, cleared: u8) {
         let want = before & cleared;

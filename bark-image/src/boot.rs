@@ -228,8 +228,9 @@ pub enum Started {
         /// The version given up, if the record still names it.
         gave_up: Option<u32>,
     },
-    /// The loader refused the staged image (`Boot::Refused`), whose record
-    /// is now forgotten.
+    /// The loader refused the staged image (`Boot::Refused`), or a reset
+    /// came between its record's write and the swap's request, so that it
+    /// was never offered; its record is now forgotten.
     Refused,
 }
 
@@ -249,7 +250,7 @@ pub fn start<F: NorFlash>(flash: &Shared<F>) -> Result<Started, FlashError> {
     };
     if found == State::Boot {
         // A record never checked, with no swap asked for, is one the
-        // loader refused.
+        // loader refused or one a reset kept from being offered.
         if bytes[..MAGIC.len()] == MAGIC && word(&mut record, CHECKED_AT)? != CHECKED {
             record.erase(0, RECORD.len).map_err(flash_error)?;
             return Ok(Started::Refused);

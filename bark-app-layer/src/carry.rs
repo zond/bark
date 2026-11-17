@@ -107,6 +107,13 @@ pub fn encode(m: &Held<'_>) -> Option<[u8; SLOT_LEN]> {
     Some(s)
 }
 
+/// Whether a slot was never written. The slots are written in order, so
+/// the first such ends them; one that fails its check does not, since a
+/// failed write leaves its slot and the next message takes the one after.
+pub fn erased(s: &[u8; SLOT_LEN]) -> bool {
+    s.iter().all(|&b| b == 0xFF)
+}
+
 /// The message a slot keeps: `None` for an erased slot and one that fails
 /// its check.
 pub fn decode(s: &[u8; SLOT_LEN]) -> Option<Held<'_>> {
@@ -232,6 +239,8 @@ mod tests {
         let mut torn = encode(&m).unwrap();
         torn[HOPS] = 0xFF;
         assert_eq!(decode(&torn), None, "its count");
+        assert!(erased(&[0xFF; SLOT_LEN]));
+        assert!(!erased(&torn), "a torn slot does not end the slots");
     }
 
     #[test]

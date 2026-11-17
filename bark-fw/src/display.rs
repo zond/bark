@@ -10,10 +10,10 @@
 //! it draws nothing and keeps the picture on the glass; only a hardware
 //! reset wakes it, so each refresh starts from one. The panel has its own
 //! SPI (SPIM1) and never shares the radio's bus, and its refreshes run as
-//! a task of their own beside the radio's loop (`main.rs`, `screen`): every wait is on an
-//! interrupt, bounded, and the picture is drawn a line at a time with the
-//! executor given back between lines, so that the radio's loop waits on
-//! it for no more than one line's drawing.
+//! a task of their own beside the radio's loop (`main.rs`, `screen`):
+//! every wait is on an interrupt, bounded, and the picture is drawn a line
+//! at a time with the executor given back between lines, so that the
+//! radio's loop waits on it for no more than one line's drawing.
 //!
 //! Not SPIM3, the nRF52840's fast instance: its transmitted data can be
 //! corrupted while the CPU or another EasyDMA master uses the same RAM
@@ -353,9 +353,9 @@ pub fn lines() {
     PERSON.signal(true);
 }
 
-/// What the phone link shows over its line for a while
-/// (spec "Screen and buttons"): a pairing's code until the pairing ends, a removal's code
-/// and a pairing refused for want of room each for [`SHOWN`] at most.
+/// What the phone link shows over its line for a while (spec "Screen and buttons"):
+/// a pairing's code until the pairing ends, a removal's code and a pairing
+/// refused for want of room each for [`SHOWN`] at most.
 #[cfg(not(feature = "console"))]
 #[derive(Clone, Copy)]
 struct Over {
