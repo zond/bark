@@ -530,10 +530,11 @@ impl SendQueue {
     }
 
     /// The entries due at `now`, written into `order` in the order the
-    /// next hand-over considers them, and how many there are (spec "Send
-    /// queue", choosing what to send): deliveries first; then those that
-    /// have waited, the most travelled first, the earliest of equals; then
-    /// the rest as they arrived. The first of them that may go is sent.
+    /// next hand-over considers them, and how many there are
+    /// (spec "Send queue", choosing what to send): deliveries first; then
+    /// those that have waited, the most travelled first, the earliest of
+    /// equals; then the rest as they arrived. The first of them that may
+    /// go is sent.
     pub fn due_order(&self, now: Instant, order: &mut [u8; ENTRIES]) -> usize {
         let mut n = 0;
         for (i, o) in self.iter().enumerate() {
