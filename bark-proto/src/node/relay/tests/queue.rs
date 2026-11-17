@@ -109,10 +109,10 @@ fn the_gate_counts_by_the_route_kept() {
     let south = off(&r, -10_000, 0);
     heard_at(&mut r, b, south, now);
     assert_eq!((ahead(&r, b, now), ahead(&r, c, now)), (2, 0), "stale");
-    // Choosing what to send routes them again.
+    // Choosing what to send routes only the first again, which may go.
     assert_eq!(r.pick(now), Some(0));
-    assert_eq!(toward(&r, 0), Some(c));
-    assert_eq!((ahead(&r, b, now), ahead(&r, c, now)), (0, 2));
+    assert_eq!((toward(&r, 0), toward(&r, 1)), (Some(c), Some(b)));
+    assert_eq!((ahead(&r, b, now), ahead(&r, c, now)), (1, 1));
 }
 
 /// One set aside, a delivery, and the message the gate is asked for do
@@ -161,4 +161,122 @@ fn a_message_that_ends_here_counts_nowhere() {
     queue(&mut r, now, here, 1, 2);
     assert_eq!(toward(&r, 0), None);
     assert_eq!((ahead(&r, b, now), ahead(&r, c, now)), (0, 0));
+}
+
+/// With nothing banned the first entry considered goes, as it did when
+/// every entry was routed first: the most travelled that has waited,
+/// else the first queued. Only the one chosen is routed again.
+#[test]
+fn with_nothing_banned_the_order_is_the_queue_s() {
+    let (mut r, now, b, c, far) = two_ways();
+    for (tag, hops) in [(1, 1), (2, 3), (3, 5), (4, 5), (5, 2)] {
+        queue(&mut r, now, far, tag, hops);
+    }
+    for i in [1, 2, 3] {
+        r.queue.get_mut(i).unwrap().waited = true;
+    }
+    // B moves south: every way kept is stale.
+    let south = off(&r, -10_000, 0);
+    heard_at(&mut r, b, south, now);
+    let mut order = Vec::new();
+    while let Some(i) = r.pick(now) {
+        assert_eq!(toward(&r, i), Some(c), "routed afresh");
+        let gone = r.queue.remove(i).unwrap();
+        order.push(gone.message.payload()[0]);
+        let rest = (0..r.queue.len()).map(|k| toward(&r, k));
+        assert!(rest.into_iter().all(|t| t == Some(b)), "not routed");
+    }
+    assert_eq!(order, [3, 4, 2, 1, 5]);
+}
+
+/// A first candidate whose way is banned is passed over and marked as
+/// having waited; the next goes.
+#[test]
+fn a_banned_candidate_is_passed_and_marked() {
+    let (mut r, now, b, c, far) = two_ways();
+    queue(&mut r, now, far, 1, 2);
+    let east = off(&r, 4_000, 100_000);
+    queue(&mut r, now, east, 2, 2);
+    assert_eq!((toward(&r, 0), toward(&r, 1)), (Some(b), Some(c)));
+    r.neighbours.refused(b, now + BAN);
+    assert_eq!(r.pick(now), Some(1));
+    assert!(r.queue.get(0).unwrap().waited);
+    assert!(!r.queue.get(1).unwrap().waited);
+    assert_eq!(r.forwarding.wake, None, "one may go");
+}
+
+/// When nothing may go, every due entry has been routed and the wakeup
+/// is the earliest end of a ban or a wait of all of them.
+#[test]
+fn with_everything_banned_the_wakeup_is_the_first_end() {
+    let (mut r, now, b, c, far) = two_ways();
+    queue(&mut r, now, far, 1, 2);
+    let east = off(&r, 4_000, 100_000);
+    queue(&mut r, now, east, 2, 2);
+    queue(&mut r, now, far, 3, 2);
+    let s = Duration::from_secs;
+    r.queue.get_mut(2).unwrap().not_before = now + s(9);
+    r.neighbours.refused(b, now + s(5));
+    r.neighbours.refused(c, now + s(7));
+    assert_eq!(r.pick(now), None);
+    assert_eq!(r.forwarding.wake, Some(now + s(5)));
+    assert!(r.queue.iter().all(|o| o.waited));
+    r.neighbours.refused(b, now + s(10));
+    assert_eq!(r.pick(now), None);
+    assert_eq!(r.forwarding.wake, Some(now + s(7)));
+    r.neighbours.refused(c, now + s(10));
+    assert_eq!(r.pick(now), None);
+    assert_eq!(r.forwarding.wake, Some(now + s(9)), "its own wait");
+}
+
+/// The message chosen at `now`.
+fn chosen(r: &mut Relay, now: Instant) -> Option<MsgId> {
+    let i = r.pick(now)?;
+    r.queue.get(i).map(|o| o.msg_id())
+}
+
+/// A message that waits for a ban behind others that go keeps the turn
+/// the ban gives it, though it is not routed while it waits: once the ban
+/// ends it goes ahead of an older message that has not waited
+/// (spec "Overload waits").
+#[test]
+fn a_message_waiting_behind_others_keeps_its_turn() {
+    let (mut r, mut now, b, _, far) = two_ways();
+    let east = off(&r, 4_000, 100_000);
+    queue(&mut r, now, east, 1, 1);
+    queue(&mut r, now, east, 2, 1);
+    let a = queue(&mut r, now, far, 3, 1);
+    assert_eq!(toward(&r, 2), Some(b));
+    let ends = now + BAN;
+    r.neighbours.refused(b, ends);
+    // The first east goes; A, behind it, is not routed, but its way kept
+    // is banned.
+    assert_eq!(r.pick(now), Some(0));
+    assert!(r.queue.get(2).unwrap().waited);
+    r.queue.remove(0);
+    now = ends;
+    assert_eq!(chosen(&mut r, now), Some(a));
+}
+
+/// One that waits for a ban is not left behind while others go: each
+/// pick sends one of them, and once the ban ends it goes first, however
+/// many keep coming for the open way.
+#[test]
+fn a_message_waiting_for_a_ban_does_not_starve() {
+    let (mut r, mut now, b, _, far) = two_ways();
+    let east = off(&r, 4_000, 100_000);
+    let a = queue(&mut r, now, far, 0, 1);
+    let ends = now + BAN.mul(4);
+    r.neighbours.refused(b, ends);
+    let mut tag = 1;
+    while now < ends {
+        queue(&mut r, now, east, tag, 1);
+        tag += 1;
+        let i = r.pick(now).expect("one for the open way");
+        assert_ne!(r.queue.get(i).map(|o| o.msg_id()), Some(a));
+        r.queue.remove(i);
+        now += BAN.div(2);
+    }
+    queue(&mut r, now, east, tag, 1);
+    assert_eq!(chosen(&mut r, now), Some(a));
 }

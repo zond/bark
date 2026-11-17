@@ -1232,14 +1232,9 @@ fn a_message_that_waited_keeps_its_turn() {
         let at = r.record_place().unwrap();
         r.records
             .put(at, Record::new(data.msg_id(), parent, (1, 0), now));
-        r.queue
-            .push(Outgoing::of(
-                &data,
-                home,
-                MIN_PREAMBLE_SYMBOLS,
-                Kind::Forward,
-            ))
-            .unwrap();
+        // Queued as an arrival queues it, routed: A's way, kept, is D.
+        let out = Outgoing::of(&data, home, MIN_PREAMBLE_SYMBOLS, Kind::Forward);
+        assert!(r.push_forward(out, 0, now));
         ids.push(data.msg_id());
     }
     // D's ban ends while K is handed over.

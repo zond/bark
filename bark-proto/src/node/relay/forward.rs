@@ -40,7 +40,7 @@ use crate::tables::budget::{
 use crate::tables::delivery::{Pushed, Queued};
 use crate::tables::neighbours::{Neighbour, Neighbours};
 use crate::tables::records::{Record, HELD};
-use crate::tables::send_queue::{Kind, Message, Outgoing, State, HOP_SLOTS, HOP_WAIT, SEND_QUEUE};
+use crate::tables::send_queue::{Kind, Message, Outgoing, State, ENTRIES, HOP_WAIT, SEND_QUEUE};
 use crate::time::{earlier, Duration, Instant};
 use crate::wire::{data_header_len, Ack, Data, Hops, Packet, MAX_HOPS, MAX_PAYLOAD};
 
@@ -250,7 +250,7 @@ fn tried(record: &Record, passed: u64, slot: usize) -> bool {
 
 /// The live neighbours as routing weighs them at `now`, one bit per
 /// neighbour-table slot in each mask: worked out once for every message
-/// routed in one call, as the gate and the pick route the whole send queue.
+/// routed in one call, as the pick may route the whole send queue.
 #[derive(Clone, Copy)]
 struct Ways {
     now: Instant,
@@ -507,53 +507,69 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|(to, ban)| (to, ban, at))
     }
 
-    /// The entry the next hand-over goes to (spec "Send queue"), each
-    /// forward routed from the state as it is now. With none to send, the
-    /// earliest end of what holds them back is kept for the wakeup. At most
-    /// queue entries × neighbour entries per call.
+    /// The entry the next hand-over goes to (spec "Send queue"): the
+    /// entries are considered in their order, each forward routed from the
+    /// state as it is now when it comes, until one may go. With none to
+    /// send, every due entry has been routed, and the earliest end of what
+    /// holds them back is kept for the wakeup. At most queue entries ×
+    /// neighbour entries per call, only when nothing may go.
     pub(super) fn pick(&mut self, now: Instant) -> Option<usize> {
-        const N: usize = SEND_QUEUE + HOP_SLOTS;
-        let mut banned = [false; N];
-        let mut hints = [None::<u16>; N];
-        let mut toward = [0u8; N];
-        let mut routed = [false; N];
-        let mut wake: Option<Instant> = None;
-        let w = self.ways(now);
-        let still_banned = w.live & w.banned;
-        for (i, o) in self.queue.iter().enumerate() {
-            if o.held() {
-                continue;
-            }
-            if o.not_before > now {
-                wake = earlier(wake, Some(o.not_before));
-                continue;
-            }
-            if o.kind != Kind::Forward {
-                continue;
-            }
-            routed[i] = true;
-            if let Some((to, ban, at)) = self.heading(&w, o) {
-                hints[i] = Some(at);
-                toward[i] = self.toward(to);
-                if ban > now {
-                    banned[i] = true;
-                    wake = earlier(wake, Some(ban));
-                }
-            }
+        if self.queue.is_empty() {
+            self.forwarding.wake = None;
+            return None;
         }
+        let w = self.ways(now);
+        let banned = w.live & w.banned;
         for i in 0..self.queue.len() {
             if let Some(o) = self.queue.get_mut(i) {
-                o.record = hints[i].unwrap_or(o.record);
-                o.waited |= banned[i];
-                o.keep_avoiding(still_banned);
-                if routed[i] {
-                    o.routed(toward[i], now);
-                }
+                o.keep_avoiding(banned);
+                // Its way as last routed is banned and not gone round: it
+                // waits, though it may not be routed again before the ban
+                // ends (spec "Overload waits").
+                let slot = o.toward.checked_sub(1).map(usize::from);
+                o.waited |= o.kind == Kind::Forward
+                    && !o.held()
+                    && slot.is_some_and(|s| Ways::has(banned & !o.avoid, s));
             }
         }
-        let pick = self.queue.next_due(now, |i, _| !banned[i]);
-        self.forwarding.wake = if pick.is_some() { None } else { wake };
-        pick
+        let mut order = [0u8; ENTRIES];
+        let due = self.queue.due_order(now, &mut order);
+        let mut wake: Option<Instant> = None;
+        for &i in &order[..due] {
+            let i = usize::from(i);
+            let Some(o) = self.queue.get(i) else {
+                continue;
+            };
+            let heading = (o.kind == Kind::Forward).then(|| self.heading(&w, o));
+            let Some(heading) = heading else {
+                self.forwarding.wake = None;
+                return Some(i);
+            };
+            let toward = heading.map_or(0, |(to, _, _)| self.toward(to));
+            let Some(o) = self.queue.get_mut(i) else {
+                continue;
+            };
+            o.routed(toward, now);
+            if let Some((_, ban, at)) = heading {
+                o.record = at;
+                if ban > now {
+                    o.waited = true;
+                    wake = earlier(wake, Some(ban));
+                    continue;
+                }
+            }
+            self.forwarding.wake = None;
+            return Some(i);
+        }
+        for o in self
+            .queue
+            .iter()
+            .filter(|o| !o.held() && o.not_before > now)
+        {
+            wake = earlier(wake, Some(o.not_before));
+        }
+        self.forwarding.wake = wake;
+        None
     }
 
     /// The gate of the send queue (spec "Send queue"): what a message
