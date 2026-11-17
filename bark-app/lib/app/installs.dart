@@ -1,6 +1,6 @@
 // A node's install of an image it gathered over the mesh, or of one the
 // phone sent it, as the app follows it, for the line and for the search's
-// wait (spec "Updates over the mesh", the install; roadmap D182, D224).
+// wait (spec "Updates over the mesh", the install; roadmap D182, D228).
 
 part of '../app.dart';
 
@@ -10,7 +10,7 @@ const Duration updatedShown = Duration(minutes: 1);
 
 /// A node's install of an image it gathered over the mesh, or of one
 /// the phone `sent` it (`updater.dart`), as the app follows it (spec
-/// "Updates over the mesh", the install; roadmap D182, D224): the node's
+/// "Updates over the mesh", the install; roadmap D182, D228): the node's
 /// name, the version, when the link ended for the reboot, whether the
 /// search gave up waiting for it, and when the node came back on that
 /// version.

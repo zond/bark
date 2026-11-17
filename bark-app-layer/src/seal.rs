@@ -196,12 +196,7 @@ fn siv_seal(
 /// The plaintext of `payload` under `keys`, sealed with `bound`, into
 /// `out`; its length. The plaintext is taken only once `siv` checks, and
 /// is wiped if it does not.
-fn siv_open(
-    keys: &SivKeys,
-    bound: &[u8],
-    payload: &[u8],
-    out: &mut [u8],
-) -> Result<usize, Error> {
+fn siv_open(keys: &SivKeys, bound: &[u8], payload: &[u8], out: &mut [u8]) -> Result<usize, Error> {
     let at = HEAD_LEN + SIV_LEN;
     let len = payload.len().checked_sub(at).ok_or(Error::Malformed)?;
     if out.len() < len {

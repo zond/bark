@@ -110,7 +110,7 @@ typedef LinkNow = ({String node, bool guest, bool byTap});
 /// A paired node that ended its link at `gone` to reboot into a new
 /// image, one it said it would install or one the phone sent, and is
 /// known to be away for up to `away` (spec "Updates over the mesh", the
-/// install; roadmap D182, D224).
+/// install; roadmap D182, D228).
 typedef Awaited = ({String node, DateTime gone, Duration away});
 
 /// What the phone knows when the search decides.
