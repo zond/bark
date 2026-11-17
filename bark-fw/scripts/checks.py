@@ -13,6 +13,7 @@ Every line the firmware logs starts `[ <uptime s> <LEVEL> ]`
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -471,6 +472,140 @@ def heartbeats(logs: list[Log]) -> list[Finding]:
     return out
 
 
+# ---- a sleepy node's watch of its anchor -------------------------------------------
+
+# The core's trace of each window in which a sleepy node woke for its
+# anchor's heartbeat, and of each rotation it listens to check the anchor
+# (bark-proto event.rs, `Trace::AnchorWatch`, `Trace::AnchorCheck`).
+WATCH = re.compile(r"^AnchorWatch \{ heard: (true|false), offset_us: (-?\d+),")
+CHECK = re.compile(r"^AnchorCheck$")
+# A listening receiver loses about one heartbeat in ten
+# (spec "Channel at boot", roadmap D47); a node whose clock keeps within
+# the core's bound loses no more, since its window covers the heartbeat's
+# every arrival.
+WATCH_LOSS = 0.1
+# How unlikely a count of catches must be, for a node that loses one in
+# ten, before it fails: one run in a thousand.
+WATCH_TAIL = 1e-3
+
+
+def below(heard: int, n: int, p: float) -> float:
+    """The chance of `heard` or fewer of `n`, each caught with chance `p`."""
+    if heard >= n:
+        return 1.0
+    total = 0.0
+    for k in range(heard + 1):
+        total += math.exp(math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+                          + k * math.log(p) + (n - k) * math.log1p(-p))
+    return min(total, 1.0)
+
+
+def anchor(log: Log) -> list[Finding]:
+    """A sleepy node that misses its anchor's watched heartbeat more often
+    than a listening receiver loses one: fewer caught than a node losing
+    WATCH_LOSS would catch but once in 1/WATCH_TAIL runs. What a node
+    whose clock or window is wrong does, and why it is then mostly awake:
+    every two misses in a row start a rotation's check."""
+    watches = [(x, WATCH.match(x.text)) for x in log.lines]
+    watches = [(x, m) for x, m in watches if m]
+    if not watches:
+        return []
+    heard = sum(m.group(1) == "true" for _, m in watches)
+    rotations = sum(1 for x in log.lines if CHECK.match(x.text))
+    n = len(watches)
+    if below(heard, n, 1 - WATCH_LOSS) >= WATCH_TAIL:
+        return []
+    what = (f"caught {heard} of {n} of its anchor's heartbeats it woke for, where one lost in "
+            f"{round(1 / WATCH_LOSS)} is expected; {rotations} checks of the anchor")
+    return [Finding("anchor", FAIL, log.name, what, watches[-1][0].n)]
+
+
+# ---- each board's clock --------------------------------------------------------
+
+# The core's bound on a node's clock against a rate all nodes share, so
+# that two part by up to twice it (bark-proto relay/anchor.rs,
+# CLOCK_DRIFT_PPM); test_checks.py holds it to the source.
+CLOCK_PPM = 100
+# The shortest boot whose rate is judged: a line may wait the log's drain
+# and a USB frame before the host reads it, which at either end of an hour
+# moves the rate by under 10 ppm.
+RATE_SPAN_S = 3600.0
+# The lines whose least delay stands for each end of a boot: a minute's.
+RATE_END_S = 60.0
+# Beyond any clock a board can have, even the RC oscillator uncalibrated
+# (±2 %, nRF52840 Product Specification, LFRC): lines the host read
+# long after the board logged them, a capture that was not live.
+RATE_IMPOSSIBLE_PPM = 50_000
+LFCLK = re.compile(r"^lfclk: (.*)$")
+
+
+@dataclass
+class Rate:
+    boot: Boot
+    ppm: float  # the board's clock against the host's, fast if above 0
+    span_s: float  # the board's uptime between the two ends
+    bound_ppm: float  # the most the lines' delays can move it by
+    lfclk: str | None  # what the boot logged of its 32.768 kHz clock
+
+
+def rates(log: Log) -> list[Rate]:
+    """Each boot's clock rate against the host's, for boots of at least
+    RATE_SPAN_S with the host's clock. A line reaches the host after the
+    board logs it, never before, so at each end the least `host - board`
+    of a minute's lines is the offset; the rate is how the offset moves."""
+    out = []
+    for boot in log.boots:
+        timed = [x for x in boot.lines if x.host is not None]
+        if not timed or timed[-1].board - timed[0].board < RATE_SPAN_S:
+            continue
+        first = [x for x in timed if x.board - timed[0].board <= RATE_END_S]
+        last = [x for x in timed if timed[-1].board - x.board <= RATE_END_S]
+        a = min(first, key=lambda x: x.host - x.board)
+        b = min(last, key=lambda x: x.host - x.board)
+        span = b.board - a.board
+        if b.host - a.host < RATE_SPAN_S:
+            continue
+        ppm = (span - (b.host - a.host)) / (b.host - a.host) * 1e6
+        if abs(ppm) > RATE_IMPOSSIBLE_PPM:
+            continue
+        bound = 2 * (LOG_DRAIN_S + 0.001) / span * 1e6
+        lf = next((m.group(1) for x in boot.lines if (m := LFCLK.match(x.text))), None)
+        out.append(Rate(boot, ppm, span, bound, lf))
+    return out
+
+
+def clocks(logs: list[Log]) -> list[Finding]:
+    """Each pair of boards whose clocks surely part by more than the core
+    allows two nodes' (2 × CLOCK_PPM), both rates measured against the
+    host's clock, whose own rate cancels in the difference. A board's
+    offset from true time, which boards built alike share, is no fault."""
+    each = [(log, r) for log in logs for r in rates(log)]
+    out = []
+    for i, (la, a) in enumerate(each):
+        for lb, b in each[i + 1:]:
+            if la.name == lb.name or abs(a.ppm - b.ppm) - a.bound_ppm - b.bound_ppm <= 2 * CLOCK_PPM:
+                continue
+            for (l, r), o in (((la, a), b), ((lb, b), a)):
+                on = f", {r.lfclk}" if r.lfclk else ""
+                what = (f"{r.ppm:+.0f} ppm against the host, {abs(r.ppm - o.ppm):.0f} from a board"
+                        f" at {o.ppm:+.0f}, beyond {2 * CLOCK_PPM}{on}")
+                out.append(Finding("clock", FAIL, l.name, what, r.boot.lines[0].n))
+    return out
+
+
+def rate_lines(logs: list[Log], labels: dict[str, str] | None = None) -> list[str]:
+    """A report line for each board's clock in each long boot, the board
+    by its label in `labels` where it has one."""
+    out = []
+    for log in logs:
+        name = (labels or {}).get(log.name, log.name)
+        for r in rates(log):
+            on = f", {r.lfclk}" if r.lfclk else ""
+            out.append(f"clock {name}: {r.ppm:+.0f} ppm ±{r.bound_ppm:.0f} over {r.span_s / 3600:.1f} h"
+                       f" from line {r.boot.lines[0].n}{on}")
+    return out
+
+
 def standing(
     logs: list[Log],
     asked: dict[str, list[float]] | None = None,
@@ -488,7 +623,9 @@ def standing(
         out += radio(log)
         out += stack(log, (rooms or {}).get(log.name))
         out += gaps(log, end, log.name in silent_at_end)
+        out += anchor(log)
     out += heartbeats(logs)
+    out += clocks(logs)
     return out
 
 

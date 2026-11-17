@@ -10,7 +10,7 @@
 //! them, and with no place stored as a fixed node, the node has none: it
 //! sends no heartbeat until its first accepted fix or a map point (roadmap
 //! D83, D133). Its seed comes from the chip's random number generator
-//! (`docs/core-interface.md` §5).
+//! (`docs/core-interface.md`, "What the driver must simulate or implement").
 
 use core::mem::MaybeUninit;
 
@@ -665,10 +665,10 @@ pub fn config(stored: Option<Stored>) -> Config {
 #[allow(clippy::large_const_arrays)]
 const _: Role = unsafe { MaybeUninit::zeroed().assume_init() };
 
-/// The node, in static memory and set up in place: `Relay::new` builds
-/// the relay on the stack, which cannot hold it (`docs/core-interface.md`
-/// §6). The static is all zeros, so it lives in `.bss`, which the startup
-/// code zeroes, instead of being stored in flash and copied to RAM at
+/// The node, in static memory and set up in place: `Relay::new` builds the
+/// relay on the stack, which cannot hold it (`docs/core-interface.md`,
+/// "Memory"). The static is all zeros, so it lives in `.bss`, which the
+/// startup code zeroes, instead of being stored in flash and copied to RAM at
 /// boot. Once only.
 pub fn core(config: Config, seed: u64) -> &'static mut Role {
     static CORE: static_cell::ConstStaticCell<MaybeUninit<Role>> =

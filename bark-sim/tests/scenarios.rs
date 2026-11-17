@@ -1,5 +1,6 @@
 //! Whole-scenario tests: determinism, the capacity-sized run, and S1.
 
+use bark_proto::node::CLOCK_DRIFT_PPM;
 use bark_sim::links::{FadingParams, Model, Site};
 use bark_sim::metrics::DropReason;
 use bark_sim::scenario::{
@@ -740,9 +741,27 @@ fn nodes_switch_on_within_their_windows() {
     }
 }
 
-/// Clocks off by up to 50 ppm (spec "Heartbeat"): a sleeping node still
-/// wakes in time for every heartbeat of its anchor (spec "Relay choice"),
-/// and never checks its anchor for want of one.
+/// Every scenario that drifts its clocks drifts them as far as the core
+/// allows (spec "Heartbeat"), so that a change to the bound reaches them.
+#[test]
+fn drifting_scenarios_take_the_cores_bound() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios");
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "toml") {
+            let sc = Scenario::load(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            let drift = sc.clocks.drift_ppm;
+            assert!(
+                drift == 0.0 || drift == CLOCK_DRIFT_PPM as f64,
+                "{path:?}: {drift} ppm"
+            );
+        }
+    }
+}
+
+/// Clocks off by as much as the core allows (spec "Heartbeat"): a
+/// sleeping node still wakes in time for every heartbeat of its anchor
+/// (spec "Relay choice"), and never checks its anchor for want of one.
 #[test]
 fn drifting_clocks_keep_the_anchor_watch() {
     for seed in 1..=4 {
@@ -754,7 +773,7 @@ fn drifting_clocks_keep_the_anchor_watch() {
             .link("R", "L0", -90.0)
             .link("R", "L1", -90.0)
             .link("R", "L2", -90.0);
-        sc.clocks.drift_ppm = 50.0;
+        sc.clocks.drift_ppm = CLOCK_DRIFT_PPM as f64;
         sc.settle_s = 900.0;
         let mut sim = Sim::new(&sc).unwrap();
         sim.run();

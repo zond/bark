@@ -426,11 +426,11 @@ impl RadioParams {
         ]
     }
 
-    /// Phases of an RSSI sample: retune there, dwell, read, retune back.
-    /// On the resting channel there is no retune and no dwell, since the
-    /// settled reading is the four-symbol one, and the node keeps receiving
-    /// (docs/core-interface.md §3 rule 7): the phases then only time the
-    /// read.
+    /// Phases of an RSSI sample: retune there, dwell, read, retune back. On
+    /// the resting channel there is no retune and no dwell, since the settled
+    /// reading is the four-symbol one, and the node keeps receiving
+    /// (`docs/core-interface.md`, "Radio", rule 7): the phases then only time
+    /// the read.
     pub fn rssi_phases(&self, off_channel: bool) -> [Phase; 3] {
         let (r, dwell) = if off_channel {
             (self.retune(), self.rssi_dwell_us + self.rssi_read_us)

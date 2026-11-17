@@ -2,10 +2,11 @@
 //! "Sleepy nodes", "Relay choice", "Beats", "Sleepy nodes alone",
 //! "Delivery").
 //!
-//! The radio may receive duty-cycled (`docs/core-interface.md` §3 rule 10)
-//! whenever the node has nothing under way and is neither in a window nor
-//! listening to watch, choose or check its anchor, until it next needs the
-//! radio. With [`Config::sleepy_listens`], a research switch, it never does.
+//! The radio may receive duty-cycled (`docs/core-interface.md`, "Radio",
+//! rule 10) whenever the node has nothing under way and is neither in a
+//! window nor listening to watch, choose or check its anchor, until it next
+//! needs the radio. With [`Config::sleepy_listens`], a research switch, it
+//! never does.
 
 use super::{Anchor, Node, Stage};
 use crate::event::{Action, Trace};
@@ -15,20 +16,23 @@ use crate::radio::{time_on_air, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::sniff::anchorless_beat_period;
 use crate::tables::neighbours::{Neighbour, Neighbours, BEATS};
 use crate::time::{earlier, Duration, Instant};
-use crate::wire::HEARTBEAT_LEN;
+use crate::wire::HEARTBEAT_MAX;
 
 /// How much stronger, in averaged RSSI, another node must be to take a
 /// sleepy node from its anchor: two standard deviations of the difference
 /// of two-heartbeat means under 4 dB fading (spec "Relay choice").
 pub const SWITCH_MARGIN_DB: f32 = 8.0;
 
-/// The most a node's clock may run fast or slow, ppm: a common 32.768 kHz
-/// watch crystal's tolerance, which the low-frequency clock runs from
-/// (nRF52840 product specification, LFXO). To be measured on the boards.
-pub const CLOCK_DRIFT_PPM: u64 = 50;
+/// The most a node's clock may run fast or slow of a rate all nodes
+/// share, ppm, so that two part by up to twice it (spec "Heartbeat",
+/// roadmap D230). Boards built alike share an offset from true time, which
+/// cancels; the 32.768 kHz crystal's tolerance and its slowing in the cold,
+/// up to 0.04 ppm/°C² from a 20–30 °C turnover (NDK NX2012SE datasheet),
+/// do not.
+pub const CLOCK_DRIFT_PPM: u64 = 100;
 
-/// How far two clocks, each off by up to [`CLOCK_DRIFT_PPM`], drift apart
-/// over `d`.
+/// How far two clocks, each within [`CLOCK_DRIFT_PPM`] of the shared rate,
+/// drift apart over `d`.
 pub(super) fn drift(d: Duration) -> Duration {
     Duration::from_micros(d.as_micros() * 2 * CLOCK_DRIFT_PPM / 1_000_000)
 }
@@ -97,7 +101,7 @@ impl Listen {
     }
 
     /// The core used the radio, which ends a duty-cycled receive
-    /// (`docs/core-interface.md` §3 rule 10).
+    /// (`docs/core-interface.md`, "Radio", rule 10).
     pub(super) fn radio_used(&mut self) {
         self.sniff_until = None;
     }
@@ -147,7 +151,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn watch(&self) -> Option<(Instant, Instant)> {
         let at = self.listen.watch_at?;
         let drift = drift(at.since(self.listen.watch_base));
-        let airtime = time_on_air(HEARTBEAT_LEN as u8, MIN_PREAMBLE_SYMBOLS);
+        // It may carry the update's section.
+        let airtime = time_on_air(HEARTBEAT_MAX as u8, MIN_PREAMBLE_SYMBOLS);
         Some((
             at - drift.mul(3),
             at + drift + heartbeat_lag(&self.config) + airtime,

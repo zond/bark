@@ -2,7 +2,8 @@
 //! end of static memory (cortex-m-rt's `__sheap`) to the stack pointer,
 //! is painted with a pattern at boot, and the deepest the stack has gone
 //! is where the pattern first ends. It is logged in the node's 10 s line,
-//! to measure the depth `docs/core-interface.md` §6 can only estimate.
+//! to measure the depth that `docs/core-interface.md`, "Memory", can only
+//! estimate.
 
 use core::ptr::{addr_of, read_volatile, write_volatile};
 

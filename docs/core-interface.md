@@ -396,11 +396,11 @@ test in `tables/mod.rs`:
 | Heard sleepy nodes (spec "Heard table") | 256 × 32 B | 8.0 KiB |
 | Delivery queue (spec "Delivery queue") | 41 × 272 B | 10.9 KiB |
 | Message records (spec "Message records") | 649 × 48 B | 30.4 KiB |
-| Send queue (spec "Send queue") | (39 + 64) × 296 B | 29.8 KiB |
+| Send queue (spec "Send queue") | (39 + 64) × 304 B | 30.6 KiB |
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 272 B | 6.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
 | Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate"), a histogram of readings for each channel | 16 B + 2 064 B | 2.0 KiB |
-| **All** | | **96.1 KiB** |
+| **All** | | **96.9 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places,
 numbered in a byte and taken at min(count, 254), keep overload from dropping messages
@@ -409,7 +409,7 @@ hold the 546 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-101 392 B (99.0 KiB): the tables and, in under 1 KiB around them, the
+102 216 B (99.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),
@@ -418,12 +418,12 @@ battery's drain, 16 B (spec "Sleepy nodes"), and beside them what it keeps
 of the update, 1 880 B, with 16 B of each neighbour's entry for its heartbeats' section and
 when it was heard, and the four images the sections name kept once in the table, 48 B (spec
 "Updates over the mesh"); its application's message waits in the send queue. Every board runs it, since every node may be a relay (spec "Nodes"). A
-`SleepyNode` is 82 048 B (80.1 KiB), without the heard table and the delivery
+`SleepyNode` is 82 872 B (80.9 KiB), without the heard table and the delivery
 queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 60 208 B,
-`bark-fw/scripts/uf2.py --stack` on the open release build of 2026-11-15 with roadmap D220,
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 58 808 B,
+`bark-fw/scripts/uf2.py --stack` on the release build of 2026-11-17,
 against a floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 

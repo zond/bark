@@ -28,7 +28,7 @@ settle_s = 900.0
 ids = "random"
 
 [clocks]
-drift_ppm = 50.0
+drift_ppm = 100.0
 
 [origin]
 lat = 50.45

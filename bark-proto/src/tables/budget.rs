@@ -34,7 +34,8 @@ pub const BUDGET: Duration =
 /// "Duty cycle cap").
 pub const DEPTH: Duration = Duration::from_micros(BUDGET.as_micros() / 60);
 
-/// Longest single transmission (spec "Regulatory limits": 1 s; SF5 frames are ≤140 ms).
+/// Longest single transmission (spec "Regulatory limits": 1 s; SF5 frames are
+/// ≤140 ms).
 pub const MAX_TRANSMISSION: Duration = Duration::from_secs(1);
 
 const fn gcd(a: u64, b: u64) -> u64 {

@@ -378,7 +378,7 @@ pub enum Trace {
         /// When the budget may next allow it.
         until: Instant,
     },
-    /// This node dropped the message (spec "Addresses").
+    /// This node dropped the message (spec "Forwarding").
     Dropped {
         /// The message.
         msg_id: MsgId,
@@ -390,8 +390,7 @@ pub enum Trace {
     Refused {
         /// The message.
         msg_id: MsgId,
-        /// [`DropReason::SendQueueFull`], [`DropReason::Budget`] or
-        /// [`DropReason::DeliveryFull`].
+        /// Why.
         reason: DropReason,
     },
     /// The receiver of a hand-over refused it (spec "Bans").
@@ -537,7 +536,7 @@ pub enum Trace {
     /// boot burst (spec "Heartbeat").
     Burst,
     /// A fixed relay's grace on battery ended; it turns sleepy (spec
-    /// "Delivery").
+    /// "Sleepy nodes").
     GraceEnded,
     /// A relay on battery is carried; it turns sleepy (spec "Sleepy nodes").
     CarriedOnBattery,

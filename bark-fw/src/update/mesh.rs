@@ -187,9 +187,9 @@ pub fn store_piece(piece: &Piece) {
     TO_TASK.piece_in.signal(());
 }
 
-/// How long a piece may take to fill: a check of the channel may be held
-/// that long for a packet under way (core-interface §3 rule 8), so one
-/// sent later goes on a check older than any the core allows for.
+/// How long a piece may take to fill: a check of the channel may be held that
+/// long for a packet under way (`docs/core-interface.md`, "Radio", rule 8),
+/// so one sent later goes on a check older than any the core allows for.
 const FILL_WITHIN: Duration = Duration::from_micros(bark_driver::MAX_AIRTIME.as_micros());
 
 /// Write the bytes of the piece `frame` names into it (`Action::Serve`);

@@ -256,7 +256,7 @@ def load(path: str | Path) -> Scenario:
     c = d.get("checks", {})
     take(c, {"skip"}, "checks")
     skip = c.get("skip", {})
-    unknown = set(skip) - {"reset", "radio", "stack", "gap", "heartbeat"}
+    unknown = set(skip) - {"reset", "radio", "stack", "gap", "heartbeat", "anchor", "clock"}
     if unknown:
         raise Bad(f"checks: no standing check {', '.join(sorted(unknown))}")
     return Scenario(
@@ -448,6 +448,7 @@ def evaluate(s: Scenario | None, run: Run, rooms: dict[str, int], asked: dict[st
     for f in findings:
         f.board = labels.get(f.board, f.board)
     report += checks.summary(findings)
+    report += checks.rate_lines(list(run.logs.values()), labels)
     ok = not any(f.kind == checks.FAIL for f in findings)
     for i, c in enumerate(s.passes if s else [], 1):
         kind, what = judge(c, run)
