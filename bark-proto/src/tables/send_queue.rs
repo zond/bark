@@ -13,8 +13,9 @@
 //! finds a free place at or below it, so numbers above that never change
 //! what is taken.
 //!
-//! Where a forward goes is not kept: the relay routes every entry each
-//! time it may send, and tells [`SendQueue::next_due`] which may go now.
+//! Each entry keeps where it was last routed ([`Outgoing::toward`]), which
+//! the gate counts by. [`SendQueue::due_order`] gives the order in which
+//! the relay considers entries to send; it routes each as it comes to it.
 //! Choosing an entry does not move it: the hand-over refers to it where
 //! it stands, so of equals the one that arrived first is offered first,
 //! however often they wait.
@@ -59,6 +60,11 @@ const _: () = assert!(HOP_PLACES >= HOP_SLOTS);
 /// design rate held at most 3 at once; holding 64 needs packets of count
 /// 64 or more.
 pub const HOP_SLOTS: usize = 64;
+
+/// Entries the queue holds at most: the regular room and the hop places.
+pub const ENTRIES: usize = SEND_QUEUE + HOP_SLOTS;
+
+const _: () = assert!(ENTRIES <= u8::MAX as usize, "an index fits a byte");
 
 /// What a queued message is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,7 +134,7 @@ pub enum Wait {
 pub struct Message {
     dst_pos: Position,
     dst_id: NodeId,
-    /// Taken once: routing asks for it of every queued message at every
+    /// Taken once: the gate asks for it of every queued message at every
     /// arrival, and hashing the payload each time cost most of the call.
     id: MsgId,
     len: u8,
@@ -229,8 +235,10 @@ pub struct Outgoing {
     /// hint, checked against the ID before it is used.
     pub record: u16,
     /// The neighbour-table slot, plus one, of where it was last routed;
-    /// 0 before it was. With `since`, a sample of that neighbour's service
-    /// time when it takes it (spec "Neighbour table").
+    /// 0 where that was to no neighbour: it ended here, or it is not yet
+    /// routed. The gate counts it there (spec "Send queue"). With `since`,
+    /// a sample of that neighbour's service time when it takes it
+    /// (spec "Neighbour table").
     pub toward: u8,
     /// When it began to wait for that neighbour here: when it was queued,
     /// or routed to another than before.
@@ -316,6 +324,18 @@ impl Outgoing {
         self.message.id()
     }
 
+    /// Routed now toward `toward`, as [`Outgoing::toward`] says it. Routed
+    /// to another neighbour than before, it begins to wait for that one
+    /// now, for that one's service time.
+    pub fn routed(&mut self, toward: u8, now: Instant) {
+        if toward != self.toward {
+            self.toward = toward;
+            if toward != 0 {
+                self.since = now;
+            }
+        }
+    }
+
     /// Go round neighbour-table `slot` while it is banned.
     pub fn go_round(&mut self, slot: usize) {
         self.avoid |= 1u64 << slot;
@@ -340,7 +360,7 @@ impl Outgoing {
 
     /// Whether it has waited for a ban, or a wait of its own, since it was
     /// queued.
-    fn waited(&self) -> bool {
+    pub fn waited(&self) -> bool {
         self.waited || self.not_before > Instant::ZERO
     }
 }
@@ -370,7 +390,7 @@ pub struct Full;
 pub struct SendQueue {
     /// The entry being handed over, or last chosen to be.
     current: Option<usize>,
-    entries: FixedVec<Outgoing, { SEND_QUEUE + HOP_SLOTS }>,
+    entries: FixedVec<Outgoing, ENTRIES>,
 }
 
 impl SendQueue {
@@ -509,35 +529,50 @@ impl SendQueue {
         Some(self.entries.remove(i))
     }
 
-    /// The entry the next hand-over goes to, of those `sendable` says may
-    /// go now (spec "Send queue", choosing what to send).
-    pub fn next_due(
-        &self,
-        now: Instant,
-        sendable: impl Fn(usize, &Outgoing) -> bool,
-    ) -> Option<usize> {
-        // Asked on every event; mostly there is nothing queued.
-        if self.is_empty() {
-            return None;
+    /// The entries due at `now`, written into `order` in the order the
+    /// next hand-over considers them, and how many there are
+    /// (spec "Send queue", choosing what to send): deliveries first; then
+    /// those that have waited, the most travelled first, the earliest of
+    /// equals; then the rest as they arrived. The first of them that may
+    /// go is sent.
+    pub fn due_order(&self, now: Instant, order: &mut [u8; ENTRIES]) -> usize {
+        let mut n = 0;
+        for (i, o) in self.iter().enumerate() {
+            if !o.held() && o.not_before <= now {
+                order[n] = i as u8;
+                n += 1;
+            }
         }
-        let due = |i: usize, o: &Outgoing| !o.held() && o.not_before <= now && sendable(i, o);
-        if let Some(i) = self.delivery_due(now) {
-            return Some(i);
+        let entries = self.entries.as_slice();
+        let rank = |i: u8| {
+            let o = &entries[usize::from(i)];
+            match (o.kind.delivers(), o.waited()) {
+                (true, _) => (0, 0, i),
+                (false, true) => (1, Hops::MAX - o.hops, i),
+                (false, false) => (2, 0, i),
+            }
+        };
+        // Insertion: the entries come in arrival order, and only those
+        // that waited or deliver move.
+        for k in 1..n {
+            let mut j = k;
+            while j > 0 && rank(order[j - 1]) > rank(order[j]) {
+                order.swap(j - 1, j);
+                j -= 1;
+            }
         }
-        self.iter()
-            .enumerate()
-            .filter(|&(i, o)| due(i, o) && o.waited())
-            .max_by(|(i, a), (j, b)| a.hops.cmp(&b.hops).then(j.cmp(i)))
-            .map(|(i, _)| i)
-            .or_else(|| self.iter().enumerate().position(|(i, o)| due(i, o)))
+        n
     }
 
     /// Neighbour-table `slot` has a new occupant, which no entry has held
-    /// for.
+    /// for, and none was routed to.
     pub fn slot_reoccupied(&mut self, slot: usize) {
         for o in self.entries.as_mut_slice() {
             o.passed &= !(1u64 << slot);
             o.keep_avoiding(!(1u64 << slot));
+            if usize::from(o.toward) == slot + 1 {
+                o.toward = 0;
+            }
         }
     }
 
@@ -742,7 +777,9 @@ mod tests {
 
     impl SendQueue {
         fn next_due_all(&self, now: Instant) -> Option<usize> {
-            self.next_due(now, |_, _| true)
+            let mut order = [0; ENTRIES];
+            let n = self.due_order(now, &mut order);
+            order[..n].first().map(|&i| usize::from(i))
         }
     }
 
@@ -800,5 +837,60 @@ mod tests {
         assert_eq!(tags(&q), [1, 2, 3], "chosen, not moved");
         q.retain(|_, _| false);
         assert_eq!(q.next_due_all(t(100)), None);
+    }
+
+    /// The order is the one the queue kept before entries were routed as
+    /// they are considered: a delivery due first, else the most travelled
+    /// of those that have waited, the earliest of equals, else the first
+    /// due as they arrived. Checked against that rule, written out, over
+    /// queues of every kind of entry.
+    #[test]
+    fn the_order_is_the_rule_of_before() {
+        let before = |q: &SendQueue, now: Instant| -> Option<usize> {
+            if let Some(i) = q.delivery_due(now) {
+                return Some(i);
+            }
+            let due = |o: &Outgoing| !o.held() && o.not_before <= now;
+            q.iter()
+                .enumerate()
+                .filter(|&(_, o)| due(o) && o.waited())
+                .max_by(|(i, a), (j, b)| a.hops.cmp(&b.hops).then(j.cmp(i)))
+                .map(|(i, _)| i)
+                .or_else(|| q.iter().position(due))
+        };
+        let t = |ms| Instant::ZERO + Duration::from_millis(ms);
+        let mut seed = 0x2545_f491_u64;
+        let mut draw = |n: u64| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (seed >> 33) % n
+        };
+        for _ in 0..2000 {
+            let mut q = SendQueue::new();
+            for tag in 0..draw(24) as u8 {
+                let mut o = data(
+                    tag,
+                    draw(6) as Hops,
+                    [None, Some(5), Some(50)][draw(3) as usize],
+                );
+                o.kind =
+                    [Kind::Forward, Kind::Return, Kind::Deliver, Kind::Direct][draw(4) as usize];
+                o.waited = draw(3) == 0;
+                if draw(8) == 0 {
+                    o.state = State::Held;
+                }
+                q.push(o).unwrap();
+            }
+            let now = t(10);
+            let mut order = [0; ENTRIES];
+            let n = q.due_order(now, &mut order);
+            assert_eq!(order[..n].first().map(|&i| usize::from(i)), before(&q, now));
+            // Each next one is the first the rule gives without those before.
+            for k in 1..n {
+                let mut rest = q.clone();
+                rest.retain(|_, o| !order[..k].iter().any(|&i| q.get(usize::from(i)) == Some(o)));
+                let next = q.get(usize::from(order[k]));
+                assert_eq!(before(&rest, now).and_then(|i| rest.get(i)), next);
+            }
+        }
     }
 }
