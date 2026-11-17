@@ -758,8 +758,8 @@ confirmed itself.
   it tell the core block 1 passed, `update: version N proven by its
   blocks 0 and 1`. A proof that fails forgets the image, `update: version
   N not proven by its blocks 0 and 1 (...); forgotten`, and the core holds
-  the version off. The core gives up a gather not yet proven that nobody
-  offers any more or that takes no piece (spec "Updates over the mesh"),
+  the version off. The core gives up a gather not yet proven that takes
+  no piece for its bound (spec "Updates over the mesh"),
   `update: version N given up unproven; forgotten`. A reset keeps what was gathered, and the node goes on with
   it if it is still newer than the running image and its blocks 0 and 1
   prove it again; one not yet proven is forgotten, since the core's bound

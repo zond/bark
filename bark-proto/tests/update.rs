@@ -932,7 +932,7 @@ fn an_image_nobody_holds_is_given_up_and_held_off() {
     h.run_for(secs(60));
     assert_eq!(offers(&h), 1, "taken again within the hold-off");
     h.run_until(
-        gave_up + bark_proto::update::hold_off(&Config::default()),
+        gave_up + bark_proto::update::unproven_within(&Config::default()),
         |_| false,
     );
     forge(&mut h, 2, forged(2));
@@ -940,27 +940,36 @@ fn an_image_nobody_holds_is_given_up_and_held_off() {
     assert_eq!(offers(&h), 2, "not taken after the hold-off");
 }
 
-/// An image claimed once and not again is given up once no section has
-/// offered it for the bound, and taken again at once when a node claims it
-/// again: a claimant gone is no sign of a forgery
+/// A gather proven and fed holds its place: a claimant naming ever newer
+/// versions resets none of its progress, and the image comes whole
 /// (spec "Updates over the mesh").
 #[test]
-fn an_image_nobody_offers_any_more_is_given_up_and_not_held_off() {
+fn a_proven_gather_is_not_given_up_for_a_claim() {
     let mut h = line();
-    forge(&mut h, 2, forged(2));
-    let claimed = h.now;
-    assert!(h.nodes[1].core.gathering().is_some());
-    h.kill(2);
-    let bound = bark_proto::update::vouched_within(&Config::default());
-    let unproven = |h: &Harness<Relay>| h.nodes[1].updates.as_ref().unwrap().unproven.clone();
-    h.run_until(claimed + bound - secs(2), |_| false);
-    assert!(unproven(&h).is_empty(), "given up early");
-    assert!(h.run_until(claimed + bound + secs(1), |h| !unproven(h).is_empty()));
-    assert_eq!(h.nodes[1].core.gathering(), None);
-    forge(&mut h, 2, forged(2));
-    h.run_for(secs(60));
+    h.deliver_app(0, AppCommand::Holds(IMAGE));
+    let proven = |h: &Harness<Relay>| h.nodes[1].core.gathering().is_some_and(|g| g.1 >= 2);
+    assert!(h.run_until(h.now + secs(3600), proven));
+    for k in 1..=5 {
+        let mut claim = forged(2);
+        claim.image = Some(Image {
+            version: FORGED - 10 + k,
+            ..IMAGE
+        });
+        forge(&mut h, 2, claim);
+        h.run_for(secs(30));
+    }
+    assert!(h.run_until(h.now + secs(3600), |h| {
+        h.nodes[1].updates.as_ref().unwrap().holds_at.is_some()
+    }));
+    // Once it holds the image whole a newer claim is offered, as any is.
     let u = h.nodes[1].updates.as_ref().unwrap();
-    assert_eq!(u.offered.len(), 2, "held off");
+    let whole = u.holds_at.unwrap();
+    assert!(
+        u.offered.iter().all(|o| o.1 == IMAGE || o.0 >= whole),
+        "a claim offered while it gathered: {:?}",
+        u.offered
+    );
+    assert_eq!(u.offered.iter().filter(|o| o.1 == IMAGE).count(), 1);
 }
 
 /// An image the driver rejects, its proof failed, is gathered no more and
@@ -987,8 +996,5 @@ fn the_unproven_bound_is_two_sweeps_a_rotation_and_a_lease() {
     let c = Config::default();
     let s = |d: bark_proto::Duration| d.as_micros() / 1_000_000;
     assert_eq!(s(bark_proto::update::unproven_within(&c)), 104_866);
-    assert_eq!(
-        bark_proto::update::hold_off(&c),
-        bark_proto::update::unproven_within(&c)
-    );
+    assert_eq!(s(bark_proto::update::fed_within(&c)), 3_990);
 }

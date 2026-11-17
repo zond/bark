@@ -1079,3 +1079,34 @@ fn a_forged_section_holds_no_node_and_spreads_no_further() {
         u.dropped
     );
 }
+
+/// Two releases in a row, the second given while nodes still gather the
+/// first: every node comes to hold the second
+/// (spec "Updates over the mesh").
+#[test]
+fn a_release_that_follows_another_reaches_every_node() {
+    let mut sc = scenario("mesh-spread.toml");
+    sc.duration_s = 12.0 * 3600.0;
+    sc.update = Some(bark_sim::scenario::UpdateSpec {
+        image_bytes: 40_000,
+        next_at_s: Some(3600.0),
+        ..Default::default()
+    });
+    let mut sim = Sim::new(&sc).expect("builds");
+    sim.run();
+    let u = sim.update().expect("an update");
+    let s = |t: &Option<bark_proto::Instant>| t.map(|t| t.as_micros() / 1_000_000);
+    let first: Vec<_> = u.holds_at.iter().map(s).collect();
+    let next: Vec<_> = u.next_holds_at.iter().map(s).collect();
+    let lacking: Vec<usize> = (0..next.len()).filter(|&i| next[i].is_none()).collect();
+    println!(
+        "the first release held by {} nodes, the second by {}, the last at {:?} s; without it: {lacking:?}",
+        first.iter().flatten().count(),
+        next.iter().flatten().count(),
+        next.iter().flatten().max(),
+    );
+    assert!(
+        lacking.is_empty(),
+        "nodes without the second release: {lacking:?}"
+    );
+}

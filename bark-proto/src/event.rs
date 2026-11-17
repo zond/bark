@@ -171,7 +171,7 @@ pub enum AppCommand<'a> {
     /// The driver gave up the image it gathers, of this version: its
     /// header, its table or its bytes failed their checks. The node
     /// gathers it no more, and takes no offer of it for
-    /// [`crate::update::hold_off`] (spec "Updates over the mesh").
+    /// [`crate::update::unproven_within`] (spec "Updates over the mesh").
     Rejected(u32),
 }
 
@@ -328,7 +328,6 @@ pub enum Action {
     /// decodes; then answer [`AppCommand::Block`]. Each piece comes once.
     StorePiece(Piece),
     /// The image the node gathers, of this version, is given up unproven:
-    /// no section offered it within [`crate::update::vouched_within`], or
     /// it took no piece within [`crate::update::unproven_within`]. The node
     /// gathers it no more, and the driver forgets its pieces
     /// (spec "Updates over the mesh").

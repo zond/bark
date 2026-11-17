@@ -3131,33 +3131,37 @@ none. No node that runs a newer image gathers the lowest.
    image's proof, blocks 0 and 1, so that a node passes on no claim it
    cannot check; and to a sleepy node only if it is its anchor, the one
    relay that streams to it. A node that hears an offer of a version above
-   the one it runs, the image it holds and the one whose proof it holds
-   asks its firmware, once, whether its policy takes the image. If it
-   does, the node gathers it; an image of a higher version offered later
-   replaces it. A gather not yet proven holds nothing back: it gives way
-   to any other image offered, older or newer, while it has taken no
-   piece, and once it takes pieces to a newer one only, since those come
-   from a holder.
+   the one it runs and the image it holds asks its firmware, once, whether
+   its policy takes the image, and if it does gathers it.
+
+   A gather that takes pieces holds its place against any claim: no offer
+   replaces it while it has taken a piece within **3 990.9 s**, since a
+   holder that offered it tells its section again at least hourly and
+   streams to it once it hears that, and a lease more rides out a telling
+   lost, 3 600 s + 2 × 195 s + 872.8 ms (`bark-proto`, `update.rs`,
+   `fed_within`). A newer image is taken once the gathered one is
+   installed, since it is then newer than what the node runs, or once
+   that is rejected. Only a gather not fed for that long gives way: an
+   unproven one to an older image, since nobody may hold it, and it is
+   then held off, below; a proven one to a newer image, since its holders
+   may have moved on to that. An unproven gather gives way to a newer
+   image at once.
 
    The node gives a gather up while it is still unproven, and its firmware
-   forgets the pieces, once no section has offered it for **3 990.9 s**:
-   a holder tells its section on every channel at least once an hour, and
-   a lease more rides out a telling lost, 3 600 s + 2 × 195 s + 872.8 ms
-   (`bark-proto`, `update.rs`, `vouched_within`). A claim made once so
-   holds a node no longer than its claimant says so. And since a claimant
-   can keep claiming, it gives a gather up once it has taken no piece of
-   it for **104 866 s**, 29.1 hours: a worst-case rotation for its section
-   to reach a holder, two sweeps of the largest image at the pace, since a
-   holder sweeps the blocks in order on two channels at most and a
-   gatherer that comes in behind or elsewhere may wait a whole sweep and,
-   a piece lost, another, 2 × 3 763 × 13.86 s, and a lease,
-   195 s + 104 280.3 s + 2 × 195 s + 872.8 ms (`unproven_within`). It
-   takes no offer of a version given up so, left unproven for another, or
-   whose proof failed, for as long again, so that an image nobody holds
-   keeps it at most half of its time; not for good, since anyone can name
-   a release's version before it comes. A gather not yet proven is
-   forgotten at a reboot, since the node's clock does not outlast one, and
-   at most two blocks are lost; one proven is proven again.
+   forgets the pieces, once it has taken no piece of it for
+   **104 866 s**, 29.1 hours, since a claimant can keep claiming: a
+   worst-case rotation for its section to reach a holder, two sweeps of
+   the largest image at the pace, since a holder sweeps the blocks in
+   order on two channels at most and a gatherer that comes in behind or
+   elsewhere may wait a whole sweep and, a piece lost, another,
+   2 × 3 763 × 13.86 s, and a lease, 195 s + 104 280.3 s + 2 × 195 s +
+   872.8 ms (`unproven_within`). It takes no offer of a version given up
+   so, left unfed for an older one, or whose proof failed, for as long
+   again, so that an image nobody holds keeps it at most half of its time;
+   not for good, since anyone can name a release's version before it
+   comes. A gather not yet proven is forgotten at a reboot, since the
+   node's clock does not outlast one, and at most two blocks are lost; one
+   proven is proven again.
 2. A node that gathers hands its firmware every piece it has not handed
    before of every block it lacks, and no other: at most 48 blocks of 64,
    the lanes the firmware keeps them in. When the firmware says a block
@@ -3365,8 +3369,8 @@ any frame and disrupt its district, within its duty cycle and unnoticed:
   elsewhere ([relay choice](#relay-choice));
 - claim the position of a destination and own it ([owner](#owner));
 - name in its section an image nobody holds, which the nodes that hear
-  it gather until they give it up unproven, an hour after the last such
-  claim, or 29.1 hours if it keeps claiming and as long again not
+  it gather for an hour before a real release offered takes its place,
+  and give up unproven 29.1 hours on, and as long again not
   ([updates over the mesh](#updates-over-the-mesh)): it holds back no
   real image and goes no further than its hearers, but a node that keeps
   naming one slows the update of those that hear it, as jamming would.

@@ -688,6 +688,9 @@ pub struct UpdateSpec {
     pub forger: Option<String>,
     /// When the forger stops, seconds; `None` for never.
     pub forged_until_s: Option<f64>,
+    /// When the relay is given a second release, one version up, seconds;
+    /// `None` for none.
+    pub next_at_s: Option<f64>,
 }
 
 impl Default for UpdateSpec {
@@ -698,6 +701,7 @@ impl Default for UpdateSpec {
             holder: None,
             forger: None,
             forged_until_s: None,
+            next_at_s: None,
         }
     }
 }

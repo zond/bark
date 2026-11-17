@@ -71,6 +71,8 @@ pub(crate) enum Ev {
     /// The update's first relay is given the image
     /// (spec "Updates over the mesh").
     Update,
+    /// The update's first relay is given a second release.
+    UpdateNext,
     /// A row of the update's series.
     UpdateSample,
     /// A node's image, gathered over the mesh, is whole and staged
@@ -1803,6 +1805,9 @@ impl Sim {
         self.update = Some(run);
         self.push(at, Ev::Update);
         self.push(at, Ev::UpdateSample);
+        if let Some(s) = u.next_at_s {
+            self.push(Instant::ZERO + secs(s), Ev::UpdateNext);
+        }
         Ok(())
     }
 
@@ -2058,6 +2063,13 @@ impl Sim {
                 if let Some(u) = self.update.as_mut() {
                     let (holder, image) = (u.holder, u.image);
                     u.give(self.now);
+                    self.deliver(holder, Event::App(AppCommand::Holds(image)));
+                }
+            }
+            Ev::UpdateNext => {
+                if let Some(u) = self.update.as_mut() {
+                    let (holder, image) = (u.holder, u.next);
+                    u.give_next(self.now);
                     self.deliver(holder, Event::App(AppCommand::Holds(image)));
                 }
             }

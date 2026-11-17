@@ -106,6 +106,12 @@ pub struct UpdateRun {
     pub forged_longest: bark_proto::Duration,
     /// Its gathers given up unproven.
     pub forged_given_up: usize,
+    /// A second release, one version up, and per node when it came to hold
+    /// it (`scenario::UpdateSpec::next_at_s`).
+    pub next: Image,
+    pub next_holds_at: Vec<Option<Instant>>,
+    /// Per node, the image it gathers.
+    gathers: Vec<Option<Image>>,
     /// The release's gathers given up unproven: the node and when.
     pub dropped: Vec<(u32, Instant)>,
     /// Per node gathering the release, when it began, until its proof.
@@ -163,6 +169,12 @@ impl UpdateRun {
             forged_since: std::collections::HashMap::new(),
             forged_longest: bark_proto::Duration::ZERO,
             forged_given_up: 0,
+            next: Image {
+                version: image.version + 1,
+                ..image
+            },
+            next_holds_at: vec![None; nodes],
+            gathers: vec![None; nodes],
             dropped: Vec::new(),
             began: std::collections::HashMap::new(),
             proved_after: Vec::new(),
@@ -172,6 +184,11 @@ impl UpdateRun {
     /// The image is given to its first holder.
     pub fn give(&mut self, now: Instant) {
         self.holds_at[self.holder as usize] = Some(now);
+    }
+
+    /// The second release is given to the first holder.
+    pub fn give_next(&mut self, now: Instant) {
+        self.next_holds_at[self.holder as usize] = Some(now);
     }
 
     /// The policy takes every image offered.
@@ -184,6 +201,7 @@ impl UpdateRun {
         } else {
             self.began.insert(node, now);
         }
+        self.gathers[node as usize] = Some(image);
         self.kept.retain(|k, _| k.0 != node);
         self.has.retain(|k| k.0 != node);
         self.decoded[node as usize] = 0;
@@ -278,8 +296,13 @@ impl UpdateRun {
             },
         ));
         if all {
-            self.owed.push((node, AppCommand::Holds(self.image)));
-            self.holds_at[node as usize].get_or_insert(now);
+            let image = self.gathers[node as usize].take().unwrap_or(self.image);
+            self.owed.push((node, AppCommand::Holds(image)));
+            let at = match image == self.next {
+                true => &mut self.next_holds_at,
+                false => &mut self.holds_at,
+            };
+            at[node as usize].get_or_insert(now);
         }
     }
 

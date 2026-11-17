@@ -286,10 +286,9 @@ the pieces carry no bytes and a block decodes when its count of distinct pieces 
   and that its table hash is the table's (spec "Updates over the mesh"), and only then
   answers `Block` for the second of them; a gather holding both is proven. If the proof
   fails, or the image whole fails at its staging, it answers `AppCommand::Rejected(version)`:
-  the core gathers it no more and holds the version off for `update::hold_off`. A gather
-  not yet proven that no section has offered for `update::vouched_within`, or that has
-  taken no piece for `update::unproven_within`, the core gives up with
-  `Action::Unproven(version)`, the latter held off as well, and the driver forgets its
+  the core gathers it no more and holds the version off for `update::unproven_within`. A
+  gather not yet proven that has taken no piece for `update::unproven_within` the core
+  gives up with `Action::Unproven(version)`, holds off as well, and the driver forgets its
   pieces.
 - `Action::StorePiece(piece)`: keep this piece. The core hands pieces of every block
   the node lacks, each once, of an image of at most 48 blocks, so the driver holds at
