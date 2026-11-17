@@ -220,7 +220,7 @@ fn with_everything_banned_the_wakeup_is_the_first_end() {
     r.neighbours.refused(c, now + s(7));
     assert_eq!(r.pick(now), None);
     assert_eq!(r.forwarding.wake, Some(now + s(5)));
-    assert!(r.queue.iter().all(|o| o.waited));
+    assert!(r.queue.iter().all(|o| o.waited()));
     r.neighbours.refused(b, now + s(10));
     assert_eq!(r.pick(now), None);
     assert_eq!(r.forwarding.wake, Some(now + s(7)));
@@ -279,4 +279,21 @@ fn a_message_waiting_for_a_ban_does_not_starve() {
     }
     queue(&mut r, now, east, tag, 1);
     assert_eq!(chosen(&mut r, now), Some(a));
+}
+
+/// A message whose way kept is banned but that routing now sends to an
+/// open way has not waited: it is routed again, once, and keeps its
+/// place.
+#[test]
+fn a_stale_way_that_is_banned_marks_nothing() {
+    let (mut r, now, b, c, far) = two_ways();
+    let east = off(&r, 4_000, 100_000);
+    queue(&mut r, now, east, 1, 1);
+    queue(&mut r, now, far, 2, 1);
+    let south = off(&r, -10_000, 0);
+    heard_at(&mut r, b, south, now);
+    r.neighbours.refused(b, now + BAN);
+    assert_eq!(r.pick(now), Some(0));
+    assert!(!r.queue.get(1).unwrap().waited);
+    assert_eq!(toward(&r, 1), Some(c), "routed again");
 }

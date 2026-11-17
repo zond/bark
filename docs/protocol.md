@@ -1327,7 +1327,7 @@ its wait here would be within a hop's **budget**, 30 s, or its count is
 higher than every one of theirs ([receiving DATA](#receiving-data)). Its
 wait is its next hop's service time, as that next hop's line takes it
 ([bans](#bans)), for each message queued here, deliveries aside, that
-goes to the same next hop now. The count of a queued message is the one
+goes to the same next hop. The count of a queued message is the one
 it holds here, one less than the count it is sent with. Each queued
 message is counted where it was last routed ([next hop](#next-hop)): when
 it was queued, as its arrival routed it, and again whenever it is routed
@@ -1364,17 +1364,19 @@ It routes each message as it comes to it, from the state as it is then
 ([next hop](#next-hop)), so that a way that opened meanwhile is taken,
 and hands over the first that may go: one whose next hop, or parent, is
 banned may not go until the ban ends, and the relay passes on to the
-next. A message passed over for a ban has waited. So has one whose next
-hop as last routed is banned and was not gone round
-([bans](#bans)), though the relay has not come to it: it keeps the turn
-the ban gives it whether or not it is routed before the ban ends
-(roadmap D231).
+next. A message passed over for a ban has waited. A message whose next
+hop as last routed is banned, and not gone round ([bans](#bans)), is
+routed then too, though the relay may not come to it, and has waited if
+its way is still banned: so it keeps the turn the ban gives it whether or
+not it is chosen before the ban ends. Each is routed so once a ban, as
+it is then marked or goes elsewhere (roadmap D231).
 
 The chosen hand-over then waits for the bucket if it must
 ([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
 go first, or with the bucket at the cap the longer frame would never go.
-The choice routes every queued message only when none may go, at most
-the queue's entries times the neighbour table's. Each entry keeps where
+The choice routes every queued message only when none may go, or when
+every message's way has just been banned, at most the queue's entries
+times the neighbour table's. Each entry keeps where
 it was last routed, for the gate, and since when, for the service time
 ([neighbour table](#neighbour-table)), and whether it has waited; the
 relay keeps when the earliest ban or wait that held a message back ends.

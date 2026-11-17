@@ -507,12 +507,34 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .map(|(to, ban)| (to, ban, at))
     }
 
+    /// Route queued forward `i` from `w`, keeping where it goes: the end
+    /// of its way's ban if that is banned, and then it has waited.
+    fn reroute(&mut self, w: &Ways, i: usize, now: Instant) -> Option<Instant> {
+        let o = self.queue.get(i)?;
+        let heading = self.heading(w, o);
+        let toward = heading.map_or(0, |(to, _, _)| self.toward(to));
+        let o = self.queue.get_mut(i)?;
+        o.routed(toward, now);
+        let (_, ban, at) = heading?;
+        o.record = at;
+        o.waited |= ban > now;
+        (ban > now).then_some(ban)
+    }
+
+    /// The end of the ban on where `o` was last routed, if it is banned.
+    fn kept_ban(&self, o: &Outgoing, now: Instant) -> Option<Instant> {
+        let slot = usize::from(o.toward.checked_sub(1)?);
+        let n = self.neighbours.slot(slot)?;
+        self.neighbours.is_banned(n, now).then_some(n.banned_until)
+    }
+
     /// The entry the next hand-over goes to (spec "Send queue"): the
     /// entries are considered in their order, each forward routed from the
     /// state as it is now when it comes, until one may go. With none to
     /// send, every due entry has been routed, and the earliest end of what
     /// holds them back is kept for the wakeup. At most queue entries ×
-    /// neighbour entries per call, only when nothing may go.
+    /// neighbour entries per call, only when nothing may go or a ban has
+    /// just begun.
     pub(super) fn pick(&mut self, now: Instant) -> Option<usize> {
         if self.queue.is_empty() {
             self.forwarding.wake = None;
@@ -520,16 +542,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let w = self.ways(now);
         let banned = w.live & w.banned;
+        let mut routed = 0u128;
         for i in 0..self.queue.len() {
-            if let Some(o) = self.queue.get_mut(i) {
-                o.keep_avoiding(banned);
-                // Its way as last routed is banned and not gone round: it
-                // waits, though it may not be routed again before the ban
-                // ends (spec "Overload waits").
-                let slot = o.toward.checked_sub(1).map(usize::from);
-                o.waited |= o.kind == Kind::Forward
-                    && !o.held()
-                    && slot.is_some_and(|s| Ways::has(banned & !o.avoid, s));
+            let Some(o) = self.queue.get_mut(i) else {
+                continue;
+            };
+            o.keep_avoiding(banned);
+            // Its way as last routed is banned and not gone round: routed
+            // again, it is marked if it waits for the ban, so that it keeps
+            // its turn though it is not chosen before the ban ends
+            // (spec "Overload waits"). Marked or routed elsewhere, it is
+            // not routed here again for the same ban.
+            let slot = o.toward.checked_sub(1).map(usize::from);
+            if o.kind == Kind::Forward
+                && !o.held()
+                && !o.waited()
+                && slot.is_some_and(|s| Ways::has(banned & !o.avoid, s))
+            {
+                self.reroute(&w, i, now);
+                routed |= 1 << i;
             }
         }
         let mut order = [0u8; ENTRIES];
@@ -540,26 +571,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             let Some(o) = self.queue.get(i) else {
                 continue;
             };
-            let heading = (o.kind == Kind::Forward).then(|| self.heading(&w, o));
-            let Some(heading) = heading else {
+            let ban = match o.kind {
+                // Routed above in this call: its way kept is current.
+                Kind::Forward if routed & 1 << i != 0 => self.kept_ban(o, now),
+                Kind::Forward => self.reroute(&w, i, now),
+                _ => None,
+            };
+            let Some(ban) = ban else {
                 self.forwarding.wake = None;
                 return Some(i);
             };
-            let toward = heading.map_or(0, |(to, _, _)| self.toward(to));
-            let Some(o) = self.queue.get_mut(i) else {
-                continue;
-            };
-            o.routed(toward, now);
-            if let Some((_, ban, at)) = heading {
-                o.record = at;
-                if ban > now {
-                    o.waited = true;
-                    wake = earlier(wake, Some(ban));
-                    continue;
-                }
-            }
-            self.forwarding.wake = None;
-            return Some(i);
+            wake = earlier(wake, Some(ban));
         }
         for o in self
             .queue

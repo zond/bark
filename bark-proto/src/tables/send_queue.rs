@@ -360,7 +360,7 @@ impl Outgoing {
 
     /// Whether it has waited for a ban, or a wait of its own, since it was
     /// queued.
-    fn waited(&self) -> bool {
+    pub fn waited(&self) -> bool {
         self.waited || self.not_before > Instant::ZERO
     }
 }
