@@ -121,8 +121,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 };
                 Held {
                     msg_id: id,
-                    dst_pos: o.message.dst_pos,
-                    dst_id: o.message.dst_id,
+                    dst_pos: o.message.dst_pos(),
+                    dst_id: o.message.dst_id(),
                     payload: o.message.payload(),
                     // It carries the count received plus one until its
                     // hand-over stamps it (`relay/forward.rs`).

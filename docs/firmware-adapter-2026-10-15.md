@@ -141,6 +141,15 @@ The firmware logs its longest `handle` and the longest stretch it spent away fro
 radio (`longest_handle_us`, `longest_away_us`) every 10 s, so the boards will say whether this
 holds.
 
+*Correction, 2026-11-17.* These figures no longer hold. The core has grown since, and this run
+never filled the send queue: the bucket and the gate kept most messages out, all for one
+destination. With the queue full, 39 regular places and 64 hop places, destinations in many
+directions and 64 neighbours, a received DATA took 85 µs on the same host, and the choice of what
+to send next, made at every event while no hand-over is under way, 70 µs. The boards run about
+500 times slower than this host (3 neighbours, about 0.35 µs a call here, 180 µs on the bench), so
+that is some 40 ms, far over the 3.6 ms above. `bark-fw/README.md`, "Work beside the radio",
+keeps the current figures.
+
 ### 2.4 What the simulator assumes
 
 The simulator hands a frame to the core the instant it ends on the air, the core takes no
