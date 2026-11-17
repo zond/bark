@@ -150,6 +150,12 @@ to send next, made at every event while no hand-over is under way, 70 µs. The b
 that is some 40 ms, far over the 3.6 ms above. `bark-fw/README.md`, "Work beside the radio",
 keeps the current figures.
 
+*Correction, 2026-11-17, later.* The gate now counts each queued message where it was last
+routed, and the choice routes only what it may send (roadmap D231). With the same full queue and
+64 neighbours a received DATA takes at most 2.9 µs on the host and the choice 1.5 µs, some 1.5
+and 0.75 ms on the board, within the 3.6 ms; while every queued message's way is banned the choice
+still routes them all, 48 µs, some 24 ms.
+
 ### 2.4 What the simulator assumes
 
 The simulator hands a frame to the core the instant it ends on the air, the core takes no

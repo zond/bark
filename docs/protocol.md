@@ -1188,9 +1188,10 @@ One function chooses where a queued message goes, from the state as it is
 when it is asked: the neighbour table, the bans, the message's record,
 and two marks its send-queue entry keeps, the neighbours that refused it
 and those it held for until they were demoted (below). It is asked for
-every queued message whenever a hand-over may start
-([send queue](#send-queue)), and for each DATA that arrives
-([receiving DATA](#receiving-data)). The **candidates** are the live
+each DATA that arrives ([receiving DATA](#receiving-data)), for queued
+messages in turn whenever a hand-over may start, until one may go, and
+again for the one chosen as its hand-over starts
+([send queue](#send-queue)). The **candidates** are the live
 neighbour-table entries ([neighbour table](#neighbour-table)) except
 those in the tried set ([message records](#message-records)).
 
@@ -1326,11 +1327,16 @@ its wait here would be within a hop's **budget**, 30 s, or its count is
 higher than every one of theirs ([receiving DATA](#receiving-data)). Its
 wait is its next hop's service time, as that next hop's line takes it
 ([bans](#bans)), for each message queued here, deliveries aside, that
-goes to the same next hop now. The count of a queued message is the one
-it holds here, one less than the count it is sent with. Every queued
-message is counted where routing sends it now ([next hop](#next-hop)),
-not where it was going when it came, so the gate needs no state beyond
-the queue and the neighbour table. It refuses the rest, each with a place
+goes to the same next hop. The count of a queued message is the one
+it holds here, one less than the count it is sent with. Each queued
+message is counted where it was last routed ([next hop](#next-hop)): when
+it was queued, as its arrival routed it, and again whenever it is routed
+to be chosen or handed over (below); one being handed over counts where
+it goes, and one that ended here counts nowhere. A route kept to a
+neighbour whose place in the table a newcomer takes is forgotten. So the
+gate routes nothing itself, and a message whose way has changed since it
+was last routed counts on its old way until it is routed again (roadmap
+D231). It refuses the rest, each with a place
 in that neighbour's line ([bans](#bans)). The gate weighs time per next
 hop, so a banned neighbour's messages keep out no other way's; 30 s is
 the first round figure above the longest wait the gate meets at the
@@ -1346,25 +1352,34 @@ before stands. Refused, a message waits at its sender, so nothing is lost
 to the reset; the application keeps its own message meanwhile.
 
 **Choosing what to send.** Whenever no hand-over is under way and the
-radio is free, the relay routes every queued message from the state as it
-is then ([next hop](#next-hop)), so that a way that opened meanwhile is
-taken; a message whose next hop, or parent, is banned is not sendable
-until the ban ends. Of the sendable, packets are handed over in the order
-they arrived, except that:
+radio is free, the relay considers the queued messages in this order:
 
-- a delivery goes first ([delivery](#delivery));
-- a packet that has waited since it was queued, for a ban or a wait of
-  its own, goes ahead of those that have not, the most travelled first
-  ([overload waits](#overload-waits)).
+- a delivery first ([delivery](#delivery));
+- then a packet that has waited since it was queued, for a ban or a wait
+  of its own, ahead of those that have not, the most travelled first and
+  of equals the one that arrived first ([overload waits](#overload-waits));
+- then the rest in the order they arrived.
+
+It routes each message as it comes to it, from the state as it is then
+([next hop](#next-hop)), so that a way that opened meanwhile is taken,
+and hands over the first that may go: one whose next hop, or parent, is
+banned may not go until the ban ends, and the relay passes on to the
+next. A message passed over for a ban has waited. A message whose next
+hop as last routed is banned, and not gone round ([bans](#bans)), is
+routed then too, though the relay may not come to it, and has waited if
+its way is still banned: so it keeps the turn the ban gives it whether or
+not it is chosen before the ban ends. Each is routed so once a ban, as
+it is then marked or goes elsewhere (roadmap D231).
 
 The chosen hand-over then waits for the bucket if it must
 ([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
 go first, or with the bucket at the cap the longer frame would never go.
-Routing every message costs at most the queue's entries times the
-neighbour table's. Each entry keeps where it was last routed and since
-when, for the service time ([neighbour table](#neighbour-table)), and
-whether its next hop has been banned since it was queued; the relay keeps
-when the earliest ban that held a message back ends.
+The choice routes every queued message only when none may go, or when
+every message's way has just been banned, at most the queue's entries
+times the neighbour table's. Each entry keeps where
+it was last routed, for the gate, and since when, for the service time
+([neighbour table](#neighbour-table)), and whether it has waited; the
+relay keeps when the earliest ban or wait that held a message back ends.
 
 #### Receiving DATA
 
