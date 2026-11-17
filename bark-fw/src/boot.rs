@@ -67,10 +67,20 @@ pub fn image_len() -> u32 {
 impl fmt::Display for Facts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.lfclk {
-            Some(Found::Crystal { started_ms }) => write!(f, "lfclk=crystal in {started_ms} ms")?,
-            Some(Found::Rc) => f.write_str("lfclk=rc")?,
-            Some(Found::Held(Source::Crystal)) => f.write_str("lfclk=crystal already running")?,
-            Some(Found::Held(Source::Rc)) => f.write_str("lfclk=rc already running")?,
+            Some(found) => {
+                f.write_str(match found.source {
+                    Source::Crystal => "lfclk=crystal",
+                    Source::Rc => "lfclk=rc",
+                })?;
+                if let Some(ms) = found.started_ms {
+                    write!(f, " in {ms} ms")?;
+                }
+                match found.held {
+                    Some(Source::Crystal) => f.write_str(" held=crystal")?,
+                    Some(Source::Rc) => f.write_str(" held=rc")?,
+                    None => {}
+                }
+            }
             None => f.write_str("lfclk=?")?,
         }
         match self.display {
