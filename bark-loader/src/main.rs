@@ -59,7 +59,10 @@ const CPU_HZ: u64 = 64_000_000;
 /// `BARK_LOADER_BENCH=reset` at build time. Only a bench-only build takes
 /// it (`BARK_BENCH_ONLY=1`, bark-fw/README.md), so that a
 /// bench loader never goes out with a board that leaves the bench.
-const CUT: bool = match (option_env!("BARK_LOADER_BENCH"), option_env!("BARK_BENCH_ONLY")) {
+const CUT: bool = match (
+    option_env!("BARK_LOADER_BENCH"),
+    option_env!("BARK_BENCH_ONLY"),
+) {
     (None, _) => false,
     (Some(b), Some(o)) if same(b, "reset") && same(o, "1") => true,
     (Some(b), _) if same(b, "reset") => panic!("BARK_LOADER_BENCH=reset needs BARK_BENCH_ONLY=1"),
