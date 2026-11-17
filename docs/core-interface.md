@@ -422,8 +422,8 @@ when it was heard, and the four images the sections name kept once in the table,
 queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 60 208 B,
-`bark-fw/scripts/uf2.py --stack` on the open release build of 2026-11-15 with roadmap D220,
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 58 808 B,
+`bark-fw/scripts/uf2.py --stack` on the release build of 2026-11-17,
 against a floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
