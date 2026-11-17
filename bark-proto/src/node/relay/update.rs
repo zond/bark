@@ -16,7 +16,7 @@ use crate::radio::{Channel, CHANNELS, MIN_PREAMBLE_SYMBOLS};
 use crate::status::Gathering;
 use crate::tables::budget::REPLY_RESERVE;
 use crate::tables::heard::beat_period;
-use crate::tables::neighbours::{Neighbour, Neighbours};
+use crate::tables::neighbours::{Neighbour, Neighbours, NEIGHBOURS};
 use crate::time::{Duration, Instant};
 use crate::update::{
     fed_within, sweep_pieces, unproven_within, Image, Piece, Section, FULL_FRAME, GAP,
@@ -48,6 +48,9 @@ const HELD_OFF: usize = 4;
 type Told = (u32, Option<u32>, u8);
 
 const ALL_CHANNELS: u16 = (1 << CHANNELS) - 1;
+
+// [`Spread::served`] keeps a bit for each slot of the neighbour table.
+const _: () = assert!(NEIGHBOURS <= u64::BITS as usize);
 
 fn bit(c: Channel) -> u16 {
     1 << c.index()
@@ -737,7 +740,15 @@ impl Spread {
     /// holds more blocks from the first than `n`, lies no farther from `n`
     /// than this node, and holds more of them than this node, or as many
     /// with a lower ID (spec "Updates over the mesh").
-    fn streams_to(&self, v: &View<'_>, n: &Neighbour, image: Image, now: Instant) -> bool {
+    /// `complete` holds [`Spread::complete_of`] by slot, and `mine` this
+    /// node's own count.
+    fn streams_to(
+        v: &View<'_>,
+        n: &Neighbour,
+        complete: &[u8; NEIGHBOURS],
+        mine: u8,
+        now: Instant,
+    ) -> bool {
         if n.sleepy {
             return n.position == v.position;
         }
@@ -747,16 +758,38 @@ impl Spread {
         let Some(u) = v.neighbours.section(n) else {
             return false;
         };
-        let mine = self.section(v.config.version).map_or(0, |s| s.complete);
         let far = n.local.distance2(Point::default());
-        !v.neighbours.live(now).any(|(_, m)| {
-            let k = Self::complete_of(v, m, image);
+        !v.neighbours.live(now).any(|(j, m)| {
+            let k = complete[j];
             !m.sleepy
                 && m.home != n.home
                 && k > u.complete
                 && (k > mine || k == mine && m.id.0 < v.id.0)
                 && m.local.distance2(n.local) <= far
         })
+    }
+
+    /// The gatherers at home on `on`, or on every channel, that this node
+    /// streams its image to ([`Spread::gatherer`], [`Spread::streams_to`]),
+    /// a bit for each by its slot, none if it streams none: worked out once
+    /// for every block a call looks at, as each is a pass over the table.
+    fn served(&self, v: &View<'_>, on: Option<Channel>, now: Instant) -> u64 {
+        let Some(image) = self.streams() else {
+            return 0;
+        };
+        let mut complete = [0; NEIGHBOURS];
+        for (j, m) in v.neighbours.live(now) {
+            complete[j] = Self::complete_of(v, m, image);
+        }
+        let mine = self.section(v.config.version).map_or(0, |s| s.complete);
+        v.neighbours
+            .live(now)
+            .filter(|(_, n)| {
+                on.is_none_or(|c| n.home == c)
+                    && Self::gatherer(v, n, image, now).is_some()
+                    && Self::streams_to(v, n, &complete, mine, now)
+            })
+            .fold(0, |served, (j, _)| served | 1 << j)
     }
 
     /// The section of `n` if it gathers `image` and was heard within its
@@ -783,11 +816,12 @@ impl Spread {
         let Some(image) = self.streams() else {
             return need;
         };
-        for (_, n) in v.neighbours.live(now) {
+        let served = self.served(v, None, now);
+        for (j, n) in v.neighbours.live(now) {
             let Some(u) = Self::gatherer(v, n, image, now) else {
                 continue;
             };
-            if !self.streams_to(v, n, image, now) {
+            if served & 1 << j == 0 {
                 continue;
             }
             let lacks = |b: u8| b > u.complete || u.have < image.pieces(b);
@@ -839,14 +873,15 @@ impl Spread {
     /// The pieces of block `b` the neighbour on channel `c` furthest
     /// behind on it lacks, by their sections: all of the block for one
     /// that lacks an earlier block, what it lacks of it for one at it.
-    fn deficit(&self, v: &View<'_>, c: Channel, b: u8, now: Instant) -> u8 {
+    /// `served` is [`Spread::served`].
+    fn deficit(&self, v: &View<'_>, c: Channel, b: u8, served: u64, now: Instant) -> u8 {
         let Some(image) = self.streams() else {
             return 0;
         };
         let k = image.pieces(b);
         v.neighbours
             .live(now)
-            .filter(|(_, n)| n.home == c && self.streams_to(v, n, image, now))
+            .filter(|&(j, n)| n.home == c && served & 1 << j != 0)
             .filter_map(|(_, n)| Self::gatherer(v, n, image, now))
             .map(|u| match u.complete.cmp(&b) {
                 core::cmp::Ordering::Greater => 0,
@@ -866,11 +901,12 @@ impl Spread {
         let blocks = image.blocks;
         let i = usize::from(c.index());
         let cur = self.cur[i];
-        let wanted = |b: u8| self.holds_block(b) && self.deficit(v, c, b, now) > 0;
+        let served = self.served(v, Some(c), now);
+        let wanted = |b: u8| self.holds_block(b) && self.deficit(v, c, b, served, now) > 0;
         if self.sent_cur[i] < self.target[i] && wanted(cur) {
             return Some(cur);
         }
-        if let Some(b) = self.tail(v, c, now) {
+        if let Some(b) = self.tail(v, c, served, now) {
             return Some(b);
         }
         (cur.saturating_add(1)..blocks)
@@ -882,16 +918,17 @@ impl Spread {
     /// lacks it, the lowest such: the stream goes on with fresh pieces of
     /// it, at the pace, until the neighbour's section shows it complete or
     /// its lease ends, so that a quota cut short by lost pieces never
-    /// leaves the channel silent (spec "Updates over the mesh").
-    fn tail(&self, v: &View<'_>, c: Channel, now: Instant) -> Option<u8> {
+    /// leaves the channel silent (spec "Updates over the mesh"). `served`
+    /// is [`Spread::served`].
+    fn tail(&self, v: &View<'_>, c: Channel, served: u64, now: Instant) -> Option<u8> {
         let image = self.streams()?;
         let i = usize::from(c.index());
         let cur = self.cur[i];
         if cur == u8::MAX || self.sent_cur[i] < self.target[i] {
             return None;
         }
-        let lowest =
-            (0..image.blocks).find(|&b| self.holds_block(b) && self.deficit(v, c, b, now) > 0)?;
+        let lowest = (0..image.blocks)
+            .find(|&b| self.holds_block(b) && self.deficit(v, c, b, served, now) > 0)?;
         (lowest == cur).then_some(cur)
     }
 
@@ -913,7 +950,8 @@ impl Spread {
                 // The pace is a floor: with no other sender heard there
                 // since its last piece and nothing else to send, the next
                 // goes a gap after it.
-                let alone = k == 0 && v.idle && self.tail(v, c, t).is_none();
+                let alone =
+                    k == 0 && v.idle && self.tail(v, c, self.served(v, Some(c), t), t).is_none();
                 at = at.max(if alone {
                     *x + GAP
                 } else {
@@ -1158,7 +1196,7 @@ impl Spread {
             self.ready_at = now;
             return;
         }
-        let deficit = self.deficit(v, c, block, now);
+        let deficit = self.deficit(v, c, block, self.served(v, Some(c), now), now);
         let slot = self.slot_open.is_some();
         self.slot_end(SlotPiece::Sent, emit);
         self.sent_piece(rng, c, Some((block, deficit)), slot, now);
@@ -1496,5 +1534,124 @@ mod tests {
         assert_eq!(lacking(&r, after), 0, "past the lease");
         r.neighbours.section_heard(hb.id, section, after);
         assert_eq!(lacking(&r, after), 1, "a section renews it");
+    }
+
+    /// Whether this node streams to `n`, worked out alone, as
+    /// [`Spread::served`] works it out for the whole table at once for the
+    /// gatherers.
+    fn streams_to_alone(
+        s: &Spread,
+        v: &View<'_>,
+        n: &Neighbour,
+        image: Image,
+        now: Instant,
+    ) -> bool {
+        if n.sleepy {
+            return n.position == v.position;
+        }
+        if n.home == v.home {
+            return true;
+        }
+        let Some(u) = v.neighbours.section(n) else {
+            return false;
+        };
+        let mine = s.section(v.config.version).map_or(0, |s| s.complete);
+        let far = n.local.distance2(Point::default());
+        !v.neighbours.live(now).any(|(_, m)| {
+            let k = Spread::complete_of(v, m, image);
+            !m.sleepy
+                && m.home != n.home
+                && k > u.complete
+                && (k > mine || k == mine && m.id.0 < v.id.0)
+                && m.local.distance2(n.local) <= far
+        })
+    }
+
+    /// The neighbours served, worked out for the table at once, are those
+    /// each worked out alone would give, over random tables: full and
+    /// sparse, near and far, at home and not, holding more or less.
+    #[test]
+    fn served_is_each_neighbour_alone() {
+        use crate::wire::Heartbeat;
+        let mut rng = Rng::new(7);
+        let (mut yes, mut no) = (0, 0);
+        for round in 0..300 {
+            let config = Config {
+                boot_listen: Duration::from_secs(1),
+                home_override: Channel::new(3),
+                ..Config::default()
+            };
+            let mut r = crate::Relay::new(config, round);
+            let now = Instant::ZERO + Duration::from_secs(2);
+            let blocks = rng.range(3, 12) as u8;
+            let image = Image {
+                version: 2,
+                blocks,
+                last: 7,
+                key: 0,
+            };
+            match rng.range(0, 1) {
+                0 => r.holds_image(image, now),
+                _ => r.gather(image, rng.range(2, u64::from(blocks) - 1) as u8, now),
+            }
+            let me = r.config.position;
+            let plane = r.plane;
+            for i in 0..rng.range(1, NEIGHBOURS as u64) {
+                let sleepy = rng.range(0, 3) == 0;
+                let at = match sleepy && rng.range(0, 1) == 0 {
+                    true => me,
+                    false => Position {
+                        lat: me.lat + rng.range(0, 20_000) as i32 - 10_000,
+                        lon: me.lon + rng.range(0, 20_000) as i32 - 10_000,
+                    },
+                };
+                let hb = Heartbeat {
+                    sleepy,
+                    anchorless: false,
+                    carried: false,
+                    home: Channel::new(rng.range(0, 5) as u8).unwrap(),
+                    format: crate::wire::FORMAT,
+                    map_point: false,
+                    leaving: false,
+                    id: NodeId::from_u64(rng.range(1, 1 << 40) << 8 | i),
+                    short: at.short(),
+                };
+                r.neighbours.heard(&hb, at, -80, &plane, now);
+                let version = match rng.range(0, 3) {
+                    0 => continue,
+                    1 => 3,
+                    _ => 2,
+                };
+                let section = Section {
+                    runs: 1,
+                    image: Some(Image { version, ..image }),
+                    complete: rng.range(0, u64::from(blocks)) as u8,
+                    have: 0,
+                };
+                r.neighbours.section_heard(hb.id, section, now);
+            }
+            let v = view!(r);
+            let served = r.spread.served(&v, None, now);
+            let on: [u64; CHANNELS as usize] =
+                core::array::from_fn(|c| r.spread.served(&v, Channel::new(c as u8), now));
+            for (j, n) in v.neighbours.live(now) {
+                let alone = Spread::gatherer(&v, n, image, now).is_some()
+                    && streams_to_alone(&r.spread, &v, n, image, now);
+                assert_eq!(served & 1 << j != 0, alone, "round {round}, slot {j}");
+                for (c, on) in on.iter().enumerate() {
+                    let here = alone && usize::from(n.home.index()) == c;
+                    assert_eq!(
+                        on & 1 << j != 0,
+                        here,
+                        "round {round}, slot {j}, channel {c}"
+                    );
+                }
+                if n.home != v.home && !n.sleepy && v.neighbours.section(n).is_some() {
+                    *if alone { &mut yes } else { &mut no } += 1;
+                }
+            }
+        }
+        // Both ways of the rule elsewhere were met, many times.
+        assert!(yes > 1000 && no > 1000, "{yes} served, {no} not");
     }
 }
