@@ -2,10 +2,11 @@
 //! "Sleepy nodes", "Relay choice", "Beats", "Sleepy nodes alone",
 //! "Delivery").
 //!
-//! The radio may receive duty-cycled (`docs/core-interface.md` §3 rule 10)
-//! whenever the node has nothing under way and is neither in a window nor
-//! listening to watch, choose or check its anchor, until it next needs the
-//! radio. With [`Config::sleepy_listens`], a research switch, it never does.
+//! The radio may receive duty-cycled (`docs/core-interface.md`, "Radio",
+//! rule 10) whenever the node has nothing under way and is neither in a
+//! window nor listening to watch, choose or check its anchor, until it next
+//! needs the radio. With [`Config::sleepy_listens`], a research switch, it
+//! never does.
 
 use super::{Anchor, Node, Stage};
 use crate::event::{Action, Trace};
@@ -97,7 +98,7 @@ impl Listen {
     }
 
     /// The core used the radio, which ends a duty-cycled receive
-    /// (`docs/core-interface.md` §3 rule 10).
+    /// (`docs/core-interface.md`, "Radio", rule 10).
     pub(super) fn radio_used(&mut self) {
         self.sniff_until = None;
     }

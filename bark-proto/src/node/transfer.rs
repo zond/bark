@@ -377,7 +377,7 @@ pub(crate) const REPLIES: usize = 1;
 ///
 /// `sending` says whether the first owed reply is on the radio now: a
 /// packet can arrive meanwhile, as the driver may hold a check while a
-/// reception ends (core-interface §3 rule 8).
+/// reception ends (`docs/core-interface.md`, "Radio", rule 8).
 #[derive(Clone)]
 pub(crate) struct Replies {
     owed: FixedVec<Owed, REPLIES>,

@@ -5,7 +5,7 @@
 //! live core that is linked to the sender, resting on the frame's channel
 //! and not deaf for any part of the frame's airtime (`radio::time_on_air`),
 //! unless another linked transmission on that channel overlaps it. The
-//! harness enforces the driver side of `docs/core-interface.md` §3: it
+//! harness enforces the driver side of `docs/core-interface.md`, "Radio": it
 //! panics if a core starts a second excursion, sends a short preamble or
 //! an oversized frame, or exceeds the duty cycle; and it holds a channel
 //! check while a reception is in progress (rule 8). It also panics if a
@@ -79,7 +79,7 @@ pub struct SimNode<C: Core> {
     wakeup: Option<Instant>,
     started: bool,
     /// The power its driver reports right after the boot wakeup, if any
-    /// (`docs/core-interface.md` §4).
+    /// (`docs/core-interface.md`, "Application").
     pub power: Option<bool>,
     /// Every transmission: start and airtime.
     pub airtime: Vec<(Instant, Duration)>,
@@ -195,7 +195,7 @@ impl<C: Core> Harness<C> {
 
     /// Cores each with whether external power is present at boot, which
     /// the harness reports right after the boot wakeup, as a driver does
-    /// (`docs/core-interface.md` §4).
+    /// (`docs/core-interface.md`, "Application").
     pub fn powered(cores: Vec<(C, bool)>) -> Self {
         let power: Vec<bool> = cores.iter().map(|c| c.1).collect();
         let mut h = Harness::new(cores.into_iter().map(|c| c.0).collect());

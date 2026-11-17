@@ -6,8 +6,9 @@
 //! The reading is uncalibrated: the converter's gain error, up to ±3 %
 //! at gain 1/6, and the divider's tolerance stay in it, and the core
 //! scales it at a rested full charge (spec "Sleepy nodes",
-//! `docs/core-interface.md` §4). The driver reads it only between radio
-//! operations, so never while the radio transmits (`bark-driver`).
+//! `docs/core-interface.md`, "Application"). The driver reads it only
+//! between radio operations, so never while the radio transmits
+//! (`bark-driver`).
 
 use embassy_nrf::saadc::{ChannelConfig, Config, Oversample, Saadc, Time};
 

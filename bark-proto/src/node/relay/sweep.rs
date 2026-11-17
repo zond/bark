@@ -105,8 +105,9 @@ impl Sweep {
             Some((channel, dbm))
         };
         self.channel = channel.next();
-        // A reading held up by receptions (core-interface rule 8) or by
-        // a hand-over must not leave a backlog to take back to back.
+        // A reading held up by receptions (`docs/core-interface.md`,
+        // "Radio", rule 8) or by a hand-over must not leave a backlog to
+        // take back to back.
         if self.next_at <= now {
             self.next_at = now + step;
         }

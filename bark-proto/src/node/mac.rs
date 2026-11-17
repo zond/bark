@@ -1,5 +1,5 @@
 //! The radio discipline the jobs share: one excursion at a time
-//! (`docs/core-interface.md` §3 rule 1), and frame building.
+//! (`docs/core-interface.md`, "Radio", rule 1), and frame building.
 
 use crate::event::{Action, Frame, MAX_FRAME};
 use crate::radio::{time_on_air, Channel};

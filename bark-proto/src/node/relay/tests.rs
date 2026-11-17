@@ -26,8 +26,8 @@ const NOBODY: NodeId = NodeId([9; 6]);
 
 #[test]
 fn sizes() {
-    // docs/core-interface.md §6: the node outside its tables in under
-    // 1 KiB, beside what it keeps across a reboot.
+    // `docs/core-interface.md`, "Memory": the node outside its tables in
+    // under 1 KiB, beside what it keeps across a reboot.
     let relay = core::mem::size_of::<Relay>();
     let tables = crate::tables::sizes::tables();
     let kept = 2 * core::mem::size_of::<Option<Stored>>();
@@ -622,10 +622,10 @@ fn a_delivery_goes_ahead_of_the_queue_in_the_bucket_too() {
     assert_eq!(checked, Some(r.home), "its hand-over starts at once");
 }
 
-/// Two packets arrive within one reply time, while a reading of the
-/// sweep holds the radio (core-interface §3 rule 8). The second finds the
-/// one owed-reply place taken: it gets no answer, and its sender's retry,
-/// after the first ACK is gone, is taken.
+/// Two packets arrive within one reply time, while a reading of the sweep
+/// holds the radio (`docs/core-interface.md`, "Radio", rule 8). The second
+/// finds the one owed-reply place taken: it gets no answer, and its sender's
+/// retry, after the first ACK is gone, is taken.
 #[test]
 fn a_packet_that_cannot_be_answered_is_not_taken() {
     use crate::event::AppEvent;

@@ -554,9 +554,9 @@ fn sniffed(h: &Harness<Relay>, i: usize, from: Instant, to: Instant) -> Duration
 }
 
 /// A sleepy node with an anchor lets its radio receive duty-cycled
-/// (`Action::Sniff`, core-interface §3 rule 10) except while it beats and
-/// through the window after each beat (spec "Delivery"), and a message for
-/// it still reaches it there.
+/// (`Action::Sniff`, `docs/core-interface.md`, "Radio", rule 10) except while
+/// it beats and through the window after each beat (spec "Delivery"), and a
+/// message for it still reaches it there.
 #[test]
 fn a_sleepy_node_receives_duty_cycled_between_its_windows() {
     let (r, s) = (0, 1);

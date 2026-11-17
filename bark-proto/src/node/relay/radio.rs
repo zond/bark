@@ -56,7 +56,7 @@ impl Radio {
         }
     }
 
-    // --- The excursion (`docs/core-interface.md` §3 rule 1) ---
+    // --- The excursion (`docs/core-interface.md`, "Radio", rule 1) ---
 
     pub(super) fn idle(&self) -> bool {
         self.excursion.idle()
@@ -174,9 +174,9 @@ impl Radio {
 
     // --- Away from listening ---
 
-    /// How long the radio has been away in all up to `until` (at most
-    /// `now`), µs, wrapping; only as far as the core knows: a frame it did
-    /// not decode is not reported (`docs/core-interface.md` §3 rule 3).
+    /// How long the radio has been away in all up to `until` (at most `now`),
+    /// µs, wrapping; only as far as the core knows: a frame it did not decode
+    /// is not reported (`docs/core-interface.md`, "Radio", rule 3).
     pub(super) fn away_us(&self, now: Instant, until: Instant) -> u32 {
         let open = self
             .away_since

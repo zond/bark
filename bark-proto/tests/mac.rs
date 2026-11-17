@@ -138,8 +138,8 @@ fn sweep_reads_one_channel_at_a_time_spread_over_the_interval() {
         // Back on home well before the next reading leaves it.
         assert!(w[1].0.since(w[0].1) > Duration::from_millis(50));
     }
-    // The reading of the home channel does not leave it (core-interface
-    // §3 rule 7); every other one does.
+    // The reading of the home channel does not leave it
+    // (`docs/core-interface.md`, "Radio", rule 7); every other one does.
     for (_, _, a, off) in &sweep {
         assert_eq!(*off, *a != Action::Rssi(home), "{a:?}");
     }

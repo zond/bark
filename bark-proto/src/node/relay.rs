@@ -7,11 +7,11 @@
 //! (spec "Heartbeat"), `anchor.rs` (spec "Sleepy nodes"), `forward.rs`
 //! (spec "Forwarding"), `delivery.rs`, `power.rs`, `motion.rs`, `gps.rs`.
 //!
-//! Each use of the radio is a job, one excursion at a time
-//! (`mac::Excursion`, `docs/core-interface.md` §3 rule 1). When the radio
-//! is free the first ready job in `JOBS` starts. While a hand-over waits
-//! for its ACK only an owed reply uses the radio: the others could take the
-//! node off its home channel, where the ACK arrives.
+//! Each use of the radio is a job, one excursion at a time (`mac::Excursion`,
+//! `docs/core-interface.md`, "Radio", rule 1). When the radio is free the
+//! first ready job in `JOBS` starts. While a hand-over waits for its ACK only
+//! an owed reply uses the radio: the others could take the node off its home
+//! channel, where the ACK arrives.
 
 mod anchor;
 mod battery;
@@ -211,7 +211,7 @@ pub struct NeighbourCounts {
 pub type SleepyNode = Node<0, 0>;
 
 /// The node, with room for `H` sleepy nodes heard and `Q` messages for
-/// them (`docs/core-interface.md` §6).
+/// them (`docs/core-interface.md`, "Memory").
 ///
 /// Laid out as declared, what an event reads first and the tables after,
 /// so an event touches few memory pages: in a city-sized simulation the
@@ -262,7 +262,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// A relay with empty tables, not set up, built at compile time so a
     /// driver can keep it in a static and set it up in place with
     /// [`Relay::reset`]: a relay is 150 KiB, and [`Relay::new`] needs as much
-    /// again on the stack (`docs/core-interface.md` §6).
+    /// again on the stack (`docs/core-interface.md`, "Memory").
     pub const UNSET: Self = {
         let config = Config::DEFAULT;
         let channel = match Channel::new(0) {
@@ -860,8 +860,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
 impl<const H: usize, const Q: usize> Core for Node<H, Q> {
     fn handle(&mut self, event: Event<'_>, now: Instant, emit: &mut dyn FnMut(Action)) {
-        // Any use of the radio ends a sniff (core-interface §3 rule 10),
-        // and an excursion takes it away from listening.
+        // Any use of the radio ends a sniff (`docs/core-interface.md`,
+        // "Radio", rule 10), and an excursion takes it away from listening.
         let woke = core::cell::Cell::new(false);
         let away = core::cell::Cell::new(false);
         let mut wake = |a: Action| {
@@ -945,8 +945,8 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             Event::App(cmd) => self.app(cmd, now, emit),
         }
         if !matches!(event, Event::Wakeup | Event::App(_)) {
-            // The excursion or the reception is over, unless a held
-            // excursion is still out (core-interface §3 rule 8).
+            // The excursion or the reception is over, unless a held excursion
+            // is still out (`docs/core-interface.md`, "Radio", rule 8).
             self.radio.back(now);
         }
         self.fire(now, emit);

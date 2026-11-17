@@ -92,7 +92,7 @@ impl Gather {
 }
 
 /// What the node keeps of the images spreading
-/// (spec "Updates over the mesh", `docs/core-interface.md` §6).
+/// (spec "Updates over the mesh", `docs/core-interface.md`, "Memory").
 pub(super) struct Spread {
     own: Option<Image>,
     /// The version of the last image offered to the driver.
