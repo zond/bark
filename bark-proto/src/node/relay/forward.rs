@@ -246,6 +246,43 @@ fn tried(record: &Record, passed: u64, slot: usize) -> bool {
     record.handed(slot) || passed & (1u64 << slot) != 0
 }
 
+/// The live neighbours as routing weighs them at `now`, one bit per
+/// neighbour-table slot in each mask: worked out once for every message
+/// routed in one call, as the gate and the pick route the whole send queue.
+#[derive(Clone, Copy)]
+struct Ways {
+    now: Instant,
+    live: u64,
+    /// A last resort at `now` (`Node::last_resort`).
+    resort: u64,
+    /// An anchored sleepy node ([`Neighbour::last_resort`]).
+    anchored: u64,
+    /// Without margin over the noise floor.
+    faint: u64,
+    demoted: u64,
+    banned: u64,
+    leaving: u64,
+    /// Holds mail ([`Neighbour::holds_mail`]).
+    mail: u64,
+    /// Where a sleepy node hands its own message (`Node::first_hop`).
+    first: Option<NodeId>,
+}
+
+impl Ways {
+    fn has(mask: u64, slot: usize) -> bool {
+        mask & (1u64 << slot) != 0
+    }
+}
+
+/// The slots of `mask`, lowest first, as the table lists them.
+fn slots(mut mask: u64) -> impl Iterator<Item = usize> {
+    core::iter::from_fn(move || {
+        let slot = mask.trailing_zeros() as usize;
+        mask &= mask.wrapping_sub(1);
+        (slot < 64).then_some(slot)
+    })
+}
+
 /// The frame of the owed reply.
 fn reply_frame(o: Owed) -> Frame {
     mac::frame(&Packet::Ack(o.reply), o.channel, MIN_PREAMBLE_SYMBOLS)
@@ -438,13 +475,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// that one's ban ends (spec "Next hop", "Return to parent").
     fn heads_to(
         &self,
+        w: &Ways,
         record: &Record,
         passed: u64,
         avoid: u64,
         dst: (NodeId, Position),
-        now: Instant,
     ) -> Option<(NodeId, Instant)> {
-        if let Some((_, n)) = self.next_hop(record, passed, avoid, dst, now) {
+        if let Some((_, n)) = self.next_hop(w, record, passed, avoid, dst) {
             return Some((n.id, n.banned_until));
         }
         let (parent, _) = record.parent()?;
@@ -457,26 +494,26 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// Where queued entry `o` goes now; `None` for a delivery, one set
     /// aside, or one this relay owns now.
-    fn bound_for(&self, o: &Outgoing, now: Instant) -> Option<NodeId> {
+    fn bound_for(&self, w: &Ways, o: &Outgoing) -> Option<NodeId> {
         if o.kind.delivers() || o.held() {
             return None;
         }
         if o.in_flight() {
             return Some(o.to);
         }
-        self.heading(o, now).map(|(to, _, _)| to)
+        self.heading(w, o).map(|(to, _, _)| to)
     }
 
     /// Where queued forward `o` goes if routed now, when that one's ban
     /// ends, and where its record is: `None` if this relay owns its
     /// destination now, or it has no record.
-    fn heading(&self, o: &Outgoing, now: Instant) -> Option<(NodeId, Instant, u16)> {
+    fn heading(&self, w: &Ways, o: &Outgoing) -> Option<(NodeId, Instant, u16)> {
         let (at, record) = self.records.find(o.msg_id(), o.record)?;
         let dst = (o.message.dst_id(), o.message.dst_pos());
-        if self.ends_here(dst, Some(record), o.passed, None, now) {
+        if self.ends_here(w, dst, Some(record), o.passed, None) {
             return None;
         }
-        self.heads_to(record, o.passed, o.avoid, dst, now)
+        self.heads_to(w, record, o.passed, o.avoid, dst)
             .map(|(to, ban)| (to, ban, at))
     }
 
@@ -490,7 +527,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut hints = [None::<u16>; N];
         let mut toward = [0u8; N];
         let mut wake: Option<Instant> = None;
-        let still_banned = self.banned_slots(now);
+        let w = self.ways(now);
+        let still_banned = w.live & w.banned;
         for (i, o) in self.queue.iter().enumerate() {
             if o.held() {
                 continue;
@@ -502,7 +540,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if o.kind != Kind::Forward {
                 continue;
             }
-            if let Some((to, ban, at)) = self.heading(o, now) {
+            if let Some((to, ban, at)) = self.heading(&w, o) {
                 hints[i] = Some(at);
                 toward[i] = self.neighbours.slot_of(to).map_or(0, |s| s as u8 + 1);
                 if ban > now {
@@ -537,8 +575,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// most queue entries × neighbour entries per call.
     fn gate(&self, id: MsgId, to: NodeId, hops: Hops, now: Instant) -> Gate {
         let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
+        let w = self.ways(now);
         for o in self.queue.iter().filter(|o| o.msg_id() != id) {
-            if self.bound_for(o, now) == Some(to) {
+            if self.bound_for(&w, o) == Some(to) {
                 ahead += 1;
                 barred |= o.hops.saturating_sub(1) >= hops;
                 oldest = Some(oldest.map_or(o.since, |t| t.min(o.since)));
@@ -639,18 +678,56 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     // --- Owner and next hop (spec "Next hop", "Owner") ---
 
+    /// The live neighbours as routing weighs them at `now`.
+    fn ways(&self, now: Instant) -> Ways {
+        // Once a call: it takes a logarithm.
+        let margin = Neighbours::margin_dbm(self.radio.busy().noise_floor_dbm(self.home));
+        let mut w = Ways {
+            now,
+            live: 0,
+            resort: 0,
+            anchored: 0,
+            faint: 0,
+            demoted: 0,
+            banned: 0,
+            leaving: 0,
+            mail: 0,
+            first: self.first_hop(now),
+        };
+        for (slot, n) in self.neighbours.live(now) {
+            let bit = 1u64 << slot;
+            let mark = |mask: &mut u64, on: bool| *mask |= if on { bit } else { 0 };
+            mark(&mut w.live, true);
+            mark(&mut w.resort, self.last_resort(n, now));
+            mark(&mut w.anchored, n.last_resort());
+            mark(&mut w.faint, n.rssi < margin);
+            mark(&mut w.demoted, self.neighbours.is_demoted(n, now));
+            mark(&mut w.banned, self.neighbours.is_banned(n, now));
+            mark(&mut w.leaving, n.leaving);
+            mark(&mut w.mail, n.holds_mail());
+        }
+        w
+    }
+
+    /// The live neighbour in `slot` of `w`.
+    fn at(&self, slot: usize) -> &Neighbour {
+        self.neighbours
+            .slot(slot)
+            .expect("a live slot of the ways is occupied")
+    }
+
     /// Whether the message of `record` to `dst_id` at `dst_pos` ends here
     /// (spec "Owner"). `from` is the node it comes from now, if any.
     fn ends_here(
         &self,
+        w: &Ways,
         (dst_id, dst_pos): (NodeId, Position),
         record: Option<&Record>,
         passed: u64,
         from: Option<NodeId>,
-        now: Instant,
     ) -> bool {
         dst_id == self.id
-            || (self.owns(dst_pos, now) && !self.addressed_open(dst_id, record, passed, from, now))
+            || (self.owns(w, dst_pos) && !self.addressed_open(w, dst_id, record, passed, from))
     }
 
     /// Whether `dst_id` is a live neighbour, no anchored sleepy node, that
@@ -659,25 +736,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// "Next hop").
     fn addressed_open(
         &self,
+        w: &Ways,
         dst_id: NodeId,
         record: Option<&Record>,
         passed: u64,
         from: Option<NodeId>,
-        now: Instant,
     ) -> bool {
         let parent = record.and_then(|r| r.parent()).map(|(name, _)| name);
-        self.neighbours.live(now).any(|(slot, n)| {
-            n.id == dst_id
-                && !n.last_resort()
-                && Some(n.id) != parent
-                && Some(n.id) != from
+        slots(w.live & !w.anchored).any(|slot| {
+            let id = self.at(slot).id;
+            id == dst_id
+                && Some(id) != parent
+                && Some(id) != from
                 && !record.is_some_and(|r| tried(r, passed, slot))
         })
     }
 
     /// Whether this relay owns the destination `dst` of another node's
     /// message (spec "Owner").
-    fn owns(&self, dst: Position, now: Instant) -> bool {
+    fn owns(&self, w: &Ways, dst: Position) -> bool {
         if self.sleepy() || self.motion.carried() || self.leaving() {
             return false;
         }
@@ -692,10 +769,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let target = self.plane.point(dst);
         let mine = target.distance2(Default::default());
         mine <= OWNER_RADIUS_M * OWNER_RADIUS_M
-            && !self
-                .neighbours
-                .candidates(now)
-                .any(|(_, n)| n.holds_mail() && n.local.distance2(target) < mine)
+            && !slots(w.live & !w.demoted & w.mail)
+                .any(|slot| self.at(slot).local.distance2(target) < mine)
     }
 
     /// Whether `n` is a last resort at `now` (spec "Next hop").
@@ -721,90 +796,80 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.last_resort(n, now) != others_open
     }
 
-    /// Whether any neighbour that is no last resort is a candidate for the
-    /// message of `record` at `now` ([`Self::tier`]).
-    fn others_open(&self, record: &Record, passed: u64, now: Instant) -> bool {
-        let parent = record.parent().map(|(name, _)| name);
-        self.neighbours.live(now).any(|(slot, n)| {
-            !self.last_resort(n, now) && !tried(record, passed, slot) && Some(n.id) != parent
-        })
-    }
-
     /// The next hop for the message of `record` to node and position `dst`
-    /// at `now` (spec "Next hop"). A banned next hop is waited for, not gone
-    /// round, unless it refused this message (`avoid`); one about to leave
-    /// the air where the message cannot end ([`Self::ends_at`]) is gone
-    /// round too. Either only where another no worse a last resort is left.
+    /// (spec "Next hop"). A banned next hop is waited for, not gone round,
+    /// unless it refused this message (`avoid`); one about to leave the air
+    /// where the message cannot end ([`Self::ends_at`]) is gone round too.
+    /// Either only where another no worse a last resort is left.
     fn next_hop(
         &self,
+        w: &Ways,
         record: &Record,
         passed: u64,
         avoid: u64,
         dst: (NodeId, Position),
-        now: Instant,
     ) -> Option<(usize, Neighbour)> {
-        let hop = self.choose(record, passed, dst, now);
+        let hop = self.choose(w, record, passed, dst);
         let (slot, n) = hop?;
-        let refused = avoid & (1u64 << slot) != 0 && self.neighbours.is_banned(&n, now);
+        let refused = Ways::has(avoid & w.banned, slot);
         if !refused && !(n.leaving && !self.ends_at(&n, dst)) {
             return hop;
         }
-        let round = (avoid & self.banned_slots(now)) | self.leaving_slots(dst, now);
-        self.choose(record, passed | round, dst, now)
-            .filter(|(_, m)| !self.last_resort(m, now) || self.last_resort(&n, now))
+        let round = (avoid & w.live & w.banned) | self.leaving_slots(w, dst);
+        self.choose(w, record, passed | round, dst)
+            .filter(|&(s, _)| !Ways::has(w.resort, s) || Ways::has(w.resort, slot))
             .or(hop)
     }
 
     /// [`Self::next_hop`] with every slot of `passed` taken out.
     fn choose(
         &self,
+        w: &Ways,
         record: &Record,
         passed: u64,
         (dst_id, dst): (NodeId, Position),
-        now: Instant,
     ) -> Option<(usize, Neighbour)> {
         let target = self.plane.point(dst);
+        let parent = record.parent().map(|(name, _)| name);
+        let open = |slot: usize| !tried(record, passed, slot) && Some(self.at(slot).id) != parent;
         // Only a carried node itself can end the search for it, and a
         // frame to it costs little against a search through the city:
         // first even when stale. An anchored sleepy node is first only
         // while this relay spares the long frame; else its anchor delivers.
-        let addressed = |n: &Neighbour| n.id == dst_id;
-        let parent = record.parent().map(|(name, _)| name);
-        // Computed once: it takes a logarithm.
-        let margin = Neighbours::margin_dbm(self.radio.busy().noise_floor_dbm(self.home));
-        let faint = |n: &Neighbour| n.rssi < margin;
-        let demoted = |n: &Neighbour| self.neighbours.is_demoted(n, now);
-        let first = self.first_hop(now).filter(|_| record.parent().is_none());
-        let others = self.others_open(record, passed, now);
-        self.neighbours
-            .live(now)
-            .filter(|(slot, n)| {
+        let first = w.first.filter(|_| parent.is_none());
+        let others = slots(w.live & !w.resort).any(open);
+        let tier = |slot: usize| Ways::has(w.resort, slot) != others;
+        let addressed = |slot: usize| self.at(slot).id == dst_id;
+        let rank = |a: usize, b: usize| {
+            let (na, nb) = (self.at(a), self.at(b));
+            let (da, db) = (na.local.distance2(target), nb.local.distance2(target));
+            addressed(b)
+                .cmp(&addressed(a))
+                .then(Ways::has(w.faint, a).cmp(&Ways::has(w.faint, b)))
+                .then(Ways::has(w.demoted, a).cmp(&Ways::has(w.demoted, b)))
+                .then(da.total_cmp(&db))
+                .then(na.id.0.cmp(&nb.id.0))
+        };
+        slots(w.live)
+            .filter(|&slot| {
+                let n = self.at(slot);
                 first.is_none_or(|a| n.id == a)
                     && (first.is_some()
-                        || (addressed(n) && (!n.last_resort() || self.reach_now(n, now)))
-                        || self.tier(n, others, now))
-                    && !tried(record, passed, *slot)
-                    && Some(n.id) != parent
+                        || (addressed(slot)
+                            && (!Ways::has(w.anchored, slot) || self.reach_now(n, w.now)))
+                        || tier(slot))
+                    && open(slot)
             })
-            .min_by(|(_, a), (_, b)| {
-                let (da, db) = (a.local.distance2(target), b.local.distance2(target));
-                addressed(b)
-                    .cmp(&addressed(a))
-                    .then(faint(a).cmp(&faint(b)))
-                    .then(demoted(a).cmp(&demoted(b)))
-                    .then(da.total_cmp(&db))
-                    .then(a.id.0.cmp(&b.id.0))
-            })
-            .map(|(slot, n)| (slot, *n))
+            .min_by(|&a, &b| rank(a, b))
+            .map(|slot| (slot, *self.at(slot)))
     }
 
-    /// The neighbour-table slots of the live neighbours about to leave the
-    /// air at `now`, but for those where a message to `dst` may end.
-    fn leaving_slots(&self, dst: (NodeId, Position), now: Instant) -> u64 {
-        self.neighbours
-            .live(now)
-            .filter(|(_, n)| n.leaving && !self.ends_at(n, dst))
-            .fold(0, |m, (slot, _)| m | 1u64 << slot)
+    /// The slots of the live neighbours about to leave the air, but for
+    /// those where a message to `dst` may end.
+    fn leaving_slots(&self, w: &Ways, dst: (NodeId, Position)) -> u64 {
+        slots(w.live & w.leaving)
+            .filter(|&slot| !self.ends_at(self.at(slot), dst))
+            .fold(0, |m, slot| m | 1u64 << slot)
     }
 
     /// Whether a message to `dst` may end at `n`: it is the destination or
@@ -814,14 +879,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         n.id == dst_id
             || (n.holds_mail()
                 && n.local.distance2(self.plane.point(dst)) <= OWNER_RADIUS_M * OWNER_RADIUS_M)
-    }
-
-    /// The neighbour-table slots of the live neighbours banned at `now`.
-    fn banned_slots(&self, now: Instant) -> u64 {
-        self.neighbours
-            .live(now)
-            .filter(|(_, n)| self.neighbours.is_banned(n, now))
-            .fold(0, |m, (slot, _)| m | 1u64 << slot)
     }
 
     /// Where a sleepy node hands its own message: its anchor while that is
@@ -977,7 +1034,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // not come.
         let slot = self.neighbours.slot_of(d.src_hop);
         let returned = handing || record.zip(slot).is_some_and(|(r, s)| r.handed(s));
-        let owner = self.ends_here((d.dst_id, d.dst_pos), record, 0, Some(d.src_hop), now);
+        let w = self.ways(now);
+        let owner = self.ends_here(&w, (d.dst_id, d.dst_pos), record, 0, Some(d.src_hop));
         let case = self.classify(id, repeat, returned, owner);
         Arrival {
             case,
@@ -1010,7 +1068,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if let Some(s) = a.slot.filter(|_| a.fresh || a.case == Case::Search) {
             probe.handed_to(s);
         }
-        self.heads_to(&probe, 0, 0, (d.dst_id, d.dst_pos), now)
+        self.heads_to(&self.ways(now), &probe, 0, 0, (d.dst_id, d.dst_pos))
     }
 
     /// The room a packet with work takes, or why there is none (spec
@@ -1553,7 +1611,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             hops: 0,
             payload,
         };
-        if self.ends_here((dst_id, dst_pos), None, 0, None, now) {
+        if self.ends_here(&self.ways(now), (dst_id, dst_pos), None, 0, None) {
             let mut record = Record::new(id, None, (0, 0), now);
             record.set_arrived();
             self.records.put(at, record);
@@ -1580,7 +1638,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return;
         }
         let record = Record::new(id, None, (0, 0), now);
-        if let Some((to, ban)) = self.heads_to(&record, 0, 0, (dst_id, dst_pos), now) {
+        let w = self.ways(now);
+        if let Some((to, ban)) = self.heads_to(&w, &record, 0, 0, (dst_id, dst_pos)) {
             // Fresh work, gated as a sleepy node's own is at its anchor
             // (spec "Receiving DATA").
             let gate = self.gate(id, to, 0, now);
@@ -1720,8 +1779,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.drop_msg(id, DropReason::NoRecord, emit);
             return Routed::Done;
         };
+        let w = self.ways(now);
         let next = self
-            .next_hop(&record, out.passed, out.avoid, dst, now)
+            .next_hop(&w, &record, out.passed, out.avoid, dst)
             .map(|(_, n)| (n, n.banned_until));
         let parent = record.parent().map(|(p, stored)| {
             let ban = self
@@ -1731,7 +1791,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             ((p, stored), ban)
         });
         let found = way(
-            self.ends_here(dst, Some(&record), out.passed, None, now),
+            self.ends_here(&w, dst, Some(&record), out.passed, None),
             self.own.id != Some(id) || self.has_room_for(out.message.dst_id(), now),
             next,
             self.origin_waits(&record, id, now),
@@ -2422,7 +2482,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// (spec "Next hop", "Return to parent").
     fn goes_to(&self, m: &Message, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
         let record = self.records.get(m.id())?;
-        self.next_hop(record, passed, avoid, (m.dst_id(), m.dst_pos()), now)
+        let w = self.ways(now);
+        self.next_hop(&w, record, passed, avoid, (m.dst_id(), m.dst_pos()))
             .map(|(_, n)| n.id)
             .or_else(|| record.parent().map(|(p, _)| p))
     }
