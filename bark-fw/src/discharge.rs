@@ -17,7 +17,7 @@ use embedded_storage::nor_flash::ReadNorFlash;
 use crate::ext_flash;
 
 /// A discharge bench build, from `BARK_DISCHARGE_BENCH=1` at build time:
-/// an open node image only, as it ignores the battery's low level and
+/// a bench-only node image only, as it ignores the battery's low level and
 /// would flatten a cell in the field. Any other value fails the build.
 pub const BENCH: bool = match option_env!("BARK_DISCHARGE_BENCH") {
     None => false,
@@ -27,8 +27,8 @@ pub const BENCH: bool = match option_env!("BARK_DISCHARGE_BENCH") {
             "BARK_DISCHARGE_BENCH is 1 or unset"
         );
         assert!(
-            matches!(crate::protect::BUILD, bark_image::protect::Build::Open),
-            "BARK_DISCHARGE_BENCH needs BARK_OPEN=1"
+            crate::BENCH_ONLY,
+            "BARK_DISCHARGE_BENCH needs BARK_BENCH_ONLY=1"
         );
         assert!(
             !cfg!(feature = "console"),

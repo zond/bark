@@ -73,14 +73,14 @@ def build_image(kind: str, version: int) -> Path:
     """The console image of `kind`, up or panic, at `version`, packed."""
     out = OUT / f"{kind}-v{version}.img"
     if not out.exists():
-        env = {"BARK_OPEN": "1", "BARK_IMAGE_VERSION": str(version)}
+        env = {"BARK_BENCH_ONLY": "1", "BARK_IMAGE_VERSION": str(version)}
         if kind == "panic":
             env["BARK_UPDATE_BENCH"] = "panic"
         cargo(FW, env, ["--features", "console"])
         data, v = image.pack(ELF.read_bytes())
         assert v == version
         out.write_bytes(data)
-    # Signed by the bench key, which an open build holds; one packed
+    # Signed by the bench key, which a bench-only build holds; one packed
     # before images were signed is signed now.
     if not any(key_id for key_id, _ in image.slots(out.read_bytes()[: image.HEADER_LEN])):
         image.sign(str(out), image.BENCH_KEY, image.bench_key_id(), None)
@@ -98,8 +98,8 @@ def cargo(where: Path, env: dict[str, str], args: list[str]) -> None:
 
 def setup(node: str, log) -> None:
     """The bench loader and a console image of version 1 on the board."""
-    cargo(LOADER, {"BARK_OPEN": "1", "BARK_LOADER_BENCH": "reset"}, [])
-    cargo(FW, {"BARK_OPEN": "1", "BARK_IMAGE_VERSION": "1"}, ["--features", "console"])
+    cargo(LOADER, {"BARK_BENCH_ONLY": "1", "BARK_LOADER_BENCH": "reset"}, [])
+    cargo(FW, {"BARK_BENCH_ONLY": "1", "BARK_IMAGE_VERSION": "1"}, ["--features", "console"])
     uf2 = OUT / "base.uf2"
     subprocess.run([sys.executable, "-I", FW / "scripts/uf2.py", "--loader", LOADER_ELF, ELF, uf2], check=True)
     bench.off(node)

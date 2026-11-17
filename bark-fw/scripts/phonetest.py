@@ -99,8 +99,8 @@ def fields(rest: str) -> dict[str, str]:
 
 
 def passkey(text: str) -> str | None:
-    """The code a node's log shows for a pairing; "" for a protected build,
-    which logs that it shows one and not which (spec "Phone link", Pairing).
+    """The code a node's log shows for a pairing; "" for a build that is
+    not bench-only, which logs that it shows one and not which (spec "Phone link", Pairing).
 
     >>> passkey("1731489201.512 ble: pairing, the code shown: 042113")
     '042113'
@@ -340,7 +340,7 @@ def main() -> None:
             print(f"no code in {a.node_log} within {PAIRING_S} s", flush=True)
             return
         if code == "":
-            print("the node is a protected build: type the code on its screen", flush=True)
+            print("the node logs no code: type the code on its screen", flush=True)
             return
         why = type_code(phone, code)
         print(f"code {code}: {why or 'typed'}", flush=True)

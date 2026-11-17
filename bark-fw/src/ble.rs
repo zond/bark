@@ -1728,16 +1728,12 @@ impl Serving<'_, '_, '_> {
         let (slot, conn) = (self.slot, self.conn);
         match event {
             GattConnectionEvent::PassKeyDisplay(key) => {
-                // The code only in an open build, for the bench: a
-                // protected node's log must not let a USB cable stand in
-                // for being at the node (spec "Phone link", Pairing).
-                match crate::protect::BUILD {
-                    bark_image::protect::Build::Open => {
-                        log::info!("ble: pairing, the code shown: {:06}", key.value())
-                    }
-                    bark_image::protect::Build::Protected => {
-                        log::info!("ble: pairing, the code shown")
-                    }
+                // The code only in a bench-only build: another node's log
+                // must not let a USB cable stand in for being at the node
+                // (spec "Phone link", Pairing).
+                match crate::BENCH_ONLY {
+                    true => log::info!("ble: pairing, the code shown: {:06}", key.value()),
+                    false => log::info!("ble: pairing, the code shown"),
                 }
                 LINK.lock(|l| l.borrow_mut().phones[slot].pairing = true);
                 crate::display::pairing(Some(key.value()));
@@ -2682,13 +2678,11 @@ fn write_phones(
                 }
             };
             LINK.lock(|l| l.borrow_mut().removal = Some(code));
-            // The code only in an open build, as a pairing's
+            // The code only in a bench-only build, as a pairing's
             // (spec "Phone link", Pairing).
-            match crate::protect::BUILD {
-                bark_image::protect::Build::Open => {
-                    log::info!("ble: removal, the code shown: {:06}", code.code)
-                }
-                bark_image::protect::Build::Protected => log::info!("ble: removal, the code shown"),
+            match crate::BENCH_ONLY {
+                true => log::info!("ble: removal, the code shown: {:06}", code.code),
+                false => log::info!("ble: removal, the code shown"),
             }
             crate::display::removal(Some(code.code));
             Ok(())

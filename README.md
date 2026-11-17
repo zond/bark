@@ -122,9 +122,9 @@ rustup target add thumbv7em-none-eabihf
 (cd bark-loader && cargo build --release)
 ```
 
-The firmware is built protected, or open, for the bench, with
-`BARK_OPEN=1` (`bark-fw/README.md`, "Read-out protection" and
-"Updates").
+A build for the bench alone, which also takes images signed by the bench
+key and logs the pairing code, is made with `BARK_BENCH_ONLY=1`
+(`bark-fw/README.md`).
 
 See `bark-fw/README.md` for packaging the UF2, with the loader, and
 flashing.
