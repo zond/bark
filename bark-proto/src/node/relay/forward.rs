@@ -472,7 +472,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// destination now, or it has no record.
     fn heading(&self, o: &Outgoing, now: Instant) -> Option<(NodeId, Instant, u16)> {
         let (at, record) = self.records.find(o.msg_id(), o.record)?;
-        let dst = (o.message.dst_id, o.message.dst_pos);
+        let dst = (o.message.dst_id(), o.message.dst_pos());
         if self.ends_here(dst, Some(record), o.passed, None, now) {
             return None;
         }
@@ -1327,7 +1327,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let ends = self
             .neighbours
             .get(by)
-            .is_some_and(|n| n.leaving && self.ends_at(n, (m.dst_id, m.dst_pos)));
+            .is_some_and(|n| n.leaving && self.ends_at(n, (m.dst_id(), m.dst_pos())));
         let id = m.id();
         ends && (self.delivery.has_room(now) || self.delivery.iter().any(|q| q.msg_id == id))
     }
@@ -1337,7 +1337,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn wait_for(&mut self, out: &Outgoing, by: NodeId, now: Instant, emit: &mut dyn FnMut(Action)) {
         let m = &out.message;
         let id = m.id();
-        let Some(mut q) = Queued::new(id, m.dst_pos, m.dst_id, m.payload(), now) else {
+        let Some(mut q) = Queued::new(id, m.dst_pos(), m.dst_id(), m.payload(), now) else {
             return;
         };
         // The counts it arrived with, which it goes on from (`release`).
@@ -1496,7 +1496,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let room = self
             .queue
             .get(i)
-            .is_none_or(|h| self.has_room_for(h.message.dst_id, now));
+            .is_none_or(|h| self.has_room_for(h.message.dst_id(), now));
         if !room {
             return;
         }
@@ -1711,7 +1711,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// have been demoted since.
     fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let id = out.msg_id();
-        let dst = (out.message.dst_id, out.message.dst_pos);
+        let dst = (out.message.dst_id(), out.message.dst_pos());
         debug_assert!(
             self.records.get(id).is_some(),
             "a held message keeps its record"
@@ -1732,7 +1732,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         });
         let found = way(
             self.ends_here(dst, Some(&record), out.passed, None, now),
-            self.own.id != Some(id) || self.has_room_for(out.message.dst_id, now),
+            self.own.id != Some(id) || self.has_room_for(out.message.dst_id(), now),
             next,
             self.origin_waits(&record, id, now),
             parent,
@@ -2042,13 +2042,13 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// never wrong.
     fn wrong_hop(&self, out: &Outgoing) -> bool {
         let m = &out.message;
-        if out.to == m.dst_id {
+        if out.to == m.dst_id() {
             return false;
         }
         let Some(to) = self.neighbours.get(out.to) else {
             return true;
         };
-        let plane = LocalPlane::new(m.dst_pos);
+        let plane = LocalPlane::new(m.dst_pos());
         let origin = Point::default();
         let (mine, theirs) = (
             plane.point(self.config.position).distance2(origin),
@@ -2262,7 +2262,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         self.neighbours.took(to, out.since, now);
         self.tried(id, to, (out.hops, out.wrong), now, emit);
-        if to == out.message.dst_id {
+        if to == out.message.dst_id() {
             // The node it is addressed to took it: it has arrived.
             if let Some(r) = self.records.get_mut(id) {
                 r.set_arrived();
@@ -2296,7 +2296,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let own_at_anchor = self.sleepy() && out.hops == 0;
         let mut gone = false;
         if !out.kind.delivers() {
-            if out.preamble >= LONG_PREAMBLE_SYMBOLS && to == out.message.dst_id {
+            if out.preamble >= LONG_PREAMBLE_SYMBOLS && to == out.message.dst_id() {
                 // Not again at once before it beats: its anchor delivers
                 // it (spec "Next hop").
                 self.neighbours.unanswered(to);
@@ -2422,7 +2422,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// (spec "Next hop", "Return to parent").
     fn goes_to(&self, m: &Message, passed: u64, avoid: u64, now: Instant) -> Option<NodeId> {
         let record = self.records.get(m.id())?;
-        self.next_hop(record, passed, avoid, (m.dst_id, m.dst_pos), now)
+        self.next_hop(record, passed, avoid, (m.dst_id(), m.dst_pos()), now)
             .map(|(_, n)| n.id)
             .or_else(|| record.parent().map(|(p, _)| p))
     }
