@@ -2,8 +2,9 @@
 // `bark-link`'s tests give them; an image file's checks and the name a
 // picked one is shown by; where a transfer goes on from; and the whole
 // update against the fake node, with lost pieces, a lost link, a low
-// battery and the reboot, its answer lost to the link's end or not; what
-// the finished update shows, whether the node hears anyone after it, and
+// battery and the reboot, its answer lost to the link's end or not, and
+// another node linked meanwhile, which is neither sent the image nor
+// judged; what the finished update shows, whether the node hears anyone after it, and
 // when the latest release is offered; and the screen of a finished
 // update.
 
@@ -322,6 +323,73 @@ void main() {
         s.attach(node.connect());
         async.flushMicrotasks();
         expect(u.phase, Phase.done, reason: u.message);
+      });
+    });
+
+    /// Another node in range, public, on image version `image`.
+    OtherNode other(FakeAsync async, int image) => OtherNode(
+      now: () => start.add(async.elapsed),
+      sodium: sodium,
+      app: List.filled(32, 7),
+    )..image = image;
+
+    /// Sends version 2 and reboots the node into it; the node is away.
+    void rebooted(FakeAsync async, Updater u) {
+      u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
+      u.send();
+      async.flushMicrotasks();
+      u.reboot();
+      async.flushMicrotasks();
+      expect(u.phase, Phase.rebooting, reason: u.message);
+    }
+
+    for (final (back, phase, message) in [
+      (2, Phase.done, null),
+      (1, Phase.failed, 'Version 2 did not start; the node is back on 1'),
+    ]) {
+      test('another node linked during the reboot is not judged; the node '
+          'back on $back is', () {
+        run((async, s, node, u) {
+          rebooted(async, u);
+          // A guest's link to a public node on another version, as the
+          // search may make while the node swaps.
+          final o = other(async, 3);
+          s.attach(o.connectGuest(), guest: true);
+          async.flushMicrotasks();
+          expect(s.node!.id, OtherNode.otherId);
+          expect(u.phase, Phase.rebooting, reason: u.message);
+          expect(u.updated, isNull);
+          o.dispose();
+          async.flushMicrotasks();
+          async.elapse(FakeNode.swapTime);
+          // The loader swapped the old image back, or did not.
+          if (back == 1) node.image = 1;
+          s.attach(node.connect());
+          async.flushMicrotasks();
+          expect(u.phase, phase);
+          expect(u.message, message);
+        });
+      });
+    }
+
+    test('a lost transfer does not go on into another paired node', () {
+      run((async, s, node, u) {
+        u.choose(parseImage(imageFile(2, 20001)), 'file');
+        node.closeAfterPieces = 40;
+        u.send();
+        async.flushMicrotasks();
+        expect(u.phase, Phase.paused);
+        final o = other(async, 1);
+        s.attach(o.connect());
+        async.flushMicrotasks();
+        expect(u.phase, Phase.paused);
+        expect(u.atNode, isFalse);
+        expect(o.piecesWritten, 0);
+        o.dispose();
+        async.flushMicrotasks();
+        s.attach(node.connect());
+        async.flushMicrotasks();
+        expect(u.phase, Phase.committed, reason: u.message);
       });
     });
 

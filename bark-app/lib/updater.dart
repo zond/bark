@@ -127,6 +127,10 @@ class Updater extends ChangeNotifier {
   /// The last thing the node said, or what went wrong.
   String? message;
 
+  /// The node the image goes to, from the send that began it: what the
+  /// app does next, and the update's outcome, are that node's alone.
+  List<int>? _target;
+
   /// The version the node ran before the reboot.
   int? _before;
 
@@ -184,6 +188,14 @@ class Updater extends ChangeNotifier {
       phase == Phase.committing ||
       phase == Phase.rebooting;
 
+  /// The link is to the node the update goes to, or to any node before
+  /// the update has one: what the next step needs.
+  bool get atNode {
+    final n = session.connected ? session.node : null;
+    final t = _target;
+    return n != null && (t == null || listEquals(n.id, t));
+  }
+
   /// Whether the chosen image, its progress and its actions are shown:
   /// not once the node runs it, when they say nothing more.
   bool get showsImage => image != null && phase != Phase.done;
@@ -236,6 +248,7 @@ class Updater extends ChangeNotifier {
     image = i;
     from = source;
     held = 0;
+    _target = null;
     _set(Phase.idle);
   }
 
@@ -243,6 +256,10 @@ class Updater extends ChangeNotifier {
     final l = session.link;
     final n = session.node;
     if (l == null || n == null) throw StateError('not connected');
+    final t = _target;
+    if (t != null && !listEquals(n.id, t)) {
+      throw StateError('connected to another node than ${nodeLabel(t)}');
+    }
     if (session.guest) {
       throw StateError('only the phone paired with the node updates it');
     }
@@ -253,6 +270,10 @@ class Updater extends ChangeNotifier {
   Future<void> send() async {
     if (_running || image == null) return;
     _running = true;
+    // A new send, not one that goes on, is to the node connected now.
+    if (phase == Phase.idle || phase == Phase.failed) {
+      _target = session.node?.id;
+    }
     try {
       await _send(image!);
     } on AttException catch (e) {
@@ -390,6 +411,9 @@ class Updater extends ChangeNotifier {
       return;
     }
     if (updated != null && (session.status?.heard ?? 0) > 0) _heard = true;
+    // Another node, as the search may take while this one is away, is
+    // neither sent this image nor judged by its version.
+    if (!atNode) return;
     if (phase == Phase.paused && !_running) {
       unawaited(send());
     } else if (phase == Phase.rebooting && _down) {

@@ -843,8 +843,8 @@ windows of seven pieces of 240 bytes, each window followed by a read of
 where the node stands (`lib/updater.dart`); it asks Android for a short
 connection interval first, and an image of 400 KB takes about 20 s, up
 to a minute where Android does not grant it. If the link is lost, the
-screen says how far it got, and when the app connects again it goes on
-from the bytes the node holds, not from the start. Once every byte is
+screen says how far it got, and when the app connects to that node
+again it goes on from the bytes the node holds, not from the start. Once every byte is
 there the app commits: the node checks the image and answers, and the
 screen says it keeps it for its next boot, or why it refused, in words.
 A refusal for a low battery keeps the image on the node, and
@@ -857,7 +857,10 @@ connects again by itself, and the screen says the node runs version N,
 updated from version M just now, or so many minutes ago; the image,
 its progress and its buttons go until another is picked. If the new
 image did not start, the node swapped the old one back, and the screen
-says the version it came back on. An image from the phone keeps itself
+says the version it came back on. Only the node the image went to
+decides this, and only it is sent the rest of an image or asked to
+commit or reboot: another node the app links to meanwhile, as a public
+one as a guest while this one swaps, changes nothing of the update. An image from the phone keeps itself
 whatever the node hears, since the node may stand alone
 (spec "Phone link", Updates). So if the node still hears no other node,
 sleepy ones counted, 585.9 s after it came back, as long as an image

@@ -172,6 +172,8 @@ class _UpdateScreenState extends State<UpdateScreen> {
 
   List<Widget> _actions(bool newer) {
     final connected = app.session.connected;
+    // What goes on with an image goes on with the node that holds it.
+    final at = u.atNode;
     return switch (u.phase) {
       Phase.idle || Phase.failed => [
         FilledButton(
@@ -188,19 +190,19 @@ class _UpdateScreenState extends State<UpdateScreen> {
       ],
       Phase.paused => [
         OutlinedButton(
-          onPressed: connected ? u.send : null,
+          onPressed: at ? u.send : null,
           child: const Text('Go on'),
         ),
       ],
       Phase.staged => [
         FilledButton(
-          onPressed: connected ? u.commit : null,
+          onPressed: at ? u.commit : null,
           child: const Text('Try again'),
         ),
       ],
       Phase.committed => [
         FilledButton(
-          onPressed: connected ? u.reboot : null,
+          onPressed: at ? u.reboot : null,
           child: Text('Reboot into version ${u.image!.version}'),
         ),
       ],
