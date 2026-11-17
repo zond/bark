@@ -1327,10 +1327,15 @@ higher than every one of theirs ([receiving DATA](#receiving-data)). Its
 wait is its next hop's service time, as that next hop's line takes it
 ([bans](#bans)), for each message queued here, deliveries aside, that
 goes to the same next hop now. The count of a queued message is the one
-it holds here, one less than the count it is sent with. Every queued
-message is counted where routing sends it now ([next hop](#next-hop)),
-not where it was going when it came, so the gate needs no state beyond
-the queue and the neighbour table. It refuses the rest, each with a place
+it holds here, one less than the count it is sent with. Each queued
+message is counted where it was last routed ([next hop](#next-hop)): when
+it was queued, as its arrival routed it, and again whenever it is routed
+to be chosen or handed over (below); one being handed over counts where
+it goes, and one that ended here counts nowhere. A route kept to a
+neighbour whose place in the table a newcomer takes is forgotten. So the
+gate routes nothing itself, and a message whose way has changed since it
+was last routed counts on its old way until it is routed again (roadmap
+D231). It refuses the rest, each with a place
 in that neighbour's line ([bans](#bans)). The gate weighs time per next
 hop, so a banned neighbour's messages keep out no other way's; 30 s is
 the first round figure above the longest wait the gate meets at the
@@ -1361,8 +1366,9 @@ The chosen hand-over then waits for the bucket if it must
 ([duty cycle cap](#duty-cycle-cap)); a shorter frame behind it does not
 go first, or with the bucket at the cap the longer frame would never go.
 Routing every message costs at most the queue's entries times the
-neighbour table's. Each entry keeps where it was last routed and since
-when, for the service time ([neighbour table](#neighbour-table)), and
+neighbour table's. Each entry keeps where it was last routed, for the
+gate, and since when, for the service time
+([neighbour table](#neighbour-table)), and
 whether its next hop has been banned since it was queued; the relay keeps
 when the earliest ban that held a message back ends.
 

@@ -86,6 +86,8 @@ struct Room {
     record_at: Option<usize>,
     /// The send-queue place of one to send on; 0 the regular room.
     place: u8,
+    /// Where one to send on is routed, as [`Outgoing::toward`] says it.
+    toward: u8,
 }
 
 /// Whether a DATA is taken, decided when it arrives (spec "Receiving DATA").
@@ -492,18 +494,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         Some((parent, ban))
     }
 
-    /// Where queued entry `o` goes now; `None` for a delivery, one set
-    /// aside, or one this relay owns now.
-    fn bound_for(&self, w: &Ways, o: &Outgoing) -> Option<NodeId> {
-        if o.kind.delivers() || o.held() {
-            return None;
-        }
-        if o.in_flight() {
-            return Some(o.to);
-        }
-        self.heading(w, o).map(|(to, _, _)| to)
-    }
-
     /// Where queued forward `o` goes if routed now, when that one's ban
     /// ends, and where its record is: `None` if this relay owns its
     /// destination now, or it has no record.
@@ -526,6 +516,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let mut banned = [false; N];
         let mut hints = [None::<u16>; N];
         let mut toward = [0u8; N];
+        let mut routed = [false; N];
         let mut wake: Option<Instant> = None;
         let w = self.ways(now);
         let still_banned = w.live & w.banned;
@@ -540,9 +531,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             if o.kind != Kind::Forward {
                 continue;
             }
+            routed[i] = true;
             if let Some((to, ban, at)) = self.heading(&w, o) {
                 hints[i] = Some(at);
-                toward[i] = self.neighbours.slot_of(to).map_or(0, |s| s as u8 + 1);
+                toward[i] = self.toward(to);
                 if ban > now {
                     banned[i] = true;
                     wake = earlier(wake, Some(ban));
@@ -554,13 +546,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 o.record = hints[i].unwrap_or(o.record);
                 o.waited |= banned[i];
                 o.keep_avoiding(still_banned);
-                // Routed elsewhere than before, it begins to wait for
-                // the new way now, for that way's service time.
-                if toward[i] != 0 && o.toward != toward[i] {
-                    if o.toward != 0 {
-                        o.since = now;
-                    }
-                    o.toward = toward[i];
+                if routed[i] {
+                    o.routed(toward[i], now);
                 }
             }
         }
@@ -571,13 +558,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
 
     /// The gate of the send queue (spec "Send queue"): what a message
     /// received with `hops`, other than `id`, going to `to`, finds there.
-    /// A queued message's count here is one less than it is sent with. At
-    /// most queue entries × neighbour entries per call.
+    /// Each queued message counts where it was last routed, one in flight
+    /// where it goes; a delivery and one set aside do not count. A queued
+    /// message's count here is one less than it is sent with.
     fn gate(&self, id: MsgId, to: NodeId, hops: Hops, now: Instant) -> Gate {
         let (mut ahead, mut barred, mut oldest) = (0, false, None::<Instant>);
-        let w = self.ways(now);
+        let toward = self.toward(to);
+        let bound = |o: &Outgoing| match o.in_flight() {
+            true => o.to == to,
+            false => toward != 0 && o.toward == toward,
+        };
         for o in self.queue.iter().filter(|o| o.msg_id() != id) {
-            if self.bound_for(&w, o) == Some(to) {
+            if !o.kind.delivers() && !o.held() && bound(o) {
                 ahead += 1;
                 barred |= o.hops.saturating_sub(1) >= hops;
                 oldest = Some(oldest.map_or(o.since, |t| t.min(o.since)));
@@ -593,6 +585,25 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             oldest,
             over: barred && queue > HOP_WAIT,
         }
+    }
+
+    /// What [`Self::gate`] finds: the wait and whether it refuses.
+    #[cfg(test)]
+    pub(super) fn gate_for(
+        &self,
+        id: MsgId,
+        to: NodeId,
+        hops: Hops,
+        now: Instant,
+    ) -> (Duration, bool) {
+        let g = self.gate(id, to, hops, now);
+        (g.queue, g.over)
+    }
+
+    /// Neighbour `to` as [`Outgoing::toward`] says it: its slot plus one,
+    /// 0 if it is not in the table.
+    fn toward(&self, to: NodeId) -> u8 {
+        self.neighbours.slot_of(to).map_or(0, |s| s as u8 + 1)
     }
 
     /// Whether forwarding, or an ACK that takes on work, may spend
@@ -1019,8 +1030,9 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             return Ok((arrival, Room::default()));
         }
         let heads = self.way_on(d, &arrival, now);
+        let toward = heads.map_or(0, |(to, _)| self.toward(to));
         self.room(d, &arrival, heads, None, Duration::ZERO, false, now)
-            .map(|room| (arrival, room))
+            .map(|room| (arrival, Room { toward, ..room }))
     }
 
     /// What `d` is to this relay: its case of spec "Receiving DATA" and
@@ -1104,7 +1116,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
             return Ok(Room {
                 record_at,
-                place: 0,
+                ..Room::default()
             });
         }
         let air = self.data_airtime(d.payload.len(), d.hops.saturating_add(1));
@@ -1116,7 +1128,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         if a.fresh && (self.bans_end(now).is_some() || banned) {
             return Err(DropReason::Banned);
         }
-        Ok(Room { record_at, place })
+        Ok(Room {
+            record_at,
+            place,
+            ..Room::default()
+        })
     }
 
     /// Act on `d`, which is `a` to this relay and taken into `room`: its
@@ -1176,7 +1192,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             Case::New | Case::Search if a.owner => {
                 self.arrive(id, d, now, emit);
             }
-            Case::New | Case::Search => self.send_on(d, room.place, now, emit),
+            Case::New | Case::Search => self.send_on(d, room, now, emit),
         }
     }
 
@@ -1273,17 +1289,18 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             .place(|id| held.binary_search_by_key(&id.0, |h| h.0).is_ok())
     }
 
-    /// Queue `d` onward into `place`. It carries the received count plus
-    /// one until its hand-over stamps the count it is sent with
-    /// (spec "Hop count").
-    fn send_on(&mut self, d: &Data<'_>, place: u8, now: Instant, emit: &mut dyn FnMut(Action)) {
+    /// Queue `d` onward into `room`, routed as it says. It carries the
+    /// received count plus one until its hand-over stamps the count it is
+    /// sent with (spec "Hop count").
+    fn send_on(&mut self, d: &Data<'_>, room: Room, now: Instant, emit: &mut dyn FnMut(Action)) {
         let id = d.msg_id();
         if d.hops == MAX_HOPS {
             self.drop_msg(id, DropReason::HopCap, emit);
             return;
         }
         let out = Outgoing {
-            place,
+            place: room.place,
+            toward: room.toward,
             since: now,
             ..self.onward(Message::of(d), (d.hops, d.wrong))
         };
@@ -1489,13 +1506,17 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     /// Queue the forward `out`, whose record is in the table, into
-    /// `place`: whether it was.
+    /// `place`, routed from the state as it is now: whether it was.
     pub(super) fn push_forward(&mut self, out: Outgoing, place: u8, now: Instant) -> bool {
-        let out = Outgoing {
+        let mut out = Outgoing {
             place,
             since: now,
             ..out
         };
+        let toward = self
+            .heading(&self.ways(now), &out)
+            .map_or(0, |(to, _, _)| self.toward(to));
+        out.routed(toward, now);
         let pushed = self.queue.push(out).is_ok();
         self.forwarding.feed_due |= pushed;
         pushed
@@ -1639,7 +1660,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         }
         let record = Record::new(id, None, (0, 0), now);
         let w = self.ways(now);
-        if let Some((to, ban)) = self.heads_to(&w, &record, 0, 0, (dst_id, dst_pos)) {
+        let heads = self.heads_to(&w, &record, 0, 0, (dst_id, dst_pos));
+        if let Some((to, ban)) = heads {
             // Fresh work, gated as a sleepy node's own is at its anchor
             // (spec "Receiving DATA").
             let gate = self.gate(id, to, 0, now);
@@ -1663,7 +1685,11 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             }
         }
         self.records.put(at, record);
-        self.send_on(&d, 0, now, emit);
+        let room = Room {
+            toward: heads.map_or(0, |(to, _)| self.toward(to)),
+            ..Room::default()
+        };
+        self.send_on(&d, room, now, emit);
     }
 
     // --- The hand-over (spec "Hand-over") ---
@@ -1768,7 +1794,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// is kept: a neighbour that refused or failed it is chosen again while
     /// it ranks first. Ownership is checked again: a closer neighbour may
     /// have been demoted since.
-    fn route(&mut self, out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
+    fn route(&mut self, mut out: Outgoing, now: Instant, emit: &mut dyn FnMut(Action)) -> Routed {
         let id = out.msg_id();
         let dst = (out.message.dst_id(), out.message.dst_pos());
         debug_assert!(
@@ -1790,8 +1816,16 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 .map_or(Instant::ZERO, |n| n.banned_until);
             ((p, stored), ban)
         });
+        let ends_here = self.ends_here(&w, dst, Some(&record), out.passed, None);
+        let heads = next.map(|(n, _)| n.id).or(parent.map(|((p, _), _)| p));
+        let toward = heads.filter(|_| !ends_here).map_or(0, |to| self.toward(to));
+        out.routed(toward, now);
+        // Kept also where it waits in its place: the gate counts it there.
+        if let Some(current) = self.queue.current_mut() {
+            current.routed(toward, now);
+        }
         let found = way(
-            self.ends_here(&w, dst, Some(&record), out.passed, None),
+            ends_here,
             self.own.id != Some(id) || self.has_room_for(out.message.dst_id(), now),
             next,
             self.origin_waits(&record, id, now),

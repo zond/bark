@@ -13,11 +13,12 @@
 //! finds a free place at or below it, so numbers above that never change
 //! what is taken.
 //!
-//! Where a forward goes is not kept: the relay routes every entry each
-//! time it may send, and tells [`SendQueue::next_due`] which may go now.
-//! Choosing an entry does not move it: the hand-over refers to it where
-//! it stands, so of equals the one that arrived first is offered first,
-//! however often they wait.
+//! Each entry keeps where it was last routed ([`Outgoing::toward`]), which
+//! the gate counts by; the relay routes an entry again when it may send,
+//! and tells [`SendQueue::next_due`] which may go now. Choosing an entry
+//! does not move it: the hand-over refers to it where it stands, so of
+//! equals the one that arrived first is offered first, however often they
+//! wait.
 
 use crate::event::{Frame, MAX_FRAME};
 use crate::ids::{MsgId, NodeId};
@@ -229,8 +230,10 @@ pub struct Outgoing {
     /// hint, checked against the ID before it is used.
     pub record: u16,
     /// The neighbour-table slot, plus one, of where it was last routed;
-    /// 0 before it was. With `since`, a sample of that neighbour's service
-    /// time when it takes it (spec "Neighbour table").
+    /// 0 where that was to no neighbour: it ended here, or it is not yet
+    /// routed. The gate counts it there (spec "Send queue"). With `since`,
+    /// a sample of that neighbour's service time when it takes it
+    /// (spec "Neighbour table").
     pub toward: u8,
     /// When it began to wait for that neighbour here: when it was queued,
     /// or routed to another than before.
@@ -314,6 +317,18 @@ impl Outgoing {
     /// Its message's ID.
     pub fn msg_id(&self) -> MsgId {
         self.message.id()
+    }
+
+    /// Routed now toward `toward`, as [`Outgoing::toward`] says it. Routed
+    /// to another neighbour than before, it begins to wait for that one
+    /// now, for that one's service time.
+    pub fn routed(&mut self, toward: u8, now: Instant) {
+        if toward != self.toward {
+            self.toward = toward;
+            if toward != 0 {
+                self.since = now;
+            }
+        }
     }
 
     /// Go round neighbour-table `slot` while it is banned.
@@ -533,11 +548,14 @@ impl SendQueue {
     }
 
     /// Neighbour-table `slot` has a new occupant, which no entry has held
-    /// for.
+    /// for, and none was routed to.
     pub fn slot_reoccupied(&mut self, slot: usize) {
         for o in self.entries.as_mut_slice() {
             o.passed &= !(1u64 << slot);
             o.keep_avoiding(!(1u64 << slot));
+            if usize::from(o.toward) == slot + 1 {
+                o.toward = 0;
+            }
         }
     }
 

@@ -4227,3 +4227,5 @@ fn the_default_wrong_hop_cap() {
     assert_eq!(Config::default().wrong_hop_cap, crate::node::WRONG_HOP_CAP);
     assert_eq!(crate::node::WRONG_HOP_CAP, 64);
 }
+
+mod queue;
