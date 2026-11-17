@@ -9,7 +9,8 @@
 //! enable, and the green LED is on P1.01, not P0.15, which the label shows
 //! as an expansion-header pin. The rail switches' logic and the external
 //! flash's pins are from the maker's schematic
-//! (`docs/external-flash-2026-11-06.md`). Polarities and the LEDs' wiring
+//! (`docs/external-flash-2026-11-06.md`). The green LED's pin is confirmed
+//! by its blink on every board; the other LEDs' wiring and the polarities
 //! are still unverified.
 //!
 //! [`take_board!`] moves the pins out of [`Peripherals`] so each driver takes

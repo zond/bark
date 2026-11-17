@@ -148,6 +148,10 @@ Phase 2:
 - An update over the mesh from one board to another, the gatherer once
   left unattended; version 11 of 471 544 bytes was whole an hour after
   it began and swapped in at a quiet moment (2026-11-09).
+- The external flash takes a byte programmed again over a written one,
+  keeping the AND of the two, as each record's bit of a slot's mark is:
+  boards 3112 and c367 log a mark read back right and none wrong
+  (Mailbox, below; logs of 2026-11-10 and 2026-11-13).
 - On the bench since 2026-11-09, with what each is to show in the bench
   list: the neighbour status and its retries (roadmap D157, D158,
   D161), the code on the screen and the button (D160, D206),
@@ -241,14 +245,13 @@ Unverified, in the order they will fail if wrong:
   and that a phone whose record holds its bond, and that pairs again on a
   full node, is known by its address and taken (Phone link, below;
   roadmap D168).
-- That the external flash takes a byte programmed again over a written
-  one, as each record's bit of a slot's mark is (Mailbox, below).
 - What a sleepy node's current pays for a paired phone's standing link.
 - VBUS detection: `USBREGSTATUS.VBUSDETECT` reads the cable, and the
   POWER interrupt comes at each change with the USB driver's handler
   bound beside the node's, so that the core is told within an event's
   time and the node turns a relay on the cable at once.
-- The green LED is on P1.01 (the board's label, 2026-10-30) and active low.
+- The green LED is active low; its pin, P1.01 (the board's label,
+  2026-10-30), is confirmed by its blink on every board.
 - The stored state: the NVMC, through the MPSL's flash timeslots, writes each record the core asks to keep into
   the next slot of the `STORE` page and erases the page when it is full,
   and the next boot logs `stored Some(..)` and comes back on the same home
@@ -1410,9 +1413,9 @@ something changes, and an arrival adds to them without a scan.
 A mark takes up to eight programs of its byte between erases, one for
 each record's bit. Whether the ZD25WQ16B allows a byte programmed again
 over a written one, keeping the AND of the two, its datasheet, not in the
-repository, says; so each mark is read back after its program, and the
-log says once `mailbox: a mark programmed over 0x03 read back 0x02, as it
-should`, or, if the chip does not, `mailbox: a mark at 0x.. programmed
+repository, says; the bench's boards do (Verified and unverified, above).
+Each mark is still read back after its program, and the log says once
+`mailbox: a mark programmed over 0x03 read back 0x02, as it should`, or, if the chip does not, `mailbox: a mark at 0x.. programmed
 0xfd over 0x03 read back .., not 0x01: the flash does not take a byte
 programmed again (1 so far)`, again at each power of two of the count.
 The second means a reading or a fetch may leave its record's bit set, so

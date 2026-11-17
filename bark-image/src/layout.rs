@@ -205,8 +205,8 @@ const MBR_RAM: u32 = 8;
 
 /// Where a panic message waits for the next boot (`panic-persist` in
 /// `bark-fw`): below every other use of RAM. The bootloader's RAM starts at
-/// `0x20007F7C`, so a soft reset through it should leave this intact;
-/// unverified on hardware.
+/// `0x20007F7C`, so a soft reset through it leaves this intact, as the
+/// boards' logs show (`previous boot panicked`, 2026-11-13).
 pub const PANIC_DUMP: Region = Region {
     start: RAM_START + MBR_RAM,
     len: 0x400 - MBR_RAM,
