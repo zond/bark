@@ -46,15 +46,17 @@ Uint8List imageFile(
       ((x = (x * 1103515245 + 12345) & 0x7fffffff) >> 16) & 0xff,
   ];
   List<int> le32(int v) => [for (var i = 0; i < 4; i++) (v >> (8 * i)) & 0xff];
+  // The table hash a node checks; the app does not.
   final header = [
     ...'bark'.codeUnits,
-    1,
+    2,
     0,
     0,
     0,
     ...le32(version),
     ...le32(len),
     ...sha256.convert(bytes).bytes,
+    ...List.filled(32, 0xa5),
     if (!unsigned) ...[1, ...List.filled(64, 0x5a)],
   ];
   return Uint8List.fromList([

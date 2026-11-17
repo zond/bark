@@ -850,13 +850,13 @@ class FakeNode implements NodeLink {
         if (_committed) _refuse(Refusal.busy);
         _staging = null;
         _held.clear();
-        if (String.fromCharCodes(h.sublist(0, 4)) != 'bark' || h[4] != 1) {
+        if (String.fromCharCodes(h.sublist(0, 4)) != 'bark' || h[4] != 2) {
           _refuse(Refusal.header);
         }
         if (_le32(h, 8) <= image) _refuse(Refusal.version);
         // A node verifies each slot's Ed25519 signature; the fake takes a
         // header with any slot naming a key as signed.
-        if (![for (var s = 0; s < 3; s++) h[48 + 65 * s]].any((k) => k != 0)) {
+        if (![for (var s = 0; s < 2; s++) h[80 + 65 * s]].any((k) => k != 0)) {
           _refuse(Refusal.signature);
         }
         _staging = h;

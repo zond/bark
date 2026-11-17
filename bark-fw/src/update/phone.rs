@@ -256,7 +256,7 @@ fn refusal(e: Refused) -> Refusal {
             StageError::Offset { .. } | StageError::Chunk | StageError::Incomplete { .. } => {
                 Refusal::Incomplete
             }
-            StageError::Hash => Refusal::Hash,
+            StageError::Hash | StageError::Table => Refusal::Hash,
             StageError::Flash(_) => Refusal::Flash,
         },
     }

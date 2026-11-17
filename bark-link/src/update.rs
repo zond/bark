@@ -144,8 +144,8 @@ pub enum Refusal {
     Busy = 3,
     /// Not every byte of the image is held.
     Incomplete = 4,
-    /// The bytes held do not hash to the header's hash; they are
-    /// forgotten.
+    /// The bytes held do not hash to the header's hashes, of the image
+    /// or of its block table; they are forgotten.
     Hash = 5,
     /// On battery at or below the low level; the image stays staged, to
     /// commit on external power (spec "Implementation notes").

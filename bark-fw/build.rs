@@ -22,7 +22,7 @@ fn main() {
     fs::write(out.join("keys.rs"), keys()).expect("write keys.rs");
 }
 
-/// The signing keys as Rust, a `[Key; SLOTS]`: the project's,
+/// The signing keys as Rust, a `[Key; KEYS]`: the project's,
 /// `keys/project.pub`, one `id:hex` a line, each id a byte from 1 to 255
 /// that names the key in a signature's slot and each key its Ed25519
 /// public key, so that any node takes the project's releases whichever
@@ -31,7 +31,7 @@ fn main() {
 /// `id:hex` comma-separated, in place of the project's. A protected build
 /// refuses the bench key, whose private half is in the repository.
 fn keys() -> String {
-    use bark_image::sign::{KEY_LEN, SLOTS};
+    use bark_image::sign::{KEYS, KEY_LEN};
     println!("cargo:rerun-if-env-changed=BARK_SIGNING_KEYS");
     println!("cargo:rerun-if-env-changed=BARK_OPEN");
     println!("cargo:rerun-if-changed=keys/project.pub");
@@ -83,11 +83,11 @@ fn keys() -> String {
         "{from} holds no key, so the firmware would stage no image"
     );
     assert!(
-        keys.len() <= SLOTS,
-        "{from} and the bench key: at most {SLOTS} keys"
+        keys.len() <= KEYS,
+        "{from} and the bench key: at most {KEYS} keys"
     );
     let mut rust = String::from("[");
-    for n in 0..SLOTS {
+    for n in 0..KEYS {
         match keys.get(n) {
             Some((id, public)) => {
                 let bytes: Vec<String> = (0..KEY_LEN)

@@ -27,7 +27,7 @@ use sha2::{Digest, Sha256};
 use crate::layout::external::DFU;
 use crate::layout::{Region, ACTIVE, PAGE, RECORD, STATE};
 use crate::record::{CHECKED, CHECKED_AT, FROM_MESH, HEADER_AT, ORIGIN_AT};
-use crate::sign::{self, Key, SignatureError, SLOTS};
+use crate::sign::{self, Key, SignatureError, KEYS};
 use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN, MAGIC};
 
 /// The flash, shared by the partitions that each see one region of it.
@@ -329,6 +329,9 @@ pub enum StageError {
     },
     /// The staged bytes do not hash to the header's hash.
     Hash,
+    /// The staged bytes' block table does not hash to the header's table
+    /// hash: the mesh would refuse the image as its node served it.
+    Table,
     /// The flash failed.
     Flash(FlashError),
 }
@@ -397,7 +400,7 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
         dfu: D,
         bytes: &[u8; HEADER_LEN],
         running: u32,
-        keys: &[Key; SLOTS],
+        keys: &[Key; KEYS],
     ) -> Result<Self, StageError> {
         let header = Header::decode(bytes).map_err(StageError::Header)?;
         if header.version <= running {
@@ -438,7 +441,7 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
         dfu: D,
         bytes: &[u8; HEADER_LEN],
         running: u32,
-        keys: &[Key; SLOTS],
+        keys: &[Key; KEYS],
     ) -> Result<Self, StageError> {
         let mut s = Self::begin(record, state, dfu, bytes, running, keys).await?;
         s.next = s.header.length;
@@ -497,6 +500,8 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
             return Err(StageError::Incomplete { got: self.next });
         }
         let mut digest = Sha256::new();
+        let mut entries = crate::pieces::Entries::new();
+        entries.feed(&self.signed, |_, _| ());
         let mut buf = [0u8; CHUNK];
         let mut at = 0;
         while at < self.header.length {
@@ -506,10 +511,14 @@ impl<R: AsyncNorFlash, S: AsyncNorFlash, D: AsyncNorFlash> Stager<R, S, D> {
                 .await
                 .map_err(flash_error)?;
             digest.update(&buf[..n]);
+            entries.feed(&buf[..n], |_, _| ());
             at += n as u32;
         }
         if <[u8; HASH_LEN]>::from(digest.finalize()) != self.header.hash {
             return Err(StageError::Hash);
+        }
+        if entries.finish(self.header.length, |_, _| ()) != self.header.table {
+            return Err(StageError::Table);
         }
         self.record
             .write(HEADER_AT, &self.signed)

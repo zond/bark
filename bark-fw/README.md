@@ -501,13 +501,18 @@ as `scripts/uf2.py` lays them:
 | Bytes | Holds |
 |---|---|
 | 0–3 | `bark` |
-| 4 | format, 1 |
+| 4 | format, 2 |
 | 5–7 | zero |
 | 8–11 | version, little-endian, raised with every image |
 | 12–15 | the image's length in bytes, little-endian |
 | 16–47 | SHA-256 of the image (FIPS 180-4) |
-| 48–242 | three signatures of 65 bytes: a byte naming the key, 1 to 255, then an Ed25519 signature (RFC 8032) of bytes 0–47; all zero if empty |
-| 243–255 | zero |
+| 48–79 | SHA-256 of the entries of its block table over the mesh, those of blocks 1 on (`bark-image/src/pieces.rs`, `table_hash`; spec "Updates over the mesh") |
+| 80–209 | two signatures of 65 bytes: a byte naming the key, 1 to 255, then an Ed25519 signature (RFC 8032) of bytes 0–79; all zero if empty |
+| 210–255 | zero |
+
+Two slots, one to sign with and one to bring in the next key, since a
+third does not fit beside 80 signed bytes; a firmware holds up to three
+keys, the project's two and in an open build the bench key.
 
 The firmware's version is `BARK_IMAGE_VERSION` at build time,
 kept under its own symbol, from which `scripts/image.py`
@@ -517,18 +522,20 @@ by UF2, which any staged image replaces and which can itself never be
 staged over another, since `scripts/image.py` packs only a version
 above 0. The hash is computed with the `sha2` crate (0.10.9), the
 firmware's over what it wrote to flash, the loader's again before the
-swap.
+swap. The table hash is checked as the hash is, at the commit, so that a
+node never runs an image whose blocks every node gathering it would
+refuse.
 
 **Signatures.** The running firmware stages an image only if one of
 the header's signatures verifies under one of the up to three public
 keys it was built with, the one its byte names (roadmap D144;
 `bark-image/src/sign.rs`, checked with the `ed25519-compact` crate,
 2.6.0). The loader checks none (D79): no key sits in the one part
-that is never updated. A signature covers bytes 0–47, the hash
+that is never updated. A signature covers bytes 0–79, the hashes
 standing for the image: the firmware hashes the staged bytes anyway, so
-it checks a signature over 48 bytes, not the whole image, and checks
-it as the staging starts, before a byte of the image has come; the hash
-once the last byte has. A header is refused with the reason:
+it checks a signature over 80 bytes, not the whole image, and checks
+it as the staging starts, before a byte of the image has come; the
+hashes once the last byte has. A header is refused with the reason:
 `Signature(Unsigned)`, `Signature(UnknownKey)` when no signature is by a
 key the firmware holds, or `Signature(Bad)`.
 

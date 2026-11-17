@@ -2553,7 +2553,7 @@ and its SHA-256, and then its bytes.
    and the read fit, and the read, answered only once the pieces before
    it are written, is the flow control.
 3. With every byte held, the app writes 1 to commit: the node checks the
-   image against the header's hash, and every other check its console's
+   image against the header's hashes, and every other check its console's
    commit makes, and asks the loader for the swap.
 4. The app writes 2 to reboot: the node answers, ends the link and
    resets.
@@ -2570,7 +2570,7 @@ with the ATT error 0x81, refused, and Update says why:
 | 2, version | not above the version the node runs |
 | 3, busy | a swap is asked for already: reboot first |
 | 4, incomplete | not every byte is held |
-| 5, hash | the bytes do not hash to the header's hash, and are forgotten |
+| 5, hash | the bytes do not hash to the header's hashes, of the image and of its block table, and are forgotten |
 | 6, battery | on battery at or below the low level ([implementation notes](#implementation-notes)); the image stays staged, to commit on external power |
 | 7, flash | the flash failed, and the image is forgotten |
 | 8, signature | no signature in the header verifies under a key the node holds |
@@ -3032,8 +3032,9 @@ node's firmware chooses whose images it takes, so that a node of another
 implementation is never overwritten against its will.
 
 **The image.** An image is named by the SHA-256 of its signed header, the
-48 bytes of its header that its signatures cover: magic, format, version,
-length and the image's own SHA-256 (`bark-image`, `sign.rs`). A version
+80 bytes of its header that its signatures cover: magic, format, version,
+length, the image's own SHA-256 and that of its block table, below
+(`bark-image`, `lib.rs`, `sign.rs`). A version
 names one image, as a release takes its version from its tag, so the
 mesh names an image by its version; the 32-byte name stays with the node
 that holds the image. What travels is the image as packed, its 256-byte
@@ -3042,7 +3043,7 @@ header and then its bytes, in **blocks** (`bark-image`, `pieces.rs`):
 | block | content |
 |---|---|
 | 0, the block table | the whole name, the first 8 bytes of the SHA-256 of each other block, then 8 bytes of the SHA-256 of all of that, its own; one piece up to 26 blocks, two up to 48 |
-| 1 and on | the packed image in blocks of 64 pieces of 247 bytes, the last block shorter and its last piece padded; block 1 begins with the signed header, which hashes to the name |
+| 1 and on | the packed image in blocks of 64 pieces of 247 bytes, the last block shorter and its last piece padded; block 1 begins with the signed header, which hashes to the name, and its entry in the table hashes it from the header's end |
 
 Each block is sent as up to 255 coded pieces, and any 64 distinct ones of
 a block, or as many as it has, give it back (a Reed-Solomon code over

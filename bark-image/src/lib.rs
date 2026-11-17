@@ -40,15 +40,15 @@ pub mod sign;
 /// needs.
 pub const TRIAL_SECONDS: u32 = 600;
 
-/// Bytes of a header: 48 of fields, three slots of a key byte and a
-/// 64-byte Ed25519 signature (RFC 8032), and 13 zero bytes.
+/// Bytes of a header: 80 of fields, two slots of a key byte and a
+/// 64-byte Ed25519 signature (RFC 8032), and 46 zero bytes.
 pub const HEADER_LEN: usize = 256;
 
 /// The first bytes of every header.
 pub const MAGIC: [u8; 4] = *b"bark";
 
 /// This header's layout.
-pub const FORMAT: u8 = 1;
+pub const FORMAT: u8 = 2;
 
 /// The bytes of [`Header::hash`]: SHA-256 (FIPS 180-4).
 pub const HASH_LEN: usize = 32;
@@ -57,17 +57,19 @@ pub const HASH_LEN: usize = 32;
 ///
 /// ```text
 /// 0   magic "bark"
-/// 4   format, 1
+/// 4   format, 2
 /// 5   3 bytes, zero
 /// 8   version, u32 little-endian, raised with every image
 /// 12  length of the image in bytes, u32 little-endian
 /// 16  SHA-256 of the image's bytes
-/// 48  3 slots of 65 bytes, each a byte naming a key, then an Ed25519
-///     signature (RFC 8032) of bytes 0..48 by that key; zero if empty
-/// 243 13 bytes, zero
+/// 48  SHA-256 of the entries of its block table but the table's own
+///     (`pieces`), so that the first two blocks prove the rest
+/// 80  2 slots of 65 bytes, each a byte naming a key, then an Ed25519
+///     signature (RFC 8032) of bytes 0..80 by that key; zero if empty
+/// 210 46 bytes, zero
 /// ```
 ///
-/// [`Header`] holds bytes 0..48; `sign` reads the slots.
+/// [`Header`] holds bytes 0..80; `sign` reads the slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
     /// The image's version: an image is staged only above the running one's.
@@ -76,6 +78,9 @@ pub struct Header {
     pub length: u32,
     /// SHA-256 of those bytes.
     pub hash: [u8; HASH_LEN],
+    /// SHA-256 of the block table's entries of blocks 1 on
+    /// (`pieces::table_hash`).
+    pub table: [u8; HASH_LEN],
 }
 
 /// Why a header was refused.
@@ -98,6 +103,7 @@ impl Header {
         b[8..12].copy_from_slice(&self.version.to_le_bytes());
         b[12..16].copy_from_slice(&self.length.to_le_bytes());
         b[16..48].copy_from_slice(&self.hash);
+        b[48..80].copy_from_slice(&self.table);
         b
     }
 
@@ -116,10 +122,13 @@ impl Header {
         }
         let mut hash = [0u8; HASH_LEN];
         hash.copy_from_slice(&b[16..48]);
+        let mut table = [0u8; HASH_LEN];
+        table.copy_from_slice(&b[48..80]);
         Ok(Header {
             version: word(8),
             length,
             hash,
+            table,
         })
     }
 }
@@ -133,6 +142,7 @@ mod tests {
             version: 7,
             length: 167_996,
             hash: core::array::from_fn(|i| i as u8),
+            table: core::array::from_fn(|i| 0x80 | i as u8),
         }
     }
 
@@ -144,12 +154,14 @@ mod tests {
     #[test]
     fn the_bytes_are_the_documented_ones() {
         let b = header().encode();
-        assert_eq!(&b[0..8], b"bark\x01\0\0\0");
+        assert_eq!(&b[0..8], b"bark\x02\0\0\0");
         assert_eq!(&b[8..12], &7u32.to_le_bytes());
         assert_eq!(&b[12..16], &167_996u32.to_le_bytes());
         assert_eq!(b[16], 0);
         assert_eq!(b[47], 31);
-        assert!(b[48..].iter().all(|&x| x == 0));
+        assert_eq!(b[48], 0x80);
+        assert_eq!(b[79], 0x80 | 31);
+        assert!(b[80..].iter().all(|&x| x == 0));
     }
 
     #[test]
@@ -158,8 +170,8 @@ mod tests {
         b[0] = b'B';
         assert_eq!(Header::decode(&b), Err(HeaderError::Magic));
         let mut b = header().encode();
-        b[4] = 2;
-        assert_eq!(Header::decode(&b), Err(HeaderError::Format(2)));
+        b[4] = 1;
+        assert_eq!(Header::decode(&b), Err(HeaderError::Format(1)));
         let too_long = layout::ACTIVE.len + 1;
         let b = Header {
             length: too_long,

@@ -194,8 +194,8 @@ fn signer() -> ed25519_compact::KeyPair {
     ed25519_compact::KeyPair::from_seed(ed25519_compact::Seed::new([7; 32]))
 }
 
-fn keys() -> [Key; SLOTS] {
-    let mut k = [Key::NONE; SLOTS];
+fn keys() -> [Key; KEYS] {
+    let mut k = [Key::NONE; KEYS];
     k[0] = Key {
         id: 1,
         public: *signer().pk,
@@ -215,10 +215,14 @@ fn header_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
 
 /// The header of `b`, unsigned.
 fn unsigned_for(b: &[u8], version: u32) -> [u8; HEADER_LEN] {
+    let mut entries = crate::pieces::Entries::new();
+    entries.feed(&[0; HEADER_LEN], |_, _| ());
+    entries.feed(b, |_, _| ());
     Header {
         version,
         length: b.len() as u32,
         hash: Sha256::digest(b).into(),
+        table: entries.finish(b.len() as u32, |_, _| ()),
     }
     .encode()
 }
@@ -469,6 +473,18 @@ fn staging_refuses_what_it_cannot_stage() {
         now(s.write((n * CHUNK) as u32, chunk)).unwrap();
     }
     assert_eq!(now(s.finish()).err(), Some(StageError::Hash));
+    // The right bytes under a header whose table hash is another's.
+    let mut wrong = unsigned_for(&b, RUNNING + 1);
+    wrong[48] ^= 1;
+    let at = sign::SIGNED_LEN;
+    wrong[at] = 1;
+    let signature = *signer().sk.sign(&wrong[..at], None);
+    wrong[at + 1..at + sign::SLOT_LEN].copy_from_slice(&signature);
+    let mut s = begin(i, e, &wrong, RUNNING).unwrap();
+    for (n, chunk) in b.chunks(CHUNK).enumerate() {
+        now(s.write((n * CHUNK) as u32, chunk)).unwrap();
+    }
+    assert_eq!(now(s.finish()).err(), Some(StageError::Table));
     assert_eq!(boot(&board), Ok(Boot::Normal));
     // On trial, nothing is staged until the image confirms itself.
     stage(&board, &b).unwrap();

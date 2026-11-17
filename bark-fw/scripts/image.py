@@ -15,13 +15,13 @@ next boot (bark-fw/README.md, "Updates").
     scripts/image.py size target/thumbv7em-none-eabihf/release/bark-fw
 
 An image is the 256-byte header of bark-image/src/lib.rs (magic "bark",
-format 1, version, length, SHA-256 of the image, three signature slots)
-followed by the flash image from the firmware's slot, as scripts/uf2.py
-lays it. The version is the firmware's own, read from its
-BARK_IMAGE_VERSION symbol, so that the header cannot say another. A
-signature is Ed25519 (RFC 8032) over the header's first 48 bytes, by a
-key the running firmware holds under the byte that names it
-(bark-image/src/sign.rs).
+format 2, version, length, SHA-256 of the image, SHA-256 of its block
+table's entries, two signature slots) followed by the flash image from
+the firmware's slot, as scripts/uf2.py lays it. The version is the
+firmware's own, read from its BARK_IMAGE_VERSION symbol, so that the
+header cannot say another. A signature is Ed25519 (RFC 8032) over the
+header's first 80 bytes, by a key the running firmware holds under the
+byte that names it (bark-image/src/sign.rs).
 
 pack and stage need the standard library only; keygen, sign and check
 need the `cryptography` package. Run with python3 -I.
@@ -43,14 +43,14 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import uf2  # noqa: E402  (scripts/uf2.py, next to this file)
 
-HEADER_LEN = 256
-MAGIC = b"bark"
-FORMAT = 1
+HEADER_LEN = uf2.HEADER_LEN
+MAGIC = uf2.HEADER_MAGIC
+FORMAT = uf2.HEADER_FORMAT
 # The signatures (bark-image/src/sign.rs): the header's bytes they cover,
-# then three slots of a byte naming the key and a signature of 64 bytes
+# then two slots of a byte naming the key and a signature of 64 bytes
 # (RFC 8032, 5.1.6).
-SIGNED_LEN = 48
-SLOTS = 3
+SIGNED_LEN = uf2.SIGNED_LEN
+SLOTS = uf2.HEADER_SLOTS
 SIGNATURE_LEN = 64
 SLOT_LEN = 1 + SIGNATURE_LEN
 # The bench key pair, which open builds hold beside the project's keys
@@ -70,7 +70,7 @@ def bench_key_id() -> int:
 # docs/protocol.md, "Updates over the mesh"). A packed image longer than
 # 47 blocks cannot travel over the mesh.
 MESH_BLOCKS = 48
-BLOCK_BYTES = 64 * 247
+BLOCK_BYTES = uf2.BLOCK_BYTES
 # The blocks `size` lets an image reach, under MESH_BLOCKS so that growth
 # is seen while there is room to act: 8 blocks, 126 KB, before the limit.
 # Reached, find where the bytes went before raising it, as
@@ -88,7 +88,8 @@ ANSWER_S = 10.0
 
 def header(version: int, image: bytes) -> bytes:
     h = MAGIC + bytes([FORMAT, 0, 0, 0]) + struct.pack("<II", version, len(image))
-    h += hashlib.sha256(image).digest()
+    h += hashlib.sha256(image).digest() + uf2.table_hash(image)
+    assert len(h) == SIGNED_LEN
     return h + bytes(HEADER_LEN - len(h))
 
 
@@ -157,10 +158,17 @@ def read_image(path: str) -> tuple[bytes, bytes]:
     with open(path, "rb") as f:
         data = f.read()
     head, image = data[:HEADER_LEN], data[HEADER_LEN:]
-    if len(head) != HEADER_LEN or head[:4] != MAGIC or len(image) != struct.unpack_from("<I", head, 12)[0]:
+    if (
+        len(head) != HEADER_LEN
+        or head[:4] != MAGIC
+        or head[4] != FORMAT
+        or len(image) != struct.unpack_from("<I", head, 12)[0]
+    ):
         sys.exit(f"{path} is not an image from `image.py pack`")
     if hashlib.sha256(image).digest() != head[16:48]:
         sys.exit(f"{path}: the image does not match its header's SHA-256")
+    if uf2.table_hash(image) != head[48:SIGNED_LEN]:
+        sys.exit(f"{path}: the image does not match its header's table hash")
     return head, image
 
 

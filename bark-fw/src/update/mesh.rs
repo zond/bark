@@ -541,8 +541,10 @@ async fn running(flash: &super::Flash) -> Option<Image> {
     let ok = RUNNING.lock(|r| {
         let mut r = r.borrow_mut();
         let r = r.as_mut()?;
-        let hash = tabling.finish(&mut r.table);
-        r.checked = hash == h.hash;
+        let hashes = tabling.finish(&mut r.table);
+        // A table the header does not name would fail every gatherer's
+        // proof.
+        r.checked = hashes.firmware == h.hash && hashes.table == h.table;
         Some(r.checked)
     });
     if ok != Some(true) {

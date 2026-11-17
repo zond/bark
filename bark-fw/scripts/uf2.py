@@ -208,7 +208,7 @@ def symbol_word(image: bytes, start: int, syms: dict[str, int], name: str) -> in
 
 # The keys a firmware takes a staged image's signature from: three of a
 # byte naming the key, 0 for none, then its Ed25519 public key
-# (bark-image/src/sign.rs, Key).
+# (bark-image/src/sign.rs, Key and KEYS).
 KEY_SLOTS = 3
 KEY_LEN = 32
 
@@ -243,12 +243,37 @@ def key_name(key_id: int, public: bytes) -> str:
 HEADER_LEN = 256
 RECORD_CHECKED_AT = HEADER_LEN
 RECORD_CHECKED = b"\0\0\0\0"
-# The header (bark-fw/README.md, "Updates"): magic, format, version,
-# length, the image's SHA-256, then the signatures' slots, each a byte
-# naming its key first.
+# The header (bark-image/src/lib.rs, Header): magic, format, version,
+# length, the image's SHA-256, the SHA-256 of its block table's entries,
+# then two signatures' slots, each a byte naming its key first.
 HEADER_MAGIC = b"bark"
-SIGNED_LEN = 48
+HEADER_FORMAT = 2
+SIGNED_LEN = 80
 SIGNATURE_SLOT = 65
+HEADER_SLOTS = 2
+# The blocks the update over the mesh sends a packed image in, the header
+# and the image, after the table (bark-image/src/pieces.rs): 64 pieces of
+# 247 bytes, the last block shorter and its last piece padded with zeros.
+PIECE = 247
+BLOCK_BYTES = 64 * PIECE
+# Bytes of a block's entry in the table: the first of its SHA-256.
+ENTRY = 8
+
+
+def table_hash(firmware: bytes) -> bytes:
+    """The header's table hash of an image of `firmware`: the SHA-256 of
+    the table's entries of blocks 1 on, each the first 8 bytes of the
+    SHA-256 of its bytes. Block 1's leaves out the header, which its name
+    and signatures check, so the table does not depend on the header."""
+    import hashlib
+
+    packed = bytes(HEADER_LEN) + firmware
+    packed += bytes(-len(packed) % PIECE)
+    entries = b""
+    for at in range(0, len(packed), BLOCK_BYTES):
+        block = packed[max(at, HEADER_LEN) : at + BLOCK_BYTES]
+        entries += hashlib.sha256(block).digest()[:ENTRY]
+    return hashlib.sha256(entries).digest()
 
 
 def record_with(header: bytes, firmware: bytes, firmware_syms: dict[str, int], start: int, size: int) -> bytes:
@@ -256,7 +281,7 @@ def record_with(header: bytes, firmware: bytes, firmware_syms: dict[str, int], s
     version the firmware's, its hash the firmware's bytes', and signed."""
     import hashlib
 
-    if len(header) < HEADER_LEN or header[:4] != HEADER_MAGIC:
+    if len(header) < HEADER_LEN or header[:4] != HEADER_MAGIC or header[4] != HEADER_FORMAT:
         sys.exit("--header: not an image from `image.py pack`")
     header = header[:HEADER_LEN]
     version, length = struct.unpack_from("<II", header, 8)
@@ -265,7 +290,9 @@ def record_with(header: bytes, firmware: bytes, firmware_syms: dict[str, int], s
         sys.exit(f"--header: the image is version {version}, the firmware {running}")
     if length != len(firmware) or hashlib.sha256(firmware).digest() != header[16:48]:
         sys.exit("--header: the image's hash is not the firmware's: packed from another build")
-    slots = range(SIGNED_LEN, SIGNED_LEN + 3 * SIGNATURE_SLOT, SIGNATURE_SLOT)
+    if table_hash(firmware) != header[48:80]:
+        sys.exit("--header: the image's table hash is not the firmware's")
+    slots = range(SIGNED_LEN, SIGNED_LEN + HEADER_SLOTS * SIGNATURE_SLOT, SIGNATURE_SLOT)
     if all(header[at] == 0 for at in slots):
         sys.exit("--header: the image is not signed (`image.py sign`): no node would take it")
     page = bytearray([FLASH_ERASED]) * size
