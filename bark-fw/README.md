@@ -801,7 +801,9 @@ confirmed itself.
   any other ask drops it and the piece is built then, as before. A piece
   asked for while one is built ahead stops that build. Relays streaming
   to relays go the same way. The line `update: serving ... built=ahead`
-  or `built=now` says which way a piece went.
+  or `built=now` says which way a piece went, and the 10 s line on the
+  node that gathers counts the pieces it took since boot, each new for a
+  block it lacks, `pieces_taken=`.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for

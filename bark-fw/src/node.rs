@@ -905,7 +905,7 @@ impl Report {
         let restart = driver.radio().restart();
         log::info!(
             "driver events={} frames={} failed={} failed_header={} failed_crc={} failed_timeout={} held={} radio_errors={} recoveries={} sniffs={} longest_handle_us={} longest_away_us={} empty_readies={} own_readies={} \
-resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} restarts={} restart_us={} restart_errors={} stack_used={} unserved={} update={}{}{}",
+resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} restarts={} restart_us={} restart_errors={} stack_used={} unserved={} pieces_taken={} update={}{}{}",
             s.events,
             s.frames,
             s.failed,
@@ -930,6 +930,7 @@ resets={} configured={} cold_starts={} tcxo_us={} tcxo_errors={} restarts={} res
             restart.errors,
             crate::stack::used(),
             s.unserved,
+            crate::update::mesh::taken(),
             crate::update::mesh::phase(),
             Time(crate::utc::time()),
             Drain(driver.core().core, now)

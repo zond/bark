@@ -182,7 +182,7 @@ class Finding:
 DRIVER_FIELDS = (
     "events frames failed failed_header failed_crc failed_timeout held radio_errors recoveries sniffs "
     "longest_handle_us longest_away_us empty_readies own_readies resets configured cold_starts tcxo_us "
-    "tcxo_errors restarts restart_us restart_errors stack_used unserved update"
+    "tcxo_errors restarts restart_us restart_errors stack_used unserved pieces_taken update"
 ).split()
 DRIVER_TAIL = "utc_s offset_min from battery_left_min drain_relay drain_sleepy".split()
 NUMBER = re.compile(r"0|[1-9]\d*")

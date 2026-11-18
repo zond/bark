@@ -108,6 +108,9 @@ static AHEAD: Mutex<ThreadModeRawMutex, RefCell<Ahead>> = Mutex::new(RefCell::ne
 /// served.
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
+/// The pieces the core took, for the 10 s line.
+static TAKEN: AtomicU32 = AtomicU32::new(0);
+
 /// The store forgets the image it gathers (`Store::forget`).
 fn forget_gathered() {
     STORE.lock(|s| s.borrow_mut().forget());
@@ -205,6 +208,7 @@ pub fn unproven(version: u32) {
 /// Keep a piece (`Action::StorePiece`). One the store has no room for
 /// now is lost, as on the air: the holders send others.
 pub fn store_piece(piece: &Piece) {
+    TAKEN.fetch_add(1, Ordering::Relaxed);
     STORE.lock(|s| s.borrow_mut().offer(piece.block, piece.index, &piece.bytes));
     TO_TASK.piece_in.signal(());
 }
@@ -250,6 +254,12 @@ pub async fn serve(frame: &mut Frame) -> bool {
         .out
         .lock(|o| frame.bytes[PIECE_HEADER_LEN..end].copy_from_slice(&o.borrow()[..]));
     true
+}
+
+/// The pieces the core took since boot, each new for a block it lacks
+/// (`Action::StorePiece`), whether the store had room for them or not.
+pub fn taken() -> u32 {
+    TAKEN.load(Ordering::Relaxed)
 }
 
 /// The version staged, once the swap is asked for: the node reboots into
