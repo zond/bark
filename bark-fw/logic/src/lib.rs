@@ -8,6 +8,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod ahead;
 pub mod bench;
 pub mod install;
 pub mod line;

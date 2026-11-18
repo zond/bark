@@ -789,6 +789,19 @@ confirmed itself.
   the store's steps, so one asked for while a whole image is checked and
   staged, about 6 s, is not sent. The 10 s line counts them,
   `unserved=`.
+- *A piece built ahead.* A coded piece takes about 40 ms to build on the
+  board, a data piece a few: longer than the 25 ms a sleepy node listens
+  after a piece of its anchor's run, so coded pieces built only when
+  asked for broke runs off after their first piece (2026-11-18). The
+  core sends a block's pieces in the order of their index, so while a
+  piece is on the air, about 138 ms, the task builds the next of the same
+  block and keeps it (`bark_fw_logic::ahead`). It serves the piece kept
+  only when the core asks for exactly that image, block and index, and
+  the store has neither begun nor forgotten an image since it was built;
+  any other ask drops it and the piece is built then, as before. A piece
+  asked for while one is built ahead stops that build. Relays streaming
+  to relays go the same way. The line `update: serving ... built=ahead`
+  or `built=now` says which way a piece went.
 - *The swap.* Once every block is decoded, the header's version and
   signature are checked as `update::stage` does, the slot is hashed
   against the header, the record written and the swap asked for
@@ -873,7 +886,7 @@ the board serves nothing. Both hold the key image 8 is signed with: the project'
 A: update: holds version=8 blocks=31 name=[..] key=255
 B: update: offered version=8 blocks=31 key=255: taken
 B: update: gathering version=8 blocks=31 (Started)
-A: update: serving block=0 piece=113 (1 of this block)
+A: update: serving block=0 piece=113 (1 of this block) built=now
 B: update: block 0 decoded and written, 1 of 31
 B: update: block 7 failed its check; gathered again
 B: update: version=8 length=471064 whole and checked: the loader swaps it in at the next boot
