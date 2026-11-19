@@ -257,11 +257,12 @@ peers, since what hurts a node is busy time at its own receiver.
 | a reading of the home channel | taken four symbol periods after the receiver last started there and kept until asked for, for one reading and at most 13 s; with none, the receiver is started again for it |
 | sweep | one channel a second, channels in turn: each channel every 13 s |
 | window | α = 1/138 per sample, 30 minutes at one sample per channel every 13 s |
-| a channel's noise floor | the 10th percentile of that channel's readings in 1 dB bins, each bin halved whenever they hold two windows of the channel's readings, about an hour; while it has none, the floor of all channels; −118 dBm before the first reading (open item O11) |
-| the floor of all channels | the 10th percentile of every channel's readings together |
+| a channel's noise floor | the median of that channel's readings in 1 dB bins, each reading's weight halved every noise half-life; while it has none, the floor of all channels; −118 dBm before the first reading (open item O11) |
+| noise half-life | 900 s, three beat periods ([beats](#beats)), the same for every node |
+| the floor of all channels | the 10th percentile of every channel's readings together, weighted the same way; also the floor of a channel with no readings |
 | the node's noise floor | where no channel is named: its home channel's |
 | listen-before-talk | busy if RSSI > the checked channel's floor + 6 dB (roadmap D216) |
-| noise floor of a node that does not sweep | its home channel's, kept by the readings its heartbeats' listen-before-talk takes there, halved whenever they hold 24, two hours of beats (roadmap D212) |
+| noise floor of a node that does not sweep | its home channel's, kept by the readings its heartbeats' listen-before-talk takes there (roadmap D212) |
 
 Interference near a receiver need not be the same on every channel. On
 the bench, boards beside a computer read their quiet channels 8 dB apart,
@@ -271,11 +272,34 @@ channel would find it busy at its usual level and never send there.
 Each check is therefore judged against its own channel's floor. The
 busy readings are still judged against all channels together: a louder
 channel costs every link on it range, and the move rule
-([channel moves](#channel-moves)) should leave it. A carrier on one
-channel moves that channel's floor once it fills nine-tenths of what the
-floor holds, after 1.6 hours of sweeps, while the move rule leaves it
-within 17 minutes; a check under it then lets the node send, which harms
-no packet the carrier does not already.
+([channel moves](#channel-moves)) should leave it.
+
+A channel's floor is the median of its readings. Traffic then moves it
+only once it fills more than half the channel's time, which carrier
+sense and the load rules keep far from
+([capacity and sizing](#capacity-and-sizing)), and it follows a rise as
+fast as a fall. The floor of all channels is a 10th percentile instead:
+interference can sit on more than half the channels, and that floor is
+what compares them.
+
+Readings fade by the clock, not by their count, so that every node
+follows a change in the same time: a node that sweeps reads a channel
+every 13 s, one that does not only before its heartbeats. The half-life
+is set by the node that does not sweep. Its beats are at most a beat
+period, 300 s, apart, and one beat under a passing signal can find all
+three of its listen-before-talk checks loud ([heartbeat](#heartbeat)).
+Just after a halving, three beat periods of readings still weigh as much
+as those three, so they cannot move the median. That is 900 s, far
+longer than any exchange holds a channel (a hand-over with every
+attempt, 3.1 s, [delivery](#delivery)); a longer half-life would only
+follow a change later.
+
+A level that stays for about a half-life is noise. A carrier on one
+channel becomes that channel's floor after about 15 minutes, while the
+move rule leaves it within 17; a check under it then lets the node send,
+which harms no packet the carrier does not already. A channel no longer
+read is empty within 16 half-lives, its bins being two bytes, and then
+takes the floor of all channels.
 
 The receiver's RSSI reads nothing for about 150 µs after it starts, then
 climbs a step a symbol period, and reads a strong signal as one fixed

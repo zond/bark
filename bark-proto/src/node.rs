@@ -263,6 +263,21 @@ pub const fn heartbeat_interval(id: NodeId, config: &Config) -> Duration {
     Duration::from_micros(min + span * id.last() as u64 / INTERVALS)
 }
 
+/// How long a noise reading keeps half its weight in its channel's floor
+/// (spec "Busy estimate"). A node that does not sweep reads its floor only
+/// at its beats, at most a beat period, 300 s, apart, and one beat under a
+/// passing signal can give all `lbt_attempts` of its checks loud. With a
+/// half-life of that many beat periods, the readings before a halving keep
+/// at least those checks' weight after it, so the checks cannot move the
+/// median. That is 900 s, much longer than any exchange holds a channel,
+/// a hand-over with every attempt 3.1 s (spec "Delivery"); a floor follows
+/// a change in about a half-life, so a longer one is no better.
+pub const fn noise_half_life(config: &Config) -> Duration {
+    crate::tables::heard::beat_period(config.delivery_ttl).mul(config.lbt_attempts as u64)
+}
+
+const _: () = assert!(noise_half_life(&Config::DEFAULT).as_micros() == 900_000_000);
+
 /// The longest a heartbeat waits behind its slot (spec "Heartbeat",
 /// "Hand-over"): a hand-over attempt under way, a full long-preamble frame
 /// and the ACK timeout, 472.8 ms (longer than any reception its check waits

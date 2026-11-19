@@ -409,8 +409,8 @@ test in `tables/mod.rs`:
 | Send queue (spec "Send queue") | (39 + 64) × 304 B | 30.6 KiB |
 | Inbox (spec "Delivery queue", "Phone link") | 23 × 272 B | 6.1 KiB |
 | Delivered window (spec "Delivery queue") | 41 × 16 B | 0.6 KiB |
-| Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate"), a histogram of readings for each channel | 16 B + 2 064 B | 2.0 KiB |
-| **All** | | **96.9 KiB** |
+| Duty budget (spec "Duty cycle cap") and busy estimate (spec "Busy estimate"), a histogram of readings for each channel | 16 B + 1 976 B | 1.9 KiB |
+| **All** | | **96.8 KiB** |
 
 The send queue's 39 regular places follow from the duty bucket, and its 254 hop places,
 numbered in a byte and taken at min(count, 254), keep overload from dropping messages
@@ -419,7 +419,7 @@ hold the 546 messages a relay can handle in the 162.9 s a full send queue takes 
 ban per place, plus the 103 the send queue
 holds, whose records are never given up (spec "Message records"). The delivery queue's 41 places hold what
 arrives in one delivery TTL for a full heard table (spec "Delivery queue"). The whole `Relay` is
-102 216 B (99.8 KiB): the tables and, in under 1 KiB around them, the
+102 232 B (99.8 KiB): the tables and, in under 1 KiB around them, the
 medium access, the hand-over in flight, its owed reply with the DATA it takes (roadmap D93),
 a neighbour's status asked or told, 16 B, with two marks in each neighbour's entry that fit
 its padding (roadmap D157),

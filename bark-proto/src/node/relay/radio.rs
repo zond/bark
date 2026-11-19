@@ -140,7 +140,7 @@ impl Radio {
         now: Instant,
     ) {
         if let Some((c, dbm)) = self.sweep.sampled(channel, dbm, home, step, now) {
-            self.busy.sample(c, dbm);
+            self.busy.sample(c, dbm, now);
         }
     }
 
@@ -260,8 +260,13 @@ impl Radio {
 
     /// A listen-before-talk reading of a node that does not sweep, for
     /// the noise floor of `channel` (spec "Busy estimate").
-    pub(super) fn floor_reading(&mut self, channel: Channel, dbm: i16, window: u32) {
-        self.busy.floor_reading(channel, dbm, window);
+    pub(super) fn floor_reading(&mut self, channel: Channel, dbm: i16, now: Instant) {
+        self.busy.floor_reading(channel, dbm, now);
+    }
+
+    /// Fade the noise readings to `now` ([`BusyEstimator::age`]).
+    pub(super) fn age_noise(&mut self, now: Instant) {
+        self.busy.age(now);
     }
 
     #[cfg(test)]

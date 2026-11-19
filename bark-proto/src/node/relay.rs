@@ -881,6 +881,8 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
             emit(a)
         };
         let emit: &mut dyn FnMut(Action) = &mut wake;
+        // The floors fade by the clock, and this event reads them as of now.
+        self.radio.age_noise(now);
         if self.stage == Stage::Off {
             self.start(now, emit);
         }
@@ -913,8 +915,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                         // known rate whatever it has to send
                         // (spec "Busy estimate").
                         if !self.sweeping() {
-                            let window = self.check_window();
-                            self.radio.floor_reading(channel, dbm, window);
+                            self.radio.floor_reading(channel, dbm, now);
                         }
                         self.heartbeat_check(busy, now, emit)
                     }
