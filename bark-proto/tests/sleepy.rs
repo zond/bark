@@ -1612,6 +1612,31 @@ fn a_sleepy_node_s_floor_follows_its_own_channel_checks() {
     assert!(sent + 6 >= due, "{sent} of {due} beats went");
 }
 
+/// The bench of roadmap D233: the noise falls 8 dB, more than the 6 that
+/// count as busy, for three hours and comes back. The sleepy node's
+/// floor follows it down and up again
+/// within a half-life, so in the hour after the noise is back its beats
+/// go as before (spec "Busy estimate").
+#[test]
+fn a_sleepy_node_s_floor_comes_back_up_after_a_quiet_spell() {
+    let (anchor, s) = (0, 1);
+    let mut h = Harness::powered(vec![node(0.0, false, 1), node(50.0, true, 3)]);
+    h.link(anchor, s);
+    h.start_at(s, at(600));
+    h.run_until(at(3600), |_| false);
+    assert!(h.nodes[s].core.anchor().is_some());
+    h.noise.insert(s, common::NOISE_DBM - 8);
+    h.run_until(at(3600 + 3 * 3600), |_| false);
+    h.noise.remove(&s);
+    let before = beats(&h, s).len();
+    h.run_until(at(3600 + 3 * 3600 + 3600), |_| false);
+    // Beats a random half to one period apart: 16 an hour on average.
+    let period = bark_proto::Config::default().delivery_ttl.as_micros() / 2;
+    let due = (3600 * 1_000_000 * 4 / (3 * period)) as usize;
+    let sent = beats(&h, s).len() - before;
+    assert!(sent + 3 >= due, "{sent} of {due} beats went");
+}
+
 /// The bench of 2026-11-12: one channel reads 8 dB louder than the others
 /// at both boards, interference near them. A relay pinned there and its
 /// sleepy node beat on it as on any other: each check is judged against

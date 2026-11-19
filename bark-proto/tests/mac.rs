@@ -196,7 +196,7 @@ fn heartbeat_rotates_through_every_channel_in_order() {
 fn boot_avoids_busy_channels_and_spreads_ties() {
     // A relay that hears a carrier on ten channels homes on one of the
     // other three. (With twelve jammed, fewer than a tenth of the readings
-    // are quiet and the noise floor, a 10th percentile, rises to the
+    // are quiet and the floor of all channels, a 10th percentile, rises to the
     // carrier: every channel then looks idle. `tables/busy.rs`.)
     let chosen = Instant::ZERO + Config::default().boot_listen + secs(1);
     for first in [0u8, 1, 4] {

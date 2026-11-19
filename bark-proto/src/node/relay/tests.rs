@@ -3159,12 +3159,14 @@ fn an_addressed_sleepy_node_is_sent_long_at_once() {
 /// "Next hop").
 #[test]
 fn a_busy_channel_does_not_hold_a_sleepy_node_back() {
-    let busy_7 = |r: &mut Relay, _: Instant| {
+    let busy_7 = |r: &mut Relay, now: Instant| {
         // Channel 7, E's, busy one sweep in ten; the others quiet.
         for i in 0..20 {
             for c in Channel::all() {
                 let loud = c.index() == 7 && i % 10 == 0;
-                r.radio.busy_mut().sample(c, if loud { -60 } else { -125 });
+                r.radio
+                    .busy_mut()
+                    .sample(c, if loud { -60 } else { -125 }, now);
             }
         }
     };

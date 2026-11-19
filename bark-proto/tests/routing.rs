@@ -3169,18 +3169,20 @@ fn a_refusal_after_a_busy_channel_sends_the_message_round() {
 /// A message that waits for a channel waits past the delivery TTL: no
 /// message ends by age on its way (spec "Overload waits").
 /// O holds it, never having offered it to C, and once the channel clears
-/// it goes to B and arrives.
+/// it goes to B and arrives. The jam ends half-way from the TTL to a
+/// noise half-life, before it would count as noise (spec "Busy estimate").
 #[test]
 fn a_message_waits_for_a_channel_past_the_delivery_ttl() {
-    let short = Config {
-        delivery_ttl: secs(30),
-        ..Config::default()
-    };
-    let (mut h, b_home) = busy_channel(201, short, false);
+    let config = Config::default();
+    let ttl = config.delivery_ttl;
+    let half_life = bark_proto::node::noise_half_life(&config);
+    let (mut h, b_home) = busy_channel(201, config, false);
     let (o, _b, c, d) = (0, 1, 2, 3);
+    // Quiet history of several half-lives first, as a node in service has.
+    h.run_for(half_life.mul(4));
     h.jam(o, b_home);
     let id = send(&mut h, o, d, b"waits");
-    h.run_for(secs(60));
+    h.run_for(ttl + (half_life - ttl).div(2));
     assert!(core(&h, o).holding().any(|m| m == id), "O kept it");
     assert!(gave_up(&h, o, id).len() >= 20);
     assert!(forwards(&h, o, id).is_empty());
@@ -3190,4 +3192,25 @@ fn a_message_waits_for_a_channel_past_the_delivery_ttl() {
     assert!(!traces(&h, o)
         .iter()
         .any(|t| matches!(t, Trace::Dropped { .. })));
+}
+
+/// The other side: interference that stays for several half-lives is
+/// the channel's noise, and the node sends under it again
+/// (spec "Busy estimate").
+#[test]
+fn steady_interference_becomes_the_floor_and_the_node_sends_again() {
+    let config = Config::default();
+    let ttl = config.delivery_ttl;
+    let half_life = bark_proto::node::noise_half_life(&config);
+    let (mut h, b_home) = busy_channel(201, config, false);
+    let (o, b, d) = (0, 1, 3);
+    h.run_for(half_life.mul(4));
+    h.jam(o, b_home);
+    let id = send(&mut h, o, d, b"under it");
+    let jammed = h.now;
+    assert!(h.run_until(jammed + half_life.mul(3), |h| delivered(h, d, id)));
+    assert_eq!(forwards(&h, o, id), vec![core(&h, b).id()]);
+    let waited = h.now.since(jammed);
+    // Not before the jam the test above waits out.
+    assert!(waited > ttl + (half_life - ttl).div(2), "{waited:?}");
 }
