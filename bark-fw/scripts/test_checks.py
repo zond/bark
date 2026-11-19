@@ -36,7 +36,7 @@ DRIVER = (
     "driver events=22 frames=0 failed=0 failed_header=0 failed_crc=0 failed_timeout=0 held=0 radio_errors={e} "
     "recoveries=0 sniffs=0 longest_handle_us=488 longest_away_us=214 empty_readies=0 own_readies=0 resets=0 "
     "configured=1 cold_starts=0 tcxo_us=500 tcxo_errors=0 restarts=0 restart_us=0 restart_errors=0 "
-    "stack_used={s} unserved=0 update=idle"
+    "stack_used={s} unserved=0 pieces_taken=0 update=idle"
 )
 
 

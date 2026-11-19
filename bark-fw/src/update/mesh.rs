@@ -17,8 +17,10 @@
 //! of the gathered image on the external one.
 
 use core::cell::{Cell, RefCell};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bark_driver::Request;
+use bark_fw_logic::ahead::{self, Ahead, Named};
 use bark_image::code::{Encoder, PIECE};
 use bark_image::ext_flash::POLL_US;
 use bark_image::layout::{ACTIVE, RECORD, STATE};
@@ -64,9 +66,6 @@ struct Running {
 /// for it for ever, so the task waits for room.
 static REQUESTS: Channel<CriticalSectionRawMutex, Request, 4> = Channel::new();
 
-/// A piece the core serves: its image, block and index.
-type Named = (u32, u8, u8);
-
 /// What the task waits on beside the store's steps.
 struct ToTask {
     /// The newest image a neighbour's section offered.
@@ -99,6 +98,24 @@ static FILLED: Filled = Filled {
     served: Signal::new(),
     out: Mutex::new(RefCell::new([0; PIECE])),
 };
+
+/// The piece the core most likely serves next, built while the one before
+/// it is on the air (`bark_fw_logic::ahead`).
+static AHEAD: Mutex<ThreadModeRawMutex, RefCell<Ahead>> = Mutex::new(RefCell::new(Ahead::EMPTY));
+
+/// Counts each change of the image the store gathers, its begin and its
+/// forget, so that a piece built ahead from the store before is never
+/// served.
+static GENERATION: AtomicU32 = AtomicU32::new(0);
+
+/// The pieces the core took, for the 10 s line.
+static TAKEN: AtomicU32 = AtomicU32::new(0);
+
+/// The store forgets the image it gathers (`Store::forget`).
+fn forget_gathered() {
+    STORE.lock(|s| s.borrow_mut().forget());
+    GENERATION.fetch_add(1, Ordering::Relaxed);
+}
 
 /// Where the update stands, for the log and the quiet moment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,6 +208,7 @@ pub fn unproven(version: u32) {
 /// Keep a piece (`Action::StorePiece`). One the store has no room for
 /// now is lost, as on the air: the holders send others.
 pub fn store_piece(piece: &Piece) {
+    TAKEN.fetch_add(1, Ordering::Relaxed);
     STORE.lock(|s| s.borrow_mut().offer(piece.block, piece.index, &piece.bytes));
     TO_TASK.piece_in.signal(());
 }
@@ -236,6 +254,12 @@ pub async fn serve(frame: &mut Frame) -> bool {
         .out
         .lock(|o| frame.bytes[PIECE_HEADER_LEN..end].copy_from_slice(&o.borrow()[..]));
     true
+}
+
+/// The pieces the core took since boot, each new for a block it lacks
+/// (`Action::StorePiece`), whether the store had room for them or not.
+pub fn taken() -> u32 {
+    TAKEN.load(Ordering::Relaxed)
 }
 
 /// The version staged, once the swap is asked for: the node reboots into
@@ -289,7 +313,7 @@ pub async fn yield_to_phone() -> bool {
 async fn let_go() -> bool {
     let held = STORE.lock(|s| s.borrow().image().is_some());
     if held {
-        STORE.lock(|s| s.borrow_mut().forget());
+        forget_gathered();
         TO_TASK.piece_in.signal(());
     }
     while STORE.lock(|s| s.borrow().busy()) {
@@ -350,26 +374,52 @@ pub async fn run(flash: &'static super::Flash, internal: &'static SharedFlash) -
     work(flash, internal).await
 }
 
-/// Fill the piece the radio's task asks for. Between the store's steps,
-/// in the same future as they, so that its state shares room with the
-/// staging's: a piece asked for while a whole image is checked and
-/// staged, about 6 s, is not filled in time.
+/// Fill the piece the radio's task asks for, from the piece built ahead if
+/// it is that one, else now; then, while it is on the air, build the one
+/// most likely asked for next. Between the store's steps, in the same
+/// future as they, so that its state shares room with the staging's: a
+/// piece asked for while a whole image is checked and staged, about 6 s,
+/// is not filled in time.
 async fn answer(flash: &super::Flash, named: Named) {
-    let (version, block, index) = named;
-    let ok = fill(flash, version, block, index).await;
+    let generation = GENERATION.load(Ordering::Relaxed);
+    let ahead = AHEAD.lock(|a| {
+        FILLED
+            .out
+            .lock(|o| a.borrow_mut().take(named, generation, &mut o.borrow_mut()))
+    });
+    let ok = ahead || fill(flash, named, false).await;
     FILLED.served.signal((named, ok));
-    // The piece's end and its line, a stretch of their own: what follows
-    // is a step of the store or the next piece.
+    // The radio's task takes the piece before its line is formatted, and
+    // the line is a stretch of its own.
     embassy_futures::yield_now().await;
+    if !ok {
+        return;
+    }
+    let (_, block, index) = named;
+    let (last, count) = STANDING.lock(Cell::get).serving;
+    let count = if last == block { count + 1 } else { 1 };
+    standing(|s| s.serving = (block, count));
+    log::info!(
+        "update: serving block={} piece={} ({} of this block) built={}",
+        block,
+        index,
+        count,
+        if ahead { "ahead" } else { "now" }
+    );
+    embassy_futures::yield_now().await;
+    fill(flash, ahead::next(named), true).await;
 }
 
-/// Piece `index` of block `block` of the image of `version` into `FILLED`:
-/// coded from the block's data pieces, read one at a time, those of the
-/// external flash [`CHUNK`] bytes at a time and those of the running image
-/// summed [`SUMMED_AT_ONCE`] bytes at a time; the executor runs between
-/// each and the next, between the steps that weigh the code's points, and
-/// before the piece's line.
-async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool {
+/// Piece `named` into `FILLED`, or into `AHEAD` if `ahead`, which a piece
+/// asked for meanwhile cuts short: coded from the block's data pieces,
+/// read one at a time, those of the external flash [`CHUNK`] bytes at a
+/// time and those of the running image summed [`SUMMED_AT_ONCE`] bytes at
+/// a time; the executor runs between each and the next, and between the
+/// steps that weigh the code's points. Whether it was built.
+async fn fill(flash: &super::Flash, named: Named, ahead: bool) -> bool {
+    let (version, block, index) = named;
+    let generation = GENERATION.load(Ordering::Relaxed);
+    let wanted = || !ahead || !TO_TASK.serve.signaled();
     let running = RUNNING.lock(|r| {
         r.borrow()
             .as_ref()
@@ -389,6 +439,9 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
         crate::at("fill");
         let weighed = encoder.weigh();
         embassy_futures::yield_now().await;
+        if !wanted() {
+            return false;
+        }
         if weighed {
             break;
         }
@@ -414,6 +467,9 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
                 }
                 encoder.add_part(i, from, part);
                 embassy_futures::yield_now().await;
+                if !wanted() {
+                    return false;
+                }
             }
         } else {
             let mut piece = [0u8; PIECE];
@@ -425,21 +481,20 @@ async fn fill(flash: &super::Flash, version: u32, block: u8, index: u8) -> bool 
                 let to = PIECE.min(from + SUMMED_AT_ONCE);
                 encoder.add_part(i, from, &piece[from..to]);
                 embassy_futures::yield_now().await;
+                if !wanted() {
+                    return false;
+                }
             }
         }
     }
     crate::at("fill");
     let out = encoder.finish();
-    FILLED.out.lock(|o| *o.borrow_mut() = out);
-    let (last, count) = STANDING.lock(Cell::get).serving;
-    let count = if last == block { count + 1 } else { 1 };
-    standing(|s| s.serving = (block, count));
-    log::info!(
-        "update: serving block={} piece={} ({} of this block)",
-        block,
-        index,
-        count
-    );
+    match ahead {
+        // Kept under the store's generation at the start: one that changed
+        // meanwhile may have read another image's bytes.
+        true => AHEAD.lock(|a| a.borrow_mut().keep(named, generation, &out)),
+        false => FILLED.out.lock(|o| *o.borrow_mut() = out),
+    }
     true
 }
 
@@ -677,7 +732,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 "update: version {} gathered before is not wanted; forgotten",
                 i.version
             );
-            STORE.lock(|s| s.borrow_mut().forget());
+            forget_gathered();
             gather = None;
         } else {
             log::info!(
@@ -720,11 +775,11 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                 Ok(()) => {
                     set_phase(Phase::Staged(i.version));
                     // The pieces are spent; the staged slot keeps the image.
-                    STORE.lock(|s| s.borrow_mut().forget());
+                    forget_gathered();
                 }
                 Err(()) => {
                     refused = Some(i.version);
-                    STORE.lock(|s| s.borrow_mut().forget());
+                    forget_gathered();
                     set_phase(idle());
                     tell(Request::Rejected(i.version)).await;
                 }
@@ -781,7 +836,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                             i.version,
                             e
                         );
-                        STORE.lock(|s| s.borrow_mut().forget());
+                        forget_gathered();
                         set_phase(idle());
                         tell(Request::Rejected(i.version)).await;
                         gather = None;
@@ -842,7 +897,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
                     Either4::First(Either::Second(version)) => {
                         if gather.is_some_and(|i| i.version == version) {
                             log::info!("update: version {} given up unproven; forgotten", version);
-                            STORE.lock(|s| s.borrow_mut().forget());
+                            forget_gathered();
                             set_phase(idle());
                             gather = None;
                             told = false;
@@ -934,7 +989,9 @@ async fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Opt
     embassy_futures::yield_now().await;
     crate::at("offer");
     let i = store_image(image);
-    match STORE.lock(|s| s.borrow_mut().begin(i)) {
+    let begun = STORE.lock(|s| s.borrow_mut().begin(i));
+    GENERATION.fetch_add(1, Ordering::Relaxed);
+    match begun {
         Begin::Unfit => {
             log::warn!("update: version {} does not fit the slot", image.version);
             None
