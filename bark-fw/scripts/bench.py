@@ -242,6 +242,7 @@ class Capture:
         self.running: dict[str, threading.Thread] = {}
         self.notes: list[tuple[float, str, str]] = []
         self.held: set[str] = set()
+        self.unwritten: set[str] = set()
         self.watcher: threading.Thread | None = None
 
     def start(self) -> None:
@@ -301,8 +302,23 @@ class Capture:
                     self.running[node] = t
             self.stopping.wait(0.5)
 
+    def _unwritten(self, node: str, e: OSError) -> None:
+        """Say once that `node`'s log is not reaching the disk."""
+        if node not in self.unwritten:
+            self.unwritten.add(node)
+            self.notes.append((time.time(), node, f"log not written: {e}"))
+            self.say(f"{time.strftime('%H:%M:%S')} {node[-4:]}: log not written: {e}")
+
     def _follow(self, node: str, port: str) -> None:
-        with open(self.out / f"{node}.log", "a", buffering=1) as log:
+        try:
+            log = open(self.out / f"{node}.log", "ab", buffering=0)
+        except OSError as e:
+            self._unwritten(node, e)
+            return
+        # Lines the disk would not take: kept and offered again, so that a
+        # full disk costs no log and the board is read throughout.
+        backlog = bytearray()
+        with log:
             try:
                 fd = open_raw(port)
                 os.set_blocking(fd, True)
@@ -323,8 +339,13 @@ class Capture:
                     got = []
                     for line in lines:
                         text = line.rstrip(b"\r").decode("utf-8", "replace")
-                        log.write(f"{now:.3f} {text}\n")
+                        backlog += f"{now:.3f} {text}\n".encode()
                         got.append((now, checks.HEADER.sub("", text, count=1)))
+                    try:
+                        del backlog[: log.write(backlog)]
+                        self.unwritten.discard(node)
+                    except OSError as e:
+                        self._unwritten(node, e)
                     if self.on_line is not None:
                         for t, text in got:
                             self.on_line(node, t, text)
