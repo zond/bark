@@ -429,8 +429,11 @@ accepted fix is its place (roadmap D84).
 - it is farther than the hearing radius, 3 km
   ([physical layer](#physical-layer)), from every relay the node knows;
   a node that knows none takes it;
-- the carrier-to-noise densities (C/N0) of the satellites used in it are
-  not what a real sky gives; the band is a bench number (O18).
+- the mean carrier-to-noise density (C/N0) of the satellites used in it
+  is under 22 dB-Hz: the L76K acquires a satellite down to 18 dB below
+  the open sky's level, about 40 dB-Hz, and a fix held on weaker ones
+  wanders by hundreds of metres. The number is a best guess until an
+  open sky is measured (O18, roadmap D234).
 
 A jammed receiver gives no fix, and the node keeps the position it has.
 No bound applies to the distance from the last fix: one wrong rejection
@@ -3667,7 +3670,7 @@ those of the bring-up order, `roadmap.md` Phase 2.
 | O11 | Relay-side RSSI noise-floor calibration method and drift | step 3 |
 | O12 | Confirm RAK WisMesh Repeater 433 availability for rooftop solar units | procurement |
 | O16 | GPS wander of a still relay indoors: how far a still node's fixes lie from one of its own for 72 s ([position](#position)); the bench so far is in `docs/gps-bench-2026-11-06.md` | step 2 bench, roadmap D70, D136 |
-| O18 | The C/N0 band a real sky gives at the L76K, open sky to indoors, and what a spoofer's satellites show ([position](#position)); indoors measured in `docs/gps-bench-2026-11-06.md`, open sky and a spoofer not yet | step 2 bench, roadmap D74 |
+| O18 | The lowest mean C/N0 of a fix that is taken, 22 dB-Hz by reasoning and by fixes indoors ([position](#position), `docs/gps-bench-2026-11-20.md`); what the L76K reads under an open sky, and what a spoofer's satellites show, are not yet measured | a node under an open sky, roadmap D74, D234 |
 | O19 | A sleepy node carried farther than half a short position's period, 19.5 km north-south and less east-west, while it hears no relay: it rebuilds its next anchor's position a period off, and the neighbour check drops the fix that would correct it ([beats](#beats), [position](#position)) | later, roadmap D91 |
 | O24 | The cell's curve in the cold: a discharge bench run at 0 °C or below, and one at a relay's current, against the curve at room temperature ([sleepy nodes](#sleepy-nodes)); one cell, one run so far | bench, roadmap D210 |
 
