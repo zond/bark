@@ -305,9 +305,9 @@ async fn fixed(f: Fix, state: State) -> State {
     if !c.real() {
         if state != State::Dropped {
             log::warn!(
-                "gps: fix dropped, c/n0 {}..{} dB-Hz outside the band",
-                c.min,
-                c.max
+                "gps: fix dropped, mean c/n0 {} dB-Hz under the floor, {}",
+                c.mean,
+                bark_driver::gnss::CN0_FLOOR
             );
         }
         lose(state);

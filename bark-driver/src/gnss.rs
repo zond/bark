@@ -40,10 +40,12 @@ const ADDRESSES: usize = 8;
 /// fill six. `KEPT` may be zero, 736 bytes less.
 pub const RAW: usize = 8;
 
-/// The C/N0 band of a real sky, dB-Hz (spec "Open items", O18). Until it
-/// is measured it is the whole GSV scale, 0 to 99 (NMEA 0183), and drops no
-/// fix.
-pub const CN0_BAND: core::ops::RangeInclusive<u8> = 0..=99;
+/// The lowest mean C/N0, dB-Hz, of the satellites of a fix that is taken
+/// (spec "Position", O18): the level at which the L76K can still acquire a
+/// satellite, 18 dB below the open sky's 40 dB-Hz
+/// (`docs/gps-bench-2026-11-20.md`). A best guess until an open sky is
+/// measured.
+pub const CN0_FLOOR: u8 = 22;
 
 /// A satellite: its system (the talker's, [`system`]) and its number.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -89,9 +91,10 @@ pub struct Cn0 {
 }
 
 impl Cn0 {
-    /// Whether every satellite lies in [`CN0_BAND`] (spec "Position").
+    /// Whether the mean reaches [`CN0_FLOOR`] (spec "Position"). A fix
+    /// that reports no C/N0 cannot be judged and is taken.
     pub fn real(&self) -> bool {
-        self.count == 0 || (CN0_BAND.contains(&self.min) && CN0_BAND.contains(&self.max))
+        self.count == 0 || self.mean >= CN0_FLOOR
     }
 }
 
@@ -939,5 +942,17 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
         assert_eq!(days(1970, 1, 1), 0);
         assert_eq!(days(2000, 3, 1), 11_017);
         assert_eq!(days(2100, 3, 1), 47_541);
+    }
+
+    #[test]
+    fn a_fix_is_real_at_the_floor_or_without_a_reading() {
+        let at = |mean| Cn0 {
+            count: 4,
+            mean,
+            ..Cn0::default()
+        };
+        assert!(at(CN0_FLOOR).real());
+        assert!(!at(CN0_FLOOR - 1).real());
+        assert!(Cn0::default().real(), "no C/N0 reported");
     }
 }
