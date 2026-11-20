@@ -178,6 +178,18 @@ def slots(head: bytes) -> list[tuple[int, bytes]]:
     return [(head[a], head[a + 1 : a + SLOT_LEN]) for a in at]
 
 
+def forge_signature(data: bytes) -> bytes:
+    """An image file whose first signature has one bit flipped, its key
+    still named: a header nobody signed, over a body that still hashes to
+    it, as a node without the key can offer. A gatherer takes the offer by
+    the key's byte and refuses the image at its proof (bench scenario A8)."""
+    (key_id, _), _ = slots(data[:HEADER_LEN])
+    if key_id == 0:
+        sys.exit("forge_signature: the image is not signed")
+    at = SIGNED_LEN + 1
+    return data[:at] + bytes([data[at] ^ 1]) + data[at + 1 :]
+
+
 def keygen(path: str) -> int:
     ed, serialization = ed25519()
     key = ed.Ed25519PrivateKey.generate()

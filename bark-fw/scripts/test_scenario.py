@@ -69,6 +69,8 @@ class Files(unittest.TestCase):
         self.assertIn("after names no action", bad(f'duration_s = 1\n{BOARDS}[[pass]]\nboard = "A"\nline = "x"\nafter = "z"\n'))
         self.assertIn("a command goes with say", bad(f'duration_s = 1\n{BOARDS}[[actions]]\nat_s = 1\nboard = "A"\ndo = "say"\n'))
         self.assertIn("needs a group", bad(f'duration_s = 1\n{BOARDS}[[pass]]\nboard = "A"\nkept = {{ before = "x", after = "y" }}\n'))
+        for board in ('serves = true\nforged = "body"\n', 'forged = "signature"\n'):
+            self.assertIn("on a board that serves", bad(f'duration_s = 1\n[[boards]]\nname = "A"\n{board}'))
 
 
 class Times(unittest.TestCase):
@@ -191,6 +193,52 @@ within_s = 6.3
             ok, report = scenario.judge_dir(p, str(s), {"A": "f4f5", "C": "c367"}, None)
         self.assertFalse(ok)
         self.assertTrue(report[-1].startswith("unchecked 1: no time for the action ac"), report)
+
+
+class Forged(unittest.TestCase):
+    """A8 on a run made here, its lines as bark-fw/src/update/mesh.rs
+    writes them: A and B refuse C's image at its proof."""
+
+    IDS = {"A": A, "B": "25f161d73112", "C": C, "D": "275c1ab9bac7"}
+
+    def run_dir(self, d: Path, a_proves: bool) -> Path:
+        start = 1000.0
+        logs = {}
+        for k, label in enumerate("ABC"):
+            v = k + 1
+            logs[label] = [line(start + t, 5.0 + t, f"uptime {int(5 + t)} s") for t in range(0, 1801, 10)]
+            logs[label].append(line(start + 1, 6.0, f"bark-fw image version {v}"))
+        logs["C"] += [
+            line(start + 2, 7.0, "update: holds version=3 blocks=39 name=Some([b0, d5, da, e6]) key=255"),
+            line(start + 360, 365.0, "update: serving block=1 piece=39 (1 of this block) built=now"),
+        ]
+        for label in "AB":
+            logs[label].append(line(start + 25, 30.0, "update: offered version=3 blocks=39 key=255: taken"))
+            proof = ("update: version 3 proven by its blocks 0 and 1" if a_proves and label == "A"
+                     else "update: version 3 not proven by its blocks 0 and 1 (Signature(Bad)); forgotten")
+            logs[label].append(line(start + 610, 615.0, proof))
+        for label, text in logs.items():
+            text.sort(key=lambda x: float(x.split()[0]))
+            write(d / f"{self.IDS[label]}.log", "".join(text))
+        meta = {"scenario": str(HERE.parent / "bench" / "a8-forged-update.toml"), "ids": self.IDS,
+                "versions": {"A": 1, "B": 2, "C": 3, "D": 4}, "stack_rooms": {k: 63384 for k in self.IDS},
+                "silent_at_end": ["D"], "setup": start - 1, "end": start + 1800.0}
+        write(d / "run.json", json.dumps(meta))
+        events = [{"t": start - 1, "board": k, "do": "on", "resets": True} for k in "ABC"]
+        write(d / "actions.jsonl", "".join(json.dumps(e) + "\n" for e in events))
+        return d
+
+    def test_refused_at_the_proof(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok, report = scenario.judge_dir(self.run_dir(Path(d), False), None, {}, None)
+        self.assertTrue(ok, report)
+
+    def test_a_proof_that_passed_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            ok, report = scenario.judge_dir(self.run_dir(Path(d), True), None, {}, None)
+        self.assertFalse(ok)
+        failed = [r for r in report if r.startswith("FAIL")]
+        self.assertEqual([r.split(" (")[0] for r in failed], ["FAIL 4", "FAIL 5"], report)
 
 
 class Kept(unittest.TestCase):

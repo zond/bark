@@ -38,6 +38,7 @@ without a package (tomllib):
     deaf_to = "C"               # BARK_IGNORE: drops every frame of C
     env = { BARK_ON_BATTERY = "1" }
     serves = false              # holds its image to serve over the mesh
+    forged = "signature"        # with serves: that image's signature spoiled
     silent = false              # kept in its bootloader for the run
     on_boot = ["..."]           # console commands typed at each boot
 
@@ -129,6 +130,7 @@ class Board:
     deaf_to: str | None = None
     env: dict[str, str] = field(default_factory=dict)
     serves: bool = False
+    forged: str | None = None
     silent: bool = False
     on_boot: list[str] = field(default_factory=list)
 
@@ -211,7 +213,7 @@ def load(path: str | Path) -> Scenario:
     take(d, {"name", "about", "duration_s", "seed", "waits_for", "boards", "actions", "pass", "checks"}, p.name)
     boards = []
     for b in d.get("boards", []):
-        take(b, {"name", "place_m", "deaf_to", "env", "serves", "silent", "on_boot"}, f"board {b.get('name')}")
+        take(b, {"name", "place_m", "deaf_to", "env", "serves", "forged", "silent", "on_boot"}, f"board {b.get('name')}")
         if not re.fullmatch(r"[A-Za-z_]\w*", b.get("name", "")):
             raise Bad("a board's name is a word")
         env = b.get("env", {})
@@ -225,6 +227,8 @@ def load(path: str | Path) -> Scenario:
     for b in boards:
         if b.deaf_to is not None and b.deaf_to not in names:
             raise Bad(f"board {b.name}: deaf to no board {b.deaf_to}")
+        if b.forged is not None and (b.forged != "signature" or not b.serves):
+            raise Bad(f"board {b.name}: forged is \"signature\", on a board that serves")
     actions = []
     for i, a in enumerate(d.get("actions", [])):
         what = f"action {i + 1}"
@@ -745,7 +749,7 @@ def run_cmd(a: argparse.Namespace) -> None:
     # Every run the same versions, so that they never run out; later
     # boards higher, as the scenarios lay out.
     for v, b in enumerate(s.boards, 1):
-        built[b.name] = bench.build_image(b.name, build_env(b, ids), v, out / "builds", b.serves)
+        built[b.name] = bench.build_image(b.name, build_env(b, ids), v, out / "builds", b.serves, b.forged)
     meta = {
         "scenario": str(Path(a.scenario).resolve()),
         "ids": ids,

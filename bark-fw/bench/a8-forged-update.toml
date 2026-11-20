@@ -1,0 +1,66 @@
+# A8, forged update (docs/bench-suite-2026-11-13.md, "Acceptance tests"):
+# an image whose header nobody signed is installed nowhere.
+#
+# C serves its own image as in A4, but with one bit of the header's
+# signature flipped (scripts/image.py, forge_signature). C checks only
+# that its slot hashes to the header before it serves, so it offers the
+# image under the bench key's byte; A and B take the offer by that byte,
+# gather blocks 0 and 1, and refuse the image at its proof
+# (spec "Updates over the mesh", the proof).
+#
+# A board refuses an image only for its core's hold-off and its store's
+# forget, neither of which outlasts the reboots of the next run's setup.
+
+about = "an image whose header nobody signed is installed nowhere"
+# Blocks 0 and 1 decoded 600 and 610 s after the start on A4's relays
+# (2026-11-17); the 66 pieces at the pace alone, 66 x 13.86 s = 915 s,
+# after the 210 s to the first, take 1 125 s. With room.
+duration_s = 1800.0
+
+[[boards]]
+name = "A"
+
+[[boards]]
+name = "B"
+
+# Last, so its version is the run's highest.
+[[boards]]
+name = "C"
+serves = true
+forged = "signature"
+
+[[boards]]
+name = "D"
+silent = true
+
+[[pass]]
+board = "C"
+line = '^update: holds version=${C.version} '
+why = "C holds the forged image"
+
+[[pass]]
+board = "C"
+line = '^update: serving block=1 '
+why = "and serves its header"
+
+[[pass]]
+boards = ["A", "B"]
+line = '^update: offered version=${C.version} blocks=\d+ key=\d+: taken'
+why = "taken by the key it names"
+
+[[pass]]
+boards = ["A", "B"]
+line = '^update: version ${C.version} not proven by its blocks 0 and 1 \(Signature\(Bad\)\); forgotten$'
+why = "refused at the proof"
+
+[[pass]]
+boards = ["A", "B"]
+line = '^update: version ${C.version} (proven|confirmed)'
+absent = true
+why = "never proven nor confirmed"
+
+[[pass]]
+boards = ["A", "B"]
+line = '(image version |\bimage_version=)${C.version}\b'
+absent = true
+why = "never run"
