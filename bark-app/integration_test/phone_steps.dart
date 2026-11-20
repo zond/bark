@@ -288,7 +288,10 @@ class _Steps {
 
   /// Every text in the dialogs shown, for a reason.
   String _dialogs() => [
-    for (final d in find.byType(AlertDialog).evaluate())
+    for (final d
+        in find
+            .byWidgetPredicate((w) => w is AlertDialog || w is SimpleDialog)
+            .evaluate())
       for (final e
           in find
               .descendant(
@@ -306,8 +309,10 @@ class _Steps {
     return log.skip(from).map((l) => l.text).join(' / ');
   }
 
+  /// A new app's navigator each time, so that a dialog a failed step left
+  /// open does not cover the next step's screen.
   Future<void> _show(Widget w) async {
-    await t.pumpWidget(MaterialApp(home: w));
+    await t.pumpWidget(MaterialApp(key: UniqueKey(), home: w));
     await t.pump();
   }
 
@@ -456,12 +461,21 @@ class _Steps {
     final text = 'Bench text ${app.now().toUtc().toIso8601String()}';
     await t.enterText(find.byType(TextField), text);
     await t.tap(find.byTooltip('Send'));
+    await t.pump(_dialogOpens);
+    // The phone keeps the friend's contact across runs: a place a text of
+    // an earlier run left, once stale and not the home, makes the send box
+    // ask where the text goes. The second node is the home.
+    if (find.text('Send to').evaluate().isNotEmpty) {
+      await t.tap(find.text('Their home node'));
+    }
     final o = await _until(
       () => app.session.outbox
           .where((o) => o.to == c.key && o.body == text)
           .firstOrNull,
       const Duration(seconds: 5),
-      () => 'the send box queued nothing: ${_lastLog()}',
+      () =>
+          'the send box queued nothing: '
+          '${_dialogs().isEmpty ? _lastLog() : _dialogs()}',
     );
     await _until(
       () => switch (o.state) {

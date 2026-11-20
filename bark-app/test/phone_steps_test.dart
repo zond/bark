@@ -2,7 +2,8 @@
 // the fake node, as the bench runs them against a board: found, paired by
 // its Pair, a text to a neighbour taken, one from the bench friend read
 // and opened, an image sent and rebooted into; over a bond the phone
-// holds, and paired anew in its place; a phone without one when a bond is
+// holds, and paired anew in its place; on a phone's screen that knows the
+// bench friend from an earlier run; a phone without one when a bond is
 // asked for, the later steps skipped; and the lines the host reads.
 
 import 'dart:typed_data';
@@ -47,6 +48,7 @@ void main() {
     required bool paired,
     Pairing pairing = Pairing.any,
     Uint8List? image,
+    Future<void> Function(AppModel app, Address home)? before,
   }) async {
     DateTime now() => t.binding.clock.now();
     final app = AppModel(
@@ -67,7 +69,9 @@ void main() {
     UniversalBle.setInstance(ble);
     if (paired) await app.session.setPaired(nodeName(FakeNode.id));
     final lines = <String>[];
-    final to = hex(node.neighbours.values.first.id);
+    final them = node.neighbours.values.first;
+    final to = hex(them.id);
+    await before?.call(app, Address(them.position, them.id));
     final ok = await runSteps(
       t,
       app,
@@ -131,6 +135,36 @@ void main() {
     expect(ok, isTrue, reason: lines.join('\n'));
     expect(lines, contains('bark-test pairing bark-fa4e00000001'));
     expect(lines, contains('bark-test pass 2 pair: paired by the code'));
+  });
+
+  // The phone keeps the bench friend's contact from run to run. A run's
+  // text from them leaves their place at their home as it was then; once
+  // the second node's GPS places it a little elsewhere, that place is
+  // stale and not the home, and the send box asks where the text goes.
+  testWidgets('a phone that knows the bench friend from an earlier run', (
+    t,
+  ) async {
+    t.view.devicePixelRatio = 2.625;
+    t.view.physicalSize = const Size(412, 915) * 2.625;
+    addTearDown(t.view.reset);
+    final (ok, lines) = await run(
+      t,
+      paired: false,
+      image: imageFile(2, 5000),
+      before: (app, home) async {
+        final friend = await BenchFriend.at(app, home);
+        final c = await app.contacts.add(friend.me.card);
+        final p = home.pos;
+        await app.contacts.put(
+          c.copyWith(
+            place: Address(Position(p.lat + 3, p.lon), home.id),
+            placeAt: app.now().subtract(const Duration(days: 1)),
+          ),
+        );
+      },
+    );
+    expect(ok, isTrue, reason: lines.join('\n'));
+    expect(lines.last, 'bark-test done 5/5');
   });
 
   testWidgets('a bond asked for where the phone holds none', (t) async {
