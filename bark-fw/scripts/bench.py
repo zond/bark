@@ -125,17 +125,20 @@ def build_loader() -> Path:
 class Built:
     version: int
     elf: Path
-    image: Path  # packed and signed by the bench key
+    image: Path  # packed and signed by the bench key, or that signature spoiled
     uf2: Path  # the loader, the firmware and, if it serves, its image's header
     stack_room: int
 
 
-def build_image(name: str, env: dict[str, str], version: int, out: Path, serves: bool) -> Built:
+def build_image(name: str, env: dict[str, str], version: int, out: Path, serves: bool,
+                forged: str | None = None) -> Built:
     """One board's bench build (bark-fw/README.md, "Bench build") at
     `version`, kept under `out` as `name`: its ELF,
     its image signed by the bench key (bark-fw/README.md, "Updates"), and
     a UF2 with the loader, built by `build_loader` first. A board that
-    `serves` holds its image to serve it over the mesh (uf2.py --header)."""
+    `serves` holds its image to serve it over the mesh (uf2.py --header);
+    `forged = "signature"` spoils that image's signature first
+    (image.forge_signature)."""
     cargo_build(FW, {**env, "BARK_IMAGE_VERSION": str(version)}, ["bench"])
     out.mkdir(parents=True, exist_ok=True)
     elf = out / f"{name}.elf"
@@ -147,6 +150,8 @@ def build_image(name: str, env: dict[str, str], version: int, out: Path, serves:
     img.write_bytes(data)
     key = ["--key-id", str(image.bench_key_id())]
     subprocess.run([sys.executable, "-I", FW / "scripts/image.py", "sign", img, image.BENCH_KEY, *key], check=True)
+    if forged == "signature":
+        img.write_bytes(image.forge_signature(img.read_bytes()))
     u = out / f"{name}.uf2"
     header = ["--header", img] if serves else []
     subprocess.run([sys.executable, "-I", FW / "scripts/uf2.py", "--loader", LOADER_ELF, *header, elf, u], check=True)

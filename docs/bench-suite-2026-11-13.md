@@ -1,7 +1,7 @@
 # Acceptance and stress tests on four boards
 
 **Status:** design, 2026-11-13. The runner, the standing checks, the
-bench build, the phone test and scenarios A1 to A5, S2 and S3 are built.
+bench build, the phone test and scenarios A1 to A5, A8, S2 and S3 are built.
 A1, A2 and A3 have passed on the boards; the others and the phone test
 have not run yet. The anchor and clock checks came on 2026-11-17. Every board of a run runs the bench build, which logs
 each transmission, as the heartbeat check needs. The bench build has a sync word of
@@ -93,6 +93,7 @@ Run before a release.
 | A5 | sleepy update | a sleepy node installs the image and is sleepy again on it || 20 h |
 | A6 | three sleepy nodes on one anchor | all three install, the last within an hour of the first | 10 h |
 | A7 | the phone | pairs, sends, receives, and updates the node it is paired with | 30 min |
+| A8 | forged update | two relays take the offer of a third whose image's header nobody signed, refuse it once blocks 0 and 1 are in, and never install it | 30 min |
 
 ## Stress tests
 
@@ -148,6 +149,11 @@ unchecked.
 
 A board holds and serves its own image only where its scenario says
 `serves`: otherwise every board would take the highest version of the run.
+With `forged = "signature"` as well, one bit of the signature of the
+header it holds is flipped. A node serves its own image only if its slot
+hashes to the header, so a body that does not match a signed header is
+not something a node serves; a header nobody signed is what a node
+without the key can offer, and what A8 offers.
 An image carries what its board was built with, its place and the board
 it is deaf to, so a board that installs another's image takes those too;
 the update scenarios are laid out for it.
