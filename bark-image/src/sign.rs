@@ -244,6 +244,32 @@ mod tests {
         assert_eq!(verify(&h, &built(true)), Err(SignatureError::Bad));
     }
 
+    /// The header of the release v46's `bark-fw-46.img`, signed by the
+    /// project's key 1 in the release workflow.
+    fn release_signed() -> [u8; HEADER_LEN] {
+        let mut h = [0; HEADER_LEN];
+        hex(
+            "6261726b020000002e000000f098080077baa1377a42850d53ba8da541852c7f\
+             12f8f8c145dcf83807e6ea15dd720311f58d09de5addaa616f3092353ed1b0fb\
+             d760bbd9ae67a970c7e76406ab1ef178",
+            &mut h[..SIGNED_LEN],
+        );
+        h[SIGNED_LEN] = 1;
+        hex(
+            "275689ec8b135a88bef0c78773e4f6c97284e6d12d315fd244e6f7fc2e426324\
+             ab290a4c338c8257317dc5896383c634205874bb18a6d15e7ec8561d1f084d0a",
+            &mut h[SIGNED_LEN + 1..SIGNED_LEN + SLOT_LEN],
+        );
+        h
+    }
+
+    /// A node of any build takes the project's release.
+    #[test]
+    fn a_release_is_taken_by_a_bench_only_build_and_any_other() {
+        assert_eq!(verify(&release_signed(), &built(true)), Ok(1));
+        assert_eq!(verify(&release_signed(), &built(false)), Ok(1));
+    }
+
     #[test]
     fn only_a_bench_only_build_takes_the_bench_key() {
         assert_eq!(
