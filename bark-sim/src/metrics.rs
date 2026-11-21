@@ -419,6 +419,7 @@ impl LeafSums {
         a.to_dst_us += b.to_dst_us;
         a.ack_us += b.ack_us;
         a.data_us += b.data_us;
+        a.update_us += b.update_us;
         a.other_us += b.other_us;
         self.relay_changes += m.relay_changes;
         self.messages_in += m.messages_in;
