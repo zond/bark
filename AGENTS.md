@@ -47,6 +47,10 @@ bonded phone keeps a copy of: there a device meets what it kept itself.
 
 The version rule is tested on purpose, by a build that claims a later version (roadmap D208).
 
+After the first deployment, a change an older node or app cannot follow goes out in two
+releases: the first understands the new form and does not send it, and the second sends it
+once the first has spread.
+
 ## Writing
 
 Describe mechanisms in their own terms. Never name other projects as the origin of code or
