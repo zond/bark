@@ -528,9 +528,10 @@ class Session extends ChangeNotifier {
   }
 
   void _badValue(Object e) =>
-      _tell('The node sent a value this app cannot read: $e');
+      tell('The node sent a value this app cannot read: $e');
 
-  void _tell(String s, {String? about}) {
+  /// Tells the person `s` in the notice, and logs it.
+  void tell(String s, {String? about}) {
     notice = (text: s, about: about);
     note(s);
     notifyListeners();
@@ -595,7 +596,7 @@ class Session extends ChangeNotifier {
       _onStatus(await link.readStatus());
       _onGivenBack(await link.readGivenBack());
     } catch (e) {
-      _tell('Reading the node failed: $e');
+      tell('Reading the node failed: $e');
     }
     if (guest) {
       guestRead = await _readGuest(link, n);
@@ -708,7 +709,7 @@ class Session extends ChangeNotifier {
     await link.close();
     final name = nodeName(n.id);
     nodes.of(name).unserved = true;
-    _tell(notServedLine(n), about: name);
+    tell(notServedLine(n), about: name);
   }
 
   Future<void> _readPublic(NodeLink link) async {
@@ -798,7 +799,7 @@ class Session extends ChangeNotifier {
         if (h.mine || !kept) key = null;
         if (!h.mine && !kept) {
           homeRemoved = true;
-          _tell(
+          tell(
             'Your home no longer keeps your mail. Set it again in Settings.',
           );
         }
@@ -1131,7 +1132,7 @@ class Session extends ChangeNotifier {
     if (g == null) return;
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
-      _tell(
+      tell(
         'The node gave back message ${msgIdHex(g.msgId)}, '
         'which this app did not send.',
       );
@@ -1327,7 +1328,7 @@ class Session extends ChangeNotifier {
     } catch (e) {
       o.state = OutState.queued;
       again = false;
-      _tell('Sending failed: $e');
+      tell('Sending failed: $e');
     } finally {
       _writing = false;
     }
@@ -1353,12 +1354,12 @@ class Session extends ChangeNotifier {
         } on AttException catch (e) {
           // The oldest is the one just read, so the node should not
           // refuse its ID; stop rather than read it in a loop.
-          _tell('The node refused the inbox confirmation: $e');
+          tell('The node refused the inbox confirmation: $e');
           break;
         }
       }
     } catch (e) {
-      _tell('Reading the inbox failed: $e');
+      tell('Reading the inbox failed: $e');
     } finally {
       _draining = false;
       notifyListeners();
@@ -1384,7 +1385,7 @@ class Session extends ChangeNotifier {
       await link.setMapPoint(p);
       note('Map point: ${p ?? 'cleared'}');
     } catch (e) {
-      _tell('Setting the node\'s place failed: $e');
+      tell('Setting the node\'s place failed: $e');
     }
   }
 

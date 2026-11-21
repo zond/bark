@@ -3,8 +3,9 @@
 // same key used again after a lost answer; the people listed, one
 // removed, the mark handed on and then refused; a home given used, with
 // its key; the person's home named after a restore from the words, and
-// one that does not answer changing nothing; and the seat taken at the
-// home by writing Home again.
+// one that does not answer changing nothing; a home that says it was
+// removed, fetched from or named, and one that stays silent; and the
+// seat taken at the home by writing Home again.
 
 import 'dart:typed_data';
 
@@ -253,6 +254,60 @@ void main() {
       expect(app.isOwner, isTrue);
       expect(app.tried, isNull);
       expect(news(app), '${nodeLabel(away.id)} is your home');
+    });
+  });
+
+  test('a home that says it was removed: no home, the person told, and the '
+      'card without it goes to the contacts', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      app.me.setHome(away);
+      async.flushMicrotasks();
+      f.removedRecords.add(f.homeRecords.removeAt(0));
+      final cards = app.session.outbox.where((o) => o.kind == OutKind.card);
+      final sent = cards.length;
+      said(async, app.fetchNow());
+      async.elapse(answered);
+      expect(f.commands.single, (null, Outcome.removed));
+      expect(app.me.home, isNull);
+      expect(app.session.notice?.text, contains('no longer keeps your mail'));
+      expect(app.session.fetchWaiting, isNull);
+      expect(cards.length, sent + 1);
+    });
+  });
+
+  test('use my existing home, removed there: told so, and nothing changes', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      f.removedRecords.add(f.homeRecords.removeAt(0));
+      said(async, app.tryHome(away));
+      async.elapse(answered);
+      expect(app.me.home, isNull);
+      expect(app.tried, isNull);
+      expect(
+        app.session.notice?.text,
+        '${nodeLabel(away.id)} does not keep your mail. Nothing changed.',
+      );
+    });
+  });
+
+  test('a home that did not answer the last fetch is said so in Settings, '
+      'until one is answered', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      app.me.setHome(away);
+      async.flushMicrotasks();
+      f.homeAnswers = false;
+      said(async, app.fetchNow());
+      async.elapse(Session.fetchAnswerWait - const Duration(seconds: 1));
+      expect(app.homeSilent, isFalse);
+      async.elapse(const Duration(seconds: 2));
+      expect(app.homeSilent, isTrue);
+      expect(app.me.home.toString(), away.toString(), reason: 'no change');
+      f.homeAnswers = true;
+      said(async, app.fetchNow());
+      async.elapse(answered);
+      expect(app.homeSilent, isFalse);
     });
   });
 

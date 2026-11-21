@@ -2325,12 +2325,30 @@ with no phone at the node ([the node's owner](#the-nodes-owner)), and is
 freed when it holds neither.
 Two phones of one person are two records holding the same key and tag:
 an item with their tag sets both records' bits, so both phones read it,
-a fetch opens under the first record whose key fits and clears only that
-record's bit, and no rule merges them.
+a fetch opens under the first record whose key fits, a home before a
+removed key (below), and clears only that record's bit, and no rule
+merges them.
+
+A home removed, through Phones ([phones](#phones)) or by the owner's
+command ([mailbox](#mailbox), The owner's commands), leaves its key in
+the record, marked **removed**, with the record's last fetch, so that the
+person's next fetch is told so ([mailbox](#mailbox), The answer). A
+removed key is no home: a fetch under it carries no item and runs no
+command, it is never the owner's, and Home and the owner's list count it
+as none. A record that
+holds a bond and a removed key lists as paired only; one that holds only
+a removed key is not listed at all ([phones](#phones)). The mark goes
+when the same key is set again, by a Home write ([settings](#settings))
+or the owner's add, and the record is a home again; a leave forgets the
+key with the rest of its person's records.
 
 A pairing takes a free record; from a phone whose identity address a
 record's bond names, it replaces that bond and keeps the rest of the
-record. With no record free the node refuses a pairing from a phone no
+record. With no record free, a pairing, or the owner's add, takes the
+record that holds only a removed key whose person was seen longest ago,
+forgetting that key: that person's later fetches then go unanswered, as
+one the node cannot open names no address to answer. With no such record
+either the node refuses a pairing from a phone no
 record's bond names: it answers the phone's Pairing Request with Pairing
 Failed, unspecified reason (Vol 3 Part H §3.5.5), shows no code, and its
 screen says `PHONES FULL` for 30 s; Node's `room` tells an app so before
@@ -2532,10 +2550,11 @@ write's ([mailbox](#mailbox), The fetch): a key set again, as after its
 person left or their home was removed, must not take a fetch from before
 it was set, which could be a command replayed, or a round answered a
 second time under a reply key and nonce used before (roadmap D224,
-D236). Written for a key the phone's record holds already, or joining a
-record that holds it (below), the record keeps the later of its last
-fetch and the write's `sent`; it is never lowered. A record that holds the same
-key and no bond, this person's home left by a phone that unpaired, then
+D236). Written for a key the phone's record holds already, a home or
+removed ([pairing](#pairing)), or joining a record that holds it
+(below), the record keeps the later of its last fetch and the write's
+`sent`; it is never lowered. A record that holds the same key and no
+bond, this person's home left by a phone that unpaired, or removed, then
 takes this phone's bond, name and tag, and the phone's own record is
 freed: the person's mail that waited for a fetch keeps its bits in the
 ring's marks, which are that record's ([mailbox](#mailbox), The ring).
@@ -2762,7 +2781,7 @@ when its day changes, at most once a day, to spare the flash.
 | flags | |
 |---|---|
 | bit 0 | paired: it holds a bond |
-| bit 1 | home: it holds a mailbox key |
+| bit 1 | home: it holds a mailbox key, not removed ([pairing](#pairing)) |
 | bit 2 | its phone is linked now |
 | bit 3 | it is the reading phone's |
 | bit 4 | its tag is known; else the tag is 0 |
@@ -2775,13 +2794,12 @@ or 3 both, or 4 to make the record's key the owner's
 ([the node's owner](#the-nodes-owner)), and the code, as a number. The
 node takes it only within 30 s of drawing the code, the Security Manager's timeout for each step of a
 pairing (Vol 3 Part H §3.4), and with that code: it forgets the bond, in
-flash too, ending its link if it has one, or the mailbox key, or both,
-and frees the record if it then holds neither; or it moves the owner's
-mark. A removed bond's phone learns of it as the removed phone does ([pairing](#pairing)); a removed
+flash too, ending its link if it has one, or marks the home removed
+([pairing](#pairing)), or both, and frees the record if it then holds
+neither; or it moves the owner's mark. A removed bond's phone learns of it as the removed phone does ([pairing](#pairing)); a removed
 home's person learns of it at their phone's next link to the node, whose
-Home then says it is not theirs, while their fetches from elsewhere go
-unanswered, as a fetch the node cannot open names no address to answer
-([mailbox](#mailbox)). A write with another code, or after the 30 s, is
+Home then says it is not theirs, or at their next fetch from elsewhere,
+whose answer says so ([mailbox](#mailbox), The answer). A write with another code, or after the 30 s, is
 answered with the ATT error 0x81, refused, and the code is forgotten: one
 try for each code drawn. A number no record has, or a part the record
 does not hold, a home to make the owner's among them, is answered 0x13,
@@ -2808,7 +2826,8 @@ owner's, and no other is ([pairing](#pairing)).
   the code the screen shows ([phones](#phones)); that record must hold a
   home. The owner before stays homed, without the mark.
 - A record freed, or its home removed, in any way, takes the mark with it
-  when no other record holds the key, and the seat is empty again.
+  when no other record holds the key as a home, and the seat is empty
+  again.
 
 The mark is a flag in the record, in flash. A power cut between the
 records that a move of the mark writes may leave it on two keys; the
@@ -3049,6 +3068,13 @@ later fetch of its own ends; the rounds of several records run at once,
 the node handing their replies to its send slot in turn. An item that
 arrives after the fetch waits for the next one.
 
+A fetch taken under a removed key ([pairing](#pairing)) is answered by
+its summary alone, with no item, none remaining, the owner's bit clear
+and the outcome 5, removed (The owner's commands, below), whether or not
+the fetch holds a command, which does not run. It is taken as any fetch
+is, its `sent` kept, so it is answered once and a replay not at all, and
+the person's app learns that the node is no longer their home.
+
 Every reply carries the fetch's recipient tag and is under the record's
 **reply key**, `crypto_kdf_derive_from_key(mailbox key, 3, "bark-rpl")`,
 so that the mailbox key itself encrypts nothing, with the nonce: the
@@ -3086,8 +3112,8 @@ A fetch whose command the node does not read opens as no fetch.
 
 | command | after its first byte | |
 |---|---|---|
-| 1, add | key (32), tag (1), name (0–32) | a record for a person with no phone at the node: a mailbox key, their recipient tag at the node, which the owner makes from their card, and their name as the card has it; a home, and no bond. Its last fetch is this fetch's `sent` |
-| 2, remove | number (2) | the record of that number loses its home; a bond it holds stays |
+| 1, add | key (32), tag (1), name (0–32) | a record for a person with no phone at the node: a mailbox key, their recipient tag at the node, which the owner makes from their card, and their name as the card has it; a home, and no bond. Its last fetch is this fetch's `sent`. A record that holds the key removed is a home again instead, with this tag and name, keeping the later of its last fetch and this `sent` |
+| 2, remove | number (2) | the home of the record of that number is removed ([pairing](#pairing)); a bond it holds stays |
 | 3, list | | every record |
 | 4, hand over | number (2) | the key of the record of that number, which holds a home, is the owner's; the owner before stays homed |
 | 5, leave | | the node forgets the sender's key, in every record that holds it, freeing those with no bond |
@@ -3101,9 +3127,10 @@ flags, what the command did, in a byte:
 |---|---|
 | 0, ok | done; for a list, the records follow |
 | 1, not allowed | the sender's key is not the owner's; nothing changed |
-| 2, full | an add, and no record is free |
-| 3, already there | an add of a key a record holds; nothing changed |
+| 2, full | an add, and no record is free ([pairing](#pairing)) |
+| 3, already there | an add of a key a record holds as a home; nothing changed |
 | 4, no such home | no record of that number holds a home |
+| 5, removed | the sender's home here was removed; nothing else was done (The answer, above) |
 
 A list gives each record as a Phones read does ([phones](#phones)), its
 flags' bit 3 marking the sender's own. What the summary leaves for it,

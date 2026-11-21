@@ -522,8 +522,8 @@ Uint8List replyNonce(int round, int place) => Uint8List.fromList([
   ...List.filled(nonceLen - 4 - placeLen, 0),
 ]);
 
-/// What a command did, as its summary says (spec "Mailbox", The owner's
-/// commands), by its code.
+/// What a command did, or that the sender's home was removed, as its
+/// summary says (spec "Mailbox", The owner's commands), by its code.
 enum Outcome {
   /// Done; for a list, the records follow.
   ok,
@@ -539,6 +539,10 @@ enum Outcome {
 
   /// No record of that number holds a home.
   noSuchHome,
+
+  /// The sender's home there was removed; nothing else was done
+  /// (spec "Mailbox", The answer).
+  removed,
 }
 
 /// What a round's summary says: how many items it carries, and how many

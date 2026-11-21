@@ -11,10 +11,10 @@
 
 use core::cell::Cell;
 
-use bark_link::phones::{Record, RECORDS};
+use bark_link::phones::{HomeKey, Record, RECORDS};
 use bark_proto::{MsgId, NodeId};
 
-use crate::command::{Command, Outcome, Summary};
+use crate::command::{Code, Command, Outcome, Summary};
 use crate::keys::KEY_LEN;
 use crate::seal::{self, Fetch, Form, MAX_REPLIES};
 use crate::{be, Address, MAX_PAYLOAD};
@@ -102,12 +102,15 @@ pub enum Arrival {
     /// taken: its answer follows, and the person's last fetch is its
     /// `sent`. A command it holds is to run on the records, and its
     /// outcome to be handed back ([`Mailbox::answer`]) before the summary
-    /// goes.
+    /// goes. Under a removed home's key the answer is a summary that says
+    /// so, and no command runs.
     Fetch {
         /// The person's place.
         person: usize,
-        /// The fetch's command.
+        /// The fetch's command, to run; none under a removed home's key.
         command: Option<Command>,
+        /// It opened under a removed home's key.
+        removed: bool,
     },
     /// A fetch that opens under no key, or is not later than the last
     /// its person took, or an item the ring has no number for: dropped.
@@ -124,8 +127,8 @@ pub struct Person {
     /// Their recipient tag at the node, once their phone wrote it: their
     /// items are those with it.
     pub tag: Option<u8>,
-    /// Their mailbox key, while the node is their home.
-    pub key: Option<[u8; KEY_LEN]>,
+    /// Their mailbox key, while the node is their home or once was.
+    pub key: HomeKey,
     /// The newest item when their record was made: their bit in the
     /// marks of items up to it was another's, and counts for nothing.
     pub from: u32,
@@ -181,8 +184,8 @@ struct Reply {
     answered: bool,
     /// The fetch's command, as far as the summary needs it.
     command: Commanded,
-    /// The person no longer holds the key, as their command removed it:
-    /// the round is its summary alone.
+    /// The person no longer holds the key as a home, as their command
+    /// took it or it was removed before: the round is its summary alone.
     orphan: bool,
 }
 
@@ -342,7 +345,7 @@ impl<R: Ring> Mailbox<R> {
             return;
         }
         let same = was.zip(person).is_some_and(|(w, p)| w.number == p.number);
-        let keyed = was.and_then(|w| w.key) == person.and_then(|p| p.key);
+        let keyed = was.map(|w| w.key) == person.map(|p| p.key);
         if !same || !keyed {
             match self.replies[i].as_mut() {
                 Some(r) if r.command != Commanded::No && !r.answered => r.summary_alone(),
@@ -531,7 +534,7 @@ impl<R: Ring> Mailbox<R> {
 
     /// Whether the node is anyone's home.
     pub fn is_home(&self) -> bool {
-        self.people.iter().flatten().any(|p| p.key.is_some())
+        self.people.iter().flatten().any(|p| p.key.home().is_some())
     }
 
     /// The highest number kept, 0 before any.
@@ -608,21 +611,25 @@ impl<R: Ring> Mailbox<R> {
         Arrival::Kept(n)
     }
 
-    /// A fetch: taken by the first person whose key opens it, if it is
-    /// later than the last they took (spec "Mailbox").
+    /// A fetch: taken by the first person whose key opens it, a home's
+    /// before a removed one's, if it is later than the last they took
+    /// (spec "Mailbox").
     fn fetch(&mut self, payload: &[u8]) -> Arrival {
-        let opened = (0..PEOPLE).find_map(|i| {
-            let key = self.people[i]?.key?;
-            Fetch::open(&key, self.node, payload)
-                .ok()
-                .map(|f| (i, key, f))
+        let opened = [false, true].into_iter().find_map(|removed| {
+            (0..PEOPLE).find_map(|i| {
+                let (key, _) = self.people[i]?.key.opens().filter(|&(_, r)| r == removed)?;
+                Fetch::open(&key, self.node, payload)
+                    .ok()
+                    .map(|f| (i, key, removed, f))
+            })
         });
         match opened {
-            Some((i, key, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
-                self.take(i, key, f);
+            Some((i, key, removed, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
+                self.take(i, key, removed, f);
                 Arrival::Fetch {
                     person: i,
-                    command: f.command,
+                    command: f.command.filter(|_| !removed),
+                    removed,
                 }
             }
             _ => Arrival::Refused,
@@ -640,19 +647,24 @@ impl<R: Ring> Mailbox<R> {
         }
     }
 
-    fn take(&mut self, i: usize, key: [u8; KEY_LEN], f: Fetch) {
+    /// The round of the fetch `f` of the person at `i`, opened under
+    /// `key`; under a removed home's, the summary that says so alone.
+    fn take(&mut self, i: usize, key: [u8; KEY_LEN], removed: bool, f: Fetch) {
         let lowest = self.lowest();
         let mut count: u8 = 0;
         let mut bottom = self.newest + 1;
         let mut n = self.newest;
-        while count < MAX_REPLIES && n >= lowest {
+        while !removed && count < MAX_REPLIES && n >= lowest {
             if self.is_unsent(i, n) {
                 count += 1;
                 bottom = n;
             }
             n -= 1;
         }
-        let remaining = self.unsent_below(i, bottom.saturating_sub(1));
+        let remaining = match removed {
+            true => 0,
+            false => self.unsent_below(i, bottom.saturating_sub(1)),
+        };
         if let Some(p) = self.people[i].as_mut() {
             p.last_fetch = f.sent;
         }
@@ -668,11 +680,12 @@ impl<R: Ring> Mailbox<R> {
             remaining: u16::try_from(remaining).unwrap_or(u16::MAX),
             again: None,
             answered: false,
-            command: match f.command {
-                Some(_) => Commanded::Awaited,
-                None => Commanded::No,
+            command: match (removed, f.command) {
+                (true, _) => Commanded::Done(Outcome::Done(Code::Removed)),
+                (false, Some(_)) => Commanded::Awaited,
+                (false, None) => Commanded::No,
             },
-            orphan: false,
+            orphan: removed,
         });
         if self.in_flight.is_some_and(|f| f.person == i) {
             self.in_flight = None;
@@ -687,7 +700,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     fn due(&self, i: usize) -> bool {
-        let keyed = self.people[i].is_some_and(|p| p.key.is_some());
+        // A removed home's round is an orphan's: its summary alone.
+        let keyed = self.people[i].is_some_and(|p| p.key.home().is_some());
         self.replies[i].is_some_and(|r| r.due() && (keyed || r.orphan))
     }
 

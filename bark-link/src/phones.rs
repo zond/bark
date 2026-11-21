@@ -100,6 +100,43 @@ impl Name {
     }
 }
 
+/// What a record holds of a person's mailbox key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HomeKey {
+    /// No key: the node is not their home.
+    #[default]
+    None,
+    /// The node is their home, under this key.
+    Home([u8; KEY_LEN]),
+    /// Their home was removed: the key stays, with none of a home's
+    /// rights, so that a fetch under it is told so (spec "Pairing").
+    Removed([u8; KEY_LEN]),
+}
+
+impl HomeKey {
+    /// The home's key; none for a removed one.
+    pub fn home(self) -> Option<[u8; KEY_LEN]> {
+        match self {
+            HomeKey::Home(k) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// The key a fetch may open under, and whether its home was removed.
+    pub fn opens(self) -> Option<([u8; KEY_LEN], bool)> {
+        match self {
+            HomeKey::None => None,
+            HomeKey::Home(k) => Some((k, false)),
+            HomeKey::Removed(k) => Some((k, true)),
+        }
+    }
+
+    /// Whether it holds `key`, a home or removed.
+    fn holds(self, key: [u8; KEY_LEN]) -> bool {
+        self.opens().is_some_and(|(k, _)| k == key)
+    }
+}
+
 /// A person paired with the node, or whose home it is, or both.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record {
@@ -112,8 +149,8 @@ pub struct Record {
     pub name: Name,
     /// Their recipient tag at the node, as written to Recipient.
     pub tag: Option<u8>,
-    /// Their mailbox key, while the node is their home.
-    pub key: Option<[u8; KEY_LEN]>,
+    /// Their mailbox key, while the node is their home or once was.
+    pub key: HomeKey,
     /// The newest item in the ring when the record was made: its bits in
     /// the marks of items up to this one were left by a record freed
     /// before, and count for nothing; its phone still reads those with
@@ -142,7 +179,7 @@ impl Record {
             bond,
             name: Name::EMPTY,
             tag: None,
-            key: None,
+            key: HomeKey::None,
             from: newest,
             read: 0,
             last_fetch: 0,
@@ -152,9 +189,16 @@ impl Record {
     }
 
     /// Whether the record holds anything: a record that holds neither a
-    /// bond nor a home is freed.
+    /// bond nor a key is freed.
     fn holds(&self) -> bool {
-        self.bond.is_some() || self.key.is_some()
+        self.bond.is_some() || self.key != HomeKey::None
+    }
+
+    /// Whether it holds nothing but a removed home: it is never shown,
+    /// and is the first to go when the node needs a record
+    /// (spec "Pairing").
+    pub fn only_removed(&self) -> bool {
+        self.bond.is_none() && matches!(self.key, HomeKey::Removed(_))
     }
 }
 
@@ -182,9 +226,11 @@ const FLAG_BOND: u8 = 0x01;
 const FLAG_IRK: u8 = 0x02;
 const FLAG_CHANGED: u8 = 0x04;
 const FLAG_TAG: u8 = 0x08;
-const FLAG_HOME: u8 = 0x10;
+const FLAG_KEY: u8 = 0x10;
 const FLAG_OWNER: u8 = 0x20;
-const FLAGS: u8 = FLAG_BOND | FLAG_IRK | FLAG_CHANGED | FLAG_TAG | FLAG_HOME | FLAG_OWNER;
+const FLAG_REMOVED: u8 = 0x40;
+const FLAGS: u8 =
+    FLAG_BOND | FLAG_IRK | FLAG_CHANGED | FLAG_TAG | FLAG_KEY | FLAG_OWNER | FLAG_REMOVED;
 
 /// 32-bit FNV-1a, as the store's other entries check theirs.
 fn fnv1a(bytes: &[u8]) -> u32 {
@@ -238,10 +284,12 @@ impl Record {
                 flags |= FLAG_TAG;
                 r[AT_TAG] = t;
             }
-            if let Some(k) = rec.key {
-                flags |= FLAG_HOME;
+            if let Some((k, removed)) = rec.key.opens() {
+                flags |= FLAG_KEY;
                 r[AT_KEY..AT_KEY + KEY_LEN].copy_from_slice(&k);
-                if rec.owner {
+                if removed {
+                    flags |= FLAG_REMOVED;
+                } else if rec.owner {
                     flags |= FLAG_OWNER;
                 }
             }
@@ -261,15 +309,18 @@ impl Record {
     pub fn decode(r: &[u8; RECORD_LEN]) -> Option<(usize, Option<Record>)> {
         let index = usize::from(r[AT_INDEX]);
         let flags = r[AT_FLAGS];
-        // The mark is a home's.
-        let marked = flags & (FLAG_OWNER | FLAG_HOME) == FLAG_OWNER;
-        if !whole(r, RECORD_TAG) || index >= RECORDS || flags & !FLAGS != 0 || marked {
+        // The mark and the removal are a key's, and the mark a home's.
+        let keyed = flags & FLAG_KEY != 0;
+        let marked = flags & FLAG_OWNER != 0 && (!keyed || flags & FLAG_REMOVED != 0);
+        let removed = flags & FLAG_REMOVED != 0 && !keyed;
+        if !whole(r, RECORD_TAG) || index >= RECORDS || flags & !FLAGS != 0 || marked || removed {
             return None;
         }
-        if flags & (FLAG_BOND | FLAG_HOME) == 0 {
+        if flags & (FLAG_BOND | FLAG_KEY) == 0 {
             return Some((index, None));
         }
         let take16 = |at: usize| -> [u8; 16] { r[at..at + 16].try_into().expect("16 bytes") };
+        let key = || r[AT_KEY..AT_KEY + KEY_LEN].try_into().expect("32 bytes");
         let bond = (flags & FLAG_BOND != 0).then(|| Keys {
             kind: r[AT_KIND],
             addr: r[AT_ADDR..AT_ADDR + 6].try_into().expect("6 bytes"),
@@ -287,8 +338,11 @@ impl Record {
                 bond,
                 name,
                 tag: (flags & FLAG_TAG != 0).then_some(r[AT_TAG]),
-                key: (flags & FLAG_HOME != 0)
-                    .then(|| r[AT_KEY..AT_KEY + KEY_LEN].try_into().expect("32 bytes")),
+                key: match (keyed, flags & FLAG_REMOVED != 0) {
+                    (false, _) => HomeKey::None,
+                    (true, false) => HomeKey::Home(key()),
+                    (true, true) => HomeKey::Removed(key()),
+                },
                 from: be24(&r[AT_FROM..]),
                 read: be24(&r[AT_READ..]),
                 last_fetch: u32::from_be_bytes(
@@ -451,7 +505,7 @@ pub enum Paired {
     /// The phone's record held a bond with it before: the new keys replace
     /// the old, and the rest of the record stays.
     Again(usize),
-    /// A free place took it.
+    /// A free place took it, or one that held only a removed home.
     Added(usize),
     /// Nobody was paired and every place held a home without a phone: the
     /// one whose person was seen longest ago took it, its home forgotten,
@@ -468,8 +522,8 @@ impl Paired {
     }
 }
 
-/// Every record is in use and a phone is paired: the pairing is refused
-/// (spec "Pairing").
+/// Every record is in use, none holds only a removed home, and a phone is
+/// paired: the pairing is refused (spec "Pairing").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Full;
 
@@ -485,9 +539,9 @@ pub struct Parts {
 /// Why an owner's add made no record (spec "The node's owner").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotAdded {
-    /// Every place holds a record.
+    /// Every place holds a record, and none only a removed home.
     Full,
-    /// A record holds the key already: nothing changed.
+    /// A record holds the key as a home already: nothing changed.
     Already,
 }
 
@@ -551,7 +605,11 @@ impl Phones {
     /// Node's `room`: how many more phones may pair; 1 on a node nobody is
     /// paired with whose every place holds a home left behind.
     pub fn room(&self) -> u8 {
-        let free = self.records.iter().filter(|r| r.is_none()).count() as u8;
+        let free = self
+            .records
+            .iter()
+            .filter(|r| r.is_none_or(|r| r.only_removed()))
+            .count() as u8;
         match (free, self.paired()) {
             (0, 0) => 1,
             (f, _) => f,
@@ -571,6 +629,17 @@ impl Phones {
     /// nobody is paired.
     pub fn takes(&self, phone: Option<(u8, [u8; 6])>) -> bool {
         self.room() > 0 || phone.is_some_and(|(k, a)| self.with_phone(k, &a).is_some())
+    }
+
+    /// The place a new record takes: a free one, else the one that holds
+    /// only a removed home whose person was seen longest ago
+    /// (spec "Pairing").
+    fn free(&self) -> Option<usize> {
+        self.records.iter().position(Option::is_none).or_else(|| {
+            (0..RECORDS)
+                .filter(|&i| self.records[i].is_some_and(|r| r.only_removed()))
+                .min_by_key(|&i| self.records[i].map(|r| (r.day, r.number)))
+        })
     }
 
     fn number(&mut self) -> u16 {
@@ -608,7 +677,7 @@ impl Phones {
             self.touch(i);
             return Ok(Paired::Again(i));
         }
-        let (i, how) = match self.records.iter().position(Option::is_none) {
+        let (i, how) = match self.free() {
             Some(i) => (i, Paired::Added(i)),
             None if self.paired() == 0 => {
                 let i = (0..RECORDS)
@@ -700,7 +769,7 @@ impl Phones {
             .iter()
             .flatten()
             .find(|r| r.owner)
-            .and_then(|r| r.key)
+            .and_then(|r| r.key.home())
     }
 
     /// Whether the record at `i` is the owner's.
@@ -714,7 +783,7 @@ impl Phones {
             let Some(r) = self.records[i].as_mut() else {
                 continue;
             };
-            let owner = key.is_some() && r.key == key;
+            let owner = key.is_some() && r.key.home() == key;
             if r.owner != owner {
                 r.owner = owner;
                 self.touch(i);
@@ -727,7 +796,12 @@ impl Phones {
     /// `was`, the owner's before, while a record holds it, and else goes
     /// to `seat`, a key that takes an empty seat (spec "The node's owner").
     fn keep_mark(&mut self, was: Option<[u8; KEY_LEN]>, seat: Option<[u8; KEY_LEN]>) {
-        let held = |k: &[u8; KEY_LEN]| self.records.iter().flatten().any(|r| r.key == Some(*k));
+        let held = |k: &[u8; KEY_LEN]| {
+            self.records
+                .iter()
+                .flatten()
+                .any(|r| r.key.home() == Some(*k))
+        };
         let key = was.filter(held).or(seat.filter(held));
         self.mark(key);
     }
@@ -747,9 +821,9 @@ impl Phones {
 
     /// The phone at `i` writes Home: its person's key, or none; returns the
     /// place that holds the phone's record after it. A home left by this
-    /// person's earlier phone takes this phone's bond and keeps its place,
-    /// whose bits in the ring's marks are their unfetched mail
-    /// (spec "Settings"). A key set takes the owner's seat if it is empty
+    /// person's earlier phone, a home or removed, takes this phone's bond
+    /// and keeps its place, whose bits in the ring's marks are their
+    /// unfetched mail (spec "Settings"). A key set takes the owner's seat if it is empty
     /// (spec "The node's owner"). `sent` is the phone's as it writes: the
     /// record's last fetch is at least it, so that no fetch of the key from
     /// before is taken; it is never lowered.
@@ -765,10 +839,18 @@ impl Phones {
             return i;
         };
         let start = if key.is_some() { sent } else { 0 };
-        if r.key != key {
-            let home = r.key.is_some() != key.is_some();
-            r.key = key;
-            r.last_fetch = start;
+        let new = key.map_or(HomeKey::None, HomeKey::Home);
+        if r.key != new {
+            // A removed home set again is a home again, from the later of
+            // its last fetch and this write's `sent`.
+            let revived = key.is_some_and(|k| r.key == HomeKey::Removed(k));
+            let home = r.key.home().is_some() != key.is_some();
+            r.last_fetch = if revived {
+                r.last_fetch.max(start)
+            } else {
+                start
+            };
+            r.key = new;
             self.touch(i);
             if home {
                 self.relisted();
@@ -781,7 +863,7 @@ impl Phones {
             return i;
         };
         let left = (0..RECORDS).find(|&j| {
-            j != i && self.records[j].is_some_and(|o| o.bond.is_none() && o.key == Some(k))
+            j != i && self.records[j].is_some_and(|o| o.bond.is_none() && o.key.holds(k))
         });
         let Some(j) = left else {
             return i;
@@ -793,6 +875,7 @@ impl Phones {
         home.tag = phone.tag.or(home.tag);
         home.day = phone.day.max(home.day);
         home.last_fetch = home.last_fetch.max(sent);
+        home.key = new;
         self.touch(i);
         self.touch(j);
         self.relisted();
@@ -807,13 +890,14 @@ impl Phones {
             .iter()
             .position(|r| r.is_some_and(|r| r.number == number))?;
         let r = self.records[i].as_ref().expect("found");
-        let lacks = (parts.bond && r.bond.is_none()) || (parts.home && r.key.is_none());
+        let lacks = (parts.bond && r.bond.is_none()) || (parts.home && r.key.home().is_none());
         (!lacks).then_some(i)
     }
 
     /// Remove `parts` of the record numbered `number` (spec "Phones"):
     /// `None` when no record has the number or it does not hold a part
-    /// asked for.
+    /// asked for. A home removed keeps its key and its last fetch, marked
+    /// removed, so that a later fetch under the key is told so.
     pub fn remove(&mut self, number: u16, parts: Parts) -> Option<Removed> {
         let i = self.holding(number, parts)?;
         let owner = self.owner();
@@ -822,9 +906,8 @@ impl Phones {
             true => r.bond.take(),
             false => None,
         };
-        if parts.home {
-            r.key = None;
-            r.last_fetch = 0;
+        if let (true, HomeKey::Home(k)) = (parts.home, r.key) {
+            r.key = HomeKey::Removed(k);
         }
         self.touch(i);
         self.free_if_empty(i);
@@ -837,7 +920,9 @@ impl Phones {
     /// node: a record with a home and no bond, made on day `day` with the
     /// ring's newest item `newest`, its last fetch `sent`, the add's own,
     /// so that no fetch of the key from before is taken (spec "Mailbox",
-    /// The owner's commands). Its place.
+    /// The owner's commands). A record that holds the key removed is a
+    /// home again instead, its last fetch the later of its own and
+    /// `sent`. Its place.
     pub fn add(
         &mut self,
         key: [u8; KEY_LEN],
@@ -847,19 +932,27 @@ impl Phones {
         day: u16,
         sent: u32,
     ) -> Result<usize, NotAdded> {
-        if self.records.iter().flatten().any(|r| r.key == Some(key)) {
+        let held = |k: HomeKey| (0..RECORDS).find(|&i| self.records[i].is_some_and(|r| r.key == k));
+        if held(HomeKey::Home(key)).is_some() {
             return Err(NotAdded::Already);
         }
-        let i = self
-            .records
-            .iter()
-            .position(Option::is_none)
-            .ok_or(NotAdded::Full)?;
+        if let Some(i) = held(HomeKey::Removed(key)) {
+            let r = self.records[i].as_mut().expect("found");
+            r.key = HomeKey::Home(key);
+            r.tag = Some(tag);
+            r.name = name;
+            r.day = r.day.max(day);
+            r.last_fetch = r.last_fetch.max(sent);
+            self.touch(i);
+            self.relisted();
+            return Ok(i);
+        }
+        let i = self.free().ok_or(NotAdded::Full)?;
         let number = self.number();
         self.records[i] = Some(Record {
             name,
             tag: Some(tag),
-            key: Some(key),
+            key: HomeKey::Home(key),
             day,
             last_fetch: sent,
             ..Record::new(number, None, newest)
@@ -880,21 +973,21 @@ impl Phones {
                 home: true,
             },
         )?;
-        self.mark(self.records[i].and_then(|r| r.key));
+        self.mark(self.records[i].and_then(|r| r.key.home()));
         Some(i)
     }
 
     /// The person of the record at `i` leaves: every record that holds
-    /// their key forgets it, and one with no bond is freed
-    /// (spec "The node's owner").
+    /// their key, a home or removed, forgets it, and one with no bond is
+    /// freed (spec "The node's owner").
     pub fn leave(&mut self, i: usize) {
-        let Some(key) = self.get(i).and_then(|r| r.key) else {
+        let Some(key) = self.get(i).and_then(|r| r.key.home()) else {
             return;
         };
         let owner = self.owner();
         for j in 0..RECORDS {
-            if let Some(r) = self.records[j].as_mut().filter(|r| r.key == Some(key)) {
-                r.key = None;
+            if let Some(r) = self.records[j].as_mut().filter(|r| r.key.holds(key)) {
+                r.key = HomeKey::None;
                 r.last_fetch = 0;
                 self.touch(j);
                 self.free_if_empty(j);
@@ -927,16 +1020,22 @@ impl Phones {
         })
     }
 
+    /// The records a person sees, with their places: all but those that
+    /// hold only a removed home.
+    fn shown(&self) -> impl Iterator<Item = (usize, &Record)> {
+        self.records
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| Some((i, r.as_ref().filter(|r| !r.only_removed())?)))
+    }
+
     /// Phones, read, into `out`; returns its length. `reader` is the
     /// reading phone's place and `linked` a bit for each place whose phone
     /// is linked now.
     pub fn page(&self, from: u8, reader: Option<usize>, linked: u8, out: &mut [u8]) -> usize {
         let mut len = 1;
         out[0] = 0;
-        for (i, r) in self.records.iter().enumerate().skip(usize::from(from)) {
-            let Some(r) = r else {
-                continue;
-            };
+        for (i, r) in self.shown().filter(|&(i, _)| i >= usize::from(from)) {
             let name = r.name.as_bytes();
             if len + PER_RECORD + name.len() > out.len() {
                 out[0] = i as u8;
@@ -953,21 +1052,13 @@ impl Phones {
     /// most bytes at which every record fits, so only as far as needed.
     /// Its length.
     pub fn list(&self, reader: usize, linked: u8, out: &mut [u8]) -> usize {
-        let names = || {
-            self.records
-                .iter()
-                .flatten()
-                .map(|r| r.name.as_bytes().len())
-        };
+        let names = || self.shown().map(|(_, r)| r.name.as_bytes().len());
         let fits = |most: usize| -> bool {
             names().map(|n| PER_RECORD + n.min(most)).sum::<usize>() <= out.len()
         };
         let most = (0..=NAME_MAX).rev().find(|&m| fits(m)).unwrap_or(0);
         let mut len = 0;
-        for (i, r) in self.records.iter().enumerate() {
-            let Some(r) = r else {
-                continue;
-            };
+        for (i, r) in self.shown() {
             let name = cut(r.name.as_bytes(), most);
             if len + PER_RECORD + name.len() > out.len() {
                 break;
@@ -1002,7 +1093,7 @@ fn put(
     let b = &mut b[..PER_RECORD + name.len()];
     b[..2].copy_from_slice(&r.number.to_be_bytes());
     b[2] = flag(r.bond.is_some(), 0x01)
-        | flag(r.key.is_some(), 0x02)
+        | flag(r.key.home().is_some(), 0x02)
         | flag(linked & (1 << i) != 0, 0x04)
         | flag(reader == Some(i), 0x08)
         | flag(r.tag.is_some(), 0x10)
@@ -1250,7 +1341,7 @@ mod tests {
             bond: Some(keys(n)),
             name: Name::new("Åsa Öberg".as_bytes()).unwrap(),
             tag: Some(n),
-            key: Some([n; 32]),
+            key: HomeKey::Home([n; 32]),
             from: 70_000,
             read: 0x01_0203,
             last_fetch: 0x0405_0607,
@@ -1270,7 +1361,7 @@ mod tests {
                 ..full(1)
             },
             Record {
-                key: None,
+                key: HomeKey::None,
                 owner: false,
                 bond: Some(Keys {
                     irk: None,
@@ -1283,6 +1374,17 @@ mod tests {
                 owner: false,
                 ..full(6)
             },
+            Record {
+                owner: false,
+                key: HomeKey::Removed([7; 32]),
+                ..full(7)
+            },
+            Record {
+                owner: false,
+                key: HomeKey::Removed([8; 32]),
+                bond: None,
+                ..full(8)
+            },
         ] {
             let r = Record::encode(5, Some(&rec));
             assert_eq!(Record::decode(&r), Some((5, Some(rec))));
@@ -1293,10 +1395,23 @@ mod tests {
                 assert_eq!(Record::decode(&cut), None);
             }
         }
-        // The mark without a home is no record.
+        // The mark without a home is no record, nor a removal without a
+        // key.
         let mut marked = Record::encode(5, Some(&full(5)));
-        marked[AT_FLAGS] &= !FLAG_HOME;
+        marked[AT_FLAGS] &= !FLAG_KEY;
         assert_eq!(Record::decode(&seal(marked)), None);
+        let mut marked = Record::encode(5, Some(&full(5)));
+        marked[AT_FLAGS] |= FLAG_REMOVED;
+        assert_eq!(Record::decode(&seal(marked)), None);
+        let mut keyless = Record::encode(
+            5,
+            Some(&Record {
+                key: HomeKey::None,
+                ..full(5)
+            }),
+        );
+        keyless[AT_FLAGS] = (keyless[AT_FLAGS] & !FLAG_OWNER) | FLAG_REMOVED;
+        assert_eq!(Record::decode(&seal(keyless)), None);
         let freed = Record::encode(7, None);
         assert_eq!(Record::decode(&freed), Some((7, None)));
         let mut far = freed;
@@ -1439,7 +1554,7 @@ mod tests {
         assert_eq!(p.room(), 1);
         assert_eq!(p.pair(keys(30), 5), Ok(Paired::Took(2)));
         let r = p.get(2).unwrap();
-        assert_eq!((r.key, r.from, r.number), (None, 5, 9));
+        assert_eq!((r.key, r.from, r.number), (HomeKey::None, 5, 9));
         assert_eq!(p.room(), 0);
     }
 
@@ -1485,12 +1600,18 @@ mod tests {
         assert_eq!(p.set_home(1, Some(k), 0), 0);
         assert_eq!(p.get(1), None);
         let r = p.get(0).unwrap();
-        assert_eq!((r.bond, r.tag, r.key), (Some(keys(2)), Some(0x11), Some(k)));
+        assert_eq!(
+            (r.bond, r.tag, r.key),
+            (Some(keys(2)), Some(0x11), HomeKey::Home(k))
+        );
         assert_eq!((r.from, r.read, r.last_fetch, r.day), (0, 30, 31, 400));
         assert_eq!(r.name.as_bytes(), b"Eva");
         // Clearing forgets the key and the last fetch, the record stays.
         assert_eq!(p.set_home(0, None, 0), 0);
-        assert_eq!(p.get(0).map(|r| (r.key, r.last_fetch)), Some((None, 0)));
+        assert_eq!(
+            p.get(0).map(|r| (r.key, r.last_fetch)),
+            Some((HomeKey::None, 0))
+        );
     }
 
     #[test]
@@ -1520,7 +1641,9 @@ mod tests {
                 bond: None
             })
         );
-        assert_eq!(p.get(1).map(|r| r.key), Some(None));
+        // The key stays, removed, with its last fetch.
+        assert_eq!(p.get(1).map(|r| r.key), Some(HomeKey::Removed([2; 32])));
+        assert_eq!(p.remove(2, home), None, "removed already");
         p.set_private(true);
         assert_eq!(
             p.remove(2, bond),
@@ -1529,7 +1652,7 @@ mod tests {
                 bond: Some(keys(2))
             })
         );
-        assert_eq!(p.get(1), None);
+        assert!(p.get(1).is_some_and(|r| r.only_removed()));
         assert!(!p.public());
         assert_eq!(
             p.remove(1, bond),
@@ -1665,7 +1788,7 @@ mod tests {
             assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0, 0).is_ok())
         });
         let at = (0..RECORDS)
-            .find(|&i| p.get(i).is_some_and(|r| r.key == Some([3; 32])))
+            .find(|&i| p.get(i).is_some_and(|r| r.key == HomeKey::Home([3; 32])))
             .unwrap();
         let added = p.get(at).unwrap().number;
         step(&mut p, "add again", false, |p| {
@@ -1737,7 +1860,7 @@ mod tests {
         let r = *p.get(1).unwrap();
         assert_eq!(
             (r.bond, r.key, r.tag, r.from, r.day, r.owner),
-            (None, Some([5; 32]), Some(0x55), 40, 300, false)
+            (None, HomeKey::Home([5; 32]), Some(0x55), 40, 300, false)
         );
         assert_eq!(r.name, eva);
         // The same key again changes nothing, full or not.
@@ -1762,7 +1885,7 @@ mod tests {
         assert_eq!(p.owner(), Some([5; 32]));
         assert_eq!(
             p.get(0).map(|r| (r.key, r.owner)),
-            Some((Some([1; 32]), false))
+            Some((HomeKey::Home([1; 32]), false))
         );
         // A record without a home cannot take it.
         p.set_home(0, None, 0);
@@ -1779,7 +1902,7 @@ mod tests {
         p.leave(0);
         assert_eq!(
             p.get(0).map(|r| (r.bond.is_some(), r.key, r.owner)),
-            Some((true, None, false))
+            Some((true, HomeKey::None, false))
         );
     }
 
@@ -1876,11 +1999,11 @@ mod tests {
             .encode(),
         );
         let one = Record {
-            key: Some([1; 32]),
+            key: HomeKey::Home([1; 32]),
             ..full(1)
         };
         let two = Record {
-            key: Some([2; 32]),
+            key: HomeKey::Home([2; 32]),
             ..full(2)
         };
         load.entry(&Record::encode(3, Some(&two)));
@@ -1933,6 +2056,168 @@ mod tests {
         p.pair(keys(3), 0).unwrap();
         assert_eq!(p.set_home(2, Some([5; 32]), 1300), 1);
         assert_eq!(p.get(1).map(|r| r.last_fetch), Some(1300));
+    }
+
+    const HOME: Parts = Parts {
+        bond: false,
+        home: true,
+    };
+    const BOND: Parts = Parts {
+        bond: true,
+        home: false,
+    };
+
+    /// Every record a Phones read lists: number, paired, home, owner.
+    fn listed(p: &Phones) -> std::vec::Vec<(u16, bool, bool, bool)> {
+        let all = every_page(p);
+        let mut out = [None; RECORDS];
+        let n = decode_list(&all, &mut out).unwrap();
+        out[..n]
+            .iter()
+            .flatten()
+            .map(|l| (l.number, l.paired, l.home, l.owner))
+            .collect()
+    }
+
+    /// A removed home keeps its key with none of a home's rights: no
+    /// owner's mark, no list shows it alone, and one with a bond shows as
+    /// paired only (spec "Phones").
+    #[test]
+    fn a_removed_home_keeps_its_key_and_shows_nowhere() {
+        let mut p = Phones::EMPTY;
+        let (ann, bo) = ([1; 32], [2; 32]);
+        p.pair(keys(1), 0).unwrap();
+        p.set_home(0, Some(ann), 100);
+        p.add(bo, 2, Name::EMPTY, 0, 0, 200).unwrap();
+        assert!(p.is_owner(0));
+        p.progress(0, 0, 150);
+        p.remove(1, HOME).unwrap();
+        let r = *p.get(0).unwrap();
+        assert_eq!(
+            (r.key, r.owner, r.last_fetch),
+            (HomeKey::Removed(ann), false, 150)
+        );
+        assert_eq!(p.owner(), None, "the seat is empty");
+        assert_eq!(
+            listed(&p),
+            [(1, true, false, false), (2, false, true, false)]
+        );
+        // Kept so in flash.
+        assert_eq!(
+            Record::decode(&Record::encode(0, Some(&r))),
+            Some((0, Some(r)))
+        );
+        // Its bond gone too, it holds only the removed key, and is shown
+        // nowhere.
+        p.remove(1, BOND).unwrap();
+        assert!(p.get(0).is_some_and(|r| r.only_removed()));
+        assert_eq!(listed(&p), [(2, false, true, false)]);
+        let mut out = [0u8; 200];
+        let mut l = [None; RECORDS];
+        let n = p.list(1, 0, &mut out);
+        assert_eq!(decode_list(&out[..n], &mut l), Ok(1));
+        // It is not a home: no hand-over, no removal again, no leave.
+        assert_eq!(p.make_owner(1), None);
+        assert_eq!(p.remove(1, HOME), None);
+        p.leave(0);
+        assert_eq!(p.get(0).map(|r| r.key), Some(HomeKey::Removed(ann)));
+        assert_eq!(p.room(), RECORDS as u8 - 1, "it is room");
+    }
+
+    /// The same key set again, by Home or by the owner's add, makes the
+    /// removed record a home again, its last fetch never lowered
+    /// (roadmap D236, D239).
+    #[test]
+    fn a_removed_key_set_again_is_a_home_again() {
+        let mut p = Phones::EMPTY;
+        let (ann, bo) = ([1; 32], [2; 32]);
+        p.pair(keys(1), 0).unwrap();
+        p.set_home(0, Some(ann), 100);
+        p.progress(0, 0, 300);
+        p.remove(1, HOME).unwrap();
+        p.set_home(0, Some(ann), 200);
+        let r = *p.get(0).unwrap();
+        assert_eq!((r.key, r.last_fetch), (HomeKey::Home(ann), 300));
+        assert!(p.is_owner(0), "the empty seat");
+        p.remove(1, HOME).unwrap();
+        p.set_home(0, Some(ann), 400);
+        assert_eq!(p.get(0).map(|r| r.last_fetch), Some(400));
+        // A removed record without a bond, set again from a new phone,
+        // takes the phone's bond.
+        p.remove(
+            1,
+            Parts {
+                bond: true,
+                home: true,
+            },
+        )
+        .unwrap();
+        p.pair(keys(2), 0).unwrap();
+        assert_eq!(p.set_home(1, Some(ann), 350), 0);
+        let r = *p.get(0).unwrap();
+        assert_eq!(
+            (r.bond, r.key.home(), r.last_fetch),
+            (Some(keys(2)), Some(ann), 400)
+        );
+        assert_eq!(p.get(1), None);
+        // An add of a removed key is not "already there": it is a home again
+        // in its record, with the add's tag and name.
+        let at = p.add(bo, 2, Name::EMPTY, 0, 10, 500).unwrap();
+        p.progress(at, 0, 700);
+        let number = p.get(at).unwrap().number;
+        p.remove(number, HOME).unwrap();
+        let eva = Name::new(b"Eva").unwrap();
+        assert_eq!(p.add(bo, 5, eva, 0, 20, 600), Ok(at));
+        let r = *p.get(at).unwrap();
+        assert_eq!(
+            (r.number, r.key.home(), r.tag, r.name, r.day, r.last_fetch),
+            (number, Some(bo), Some(5), eva, 20, 700)
+        );
+        assert_eq!(p.add(bo, 5, eva, 0, 20, 800), Err(NotAdded::Already));
+    }
+
+    /// A node that needs a record and has none free takes the one that
+    /// holds only a removed key, seen longest ago, and never another
+    /// (spec "Pairing").
+    #[test]
+    fn a_full_node_takes_the_oldest_removed_record_and_no_other() {
+        let mut p = Phones::EMPTY;
+        p.pair(keys(0), 0).unwrap();
+        p.set_home(0, Some([0; 32]), 0);
+        for k in 1..RECORDS as u8 {
+            p.add([k; 32], k, Name::EMPTY, 0, 100 + u16::from(k), 0)
+                .unwrap();
+        }
+        assert_eq!(p.pair(keys(20), 0), Err(Full));
+        assert_eq!(
+            p.add([20; 32], 20, Name::EMPTY, 0, 0, 0),
+            Err(NotAdded::Full)
+        );
+        // Records 5 and 3 removed, and 0, which keeps its bond and so its
+        // place.
+        for at in [5, 3, 0] {
+            let number = p.get(at).unwrap().number;
+            p.remove(number, HOME).unwrap();
+        }
+        assert_eq!(p.room(), 2);
+        assert_eq!(p.pair(keys(21), 0), Ok(Paired::Added(3)));
+        let r = *p.get(3).unwrap();
+        assert_eq!((r.bond, r.key), (Some(keys(21)), HomeKey::None));
+        assert_eq!(p.add([22; 32], 22, Name::EMPTY, 0, 0, 0), Ok(5));
+        assert_eq!(
+            p.get(5).map(|r| (r.key.home(), r.bond)),
+            Some((Some([22; 32]), None))
+        );
+        assert_eq!(p.pair(keys(23), 0), Err(Full));
+        assert_eq!(
+            p.add([23; 32], 23, Name::EMPTY, 0, 0, 0),
+            Err(NotAdded::Full)
+        );
+        let r = *p.get(0).unwrap();
+        assert_eq!((r.bond, r.key), (Some(keys(0)), HomeKey::Removed([0; 32])));
+        assert!((1..RECORDS).all(|i| p
+            .get(i)
+            .is_some_and(|r| r.key.home().is_some() || r.bond.is_some())));
     }
 
     #[test]

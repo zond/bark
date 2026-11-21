@@ -118,20 +118,21 @@ pub enum Code {
     Already = 3,
     /// No record of that number holds a home.
     NoSuchHome = 4,
+    /// The sender's home here was removed; nothing else was done.
+    Removed = 5,
 }
 
 impl Code {
     fn of(b: u8) -> Result<Code, Error> {
-        [
-            Code::Ok,
-            Code::NotAllowed,
-            Code::Full,
-            Code::Already,
-            Code::NoSuchHome,
-        ]
-        .into_iter()
-        .find(|c| *c as u8 == b)
-        .ok_or(Error::Malformed)
+        Ok(match b {
+            0 => Code::Ok,
+            1 => Code::NotAllowed,
+            2 => Code::Full,
+            3 => Code::Already,
+            4 => Code::NoSuchHome,
+            5 => Code::Removed,
+            _ => return Err(Error::Malformed),
+        })
     }
 }
 
@@ -240,7 +241,8 @@ pub struct Summary {
     /// ([`crate::VERSION`]), so that the app away writes it one it reads
     /// (spec "The payload").
     pub newest: u8,
-    /// What the fetch's command did; none for a fetch without one.
+    /// What the fetch's command did, none for a fetch without one; or,
+    /// with or without one, that the sender's home was removed.
     pub outcome: Option<Outcome>,
 }
 

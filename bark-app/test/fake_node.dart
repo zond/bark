@@ -385,7 +385,7 @@ class FakeNode implements NodeLink {
     if (!homeAnswers || formOf(payload) != Form.fetch) return;
     FakeHomeRecord? from;
     Fetch? f;
-    for (final r in homeRecords) {
+    for (final r in [...homeRecords, ...removedRecords]) {
       final k = SecureKey.fromList(sodium, r.key);
       try {
         f = Fetch.open(sodium, k, home, payload);
@@ -401,7 +401,12 @@ class FakeNode implements NodeLink {
     from.lastFetch = f.sent;
     final key = SecureKey.fromList(sodium, from.key);
     final c = f.command;
-    final (outcome, list) = c == null ? (null, null) : _obey(from, c, f.sent);
+    final removed = removedRecords.contains(from);
+    final (outcome, list) = removed
+        ? (Outcome.removed, null)
+        : c == null
+        ? (null, null)
+        : _obey(from, c, f.sent);
     // Only the person's own record has items here; a command that takes
     // the sender's own key is answered by its summary alone.
     final own = from == homeRecords.firstOrNull && homeRecords.contains(from);
@@ -447,6 +452,11 @@ class FakeNode implements NodeLink {
       FakeHomeRecord(1, mailbox!.extractBytes(), name: 'Me', owner: true),
   ];
 
+  /// The records of the home away whose home was removed: each keeps its
+  /// key, a fetch under which is told so, until the key is added again
+  /// or its place is needed (spec "Phone link", Pairing).
+  final List<FakeHomeRecord> removedRecords = [];
+
   /// Whether the home away hears fetches; false for one out of reach.
   bool homeAnswers = true;
 
@@ -472,16 +482,34 @@ class FakeNode implements NodeLink {
         if (homeRecords.any((r) => hex(r.key) == hex(key))) {
           return (Outcome.already, null);
         }
-        if (homeRecords.length == maxPhones) return (Outcome.full, null);
-        final n = homeRecords.map((r) => r.number).fold(0, max) + 1;
+        final was = removedRecords
+            .where((r) => hex(r.key) == hex(key))
+            .firstOrNull;
+        if (was == null && homeRecords.length == maxPhones) {
+          return (Outcome.full, null);
+        }
+        if (was != null) {
+          removedRecords.remove(was);
+        } else if (homeRecords.length + removedRecords.length == maxPhones) {
+          removedRecords.removeAt(0);
+        }
+        final n =
+            was?.number ??
+            [
+                  ...homeRecords,
+                  ...removedRecords,
+                ].map((r) => r.number).fold(0, max) +
+                1;
         homeRecords.add(
-          FakeHomeRecord(n, key, tag: tag, name: name)..lastFetch = sent,
+          FakeHomeRecord(n, key, tag: tag, name: name)
+            ..lastFetch = max(was?.lastFetch ?? 0, sent),
         );
         return (Outcome.ok, null);
       case RemoveCommand(:final number):
         final r = numbered(number);
         if (r == null) return (Outcome.noSuchHome, null);
         homeRecords.remove(r);
+        removedRecords.add(r..owner = false);
         return (Outcome.ok, null);
       case HandOverCommand(:final number):
         final r = numbered(number);
