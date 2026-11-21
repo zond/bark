@@ -328,6 +328,7 @@ impl Transport for FakeRadio {
             queue: VecDeque::new(),
             neighbours_from: 0,
             phones_from: 0,
+            code_drawn: false,
             tag: None,
             after: 0,
         })
@@ -372,6 +373,8 @@ pub struct FakeLink {
     queue: VecDeque<(Char, Vec<u8>)>,
     neighbours_from: u8,
     phones_from: u8,
+    /// A code for a change to the phones is drawn and not yet tried.
+    code_drawn: bool,
     /// The recipient tag the link wrote.
     tag: Option<u8>,
     /// What a guest wrote to Guest.
@@ -528,7 +531,28 @@ impl Link for FakeLink {
             Char::Neighbours => self.neighbours_from = taken(neighbours::decode_from(v))?,
             Char::Phones => match taken(PhonesWrite::decode(v))? {
                 PhonesWrite::From(s) => self.phones_from = s,
-                _ => return Err(Error::Other("the fake removes no phone".into())),
+                PhonesWrite::Code => self.code_drawn = true,
+                PhonesWrite::Remove { .. } | PhonesWrite::Owner { .. } if !self.code_drawn => {
+                    return Err(Error::Att(bark_link::att::REFUSED));
+                }
+                w @ (PhonesWrite::Remove { code, .. } | PhonesWrite::Owner { code, .. }) => {
+                    // One try for each code drawn.
+                    self.code_drawn = false;
+                    if code != n.code {
+                        return Err(Error::Att(bark_link::att::REFUSED));
+                    }
+                    let done = match w {
+                        PhonesWrite::Remove { number, parts, .. } => {
+                            n.phones.remove(number, parts).is_some()
+                        }
+                        PhonesWrite::Owner { number, .. } => n.phones.make_owner(number).is_some(),
+                        _ => unreachable!("a change"),
+                    };
+                    if !done {
+                        return Err(Error::Att(bark_link::att::VALUE_NOT_ALLOWED));
+                    }
+                    n.relisted();
+                }
             },
             Char::Update => {
                 let refuse = |n: &mut FakeNode, why| {
@@ -619,8 +643,20 @@ impl Link for FakeLink {
             }
             Char::Guest => self.after = taken(After::decode(v))?.0,
             Char::Home => match taken(SetHome::decode(v))? {
-                SetHome::Set { key, .. } => n.home = Some(key),
-                SetHome::Clear => n.home = None,
+                SetHome::Set { key, sent } => {
+                    n.home = Some(key);
+                    if let Some(i) = n.mine() {
+                        n.phones.set_home(i, Some(key), sent);
+                        n.relisted();
+                    }
+                }
+                SetHome::Clear => {
+                    n.home = None;
+                    if let Some(i) = n.mine() {
+                        n.phones.set_home(i, None, 0);
+                        n.relisted();
+                    }
+                }
             },
             Char::Ask => {
                 let Ask(id) = taken(Ask::decode(v))?;

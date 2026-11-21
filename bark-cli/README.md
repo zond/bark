@@ -78,9 +78,13 @@ first, and a paired one their name too, so the node hands them their mail.
   what it is.
 - `phones <id>`: a line for each record the node keeps: its number, its
   flags (`mine` is this computer's, `owner` the node's owner's), its tag,
-  the day its person was last seen, and its name. The tool neither removes a
-  record nor makes an owner; the app does both, by the code the node's
-  screen shows.
+  the day its person was last seen, and its name.
+- `remove <id> <number> pairing|home|both`: removes that part of the
+  record with the number. The node shows `CONFIRM` and a code on its
+  screen, the tool asks for it, and the node takes one try within 30 s.
+  Then it prints the records.
+- `owner <id> <number>`: makes that record's person the node's owner, by
+  the same code. Then it prints the records.
 
 ## Messages
 

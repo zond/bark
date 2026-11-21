@@ -6,8 +6,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use bark_link::neighbours::{self, Header, Neighbour};
-use bark_link::phones::{self, PhonesWrite, RECORDS};
-use bark_link::{Answer, Ask, Clock, MapPoint, Node, NodeTime, Public, PublicWrite, Status};
+use bark_link::phones::{self, Parts, PhonesWrite, RECORDS};
+use bark_link::{att, Answer, Ask, Clock, MapPoint, Node, NodeTime, Public, PublicWrite, Status};
 use bark_proto::{NodeId, Position};
 
 use crate::link::{id_text, Char, Error, Found, Link, Reach, Result, Transport};
@@ -639,6 +639,48 @@ pub fn phones<L: Link>(l: &mut L) -> Result<Vec<Record>> {
     ))
 }
 
+/// What a paired phone changes of a record at the node (spec "Phones").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// Remove these parts of it.
+    Remove(Parts),
+    /// Make its key the owner's.
+    Owner,
+}
+
+/// Changes the record numbered `number`: the node draws a code on its
+/// screen, `code` gives it as the person reads it there, and the node
+/// takes the change only with it (spec "Phones").
+pub fn change<L: Link>(
+    l: &mut L,
+    number: u16,
+    what: Change,
+    code: impl FnOnce() -> Result<u32>,
+) -> Result<()> {
+    let mut b = [0; PhonesWrite::MAX_LEN];
+    let len = PhonesWrite::Code.encode(&mut b);
+    l.write(Char::Phones, &b[..len])?;
+    let code = code()?;
+    let write = match what {
+        Change::Remove(parts) => PhonesWrite::Remove {
+            number,
+            parts,
+            code,
+        },
+        Change::Owner => PhonesWrite::Owner { number, code },
+    };
+    let len = write.encode(&mut b);
+    l.write(Char::Phones, &b[..len]).map_err(|e| match e {
+        Error::Att(att::REFUSED) => Error::Other(
+            "refused: not the code on the node's screen, or typed after its 30 s; ask again".into(),
+        ),
+        Error::Att(att::VALUE_NOT_ALLOWED) => {
+            Error::Other(format!("no record {number} holds that; nothing changed"))
+        }
+        e => e,
+    })
+}
+
 /// How long an app with a message waits for ready after asking for the
 /// turn, before it asks again: a ban for each of the eight other links,
 /// 8 × 1.58 s (spec "Sending").
@@ -1111,6 +1153,48 @@ mod tests {
         assert_eq!(a.status.version, 46);
         let e = ask(&mut l, id(0xbb00_0000_0001)).unwrap_err();
         assert!(e.to_string().contains("did not answer"), "{e}");
+    }
+
+    /// A record changes only with the code the node shows: a home is
+    /// removed and the owner made with it, and neither without.
+    #[test]
+    fn a_record_changes_with_the_node_s_code_alone() {
+        let mut radio = FakeRadio::new(vec![FakeNode::new(id(1)).with_other_phone()]);
+        let mut state = State::in_memory();
+        pair(
+            &mut radio,
+            &mut state,
+            &sel("1"),
+            SCAN_TIME,
+            Some(123_456),
+            CLOCK,
+        )
+        .unwrap();
+        let (_, mut l) = paired_link(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
+        home(&mut l, Some([7; 32]), CLOCK.utc_s).unwrap();
+        let mine = |l: &mut _| phones(l).unwrap().into_iter().find(|r| r.mine).unwrap();
+        let me = mine(&mut l);
+        assert!(me.home);
+        let part = Change::Remove(Parts {
+            bond: false,
+            home: true,
+        });
+        let e = change(&mut l, me.number, part, || Ok(1)).unwrap_err();
+        assert!(e.to_string().contains("refused"), "{e}");
+        assert!(mine(&mut l).home);
+        let e = change(&mut l, 999, part, || Ok(123_456)).unwrap_err();
+        assert!(e.to_string().contains("no record 999"), "{e}");
+        change(&mut l, me.number, part, || Ok(123_456)).unwrap();
+        assert!(!mine(&mut l).home);
+        home(&mut l, Some([7; 32]), CLOCK.utc_s + 1).unwrap();
+        let other = phones(&mut l)
+            .unwrap()
+            .into_iter()
+            .find(|r| !r.mine)
+            .unwrap();
+        assert!(mine(&mut l).owner && !other.home);
+        let e = change(&mut l, other.number, Change::Owner, || Ok(123_456)).unwrap_err();
+        assert!(e.to_string().contains("holds that"), "{e}");
     }
 
     #[test]

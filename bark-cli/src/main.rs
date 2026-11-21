@@ -7,9 +7,10 @@ use std::time::{Duration, SystemTime};
 use bark_cli::bluez::Bluez;
 use bark_cli::link::{Error, Link, Result};
 use bark_cli::messages;
-use bark_cli::phone::{self, Select};
+use bark_cli::phone::{self, Change, Select};
 use bark_cli::show;
 use bark_cli::state::{self, State};
+use bark_link::phones::Parts;
 use bark_link::Clock;
 use bark_proto::Position;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -42,6 +43,13 @@ struct Args {
 enum OnOff {
     On,
     Off,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Part {
+    Pairing,
+    Home,
+    Both,
 }
 
 #[derive(Subcommand)]
@@ -103,6 +111,21 @@ enum Command {
     Public { node: Select, set: Option<OnOff> },
     /// The phones paired with the node, and whose home it is.
     Phones { node: Select },
+    /// Remove a record's pairing, its home or both, with the code the
+    /// node's screen then shows.
+    Remove {
+        node: Select,
+        /// The record's number, as `phones` gives it.
+        number: u16,
+        what: Part,
+    },
+    /// Make a record's person the node's owner, with the code the node's
+    /// screen then shows.
+    Owner {
+        node: Select,
+        /// The record's number, as `phones` gives it.
+        number: u16,
+    },
     /// This person: identity, name, home, and the card others add.
     Me {
         /// Sets the name the card shows, 32 bytes at most.
@@ -232,7 +255,9 @@ fn run(args: Args) -> Result<Vec<String>> {
                 | Command::Clock { node }
                 | Command::MapPoint { node, .. }
                 | Command::Public { node, .. }
-                | Command::Phones { node } => node.clone(),
+                | Command::Phones { node }
+                | Command::Remove { node, .. }
+                | Command::Owner { node, .. } => node.clone(),
                 _ => unreachable!("handled above"),
             };
             let (_, mut l) = phone::paired_link(r, &mut state, &node, now())?;
@@ -269,8 +294,34 @@ fn owned<L: Link>(l: &mut L, command: Command) -> Result<Vec<String>> {
             vec![format!("public {}", if public { "yes" } else { "no" })]
         }
         Command::Phones { .. } => show::phones(&phone::phones(l)?),
+        Command::Remove { number, what, .. } => {
+            let parts = Parts {
+                bond: matches!(what, Part::Pairing | Part::Both),
+                home: matches!(what, Part::Home | Part::Both),
+            };
+            phone::change(l, number, Change::Remove(parts), typed_code)?;
+            show::phones(&phone::phones(l)?)
+        }
+        Command::Owner { number, .. } => {
+            phone::change(l, number, Change::Owner, typed_code)?;
+            show::phones(&phone::phones(l)?)
+        }
         _ => unreachable!("not a paired phone's command"),
     })
+}
+
+/// The code the person reads on the node's screen, typed here.
+fn typed_code() -> Result<u32> {
+    eprint!("The code on the node's screen: ");
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| Error::Other(format!("reading the code: {e}")))?;
+    line.trim()
+        .parse()
+        .ok()
+        .filter(|&c| c < bark_link::phones::CODES)
+        .ok_or_else(|| Error::Other("a code is six digits".into()))
 }
 
 fn main() -> ExitCode {
