@@ -89,6 +89,7 @@ impl FakeNode {
                 address: Position::from_degrees(50.45, 30.52),
                 relays: 3,
                 heard: 4,
+                gps_cn0: 38,
                 ..Status::EMPTY
             },
             code: 123_456,
@@ -161,6 +162,7 @@ impl FakeNode {
                     id,
                     bark_proto::status::Status {
                         placed: true,
+                        gps_cn0: 21,
                         version: 46,
                         ..Default::default()
                     },
@@ -617,7 +619,7 @@ impl Link for FakeLink {
             }
             Char::Guest => self.after = taken(After::decode(v))?.0,
             Char::Home => match taken(SetHome::decode(v))? {
-                SetHome::Set(k) => n.home = Some(k),
+                SetHome::Set { key, .. } => n.home = Some(key),
                 SetHome::Clear => n.home = None,
             },
             Char::Ask => {

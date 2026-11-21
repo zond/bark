@@ -369,6 +369,7 @@ fn a_forged_siv_opens_nothing() {
 /// from a person who is not the owner.
 fn counts(items: u8, remaining: u16) -> Summary {
     Summary {
+        newest: crate::VERSION,
         items,
         remaining,
         owner: false,
@@ -503,6 +504,7 @@ fn a_reply_gives_back_its_item_which_proves_itself() {
 fn a_card_reads_back_as_bytes_and_as_text() {
     let f = fixture();
     let c = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: None,
@@ -512,8 +514,20 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     let mut b = [0u8; card::MAX_LEN];
     let n = c.encode(&mut b).unwrap();
     assert_eq!(n, 51 + 7);
-    assert_eq!(&b[..2], &[3, 1]);
+    // The flags' high four bits: the newest payload version Alice reads.
+    assert_eq!(&b[..2], &[3, 0x21]);
     assert_eq!(Card::decode(&b[..n]), Ok(c));
+    let later = Card { reads: 15, ..c };
+    let m = later.encode(&mut b).unwrap();
+    assert_eq!(
+        (b[1], Card::decode(&b[..m]).map(|c| c.reads)),
+        (0xf1, Ok(15))
+    );
+    assert_eq!(
+        Card { reads: 16, ..c }.encode(&mut b),
+        Err(Error::Malformed)
+    );
+    c.encode(&mut b).unwrap();
     let away = card::Linked {
         address: f.away,
         at: 0x0102_0304,
@@ -524,7 +538,7 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     };
     let n = both.encode(&mut b).unwrap();
     assert_eq!(n, 68 + 7);
-    assert_eq!(b[1], 3);
+    assert_eq!(b[1], 0x23);
     assert_eq!(&b[51..64], &f.away.encode());
     assert_eq!(&b[64..68], &[1, 2, 3, 4]);
     assert_eq!(Card::decode(&b[..n]), Ok(both));
@@ -540,12 +554,12 @@ fn a_card_reads_back_as_bytes_and_as_text() {
         Card::decode(&b[..card::FIXED_LEN + 15]),
         Err(Error::Malformed)
     );
-    assert_eq!(b[1], 2);
+    assert_eq!(b[1], 0x22);
     assert_eq!(Card::decode(&b[..n]), Ok(temporary));
     let homeless = Card { home: None, ..c };
     let n = homeless.encode(&mut b).unwrap();
     assert_eq!(n, 38 + 7);
-    assert_eq!(b[1], 0);
+    assert_eq!(b[1], 0x20);
     assert_eq!(Card::decode(&b[..n]), Ok(homeless));
     let mut t = [0u8; card::MAX_TEXT_LEN];
     let tn = c.to_text(&mut t).unwrap();
@@ -566,6 +580,7 @@ fn a_card_that_is_not_one_is_refused() {
     }
     let f = fixture();
     let long = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: None,
@@ -577,7 +592,7 @@ fn a_card_that_is_not_one_is_refused() {
     let short = Card { name: "", ..long };
     let mut b = [0u8; card::MAX_LEN];
     let n = short.encode(&mut b).unwrap();
-    for (at, v) in [(0, 1), (0, 2), (0, 4), (1, 4)] {
+    for (at, v) in [(0, 1), (0, 2), (0, 4), (1, 4), (1, 0x28)] {
         let mut bad = b;
         bad[at] = v;
         assert_eq!(Card::decode(&bad[..n]), Err(Error::Malformed), "{at}");
@@ -618,6 +633,7 @@ fn text_takes_windows_1251_when_it_can() {
 fn records_read_back_in_order() {
     let f = fixture();
     let c = Card {
+        reads: crate::VERSION,
         identity: f.bob.identity,
         home: None,
         now: Some(card::Linked {
@@ -649,6 +665,22 @@ fn records_read_back_in_order() {
     let rs: Vec<_> = r.collect();
     assert_eq!(rs, [Ok(Record::Card(c)), Ok(t)]);
     assert!(plain::read(&[0x80, 0, 0, 0, 0]).is_err());
+    // A home given: its address and key, 46 bytes with its type, and
+    // records may follow it.
+    let home = Record::Home {
+        address: f.home,
+        key: [7; 32],
+    };
+    let mut w = Writer::new(&mut b, &Header { address: None, ..h }).unwrap();
+    w.push(&home).unwrap();
+    w.push(&t).unwrap();
+    let n = w.finish();
+    assert_eq!(n, 5 + 46 + 4);
+    assert_eq!(b[5], 7);
+    let (_, r) = plain::read(&b[..n]).unwrap();
+    assert_eq!(r.collect::<Vec<_>>(), [Ok(home), Ok(t)]);
+    let (_, mut r) = plain::read(&b[..5 + 45]).unwrap();
+    assert_eq!(r.next(), Some(Err(Error::Malformed)), "cut short");
     let (_, mut r) = plain::read(&[0, 0, 0, 0, 0, 12]).unwrap();
     assert_eq!(r.next(), Some(Err(Error::Malformed)));
     assert_eq!(r.next(), None);
@@ -1992,10 +2024,10 @@ mod commands {
         let mut p = Phones::EMPTY;
         p.pair(bond(1), 0).unwrap();
         p.set_recipient(0, 0x11, Name::new(b"Alice").unwrap());
-        p.set_home(0, Some(f.alice.mailbox));
+        p.set_home(0, Some(f.alice.mailbox), 0);
         p.pair(bond(2), 0).unwrap();
         p.set_recipient(1, 0x22, Name::new(b"Bob").unwrap());
-        p.set_home(1, Some(f.bob.mailbox));
+        p.set_home(1, Some(f.bob.mailbox), 0);
         let mut m = Mailbox::new(RamRing::new(), f.home.node);
         for i in 0..RECORDS {
             m.set_person(i, p.get(i).map(Person::of));
@@ -2132,12 +2164,14 @@ mod commands {
         let mut out = [0u8; MAX_PAYLOAD];
         for s in [
             Summary {
+                newest: crate::VERSION,
                 items: 3,
                 remaining: 700,
                 owner: true,
                 outcome: None,
             },
             Summary {
+                newest: crate::VERSION,
                 items: 0,
                 remaining: 0,
                 owner: false,
@@ -2148,6 +2182,23 @@ mod commands {
             assert_eq!(n, seal::SUMMARY_LEN + usize::from(s.outcome.is_some()));
             assert_eq!(seal::open_summary(&k, 10, &out[..n]), Ok(s));
         }
+        // The flags: the owner in bit 0, the home's newest payload version
+        // in the high four bits.
+        let s = Summary {
+            items: 0,
+            remaining: 0,
+            owner: true,
+            newest: 9,
+            outcome: None,
+        };
+        let mut plain = [0u8; command::SUMMARY_PLAIN_LEN + Outcome::MAX_LEN];
+        assert_eq!(s.encode(&mut plain), command::SUMMARY_PLAIN_LEN);
+        assert_eq!(plain[3], 0x91);
+        assert_eq!(Summary::decode(&plain[..4]), Ok(s));
+        // A home's mailbox says its own.
+        let (mut m, mut p) = node();
+        let (s, _) = ask(&mut m, &mut p, &fixture().alice.mailbox, 1, None);
+        assert_eq!(s.newest, crate::VERSION);
     }
 
     /// Eight records with names of 32 bytes: the list all but fills a
@@ -2156,7 +2207,7 @@ mod commands {
     fn the_longest_list_fits_one_summary() {
         let (mut m, mut p) = node();
         for k in 2..RECORDS as u8 {
-            p.add([k; 32], k, Name::new(&[b'n'; 32]).unwrap(), 0, 0)
+            p.add([k; 32], k, Name::new(&[b'n'; 32]).unwrap(), 0, 0, 0)
                 .unwrap();
         }
         p.set_recipient(0, 0x11, Name::new(&[b'a'; 32]).unwrap());
@@ -2310,7 +2361,7 @@ mod commands {
         let (s, _) = ask(&mut m, &mut p, &f.alice.mailbox, 12, Some(Command::Leave));
         assert_eq!((s.owner, s.outcome), (false, done(Code::Ok)));
         assert_eq!(p.owner(), None);
-        p.set_home(1, Some(f.bob.mailbox));
+        p.set_home(1, Some(f.bob.mailbox), 0);
         assert_eq!(p.owner(), Some(f.bob.mailbox));
     }
 
@@ -2335,5 +2386,87 @@ mod commands {
         let again = m.next(&mut out).unwrap();
         let s = seal::open_summary(&key, 1, &out[..again.len]).unwrap();
         assert_eq!(s.outcome, done(Code::Ok));
+    }
+
+    /// The people as the records say them, as the firmware hands them
+    /// over after any change.
+    fn sync(m: &mut Home, p: &Phones) {
+        for i in 0..RECORDS {
+            m.set_person(i, p.get(i).map(Person::of));
+        }
+    }
+
+    /// A key set again takes no fetch from before it was set: a captured
+    /// leave, replayed once the person has made the node their home again,
+    /// is refused (spec "Settings", Home; roadmap D236).
+    #[test]
+    fn a_captured_leave_is_refused_once_the_key_is_set_again() {
+        let f = fixture();
+        let bob = f.bob.mailbox;
+        let (mut m, mut p) = node();
+        let leave = fetch(&bob, 10, Some(Command::Leave));
+        let Arrival::Fetch { person, command } = m.arrive(MsgId(1), &leave) else {
+            panic!("taken")
+        };
+        command::obey(&mut m, &mut p, person, command, 0, 0);
+        assert_eq!(p.get(1).map(|r| r.key), Some(None));
+        // Home again, from his phone, at its `sent` of 50.
+        p.set_home(1, Some(bob), 50);
+        sync(&mut m, &p);
+        assert_eq!(m.arrive(MsgId(2), &leave), Arrival::Refused);
+        assert_eq!(p.get(1).map(|r| r.key), Some(Some(bob)));
+        let (s, _) = ask(&mut m, &mut p, &bob, 51, None);
+        assert_eq!(s.outcome, None, "a later fetch is taken");
+    }
+
+    /// An owner's command captured before the owner left, replayed once
+    /// they are home and the owner again, is refused.
+    #[test]
+    fn a_captured_owner_command_is_refused_once_the_key_is_set_again() {
+        let f = fixture();
+        let alice = f.alice.mailbox;
+        let (mut m, mut p) = node();
+        let bob_number = p.get(1).unwrap().number;
+        // Captured on its way, never delivered.
+        let remove = fetch(&alice, 10, Some(Command::Remove(bob_number)));
+        let (s, _) = ask(&mut m, &mut p, &alice, 11, Some(Command::Leave));
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(p.owner(), None);
+        p.set_home(0, Some(alice), 40);
+        sync(&mut m, &p);
+        assert_eq!(p.owner(), Some(alice), "the empty seat");
+        assert_eq!(m.arrive(MsgId(3), &remove), Arrival::Refused);
+        assert_eq!(p.get(1).map(|r| r.key), Some(Some(f.bob.mailbox)));
+    }
+
+    /// A person added again after a leave takes none of their fetches from
+    /// before the add: the record starts at the add's own `sent`.
+    #[test]
+    fn an_add_after_a_leave_refuses_the_old_fetches() {
+        let f = fixture();
+        let alice = f.alice.mailbox;
+        let carol = [3u8; 32];
+        let (mut m, mut p) = node();
+        let add = Command::Add {
+            key: carol,
+            tag: 0x33,
+            name: Name::EMPTY,
+        };
+        let (s, _) = ask(&mut m, &mut p, &alice, 20, Some(add));
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(p.get(2).map(|r| r.last_fetch), Some(20));
+        let old = fetch(&carol, 25, None);
+        let (s, _) = ask(&mut m, &mut p, &carol, 30, Some(Command::Leave));
+        assert_eq!(s.outcome, done(Code::Ok));
+        let (s, _) = ask(&mut m, &mut p, &alice, 40, Some(add));
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(p.get(2).map(|r| r.last_fetch), Some(40));
+        assert_eq!(m.arrive(MsgId(4), &old), Arrival::Refused);
+        assert_eq!(
+            m.arrive(MsgId(5), &fetch(&carol, 30, Some(Command::Leave))),
+            Arrival::Refused
+        );
+        let (s, _) = ask(&mut m, &mut p, &carol, 41, None);
+        assert_eq!(s.outcome, None);
     }
 }

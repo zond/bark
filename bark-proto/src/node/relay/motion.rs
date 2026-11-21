@@ -36,6 +36,10 @@ pub(super) struct Motion {
     far_last: Instant,
     /// The GPS lost its fix since [`Motion::far_last`].
     far_lost: bool,
+    /// The receiver's latest reading, the mean C/N0 in dB-Hz of the
+    /// satellites it used, kept or dropped; 0 for none
+    /// (spec "Neighbour status"). Here, where the flags leave room.
+    pub(super) cn0: u8,
     /// The place its fixes are compared with, and, carried, since when
     /// they have stayed near it.
     still_at: Position,
@@ -73,6 +77,7 @@ impl Motion {
             far_since: None,
             far_last: Instant::ZERO,
             far_lost: false,
+            cn0: 0,
             still_at: at,
             still_since: Instant::ZERO,
             stood: None,
@@ -108,6 +113,7 @@ impl Motion {
             far_since: None,
             far_last: Instant::ZERO,
             far_lost: false,
+            cn0: 0,
             still_at: at,
             still_since: now,
             stood: None,
@@ -143,6 +149,7 @@ impl Motion {
         let was = self.carried;
         *self = Motion {
             map_point: true,
+            cn0: self.cn0,
             ..Motion::fixed(at)
         };
         was
@@ -202,7 +209,10 @@ impl Motion {
                 // Back within the radius of where it stood, it stands there
                 // again, and its address with it.
                 let place = self.stood.filter(|&p| near(p)).unwrap_or(at);
-                *self = Motion::fixed(place);
+                *self = Motion {
+                    cn0: self.cn0,
+                    ..Motion::fixed(place)
+                };
                 takes = Some(place);
                 turned = Some(false);
             }
@@ -268,6 +278,7 @@ impl Motion {
                 } else {
                     mark(now + SEARCH_LIMIT)
                 },
+                cn0: self.cn0,
                 ..Motion::fixed(at)
             };
         }
@@ -356,7 +367,10 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.first_place(at, now);
         }
         self.set_position(at);
-        self.motion = Motion::fixed(at);
+        self.motion = Motion {
+            cn0: self.motion.cn0,
+            ..Motion::fixed(at)
+        };
         if had && moved && !self.sleepy() {
             self.changed();
         }

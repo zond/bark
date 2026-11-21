@@ -242,6 +242,10 @@ pub enum Request {
     /// The GPS runs and its fixes stopped passing (`AppCommand::NoFix`);
     /// sent at the change.
     NoFix,
+    /// The receiver's latest reading, the mean C/N0 of the satellites it
+    /// used, the fix kept or dropped; 0 as it comes to rest
+    /// (`AppCommand::Signal`, [`gnss::Fix::signal`]).
+    Signal(u8),
     /// The image the node holds whole and checked (`AppCommand::Holds`).
     Holds(Image),
     /// Gather this image from block `from` on (`AppCommand::Gather`): the
@@ -848,6 +852,9 @@ impl<C: Core, R: Radio, K: Clock, A: App> Driver<C, R, K, A> {
                 }
                 Request::Fix(position) => self.fix(position).await?,
                 Request::NoFix => self.deliver(Event::App(AppCommand::NoFix)).await?,
+                Request::Signal(cn0) => {
+                    self.deliver(Event::App(AppCommand::Signal { cn0 })).await?
+                }
                 Request::Holds(image) => self.deliver(Event::App(AppCommand::Holds(image))).await?,
                 Request::Gather { image, from } => {
                     self.deliver(Event::App(AppCommand::Gather { image, from }))

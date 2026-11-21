@@ -152,6 +152,7 @@ pub fn json() -> String {
     ));
 
     let alice_card = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: Some(card::Linked {
@@ -162,6 +163,7 @@ pub fn json() -> String {
         name: "Аліса",
     };
     let bob_card = Card {
+        reads: crate::VERSION,
         identity: f.bob.identity,
         home: None,
         now: Some(card::Linked {
@@ -191,6 +193,7 @@ pub fn json() -> String {
                 ),
                 ("time", format!("{}", c.time)),
                 ("name", q(c.name)),
+                ("reads", format!("{}", c.reads)),
                 ("bytes", h(&cb[..n])),
                 ("text", q(core::str::from_utf8(&ct[..tn]).unwrap())),
             ],
@@ -246,6 +249,33 @@ pub fn json() -> String {
         "box_utf8",
         &[
             ("text", q(words)),
+            ("sent", format!("{}", header.sent)),
+            ("greater", format!("{}", header.greater)),
+            ("plaintext", h(&p)),
+            ("payload", h(&boxed(&f.bob, &f.alice, f.away.node, &p))),
+        ],
+    ));
+
+    // A home given, Bob to Alice: his home node, and the mailbox key it
+    // took for her, with which she may make it her home.
+    let given: [u8; 32] = core::array::from_fn(|i| 0x80 + i as u8);
+    let header = Header {
+        greater: plain::greater(&f.bob.identity, &f.alice.identity),
+        sent: 1_000_090,
+        address: None,
+    };
+    let p = plaintext(
+        &header,
+        &[Record::Home {
+            address: f.home,
+            key: given,
+        }],
+    );
+    parts.push(entry(
+        "home_record",
+        &[
+            ("address", h(&f.home.encode())),
+            ("key", h(&given)),
             ("sent", format!("{}", header.sent)),
             ("greater", format!("{}", header.greater)),
             ("plaintext", h(&p)),
@@ -405,6 +435,7 @@ pub fn json() -> String {
     let to = fetch.recipient;
     let summary = |round: u32, items: u8, owner: bool, outcome: Option<Outcome>| {
         let s = Summary {
+            newest: crate::VERSION,
             items,
             remaining: 0,
             owner,
@@ -421,6 +452,7 @@ pub fn json() -> String {
             ("items", "2".into()),
             ("remaining", "0".into()),
             ("owner", "true".into()),
+            ("newest", format!("{}", crate::VERSION)),
             ("nonce", h(&seal::reply_nonce(round, 0))),
             ("payload", h(&summary(round, 2, true, None))),
         ],
@@ -493,7 +525,7 @@ pub fn json() -> String {
     };
     records.pair(bond, 0).unwrap();
     records.set_recipient(0, home, Name::new(b"Alice").unwrap());
-    records.set_home(0, Some(f.alice.mailbox));
+    records.set_home(0, Some(f.alice.mailbox), 1_000_000);
     let add = Command::Add {
         key: f.bob.mailbox,
         tag: seal::recipient(&f.bob.identity, f.home.node),
@@ -510,7 +542,7 @@ pub fn json() -> String {
             command: Some(c),
             ..fetch
         };
-        let outcome = command::run(&mut records, 0, &c, 0, 330, 1);
+        let outcome = command::run(&mut records, 0, &c, sent, 0, 330, 1);
         let mut ob = [0u8; Outcome::MAX_LEN];
         let o = outcome.encode(&mut ob);
         parts.push(entry(

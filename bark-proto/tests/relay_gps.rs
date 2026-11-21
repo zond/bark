@@ -209,3 +209,40 @@ fn a_low_battery_s_flush_keeps_the_gps_at_rest() {
         h.run_for(secs(1));
     }
 }
+
+/// The status tells the GPS's latest reading while the GPS runs, a
+/// reading under the floor as any other, and 0 once the GPS rests, as
+/// the reading is then of a sky it no longer watches
+/// (spec "Neighbour status").
+#[test]
+fn the_status_tells_the_signal_while_the_gps_runs() {
+    let mut h = resting();
+    h.run_until(at(1000), |_| false);
+    let cn0 = |h: &Harness<Relay>| h.nodes[0].core.status(h.now).gps_cn0;
+    // At rest: a reading, as one left over from before, tells nothing.
+    h.command(0, AppCommand::Signal { cn0: 30 });
+    assert_eq!(cn0(&h), 0);
+    // A far fix keeps it on; a reading under the floor of 22 dB-Hz,
+    // whose fix the firmware drops, is told all the same.
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(300.0),
+        },
+    );
+    h.command(0, AppCommand::Signal { cn0: 17 });
+    assert_eq!(cn0(&h), 17);
+    h.command(0, AppCommand::Signal { cn0: 0 });
+    assert_eq!(cn0(&h), 0, "no satellite used");
+    h.command(0, AppCommand::Signal { cn0: 35 });
+    assert_eq!(cn0(&h), 35);
+    // A near fix sends the GPS back to rest: stale, 0.
+    h.command(
+        0,
+        AppCommand::Fix {
+            position: pos(10.0),
+        },
+    );
+    assert!(!h.nodes[0].core.gps_tracks());
+    assert_eq!(cn0(&h), 0);
+}

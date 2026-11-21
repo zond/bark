@@ -121,7 +121,7 @@ The modulation is fixed (SF5, 125 kHz, CR 4/5, `radio.rs`) and is not negotiated
 
 Every node has the same application interface: the readiness query
 `accepts_send`, the inbox's `inbox`, `inbox_len` and `confirm`, the commands `AppCommand::Send`, `AppCommand::SetPosition`,
-`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Power`,
+`AppCommand::ClearMapPoint`, `AppCommand::Fix`, `AppCommand::NoFix`, `AppCommand::Signal`, `AppCommand::Power`,
 `AppCommand::ForceRole` and `AppCommand::Battery`, the queries `forced`, `battery_left` and
 `battery_drains`, the events
 `AppEvent::Message`, `AppEvent::GivenBack`, `AppEvent::Boot` and `AppEvent::Heard`, the store,
@@ -197,6 +197,12 @@ position, and a relay's sleepy nodes' with it (spec "Node identity").
 lost its fix, its satellites failed the C/N0 check, or the fix was beyond reach. The
 driver sends it at the change from handing fixes to not, and the time until the next fix
 does not count towards a run of far fixes (spec "Position", roadmap D136).
+
+`AppCommand::Signal { cn0 }` is the receiver's latest reading, sent about once a second
+while it runs: the mean C/N0 of the satellites it used, whether or not the fix is
+handed, 0 when it used none, and 0 again as it comes to rest. `Node::status` tells it
+while the core runs its GPS, tracking or in a search not past its end, and 0 otherwise
+(spec "Neighbour status", roadmap D237).
 
 `Config::placed` says whether `Config::position` is the node's place: a board built
 with one, or the simulator's nodes. Without it and without a stored place the node has

@@ -765,6 +765,7 @@ and the node asking, and nothing else. The **answer**, the status, says
 | heard | 1 | its live neighbours, at most 64 ([neighbour table](#neighbour-table)) |
 | strong | 1 | of them, those with margin, likely to hear it too |
 | proven | 1 | of them, those that have taken a message from it |
+| gps | 1 | the mean C/N0, dB-Hz, of the satellites its GPS used in its latest reading, whether or not that fix was kept ([position](#position)); 0 while its GPS rests, as an anchored sleepy node's always does ([beats](#beats)), and when it used none |
 | version | 4 | the version of the firmware image it runs, 0 if not known, as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
 | gathers | 4 | the version of the image it gathers over the mesh, 0 if none |
 | blocks | 1 | that image's blocks, the table's among them; 0 if none |
@@ -787,10 +788,17 @@ one hop, neither answered nor sent again. A node:
   ask;
 - hands every answer addressed to it to its app.
 
-The ask is 14 bytes, 15.68 ms on air, the answer 30, 23.36 ms; with the
-long preamble 249.92 and 257.60 ms. Asked only on a look, the status
-costs the network nothing between looks. Its last fields make the answer
-fill 13 blocks of symbols exactly.
+The ask is 14 bytes, 15.68 ms on air, the answer 31, 24.64 ms; with the
+long preamble 249.92 and 258.88 ms. Asked only on a look, the status
+costs the network nothing between looks. The GPS's byte takes the
+answer from 13 blocks of symbols to 14, 1.28 ms, 5.5 % of its airtime
+and 0.5 % with the long preamble, and leaves room in the 14th for one
+byte more at no cost (roadmap D237). The GPS's number is told dropped
+fix or not because it tells most where the sky is poor, and it is what
+the floor of 22 dB-Hz is to be tuned by. It stands for the last second
+the receiver ran: once the node's GPS rests, as a relay's on battery
+does between searches and a sleepy node's with an anchor always does,
+there is no reading to tell.
 
 ## Forwarding
 
@@ -2364,7 +2372,7 @@ ATT PDU and one link-layer packet. The node also takes long writes and
 serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5), so a phone that
 settles on less still works; iOS chooses the MTU itself. A notified value
 fits the 20 bytes a notification carries at the default MTU of 23 (Vol 3
-Part F §3.4.7.1) (roadmap D119), but Ask's, 22: at that MTU its
+Part F §3.4.7.1) (roadmap D119), but Ask's, 23: at that MTU its
 notification carries all but what the neighbour gathers, which the app
 then shows as nothing gathered (roadmap D158).
 
@@ -2375,7 +2383,7 @@ and its characteristics in the order of this table:
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
-| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) | 18 |
+| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) gps(1) | 19 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–224) | 13–237 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–224), empty when none; a guest's: number(3) msg_id(4) payload(0–224) | 0, 4–228, 7–231 |
 | | | write | msg_id(4) | 4 |
@@ -2384,7 +2392,7 @@ and its characteristics in the order of this table:
 | Clock | `28bc0008-…` | read | utc(4) offset(2) source(1) | 7 |
 | | | write | utc(4) offset(2) | 6 |
 | Home | `28bc0009-…` | read | set(1) mine(1) oldest(3) newest(3) | 8 |
-| | | write | 0 to clear; 1 then key(32) to set | 1, 33 |
+| | | write | 0 to clear; 1 then key(32) sent(4) to set | 1, 37 |
 | Neighbours | `28bc000a-…` | read | next(1) floor(1) own(7) entry_len(1), then per neighbour id(6) position(7) rssi(2) age(2) flags(1) | 10–244 |
 | | | write | slot(1) | 1 |
 | Update | `28bc000b-…` | read | state(1) refused(1) held(4) version(4) hash(32) | 42 |
@@ -2395,7 +2403,7 @@ and its characteristics in the order of this table:
 | | | write | 0 private, 1 public, 2 unpair | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
 | Ask | `28bc0010-…` | write | id(6) | 6 |
-| | | read, notify | id(6) status(16), empty when none | 0, 22 |
+| | | read, notify | id(6) status(17), empty when none | 0, 23 |
 | Phones | `28bc0011-…` | write | 0 then slot(1) to read from; 1 for a code; 2 then number(2) what(1) code(3) to remove | 2, 1, 7 |
 | | | read | next(1), then per record number(2) flags(1) day(2) tag(1) name_len(1) name(0–32) | 1–244 |
 
@@ -2426,7 +2434,7 @@ and the node keeps a guest's tag only for its link
 ([public nodes](#public-nodes)).
 
 **Status.** How the node stands now, notified at every change but the
-countdown of `boot_left`; one value is one notification and one read at
+countdown of `boot_left` and `gps`'s moves; one value is one notification and one read at
 a connection:
 
 | | |
@@ -2445,6 +2453,7 @@ a connection:
 | installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none. The node ends its phones' links for the minute a swap takes, and the app waits for it (roadmap D182) |
 | inbox | the phone's messages not yet confirmed ([receiving](#receiving)) |
 | phones | a count, wrapping, that moves at each change to what Phones lists for this phone ([phones](#phones)): a phone paired, removed or unpaired, a home set or cleared, a person added or gone, the owner's mark moved, a name or tag written, a phone's link up or down, a day; 0 on a guest's link. The node tells its linked paired phones once the records are written; at a change, the app reads Phones again |
+| gps | the GPS's signal, as a status asked tells it ([neighbour status](#neighbour-status)); it moves every second while the GPS runs, so its changes are not notified, and the app reads it |
 
 ### Sending
 
@@ -2514,9 +2523,18 @@ keeps, and where the time came from: 0 none, 1 GPS, 2 the phone; with
 none the time is 0. The phone, not the node, holds the time zones' rules
 (roadmap D130).
 
-**Home.** A write of 1 and the mailbox key makes the node the home of the
-phone's person, the key kept in the phone's record across reboots, and of
-0 forgets that key ([mailbox](#mailbox)). A record that holds the same
+**Home.** A write of 1, the mailbox key and the phone's `sent`
+([the payload](#the-payload)), later than any it gave before, makes the
+node the home of the phone's person, the key kept in the phone's record
+across reboots, and of 0 forgets that key ([mailbox](#mailbox)). The
+node takes no fetch of the key whose `sent` is not later than the
+write's ([mailbox](#mailbox), The fetch): a key set again, as after its
+person left or their home was removed, must not take a fetch from before
+it was set, which could be a command replayed, or a round answered a
+second time under a reply key and nonce used before (roadmap D224,
+D236). Written for a key the phone's record holds already, or joining a
+record that holds it (below), the record keeps the later of its last
+fetch and the write's `sent`; it is never lowered. A record that holds the same
 key and no bond, this person's home left by a phone that unpaired, then
 takes this phone's bond, name and tag, and the phone's own record is
 freed: the person's mail that waited for a fetch keeps its bits in the
@@ -2708,10 +2726,13 @@ On a public node:
   transaction's timeout (Vol 3 Part F §3.3.3); a phone that is not paired
   and writes Recipient while another guest's link is up is closed at
   once. Made private again, the node closes the guest's link.
-- *A guest's messages* are those in the ring that no record's tag claims
-  ([receiving](#receiving)): written with every bit of the mark clear, so
-  that no fetch sends them ([mailbox](#mailbox), The ring), they leave
-  the ring only as it wraps. A guest reads its own through Inbox, after
+- *A guest's messages* are those in the ring with its tag, whatever
+  their marks say ([mailbox](#mailbox), The ring): one that no record's
+  tag claims, written with every bit clear, no fetch sends and only the
+  ring's wrapping takes; one a record's tag claims a guest of that tag
+  reads too, so a person linked to their home without a pairing reads
+  their mail there, and their fetches still send it, as a guest's
+  reading clears no bit. A guest reads its own through Inbox, after
   the number of the last item it took, which it writes to Guest, 0 at
   first: a read gives the oldest item after it with the guest's tag, its
   number, the message ID it arrived with and the payload, or nothing; a
@@ -2814,7 +2835,14 @@ keys do not change.
 *Forms.* A payload's first byte is its format: the version, 2, in the
 high four bits, the form in the low four. Its second is the recipient tag
 (below), which every version keeps there, as a node reads it. A receiver
-drops a payload of a version or form it does not know.
+drops a payload of a version or form it does not know, so a sender writes
+each payload in a version its receiver is known to read: to a contact,
+at most the newest their card says their app reads (*the card*, below);
+to the home, at most the newest its summaries say it reads
+([mailbox](#mailbox), The answer). Before either is known it writes the
+oldest version it writes. Version 2 is the only one, and nothing older
+exists, so there is nothing to choose yet: every payload is version 2
+(roadmap D238).
 
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
@@ -2919,7 +2947,9 @@ taken; 16 parts hold 3 168 bytes (roadmap D137, D221, D222).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
 flags (1), bit 0 set when a home address follows, bit 1 when the node's
-address follows, the others zero; the identity (32); when the home was
+address follows, bits 2 and 3 zero, and in the high four bits the newest
+payload version the person's app reads, as a payload's format byte holds
+its version (*Forms*, above); the identity (32); when the home was
 set or cleared, as `sent` (4); the home node's address (0 or 13); the
 address of the node the phone is linked to, or was last, when the card is
 made or shown, unless it is the home, then when the phone was last linked
@@ -2992,8 +3022,9 @@ which the node keeps for each; the record's items are those with its
 tag. The node has that `sent` on flash before it hands the round's first
 reply to the core, so a fetch it answered is refused after a reboot, and
 no round is answered twice with other items at its places (roadmap
-D224). A fetch is sent only when the person asks, so that a mailbox
-costs air only then (roadmap D128).
+D224). A fetch is sent only on a person's act: when they ask, or as a
+choice they made calls for, as to empty a home they leave, so that a
+mailbox costs air only then (roadmap D128).
 
 **The answer.** The node answers a fetch once, to the fetch's address,
 one reply at a time through its send slot: first a summary, then one
@@ -3003,8 +3034,9 @@ many of the record's items stay unsent after them, both as the fetch was
 taken; with no item it says nothing is new, so the person can tell "no
 mail" from a loss. Its flags, a byte, say in bit 0 that the record's key
 is the owner's ([the node's owner](#the-nodes-owner)) once any command
-of the fetch has run, the others zero, and a command's outcome follows
-them. A fetch taken counts as its person seen ([pairing](#pairing)). The
+of the fetch has run, in the high four bits the newest payload version
+the home reads ([the payload](#the-payload)), and the others zero; a
+command's outcome follows them. A fetch taken counts as its person seen ([pairing](#pairing)). The
 node clears an item's bit when it hands the item's reply to the core;
 nothing confirms it, and a reply lost on the way stays in the ring for
 the phone to read at home. A record has one round at a time, which a
@@ -3049,7 +3081,7 @@ A fetch whose command the node does not read opens as no fetch.
 
 | command | after its first byte | |
 |---|---|---|
-| 1, add | key (32), tag (1), name (0–32) | a record for a person with no phone at the node: their mailbox key, their recipient tag at the node, which the owner makes from their card, and their name as the card has it; a home, and no bond |
+| 1, add | key (32), tag (1), name (0–32) | a record for a person with no phone at the node: a mailbox key, their recipient tag at the node, which the owner makes from their card, and their name as the card has it; a home, and no bond. Its last fetch is this fetch's `sent` |
 | 2, remove | number (2) | the record of that number loses its home; a bond it holds stays |
 | 3, list | | every record |
 | 4, hand over | number (2) | the key of the record of that number, which holds a home, is the owner's; the owner before stays homed |
@@ -3075,8 +3107,13 @@ when the names do not all fit, each is cut, at a character's end, to the
 most bytes at which all do, so only long names are cut and only as far
 as needed; the person's whole name is the one their card has.
 
-A record added has the day it is made as its day, and the owner's tag
-for it gives it the items with that tag ([pairing](#pairing); The ring,
+The app gives each person it adds a new random key, which reaches them
+from the owner. A record added takes, as Home's does
+([settings](#settings)), no fetch of its key from before it was made:
+the added person's first fetch must be later than the add's `sent`,
+which is the owner's clock, so a person whose clock runs behind waits
+until it passes. A record added has the day it is made as its day, and
+the owner's tag for it gives it the items with that tag ([pairing](#pairing); The ring,
 above). Should the person later pair at the node and set Home with their
 key, that record takes their phone's bond ([settings](#settings)).
 

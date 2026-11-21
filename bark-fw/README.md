@@ -1346,7 +1346,8 @@ keeping the record's home, and closes the link; the record is freed if
 it holds no home.
 
 Home sets or clears the writing phone's person's key alone, in its
-record; a record that holds the same key and no bond, the home the
+record, from the phone's `sent` it carries, before which the record
+takes no fetch of the key (spec "Settings", Home); a record that holds the same key and no bond, the home the
 person's earlier phone left, takes this phone's bond, name and tag, and
 the phone's own record is freed, so that the bits the person's unfetched
 mail has in the ring's marks stay theirs. A key set takes the owner's

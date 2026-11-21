@@ -101,6 +101,7 @@ impl Me {
             .filter(|(a, _)| self.home.is_none_or(|h| h.node != a.node))
             .map(|(address, at)| Linked { address, at });
         let c = Card {
+            reads: bark_app_layer::VERSION,
             identity: self.keys().identity,
             home: self.home,
             now,
@@ -410,6 +411,10 @@ pub enum Opened {
     },
     /// A card alone.
     Card { from: usize },
+    /// A home given by the contact at `from`: the node that holds a
+    /// mailbox key for this person. The key is not kept here: the tool
+    /// sets no home it was given.
+    Home { from: usize, node: NodeId },
     /// From the person's mailbox: the tool reads none yet.
     Mailbox,
     /// For nobody here, or not well formed.
@@ -448,6 +453,7 @@ pub fn open(me: &Me, contacts: &mut Vec<Contact>, payload: &[u8]) -> Opened {
     };
     let mut from = from;
     let mut said = None;
+    let mut home = None;
     for r in records {
         let Ok(r) = r else { return Opened::Nobody };
         match r {
@@ -498,6 +504,7 @@ pub fn open(me: &Me, contacts: &mut Vec<Contact>, payload: &[u8]) -> Opened {
             Record::React { sent, emoji } => {
                 said = Some((None, None, Some((sent, emoji.to_string()))))
             }
+            Record::Home { address, .. } => home = Some(address.node),
         }
     }
     let Some(i) = from else { return Opened::Nobody };
@@ -512,6 +519,11 @@ pub fn open(me: &Me, contacts: &mut Vec<Contact>, payload: &[u8]) -> Opened {
     c.knows_mine = c.sent_mine.or(c.knows_mine);
     if let Some(a) = header.address {
         c.place = Some((a, header.sent));
+    }
+    // A home given is what the message is for; a text beside it is
+    // shown by the app.
+    if let Some(node) = home {
+        return Opened::Home { from: i, node };
     }
     match said {
         Some((Some(text), part, _)) => Opened::Text {
@@ -638,5 +650,48 @@ mod tests {
         let at = c.place.unwrap();
         assert_eq!(c.destination(at.1 + 10), Some(at.0));
         assert_eq!(c.destination(at.1 + 120), Some(home));
+    }
+    /// A home given opens as one line's worth: who gave it and the node,
+    /// never the key.
+    #[test]
+    fn a_home_given_opens_as_its_giver_and_node() {
+        let me = person(1, "Me");
+        let friend = person(2, "Friend");
+        let keys = friend.keys();
+        let home = Address {
+            position: Position::from_degrees(50.45, 30.52),
+            node: NodeId::from_u64(0xfa4e_0000_00aa),
+        };
+        let header = Header {
+            greater: plain::greater(&keys.identity, &me.keys().identity),
+            sent: 7,
+            address: None,
+        };
+        let mut buf = [0u8; MAX_PAYLOAD];
+        let mut w = Writer::new(&mut buf, &header).unwrap();
+        let card = friend.card();
+        w.push(&Record::Card(Card::decode(&card).unwrap())).unwrap();
+        w.push(&Record::Home {
+            address: home,
+            key: [0x5a; KEY_LEN],
+        })
+        .unwrap();
+        let n = w.finish();
+        let mut payload = [0u8; MAX_PAYLOAD];
+        let len = seal::seal_intro(
+            &PublicKey::from(me.keys().identity.0),
+            0,
+            &SecretKey::from([9; KEY_LEN]),
+            &buf[..n],
+            &mut payload,
+        )
+        .unwrap();
+        let mut contacts = Vec::new();
+        let opened = open(&me, &mut contacts, &payload[..len]);
+        assert!(
+            matches!(opened, Opened::Home { from: 0, node } if node == home.node),
+            "{opened:?}"
+        );
+        assert_eq!(contacts[0].name, "Friend");
     }
 }

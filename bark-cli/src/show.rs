@@ -106,6 +106,7 @@ pub fn answer(a: &Answer) -> Vec<String> {
         format!("heard {}", s.neighbours.heard),
         format!("strong {}", s.neighbours.strong),
         format!("both_ways {}", s.neighbours.both_ways),
+        format!("gps_cn0 {}", s.gps_cn0),
         format!("image {}", s.version),
     ];
     let g = &s.gathering;
@@ -234,6 +235,7 @@ pub fn status(s: &Status) -> Vec<String> {
         format!("installing {}", s.installing),
         format!("inbox {}", s.inbox),
         format!("phones_mark {}", s.phones),
+        format!("gps_cn0 {}", s.gps_cn0),
     ]
 }
 
@@ -250,12 +252,14 @@ mod tests {
             booting: true,
             address: Position::from_degrees(50.45, 30.52),
             battery_mv: 3900,
+            gps_cn0: 27,
             ..Status::EMPTY
         };
         let lines = status(&s);
         assert_eq!(lines[0], "flags ready placed first_rotation");
         assert_eq!(lines[1], format!("address {}", s.address));
         assert_eq!(lines[2], "battery_mv 3900");
+        assert_eq!(lines.last().unwrap(), "gps_cn0 27");
         let lines = status(&Status::EMPTY);
         assert_eq!(lines[0], "flags none");
         assert_eq!(lines[1], "address none");

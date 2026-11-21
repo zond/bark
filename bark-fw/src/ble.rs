@@ -713,9 +713,12 @@ pub fn publish(status: Status, heads: [Option<(u32, MsgId)>; RECORDS], counts: [
         l.counts = counts;
         l.status = status;
         let told = l.told;
+        // The GPS's signal moves every second while it runs: read, not
+        // notified.
         let quiet = |s: Status| Status {
             boot_left_s: 0,
             battery_mv: 0,
+            gps_cn0: 0,
             ..s
         };
         let changed = quiet(told) != quiet(status)
@@ -2614,7 +2617,9 @@ fn phones_now(
 }
 
 /// Home, written by the phone of record `i`: its person's key, or none,
-/// at once; another person's home stays (spec "Phone link", Home).
+/// at once, with the phone's `sent`, before which the record takes no
+/// fetch of the key; another person's home stays (spec "Phone link",
+/// Home).
 fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     use bark_link::home::SetHome;
     let set = w.with_data(|offset, data| match offset {
@@ -2624,11 +2629,11 @@ fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(
     let Some(i) = from.record else {
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
     };
-    let key = match set {
-        SetHome::Set(k) => Some(k),
-        SetHome::Clear => None,
+    let (key, sent) = match set {
+        SetHome::Set { key, sent } => (Some(key), sent),
+        SetHome::Clear => (None, 0),
     };
-    let now = crate::phones::with(|p| p.set_home(i, key));
+    let now = crate::phones::with(|p| p.set_home(i, key, sent));
     if now != i {
         log::info!(
             "ble: record {} joins the home record {} left by its person's phone",

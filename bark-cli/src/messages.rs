@@ -95,6 +95,12 @@ fn told(state: &State, id: MsgId, o: &Opened) -> String {
             at(*to)
         ),
         Opened::Card { from } => format!("card {} from {}", msg(id), name(*from)),
+        Opened::Home { from, node } => format!(
+            "home {} from {} node {}",
+            msg(id),
+            name(*from),
+            crate::link::id_text(*node)
+        ),
         Opened::Mailbox => format!(
             "mailbox {}: a reply from a home's mailbox, which this tool does not read",
             msg(id)
@@ -234,10 +240,11 @@ pub fn home<T: Transport>(
             .keys()
             .mailbox
     });
-    let h = phone::home(&mut l, key)?;
+    // One `sent` for the write and the card: when the home was set.
+    let time = state.me()?.next_sent(u64::from(clock.utc_s));
+    let h = phone::home(&mut l, key, time)?;
     let s = phone::status(&mut l)?;
     let me = state.me()?;
-    let time = me.next_sent(u64::from(clock.utc_s));
     match (on, phone::here(&n, &s)) {
         (true, Some(a)) => me.home = Some(a),
         (true, None) => {

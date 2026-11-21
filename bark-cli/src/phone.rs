@@ -763,10 +763,11 @@ fn home_of<L: Link>(l: &mut L) -> Result<bark_link::home::Home> {
 }
 
 /// Makes the node this person's home with their mailbox `key`, or, with
-/// none, forgets it there (spec "Settings", Home). A home is a fixed
-/// relay, neither sleepy nor carried, so that its address stays
+/// none, forgets it there (spec "Settings", Home); `sent` is this
+/// person's next, from which the node takes their fetches. A home is a
+/// fixed relay, neither sleepy nor carried, so that its address stays
 /// (spec "Mailbox").
-pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>) -> Result<bark_link::home::Home> {
+pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>, sent: u32) -> Result<bark_link::home::Home> {
     if key.is_some() {
         let s = status(l)?;
         if s.sleepy || s.carried {
@@ -776,7 +777,7 @@ pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>) -> Result<bark_link::home
         }
     }
     let set = match key {
-        Some(k) => bark_link::home::SetHome::Set(k),
+        Some(key) => bark_link::home::SetHome::Set { key, sent },
         None => bark_link::home::SetHome::Clear,
     };
     let mut b = [0; bark_link::home::SetHome::MAX_LEN];

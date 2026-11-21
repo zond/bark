@@ -750,26 +750,32 @@ impl Phones {
     /// person's earlier phone takes this phone's bond and keeps its place,
     /// whose bits in the ring's marks are their unfetched mail
     /// (spec "Settings"). A key set takes the owner's seat if it is empty
-    /// (spec "The node's owner").
-    pub fn set_home(&mut self, i: usize, key: Option<[u8; KEY_LEN]>) -> usize {
+    /// (spec "The node's owner"). `sent` is the phone's as it writes: the
+    /// record's last fetch is at least it, so that no fetch of the key from
+    /// before is taken; it is never lowered.
+    pub fn set_home(&mut self, i: usize, key: Option<[u8; KEY_LEN]>, sent: u32) -> usize {
         let owner = self.owner();
-        let at = self.set_key(i, key);
+        let at = self.set_key(i, key, sent);
         self.keep_mark(owner, key);
         at
     }
 
-    fn set_key(&mut self, i: usize, key: Option<[u8; KEY_LEN]>) -> usize {
+    fn set_key(&mut self, i: usize, key: Option<[u8; KEY_LEN]>, sent: u32) -> usize {
         let Some(r) = self.records[i].as_mut() else {
             return i;
         };
+        let start = if key.is_some() { sent } else { 0 };
         if r.key != key {
             let home = r.key.is_some() != key.is_some();
             r.key = key;
-            r.last_fetch = 0;
+            r.last_fetch = start;
             self.touch(i);
             if home {
                 self.relisted();
             }
+        } else if start > r.last_fetch {
+            r.last_fetch = start;
+            self.dirty.progress |= 1 << i;
         }
         let Some(k) = key else {
             return i;
@@ -786,6 +792,7 @@ impl Phones {
         home.name = phone.name;
         home.tag = phone.tag.or(home.tag);
         home.day = phone.day.max(home.day);
+        home.last_fetch = home.last_fetch.max(sent);
         self.touch(i);
         self.touch(j);
         self.relisted();
@@ -828,7 +835,9 @@ impl Phones {
 
     /// The owner adds a person by their mailbox key and their tag at the
     /// node: a record with a home and no bond, made on day `day` with the
-    /// ring's newest item `newest` (spec "The node's owner"). Its place.
+    /// ring's newest item `newest`, its last fetch `sent`, the add's own,
+    /// so that no fetch of the key from before is taken (spec "Mailbox",
+    /// The owner's commands). Its place.
     pub fn add(
         &mut self,
         key: [u8; KEY_LEN],
@@ -836,6 +845,7 @@ impl Phones {
         name: Name,
         newest: u32,
         day: u16,
+        sent: u32,
     ) -> Result<usize, NotAdded> {
         if self.records.iter().flatten().any(|r| r.key == Some(key)) {
             return Err(NotAdded::Already);
@@ -851,6 +861,7 @@ impl Phones {
             tag: Some(tag),
             key: Some(key),
             day,
+            last_fetch: sent,
             ..Record::new(number, None, newest)
         });
         self.touch(i);
@@ -1398,7 +1409,7 @@ mod tests {
             (Some(again), Some(0x42), 6, 105)
         );
         // Unpaired, it keeps its home; with no home it is freed.
-        p.set_home(5, Some([1; 32]));
+        p.set_home(5, Some([1; 32]), 0);
         assert_eq!(p.unpair(5), Some(again));
         assert_eq!(p.get(5).map(|r| r.bond), Some(None));
         p.unpair(6);
@@ -1417,7 +1428,7 @@ mod tests {
         for n in 0..RECORDS as u8 {
             p.pair(keys(n), 0).unwrap();
             p.seen(n.into(), [50, 40, 10, 30, 20, 60, 70, 80][usize::from(n)]);
-            p.set_home(n.into(), Some([n; 32]));
+            p.set_home(n.into(), Some([n; 32]), 0);
         }
         p.set_private(true);
         for n in 0..RECORDS {
@@ -1465,20 +1476,20 @@ mod tests {
         let mut p = Phones::EMPTY;
         let k = [9; 32];
         p.pair(keys(1), 0).unwrap();
-        p.set_home(0, Some(k));
+        p.set_home(0, Some(k), 0);
         p.progress(0, 30, 31);
         p.unpair(0);
         p.pair(keys(2), 50).unwrap();
         p.set_recipient(1, 0x11, Name::new(b"Eva").unwrap());
         p.seen(1, 400);
-        assert_eq!(p.set_home(1, Some(k)), 0);
+        assert_eq!(p.set_home(1, Some(k), 0), 0);
         assert_eq!(p.get(1), None);
         let r = p.get(0).unwrap();
         assert_eq!((r.bond, r.tag, r.key), (Some(keys(2)), Some(0x11), Some(k)));
         assert_eq!((r.from, r.read, r.last_fetch, r.day), (0, 30, 31, 400));
         assert_eq!(r.name.as_bytes(), b"Eva");
         // Clearing forgets the key and the last fetch, the record stays.
-        assert_eq!(p.set_home(0, None), 0);
+        assert_eq!(p.set_home(0, None, 0), 0);
         assert_eq!(p.get(0).map(|r| (r.key, r.last_fetch)), Some((None, 0)));
     }
 
@@ -1487,7 +1498,7 @@ mod tests {
         let mut p = Phones::EMPTY;
         p.pair(keys(1), 0).unwrap();
         p.pair(keys(2), 0).unwrap();
-        p.set_home(1, Some([2; 32]));
+        p.set_home(1, Some([2; 32]), 0);
         let both = Parts {
             bond: true,
             home: true,
@@ -1538,7 +1549,7 @@ mod tests {
             p.pair(keys(n), 0).unwrap();
             p.set_recipient(n.into(), n, Name::new(&[b'a' + n; NAME_MAX]).unwrap());
         }
-        p.set_home(2, Some([1; 32]));
+        p.set_home(2, Some([1; 32]), 0);
         p.unpair(2);
         p.seen(3, 9);
         let mut out = [0u8; MAX_LEN];
@@ -1630,17 +1641,17 @@ mod tests {
         step(&mut p, "progress", false, |p| p.progress(1, 9, 9));
         step(&mut p, "private", false, |p| p.set_private(true));
         step(&mut p, "home", true, |p| {
-            assert_eq!(p.set_home(1, Some([7; 32])), 1)
+            assert_eq!(p.set_home(1, Some([7; 32]), 0), 1)
         });
         step(&mut p, "new key", false, |p| {
-            assert_eq!(p.set_home(1, Some([8; 32])), 1)
+            assert_eq!(p.set_home(1, Some([8; 32]), 0), 1)
         });
         step(&mut p, "unpair", true, |p| assert!(p.unpair(1).is_some()));
         step(&mut p, "join", true, |p| {
-            assert_eq!(p.set_home(0, Some([8; 32])), 1)
+            assert_eq!(p.set_home(0, Some([8; 32]), 0), 1)
         });
         step(&mut p, "no home", true, |p| {
-            assert_eq!(p.set_home(1, None), 1)
+            assert_eq!(p.set_home(1, None, 0), 1)
         });
         let number = p.get(1).unwrap().number;
         let bond = Parts {
@@ -1651,14 +1662,14 @@ mod tests {
             assert!(p.remove(number, bond).is_some())
         });
         step(&mut p, "add", true, |p| {
-            assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0).is_ok())
+            assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0, 0).is_ok())
         });
         let at = (0..RECORDS)
             .find(|&i| p.get(i).is_some_and(|r| r.key == Some([3; 32])))
             .unwrap();
         let added = p.get(at).unwrap().number;
         step(&mut p, "add again", false, |p| {
-            assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0).is_err())
+            assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0, 0).is_err())
         });
         step(&mut p, "owner", true, |p| {
             assert!(p.make_owner(added).is_some())
@@ -1681,14 +1692,14 @@ mod tests {
             p.pair(keys(n), 0).unwrap();
         }
         assert_eq!(p.owner(), None);
-        p.set_home(0, Some(ann));
+        p.set_home(0, Some(ann), 0);
         assert_eq!(p.owner(), Some(ann));
-        p.set_home(1, Some(bo));
+        p.set_home(1, Some(bo), 0);
         assert!(p.is_owner(0) && !p.is_owner(1), "the seat is taken");
         // Ann's second phone holds her key, and so the mark.
-        p.set_home(2, Some(ann));
+        p.set_home(2, Some(ann), 0);
         assert!(p.is_owner(2));
-        p.set_home(0, None);
+        p.set_home(0, None, 0);
         assert!(!p.is_owner(0) && p.is_owner(2));
         // Her last home gone, the seat is empty, and Bo's own key, written
         // again, takes it.
@@ -1698,7 +1709,7 @@ mod tests {
         };
         p.remove(p.get(2).unwrap().number, home).unwrap();
         assert_eq!(p.owner(), None);
-        p.set_home(1, Some(bo));
+        p.set_home(1, Some(bo), 0);
         assert_eq!(p.owner(), Some(bo));
         // Kept in the record, and in the page's flags.
         let r = Record::encode(1, p.get(1));
@@ -1720,9 +1731,9 @@ mod tests {
     fn an_owner_adds_hands_over_and_a_person_leaves() {
         let mut p = Phones::EMPTY;
         p.pair(keys(1), 0).unwrap();
-        p.set_home(0, Some([1; 32]));
+        p.set_home(0, Some([1; 32]), 0);
         let eva = Name::new(b"Eva").unwrap();
-        assert_eq!(p.add([5; 32], 0x55, eva, 40, 300), Ok(1));
+        assert_eq!(p.add([5; 32], 0x55, eva, 40, 300, 0), Ok(1));
         let r = *p.get(1).unwrap();
         assert_eq!(
             (r.bond, r.key, r.tag, r.from, r.day, r.owner),
@@ -1731,15 +1742,21 @@ mod tests {
         assert_eq!(r.name, eva);
         // The same key again changes nothing, full or not.
         assert_eq!(
-            p.add([5; 32], 0x56, Name::EMPTY, 41, 301),
+            p.add([5; 32], 0x56, Name::EMPTY, 41, 301, 0),
             Err(NotAdded::Already)
         );
         assert_eq!(p.get(1), Some(&r));
         for k in 6..12 {
-            assert!(p.add([k; 32], k, Name::EMPTY, 0, 0).is_ok());
+            assert!(p.add([k; 32], k, Name::EMPTY, 0, 0, 0).is_ok());
         }
-        assert_eq!(p.add([12; 32], 1, Name::EMPTY, 0, 0), Err(NotAdded::Full));
-        assert_eq!(p.add([5; 32], 1, Name::EMPTY, 0, 0), Err(NotAdded::Already));
+        assert_eq!(
+            p.add([12; 32], 1, Name::EMPTY, 0, 0, 0),
+            Err(NotAdded::Full)
+        );
+        assert_eq!(
+            p.add([5; 32], 1, Name::EMPTY, 0, 0, 0),
+            Err(NotAdded::Already)
+        );
         // Handed over: the old owner stays homed and loses the mark.
         assert_eq!(p.make_owner(r.number), Some(1));
         assert_eq!(p.owner(), Some([5; 32]));
@@ -1748,7 +1765,7 @@ mod tests {
             Some((Some([1; 32]), false))
         );
         // A record without a home cannot take it.
-        p.set_home(0, None);
+        p.set_home(0, None, 0);
         assert_eq!(p.make_owner(p.get(0).unwrap().number), None);
         assert_eq!(p.make_owner(999), None);
         // Eva leaves: her record, which holds no bond, is freed, and the
@@ -1757,7 +1774,7 @@ mod tests {
         assert_eq!(p.get(1), None);
         assert_eq!(p.owner(), None);
         // A person with a phone who leaves keeps the bond.
-        p.set_home(0, Some([1; 32]));
+        p.set_home(0, Some([1; 32]), 0);
         assert!(p.is_owner(0));
         p.leave(0);
         assert_eq!(
@@ -1774,9 +1791,9 @@ mod tests {
         let mut p = Phones::EMPTY;
         p.pair(keys(0), 0).unwrap();
         p.seen(0, 5);
-        p.set_home(0, Some([0; 32]));
+        p.set_home(0, Some([0; 32]), 0);
         for k in 1..RECORDS as u8 {
-            p.add([k; 32], k, Name::EMPTY, 0, 100 + u16::from(k))
+            p.add([k; 32], k, Name::EMPTY, 0, 100 + u16::from(k), 0)
                 .unwrap();
         }
         // Record 3's person fetched on day 400.
@@ -1791,7 +1808,7 @@ mod tests {
         let mut at = 1;
         for n in 10..16 {
             p.seen(at, 500);
-            p.set_home(at, Some([n; 32]));
+            p.set_home(at, Some([n; 32]), 0);
             p.unpair(at);
             at = p.pair(keys(n), 0).unwrap().index();
             took.push(at);
@@ -1817,7 +1834,7 @@ mod tests {
         }
         let mut p = Phones::EMPTY;
         p.pair(keys(0), 0).unwrap();
-        p.set_home(0, Some([0; 32]));
+        p.set_home(0, Some([0; 32]), 0);
         // Two bytes a letter, but for the space: 31 bytes.
         let long = "Олександра Ковал".as_bytes();
         assert_eq!(long.len(), 31);
@@ -1832,7 +1849,8 @@ mod tests {
             (long, true, true, true)
         );
         for k in 1..RECORDS as u8 {
-            p.add([k; 32], k, Name::new(long).unwrap(), 0, 0).unwrap();
+            p.add([k; 32], k, Name::new(long).unwrap(), 0, 0, 0)
+                .unwrap();
         }
         // 200 bytes: 25 a record, 18 of a name, a character's end.
         assert!(names(&p, 200).iter().all(|n| n == &long[..18]));
@@ -1877,6 +1895,44 @@ mod tests {
         let p = load.phones();
         assert_eq!(p.owner(), Some([1; 32]));
         assert!(p.is_owner(1) && p.is_owner(5) && !p.is_owner(3));
+    }
+
+    /// A key set starts its record's last fetch at the write's `sent`, or
+    /// the add's, and a write of a key held already never lowers it, so
+    /// no fetch of the key from before is taken (spec "Settings", Home).
+    #[test]
+    fn a_key_set_starts_at_its_sent_and_never_goes_back() {
+        let mut p = Phones::EMPTY;
+        let k = [4; 32];
+        p.pair(keys(1), 0).unwrap();
+        p.set_home(0, Some(k), 500);
+        assert_eq!(p.get(0).map(|r| r.last_fetch), Some(500));
+        p.progress(0, 0, 700);
+        p.take_dirty();
+        // Again, earlier: nothing moves.
+        p.set_home(0, Some(k), 600);
+        assert_eq!(p.get(0).map(|r| r.last_fetch), Some(700));
+        assert_eq!(p.take_dirty(), Dirty::default());
+        // Again, later: it moves, and is kept as progress.
+        p.set_home(0, Some(k), 900);
+        assert_eq!(p.get(0).map(|r| r.last_fetch), Some(900));
+        assert_eq!(p.take_dirty().progress, 1);
+        // Left and set again: from the new write, not from 0.
+        p.leave(0);
+        assert_eq!(p.get(0).map(|r| r.last_fetch), Some(0));
+        p.set_home(0, Some(k), 1000);
+        assert_eq!(p.get(0).map(|r| r.last_fetch), Some(1000));
+        // An add starts at its own fetch's `sent`.
+        p.add([5; 32], 5, Name::EMPTY, 0, 0, 1200).unwrap();
+        assert_eq!(p.get(1).map(|r| r.last_fetch), Some(1200));
+        // A phone joining that record keeps the later of the two.
+        p.pair(keys(2), 0).unwrap();
+        assert_eq!(p.set_home(2, Some([5; 32]), 1100), 1);
+        assert_eq!(p.get(1).map(|r| r.last_fetch), Some(1200));
+        p.unpair(1);
+        p.pair(keys(3), 0).unwrap();
+        assert_eq!(p.set_home(2, Some([5; 32]), 1300), 1);
+        assert_eq!(p.get(1).map(|r| r.last_fetch), Some(1300));
     }
 
     #[test]

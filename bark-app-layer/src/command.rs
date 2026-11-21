@@ -136,7 +136,8 @@ impl Code {
 }
 
 /// Bytes of a summary's plaintext without an outcome: the round's items
-/// (1), the items remaining (2) and the flags (1).
+/// (1), the items remaining (2) and the flags (1), whose high four bits
+/// are the home's newest payload version.
 pub const SUMMARY_PLAIN_LEN: usize = 1 + 2 + 1;
 
 /// Bytes of the summary's head, the tag and that plaintext.
@@ -235,16 +236,20 @@ pub struct Summary {
     pub remaining: u16,
     /// The requester's key is the owner's.
     pub owner: bool,
+    /// The newest payload version the home node reads
+    /// ([`crate::VERSION`]), so that the app away writes it one it reads
+    /// (spec "The payload").
+    pub newest: u8,
     /// What the fetch's command did; none for a fetch without one.
     pub outcome: Option<Outcome>,
 }
 
 impl Summary {
     /// The plaintext into `out`; its length.
-    pub(crate) fn encode(&self, out: &mut [u8; SUMMARY_PLAIN_LEN + Outcome::MAX_LEN]) -> usize {
+    pub fn encode(&self, out: &mut [u8; SUMMARY_PLAIN_LEN + Outcome::MAX_LEN]) -> usize {
         out[0] = self.items;
         out[1..3].copy_from_slice(&self.remaining.to_be_bytes());
-        out[3] = u8::from(self.owner);
+        out[3] = u8::from(self.owner) | (self.newest & 0x0f) << 4;
         SUMMARY_PLAIN_LEN
             + self
                 .outcome
@@ -252,7 +257,7 @@ impl Summary {
     }
 
     /// The plaintext `b` holds whole.
-    pub(crate) fn decode(b: &[u8]) -> Result<Summary, Error> {
+    pub fn decode(b: &[u8]) -> Result<Summary, Error> {
         if b.len() < SUMMARY_PLAIN_LEN {
             return Err(Error::Malformed);
         }
@@ -261,6 +266,7 @@ impl Summary {
             items: b[0],
             remaining: be(&b[1..3]) as u16,
             owner: b[3] & 1 != 0,
+            newest: b[3] >> 4,
             outcome: match rest.is_empty() {
                 true => None,
                 false => Some(Outcome::decode(rest)?),
@@ -269,14 +275,16 @@ impl Summary {
     }
 }
 
-/// Runs `command` from the person of the record at `from` on `phones`,
-/// the ring's newest item `newest`, today `day` and a bit for each record
-/// whose phone is linked in `linked` (spec "Mailbox", The owner's
-/// commands).
+/// Runs `command`, of the fetch of `sent`, from the person of the record
+/// at `from` on `phones`, the ring's newest item `newest`, today `day`
+/// and a bit for each record whose phone is linked in `linked` (spec
+/// "Mailbox", The owner's commands). A record added takes no fetch of its
+/// key that is not later than `sent`.
 pub fn run(
     phones: &mut Phones,
     from: usize,
     command: &Command,
+    sent: u32,
     newest: u32,
     day: u16,
     linked: u8,
@@ -290,7 +298,7 @@ pub fn run(
     };
     let done = |ok: bool| Outcome::Done(if ok { Code::Ok } else { Code::NoSuchHome });
     match *command {
-        Command::Add { key, tag, name } => match phones.add(key, tag, name, newest, day) {
+        Command::Add { key, tag, name } => match phones.add(key, tag, name, newest, day, sent) {
             Ok(_) => Outcome::Done(Code::Ok),
             Err(NotAdded::Full) => Outcome::Done(Code::Full),
             Err(NotAdded::Already) => Outcome::Done(Code::Already),
@@ -322,11 +330,13 @@ pub fn obey<R: Ring>(
     day: u16,
     linked: u8,
 ) {
-    if let Some(p) = m.person(i) {
-        phones.progress(i, p.read, p.last_fetch);
-    }
+    // The fetch's `sent` is the person's last fetch now.
+    let Some(p) = m.person(i) else {
+        return;
+    };
+    phones.progress(i, p.read, p.last_fetch);
     phones.seen(i, day);
-    let outcome = command.map(|c| run(phones, i, &c, m.newest(), day, linked));
+    let outcome = command.map(|c| run(phones, i, &c, p.last_fetch, m.newest(), day, linked));
     for j in 0..RECORDS {
         m.set_person(j, phones.get(j).map(Person::of));
     }

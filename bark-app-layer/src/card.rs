@@ -20,6 +20,9 @@ pub struct Card<'a> {
     pub time: u32,
     /// The name they chose.
     pub name: &'a str,
+    /// The newest payload version their app reads ([`crate::VERSION`]),
+    /// so that a sender writes them one they read (spec "The payload").
+    pub reads: u8,
 }
 
 /// A node a phone was linked to, and when.
@@ -52,6 +55,9 @@ pub const MAX_TEXT_LEN: usize = PREFIX.len() + (MAX_LEN * 8).div_ceil(5);
 
 const FLAG_HOME: u8 = 1;
 const FLAG_NOW: u8 = 2;
+/// The flags' high four bits: the newest payload version the app reads,
+/// where a payload's format byte holds its version.
+const READS_SHIFT: u8 = 4;
 
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -66,9 +72,13 @@ impl<'a> Card<'a> {
         if name.len() > MAX_NAME || out.len() < len {
             return Err(Error::TooLong);
         }
+        if self.reads >> READS_SHIFT != 0 {
+            return Err(Error::Malformed);
+        }
         out[0] = CARD_VERSION;
         out[1] = if self.home.is_some() { FLAG_HOME } else { 0 }
-            | if self.now.is_some() { FLAG_NOW } else { 0 };
+            | if self.now.is_some() { FLAG_NOW } else { 0 }
+            | self.reads << READS_SHIFT;
         out[2..34].copy_from_slice(&self.identity.0);
         out[34..FIXED_LEN].copy_from_slice(&self.time.to_be_bytes());
         let mut i = FIXED_LEN;
@@ -88,7 +98,7 @@ impl<'a> Card<'a> {
     pub fn decode(b: &'a [u8]) -> Result<Card<'a>, Error> {
         if b.first() != Some(&CARD_VERSION)
             || b.len() < FIXED_LEN
-            || b[1] & !(FLAG_HOME | FLAG_NOW) != 0
+            || b[1] & !(FLAG_HOME | FLAG_NOW) & ((1 << READS_SHIFT) - 1) != 0
         {
             return Err(Error::Malformed);
         }
@@ -121,6 +131,7 @@ impl<'a> Card<'a> {
             now,
             time: be(&b[34..FIXED_LEN]),
             name: core::str::from_utf8(&b[at..]).map_err(|_| Error::Malformed)?,
+            reads: b[1] >> READS_SHIFT,
         })
     }
 

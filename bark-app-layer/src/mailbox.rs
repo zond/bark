@@ -179,13 +179,39 @@ struct Reply {
     again: Option<(u32, u8)>,
     /// The summary has been handed to the core.
     answered: bool,
-    /// The fetch's command, whose outcome the summary waits for.
-    command: bool,
-    /// What the command did.
-    outcome: Option<Outcome>,
+    /// The fetch's command, as far as the summary needs it.
+    command: Commanded,
     /// The person no longer holds the key, as their command removed it:
     /// the round is its summary alone.
     orphan: bool,
+}
+
+/// A round's command, as its summary needs it. Kept in place, as
+/// nothing here allocates.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Commanded {
+    /// The fetch held none.
+    No,
+    /// It held one, which has not run yet: the summary waits.
+    Awaited,
+    /// What it did, which the summary says.
+    Done(Outcome),
+}
+
+impl Commanded {
+    /// Whether the summary may go: no command waits to run.
+    fn ready(self) -> bool {
+        self != Commanded::Awaited
+    }
+
+    /// What the summary says the command did.
+    fn outcome(self) -> Option<Outcome> {
+        match self {
+            Commanded::Done(o) => Some(o),
+            _ => None,
+        }
+    }
 }
 
 impl Reply {
@@ -193,7 +219,7 @@ impl Reply {
     /// items.
     fn due(&self) -> bool {
         match self.answered {
-            false => !self.command || self.outcome.is_some(),
+            false => self.command.ready(),
             true => self.again.is_some() || self.next >= self.bottom,
         }
     }
@@ -319,7 +345,7 @@ impl<R: Ring> Mailbox<R> {
         let keyed = was.and_then(|w| w.key) == person.and_then(|p| p.key);
         if !same || !keyed {
             match self.replies[i].as_mut() {
-                Some(r) if r.command && !r.answered => r.summary_alone(),
+                Some(r) if r.command != Commanded::No && !r.answered => r.summary_alone(),
                 _ => self.replies[i] = None,
             }
             if self.in_flight.is_some_and(|f| f.person == i) {
@@ -606,8 +632,11 @@ impl<R: Ring> Mailbox<R> {
     /// What the command of the round of the person at `i` did, for its
     /// summary, which waits for it.
     pub fn answer(&mut self, i: usize, outcome: Outcome) {
-        if let Some(r) = self.replies[i].as_mut().filter(|r| r.command) {
-            r.outcome = Some(outcome);
+        if let Some(r) = self.replies[i]
+            .as_mut()
+            .filter(|r| r.command == Commanded::Awaited)
+        {
+            r.command = Commanded::Done(outcome);
         }
     }
 
@@ -639,8 +668,10 @@ impl<R: Ring> Mailbox<R> {
             remaining: u16::try_from(remaining).unwrap_or(u16::MAX),
             again: None,
             answered: false,
-            command: f.command.is_some(),
-            outcome: None,
+            command: match f.command {
+                Some(_) => Commanded::Awaited,
+                None => Commanded::No,
+            },
             orphan: false,
         });
         if self.in_flight.is_some_and(|f| f.person == i) {
@@ -690,7 +721,8 @@ impl<R: Ring> Mailbox<R> {
                 items: r.items,
                 remaining: r.remaining,
                 owner: !r.orphan && self.people[i].is_some_and(|p| p.owner),
-                outcome: r.outcome,
+                newest: crate::VERSION,
+                outcome: r.command.outcome(),
             };
             let n = seal::seal_summary(&key, r.recipient, r.round, &summary, out);
             sealed = Some((0, 0, n));
