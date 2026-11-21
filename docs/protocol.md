@@ -2384,7 +2384,7 @@ and its characteristics in the order of this table:
 | Clock | `28bc0008-…` | read | utc(4) offset(2) source(1) | 7 |
 | | | write | utc(4) offset(2) | 6 |
 | Home | `28bc0009-…` | read | set(1) mine(1) oldest(3) newest(3) | 8 |
-| | | write | 0 to clear; 1 then key(32) to set | 1, 33 |
+| | | write | 0 to clear; 1 then key(32) sent(4) to set | 1, 37 |
 | Neighbours | `28bc000a-…` | read | next(1) floor(1) own(7) entry_len(1), then per neighbour id(6) position(7) rssi(2) age(2) flags(1) | 10–244 |
 | | | write | slot(1) | 1 |
 | Update | `28bc000b-…` | read | state(1) refused(1) held(4) version(4) hash(32) | 42 |
@@ -2514,9 +2514,18 @@ keeps, and where the time came from: 0 none, 1 GPS, 2 the phone; with
 none the time is 0. The phone, not the node, holds the time zones' rules
 (roadmap D130).
 
-**Home.** A write of 1 and the mailbox key makes the node the home of the
-phone's person, the key kept in the phone's record across reboots, and of
-0 forgets that key ([mailbox](#mailbox)). A record that holds the same
+**Home.** A write of 1, the mailbox key and the phone's `sent`
+([the payload](#the-payload)), later than any it gave before, makes the
+node the home of the phone's person, the key kept in the phone's record
+across reboots, and of 0 forgets that key ([mailbox](#mailbox)). The
+node takes no fetch of the key whose `sent` is not later than the
+write's ([mailbox](#mailbox), The fetch): a key set again, as after its
+person left or their home was removed, must not take a fetch from before
+it was set, which could be a command replayed, or a round answered a
+second time under a reply key and nonce used before (roadmap D224,
+D236). Written for a key the phone's record holds already, or joining a
+record that holds it (below), the record keeps the later of its last
+fetch and the write's `sent`; it is never lowered. A record that holds the same
 key and no bond, this person's home left by a phone that unpaired, then
 takes this phone's bond, name and tag, and the phone's own record is
 freed: the person's mail that waited for a fetch keeps its bits in the
@@ -3048,7 +3057,7 @@ A fetch whose command the node does not read opens as no fetch.
 
 | command | after its first byte | |
 |---|---|---|
-| 1, add | key (32), tag (1), name (0–32) | a record for a person with no phone at the node: their mailbox key, their recipient tag at the node, which the owner makes from their card, and their name as the card has it; a home, and no bond |
+| 1, add | key (32), tag (1), name (0–32) | a record for a person with no phone at the node: a mailbox key, their recipient tag at the node, which the owner makes from their card, and their name as the card has it; a home, and no bond. Its last fetch is this fetch's `sent` |
 | 2, remove | number (2) | the record of that number loses its home; a bond it holds stays |
 | 3, list | | every record |
 | 4, hand over | number (2) | the key of the record of that number, which holds a home, is the owner's; the owner before stays homed |
@@ -3074,8 +3083,13 @@ when the names do not all fit, each is cut, at a character's end, to the
 most bytes at which all do, so only long names are cut and only as far
 as needed; the person's whole name is the one their card has.
 
-A record added has the day it is made as its day, and the owner's tag
-for it gives it the items with that tag ([pairing](#pairing); The ring,
+The app gives each person it adds a new random key, which reaches them
+from the owner. A record added takes, as Home's does
+([settings](#settings)), no fetch of its key from before it was made:
+the added person's first fetch must be later than the add's `sent`,
+which is the owner's clock, so a person whose clock runs behind waits
+until it passes. A record added has the day it is made as its day, and
+the owner's tag for it gives it the items with that tag ([pairing](#pairing); The ring,
 above). Should the person later pair at the node and set Home with their
 key, that record takes their phone's bond ([settings](#settings)).
 

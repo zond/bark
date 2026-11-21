@@ -1261,7 +1261,7 @@ impl Sim {
             let key = Sim::mailbox_key(sc.seed, i);
             let tag = Sim::mailbox_tag(sc.seed, i);
             let at = records
-                .add(key, tag, Name::EMPTY, 0, 0)
+                .add(key, tag, Name::EMPTY, 0, 0, 0)
                 .expect("a free place");
             records.make_owner(records.get(at).expect("added").number);
             let mut mailbox = Mailbox::new(RamRing::new(), ids[i as usize]);

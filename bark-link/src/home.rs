@@ -3,11 +3,13 @@
 //!
 //! | | value | bytes |
 //! |---|---|---|
-//! | write | 0, no home; or 1 then the mailbox key | 1, 33 |
+//! | write | 0, no home; or 1 then the mailbox key and the phone's `sent` | 1, 37 |
 //! | read | 1 if anyone's home, else 0; 1 if the reading phone's person's home, else 0; the oldest item's number (3); the newest's (3) | 8 |
 //!
 //! The numbers are 0 while the mailbox holds nothing. A write sets or
-//! clears the writing phone's person's key alone.
+//! clears the writing phone's person's key alone. The `sent` is where
+//! the record's last fetch starts, so that no fetch from before the key
+//! was set is taken (spec "Settings", Home).
 
 use crate::Malformed;
 
@@ -20,14 +22,20 @@ pub enum SetHome {
     /// No home: the mailbox forgets its key.
     Clear,
     /// Home, with this mailbox key.
-    Set([u8; KEY_LEN]),
+    Set {
+        /// The mailbox key.
+        key: [u8; KEY_LEN],
+        /// The phone's `sent` as it writes, later than any it gave
+        /// before: the node takes no fetch of the key that is not later.
+        sent: u32,
+    },
 }
 
 impl SetHome {
     const CLEAR: u8 = 0;
     const SET: u8 = 1;
     /// Bytes in the longest value.
-    pub const MAX_LEN: usize = 1 + KEY_LEN;
+    pub const MAX_LEN: usize = 1 + KEY_LEN + 4;
 
     /// The value, into `b`; returns its length.
     pub fn encode(&self, b: &mut [u8; Self::MAX_LEN]) -> usize {
@@ -36,9 +44,10 @@ impl SetHome {
                 b[0] = Self::CLEAR;
                 1
             }
-            SetHome::Set(k) => {
+            SetHome::Set { key, sent } => {
                 b[0] = Self::SET;
-                b[1..].copy_from_slice(k);
+                b[1..1 + KEY_LEN].copy_from_slice(key);
+                b[1 + KEY_LEN..].copy_from_slice(&sent.to_be_bytes());
                 Self::MAX_LEN
             }
         }
@@ -49,9 +58,14 @@ impl SetHome {
         match (b.first(), b.len()) {
             (Some(&Self::CLEAR), 1) => Ok(SetHome::Clear),
             (Some(&Self::SET), Self::MAX_LEN) => {
-                let mut k = [0u8; KEY_LEN];
-                k.copy_from_slice(&b[1..]);
-                Ok(SetHome::Set(k))
+                let mut key = [0u8; KEY_LEN];
+                key.copy_from_slice(&b[1..1 + KEY_LEN]);
+                let mut sent = [0u8; 4];
+                sent.copy_from_slice(&b[1 + KEY_LEN..]);
+                Ok(SetHome::Set {
+                    key,
+                    sent: u32::from_be_bytes(sent),
+                })
             }
             (Some(&Self::CLEAR | &Self::SET), _) | (None, _) => Err(Malformed::Length),
             (Some(_), _) => Err(Malformed::Value),
@@ -116,10 +130,16 @@ mod tests {
         assert_eq!(SetHome::Clear.encode(&mut b), 1);
         assert_eq!(b[0], 0);
         let k = core::array::from_fn(|i| i as u8);
-        assert_eq!(SetHome::Set(k).encode(&mut b), 33);
+        let set = SetHome::Set {
+            key: k,
+            sent: 0x0102_0304,
+        };
+        assert_eq!(set.encode(&mut b), 37);
         assert_eq!(b[0], 1);
-        assert_eq!(&b[1..], &k);
-        assert_eq!(SetHome::decode(&b), Ok(SetHome::Set(k)));
+        assert_eq!(&b[1..33], &k);
+        assert_eq!(&b[33..], &[1, 2, 3, 4]);
+        assert_eq!(SetHome::decode(&b), Ok(set));
+        assert_eq!(SetHome::decode(&b[..33]), Err(Malformed::Length));
         assert_eq!(SetHome::decode(&[0]), Ok(SetHome::Clear));
         assert_eq!(SetHome::decode(&[1, 2]), Err(Malformed::Length));
         assert_eq!(SetHome::decode(&[2]), Err(Malformed::Value));

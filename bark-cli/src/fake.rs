@@ -617,7 +617,7 @@ impl Link for FakeLink {
             }
             Char::Guest => self.after = taken(After::decode(v))?.0,
             Char::Home => match taken(SetHome::decode(v))? {
-                SetHome::Set(k) => n.home = Some(k),
+                SetHome::Set { key, .. } => n.home = Some(key),
                 SetHome::Clear => n.home = None,
             },
             Char::Ask => {

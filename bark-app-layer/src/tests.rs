@@ -1992,10 +1992,10 @@ mod commands {
         let mut p = Phones::EMPTY;
         p.pair(bond(1), 0).unwrap();
         p.set_recipient(0, 0x11, Name::new(b"Alice").unwrap());
-        p.set_home(0, Some(f.alice.mailbox));
+        p.set_home(0, Some(f.alice.mailbox), 0);
         p.pair(bond(2), 0).unwrap();
         p.set_recipient(1, 0x22, Name::new(b"Bob").unwrap());
-        p.set_home(1, Some(f.bob.mailbox));
+        p.set_home(1, Some(f.bob.mailbox), 0);
         let mut m = Mailbox::new(RamRing::new(), f.home.node);
         for i in 0..RECORDS {
             m.set_person(i, p.get(i).map(Person::of));
@@ -2156,7 +2156,7 @@ mod commands {
     fn the_longest_list_fits_one_summary() {
         let (mut m, mut p) = node();
         for k in 2..RECORDS as u8 {
-            p.add([k; 32], k, Name::new(&[b'n'; 32]).unwrap(), 0, 0)
+            p.add([k; 32], k, Name::new(&[b'n'; 32]).unwrap(), 0, 0, 0)
                 .unwrap();
         }
         p.set_recipient(0, 0x11, Name::new(&[b'a'; 32]).unwrap());
@@ -2310,7 +2310,7 @@ mod commands {
         let (s, _) = ask(&mut m, &mut p, &f.alice.mailbox, 12, Some(Command::Leave));
         assert_eq!((s.owner, s.outcome), (false, done(Code::Ok)));
         assert_eq!(p.owner(), None);
-        p.set_home(1, Some(f.bob.mailbox));
+        p.set_home(1, Some(f.bob.mailbox), 0);
         assert_eq!(p.owner(), Some(f.bob.mailbox));
     }
 
@@ -2335,5 +2335,87 @@ mod commands {
         let again = m.next(&mut out).unwrap();
         let s = seal::open_summary(&key, 1, &out[..again.len]).unwrap();
         assert_eq!(s.outcome, done(Code::Ok));
+    }
+
+    /// The people as the records say them, as the firmware hands them
+    /// over after any change.
+    fn sync(m: &mut Home, p: &Phones) {
+        for i in 0..RECORDS {
+            m.set_person(i, p.get(i).map(Person::of));
+        }
+    }
+
+    /// A key set again takes no fetch from before it was set: a captured
+    /// leave, replayed once the person has made the node their home again,
+    /// is refused (spec "Settings", Home; roadmap D236).
+    #[test]
+    fn a_captured_leave_is_refused_once_the_key_is_set_again() {
+        let f = fixture();
+        let bob = f.bob.mailbox;
+        let (mut m, mut p) = node();
+        let leave = fetch(&bob, 10, Some(Command::Leave));
+        let Arrival::Fetch { person, command } = m.arrive(MsgId(1), &leave) else {
+            panic!("taken")
+        };
+        command::obey(&mut m, &mut p, person, command, 0, 0);
+        assert_eq!(p.get(1).map(|r| r.key), Some(None));
+        // Home again, from his phone, at its `sent` of 50.
+        p.set_home(1, Some(bob), 50);
+        sync(&mut m, &p);
+        assert_eq!(m.arrive(MsgId(2), &leave), Arrival::Refused);
+        assert_eq!(p.get(1).map(|r| r.key), Some(Some(bob)));
+        let (s, _) = ask(&mut m, &mut p, &bob, 51, None);
+        assert_eq!(s.outcome, None, "a later fetch is taken");
+    }
+
+    /// An owner's command captured before the owner left, replayed once
+    /// they are home and the owner again, is refused.
+    #[test]
+    fn a_captured_owner_command_is_refused_once_the_key_is_set_again() {
+        let f = fixture();
+        let alice = f.alice.mailbox;
+        let (mut m, mut p) = node();
+        let bob_number = p.get(1).unwrap().number;
+        // Captured on its way, never delivered.
+        let remove = fetch(&alice, 10, Some(Command::Remove(bob_number)));
+        let (s, _) = ask(&mut m, &mut p, &alice, 11, Some(Command::Leave));
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(p.owner(), None);
+        p.set_home(0, Some(alice), 40);
+        sync(&mut m, &p);
+        assert_eq!(p.owner(), Some(alice), "the empty seat");
+        assert_eq!(m.arrive(MsgId(3), &remove), Arrival::Refused);
+        assert_eq!(p.get(1).map(|r| r.key), Some(Some(f.bob.mailbox)));
+    }
+
+    /// A person added again after a leave takes none of their fetches from
+    /// before the add: the record starts at the add's own `sent`.
+    #[test]
+    fn an_add_after_a_leave_refuses_the_old_fetches() {
+        let f = fixture();
+        let alice = f.alice.mailbox;
+        let carol = [3u8; 32];
+        let (mut m, mut p) = node();
+        let add = Command::Add {
+            key: carol,
+            tag: 0x33,
+            name: Name::EMPTY,
+        };
+        let (s, _) = ask(&mut m, &mut p, &alice, 20, Some(add));
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(p.get(2).map(|r| r.last_fetch), Some(20));
+        let old = fetch(&carol, 25, None);
+        let (s, _) = ask(&mut m, &mut p, &carol, 30, Some(Command::Leave));
+        assert_eq!(s.outcome, done(Code::Ok));
+        let (s, _) = ask(&mut m, &mut p, &alice, 40, Some(add));
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(p.get(2).map(|r| r.last_fetch), Some(40));
+        assert_eq!(m.arrive(MsgId(4), &old), Arrival::Refused);
+        assert_eq!(
+            m.arrive(MsgId(5), &fetch(&carol, 30, Some(Command::Leave))),
+            Arrival::Refused
+        );
+        let (s, _) = ask(&mut m, &mut p, &carol, 41, None);
+        assert_eq!(s.outcome, None);
     }
 }

@@ -493,7 +493,7 @@ pub fn json() -> String {
     };
     records.pair(bond, 0).unwrap();
     records.set_recipient(0, home, Name::new(b"Alice").unwrap());
-    records.set_home(0, Some(f.alice.mailbox));
+    records.set_home(0, Some(f.alice.mailbox), 1_000_000);
     let add = Command::Add {
         key: f.bob.mailbox,
         tag: seal::recipient(&f.bob.identity, f.home.node),
@@ -510,7 +510,7 @@ pub fn json() -> String {
             command: Some(c),
             ..fetch
         };
-        let outcome = command::run(&mut records, 0, &c, 0, 330, 1);
+        let outcome = command::run(&mut records, 0, &c, sent, 0, 330, 1);
         let mut ob = [0u8; Outcome::MAX_LEN];
         let o = outcome.encode(&mut ob);
         parts.push(entry(
