@@ -40,10 +40,15 @@
         android:required="true" />
     <uses-feature android:name="android.hardware.camera"
         android:required="false" />
+    <!-- No backup to the cloud and no copy to a new phone: the app's files
+         hold the person's seed (res/xml/data_extraction_rules.xml).
+         `allowBackup` is what Android 11 and earlier read. -->
     <application
         android:label="bark"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"
