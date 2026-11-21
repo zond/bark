@@ -124,17 +124,15 @@ pub enum Code {
 
 impl Code {
     fn of(b: u8) -> Result<Code, Error> {
-        [
-            Code::Ok,
-            Code::NotAllowed,
-            Code::Full,
-            Code::Already,
-            Code::NoSuchHome,
-            Code::Removed,
-        ]
-        .into_iter()
-        .find(|c| *c as u8 == b)
-        .ok_or(Error::Malformed)
+        Ok(match b {
+            0 => Code::Ok,
+            1 => Code::NotAllowed,
+            2 => Code::Full,
+            3 => Code::Already,
+            4 => Code::NoSuchHome,
+            5 => Code::Removed,
+            _ => return Err(Error::Malformed),
+        })
     }
 }
 
