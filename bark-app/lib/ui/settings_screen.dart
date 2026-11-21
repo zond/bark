@@ -8,12 +8,11 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
-import 'package:geolocator_platform_interface/geolocator_platform_interface.dart'
-    show GeolocatorPlatform, LocationPermission;
 
 import '../app.dart';
 import '../app_layer.dart';
 import '../link.dart';
+import '../phone_place.dart';
 import 'common.dart';
 import 'debug_screen.dart';
 import 'home_section.dart';
@@ -104,19 +103,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// The phone's position, after asking for location if needed; null,
   /// with the person told why, without one.
   Future<Position?> _phonePosition() async {
-    final g = GeolocatorPlatform.instance;
     try {
-      var p = await g.checkPermission();
-      if (p == LocationPermission.denied) p = await g.requestPermission();
-      if (p == LocationPermission.denied ||
-          p == LocationPermission.deniedForever) {
-        if (mounted) say(context, 'Location permission denied');
-        return null;
-      }
-      final here = await g.getCurrentPosition();
-      return Position.fromDegrees(here.latitude, here.longitude);
-    } catch (e) {
-      if (mounted) say(context, 'No location: $e');
+      return await app.place.here();
+    } on NoPlace catch (e) {
+      if (mounted) say(context, '$e');
       return null;
     }
   }

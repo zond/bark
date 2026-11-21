@@ -24,6 +24,7 @@ import 'messenger.dart';
 import 'node_link.dart';
 import 'nodes.dart';
 import 'phone_notifier.dart';
+import 'phone_place.dart';
 import 'releases.dart';
 import 'session.dart';
 import 'store.dart';
@@ -133,6 +134,9 @@ class AppModel extends _AppCore
   /// Where a newer app's APK is kept.
   final Apks apks;
 
+  /// Where the phone is, asked only on the person's tap.
+  final PhonePlace place;
+
   AppModel({
     required this.sodium,
     required this.me,
@@ -143,6 +147,7 @@ class AppModel extends _AppCore
     Releases? releases,
     this.apks = const NoApks(),
     this.passwordKey = argon2id,
+    this.place = const AndroidPlace(),
     Future<bool> Function()? bluetoothAllowed,
     Future<void> Function()? requestBluetooth,
   }) : releases = releases ?? Releases(MemoryStore('release'), now: now),

@@ -9,7 +9,9 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
-    <!-- Location: the phone's position as the node's map point. -->
+    <!-- Location, while the app is in use and on the person's tap only:
+         the phone's position as the node's map point, and on the map.
+         No background location. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Camera: scanning another phone's card. A phone without one

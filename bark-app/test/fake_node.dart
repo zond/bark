@@ -889,10 +889,15 @@ class FakeNode implements NodeLink {
         ? slots[NeighbourPage.perPage]
         : 0;
     final up = now().difference(_boot).inSeconds % 10;
-    return NeighbourPage(floorDbm, next, _mapPoint ?? _fix, [
-      for (final s in slots.take(NeighbourPage.perPage))
-        neighbours[s]!.withAge(neighbours[s]!.ageS + up),
-    ]);
+    return NeighbourPage(
+      floorDbm,
+      next,
+      _mapPoint ?? (fixed && !sleepy ? _fix : const Position(0, 0)),
+      [
+        for (final s in slots.take(NeighbourPage.perPage))
+          neighbours[s]!.withAge(neighbours[s]!.ageS + up),
+      ],
+    );
   });
 
   /// The firmware image's version it runs.

@@ -18,6 +18,7 @@ import '../app.dart';
 import '../asks.dart';
 import '../link.dart';
 import '../session.dart';
+import '../phone_place.dart';
 import 'common.dart';
 import 'fact_help.dart';
 
@@ -134,7 +135,7 @@ const int gpsFixFloorDbHz = 22;
 /// The GPS's signal: its number and, by [gpsFixFloorDbHz], whether a fix
 /// is taken at it; 0 is no reading (spec "Neighbour status").
 Fact gpsFact(int cn0) => Fact(
-  Icons.satellite_alt,
+  Icons.signal_cellular_alt,
   'GPS signal',
   'GPS signal',
   cn0 == 0
@@ -372,6 +373,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _refresh() {
     _ask = true;
     _readGps();
+    if (_you != null) _showMe();
     return _read();
   }
 
@@ -388,6 +390,11 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(
         title: const Text('Nearby nodes'),
         actions: [
+          IconButton(
+            tooltip: 'Show where I am',
+            icon: const Icon(Icons.person_pin_circle),
+            onPressed: _showMe,
+          ),
           IconButton(
             tooltip: 'Read again',
             icon: const Icon(Icons.refresh),
@@ -420,9 +427,18 @@ class _MapScreenState extends State<MapScreen> {
           ? _say('Reading the neighbours failed: $_error')
           : const Center(child: CircularProgressIndicator());
     }
-    final placed = _s.status?.placed ?? false;
-    final own = placed ? _at(t.own) : null;
-    final points = [?own, for (final m in t.list) _at(m.position)];
+    // The node's own position; without one, as a sleepy node's with an
+    // anchor or one with no place yet, it is drawn where the phone is, as
+    // the Bluetooth link puts it within metres of it.
+    final own = _placed(t.own) ? _at(t.own) : null;
+    final you = _you;
+    // Without the phone's, at its address, where others reach it: a
+    // sleepy node's is its anchor's.
+    final st = _s.status;
+    final drawn =
+        own ?? you ?? (st != null && st.placed ? _at(st.address) : null);
+    final anchor = t.list.where((n) => n.anchor).firstOrNull;
+    final points = [?drawn, ?you, for (final m in t.list) _at(m.position)];
     if (points.isEmpty) {
       return _say(
         'The node has no place yet and has heard no neighbour: nothing '
@@ -469,11 +485,32 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                 ],
               ),
+            if (own == null && you != null && anchor != null)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: [you, _at(anchor.position)],
+                    color: Theme.of(context).colorScheme.outline,
+                    strokeWidth: 1.5,
+                  ),
+                ],
+              ),
+            if (you != null)
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: you,
+                    width: 18,
+                    height: 18,
+                    child: Semantics(label: 'You', child: _youDot(context)),
+                  ),
+                ],
+              ),
             // Grouped anew as the camera moves, so that zooming in
             // separates nodes that are near but not at one place.
             Builder(
               builder: (context) {
-                final spots = _spots(context, t, own);
+                final spots = _spots(context, t, drawn);
                 final camera = MapCamera.of(context);
                 final groups = places([
                   for (final s in spots) camera.latLngToScreenOffset(s.point),
@@ -499,10 +536,13 @@ class _MapScreenState extends State<MapScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (!placed)
+              if (own == null)
                 _banner(
-                  'The node has no place yet: its neighbours are drawn '
-                  'without lines to it.',
+                  you == null
+                      ? 'The node has no place of its own: its neighbours '
+                            'are drawn without lines to it.'
+                      : 'The node has no place of its own: it is drawn '
+                            'where you are.',
                 ),
               if (_noTiles)
                 _banner(
@@ -757,10 +797,50 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ],
             ),
+            if (_you != null)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _youDot(context, size: 12),
+                  const SizedBox(width: 4),
+                  const Flexible(
+                    child: Text(
+                      'you: your position stays on this phone, never sent '
+                      'or kept',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
           ],
         ),
       ),
     );
+  }
+
+  /// The phone's own position, as the person asked to see it.
+  static Widget _youDot(BuildContext context, {double size = 18}) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: Colors.blue,
+      shape: BoxShape.circle,
+      border: Border.all(color: Colors.white, width: 2),
+    ),
+  );
+
+  /// Where the phone is, once the person asked; kept in this screen only.
+  LatLng? _you;
+
+  /// Asks the phone where it is, which asks for the location permission
+  /// the first time; without one the map stays as it was.
+  Future<void> _showMe() async {
+    try {
+      final p = await widget.app.place.here();
+      if (mounted) setState(() => _you = _at(p));
+    } on NoPlace catch (e) {
+      if (mounted) say(context, '$e');
+    }
   }
 }
 
@@ -783,7 +863,17 @@ class _NodeMarker {
           !st.anchorless,
           to: anchor == null ? null : nodeLabel(anchor.id),
         ),
-      _position(t.own, mapPoint: st.mapPoint),
+      // A sleepy node with an anchor has no place of its own: others reach
+      // it at its anchor's, its address.
+      if (!_placed(t.own) && st.sleepy && st.placed)
+        Fact(
+          Icons.anchor,
+          'Place',
+          'place, its anchor\'s',
+          'its anchor\'s\n${_where(st.address)}',
+        )
+      else
+        _position(t.own, mapPoint: st.mapPoint),
       _power(
         usb: st.externalPower,
         battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
