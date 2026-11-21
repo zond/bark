@@ -38,7 +38,7 @@ mixin _Connect on _AppCore {
   int? mtu;
 
   /// The person taps a node they are paired with in Settings: the app
-  /// connects to it as its owner, as a tap on it in a scan does. A node
+  /// connects to it as a paired phone, as a tap on it in a scan does. A node
   /// heard within the span the search takes to call a node out of reach
   /// ([ownGone] rounds) is taken as heard; another is listened for first,
   /// one round's scan, and [NotSeen] goes on if it is not heard.
@@ -82,7 +82,7 @@ mixin _Connect on _AppCore {
   }
 
   /// The person connects to `n`, a public node, as a guest: without
-  /// pairing, so that it stays its owner's. It ends a search round, as
+  /// pairing, so that it stays its paired phones'. It ends a search round, as
   /// [connect] does, and the link lasts until the node ends it, after a
   /// guest's 30 s, or the person leaves, not one errand (roadmap D179).
   Future<void> connectGuest(FoundNode n) async {
@@ -232,7 +232,7 @@ mixin _Connect on _AppCore {
   /// search the person made. Unless the link is a `guest`'s, the node
   /// holds this phone's bond then and is kept as the paired node; one
   /// that no longer does is kept as lost, with `again` to pair with it
-  /// anew, and [NotOurs] goes on to the caller. An owner's link to `name`
+  /// anew, and [NotOurs] goes on to the caller. A paired phone's link to `name`
   /// that ended while it was read is not taken as the node holding the
   /// bond: [LinkEnded] goes on.
   Future<void> _open(

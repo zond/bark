@@ -66,8 +66,8 @@ class NodeRecord {
   DateTime? ringReadAt;
   GuestReading? asGuest;
 
-  /// Paired, and the node still holds the phone's bond: the phone is its
-  /// owner.
+  /// Paired, and the node still holds the phone's bond: the phone is
+  /// paired with it now.
   bool get own => paired && !lost;
 
   /// Its own, and the search may use it: not [unserved].
@@ -91,7 +91,7 @@ class NodeRecord {
 }
 
 /// The records, by name, a paired node's moved to the end each time the
-/// phone links to it as its owner, so that the one linked to last is
+/// phone links to it as a paired phone, so that the one linked to last is
 /// last.
 class NodeStore {
   final Map<String, NodeRecord> _all = {};
@@ -115,7 +115,7 @@ class NodeStore {
       if (r.paired && r.lost) r.name,
   };
 
-  /// The paired nodes that still hold it: the phone is their owner.
+  /// The paired nodes that still hold it: the phone is paired with them now.
   Set<String> get own => {
     for (final r in _all.values)
       if (r.own) r.name,
@@ -165,7 +165,7 @@ class NodeStore {
 
   /// Takes the nodes of an identity file. One the old phone was paired
   /// with does not hold this phone's bond, as a bond stays in the phone it
-  /// was made on, so it is paired and lost, unless this phone is its owner
+  /// was made on, so it is paired and lost, unless this phone is paired with it
   /// already; and where the old phone stood in each node's ring as a guest
   /// is where this one does. Of what this phone knew, only its own nodes
   /// stay paired, as Android holds their bonds; its places in the rings

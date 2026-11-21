@@ -48,7 +48,7 @@ class PersonCard {
   /// an earlier one, also one that drops the home.
   final int time;
 
-  /// The name its owner chose.
+  /// The name its person chose.
   final String name;
 
   PersonCard(

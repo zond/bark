@@ -327,7 +327,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final others = app.nodes.paired.length > 1
         ? ' It stays paired with your other nodes.'
         : '';
-    // With the last phone gone a node is public, whatever its owners set.
+    // With the last phone gone a node is public, whatever its phones set.
     final last = !(s.phones ?? const []).any((r) => r.paired && !r.mine);
     final after = last ? ' With no phone left, it turns public.' : '';
     final done = last ? 'Unpaired. The node is public.' : 'Unpaired.';

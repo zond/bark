@@ -32,7 +32,7 @@ class NotOurs implements Exception {
 
 /// Android kept its bond with the node `node`, which the app does not
 /// count as the phone's, when asked to remove it. Android encrypts every
-/// link to the node with it, which the node takes as its owner's or ends,
+/// link to the node with it, which the node takes as a paired phone's or ends,
 /// and pairs with its old keys while the node runs a new pairing (bench,
 /// 2026-11-10), so the phone cannot use the node until the person
 /// forgets it in the phone's Bluetooth settings (spec "Phone link",

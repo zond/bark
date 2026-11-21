@@ -98,7 +98,7 @@ class NodeSection extends StatelessWidget {
   }
 
   /// The nodes this phone is paired with, the home first, each with how
-  /// it stands; a tap on another connects to it as its owner (spec "Phone
+  /// it stands; a tap on another connects to it as a paired phone (spec "Phone
   /// link", Pairing). The phone's own row of the node's phones has Unpair
   /// ([_phones]).
   List<Widget> _paired(BuildContext context) {

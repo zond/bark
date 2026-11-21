@@ -9,8 +9,8 @@ import 'link.dart';
 import 'node_link.dart';
 
 /// A node seen in a scan; [public] unless it advertised the service's
-/// UUID, as a node whose owner made it private does: a node is public,
-/// serving phones that have not paired with it, unless its owner says
+/// UUID, as a node whose paired phones made it private does: a node is public,
+/// serving phones that have not paired with it, unless its paired phones say
 /// otherwise (spec "Phone link", Public).
 class FoundNode {
   final String deviceId;
@@ -256,7 +256,7 @@ class BleLink implements NodeLink {
     await UniversalBle.connect(
       deviceId,
       // The node takes one connection; one left open by a killed app
-      // would keep the owner out until the supervision timeout.
+      // would keep the paired phone out until the supervision timeout.
       platformConfig: ConnectionPlatformConfig(
         android: AndroidConnectionOptions(closeGattOnDetach: true),
       ),

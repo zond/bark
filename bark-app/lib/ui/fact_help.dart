@@ -44,7 +44,7 @@ const Map<String, String> factHelp = {
       'On battery the figure is read from the cell\'s voltage, so it is '
       'rough; on this node\'s own sheet it is the raw reading in '
       'millivolts. At about a fifth left the battery counts as low, and '
-      'a relay on it turns sleepy to save the rest for its owner.',
+      'a relay on it turns sleepy to save the rest.',
   // Spec "Phone link", Neighbours; "Neighbour table".
   'Link':
       'How well this node hears the other one: how far its signal is '

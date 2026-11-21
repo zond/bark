@@ -1,10 +1,10 @@
-// A public node (spec "Phone link", Public), against the fake: the owner
-// writes its recipient tag and sets Public; a guest's link takes nothing
+// A public node (spec "Phone link", Public), against the fake: the paired
+// phone writes its recipient tag and sets Public; a guest's link takes nothing
 // that needs the bond, and the app's guest touches nothing of it; the
-// owner's messages go to its inbox and the rest to the ring, which a
+// paired phone's messages go to its inbox and the rest to the ring, which a
 // guest reads by its tag after the number it keeps for the node, across
 // links and restarts, reading taking nothing; one guest's link at a time,
-// ended after 30 s; and the owner and a guest take turns at the one
+// ended after 30 s; and the paired phone and a guest take turns at the one
 // message it holds, the turn being Ready, which goes only to a phone
 // that asks.
 
@@ -28,22 +28,22 @@ void main() {
   final start = DateTime.utc(2026, 11, 8);
   final there = Address(Position.fromDegrees(50.0, 30.0), [1, 2, 3, 4, 5, 6]);
 
-  /// The owner's phone attached to the fake, and a guest's phone, each of
+  /// The paired phone's phone attached to the fake, and a guest's phone, each of
   /// a fixed identity.
   void run(void Function(FakeAsync, Phone, Phone, FakeNode) body) {
     fakeAsync((async) {
       DateTime now() => start.add(async.elapsed);
-      final owner = Phone(sodium, now), guest = Phone(sodium, now);
+      final paired = Phone(sodium, now), guest = Phone(sodium, now);
       async.flushMicrotasks();
-      owner.me.restore(Uint8List.fromList(List.filled(seedLen, 1)));
+      paired.me.restore(Uint8List.fromList(List.filled(seedLen, 1)));
       guest.me.restore(Uint8List.fromList(List.filled(seedLen, 2)));
       async.flushMicrotasks();
-      final node = FakeNode(now: now, sodium: sodium, app: owner.me.identity);
-      owner.session.attach(node.connect());
+      final node = FakeNode(now: now, sodium: sodium, app: paired.me.identity);
+      paired.session.attach(node.connect());
       async.flushMicrotasks();
-      body(async, owner, guest, node);
+      body(async, paired, guest, node);
       node.dispose();
-      owner.session.dispose();
+      paired.session.dispose();
       guest.session.dispose();
     });
   }
@@ -62,23 +62,23 @@ void main() {
   Matcher refused(int code) =>
       throwsA(isA<AttException>().having((e) => e.code, 'code', code));
 
-  test('the owner writes its tag, reads Public, on by default, and sets '
+  test('the paired phone writes its tag, reads Public, on by default, and sets '
       'it', () {
-    run((async, owner, guest, node) {
-      expect(node.ownerTag, tagOf(owner));
-      expect(owner.session.nodePublic, isTrue);
-      owner.session.writePublic(false);
+    run((async, paired, guest, node) {
+      expect(node.pairedTag, tagOf(paired));
+      expect(paired.session.nodePublic, isTrue);
+      paired.session.writePublic(false);
       async.flushMicrotasks();
-      expect((node.public, owner.session.nodePublic), (false, false));
-      owner.session.writePublic(true);
+      expect((node.public, paired.session.nodePublic), (false, false));
+      paired.session.writePublic(true);
       async.flushMicrotasks();
-      expect((node.public, owner.session.nodePublic), (true, true));
+      expect((node.public, paired.session.nodePublic), (true, true));
     });
   });
 
   test('a guest\'s link: refused everything on a node not public, and on '
       'a public one what needs the bond', () {
-    run((async, owner, guest, node) {
+    run((async, paired, guest, node) {
       node.public = false;
       final g = node.connectGuest();
       expect(g.readNode(), refused(AttError.insufficientAuthentication));
@@ -103,8 +103,8 @@ void main() {
   });
 
   test('a guest attaches: its tag written, nothing that needs the bond '
-      'touched, and the owner\'s settings not its', () {
-    run((async, owner, guest, node) {
+      'touched, and the paired phone\'s settings not its', () {
+    run((async, paired, guest, node) {
       node.public = true;
       final g = node.connectGuest();
       guest.session.attach(g, guest: true);
@@ -112,7 +112,7 @@ void main() {
       final s = guest.session;
       expect((s.connected, s.guest), (true, true));
       expect(g.tag, tagOf(guest));
-      expect(tagOf(guest), isNot(tagOf(owner)));
+      expect(tagOf(guest), isNot(tagOf(paired)));
       expect((s.nodeTime, s.nodeHome, s.nodePublic), (null, null, null));
       expect(s.log.where((l) => l.text.contains('0x5')), isEmpty);
       Object? failed;
@@ -120,25 +120,25 @@ void main() {
       async.flushMicrotasks();
       expect(failed, isA<StateError>());
       expect(node.public, isTrue);
-      // The fake friend's first messages are the owner's alone.
+      // The fake friend's first messages are the paired phone's alone.
       expect(s.received, isEmpty);
-      expect(owner.session.received, hasLength(2));
+      expect(paired.session.received, hasLength(2));
     });
   });
 
-  test('the owner\'s messages go to its inbox, the rest to the ring; a '
+  test('the paired phone\'s messages go to its inbox, the rest to the ring; a '
       'guest reads its tag\'s after its number, which it keeps for the node '
       'across links and restarts; reading takes nothing', () {
-    run((async, owner, guest, node) {
+    run((async, paired, guest, node) {
       final nobody = {for (var t = 0; t < 256; t++) t}
-          .difference({tagOf(owner), tagOf(guest)})
+          .difference({tagOf(paired), tagOf(guest)})
           .first;
       node.deliver(payloadFor(tagOf(guest), 1));
-      node.deliver(payloadFor(tagOf(owner), 2));
+      node.deliver(payloadFor(tagOf(paired), 2));
       node.deliver(payloadFor(nobody, 3));
       node.deliver(payloadFor(tagOf(guest), 4));
       async.flushMicrotasks();
-      expect(owner.session.received.last.payload[2], 2);
+      expect(paired.session.received.last.payload[2], 2);
       expect(node.ring.map((i) => i.message.payload[2]), [1, 3, 4]);
       List<int> got(Phone p) => [
         for (final r in p.session.received) r.payload[2],
@@ -150,7 +150,7 @@ void main() {
       expect(got(guest), [1, 4]);
       expect(guest.session.guestRead, isTrue);
       // Items 3 and 6 by number: the fake friend's first two took 1 and
-      // 2, the owner's 4, and reading took nothing from the ring.
+      // 2, the paired phone's 4, and reading took nothing from the ring.
       expect(guest.session.nodes.of(key).ringAfter, node.ring.last.number);
       expect(node.ring, hasLength(3));
       guest.session.disconnect();
@@ -174,7 +174,7 @@ void main() {
   });
 
   test('a ring restarted: a number above its newest reads from the start', () {
-    run((async, owner, guest, node) {
+    run((async, paired, guest, node) {
       final key = nodeName(FakeNode.id);
       guest.session.nodes.of(key).ringAfter = 50;
       node.restartRing();
@@ -190,7 +190,7 @@ void main() {
 
   test('one guest\'s link at a time: a second is closed at its Recipient; '
       'a guest\'s link ends after 30 s', () {
-    run((async, owner, guest, node) {
+    run((async, paired, guest, node) {
       final first = node.connectGuest();
       guest.session.attach(first, guest: true);
       async.flushMicrotasks();
@@ -241,7 +241,7 @@ void main() {
       'see no flips; the holder keeps it past its message; an ask out of '
       'turn is answered not ready and has the turn after the holder\'s ban '
       'unused; two asking take turns; a link that ends passes it', () {
-    run((async, owner, guest, node) {
+    run((async, paired, guest, node) {
       final g = node.connectGuest();
       g.setRecipient(tagOf(guest), '');
       async.flushMicrotasks();
@@ -249,19 +249,19 @@ void main() {
       ready() => readyOf(async, links);
       var told = 0;
       final sub = g.statusNotified.listen((_) => told++);
-      Uint8List send(int n) => encodeSend(there, payloadFor(tagOf(owner), n));
-      // The owner's link came first: its turn.
+      Uint8List send(int n) => encodeSend(there, payloadFor(tagOf(paired), n));
+      // The paired phone's link came first: its turn.
       expect(ready(), [true, false]);
       // Both idle: the turn stays, and nobody is told anything.
       async.elapse(FakeNode.ban * 5);
       expect(ready(), [true, false]);
       expect(told, 0);
-      // The owner's message taken: nobody else asked, so the turn stays.
+      // The paired phone's message taken: nobody else asked, so the turn stays.
       expect(sendOn(async, node, send(1)), isNull);
       async.elapse(FakeNode.handOver);
       expect(ready(), [true, false]);
-      // The guest asks while the owner has just had Ready back: not ready,
-      // and the turn after the owner's ban unused.
+      // The guest asks while the paired phone has just had Ready back: not ready,
+      // and the turn after the paired phone's ban unused.
       expect(sendOn(async, g, send(2)), notReady);
       async.elapse(FakeNode.ban - const Duration(milliseconds: 1));
       expect(ready(), [true, false]);
@@ -276,7 +276,7 @@ void main() {
       expect(sendOn(async, g, send(5)), notReady);
       async.elapse(FakeNode.ban);
       expect(ready(), [false, true]);
-      // The guest's link ends: back to the owner.
+      // The guest's link ends: back to the paired phone.
       g.close();
       links.removeLast();
       async.flushMicrotasks();

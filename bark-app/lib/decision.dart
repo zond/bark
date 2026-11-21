@@ -103,7 +103,7 @@ FoundNode? chooseNode(
   return place(n.name) < place(on) ? n : null;
 }
 
-/// The link the phone has: to the node `node`, a guest's or the owner's,
+/// The link the phone has: to the node `node`, a guest's or a paired phone's,
 /// made by the person's tap or by the search.
 typedef LinkNow = ({String node, bool guest, bool byTap});
 
@@ -156,7 +156,7 @@ class Situation {
   /// When the search last started a scan.
   final DateTime? scannedAt;
 
-  /// When the phone last lost a link it held between rounds: an owner's,
+  /// When the phone last lost a link it held between rounds: a paired phone's,
   /// or a guest's the person made.
   final DateTime? droppedAt;
 
@@ -294,7 +294,7 @@ final class Listen extends Decision {
   String toString() => 'Listen(${until ?? 'all'})';
 }
 
-/// A link to `node` as its owner.
+/// A link to `node` as a paired phone.
 final class Connect extends Decision {
   final FoundNode node;
   const Connect(this.node);

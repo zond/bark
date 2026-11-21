@@ -30,21 +30,21 @@ class HomeSection extends StatelessWidget {
     final st = s.status;
     // A guest can clear no key, and makes the node its home by pairing
     // first; between its errands only the last one's reading is known.
-    final owned = s.connected && !s.guest;
+    final paired = s.connected && !s.guest;
     final guest = app.guestHere?.asGuest;
-    final here = owned ? s.address : guest?.address;
-    final atHome = owned ? app.atHome : app.guestAtHome;
-    final homeable = owned ? canBeHome(st) : guest?.homeable ?? false;
+    final here = paired ? s.address : guest?.address;
+    final atHome = paired ? app.atHome : app.guestAtHome;
+    final homeable = paired ? canBeHome(st) : guest?.homeable ?? false;
     final full = guest?.room == 0;
     return [
       SettingsHeading('Home node', help: _homeHelp),
       Text(home == null ? 'None: your card is temporary.' : 'At $home.'),
-      if (here == null && (owned ? st != null : guest != null))
+      if (here == null && (paired ? st != null : guest != null))
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
             'This node has no place yet, so it cannot be a home.'
-            '${owned ? ' Set it under This node.' : ''}',
+            '${paired ? ' Set it under This node.' : ''}',
           ),
         ),
       if (here != null && !atHome && !homeable)
@@ -78,12 +78,12 @@ class HomeSection extends StatelessWidget {
       Wrap(
         spacing: 8,
         children: [
-          if ((owned || guest != null) &&
+          if ((paired || guest != null) &&
               here != null &&
               (!atHome || app.homeKeyGone))
             FilledButton(
-              onPressed: homeable && !app.connecting && (owned || !full)
-                  ? () => _setHome(context, here, pair: !owned)
+              onPressed: homeable && !app.connecting && (paired || !full)
+                  ? () => _setHome(context, here, pair: !paired)
                   : null,
               child: const Text('Make this node my home'),
             ),
@@ -92,7 +92,7 @@ class HomeSection extends StatelessWidget {
               onPressed: () => _setHome(context, null),
               child: const Text('No home node'),
             ),
-          if (owned && app.holdsOtherKey)
+          if (paired && app.holdsOtherKey)
             OutlinedButton(
               onPressed: () => trySay(context, () async {
                 final r = await app.clearKey();
@@ -125,7 +125,7 @@ class HomeSection extends StatelessWidget {
           ),
         ),
       SendCardLine(app, padding: EdgeInsets.zero),
-      ..._people(context, atHome: atHome && owned),
+      ..._people(context, atHome: atHome && paired),
     ];
   }
 

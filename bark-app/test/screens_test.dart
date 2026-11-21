@@ -1324,7 +1324,7 @@ void main() {
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
     // The name from the card went to the node.
-    expect(f.ownerName, 'Ann');
+    expect(f.pairedName, 'Ann');
     expect(find.text('Phones paired with this node'), findsOneWidget);
     expect(find.text('Phones with a home here'), findsOneWidget);
     // On the node's list and under My name.
@@ -1637,8 +1637,8 @@ void main() {
     app.disposeWithNode();
   });
 
-  testWidgets('the owner\'s Public switch; a guest\'s line, without the '
-      'owner\'s settings', (t) async {
+  testWidgets('the paired phone\'s Public switch; a guest\'s line, without the '
+      'paired phone\'s settings', (t) async {
     final app = await model(t);
     await app.connectFake();
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
@@ -1700,7 +1700,7 @@ void main() {
         sodium: sodium,
         app: app.me.identity,
         id: [0x0c, 0xe4, 0, 0, 0, 4],
-      )..owned = false,
+      )..hasPhones = false,
     }, bonds: {});
     UniversalBle.setInstance(ble);
     app.startSearch();

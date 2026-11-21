@@ -817,7 +817,7 @@ void main() {
     });
   });
 
-  /// Attaches `node`, its link the owner's or a `guest`'s; whether the
+  /// Attaches `node`, its link a paired phone's or a `guest`'s; whether the
   /// session took it.
   bool? attached(
     FakeAsync async,
@@ -842,7 +842,7 @@ void main() {
     ..recipient = ((n) => 7)
     ..name = (() => 'Ann');
 
-  test('a newer node that still serves this app is used, as its owner and '
+  test('a newer node that still serves this app is used, as a paired phone and '
       'as a guest, with no notice', () {
     fakeAsync((async) {
       final s = session();
@@ -851,7 +851,7 @@ void main() {
       expect(s.connected && !s.guest, isTrue);
       expect(s.nodeNewer, isTrue);
       expect(s.notice, isNull);
-      expect(node.ownerName, 'Ann');
+      expect(node.pairedName, 'Ann');
       // The owner's values of this app's version are read as on any node.
       expect(s.nodePublic, isTrue);
       expect(s.nodeHome, isNotNull);
@@ -1061,7 +1061,7 @@ void main() {
         mailbox: p.me.keys.mailbox,
       );
       // The replies come back to this node though the fetch names another,
-      // whose tag a public node would not take for the owner's.
+      // whose tag a public node would not take for the paired phone's.
       node.public = false;
       p.session.attach(node.connect());
       async.flushMicrotasks();

@@ -13,7 +13,7 @@
 // a firmware update as the node does, and comes back from its reboot
 // running the new version, which hears no one unless a test says so, so
 // that the app's warning of a node that hears no one can be seen. Public
-// unless its owner makes it private, it also takes guests' links, as the
+// unless its paired phone makes it private, it also takes guests' links, as the
 // spec's "Phone link", Public, says.
 
 import 'dart:async';
@@ -251,7 +251,7 @@ class FakeNode implements NodeLink {
   int _heard = 0;
   bool _ready = true;
 
-  /// The owner's inbox; on a public node, the ring, which never refuses.
+  /// The paired phone's inbox; on a public node, the ring, which never refuses.
   final List<InboxMessage> _inbox = [];
 
   /// The fake friend's last `sent`, and how many messages they wrote.
@@ -261,7 +261,7 @@ class FakeNode implements NodeLink {
   int _taken = 0;
 
   /// The paired phone's link, which this fake is.
-  final _Phone _owner = _Phone();
+  final _Phone _pairedPhone = _Phone();
   var _closed = Completer<void>();
   final List<Timer> _timers = [];
 
@@ -532,7 +532,7 @@ class FakeNode implements NodeLink {
   void changed() => _notify();
 
   void _notify() {
-    if (_owner.connected) _owner.status.add(_now());
+    if (_pairedPhone.connected) _pairedPhone.status.add(_now());
     for (final g in guests) {
       g._phone.status.add(_statusOf(g));
     }
@@ -581,13 +581,13 @@ class FakeNode implements NodeLink {
             Duration.microsecondsPerSecond;
 
   GivenBack? _givenBackNow([_Phone? p]) {
-    final g = (p ?? _owner).givenBack;
+    final g = (p ?? _pairedPhone).givenBack;
     if (g == null) return null;
     return GivenBack(g.$1, _ceilS(g.$2.difference(now())));
   }
 
   Future<T> _answer<T>(T Function() f) async {
-    if (!_owner.connected) throw StateError('not connected');
+    if (!_pairedPhone.connected) throw StateError('not connected');
     return f();
   }
 
@@ -619,7 +619,7 @@ class FakeNode implements NodeLink {
   @override
   Future<void> send(Uint8List value) => _answer(() => _send(this, value));
 
-  /// A Send from the phone `p`, this fake for the owner or a guest.
+  /// A Send from the phone `p`, this fake for the paired phone or a guest.
   void _send(Object p, Uint8List value) {
     if (value.length < Address.len || value.length > Address.len + maxPayload) {
       throw const AttException(AttError.invalidLength);
@@ -675,14 +675,14 @@ class FakeNode implements NodeLink {
     }
   }
 
-  _Phone _phoneOf(Object p) => p is FakeGuest ? p._phone : _owner;
+  _Phone _phoneOf(Object p) => p is FakeGuest ? p._phone : _pairedPhone;
 
   void _giveBack(_Phone phone, int id, Duration wait) {
     phone.givenBack = (id, now().add(wait));
     if (phone.connected) phone.given.add(_givenBackNow(phone));
   }
 
-  /// The phones connected, in the order of their links: the owner's link,
+  /// The phones connected, in the order of their links: the paired phone's,
   /// this fake, and the guests'.
   final List<Object> _links = [];
 
@@ -913,7 +913,7 @@ class FakeNode implements NodeLink {
 
   int get _length => _le32(_staging!, 12);
 
-  /// Guest is a guest's; the owner's link reads its mail through Inbox,
+  /// Guest is a guest's; the paired phone's link reads its mail through Inbox,
   /// in its own form.
   @override
   Future<void> setGuestAfter(int number) => _answer(() {});
@@ -1060,8 +1060,8 @@ class FakeNode implements NodeLink {
   @override
   Future<void> setRecipient(int tag, String name) => _answer(() {
     final r = _takeRecipient(encodeRecipient(tag, name), this);
-    ownerTag = r.tag;
-    ownerName = r.name;
+    pairedTag = r.tag;
+    pairedName = r.name;
   });
 
   /// Recipient as the node takes it from `phone`: one that, by the
@@ -1090,14 +1090,14 @@ class FakeNode implements NodeLink {
   /// The records of the node's other phones, each another person's phone,
   /// a home one left behind, or both, which a test sets (spec "Phone
   /// link", Pairing, Phones). This phone's own is made of [paired],
-  /// [homeKey], [ownerTag] and [ownerName], numbered [ownNumber].
+  /// [homeKey], [pairedTag] and [pairedName], numbered [ownNumber].
   final List<PhoneRecord> others = [];
 
   /// The number of this phone's record.
   int ownNumber = 1;
 
   /// The name this phone's person wrote to Recipient.
-  String ownerName = '';
+  String pairedName = '';
 
   /// Today as a record counts it ([dayOf]).
   int get _today => now().toUtc().difference(DateTime.utc(2026)).inDays + 1;
@@ -1110,12 +1110,12 @@ class FakeNode implements NodeLink {
         number: ownNumber,
         paired: paired,
         home: homeKey != null,
-        linked: _owner.connected,
+        linked: _pairedPhone.connected,
         mine: true,
         owner: mineOwner,
-        tag: ownerTag,
+        tag: pairedTag,
         day: _today,
-        name: ownerName,
+        name: pairedName,
       ),
     ...others,
   ];
@@ -1216,7 +1216,7 @@ class FakeNode implements NodeLink {
       }
       if (bond) {
         paired = false;
-        ownerTag = null;
+        pairedTag = null;
         scheduleMicrotask(close);
       }
       return;
@@ -1241,12 +1241,12 @@ class FakeNode implements NodeLink {
   Future<void> setPublic(bool v) => _answer(() => public = v);
 
   /// Forgets this phone's bond, as the node does: public again, its
-  /// owner's tag gone, and this phone's next link refused, as the phone
+  /// paired phone's tag gone, and this phone's next link refused, as the phone
   /// still holds its half of the bond; the link ends after the answer.
   @override
   Future<void> unpair() => _answer(() {
     public = true;
-    ownerTag = null;
+    pairedTag = null;
     paired = false;
     scheduleMicrotask(close);
   });
@@ -1255,7 +1255,7 @@ class FakeNode implements NodeLink {
   Future<void> subscribeAsk() => _answer(() {});
 
   /// Sends the question only to a neighbour in its table, as the node
-  /// does; the answer is the owner's, notified if its link is still up.
+  /// does; the answer is the paired phone's, notified if its link is still up.
   @override
   Future<void> ask(List<int> id) => _answer(() {
     if (id.length != nodeIdLen) {
@@ -1275,22 +1275,22 @@ class FakeNode implements NodeLink {
     if (loseEvery > 0 && _answerable % loseEvery == 0) return;
     _timers.add(
       Timer(answerAfter, () {
-        if (_owner.connected) _owner.answer.add(Answer(id, s));
+        if (_pairedPhone.connected) _pairedPhone.answer.add(Answer(id, s));
       }),
     );
   });
 
   @override
-  Stream<Status> get statusNotified => _owner.status.stream;
+  Stream<Status> get statusNotified => _pairedPhone.status.stream;
 
   @override
-  Stream<GivenBack?> get givenBackNotified => _owner.given.stream;
+  Stream<GivenBack?> get givenBackNotified => _pairedPhone.given.stream;
 
   @override
-  Stream<Answer?> get answerNotified => _owner.answer.stream;
+  Stream<Answer?> get answerNotified => _pairedPhone.answer.stream;
 
   /// Whether it serves phones that have not paired, as a node does
-  /// unless its owner makes it private; kept across connections and
+  /// unless its paired phone makes it private; kept across connections and
   /// pairings as with the bond.
   bool get public => _public;
   bool _public = true;
@@ -1309,17 +1309,17 @@ class FakeNode implements NodeLink {
 
   /// The paired phone's recipient tag, kept with the bond; null until it
   /// writes one.
-  int? ownerTag;
+  int? pairedTag;
 
   /// Whether any phone has paired with it; a test's stranger's node has
   /// no owner, and all its mail is the guests'.
-  bool owned = true;
+  bool hasPhones = true;
 
   /// The guests' links up now: one, and for a moment a second, which
   /// the node closes once it writes Recipient.
   final List<FakeGuest> guests = [];
 
-  /// The guests it serves at once beside its owner (spec "Phone link",
+  /// The guests it serves at once beside its paired phone (spec "Phone link",
   /// Public).
   static const maxGuests = 1;
 
@@ -1328,14 +1328,14 @@ class FakeNode implements NodeLink {
   static const guestLinkTime = Duration(seconds: 30);
 
   /// The guests' items of its ring, oldest first, as the node keeps them
-  /// in flash: on a public node every message not the owner's.
+  /// in flash: on a public node every message not the paired phone's.
   final List<GuestItem> ring = [];
 
   /// The items its ring holds, as a home's (spec "Mailbox", The ring);
   /// the oldest leaves for a new one.
   static const ringItems = 1024;
 
-  /// The last number an item took; the owner's take numbers too, so the
+  /// The last number an item took; the paired phone's take numbers too, so the
   /// guests' run with gaps, as in the node's ring.
   int _number = 0;
 
@@ -1345,15 +1345,15 @@ class FakeNode implements NodeLink {
     _notify();
   }
 
-  /// Keeps a message for its phones: the owner's in the owner's inbox,
-  /// those with the owner's tag or every one while the bond holds none;
+  /// Keeps a message for its phones: the paired phone's in its inbox,
+  /// those with its tag or every one while the bond holds none;
   /// on a public node the rest in the ring, by number, for the guests to
   /// read by their tags, and all of them on a node nobody has paired with.
   void _place(InboxMessage m) {
     _number++;
     final tag = m.payload.length > 1 ? m.payload[1] : null;
-    final owners = owned && (ownerTag == null || ownerTag == tag);
-    if (!public || owners) {
+    final theirs = hasPhones && (pairedTag == null || pairedTag == tag);
+    if (!public || theirs) {
       _inbox.add(m);
       return;
     }
@@ -1403,7 +1403,7 @@ class FakeNode implements NodeLink {
   /// one; the tag kept with the old bond goes with it.
   void pairElsewhere() {
     paired = false;
-    ownerTag = null;
+    pairedTag = null;
   }
 
   /// This phone pairs again, by the code on the fake's screen.
@@ -1417,8 +1417,8 @@ class FakeNode implements NodeLink {
     if (back != null && now().isBefore(back)) {
       throw StateError('${nodeName(nodeId)} is swapping in its new image');
     }
-    if (!_owner.connected) _joined(this);
-    _owner.connected = true;
+    if (!_pairedPhone.connected) _joined(this);
+    _pairedPhone.connected = true;
     _closed = Completer<void>();
     return this;
   }
@@ -1428,8 +1428,8 @@ class FakeNode implements NodeLink {
 
   @override
   Future<void> close() async {
-    if (_owner.connected) _gone(this);
-    _owner.connected = false;
+    if (_pairedPhone.connected) _gone(this);
+    _pairedPhone.connected = false;
     if (!_closed.isCompleted) _closed.complete();
   }
 

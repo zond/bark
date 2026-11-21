@@ -5,7 +5,7 @@
 // it; and the app's search for its paired node, which connects when it
 // sees the node, at start, after a drop and after Bluetooth was off, an
 // update going on from what the node holds, but not after the person
-// disconnected, not to a node no longer theirs as its owner, and gives
+// disconnected, not to a node no longer theirs as a paired phone, and gives
 // way to the person's tap on another node; and with no paired node, or
 // while it is not heard, the strongest public node, joined as a guest,
 // once Android's bond with any node the app does not count as its own
@@ -13,7 +13,7 @@
 // the bond is forgotten, nor any other node while a paired node is away
 // for its install or its reboot into the phone's image, nor a node that refused the phone over its link
 // version, until a tap tries it or a link to it is made; and
-// the owner's unpairing, after which Android forgets its bond too; and
+// the paired phone's unpairing, after which Android forgets its bond too; and
 // Pair, which removes a bond Android holds first and tries nothing where
 // Android keeps it, Pair again on a lost node heard lately, a link the
 // node ends said so, and a Pair during the search's connect that waits.
@@ -405,7 +405,7 @@ void main() {
       });
     });
 
-    test('a node no longer this phone\'s is not tried again as its owner: '
+    test('a node no longer this phone\'s is not tried again as a paired phone: '
         'its bond goes as it is heard, and it is a public node like any '
         'other', () {
       run((async, app, ble) {
@@ -522,8 +522,8 @@ void main() {
         final ble = FakeNodes(
           {
             if (withPaired) paired: FakeNode(now: now, sodium: sodium, app: id),
-            weak: other(weakId)..owned = false,
-            strong: other(strongId)..owned = false,
+            weak: other(weakId)..hasPhones = false,
+            strong: other(strongId)..hasPhones = false,
             shut: other([0x0c, 0xe4, 0, 0, 0, 5])..public = false,
           },
           bonds: {if (withPaired) paired, ...bonds},
@@ -1149,7 +1149,7 @@ void main() {
       });
     });
 
-    test('the owner unpairs: the node forgets the phone, then the phone its '
+    test('the paired phone unpairs: the node forgets the phone, then the phone its '
         'bond, and the node serves it as a guest after', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         async.elapse(round);
@@ -1170,7 +1170,7 @@ void main() {
       });
     });
 
-    test('the owner unpairs and the link ends under the write: done all '
+    test('the paired phone unpairs and the link ends under the write: done all '
         'the same, the phone forgets its bond, and the node serves it as a '
         'guest', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
@@ -1216,29 +1216,32 @@ void main() {
       });
     });
 
-    test('the owner unpairs on a phone that keeps its bond: the person is '
-        'told to forget the node, which is passed over until then', () {
-      run(withPaired: true, pairedInReach: true, (async, app, ble) {
-        async.elapse(round);
-        ble
-          ..inReach.removeAll({weak, strong})
-          ..keepsBonds = true;
-        bool? forgotten;
-        app.unpair().then((v) => forgotten = v);
-        async.elapse(const Duration(seconds: 3));
-        expect(forgotten, isFalse);
-        expect(ble.bonds, {paired});
-        expect(app.bondKept, nodeName(FakeNode.id));
-        final connects = ble.connects.length;
-        async.elapse(lookRound * 4);
-        expect(ble.connects, hasLength(connects));
-        ble.bonds.remove(paired);
-        async.elapse(lookRound * 2);
-        expect(app.bondKept, isNull);
-        expect(ble.connects.last, paired);
-        expect(app.guestNode, nodeName(FakeNode.id));
-      });
-    });
+    test(
+      'the paired phone unpairs on a phone that keeps its bond: the person is '
+      'told to forget the node, which is passed over until then',
+      () {
+        run(withPaired: true, pairedInReach: true, (async, app, ble) {
+          async.elapse(round);
+          ble
+            ..inReach.removeAll({weak, strong})
+            ..keepsBonds = true;
+          bool? forgotten;
+          app.unpair().then((v) => forgotten = v);
+          async.elapse(const Duration(seconds: 3));
+          expect(forgotten, isFalse);
+          expect(ble.bonds, {paired});
+          expect(app.bondKept, nodeName(FakeNode.id));
+          final connects = ble.connects.length;
+          async.elapse(lookRound * 4);
+          expect(ble.connects, hasLength(connects));
+          ble.bonds.remove(paired);
+          async.elapse(lookRound * 2);
+          expect(app.bondKept, isNull);
+          expect(ble.connects.last, paired);
+          expect(app.guestNode, nodeName(FakeNode.id));
+        });
+      },
+    );
 
     test('a node no longer this phone\'s: its bond removed as it is heard, '
         'and used as a guest like any public node', () {
@@ -1260,9 +1263,9 @@ void main() {
         async.elapse(round);
         expect((app.session.guest, app.linkDevice), (false, paired));
         expect(ble.connects, [paired]);
-        final owner = ble.nodes[paired]!;
+        final node = ble.nodes[paired]!;
         expect(
-          owner.ownerTag,
+          node.pairedTag,
           recipientTag(sodium, app.me.identity, FakeNode.id),
         );
       });
@@ -1399,7 +1402,7 @@ void main() {
     });
 
     test('a tap on a paired node in Settings, the search stopped: heard '
-        'by a scan of its own, and connected as its owner', () {
+        'by a scan of its own, and connected as a paired phone', () {
       run(
         (async, app, ble) {
           async.elapse(round);
@@ -1719,7 +1722,7 @@ void main() {
           {
             home: FakeNode(now: now, sodium: sodium, app: id),
             near: other(nearId)..public = false,
-            strong: other(strongId)..owned = false,
+            strong: other(strongId)..hasPhones = false,
           },
           bonds: {home, near},
         );
@@ -1754,7 +1757,7 @@ void main() {
       });
     });
 
-    test('the home out of reach: the other paired node, as its owner, '
+    test('the home out of reach: the other paired node, as a paired phone, '
         'before a stronger public node and without waiting', () {
       run((async, app, ble) {
         ble.inReach.remove(home);
@@ -1842,7 +1845,7 @@ void main() {
         expect(ble.connects, [home]);
         expect(app.session.notice?.text, said);
         expect(app.nodes[name]!.unserved, isTrue);
-        // The next round takes the other paired node, as its owner.
+        // The next round takes the other paired node, as a paired phone.
         async.elapse(lookRound);
         expect(ble.connects, [home, near]);
         expect((app.linkDevice, app.session.guest), (near, false));
