@@ -2344,6 +2344,18 @@ fn malformed(m: Malformed) -> AttErrorCode {
     AttErrorCode::new(m.att_error())
 }
 
+/// A written value, taken whole by `decode`; a write at an offset, the
+/// later part of a long write, is refused.
+fn value<T>(
+    w: &WriteEvent<'_, '_, DefaultPacketPool>,
+    decode: impl FnOnce(&[u8]) -> Result<T, Malformed>,
+) -> Result<T, AttErrorCode> {
+    w.with_data(|offset, data| match offset {
+        0 => decode(data).map_err(malformed),
+        _ => Err(AttErrorCode::INVALID_OFFSET),
+    })
+}
+
 const NOT_READY: AttErrorCode = AttErrorCode::new(bark_link::att::NOT_READY);
 const REFUSED: AttErrorCode = AttErrorCode::new(bark_link::att::REFUSED);
 
@@ -2444,10 +2456,7 @@ async fn write_confirm(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<(), AttErrorCode> {
-    let c = w.with_data(|offset, data| match offset {
-        0 => bark_link::Confirm::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let c = value(w, bark_link::Confirm::decode)?;
     if LINK.lock(|l| l.borrow().guest(from.slot)) {
         return Err(malformed(Malformed::Value));
     }
@@ -2461,10 +2470,7 @@ async fn write_map_point(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<(), AttErrorCode> {
-    let m = w.with_data(|offset, data| match offset {
-        0 => bark_link::MapPoint::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let m = value(w, bark_link::MapPoint::decode)?;
     ask(from, Request::MapPoint(m)).await;
     Ok(())
 }
@@ -2484,10 +2490,7 @@ fn write_recipient(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> (Result<(), AttErrorCode>, bool) {
-    let r = w.with_data(|offset, data| match offset {
-        0 => bark_link::Recipient::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    });
+    let r = value(w, bark_link::Recipient::decode);
     let r = match r {
         Ok(r) => r,
         Err(e) => return (Err(e), false),
@@ -2546,10 +2549,7 @@ this node speaks {} and serves apps from {}: they do not serve each other, close
 /// Guest, written: the number of the last item the guest took, after
 /// which its next read of Guest looks.
 fn write_guest(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
-    let after = w.with_data(|offset, data| match offset {
-        0 => bark_link::After::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let after = value(w, bark_link::After::decode)?;
     LINK.lock(|l| l.borrow_mut().phones[from.slot].after = after.0);
     Ok(())
 }
@@ -2563,10 +2563,7 @@ fn write_public(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<bool, AttErrorCode> {
-    let write = w.with_data(|offset, data| match offset {
-        0 => bark_link::PublicWrite::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let write = value(w, bark_link::PublicWrite::decode)?;
     if !from.paired() {
         // Only a paired phone's link writes it.
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
@@ -2627,10 +2624,7 @@ fn phones_now(
 /// Home).
 fn write_home(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<(), AttErrorCode> {
     use bark_link::home::SetHome;
-    let set = w.with_data(|offset, data| match offset {
-        0 => SetHome::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let set = value(w, SetHome::decode)?;
     let Some(i) = from.record else {
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
     };
@@ -2672,10 +2666,7 @@ fn write_phones(
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<(), AttErrorCode> {
     use bark_link::phones::{Code, PhonesWrite};
-    let write = w.with_data(|offset, data| match offset {
-        0 => PhonesWrite::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let write = value(w, PhonesWrite::decode)?;
     if from.record.is_none() {
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
     }
@@ -2774,10 +2765,7 @@ fn write_neighbours(
     slot: usize,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<(), AttErrorCode> {
-    let from = w.with_data(|offset, data| match offset {
-        0 => neighbours::decode_from(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let from = value(w, neighbours::decode_from)?;
     LINK.lock(|l| l.borrow_mut().phones[slot].neighbours_from = from);
     Ok(())
 }
@@ -2788,10 +2776,7 @@ async fn write_ask(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<(), AttErrorCode> {
-    let a = w.with_data(|offset, data| match offset {
-        0 => bark_link::Ask::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let a = value(w, bark_link::Ask::decode)?;
     ask(from, Request::Ask(a.0)).await;
     Ok(())
 }
@@ -2800,10 +2785,7 @@ async fn write_clock(
     from: From,
     w: &WriteEvent<'_, '_, DefaultPacketPool>,
 ) -> Result<(), AttErrorCode> {
-    let c = w.with_data(|offset, data| match offset {
-        0 => bark_link::Clock::decode(data).map_err(malformed),
-        _ => Err(AttErrorCode::INVALID_OFFSET),
-    })?;
+    let c = value(w, bark_link::Clock::decode)?;
     ask(from, Request::Clock(c)).await;
     Ok(())
 }
