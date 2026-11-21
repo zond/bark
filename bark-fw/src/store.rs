@@ -24,8 +24,9 @@
 //! write's futures nested in the node's loop grew the main task's stack
 //! frame by 2.4 KB.
 //!
-//! The MPSL's flash is one, taken once ([`SharedFlash`]): the mailbox
-//! writes through it too (`mailbox.rs`), each op a timeslot of its own.
+//! The MPSL's flash is one, taken once ([`SharedFlash`]): an update
+//! writes the loader's record and state through it too
+//! (`update/phone.rs`), each op a timeslot of its own.
 //!
 //! The page also keeps the phone's UTC offset (`utc.rs`), in records of
 //! its own beside the core's: [`ZONE`] and the offset in the first word,

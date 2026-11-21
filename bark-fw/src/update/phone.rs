@@ -17,7 +17,6 @@ use bark_link::update::{Progress, Refusal, State};
 use embassy_embedded_hal::flash::partition::Partition;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
-use embedded_storage::nor_flash::ReadNorFlash;
 
 use super::{Power, Refused};
 use crate::ext_flash::Dfu;
@@ -76,7 +75,7 @@ impl Phone {
     /// the node was committed and not rebooted, else idle.
     pub fn new(internal: &'static SharedFlash, flash: &'static super::Flash) -> Phone {
         let committed = match swap_requested(flash) {
-            Ok(true) => recorded(flash),
+            Ok(true) => super::recorded(flash),
             _ => None,
         };
         let phone = Phone {
@@ -233,14 +232,6 @@ impl Phone {
         self.refused = Some(why);
         why
     }
-}
-
-/// The header of the record, which a commit wrote.
-fn recorded(flash: &super::Flash) -> Option<Header> {
-    let mut b = [0u8; HEADER_LEN];
-    let at = RECORD.start + bark_image::record::HEADER_AT;
-    flash.lock(|f| f.borrow_mut().read(at, &mut b)).ok()?;
-    Header::decode(&b).ok()
 }
 
 /// The phone's word for a refusal.

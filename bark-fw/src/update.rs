@@ -267,8 +267,9 @@ pub fn started(flash: &Flash) -> Boot {
     }
     Boot {
         swapped: matches!(started, Ok(Started::Confirmed | Started::OnTrial))
-            .then(|| recorded_length(flash))
-            .flatten(),
+            .then(|| recorded(flash))
+            .flatten()
+            .map(|h| h.length),
         deaf,
     }
 }
@@ -281,13 +282,14 @@ impl Boot {
     };
 }
 
-/// The length of the image the record names, the one swapped in.
-fn recorded_length(flash: &Flash) -> Option<u32> {
+/// The header of the image the record names: the one a commit staged,
+/// and after a swap the one swapped in.
+fn recorded(flash: &Flash) -> Option<Header> {
     use embedded_storage::nor_flash::ReadNorFlash;
     let mut b = [0u8; HEADER_LEN];
     let at = bark_image::layout::RECORD.start + bark_image::record::HEADER_AT;
     flash.lock(|f| f.borrow_mut().read(at, &mut b)).ok()?;
-    Header::decode(&b).ok().map(|h| h.length)
+    Header::decode(&b).ok()
 }
 
 /// The image is kept: the watchdog is fed from now on, and the update over
