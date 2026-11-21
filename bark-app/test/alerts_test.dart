@@ -286,7 +286,7 @@ void main() {
       const looking =
           'Not connected. Looking for ID FA4E00000001; texts wait on the phone';
       expect(n.boot.last, looking);
-      app.disconnect();
+      app.links.disconnect();
       async.flushMicrotasks();
       expect(n.boot.last, isNull);
       app.connectFake();
@@ -295,7 +295,7 @@ void main() {
 
       // The stop is kept: the app started again does not look, nor
       // start with the phone, and lets go of a service started with it.
-      app.disconnect();
+      app.links.disconnect();
       async.flushMicrotasks();
       final n2 = FakeNotifier();
       final again = AppModel(

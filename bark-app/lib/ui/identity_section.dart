@@ -107,7 +107,7 @@ class IdentitySection extends StatelessWidget {
     if (done != true || !context.mounted) return;
     say(
       context,
-      app.nodes.lost.isEmpty
+      app.session.nodes.lost.isEmpty
           ? 'Identity restored'
           : 'Identity restored. Pair again with your nodes.',
     );
@@ -183,6 +183,9 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
             controller: _password,
             autofocus: true,
             obscureText: true,
+            enableSuggestions: false,
+            autocorrect: false,
+            enableIMEPersonalizedLearning: false,
             enabled: !_running,
             decoration: const InputDecoration(labelText: 'Password'),
             onChanged: (_) => setState(() {}),
@@ -192,6 +195,9 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
               key: const Key('password again'),
               controller: _again,
               obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              enableIMEPersonalizedLearning: false,
               enabled: !_running,
               decoration: InputDecoration(
                 labelText: 'Password again',

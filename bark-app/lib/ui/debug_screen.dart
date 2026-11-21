@@ -179,7 +179,7 @@ class DebugScreen extends StatelessWidget {
     return [
       _row('Name', nodeName(n.id)),
       _row('Node ID', hex(n.id)),
-      _row('MTU', '${app.mtu ?? '?'}'),
+      _row('MTU', '${app.links.mtu ?? '?'}'),
       _row('Link', s.guest ? 'a guest\'s' : 'the paired phone\'s'),
       _row('Link version', '${n.version}'),
       _row('Firmware image', '${n.image}'),

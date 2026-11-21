@@ -239,7 +239,7 @@ class BleLink implements NodeLink {
   /// As a `guest` of a public node it neither pairs nor reads: Android
   /// may start a pairing by itself on a read the node refuses for want of
   /// a bond, and the node is not the person's. The phone holds no bond
-  /// with a node it joins as a guest ([AppModel]).
+  /// with a node it joins as a guest (`links.dart`).
   ///
   /// Throws [NotOurs] for a node, `name`, that no longer holds the
   /// phone's bond: one that ends the link it took before the app has

@@ -226,7 +226,7 @@ Future<bool> runSteps(
   // As the app runs it from its start (`main.dart`): it links again by
   // itself after the update's reboot. Started later, while a link listens
   // to Bluetooth's state already, it would not hear that it is on.
-  app.startSearch();
+  app.links.startSearch();
   final s = _Steps(t, app, bench, host);
   var passed = 0, ran = 0;
   final steps = <(String, Future<String> Function(), int?)>[
@@ -321,11 +321,11 @@ class _Steps {
     await t.tap(find.widgetWithText(FilledButton, 'Scan'));
     final name = bench.nodeName;
     final n = await _until(
-      () => app.found.values.where((f) => f.name == name).firstOrNull,
+      () => app.links.found.values.where((f) => f.name == name).firstOrNull,
       findWait,
-      () => app.bluetoothAllowed
+      () => app.links.bluetoothAllowed
           ? 'not heard in ${findWait.inSeconds} s; heard '
-                '${app.found.values.map((f) => shownName(f.name)).join(', ')}'
+                '${app.links.found.values.map((f) => shownName(f.name)).join(', ')}'
           : 'Android does not let the app use Bluetooth',
     );
     _found = n;
@@ -335,16 +335,17 @@ class _Steps {
 
   Future<String> pairNode() async {
     final name = bench.nodeName;
-    if (bench.pairing == Pairing.fresh && app.nodes.own.contains(name)) {
+    if (bench.pairing == Pairing.fresh &&
+        app.session.nodes.own.contains(name)) {
       await _letGo(name);
     }
-    final ours = app.nodes.own.contains(name);
+    final ours = app.session.nodes.own.contains(name);
     if (bench.pairing == Pairing.bond && !ours) {
       throw const Failed('the phone is not paired with the node');
     }
     // The row's buttons are off while the search connects.
     await _until(
-      () => app.connecting ? null : true,
+      () => app.links.connecting ? null : true,
       pairingWait,
       () => 'the search still connects: ${_lastLog()}',
     );
@@ -363,7 +364,7 @@ class _Steps {
       await t.tap(pairButton);
       await t.pump(_dialogOpens);
       await t.tap(find.widgetWithText(FilledButton, 'Pair'));
-    } else if (!app.connectedTo(_found!.deviceId) || app.session.guest) {
+    } else if (!app.links.connectedTo(_found!.deviceId) || app.session.guest) {
       await t.tap(row);
     }
     var began = false;
@@ -381,12 +382,12 @@ class _Steps {
         if (s.connected &&
             !s.guest &&
             nodeName(s.node!.id) == name &&
-            app.nodes.own.contains(name) &&
-            !app.connecting) {
+            app.session.nodes.own.contains(name) &&
+            !app.links.connecting) {
           return true;
         }
-        if (app.connecting) began = true;
-        if (began && !app.connecting) {
+        if (app.links.connecting) began = true;
+        if (began && !app.links.connecting) {
           throw Failed(
             'no link: ${_dialogs().isEmpty ? _lastLog() : _dialogs()}',
           );
@@ -442,9 +443,9 @@ class _Steps {
     final s = app.session;
     final bool? gone;
     if (s.connected && !s.guest && nodeName(s.node!.id) == name) {
-      gone = await app.unpair();
+      gone = await app.links.unpair();
     } else {
-      gone = await app.forget(name);
+      gone = await app.links.forget(name);
     }
     if (gone != true) {
       throw const Failed(

@@ -460,7 +460,7 @@ extension FakeNodeOf on AppModel {
     );
     final name = nodeName(n.nodeId);
     if (!session.nodes.paired.contains(name)) await session.setPaired(name);
-    await connect(FoundNode(fakeDevice, name, -60, public: n.public));
+    await links.connect(FoundNode(fakeDevice, name, -60, public: n.public));
   }
 }
 

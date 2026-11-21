@@ -886,6 +886,9 @@ void main() {
     expect(find.text(nodeLabel(alone.id)), findsOneWidget);
     expect(find.text('Home: You'), findsOneWidget);
     expect(find.text('Last seen: Bo 5 min ago'), findsOneWidget);
+    // The sheet moves with the clock while it is open.
+    await t.pump(const Duration(minutes: 1));
+    expect(find.text('Last seen: Bo 6 min ago'), findsOneWidget);
     await closeSheet(t);
     semantics.dispose();
     await shut(t, app);

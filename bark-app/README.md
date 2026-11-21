@@ -778,10 +778,11 @@ theirs. Where none is listed, someone paired with the node may have
 removed the home there, and the app tells the person rather than
 overrule them (A home removed, below).
 
-The queue and the received texts, the contacts and what is archived,
-and the person (seed, name, home, the last `sent`, the mailbox's
-state) are kept in three
-files in the app's private storage, so they survive a restart. The
+The app keeps four files in its private storage, so that they survive
+a restart: the queue, the received texts and the nodes in `bark.json`,
+the contacts and what is archived in `contacts.json`, the person (seed,
+name, home, the last `sent`, the mailbox's state) in `me.json`, and the
+last release heard of in `release.json` (Newer releases, below). The
 seed is kept there in the clear: anyone who can read the app's storage
 has the identity. Each file names the version of its format; a file of
 another version or none, or one with any part that does not read, is
@@ -790,7 +791,7 @@ renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 ever overwritten; the debug screen's log says so, and the app starts that
 file empty (for the person, with a new identity). The app reads only
 the forms it writes, and `bark.json` of the version before.
-`me.json` and `contacts.json` are each one JSON object, written whole
+`me.json`, `contacts.json` and `release.json` are each one JSON object, written whole
 to a file beside it and renamed over it, so that a kill leaves the old
 or the new. `bark.json`, which grows with every text, is a log: a first
 line `{"version":4}`, then a line for each change, a message queued,
@@ -799,7 +800,7 @@ that saving costs what changed. A line is written whole or not at all;
 a kill mid-line loses that change alone, and the next start writes the
 file afresh without it. Once the lines outnumber twice what the file
 holds, it is written whole again, a line a message, the same way as the
-other two. Version 3, before it, held everything as one object; the app
+others. Version 3, before it, held everything as one object; the app
 reads it and writes it afresh as a log. A field added to a form that every file before
 lacks, such as a home's given key, the owner's mark, the home's newest
 payload version or a home being left

@@ -34,7 +34,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     super.initState();
     // Without Bluetooth there is no node, so the app asks at once.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) app.askForBluetooth(() => whyBluetooth(context));
+      if (mounted) app.links.askForBluetooth(() => whyBluetooth(context));
     });
   }
 

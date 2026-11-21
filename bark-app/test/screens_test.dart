@@ -21,6 +21,7 @@
 // on a home that lost its key while the changed card waits.
 
 import 'package:bark_app/app.dart';
+import 'package:bark_app/links.dart' show Linking;
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/emojis.dart';
@@ -652,7 +653,7 @@ void main() {
   });
 
   testWidgets('the words and the identity file\'s password are kept out of '
-      'screenshots while shown', (t) async {
+      'screenshots and the keyboard\'s memory while shown', (t) async {
     final secure = <bool>[];
     final m = t.binding.defaultBinaryMessenger;
     m.setMockMethodCallHandler(Secret.channel, (c) async {
@@ -674,6 +675,17 @@ void main() {
       await t.pumpAndSettle();
     }
 
+    // Each field shown takes a secret, and the keyboard keeps none of it.
+    void keepsNoWords(int fields) {
+      final fs = t.widgetList<TextField>(find.byType(TextField));
+      expect(fs, hasLength(fields));
+      for (final f in fs) {
+        expect(f.enableSuggestions, isFalse);
+        expect(f.autocorrect, isFalse);
+        expect(f.enableIMEPersonalizedLearning, isFalse);
+      }
+    }
+
     await tap('Show my words');
     expect(secure, [true]);
     await t.tap(find.text('I wrote them down'));
@@ -686,12 +698,14 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('Your 12 words'), findsOneWidget);
     expect(secure, [true, false, true]);
+    keepsNoWords(1);
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(secure, [true, false, true, false]);
 
     await tap('Save to a file');
     expect(secure, [true, false, true, false, true]);
+    keepsNoWords(2);
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(secure, [true, false, true, false, true, false]);
@@ -1206,7 +1220,7 @@ void main() {
     await Future.wait([app.connectFake(), app.connectFake()]);
     await app.connectFake();
     expect(app.session.connected, isTrue);
-    expect(app.linking, Linking.none);
+    expect(app.links.linking, Linking.none);
     expect(
       app.session.log.where((l) => l.text.startsWith('Connected, MTU')),
       hasLength(1),
@@ -1603,10 +1617,10 @@ void main() {
     )..oldest = linkVersion + 1;
     await app.connectFake();
     expect(app.session.connected, isFalse);
-    expect(app.nodes[nodeName(FakeNode.id)]!.unserved, isTrue);
+    expect(app.session.nodes[nodeName(FakeNode.id)]!.unserved, isTrue);
     const other = 'bark-0ce400000002';
-    app.nodes.of(other).unserved = true;
-    app.found['0c:e4'] = FoundNode('0c:e4', other, -60);
+    app.session.nodes.of(other).unserved = true;
+    app.links.found['0c:e4'] = FoundNode('0c:e4', other, -60);
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
     expect(
@@ -1663,7 +1677,7 @@ void main() {
     expect(app.fakeNode!.public, isTrue);
     expect(app.session.connected, isFalse);
     expect(app.session.nodes.paired, isEmpty);
-    expect(app.pairedNodes, isEmpty);
+    expect(app.links.pairedNodes, isEmpty);
     expect(unpair, findsNothing);
     await t.pumpWidget(const SizedBox());
     app.disposeWithNode();
@@ -1688,8 +1702,8 @@ void main() {
         'use the node. Forget it in Bluetooth settings.';
     await t.pumpWidget(BarkApp(app));
     expect(find.text(line), findsNothing);
-    app.nodes.of('bark-0ce400000004').bondKept = true;
-    app.notifyListeners();
+    app.session.nodes.of('bark-0ce400000004').bondKept = true;
+    app.links.notifyListeners();
     await t.pump();
     expect(find.text(line), findsOneWidget);
     await t.tap(find.text('Bluetooth settings'));
@@ -1732,7 +1746,7 @@ void main() {
     app.fakeNode!.public = true;
     app.fakeBle!.bonds.clear();
     await app.session.disconnect();
-    await app.connectGuest(
+    await app.links.connectGuest(
       FoundNode(fakeDevice, nodeName(FakeNode.id), -60, public: true),
     );
     await t.pump();
@@ -1768,9 +1782,11 @@ void main() {
       )..hasPhones = false,
     }, bonds: {});
     UniversalBle.setInstance(ble);
-    app.startSearch();
+    app.links.startSearch();
     await t.pump();
-    app.connectGuest(FoundNode(device, 'bark-0ce400000004', -50, public: true));
+    app.links.connectGuest(
+      FoundNode(device, 'bark-0ce400000004', -50, public: true),
+    );
     for (var i = 0; i < 10; i++) {
       await t.pump(const Duration(milliseconds: 100));
     }
@@ -1779,7 +1795,7 @@ void main() {
 
   Future<void> done(WidgetTester t, AppModel app, FakeNodes ble) async {
     await t.pumpWidget(const SizedBox());
-    await app.stopLooking();
+    await app.links.stopLooking();
     app.session.disconnect();
     await t.pump(const Duration(seconds: 1));
     app.disposeWithNode();
@@ -1792,7 +1808,7 @@ void main() {
   testWidgets('a guest with no home: the first screen offers the node as '
       'the home, which pairs and then makes it the home', (t) async {
     final (app, ble) = await guestOnce(t);
-    expect(app.guestNode, 'bark-0ce400000004');
+    expect(app.links.guestNode, 'bark-0ce400000004');
     await t.pumpWidget(BarkApp(app));
     await t.pump();
     expect(
@@ -1823,7 +1839,7 @@ void main() {
     await t.tap(find.text('Not now'));
     await t.pump();
     expect(find.textContaining('no home node set'), findsNothing);
-    expect(app.guestNode, 'bark-0ce400000004');
+    expect(app.links.guestNode, 'bark-0ce400000004');
     expect(ble.pairings, 0);
     await done(t, app, ble);
   });
@@ -1832,7 +1848,7 @@ void main() {
       'first; Pair on the node\'s row in the scan pairs at once', (t) async {
     final (app, ble) = await guestOnce(t);
     const device = 'aa:bb:cc:dd:ee:04';
-    app.found[device] = FoundNode(
+    app.links.found[device] = FoundNode(
       device,
       'bark-0ce400000004',
       -50,
@@ -1873,7 +1889,7 @@ void main() {
     }
     expect(ble.pairings, 1);
     expect((app.session.connected, app.session.guest), (true, false));
-    expect(app.pairedNodes, contains('bark-0ce400000004'));
+    expect(app.links.pairedNodes, contains('bark-0ce400000004'));
     expect(app.me.home, isNull);
     await done(t, app, ble);
   });
@@ -1882,7 +1898,7 @@ void main() {
       'node ended the link; Android kept the old bond', (t) async {
     final (app, ble) = await guestOnce(t);
     const device = 'aa:bb:cc:dd:ee:04';
-    app.found[device] = FoundNode(
+    app.links.found[device] = FoundNode(
       device,
       'bark-0ce400000004',
       -50,
@@ -1915,7 +1931,7 @@ void main() {
 
     // Android holds a bond with it, which the node no longer knows, and
     // will not let it go.
-    await app.stopLooking();
+    await app.links.stopLooking();
     ble
       ..endsLinks.clear()
       ..bonds.add(device)

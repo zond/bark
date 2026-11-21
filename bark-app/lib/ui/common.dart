@@ -361,7 +361,7 @@ class BondKeptLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final n = app.bondKept;
+    final n = app.links.bondKept;
     if (n == null) return const SizedBox.shrink();
     return Card(
       color: Theme.of(context).colorScheme.errorContainer,
@@ -470,7 +470,7 @@ class HomeOfferLine extends StatelessWidget {
                   child: const Text('Not now'),
                 ),
                 TextButton(
-                  onPressed: app.connecting
+                  onPressed: app.links.connecting
                       ? null
                       : () async {
                           try {
@@ -702,6 +702,10 @@ Future<String?> askText(
           controller: c,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
+          // The keyboard keeps no word of a secret.
+          enableSuggestions: !secret,
+          autocorrect: !secret,
+          enableIMEPersonalizedLearning: !secret,
           onSubmitted: (v) => Navigator.pop(context, v.trim()),
         ),
         actions: [
@@ -725,11 +729,14 @@ Future<String?> askText(
 /// when it does not look, while a connection is being made and while the
 /// person scans.
 String? lookingLine(AppModel app) {
-  if (!app.searchOn || !app.bluetoothAllowed || app.connecting) return null;
-  if (!app.bluetoothOn) {
+  final l = app.links;
+  if (!l.searchOn || !l.bluetoothAllowed || l.connecting) return null;
+  if (!app.links.bluetoothOn) {
     return AppModel.searchLine(app.sought, bluetooth: false);
   }
-  return app.scanning ? null : AppModel.searchLine(app.sought, bluetooth: true);
+  return app.links.scanning
+      ? null
+      : AppModel.searchLine(app.sought, bluetooth: true);
 }
 
 /// The line on the phone's node, one of four: on its home, on another
@@ -747,7 +754,7 @@ String connectionLine(AppModel app) =>
 /// "Screens"; roadmap D163, D171).
 String connectionHelp(AppModel app) {
   final s = app.session;
-  final lost = [for (final n in app.nodes.lost) shownName(n)];
+  final lost = [for (final n in app.session.nodes.lost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
     [final n] =>
@@ -757,7 +764,7 @@ String connectionHelp(AppModel app) {
           'in Settings.',
   };
   final unserved = [
-    for (final r in app.nodes.records)
+    for (final r in app.session.nodes.records)
       if (r.unserved) shownName(r.name),
   ];
   final unservedLine = switch (unserved) {
@@ -778,23 +785,23 @@ String connectionHelp(AppModel app) {
           'texts come at once, also with the screen off. It always goes to '
           'your home first.';
     }
-    final home = app.homeName == null
+    final home = app.links.homeName == null
         ? 'With no home, your card names this node while you use it.'
         : 'Texts to you wait at your home; Fetch my mail brings them here.'
-              '${app.movesHome ? ' When your home is in reach, the phone moves to it within a minute.' : ''}';
+              '${app.links.movesHome ? ' When your home is in reach, the phone moves to it within a minute.' : ''}';
     return 'A node you are paired with. The phone stays linked while it is '
         'in reach. $home';
   }
-  if (app.tappedGuest) {
+  if (app.links.tappedGuest) {
     return 'Someone else\'s public node, which you chose. It serves one '
         'guest at a time and ends a guest\'s link after 30 seconds; then the '
         'phone chooses a node itself.$others';
   }
   if (app.nodeLine != null) {
-    final why = app.ownWeak
+    final why = app.links.ownWeak
         ? 'Your paired nodes are heard too weakly here, so the phone uses '
               'this public node until it hears one well.'
-        : app.ownAway
+        : app.links.ownAway
         ? 'None of your paired nodes has been in reach for 30 seconds, so '
               'the phone uses this public node until it hears one.'
         : 'No node of yours is near, so the phone uses this public node, '
@@ -803,11 +810,11 @@ String connectionHelp(AppModel app) {
         'you send. Replies to texts sent from here come here.$others';
   }
   if (lookingLine(app) != null) {
-    if (!app.bluetoothOn) {
+    if (!app.links.bluetoothOn) {
       return 'Bluetooth is off. Texts wait on the phone until it is on and a '
           'node is in reach.$others';
     }
-    if (app.searchFor == null) {
+    if (app.links.searchFor == null) {
       return 'No node of yours to use, so the phone looks every 15 seconds '
           'for a public node to use as a guest.$others';
     }

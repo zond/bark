@@ -158,7 +158,7 @@ class ConnectAsk {
         ],
       ),
     );
-    final pair = app.pairAgain;
+    final pair = app.links.pairAgain;
     if (again != true || pair == null || !context.mounted) return;
     await _once(context, pair, pairs: true);
   }

@@ -32,7 +32,7 @@ class HomeSection extends StatelessWidget {
     // A guest can clear no key, and makes the node its home by pairing
     // first; between its errands only the last one's reading is known.
     final paired = s.connected && !s.guest;
-    final guest = app.guestHere?.asGuest;
+    final guest = app.links.guestHere?.asGuest;
     final here = paired ? s.address : guest?.address;
     final atHome = paired ? app.mailbox.atHome : app.mailbox.guestAtHome;
     final homeable = paired ? canBeHome(st) : guest?.homeable ?? false;
@@ -88,7 +88,7 @@ class HomeSection extends StatelessWidget {
               here != null &&
               (!atHome || app.mailbox.homeKeyGone))
             FilledButton(
-              onPressed: homeable && !app.connecting && (paired || !full)
+              onPressed: homeable && !app.links.connecting && (paired || !full)
                   ? () => _setHome(context, here, pair: !paired)
                   : null,
               child: const Text('Make this node my home'),

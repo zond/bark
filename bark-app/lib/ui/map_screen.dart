@@ -699,7 +699,8 @@ class _MapScreenState extends State<MapScreen> {
       context: context,
       // Taller than half the screen when its rows need it.
       isScrollControlled: true,
-      builder: (_) => s.sheet(),
+      // "Last seen … ago" moves with the clock while the sheet is open.
+      builder: (_) => Ticking((_) => s.sheet()),
     );
   }
 

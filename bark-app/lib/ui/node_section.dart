@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../links.dart' show Linking;
 import '../mailbox.dart' show fullNode;
 import '../ble_link.dart';
 import '../link.dart';
@@ -35,8 +36,8 @@ class NodeSection extends StatelessWidget {
     final s = app.session;
     return [
       SettingsHeading('Node'),
-      if (app.connecting)
-        Text(_linking(app.linking))
+      if (app.links.connecting)
+        Text(_linking(app.links.linking))
       else
         Row(
           children: [
@@ -56,7 +57,7 @@ class NodeSection extends StatelessWidget {
         Align(
           alignment: Alignment.centerLeft,
           child: OutlinedButton(
-            onPressed: app.disconnect,
+            onPressed: app.links.disconnect,
             child: const Text('Disconnect'),
           ),
         )
@@ -64,7 +65,7 @@ class NodeSection extends StatelessWidget {
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton(
-            onPressed: app.stopLooking,
+            onPressed: app.links.stopLooking,
             child: const Text('Stop looking'),
           ),
         )
@@ -73,13 +74,13 @@ class NodeSection extends StatelessWidget {
       Row(
         children: [
           FilledButton(
-            onPressed: app.scanning || app.connecting
-                ? app.stopScan
-                : () => trySay(context, app.scan, 'Scan failed'),
-            child: Text(app.scanning ? 'Stop' : 'Scan'),
+            onPressed: app.links.scanning || app.links.connecting
+                ? app.links.stopScan
+                : () => trySay(context, app.links.scan, 'Scan failed'),
+            child: Text(app.links.scanning ? 'Stop' : 'Scan'),
           ),
           const SizedBox(width: 16),
-          if (app.scanning || app.connecting)
+          if (app.links.scanning || app.links.connecting)
             const SizedBox.square(
               dimension: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
@@ -89,8 +90,8 @@ class NodeSection extends StatelessWidget {
       // The connected node's row does nothing; another's connects to
       // it, closing the link to this one first: a public node not the
       // phone's as a guest, or paired with at once by its Pair.
-      for (final FoundNode n in app.found.values) _found(context, n),
-      if (app.noneFound) ...[
+      for (final FoundNode n in app.links.found.values) _found(context, n),
+      if (app.links.noneFound) ...[
         const SizedBox(height: 8),
         const Text('No node found nearby.'),
         Text(
@@ -107,8 +108,8 @@ class NodeSection extends StatelessWidget {
   /// ([_phones]).
   List<Widget> _paired(BuildContext context) {
     final s = app.session;
-    final home = app.homeName;
-    final paired = app.nodes.paired;
+    final home = app.links.homeName;
+    final paired = app.session.nodes.paired;
     final names = [
       if (paired.contains(home)) home!,
       for (final n in paired)
@@ -125,7 +126,7 @@ class NodeSection extends StatelessWidget {
         ),
       ),
       for (final n in names)
-        if (app.nodes[n]!.lost)
+        if (app.session.nodes[n]!.lost)
           _lostRow(context, n, home: n == home)
         else
           ListTile(
@@ -136,9 +137,9 @@ class NodeSection extends StatelessWidget {
               '' => null,
               final w => Text(w),
             },
-            onTap: n == on || app.connecting
+            onTap: n == on || app.links.connecting
                 ? null
-                : () => connect(context, () => app.connectPaired(n)),
+                : () => connect(context, () => app.links.connectPaired(n)),
           ),
     ];
   }
@@ -156,12 +157,15 @@ class NodeSection extends StatelessWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (app.lostInReach(n))
+            if (app.links.lostInReach(n))
               TextButton(
-                onPressed: app.connecting
+                onPressed: app.links.connecting
                     ? null
-                    : () =>
-                          connect(context, () => app.pairLost(n), pairs: true),
+                    : () => connect(
+                        context,
+                        () => app.links.pairLost(n),
+                        pairs: true,
+                      ),
                 child: const Text('Pair again'),
               ),
             TextButton(
@@ -190,7 +194,7 @@ class NodeSection extends StatelessWidget {
   /// unless it passes the node over for its version; while the phone is on
   /// another node the search stops and cannot tell.
   String _pairedState(String n, {required bool home, required bool on}) {
-    final r = app.nodes[n];
+    final r = app.session.nodes[n];
     return capital(
       [
         if (home) 'your home',
@@ -200,7 +204,7 @@ class NodeSection extends StatelessWidget {
           'does not know this phone'
         else if (r?.unserved ?? false)
           'cannot be used yet. Tap to try again'
-        else if (app.searchOn)
+        else if (app.links.searchOn)
           'not in reach'
         else if (app.session.stopped)
           'not looking. Tap to connect',
@@ -209,8 +213,8 @@ class NodeSection extends StatelessWidget {
   }
 
   Widget _found(BuildContext context, FoundNode n) {
-    final guest = n.public && !app.pairedNodes.contains(n.name);
-    final busy = app.connecting || app.connectedTo(n.deviceId);
+    final guest = n.public && !app.links.pairedNodes.contains(n.name);
+    final busy = app.links.connecting || app.links.connectedTo(n.deviceId);
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(n.public ? Icons.storefront : Icons.router),
@@ -218,9 +222,10 @@ class NodeSection extends StatelessWidget {
       subtitle: Text.rich(
         TextSpan(
           text: [
-            if (app.connectedTo(n.deviceId)) 'Connected',
+            if (app.links.connectedTo(n.deviceId)) 'Connected',
             if (n.public) 'public',
-            if (app.nodes[n.name]?.unserved ?? false) 'cannot be used yet',
+            if (app.session.nodes[n.name]?.unserved ?? false)
+              'cannot be used yet',
             signalWord(n.rssi),
           ].join(', '),
           children: [
@@ -236,11 +241,13 @@ class NodeSection extends StatelessWidget {
           ? null
           : () => connect(
               context,
-              () => guest ? app.connectGuest(n) : app.connect(n),
+              () => guest ? app.links.connectGuest(n) : app.links.connect(n),
             ),
       trailing: guest
           ? TextButton(
-              onPressed: app.connecting ? null : () => _askPair(context, n),
+              onPressed: app.links.connecting
+                  ? null
+                  : () => _askPair(context, n),
               child: const Text('Pair'),
             )
           : null,
@@ -250,7 +257,7 @@ class NodeSection extends StatelessWidget {
   /// Pairs with `n`, a public node, by the code on its screen, once the
   /// person has read what pairing gives; the home is set apart.
   Future<void> _askPair(BuildContext context, FoundNode n) async {
-    if (app.nodes[n.name]?.asGuest?.room == 0) {
+    if (app.session.nodes[n.name]?.asGuest?.room == 0) {
       say(context, fullNode);
       return;
     }
@@ -275,7 +282,7 @@ class NodeSection extends StatelessWidget {
       ),
     );
     if (ok != true || !context.mounted) return;
-    await connect(context, () => app.connect(n), pairs: true);
+    await connect(context, () => app.links.connect(n), pairs: true);
   }
 
   /// Forgets `name`, a node no longer this phone's, after a dialog that
@@ -306,7 +313,7 @@ class NodeSection extends StatelessWidget {
     );
     if (ok != true || !context.mounted) return;
     await trySay(context, () async {
-      final gone = await app.forget(name);
+      final gone = await app.links.forget(name);
       if (!context.mounted) return;
       switch (gone) {
         case true:
