@@ -424,8 +424,9 @@ class Session extends ChangeNotifier {
     return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
   }
 
-  /// The version of `bark.json`'s format.
-  static const version = 3;
+  /// The version of `bark.json`'s format; an identity file carries its
+  /// messages in it too.
+  static const version = 4;
 
   Future<void> load() async {
     final j = await store.load(
@@ -467,6 +468,31 @@ class Session extends ChangeNotifier {
     'stopped': stopped,
     'reactionsUsed': reactionsUsed,
   });
+
+  /// Takes the nodes and the messages of an identity file, or no
+  /// messages: those of another identity are no one's here now. Applied at
+  /// once, saved after.
+  Future<void> moveIn(
+    Iterable<MovedNode> ns, {
+    List<Outgoing> outbox = const [],
+    List<Received> received = const [],
+    Map<String, int> reactionsUsed = const {},
+  }) {
+    this.outbox
+      ..clear()
+      ..addAll(outbox);
+    this.received
+      ..clear()
+      ..addAll(received);
+    this.reactionsUsed
+      ..clear()
+      ..addAll(reactionsUsed);
+    nodes.moveIn(ns);
+    fetchNews = null;
+    _retryWhenDue();
+    notifyListeners();
+    return save();
+  }
 
   /// The node `name` holds this phone's bond, or no longer does; the
   /// other nodes paired with stay.

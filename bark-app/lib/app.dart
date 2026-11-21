@@ -2,8 +2,8 @@
 // the node, the messages sealed and opened, and how the app reaches a
 // node over Bluetooth. The model is made of parts, each with one job, in
 // `app/`: the links it makes, the search that chooses them, pairing and
-// Android's bonds, the home and the card, the person's scan, and a node's
-// install.
+// Android's bonds, the home and the card, the person's scan, a node's
+// install, and moving to a new phone.
 
 import 'dart:async';
 
@@ -16,6 +16,7 @@ import 'app_update.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
 import 'decision.dart';
+import 'identity_file.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
@@ -30,6 +31,7 @@ import 'updater.dart';
 part 'app/connect.dart';
 part 'app/home.dart';
 part 'app/installs.dart';
+part 'app/moving.dart';
 part 'app/pairing.dart';
 part 'app/scan.dart';
 part 'app/search.dart';
@@ -93,8 +95,13 @@ abstract class _AppCore extends ChangeNotifier {
 }
 
 class AppModel extends _AppCore
-    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home {
+    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Moving {
+  @override
   final Sodium sodium;
+
+  /// The key an identity file is sealed under, from its password.
+  @override
+  final PasswordKey passwordKey;
   @override
   final Me me;
   @override
@@ -127,6 +134,7 @@ class AppModel extends _AppCore
     this.notifier = const NoNotifier(),
     Releases? releases,
     this.apks = const NoApks(),
+    this.passwordKey = argon2id,
     Future<bool> Function()? bluetoothAllowed,
     Future<void> Function()? requestBluetooth,
   }) : releases = releases ?? Releases(MemoryStore('release'), now: now),

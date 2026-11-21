@@ -259,7 +259,8 @@ class Contacts extends ChangeNotifier {
     }
   }
 
-  /// The version of `contacts.json`'s format.
+  /// The version of `contacts.json`'s format, which an identity file
+  /// carries too.
   static const version = 2;
 
   Future<void> load() async {
@@ -277,6 +278,19 @@ class Contacts extends ChangeNotifier {
     list.addAll(l.$1);
     archived.addAll(l.$2);
     notifyListeners();
+  }
+
+  /// Takes the contacts of an identity file in place of these. Applied at
+  /// once, saved after.
+  Future<void> moveIn(Iterable<Contact> cs, Iterable<String> archived) {
+    list
+      ..clear()
+      ..addAll(cs);
+    this.archived
+      ..clear()
+      ..addAll(archived);
+    notifyListeners();
+    return _save();
   }
 
   Future<void> _save() => store.save(version, {
