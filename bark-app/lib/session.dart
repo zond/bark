@@ -703,6 +703,15 @@ class Session extends ChangeNotifier {
     return true;
   }
 
+  /// The person's name changed: a paired phone's link writes Recipient
+  /// again, so that the node's other phones see the new one now and not
+  /// at this phone's next link.
+  Future<void> nameChanged() async {
+    final link = _link, n = node;
+    if (link == null || n == null || guest) return;
+    await _setRecipient(link, n);
+  }
+
   /// Closes `link` to `n`, which and this app do not serve each other,
   /// says so, and marks the node passed over ([NodeRecord.unserved]).
   Future<void> _notServed(NodeLink link, NodeInfo n) async {
@@ -797,12 +806,7 @@ class Session extends ChangeNotifier {
           (r) => r.home && !r.mine && r.tag != null && r.tag == tag,
         );
         if (h.mine || !kept) key = null;
-        if (!h.mine && !kept) {
-          homeRemoved = true;
-          tell(
-            'Your home no longer keeps your mail. Set it again in Settings.',
-          );
-        }
+        if (!h.mine && !kept) _homeTaken();
       }
       if (key != null) await link.setHome(await _homeSet(key));
       nodeHome = await link.readHome();
@@ -818,8 +822,14 @@ class Session extends ChangeNotifier {
   }
 
   /// At this link the person's home said a phone paired with it removed
-  /// their home there ([_keepHome]).
+  /// their home there, as the link came up ([_keepHome]) or during it
+  /// ([_readPhones]).
   bool homeRemoved = false;
+
+  void _homeTaken() {
+    homeRemoved = true;
+    tell('Your home no longer keeps your mail. Set it again in Settings.');
+  }
 
   /// Reads the node's records, page by page, once the read under way, if
   /// any, is done: a read asked for while one runs makes it read again,
@@ -865,7 +875,13 @@ class Session extends ChangeNotifier {
           final n = await link.readNode();
           if (_link == link && listEquals(n.id, node?.id)) node = n;
           final h = await link.readHome();
-          if (_link == link) nodeHome = h;
+          if (_link == link) {
+            // A phone paired with the node removed the home while this
+            // one was linked.
+            final taken = nodeHome!.mine && !h.mine && homeKey?.call(n) != null;
+            nodeHome = h;
+            if (taken) _homeTaken();
+          }
         }
         notifyListeners();
       }

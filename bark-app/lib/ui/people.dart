@@ -308,6 +308,8 @@ class _CodeDialogState extends State<_CodeDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
+    // Its field stays in reach above the keyboard on a phone held sideways.
+    scrollable: true,
     title: const Text('The code on the node'),
     content: Column(
       mainAxisSize: MainAxisSize.min,

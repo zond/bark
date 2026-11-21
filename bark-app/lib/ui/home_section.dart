@@ -314,6 +314,8 @@ class _HomeAddressDialogState extends State<_HomeAddressDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
+    // Its field stays in reach above the keyboard on a phone held sideways.
+    scrollable: true,
     title: const Text('Your home\'s address'),
     content: Column(
       mainAxisSize: MainAxisSize.min,

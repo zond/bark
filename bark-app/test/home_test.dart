@@ -295,6 +295,29 @@ void main() {
     });
   });
 
+  test('a new name reaches the node the phone is paired with at once', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      app.setName('Zed');
+      async.flushMicrotasks();
+      expect(f.pairedName, 'Zed');
+    });
+  });
+
+  test('a home removed while the phone is linked to it is told then', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.makeHome(app.session.address!));
+      expect(app.session.notice, isNull);
+      // Another paired phone removes it: Status's phones moves.
+      f.homeKey = null;
+      f.changed();
+      async.elapse(const Duration(seconds: 1));
+      expect(app.session.notice?.text, contains('no longer keeps your mail'));
+      expect(app.homeKeyGone, isTrue);
+    });
+  });
+
   test('another person\'s home is someone else\'s, with no key to clear', () {
     run((async, app) {
       app.fakeNode!.others.add(const PhoneRecord(number: 2, home: true));

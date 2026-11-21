@@ -272,7 +272,8 @@ is a prototype for the bench, not the app people will carry.
   - **My name** and **Backup**: show the 12 words, or restore an
     identity from them, after a warning that contacts reach it only
     once they have its card. A restore ends the link and drops the home,
-    which were the identity replaced's.
+    which were the identity replaced's. A new name goes at once to the
+    node the phone is paired with, which lists it for its other phones.
   - **My identity**: "Save it to a file to move to a new phone.", with
     **Save to a file** and **Restore from a file**, and an info button
     on what the file holds, that a pairing stays on the old phone, and
@@ -328,7 +329,7 @@ is a prototype for the bench, not the app people will carry.
   "This link: −71 dBm, +19 dB over the noise floor."), Last heard (a clock), Distance (a ruler), Known
   (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
   exchanged`), GPS signal (signal bars, its GPS's mean C/N0 as its last
-  reading had it, `31 dB-Hz · good`, or `· too weak for a fix` under the
+  reading had it, `31 dB-Hz · enough for a fix`, or `· too weak for a fix` under the
   22 dB-Hz below which a node drops a fix, spec "Position", roadmap
   D234, or `no reading` for 0, as while its GPS rests; read from Status
   again as the map opens and is refreshed, as the node does not notify
@@ -1179,7 +1180,8 @@ Nothing changed." and the button comes back.
 
 **A home removed.** A person whose home was removed, at the node or by
 its owner, learns it in one of two ways. At the home, Home says it is
-not theirs and no other phone of theirs keeps it (above): the app keeps
+not theirs and no other phone of theirs keeps it (above), as the phone
+links or while it is linked: the app keeps
 the home, as the person is there to set it again, a notice says "Your
 home no longer keeps your mail. Set it again in Settings.", and Settings
 shows **Make this node my home** on the home, with the line "Your home
@@ -1739,7 +1741,7 @@ a phone (Trying it).
     home of record … set`; a **Fetch my mail** from B right after is
     answered as usual.
 29. GPS signal. **Nearby nodes**, a tap on this node: the GPS signal row
-    says the node's number, such as `38 dB-Hz · good` outdoors; indoors,
+    says the node's number, such as `38 dB-Hz · enough for a fix` outdoors; indoors,
     away from a window, it falls under 22 to `too weak for a fix`, and a
     sleepy node with an anchor says `no reading`. The refresh button
     reads it again. A neighbour's row comes with its answer. Debug's

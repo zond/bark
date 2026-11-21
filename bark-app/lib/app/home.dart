@@ -32,6 +32,13 @@ mixin _Home on _AppCore {
     if (atHome && a.toString() != me.home.toString()) unawaited(me.setHome(a));
   }
 
+  /// Sets the person's name, which their card carries and the node they
+  /// are paired with lists for its other phones.
+  Future<void> setName(String n) async {
+    await me.setName(n);
+    await session.nameChanged();
+  }
+
   /// The card changed and has not gone to the contacts. Without contacts
   /// there is no one to send it to.
   bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;

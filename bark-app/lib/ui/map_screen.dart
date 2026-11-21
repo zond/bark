@@ -140,7 +140,7 @@ Fact gpsFact(int cn0) => Fact(
   'GPS signal',
   cn0 == 0
       ? 'no reading'
-      : '$cn0 dB-Hz · ${cn0 < gpsFixFloorDbHz ? 'too weak for a fix' : 'good'}',
+      : '$cn0 dB-Hz · ${cn0 < gpsFixFloorDbHz ? 'too weak for a fix' : 'enough for a fix'}',
 );
 
 Fact _role(bool sleepy) => sleepy
