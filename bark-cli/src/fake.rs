@@ -35,6 +35,9 @@ fn keys(addr: [u8; 6]) -> Keys {
 pub struct FakeNode {
     pub rssi: i16,
     pub public: bool,
+    /// Scans call it public though it is not, as BlueZ keeps the UUIDs a
+    /// device once advertised.
+    pub looks_public: bool,
     pub node: Node,
     pub status: Status,
     /// The passkey it shows when a pairing asks.
@@ -55,6 +58,7 @@ impl FakeNode {
         let mut n = FakeNode {
             rssi: -60,
             public: true,
+            looks_public: false,
             node: Node {
                 version: bark_link::VERSION,
                 oldest: bark_link::OLDEST,
@@ -218,7 +222,7 @@ impl Transport for FakeRadio {
                 id: n.node.id,
                 address: Self::address(i),
                 rssi: Some(n.rssi),
-                public: n.public,
+                public: n.public || n.looks_public,
                 bonded: self.bonds.borrow().contains(&Self::address(i)),
             });
             if enough(&heard, step * (i as u32 + 1)) {

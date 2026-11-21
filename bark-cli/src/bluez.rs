@@ -35,11 +35,11 @@ const AGENT_PATH: &str = "/org/bark/agent";
 /// itself after the ATT transaction's 30 s (Vol 3 Part F §3.3.3).
 const CALL_TIMEOUT: Duration = Duration::from_secs(4 * 30);
 
-/// How long one attempt to connect is waited for: ten of the node's
-/// advertising intervals of 1022.5 ms (spec "Phone link", Finding the
-/// node). The connection request answers an advertisement, so a node in
-/// reach is caught within a few intervals; past ten, BlueZ is told to stop
-/// and the tool tries again.
+/// How long one attempt to connect to a device without a bond is waited
+/// for: ten of the node's advertising intervals of 1022.5 ms
+/// (spec "Phone link", Finding the node). The connection request answers
+/// an advertisement, so a node in reach is caught within a few intervals;
+/// past ten, the attempt is stopped and the tool tries again.
 const CONNECT_WAIT: Duration = Duration::from_micros(10 * 1_022_500);
 
 /// How long the GATT discovery may take after the link is up. BlueZ
@@ -230,6 +230,14 @@ struct Device {
 }
 
 impl Device {
+    /// A device BlueZ held as the scan began: heard if it holds an RSSI.
+    fn known(p: &Props) -> Device {
+        let mut d = Device::default();
+        d.update(p);
+        d.heard = d.rssi.is_some();
+        d
+    }
+
     fn update(&mut self, p: &Props) {
         if let Some(a) = string(p, "Address") {
             self.address = a;
@@ -340,6 +348,27 @@ impl Bluez {
         }))
     }
 
+    /// A device's properties reported in a scan; an RSSI among them is
+    /// the device heard.
+    fn seen(
+        &self,
+        devices: &mut HashMap<OwnedObjectPath, Device>,
+        path: OwnedObjectPath,
+        p: &Props,
+    ) {
+        if !self.mine(path.as_str()) {
+            return;
+        }
+        let d = devices.entry(path.clone()).or_default();
+        d.update(p);
+        if p.contains_key("RSSI") {
+            d.heard = true;
+        }
+        let level = if d.found().is_some() { 1 } else { 2 };
+        self.bus
+            .say(level, || format!("device {path}: {}", shown(p)));
+    }
+
     fn stop_discovery(&self) {
         // Errors are logged; the scan has what it heard either way.
         let _ = self
@@ -347,10 +376,12 @@ impl Bluez {
             .call(&self.adapter, ADAPTER, "StopDiscovery", &(), "");
     }
 
-    /// Ends what an attempt to connect left: BlueZ drops a connection it
-    /// is still making when told to disconnect, and forgets a device
-    /// without a bond when it is removed, so that the next scan hears it
-    /// afresh.
+    /// Ends what an attempt to connect left. BlueZ stops a connection it is
+    /// still making only when the device is removed, which a device with
+    /// a bond must not be; its attempts are left to end by themselves
+    /// ([`Bluez::link_up`]). While another program's discovery runs, a
+    /// device removed may be reported again only after a while, so the
+    /// tool listens longer before it tries again (`phone.rs`).
     fn cancel(&self, device: &str, paired: bool) {
         let _ = self.bus.call(device, DEVICE, "Disconnect", &(), "");
         if !paired {
@@ -391,9 +422,13 @@ impl Bluez {
     /// bearer for it, BR/EDR, which a node has none of (its advertisement's
     /// flags say so), by the adapter's, which takes the address's type.
     /// That one refuses an address BlueZ has an object for, so the object
-    /// goes first, unless it holds a bond.
+    /// goes first, unless it holds a bond. A bonded device's attempt is
+    /// waited for until BlueZ ends it, as nothing else stops it.
     fn link_up(&self, device: &str, address: &str, paired: bool) -> Result<String> {
-        let c = &self.bus.connecting;
+        let c = match paired {
+            true => &self.bus.conn,
+            false => &self.bus.connecting,
+        };
         match self.bus.call_on(c, device, DEVICE, "Connect", &(), "") {
             Ok(_) => return Ok(device.to_string()),
             Err(Error::Transport(e)) if e.contains("br-connection") && !paired => {
@@ -403,7 +438,11 @@ impl Bluez {
             Err(Error::TimedOut(_)) => {
                 return Err(Error::TimedOut(format!(
                     "no connection within {:.1} s",
-                    CONNECT_WAIT.as_secs_f64()
+                    match paired {
+                        true => CALL_TIMEOUT,
+                        false => CONNECT_WAIT,
+                    }
+                    .as_secs_f64()
                 )))
             }
             Err(e) => return Err(e),
@@ -476,7 +515,6 @@ impl Bluez {
         });
         Ok(BluezLink {
             bus: self.bus.clone(),
-            adapter: self.adapter.clone(),
             device,
             chars,
             closed: false,
@@ -576,28 +614,29 @@ impl Transport for Bluez {
             &(filter,),
             &shown_filter,
         )?;
-        // A node's device BlueZ kept from before holds what earlier links
-        // added to it and may still be connecting; one without a bond goes,
-        // so that what the scan says of it is its advertisement's.
+        // A device BlueZ holds with an RSSI was heard in a discovery that
+        // runs now, another program's perhaps: BlueZ clears the RSSI when
+        // the last discovery stops. While one runs, the controller reports
+        // an advertiser only now and then, so such a device counts as
+        // heard; and the device is kept, as one removed is reported again
+        // only when the controller next reports it.
         let mut devices: HashMap<OwnedObjectPath, Device> = HashMap::new();
         for (path, mut i) in self.bus.objects()? {
             let Some(p) = i.remove(DEVICE) else { continue };
-            if !self.mine(path.as_str()) {
-                continue;
+            if self.mine(path.as_str()) {
+                devices.insert(path, Device::known(&p));
             }
-            let mut d = Device::default();
-            d.update(&p);
-            if d.found().is_some() && !d.paired {
+        }
+        for d in devices.values().filter(|d| d.heard) {
+            if let Some(f) = d.found() {
                 self.bus.say(1, || {
-                    format!("forgetting {}, kept without a bond", d.address)
+                    format!(
+                        "{} heard before this scan, at {:?} dBm",
+                        crate::link::id_text(f.id),
+                        f.rssi
+                    )
                 });
-                if self.bus.remove(&self.adapter, path.as_str()).is_ok() {
-                    continue;
-                }
             }
-            // An RSSI from before the scan is not this scan's.
-            d.rssi = None;
-            devices.insert(path, d);
         }
         self.bus
             .call(&self.adapter, ADAPTER, "StartDiscovery", &(), "")?;
@@ -612,35 +651,29 @@ impl Transport for Bluez {
             f.sort_by(|a, b| a.address.cmp(&b.address));
             f
         };
-        let mut done = false;
+        let mut done = enough(&heard(&devices), Duration::ZERO);
         while !done && Instant::now() < deadline {
             let tick = deadline.min(Instant::now() + SCAN_TICK);
-            if let Some(s) = self.bus.next(tick) {
-                let (path, p) = match s {
-                    Signal::Added(path, mut i) => match i.remove(DEVICE) {
-                        Some(p) => (path, p),
-                        None => continue,
-                    },
-                    Signal::Changed(path, iface, p) if iface == DEVICE => (path, p),
-                    Signal::Changed(..) => continue,
-                };
-                if !self.mine(path.as_str()) {
-                    continue;
+            match self.bus.next(tick) {
+                Some(Signal::Added(path, mut i)) => {
+                    if let Some(p) = i.remove(DEVICE) {
+                        self.seen(&mut devices, path, &p);
+                    }
                 }
-                let d = devices.entry(path.clone()).or_default();
-                d.update(&p);
-                if p.contains_key("RSSI") {
-                    d.heard = true;
+                Some(Signal::Changed(path, iface, p)) if iface == DEVICE => {
+                    self.seen(&mut devices, path, &p);
                 }
-                let level = if d.found().is_some() { 1 } else { 2 };
-                self.bus
-                    .say(level, || format!("device {path}: {}", shown(&p)));
+                Some(Signal::Changed(path, iface, p))
+                    if iface == ADAPTER && path.as_str() == self.adapter =>
+                {
+                    self.bus.say(1, || format!("adapter changed {}", shown(&p)));
+                }
+                _ => {}
             }
             done = enough(&heard(&devices), start.elapsed());
         }
         // What BlueZ holds now: a device heard at the same RSSI as before
-        // the scan sends no change, but its RSSI is set while discovery
-        // runs.
+        // sends no change, but its RSSI is set while discovery runs.
         if !done {
             for (path, mut i) in self.bus.objects()? {
                 if let (Some(p), Some(d)) = (i.remove(DEVICE), devices.get_mut(&path)) {
@@ -692,7 +725,6 @@ impl Transport for Bluez {
 
 pub struct BluezLink {
     bus: Rc<Bus>,
-    adapter: String,
     device: String,
     chars: HashMap<Char, String>,
     mtu: u16,
@@ -706,12 +738,6 @@ impl BluezLink {
             .get(&c)
             .map(String::as_str)
             .ok_or_else(|| Error::Other(format!("the node has no {c:?} characteristic")))
-    }
-
-    fn paired(&self) -> bool {
-        self.bus
-            .properties(&self.device, DEVICE)
-            .is_ok_and(|p| boolean(&p, "Paired") == Some(true))
     }
 }
 
@@ -855,17 +881,9 @@ impl Drop for BluezLink {
 impl BluezLink {
     fn close(&mut self) -> Result<()> {
         self.closed = true;
-        let paired = self.paired();
-        let done = self
-            .bus
+        self.bus
             .call(&self.device, DEVICE, "Disconnect", &(), "")
-            .map(|_| ());
-        // A guest's device goes, so that the next scan hears what the node
-        // advertises then and not what this link added (see [`Device::found`]).
-        if !paired {
-            let _ = self.bus.remove(&self.adapter, &self.device);
-        }
-        done
+            .map(|_| ())
     }
 }
 
@@ -1036,5 +1054,16 @@ mod tests {
             ),
         ]));
         assert!(!d.found().unwrap().public);
+    }
+
+    /// While a discovery runs, BlueZ holds the RSSI of a device heard in
+    /// it, and the controller may not report the device again soon.
+    #[test]
+    fn a_device_holding_an_rssi_counts_as_heard() {
+        let name = ("Name", Value::from("bark-bae6e6cbf4f5"));
+        let d = Device::known(&props(&[name.clone(), ("RSSI", Value::from(-50i16))]));
+        assert!(d.heard);
+        assert_eq!(d.found().unwrap().rssi, Some(-50));
+        assert!(!Device::known(&props(&[name])).heard);
     }
 }

@@ -99,17 +99,27 @@ scan. Should BlueZ still try BR/EDR, its error names it
 address as a random one instead, which BlueZ offers only with its
 experimental interfaces on (`bluetoothd -E`).
 
-BlueZ adds to a device the services it finds on a link, so a scan judges
-a node public by the public node's UUID, which only the advertisement
-carries. Before each scan the tool removes the devices BlueZ kept of
-nodes it holds no bond with, and after a guest's link the device it used,
-so that what a scan says of such a node is what it advertises now. A
-paired node's device stays, as it holds the bond; whether a paired node
+Another program may keep a discovery running all the time, and then the
+controller reports a node only now and then. So a scan counts as heard a
+node whose device BlueZ holds with an RSSI, which BlueZ keeps while any
+discovery runs and clears when the last one stops; and the tool leaves
+BlueZ's devices in place. While another program discovers, a node that
+went out of reach lately may therefore still be listed, at the RSSI it
+was last heard at.
+
+BlueZ adds to a device the UUIDs it was ever seen with and the services
+found on a link, so a scan judges a node public by the public node's
+UUID, which only the advertisement carries. A node made private since
+BlueZ last saw it public still looks public; it refuses the guest's
+first read, and the tool says it is private now. Whether a paired node
 is public, `public <id>` says.
 
-An attempt to connect is given ten advertising intervals. One that fails
-is stopped in BlueZ, the node is looked for again, and the tool tries
-three times in all.
+An attempt to connect to a node without a bond is given ten advertising
+intervals; one that fails is stopped by removing the device from BlueZ,
+the only way BlueZ stops one, and the tool listens for the node again,
+up to three scans' time, before the next of three tries. An attempt over
+a bond is left to BlueZ to end, as removing the device would remove the
+bond.
 
 Pairing is by passkey entry: the node shows the code and the tool types
 it. The tool answers BlueZ as its pairing agent, with a keyboard alone,

@@ -139,7 +139,7 @@ fn run(args: Args) -> Result<Vec<String>> {
         Command::Scan => phone::scan(r, time)?.iter().map(show::found).collect(),
         Command::Node { node } => {
             let mut l = phone::guest(r, &node, time)?;
-            let n = phone::node(&mut l);
+            let n = phone::guest_node(&mut l);
             let _ = l.disconnect();
             show::node(&n?)
         }

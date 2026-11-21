@@ -135,8 +135,15 @@ fn gave_up(id: NodeId, e: &Error) -> Error {
     ))
 }
 
-/// Connects to `found`, heard in a scan for `sel`, scanning again before
-/// each new try, as a failed attempt leaves BlueZ no device to try.
+/// How many scans' time the look for a node before a new try may take.
+/// A failed attempt leaves BlueZ no device to try, and while another
+/// program's discovery runs the controller may report the node again only
+/// after a while: on the bench, scans of 30 s heard nodes that scans of
+/// 10 s missed (2026-11-21). A look ends as soon as the node is heard.
+const RETRY_SCANS: u32 = 3;
+
+/// Connects to `found`, heard in a scan for `sel`, looking for it again
+/// before each new try.
 fn connect_heard<T: Transport>(
     t: &mut T,
     sel: &Select,
@@ -149,7 +156,7 @@ fn connect_heard<T: Transport>(
             Ok(l) => return Ok(l),
             Err(e) if retried(&e) && tries < CONNECT_TRIES => {
                 tries += 1;
-                found = find(t, sel, time)?;
+                found = find(t, sel, time * RETRY_SCANS)?;
             }
             Err(e) if retried(&e) => return Err(gave_up(found.id, &e)),
             Err(e) => return Err(e),
@@ -157,10 +164,10 @@ fn connect_heard<T: Transport>(
     }
 }
 
-/// Connects to `found`, guest's link: a node takes one only while it is
-/// public (spec "Phone link", Public). A private node refuses a guest's
+/// A guest's link to the node `sel` names: a node takes one only while it
+/// is public (spec "Phone link", Public). A private node refuses a guest's
 /// read for want of a bond, at which BlueZ starts a pairing by itself, so
-/// a guest does not connect to one.
+/// a guest does not connect to one it knows to be private.
 pub fn guest<T: Transport>(t: &mut T, sel: &Select, time: Duration) -> Result<T::Link> {
     let found = find(t, sel, time)?;
     if !found.public {
@@ -205,9 +212,22 @@ pub fn status<L: Link>(l: &mut L) -> Result<Status> {
         .map_err(|_| Error::Other("the node's Status value is too short".into()))
 }
 
-/// Node then Status, as the app reads them as a link comes up.
+/// Node, as a guest's link reads it first. BlueZ keeps the UUIDs a device
+/// once advertised, so a node made private since may still look public;
+/// it then refuses the read for want of a bond, or ends the link.
+pub fn guest_node<L: Link>(l: &mut L) -> Result<Node> {
+    match node(l) {
+        Err(Error::Ended | Error::Att(0x05 | 0x0F)) => Err(Error::Other(
+            "the node refused this guest: it is private now, and only its paired phones use it"
+                .into(),
+        )),
+        n => n,
+    }
+}
+
+/// Node then Status, as the app reads them as a guest's link comes up.
 pub fn node_status<L: Link>(l: &mut L) -> Result<Status> {
-    served(&node(l)?)?;
+    served(&guest_node(l)?)?;
     status(l)
 }
 
@@ -602,6 +622,16 @@ mod tests {
         l.disconnect().unwrap();
         assert!(find(&mut radio, &sel("1"), SCAN_TIME).unwrap().public);
         guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
+    }
+
+    #[test]
+    fn a_node_made_private_since_refuses_the_guest() {
+        let mut n = FakeNode::new(id(1)).private();
+        n.looks_public = true;
+        let mut radio = FakeRadio::new(vec![n]);
+        let mut l = guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
+        let e = node_status(&mut l).unwrap_err();
+        assert!(e.to_string().contains("private now"), "{e}");
     }
 
     #[test]
