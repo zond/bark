@@ -604,28 +604,6 @@ struct StoreCount {
     settled: u32,
 }
 
-/// A message held on a neighbour after a failed hand-over
-/// (`metrics::Holds`).
-#[derive(Clone, Copy)]
-struct Hold {
-    /// The neighbour's ID key.
-    to: u64,
-    /// Failed hand-overs to it in a row.
-    failures: u8,
-    /// When the first failed.
-    since: Instant,
-}
-
-impl Hold {
-    fn new(to: u64, since: Instant) -> Hold {
-        Hold {
-            to,
-            failures: 0,
-            since,
-        }
-    }
-}
-
 /// A message an application waits to hand to its core.
 #[derive(Clone, Copy)]
 struct Offer {
@@ -865,19 +843,6 @@ pub struct Sim {
     queued_for: HashMap<(u32, u64), Vec<u32>>,
     /// The holders of messages queued for each node, by the node's ID.
     holders_of: HashMap<u64, Vec<u32>>,
-    /// Messages held on a neighbour after a failed hand-over, by node and
-    /// message ID (`metrics::Holds`).
-    holds: HashMap<(u32, u32), Hold>,
-    /// Every hand-over that ended, by message tag: the relay and the
-    /// neighbour offered, in order (`metrics::Pressure`).
-    offer_log: HashMap<u32, OfferLog>,
-    /// The refuser of each relay origin's own message refused last, by
-    /// origin and message tag, until its next hand-over ends
-    /// (`metrics::Pressure::own_refused`).
-    own_refused_by: HashMap<(u32, u32), u64>,
-    /// Demotions not yet followed by an answer from the neighbour, by
-    /// relay and the neighbour's key: when.
-    demoted_at: HashMap<(u32, u64), Instant>,
     /// Beats on the air of a node with messages queued: key to each
     /// holder and the beat's fate there so far.
     pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<BeatFate>)>>,
@@ -928,15 +893,8 @@ pub struct Sim {
     /// DATA a relay received and has not answered yet: (relay, message,
     /// `to`) to the answer's deadline and whether a leaf sent it.
     pub(crate) awaiting: HashMap<(u32, u32, u64), (Instant, bool)>,
-    /// The relay DATA a relay is being handed now: (relay, message,
-    /// sender's ID, count), for [`crate::metrics::HopPlaceRefusals`].
-    rx_data: Option<(u32, u32, u64, u32)>,
-    /// (relay, message) for every record a relay has kept, for
-    /// [`crate::metrics::RecordsLost`].
-    recorded: std::collections::HashSet<(u32, u32)>,
-    /// Refused messages not yet sent again: (sender, message) to the
-    /// refusal's time and whether a hop place was free for another.
-    refused_at: HashMap<(u32, u32), (Instant, bool)>,
+    /// How hand-overs go (`handovers.rs`).
+    pub(crate) handovers: crate::handovers::HandOverWatch,
     /// Every boot, watched until the node takes part (`boots.rs`).
     boots: Boots,
     /// Per node, what the trace before its next transmission said it is.
@@ -969,27 +927,6 @@ fn sector(p: bark_proto::geo::Point) -> usize {
 pub(crate) fn reach_bin(p: bark_proto::geo::Point) -> usize {
     use crate::metrics::{REACH_BINS, REACH_BIN_M};
     ((p.distance_m(Default::default()) / REACH_BIN_M) as usize).min(REACH_BINS - 1)
-}
-
-/// The hand-overs of one message that ended, at any relay
-/// (`Sim::note_offer`).
-#[derive(Default)]
-struct OfferLog {
-    /// Relay and neighbour of each, in order.
-    to: Vec<(u32, u64)>,
-    /// Offers to a neighbour, then another, then the first again, at one
-    /// relay.
-    flaps: u32,
-}
-
-impl OfferLog {
-    /// Distinct relay and neighbour pairs offered.
-    fn next_hops(&self) -> usize {
-        let mut v = self.to.clone();
-        v.sort_unstable();
-        v.dedup();
-        v.len()
-    }
 }
 
 /// A node ID as a map key.
@@ -1425,10 +1362,6 @@ impl Sim {
             msg_minutes: None,
             queued_for: HashMap::new(),
             holders_of: HashMap::new(),
-            holds: HashMap::new(),
-            offer_log: HashMap::new(),
-            own_refused_by: HashMap::new(),
-            demoted_at: HashMap::new(),
             beat_watch: HashMap::new(),
             script: Vec::new(),
             script_log: Vec::new(),
@@ -1457,9 +1390,7 @@ impl Sim {
             margin: None,
             answer_of: HashMap::new(),
             awaiting: HashMap::new(),
-            rx_data: None,
-            recorded: std::collections::HashSet::new(),
-            refused_at: HashMap::new(),
+            handovers: Default::default(),
             boots: Boots::new(n),
             next_tx: vec![TxMark::None; n],
             stored: vec![None; n],
@@ -2281,17 +2212,6 @@ impl Sim {
                 }
             }
         }
-        if node < self.n_relays {
-            self.rx_data = match ev {
-                Event::Received { bytes, .. } => match bark_proto::wire::Packet::decode(bytes) {
-                    Ok(bark_proto::wire::Packet::Data(d)) if d.hops > 0 => {
-                        Some((node, d.msg_id().0, key(d.src_hop), d.hops))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
-        }
         if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
             use bark_proto::wire::{Packet, Update};
             match Packet::decode(bytes) {
@@ -2320,15 +2240,8 @@ impl Sim {
                 _ => {}
             }
         }
+        self.handover_before(node, &ev);
         let clock = self.clocks[node as usize];
-        let rx = self.rx_data.filter(|r| r.0 == node);
-        if let Some((at, id, _, _)) = rx {
-            if !self.relays[at as usize].knows(MsgId(id)) && self.recorded.contains(&(at, id)) {
-                let l = &mut self.metrics.records_lost;
-                l.packets += 1;
-                l.tags.extend(self.msg_tags.get(&id));
-            }
-        }
         let c = &mut self.relays[node as usize];
         self.was_booting = c.booting();
         let received = matches!(ev, Event::Received { .. });
@@ -2342,12 +2255,8 @@ impl Sim {
             .after_event(node, &relays[node as usize], now, received, |n| {
                 relays[n as usize].home()
             });
+        self.handover_after(node);
         let c = &mut self.relays[node as usize];
-        if let Some((at, id, _, _)) = rx {
-            if c.knows(MsgId(id)) {
-                self.recorded.insert((at, id));
-            }
-        }
         let wake = c.next_wakeup().map(|t| clock.true_time(t));
         if node >= self.n_relays || c.sleepy() {
             let anchor = c.anchor().map(|a| a.position);
@@ -3005,7 +2914,7 @@ impl Sim {
                     air,
                 );
                 self.carried_transmit(node, &f);
-                self.note_sent_again(node, &f);
+                self.handover_transmit(node, &f);
                 if self.changing.remove(&node) {
                     self.power_changed(&f);
                     self.carried_changed(node, &f);
@@ -3033,6 +2942,7 @@ impl Sim {
             Action::Trace(t) => {
                 self.power_trace(node, &t);
                 self.carried_trace(node, &t);
+                self.handover_trace(node, &t);
                 if let Trace::Role { sleepy } = t {
                     self.battery_turn(sleepy);
                 }
@@ -3065,58 +2975,14 @@ impl Sim {
                         }
                     }
                     Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
-                    Trace::Refused { msg_id, reason } => {
-                        c.refused.add(reason);
-                        self.note_refusal(node, msg_id, reason);
-                    }
-                    Trace::TurnedAway { msg_id, by } => {
-                        self.note_offer(node, msg_id, by);
-                        self.note_own_refusal(node, msg_id, by);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.turned_away += 1;
-                        if let Some(held) = self.hold_ended(node, msg_id) {
-                            self.metrics.holds.ended_refused += 1;
-                            self.metrics.holds.held_us.push(held);
-                        }
-                    }
+                    Trace::Refused { reason, .. } => c.refused.add(reason),
+                    Trace::TurnedAway { .. } => c.turned_away += 1,
                     Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
                     Trace::ChannelBusy { .. } => {
                         c.lbt_gave_up += 1;
                         c.busy_wait_us += busy_wait;
                     }
-                    Trace::Demoted { neighbour } => {
-                        c.demoted += 1;
-                        let now = self.now;
-                        if let std::collections::hash_map::Entry::Vacant(e) =
-                            self.demoted_at.entry((node, key(neighbour)))
-                        {
-                            e.insert(now);
-                            self.metrics.pressure.demotions += 1;
-                        }
-                    }
-                    Trace::Answered { neighbour } => {
-                        if let Some(t) = self.demoted_at.remove(&(node, key(neighbour))) {
-                            let s = self.now.since(t).as_micros() as f64 / 1e6;
-                            self.metrics.pressure.answered_after(s);
-                        }
-                    }
-                    Trace::InLine {
-                        wait,
-                        service,
-                        at_cap,
-                        ..
-                    } => self.metrics.pressure.in_line(wait, service, at_cap),
-                    Trace::WayWait { wait, refused } if self.now >= self.settle => {
-                        self.metrics.pressure.way_wait(wait, refused)
-                    }
-                    Trace::Silent { owed, .. } => {
-                        let p = &mut self.metrics.pressure;
-                        if owed {
-                            p.silent_owed += 1;
-                        } else {
-                            p.silent_budget += 1;
-                        }
-                    }
+                    Trace::Demoted { .. } => c.demoted += 1,
                     Trace::AnchorCheck => {
                         c.anchor_checks += 1;
                         if self.fixing && self.now >= self.settle {
@@ -3182,26 +3048,15 @@ impl Sim {
                         }
                         self.delivery_waits(node, msg_id.0, key(to), tried)
                     }
-                    Trace::Forwarded {
-                        msg_id,
-                        to,
-                        hops,
-                        attempts,
-                    } => {
-                        self.note_offer(node, msg_id, to);
-                        let c = &mut self.metrics.nodes[node as usize].core;
+                    Trace::Forwarded { hops, .. } => {
                         c.handed_over += 1;
                         c.originated_out += u64::from(hops == 1);
-                        self.metrics.taken_at_attempt(attempts);
-                        self.hold_taken(node, msg_id, to);
                     }
                     Trace::HandOverFailed {
                         msg_id,
                         to,
                         moves_on,
                     } => {
-                        self.note_offer(node, msg_id, to);
-                        let c = &mut self.metrics.nodes[node as usize].core;
                         c.failed += 1;
                         let had = self
                             .relay_index
@@ -3210,24 +3065,6 @@ impl Sim {
                         c.failed_taken += u64::from(had);
                         c.moved_on += u64::from(moves_on);
                         c.moved_on_taken += u64::from(moves_on && had);
-                        let now = self.now;
-                        let hold = self
-                            .holds
-                            .entry((node, msg_id.0))
-                            .and_modify(|h| {
-                                if h.to != key(to) {
-                                    *h = Hold::new(key(to), now);
-                                }
-                            })
-                            .or_insert_with(|| Hold::new(key(to), now));
-                        hold.failures = hold.failures.saturating_add(1);
-                        if moves_on {
-                            let failures = hold.failures;
-                            let held = now.since(hold.since);
-                            self.metrics.holds.moved_on_after(failures);
-                            self.metrics.holds.held_us.push(held.as_micros());
-                            self.holds.remove(&(node, msg_id.0));
-                        }
                     }
                     Trace::Copy {
                         returned,
@@ -3243,26 +3080,10 @@ impl Sim {
                             c.seen += u64::from(seen);
                         }
                     }
-                    Trace::Seen { msg_id, by } => {
-                        self.note_offer(node, msg_id, by);
-                        let c = &mut self.metrics.nodes[node as usize].core;
-                        c.seen_acted += 1;
-                        if let Some(held) = self.hold_ended(node, msg_id) {
-                            self.metrics.holds.ended_seen += 1;
-                            self.metrics.holds.held_us.push(held);
-                        }
-                    }
-                    Trace::ReturnedToParent {
-                        msg_id,
-                        to,
-                        attempts,
-                    } => {
-                        self.note_offer(node, msg_id, to);
-                        let c = &mut self.metrics.nodes[node as usize].core;
+                    Trace::Seen { .. } => c.seen_acted += 1,
+                    Trace::ReturnedToParent { .. } => {
                         c.handed_over += 1;
                         c.returned += 1;
-                        self.metrics.taken_at_attempt(attempts);
-                        self.hold_taken(node, msg_id, to);
                     }
                     _ => {}
                 }
@@ -3271,66 +3092,6 @@ impl Sim {
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
-    }
-
-    /// A hand-over of `msg_id` from `node` to `to` ended, taken, refused,
-    /// failed or seen: counted per message, and a flap noted when `node`
-    /// offers it to a neighbour, then another, then the first again.
-    fn note_offer(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
-        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
-            return;
-        };
-        let to = key(to);
-        if let Some(by) = self.own_refused_by.remove(&(node, tag)) {
-            self.metrics.pressure.own_round += u64::from(by != to);
-        }
-        let log = self.offer_log.entry(tag).or_default();
-        let mut here = log.to.iter().rev().filter(|(n, _)| *n == node);
-        if let Some(&(_, last)) = here.next() {
-            if last != to && here.any(|&(_, k)| k == to) {
-                log.flaps += 1;
-                self.metrics.pressure.flaps += 1;
-            }
-        }
-        log.to.push((node, to));
-    }
-
-    /// `by` refused `msg_id` at `node`: counted if it is the own message
-    /// of a relay origin, not yet past its first hop, whose next
-    /// hand-over [`Sim::note_offer`] then compares with `by`.
-    fn note_own_refusal(&mut self, node: u32, msg_id: MsgId, by: NodeId) {
-        let Some(&tag) = self.msg_tags.get(&msg_id.0) else {
-            return;
-        };
-        let o = &self.origins[tag as usize];
-        if o.src != node || o.entered_at.is_some() || self.relays[node as usize].sleepy() {
-            return;
-        }
-        self.metrics.pressure.own_refused += 1;
-        self.own_refused_by.insert((node, tag), key(by));
-    }
-
-    /// `node` handed `msg_id` to `to`: if it had held the message on `to`
-    /// after failures, the hand-over was taken at an offer again, and the
-    /// hold ends; held on another neighbour, that hold is over without an
-    /// outcome to count.
-    fn hold_taken(&mut self, node: u32, msg_id: MsgId, to: NodeId) {
-        let hold = self.holds.remove(&(node, msg_id.0));
-        let failures = hold.filter(|h| h.to == key(to)).map_or(0, |h| h.failures);
-        self.metrics.holds.taken_after(failures);
-        if let Some(h) = hold.filter(|h| h.to == key(to)) {
-            self.metrics
-                .holds
-                .held_us
-                .push(self.now.since(h.since).as_micros());
-        }
-    }
-
-    /// `node`'s hold of `msg_id`, if any, ended by something other than a
-    /// hand-over: how long it lasted, microseconds.
-    fn hold_ended(&mut self, node: u32, msg_id: MsgId) -> Option<u64> {
-        let h = self.holds.remove(&(node, msg_id.0))?;
-        Some(self.now.since(h.since).as_micros())
     }
 
     /// A delivery by `holder` of `msg` to the node `to` waits for its next
@@ -3366,33 +3127,6 @@ impl Sim {
         } else {
             AFTER_BEAT
         }
-    }
-
-    /// A relay refused the relay DATA it is being handed, if it is that:
-    /// see [`crate::metrics::HopPlaceRefusals`].
-    fn note_refusal(&mut self, node: u32, msg_id: MsgId, reason: bark_proto::DropReason) {
-        use bark_proto::DropReason as R;
-        if !matches!(reason, R::Budget | R::SendQueueFull) {
-            return;
-        }
-        let Some((at, id, from, _)) = self.rx_data else {
-            return;
-        };
-        if at != node || id != msg_id.0 {
-            return;
-        }
-        let Some(&sender) = self.relay_index.get(&from) else {
-            return;
-        };
-        let me = self.relays[node as usize].id();
-        let lowest = self.relays[node as usize].lowest_free_hop_place();
-        let then = self.clocks[sender as usize].local(self.now);
-        let held = self.relays[sender as usize].highest_count_for(me, then);
-        let with = matches!((lowest, held), (Some(k), Some(h)) if h >= u32::from(k));
-        let h = &mut self.metrics.hop_places;
-        h.refusals += 1;
-        h.with_place += u64::from(with);
-        self.refused_at.insert((sender, id), (self.now, with));
     }
 
     /// `node` takes a GPS fix: where it is, or where a fault says. With
@@ -3475,26 +3209,6 @@ impl Sim {
             bark_proto::wire::Packet::decode(f.payload())
         {
             self.push(self.now, Ev::Fix(node));
-        }
-    }
-
-    /// `node` sends `f`: if it is a DATA of a message refused to it, the
-    /// wait since ends.
-    fn note_sent_again(&mut self, node: u32, f: &Frame) {
-        if node >= self.n_relays || self.refused_at.is_empty() {
-            return;
-        }
-        let Ok(bark_proto::wire::Packet::Data(d)) = bark_proto::wire::Packet::decode(f.payload())
-        else {
-            return;
-        };
-        if let Some((t, with)) = self.refused_at.remove(&(node, d.msg_id().0)) {
-            let w = self.now.since(t).as_micros();
-            let h = &mut self.metrics.hop_places;
-            h.wait_us += w;
-            if with {
-                h.wait_with_place_us += w;
-            }
         }
     }
 
@@ -3837,10 +3551,7 @@ impl Sim {
     pub fn message_dropped(&mut self, node: u32, msg_id: MsgId, reason: DropReason) {
         self.metrics.app.drops.add(reason);
         self.metrics.nodes[node as usize].drops.add(reason);
-        if let Some(held) = self.hold_ended(node, msg_id) {
-            self.metrics.holds.ended_dropped += 1;
-            self.metrics.holds.held_us.push(held);
-        }
+        self.handover_dropped(node, msg_id);
         if reason == DropReason::Pushback {
             // The message is its application's again, which decides its
             // fate on the `AppEvent::GivenBack` that follows.
@@ -4027,6 +3738,19 @@ impl Sim {
             .collect()
     }
 
+    /// The tag of the message with the ID `msg_id`, if it is a text the
+    /// traffic made.
+    pub(crate) fn msg_tag(&self, msg_id: u32) -> Option<u32> {
+        self.msg_tags.get(&msg_id).copied()
+    }
+
+    /// Whether the text `tag` is `node`'s own and has not yet passed its
+    /// first hop.
+    pub(crate) fn own_unsent(&self, node: u32, tag: u32) -> bool {
+        let o = &self.origins[tag as usize];
+        o.src == node && o.entered_at.is_none()
+    }
+
     /// The fate of the message with the ID `msg_id`, if it is a text the
     /// traffic made.
     pub(crate) fn message_fate(&self, msg_id: u32) -> Option<Fate> {
@@ -4190,10 +3914,7 @@ impl Sim {
             for b in w.beats {
                 s.push_str(&format!(",{b}"));
             }
-            let (offers, hops, flaps) = self
-                .offer_log
-                .get(&r.tag)
-                .map_or((0, 0, 0), |l| (l.to.len(), l.next_hops(), l.flaps));
+            let (offers, hops, flaps) = self.offers_of(r.tag);
             let (dst_hops, dst_wrong) =
                 r.at_dst.map_or((String::new(), String::new()), |(h, w)| {
                     (h.to_string(), w.to_string())
@@ -5061,15 +4782,6 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn distinct_next_hops_count_each_relay_and_neighbour_once() {
-        let log = OfferLog {
-            to: vec![(1, 10), (1, 10), (2, 20), (1, 11)],
-            flaps: 0,
-        };
-        assert_eq!(log.next_hops(), 3);
-    }
 
     /// A clock off by 50 ppm reads 50 µs more or less a second, and a
     /// timer set on it fires at the first true microsecond it reads the
