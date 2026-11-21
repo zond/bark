@@ -152,6 +152,44 @@ void main() {
       expect('${const OtherLayout()}', contains('another version'));
     });
 
+    test('messages saved while bark.json was of version 3 read; those of a '
+        'version this app does not know are refused', () {
+      final f = small();
+      final j = IdentityFile(
+        seed: f.seed,
+        name: f.name,
+        home: f.home,
+        nodeAddress: f.nodeAddress,
+        nodeAt: f.nodeAt,
+        cardTime: f.cardTime,
+        cardSentTime: f.cardSentTime,
+        lastSent: f.lastSent,
+        backedUp: f.backedUp,
+        remaining: f.remaining,
+        rounds: f.rounds,
+        contacts: f.contacts,
+        archived: f.archived,
+        nodes: f.nodes,
+        messages: (
+          outbox: const [],
+          received: [
+            Received(1, [1, 2], start, from: 'ab', sent: 3, body: 'hi'),
+          ],
+          reactionsUsed: const {'👍': 1},
+        ),
+      ).toJson();
+      final m = j['messages'] as Map<String, dynamic>;
+      expect(m['version'], Session.version);
+      m['version'] = 3;
+      final old = IdentityFile.fromJson(
+        jsonDecode(jsonEncode(j)) as Map<String, dynamic>,
+      );
+      expect(old.messages!.received.single.body, 'hi');
+      expect(old.messages!.reactionsUsed, {'👍': 1});
+      m['version'] = Session.version + 1;
+      expect(() => IdentityFile.fromJson(j), throwsA(isA<OtherLayout>()));
+    });
+
     test('a home with a key the identity does not make, a given one, opens '
         'with that key; one of another length does not', () async {
       final given = Uint8List.fromList(List.filled(32, 7));

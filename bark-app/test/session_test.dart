@@ -148,7 +148,9 @@ void main() {
       expect(f.cameByMessage, isTrue);
       expect(f.unverified, isTrue);
       expect(s.received.map((r) => r.from), [f.key, f.key]);
-      expect((p.sessionStore.state!['received'] as List).length, 2);
+      final kept = Session(store: p.sessionStore, now: () => start)..load();
+      async.flushMicrotasks();
+      expect(kept.received.map((r) => r.from), [f.key, f.key]);
       expect(s.address.toString(), '${Address(FakeNode.gps, FakeNode.id)}');
     });
   });
@@ -443,7 +445,7 @@ void main() {
       '❤️',
       '😂',
     ]);
-    await s.save();
+    await s.save(state: true);
     final again = Session(store: store, now: () => DateTime.utc(2026));
     await again.load();
     expect(
@@ -987,13 +989,6 @@ void main() {
       // The one connected last, last.
       expect(again.session.nodes.paired.toList(), [b, a]);
       expect(again.session.nodes.lost, {a});
-      expect(
-        [
-          for (final r in (p.session.store as MemoryStore).state!['nodes'])
-            r['name'],
-        ],
-        [b, a],
-      );
     });
   });
 
