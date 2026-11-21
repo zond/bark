@@ -803,7 +803,7 @@ class Session extends ChangeNotifier {
           );
         }
       }
-      if (key != null) await link.setHome(key);
+      if (key != null) await link.setHome(await _homeSet(key));
       nodeHome = await link.readHome();
       note(
         key != null
@@ -905,10 +905,22 @@ class Session extends ChangeNotifier {
     }
   }
 
-  /// Writes Home, the mailbox key or none, and reads it back.
+  /// The next `sent` of the person's, later than any given before.
+  Future<int> Function()? nextSent;
+
+  /// `key` with a fresh `sent`, so that every later fetch is later than
+  /// it: the node takes none that is not (spec "Phone link", Settings).
+  Future<HomeSet> _homeSet(List<int> key) async {
+    final next = nextSent;
+    if (next == null) throw StateError('no sent to write Home with');
+    return (key: key, sent: await next());
+  }
+
+  /// Writes Home, the mailbox key or none, with a fresh `sent`, and reads
+  /// it back.
   Future<NodeHome> writeHome(List<int>? key) async {
     final link = _owned('Home');
-    await link.setHome(key);
+    await link.setHome(key == null ? null : await _homeSet(key));
     nodeHome = await link.readHome();
     if (nodeHome!.mine) homeRemoved = false;
     await _readPhones(link);

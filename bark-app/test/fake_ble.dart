@@ -371,8 +371,18 @@ class FakeNodes extends UniversalBlePlatform {
         await n.send(value);
       case Uuids.inbox:
         await n.confirm(ByteData.sublistView(value).getUint32(0));
+      case Uuids.home when value.first == 1 && value.length != 37:
+        throw const AttException(AttError.invalidLength);
       case Uuids.home:
-        await n.setHome(value.first == 1 ? value.sublist(1) : null);
+        await n.setHome(
+          value.first == 1
+              ? (
+                  key: value.sublist(1, 1 + mailboxKeyLen),
+                  sent: ByteData.sublistView(value)
+                      .getUint32(1 + mailboxKeyLen),
+                )
+              : null,
+        );
       case Uuids.update:
         await n.writeUpdate(value);
       case Uuids.image:

@@ -8,7 +8,8 @@
 // overruled, where someone removed it.
 
 import 'package:bark_app/app.dart';
-import 'package:bark_app/app_layer.dart' show LeaveCommand, recipientTag;
+import 'package:bark_app/app_layer.dart'
+    show Fetch, LeaveCommand, Outcome, recipientTag;
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 
@@ -77,6 +78,40 @@ void main() {
       expect(app.session.nodeHome!.set, isTrue);
       expect(app.me.home.toString(), here.toString());
       expect(app.atHome, isTrue);
+    });
+  });
+
+  test('the Home write carries a fresh sent: a fetch right after is taken, '
+      'one from before is not', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      final before = app.me.lastSent;
+      said(async, app.makeHome(app.session.address!));
+      final start = f.homeRecords.first.lastFetch;
+      expect(start, greaterThan(before));
+      expect(app.me.lastSent, greaterThanOrEqualTo(start));
+      // A fetch sealed before the write, sent now, is refused.
+      final home = app.me.home!;
+      final stale =
+          Fetch(
+            before,
+            home,
+            recipientTag(sodium, app.me.identity, home.id),
+          ).seal(
+            sodium,
+            app.me.mailboxKey,
+            home.id,
+            recipientTag(sodium, app.me.identity, home.id),
+          );
+      app.session.queue(
+        Outgoing(home, stale, at: app.now(), kind: OutKind.fetch, sent: before),
+      );
+      async.elapse(const Duration(minutes: 1));
+      expect(f.commands, isEmpty);
+      // The next one is later, and taken.
+      said(async, app.askList());
+      async.elapse(const Duration(minutes: 1));
+      expect(f.commands.map((c) => c.$2), [Outcome.ok]);
     });
   });
 

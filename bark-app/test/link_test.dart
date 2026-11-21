@@ -197,8 +197,9 @@ void main() {
   test('home', () {
     expect(encodeHome(null), [0]);
     final k = List.generate(mailboxKeyLen, (i) => i);
-    expect(encodeHome(k), [1, ...k]);
-    expect(() => encodeHome([1, 2]), throwsA(isA<Malformed>()));
+    expect(encodeHome((key: k, sent: 0x01020304)), [1, ...k, 1, 2, 3, 4]);
+    expect(encodeHome((key: k, sent: 0)).length, 37);
+    expect(() => encodeHome((key: [1, 2], sent: 1)), throwsA(isA<Malformed>()));
     final h = NodeHome.decode([1, 0, 0, 0, 17, 1, 2, 3, 9]);
     expect((h.set, h.mine, h.oldest, h.newest), (true, false, 17, 0x010203));
     expect(h.encode(), [1, 0, 0, 0, 17, 1, 2, 3]);

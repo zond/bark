@@ -501,12 +501,17 @@ Uint8List encodeMapPoint(Position? p) => p == null
 /// Bytes of the mailbox key.
 const int mailboxKeyLen = 32;
 
-/// Home, write: 0, the node is nobody's home; 1 and the mailbox key, the
-/// person's.
-Uint8List encodeHome(List<int>? key) {
-  if (key == null) return Uint8List.fromList([0]);
-  if (key.length != mailboxKeyLen) throw const Malformed('mailbox key');
-  return Uint8List.fromList([1, ...key]);
+/// A Home write's key and `sent`.
+typedef HomeSet = ({List<int> key, int sent});
+
+/// Home, write: 0, the node is nobody's home; 1, the mailbox key and the
+/// phone's `sent`, later than any it gave before, the person's: the node
+/// takes no fetch of the key that is not later (spec "Phone link",
+/// Settings).
+Uint8List encodeHome(HomeSet? set) {
+  if (set == null) return Uint8List.fromList([0]);
+  if (set.key.length != mailboxKeyLen) throw const Malformed('mailbox key');
+  return Uint8List.fromList([1, ...set.key, ..._be32(set.sent)]);
 }
 
 /// Home, read: whether the node holds a mailbox key, anyone's, whether

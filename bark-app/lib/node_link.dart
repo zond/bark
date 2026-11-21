@@ -93,7 +93,7 @@ abstract class NodeLink {
   Future<NodeTime> readClock();
 
   /// The mailbox key, or none.
-  Future<void> setHome(List<int>? key);
+  Future<void> setHome(HomeSet? set);
   Future<NodeHome> readHome();
 
   /// The next read of Neighbours starts at `slot`.

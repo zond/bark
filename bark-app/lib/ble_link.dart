@@ -443,7 +443,7 @@ class BleLink implements NodeLink {
       NodeTime.decode(await _read(Uuids.clock));
 
   @override
-  Future<void> setHome(List<int>? key) => _write(Uuids.home, encodeHome(key));
+  Future<void> setHome(HomeSet? set) => _write(Uuids.home, encodeHome(set));
 
   @override
   Future<NodeHome> readHome() async => NodeHome.decode(await _read(Uuids.home));

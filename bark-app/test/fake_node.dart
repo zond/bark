@@ -395,7 +395,7 @@ class FakeNode implements NodeLink {
     from.lastFetch = f.sent;
     final key = SecureKey.fromList(sodium, from.key);
     final c = f.command;
-    final (outcome, list) = c == null ? (null, null) : _obey(from, c);
+    final (outcome, list) = c == null ? (null, null) : _obey(from, c, f.sent);
     // Only the person's own record has items here; a command that takes
     // the sender's own key is answered by its summary alone.
     final own = from == homeRecords.firstOrNull && homeRecords.contains(from);
@@ -453,7 +453,11 @@ class FakeNode implements NodeLink {
 
   /// Runs `c` from `from` as the home's node does: what it did, and for a
   /// list the records.
-  (Outcome, List<PhoneRecord>?) _obey(FakeHomeRecord from, Command c) {
+  (Outcome, List<PhoneRecord>?) _obey(
+    FakeHomeRecord from,
+    Command c,
+    int sent,
+  ) {
     if (c is! LeaveCommand && !from.owner) return (Outcome.notAllowed, null);
     FakeHomeRecord? numbered(int n) =>
         homeRecords.where((r) => r.number == n).firstOrNull;
@@ -464,7 +468,9 @@ class FakeNode implements NodeLink {
         }
         if (homeRecords.length == maxPhones) return (Outcome.full, null);
         final n = homeRecords.map((r) => r.number).fold(0, max) + 1;
-        homeRecords.add(FakeHomeRecord(n, key, tag: tag, name: name));
+        homeRecords.add(
+          FakeHomeRecord(n, key, tag: tag, name: name)..lastFetch = sent,
+        );
         return (Outcome.ok, null);
       case RemoveCommand(:final number):
         final r = numbered(number);
@@ -808,10 +814,12 @@ class FakeNode implements NodeLink {
   /// Home as the node serves it; the fake has no ring, so its numbers
   /// are 0.
   @override
-  Future<void> setHome(List<int>? key) => _answer(() {
+  Future<void> setHome(HomeSet? set) => _answer(() {
+    final key = set?.key;
     if (key != null && key.length != mailboxKeyLen) {
       throw const AttException(AttError.invalidLength);
     }
+    if (set != null) _start(set);
     String? held(List<int>? k) => k == null ? null : hex(k);
     if (held(key) != held(homeKey)) {
       homeKey = key == null ? null : Uint8List.fromList(key);
@@ -826,6 +834,24 @@ class FakeNode implements NodeLink {
       _notify();
     }
   });
+
+  /// A key set starts its record's last fetch at the write's `sent`, never
+  /// lowering it, so that no fetch from before is taken (spec "Phone
+  /// link", Settings): the fake's home away is the node's mailbox, and a
+  /// key it no longer holds comes back as a record of its own.
+  void _start(HomeSet set) {
+    final r = homeRecords.where((r) => hex(r.key) == hex(set.key)).firstOrNull;
+    if (r != null) {
+      r.lastFetch = max(r.lastFetch, set.sent);
+      return;
+    }
+    final n = homeRecords.map((r) => r.number).fold(0, max) + 1;
+    homeRecords.insert(
+      0,
+      FakeHomeRecord(n, set.key, owner: !homeRecords.any((r) => r.owner))
+        ..lastFetch = set.sent,
+    );
+  }
 
   /// This phone's record holds the owner's mark (spec "Phone link", The
   /// node's owner).
@@ -1557,7 +1583,7 @@ class FakeGuest implements NodeLink {
   @override
   Future<NodeTime> readClock() => _bonded();
   @override
-  Future<void> setHome(List<int>? key) => _bonded();
+  Future<void> setHome(HomeSet? set) => _bonded();
   @override
   Future<NodeHome> readHome() => _bonded();
   @override
