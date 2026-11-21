@@ -4795,7 +4795,9 @@ impl Sim {
         // as on a board; the simulator has no time of day, and no phones.
         match h.mailbox.arrive(msg_id, payload) {
             Kept::Kept(_) => false,
-            Kept::Fetch { person, command } => {
+            Kept::Fetch {
+                person, command, ..
+            } => {
                 command::obey(&mut h.mailbox, &mut h.records, person, command, 0, 0);
                 true
             }

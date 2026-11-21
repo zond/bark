@@ -108,7 +108,21 @@ pub fn idle() -> bool {
 pub fn arrive(msg_id: MsgId, payload: &[u8]) {
     match with(|m| m.arrive(msg_id, payload)) {
         Some(Arrival::Kept(n)) => log::info!("mailbox: id={:08x} kept as {}", msg_id.0, n),
-        Some(Arrival::Fetch { person, command }) => {
+        Some(Arrival::Fetch {
+            person,
+            removed: true,
+            ..
+        }) => {
+            log::info!(
+                "mailbox: fetch id={:08x} taken for record {}, whose home was removed: told so, nothing run",
+                msg_id.0,
+                person
+            );
+            crate::phones::fetched(person, None);
+        }
+        Some(Arrival::Fetch {
+            person, command, ..
+        }) => {
             log::info!(
                 "mailbox: fetch id={:08x} taken for record {}, command {:?}",
                 msg_id.0,

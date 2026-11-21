@@ -976,6 +976,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 0,
                 command: None,
+                removed: false,
             }
         );
         assert!(m.reply_due());
@@ -1056,6 +1057,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 0,
                 command: None,
+                removed: false,
             }
         );
         assert_eq!(m.person(0).map(|p| p.last_fetch), Some(50));
@@ -1087,6 +1089,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 3,
                 command: None,
+                removed: false,
             }
         );
         let mut out = [0u8; MAX_PAYLOAD];
@@ -1118,6 +1121,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 1,
                 command: None,
+                removed: false,
             }
         );
         assert_eq!(
@@ -1125,6 +1129,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 4,
                 command: None,
+                removed: false,
             }
         );
         let mut out = [0u8; MAX_PAYLOAD];
@@ -1195,6 +1200,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 2,
                 command: None,
+                removed: false,
             }
         );
         while m.next(&mut out).is_some() {}
@@ -1205,6 +1211,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 6,
                 command: None,
+                removed: false,
             }
         );
         assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 0)));
@@ -1278,6 +1285,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 0,
                 command: None,
+                removed: false,
             }
         );
         let got = drain(m, round);
@@ -1426,6 +1434,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 0,
                 command: None,
+                removed: false,
             }
         );
         assert_eq!(m.arrive(MsgId(0), &f), Arrival::Refused);
@@ -1442,6 +1451,7 @@ mod mailbox {
             Arrival::Fetch {
                 person: 0,
                 command: None,
+                removed: false,
             }
         );
     }
@@ -1736,6 +1746,7 @@ mod flash_ring {
                 Arrival::Fetch {
                     person: 0,
                     command: None,
+                    removed: false,
                 }
             )
         });
@@ -1935,6 +1946,7 @@ mod flash_ring {
             Arrival::Fetch {
                 person: 0,
                 command: None,
+                removed: false,
             }
         );
         let mut ops = take_ops(&mut m);
@@ -2495,11 +2507,14 @@ mod commands {
         c: Option<Command>,
     ) -> Summary {
         let Arrival::Fetch {
-            person, command, ..
+            person,
+            command,
+            removed,
         } = m.arrive(MsgId(sent), &fetch(key, sent, c))
         else {
             panic!("the fetch is taken");
         };
+        assert!(removed, "under a removed home's key");
         assert_eq!(command, None, "no command runs");
         command::obey(m, p, person, command, 300, 0);
         let (s, items) = drain(m, key, sent);

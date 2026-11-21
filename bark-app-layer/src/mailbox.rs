@@ -109,6 +109,8 @@ pub enum Arrival {
         person: usize,
         /// The fetch's command, to run; none under a removed home's key.
         command: Option<Command>,
+        /// It opened under a removed home's key.
+        removed: bool,
     },
     /// A fetch that opens under no key, or is not later than the last
     /// its person took, or an item the ring has no number for: dropped.
@@ -627,6 +629,7 @@ impl<R: Ring> Mailbox<R> {
                 Arrival::Fetch {
                     person: i,
                     command: f.command.filter(|_| !removed),
+                    removed,
                 }
             }
             _ => Arrival::Refused,
