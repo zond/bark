@@ -1138,8 +1138,9 @@ const int maxPhones = 8;
 DateTime? dayOf(int day) =>
     day == 0 ? null : DateTime.utc(2026).add(Duration(days: day - 1));
 
-/// A record of Phones, read: a phone paired with the node, or a home a
-/// phone left there, or both (spec "Phone link", Phones).
+/// A record of Phones, read, or of the owner's list in a summary: a
+/// phone paired with the node, a home, or both (spec "Phone link",
+/// Phones).
 class PhoneRecord {
   /// Bytes before the name.
   static const header = 2 + 1 + 2 + 1 + 1;
@@ -1154,16 +1155,19 @@ class PhoneRecord {
   /// Its phone is linked now.
   final bool linked;
 
-  /// It is the reading phone's own.
+  /// It is the reading phone's own, or in a list the sender's.
   final bool mine;
 
-  /// Its person's recipient tag at the node, once its phone wrote one.
+  /// Its key is the owner's (spec "Phone link", The node's owner).
+  final bool owner;
+
+  /// Its person's recipient tag at the node, once known.
   final int? tag;
 
-  /// The day its phone was last linked ([dayOf]).
+  /// The day its person was last seen ([dayOf]).
   final int day;
 
-  /// Its person's name, empty when their phone wrote none.
+  /// Its person's name, empty when none was given.
   final String name;
 
   const PhoneRecord({
@@ -1172,10 +1176,23 @@ class PhoneRecord {
     this.home = false,
     this.linked = false,
     this.mine = false,
+    this.owner = false,
     this.tag,
     this.day = 0,
     this.name = '',
   });
+
+  PhoneRecord copyWith({bool? paired, bool? home, bool? owner}) => PhoneRecord(
+    number: number,
+    paired: paired ?? this.paired,
+    home: home ?? this.home,
+    linked: linked,
+    mine: mine,
+    owner: owner ?? this.owner,
+    tag: tag,
+    day: day,
+    name: name,
+  );
 
   Uint8List encode() {
     final n = nameBytes(name);
@@ -1186,13 +1203,50 @@ class PhoneRecord {
           flag(home, 0x02) |
           flag(linked, 0x04) |
           flag(mine, 0x08) |
-          flag(tag != null, 0x10),
+          flag(tag != null, 0x10) |
+          flag(owner, 0x20),
       ..._be16(day),
       tag ?? 0,
       n.length,
       ...n,
     ]);
   }
+}
+
+/// The records `b` holds whole, as Phones and the owner's list give them.
+List<PhoneRecord> decodeRecords(List<int> b) {
+  final records = <PhoneRecord>[];
+  var at = 0;
+  while (at < b.length) {
+    if (at + PhoneRecord.header > b.length) throw const Malformed('records');
+    final nameLen = b[at + 6];
+    final end = at + PhoneRecord.header + nameLen;
+    if (nameLen > nameMax || end > b.length || records.length == maxPhones) {
+      throw const Malformed('records');
+    }
+    final flags = b[at + 2];
+    final String name;
+    try {
+      name = utf8.decode(b.sublist(at + PhoneRecord.header, end));
+    } on FormatException {
+      throw const Malformed('records');
+    }
+    records.add(
+      PhoneRecord(
+        number: _u16(b, at),
+        paired: flags & 0x01 != 0,
+        home: flags & 0x02 != 0,
+        linked: flags & 0x04 != 0,
+        mine: flags & 0x08 != 0,
+        owner: flags & 0x20 != 0,
+        tag: flags & 0x10 != 0 ? b[at + 5] : null,
+        day: _u16(b, at + 3),
+        name: name,
+      ),
+    );
+    at = end;
+  }
+  return records;
 }
 
 /// Phones, read: the records from the place written, and the place to
@@ -1207,39 +1261,11 @@ class PhonesPage {
 
   static PhonesPage decode(List<int> b) {
     if (b.isEmpty) throw const Malformed('Phones');
-    final records = <PhoneRecord>[];
-    var at = 1;
-    while (at < b.length) {
-      if (at + PhoneRecord.header > b.length) {
-        throw const Malformed('Phones');
-      }
-      final nameLen = b[at + 6];
-      final end = at + PhoneRecord.header + nameLen;
-      if (nameLen > nameMax || end > b.length || records.length == maxPhones) {
-        throw const Malformed('Phones');
-      }
-      final flags = b[at + 2];
-      final String name;
-      try {
-        name = utf8.decode(b.sublist(at + PhoneRecord.header, end));
-      } on FormatException {
-        throw const Malformed('Phones');
-      }
-      records.add(
-        PhoneRecord(
-          number: _u16(b, at),
-          paired: flags & 0x01 != 0,
-          home: flags & 0x02 != 0,
-          linked: flags & 0x04 != 0,
-          mine: flags & 0x08 != 0,
-          tag: flags & 0x10 != 0 ? b[at + 5] : null,
-          day: _u16(b, at + 3),
-          name: name,
-        ),
-      );
-      at = end;
+    try {
+      return PhonesPage(b[0], decodeRecords(b.sublist(1)));
+    } on Malformed {
+      throw const Malformed('Phones');
     }
-    return PhonesPage(b[0], records);
   }
 }
 
