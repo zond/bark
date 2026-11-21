@@ -38,6 +38,11 @@ use bark_proto::{NodeId, Position};
 /// (spec "The payload").
 pub const VERSION: u8 = 2;
 
+/// The version and the form kept for saying that the number follows in a
+/// byte of its own (spec "The payload", Forms): never a version or a form.
+pub const EXTENDED: u8 = 15;
+const _: () = assert!(VERSION < EXTENDED);
+
 /// The longest payload the network carries (spec "Packet formats").
 pub const MAX_PAYLOAD: usize = bark_proto::wire::MAX_PAYLOAD;
 

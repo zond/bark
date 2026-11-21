@@ -35,6 +35,8 @@ pub enum Form {
     IntroductionItem = 5,
 }
 
+const _: () = assert!((Form::IntroductionItem as u8) < crate::EXTENDED);
+
 impl Form {
     /// The format byte of this form.
     pub const fn format(self) -> u8 {

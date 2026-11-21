@@ -2844,6 +2844,11 @@ oldest version it writes. Version 2 is the only one, and nothing older
 exists, so there is nothing to choose yet: every payload is version 2
 (roadmap D238).
 
+Version 15 and form 15 are kept: each will say that the number itself
+follows in a byte of its own, so that four bits do not bound either
+count. Nothing writes them yet, and a receiver drops them as unknown. A
+card's or a summary's newest version of 15 will say the same of it.
+
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
 | 0, boxed | a contact | `siv` (16), ciphertext, under the pair's keys (below) | 18 |
