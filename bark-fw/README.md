@@ -205,6 +205,14 @@ Verified on the host:
   the new one after a swap and the old one after a swap back (2026-10-25).
 - `scripts/image.py stage` sends an image whole, in order, through a
   fake console on a pseudo-terminal (2026-10-25).
+- The stored state on two pages of flash in RAM
+  (`cargo test -p bark-fw-logic`, `store`): with the power cut at every
+  word written and every erase of 400 changes, 5 838 operations with six
+  turns among them, a cut word half written or not at all and a cut page
+  with its head left or not, the next boot reads back everything kept
+  before the change the cut fell in, that change whole or not at all, and
+  the changes written after that boot all hold at the boot after; a page
+  of layout 2 is read as holding nothing (roadmap D241, 2026-11-22).
 - The phones' records (`cargo test -p bark-link`, `phones`): each entry
   kept whole or, cut at any word, not at all; the last of each kind
   holding; a pairing
@@ -253,9 +261,10 @@ Unverified, in the order they will fail if wrong:
 - The green LED is active low; its pin, P1.01 (the board's label,
   2026-10-30), is confirmed by its blink on every board.
 - The stored state: the NVMC, through the MPSL's flash timeslots, writes each record the core asks to keep into
-  the next slot of the `STORE` page and erases the page when it is full,
-  and the next boot logs `stored Some(..)` and comes back on the same home
-  channel (`src/store.rs`, roadmap D73).
+  the next slot of the `STORE` page in use, and the next boot logs
+  `stored Some(..)` and comes back on the same home channel
+  (`src/store.rs`, roadmap D73). Not yet run on a board: the turn to the
+  other page and the boot that chooses between them (roadmap D241).
 - The external flash drops from standby to deep power-down, 12 µA to
   0.5 µA typical (`src/ext_flash.rs`,
   `docs/external-flash-2026-11-06.md`); `scripts/measure.md` step 5 sees
@@ -335,8 +344,8 @@ Inside:
 | firmware, running | `0x06000` | 908 KiB, 227 pages | the CPU runs from internal flash; everything up to the record |
 | staged image's record | `0xE9000` | 4 KiB | its header, and the loader's word that it matched it; inside, since it holds the hash the firmware checked before it staged, and the last page the bootloader's drive writes, so every UF2 writes it erased |
 | given up | `0xEA000` | 4 KiB | the versions of the images the node swapped back, 1 024, which it never gathers again (Updates, below); outside every UF2, so a copy over USB keeps them |
-| spare | `0xEB000` | 32 KiB, 8 pages | unused, outside every UF2: for secrets to come; its pages hold what earlier layouts left, so a use erases them first |
-| stored state | `0xF3000` | 4 KiB | the node's stored state (`src/store.rs`, roadmap D73), where it was; with it the phone's UTC offset and the phones' records, their bonds' keys and mailbox keys among them; secret, so above `0xEA000` |
+| spare | `0xEB000` | 28 KiB, 7 pages | unused, outside every UF2: for secrets to come; its pages hold what earlier layouts left, so a use erases them first |
+| stored state | `0xF2000` | 8 KiB, 2 pages | the node's stored state (`src/store.rs`, roadmap D73, D241): the core's, the phone's UTC offset and the phones' records, their bonds' keys and mailbox keys among them; two pages that take turns, so a power cut leaves one whole; the first was the spare's last before D241; secret, so above `0xEA000` |
 | bootloader | `0xF4000` | 38 KiB | the bootloader's linker script |
 | bootloader config | `0xFD800` | 2 KiB | |
 | MBR parameters | `0xFE000` | 4 KiB | |
@@ -1211,17 +1220,21 @@ fetch taken; the day the person was last seen, their phone linked or
 their fetch taken; whether their key is the owner's; the record's number; and
 the ring's newest item when the record was made, so that bits of the
 marks left by a record freed before count for nothing (Mailbox, below).
-The store keeps them in the stored-state page beside the core's state
-(`src/store.rs`): a record as an entry of four slots, written when the
+The store keeps them in the stored state beside the core's state
+(`src/store.rs`, `bark_fw_logic::store`): a record as an entry of four slots, written when the
 bond, the tag, the name, the home, the owner's mark or the day changes; what each read or
 fetch moves, the last confirmed and the last fetch, as an entry of one
 slot; and the node's settings, private or not and the next record's
-number, one slot. The last entry of each kind is the one that holds, and
-a full page is erased and every kind's latest written again. The page's
-first slot is its head, which names the page's layout, 2; a page
-without it, or of another layout, is read as empty, and the node logs
-`store: the page is of another layout; its state is discarded` and
-erases it at its first write (roadmap D188).
+number, one slot. The last entry of each kind is the one that holds. The
+store writes into one of two pages; when it is full, it erases the other,
+writes every kind's latest there, and last that page's head, which names
+the layout, 3, and a generation one above the full page's. A page is
+valid once its head is whole, and at boot the valid page of the later
+generation holds, so a power cut at any moment leaves every pairing and
+home kept before it (roadmap D241). With neither page valid, as on a
+board that kept layout 2 or earlier, the node holds nothing, logs
+`store: no page of this layout; what the pages held is discarded`, and
+is paired again; its first write erases the first page (roadmap D188).
 
 A pairing that completes, is authenticated and bonds takes a free
 record, or replaces the bond of the record whose bond names the same
@@ -1337,7 +1350,7 @@ of each link and each Send out of turn, an ask (spec "Phone link",
 Sending). A message given back is
 kept with its phone's record, a guest's with its link. The console's
 `status` has `public=true` or `public=false`, read from the phones in
-the stored-state page, and then `drain_relay=` and `drain_sleepy=`, the
+the stored state, and then `drain_relay=` and `drain_sleepy=`, the
 drains the node image kept there, or the first ones while it has learned
 none.
 
