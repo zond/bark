@@ -438,8 +438,8 @@ when it was heard, and the four images the sections name kept once in the table,
 queue, 18.9 KiB (roadmap D58), for a driver whose node never switches, as the simulator's
 tests can have. There is no fixed target;
 the sizes follow from the design. The board's application has 255 KiB of RAM
-(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 58 808 B,
-`bark-fw/scripts/uf2.py --stack` on the release build of 2026-11-17,
+(`bark-image/src/layout.rs`), 261 120 B. The node image leaves its call stack 53 192 B,
+`bark-fw/scripts/uf2.py --stack` on the release build of 2026-11-21,
 against a floor of 24 576 B (`bark-fw/README.md`, "Tasks and the stack").
 Checked by the tests in `tables/mod.rs` and `node/relay/tests.rs`.
 
@@ -489,7 +489,7 @@ action at a time, and the core never allocates.
     7-bit groups, and a form longer than its count needs is rejected (spec "Packet formats").
   - A DATA's `aux` 15 is the update's piece, 16 and 17 a neighbour's status asked and
     told, and 13, 14 and 18 to 63 are rejected (spec "Packet formats"); a piece is always a
-    full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 30. A
+    full frame, 247 bytes after its 8-byte header, an ask 14 bytes and a status 31. A
     status's battery byte that is no percent, 101 to 254, is read as not read. A heartbeat of 26 bytes or more carries the update's section in bytes 13 to
     25, its versions big-endian (`wire::decode_section`).
   - The first byte's bit 6 marks an ACK, with the six bits under it `aux` and the top bit

@@ -1242,6 +1242,11 @@ ticks **Add my messages**, the queue, the received texts and the
 reactions used. Whether the app asked for Bluetooth and to notify is
 the phone's, and stays.
 
+Android keeps the app's files out of its backups and out of a transfer
+to a new device (`android:allowBackup="false"` and
+`res/xml/data_extraction_rules.xml`), as they hold the seed and the
+mailbox key: the words and this file are the only ways to move.
+
 The file is a header of 54 bytes, the ASCII `bark-identity`, the
 layout's version, 1, a salt of 16 random bytes and a nonce of 24, then
 the contents as JSON, encrypted and authenticated with

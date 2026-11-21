@@ -168,7 +168,7 @@ Verified on the host:
   of the 929 792 B slot, and uses 196 120 B of RAM before the stack
   (`.data` and `.bss`), which leaves the stack 64 976 B (2026-11-11,
   `size -A`, `scripts/uf2.py --stack`). The relay,
-  95 536 B, is in `.bss`: its static holds zero bytes, which the
+  102 176 B, is in `.bss`: its static holds zero bytes, which the
   startup code writes, and `src/node.rs` sets it up in place. The
   stack's depth is in "Tasks and the stack", below.
 - The driver loop, against a fake radio (`cargo test -p bark-driver` in
@@ -392,9 +392,10 @@ step shows on the board as `longest_handle_us` in the 10 s line.
 over the mesh sends it in, the table's among them, and its static RAM,
 and fails past a budget of 40 blocks, under the 48 the update carries
 (`BUDGET_BLOCKS` in the script says why and what to do when it is
-reached); CI runs it on the release build. On 2026-11-11 the node image
-is 530 736 B of flash, 35 blocks, with 196 144 B of static RAM; it was
-340 992 B on 2026-11-06.
+reached); CI runs it on the release build. On 2026-11-21 the node image
+is 571 720 B of flash, 38 blocks, with 207 928 B of static RAM, which
+leaves the stack 53 192 B; it was 530 736 B on 2026-11-11 and 340 992 B
+on 2026-11-06.
 
 The same line counts what the radio heard since boot: `frames` passed
 their CRC, and `failed` began and gave no frame, split into
@@ -1099,7 +1100,7 @@ links on one channel are mostly symmetric, and a neighbour heard with
 margin will likely hear a frame at the same power. A refusal or an ACK that has seen the packet also prove the
 neighbour hears this node; the table keeps neither per neighbour. A
 bit for "answered" would cost no RAM, since it fits the padding of the
-120-byte entry (`docs/core-interface.md` §6), and would count those two as well; it is
+128-byte entry (`docs/core-interface.md` §6), and would count those two as well; it is
 left out while the display is its only reader, since on a quiet network
 neither comes before a take does.
 
@@ -1461,7 +1462,7 @@ a read raced against a timer. The console keeps its one-shot structure,
 its radio, LED and picture joined in the main task, which holds no
 relay; its USB device, log, touch and watchdog are tasks as in the node.
 
-The relay, 95 536 B, is built in place in its static
+The relay, 102 176 B, is built in place in its static
 (`Relay::reset`, `docs/core-interface.md` §6), so that no task's frame
 holds it. So are the phone link's host and attribute table: the host
 writes its nine connections' storage, 10 KB, where it lies, and the
@@ -1760,7 +1761,7 @@ listens with `rx <k> <ms>` for as long as the host logs.
   12 s for two days.
 
 The log never waits for a host: lines logged with no port open fill
-the 2 KiB buffer and newer ones are dropped (Log, below), so a survey
+the 4 KiB buffer and newer ones are dropped (Log, below), so a survey
 board runs the same with and without one. Its home channel is k, so
 `ping k` from the near board is answered. The display says `SURVEY`
 and `CH<k>` (Display, above).
@@ -2199,7 +2200,7 @@ hex digits, as its serial number. On Linux it appears as `/dev/ttyACM0`
 CDC-ACM is a USB bulk pipe: the baud rate, parity and stop bits a terminal
 sets are ignored, so any value works. What matters is that the terminal
 asserts DTR, because the firmware holds log output until the port is opened.
-Lines logged before that wait in a 2 KiB ring (the banner is always
+Lines logged before that wait in a 4 KiB ring (the banner is always
 there); once it fills, newer lines are dropped until the port opens.
 
 ```

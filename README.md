@@ -11,7 +11,7 @@ adversary. Nothing on the air is authenticated, so anyone with a radio
 in range can disrupt the nodes around them, and anyone in range of a
 node learns its ID and position. The app encrypts the messages
 themselves end to end. `docs/protocol.md`, "What the protocol omits",
-says why.
+lists what a forger can do.
 
 The name is from Darwin's bark spider (*Caerostris darwini*), the Madagascan
 spider that builds the largest orb webs known, anchored on bridge lines up to
