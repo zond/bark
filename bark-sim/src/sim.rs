@@ -724,10 +724,6 @@ pub struct Sim {
     /// node it was for, by its hop count.
     queue_peaks: Vec<QueuePeak>,
     arrival_hops: [u64; 256],
-    /// Each anchor's sleepy nodes, as of the update's last sample.
-    sleepers: HashMap<u32, Vec<u32>>,
-    /// The last heartbeat each node heard, its sender and when.
-    beat_from: HashMap<u32, (u64, Instant)>,
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
     was_booting: bool,
@@ -1307,8 +1303,6 @@ impl Sim {
             battery: None,
             update: None,
             install: None,
-            sleepers: HashMap::new(),
-            beat_from: HashMap::new(),
             relays,
             nodes,
             now: Instant::ZERO,
@@ -1710,50 +1704,6 @@ impl Sim {
         self.battery_setup(&sc.battery, sc.seed)
     }
 
-    /// The update's first relay, the time it is given the image, and the
-    /// series' first row (`update.rs`).
-    fn update_setup(
-        &mut self,
-        u: &crate::scenario::UpdateSpec,
-        sc: &Scenario,
-        placed: &[PlacedNode],
-    ) -> Result<(), String> {
-        let holder = match &u.holder {
-            Some(name) => resolve(placed, name)?,
-            None => {
-                let placed_relays: Vec<u32> = (0..self.n_relays)
-                    .filter(|&i| self.person_of[i as usize] == u32::MAX)
-                    .collect();
-                let n = self.xy.len() as f64;
-                let cx = self.xy.iter().map(|p| p.x).sum::<f64>() / n;
-                let cy = self.xy.iter().map(|p| p.y).sum::<f64>() / n;
-                let d = |i: &u32| {
-                    let p = self.xy[*i as usize];
-                    (p.x - cx).hypot(p.y - cy)
-                };
-                *placed_relays
-                    .iter()
-                    .min_by(|a, b| d(a).total_cmp(&d(b)))
-                    .ok_or("[update] needs a node placed as a relay")?
-            }
-        };
-        let at = Instant::ZERO + secs(u.at_s.unwrap_or_else(|| sc.settled_s()));
-        let mut run = crate::update::UpdateRun::new(u.image_bytes, holder, at, self.xy.len());
-        if let Some(name) = &u.forger {
-            let until = u
-                .forged_until_s
-                .map_or(Instant::MAX, |s| Instant::ZERO + secs(s));
-            run.forger = Some((resolve(placed, name)?, until));
-        }
-        self.update = Some(run);
-        self.push(at, Ev::Update);
-        self.push(at, Ev::UpdateSample);
-        if let Some(s) = u.next_at_s {
-            self.push(Instant::ZERO + secs(s), Ev::UpdateNext);
-        }
-        Ok(())
-    }
-
     /// The send queue's peaks over relays and the hop counts DATA arrived
     /// with (spec "Send queue"): the most, and the 99th and 99.9th
     /// percentiles.
@@ -1792,62 +1742,6 @@ impl Sim {
         )
     }
 
-    /// The update's run, if the scenario has one.
-    pub fn update(&self) -> Option<&crate::update::UpdateRun> {
-        self.update.as_ref()
-    }
-
-    /// The update's series, and when each node came to hold the image.
-    pub fn update_csv(&self) -> Option<String> {
-        self.update.as_ref().map(|u| u.csv())
-    }
-
-    /// A row of the update's series.
-    fn update_sample(&mut self) {
-        let Some(mut u) = self.update.take() else {
-            return;
-        };
-        let nodes: Vec<(bool, bool)> = (0..self.relays.len())
-            .map(|i| {
-                let placed = (i as u32) < self.n_relays && self.person_of[i] == u32::MAX;
-                let alive = self.nodes[i].alive;
-                (alive && !self.relays[i].sleepy(), alive && placed)
-            })
-            .collect();
-        let busy = (0..self.relays.len())
-            .filter(|&i| nodes[i].0)
-            .map(|i| {
-                let r = &self.relays[i];
-                r.busy().fraction(r.home()) as f64 / bark_proto::tables::busy::ONE as f64
-            })
-            .collect();
-        let gathering: Vec<u8> = (0..self.relays.len())
-            .filter(|&i| self.nodes[i].alive)
-            .filter_map(|i| self.relays[i].gathering().map(|g| g.1))
-            .collect();
-        u.sample(self.now, &nodes, &gathering, busy);
-        self.update = Some(u);
-        self.sleepers.clear();
-        for i in 0..self.relays.len() {
-            let r = &self.relays[i];
-            if !self.nodes[i].alive || !r.sleepy() {
-                continue;
-            }
-            let Some(a) = r.anchor() else { continue };
-            if let Some(&ai) = self
-                .relay_index
-                .get(&key(a.id))
-                .or(self.sleepy_index.get(&key(a.id)))
-            {
-                self.sleepers.entry(ai).or_default().push(i as u32);
-            }
-        }
-        self.push(
-            self.now + Duration::from_micros(crate::update::SAMPLE_US),
-            Ev::UpdateSample,
-        );
-    }
-
     pub(crate) fn push(&mut self, t: Instant, ev: Ev) {
         self.seq += 1;
         self.heap.push(queue::order(t, self.seq), ev);
@@ -1871,6 +1765,11 @@ impl Sim {
     /// Number of relays (nodes `0..relays()` are relays, the rest leaves).
     pub fn relays(&self) -> u32 {
         self.n_relays
+    }
+
+    /// Whether node `i` was placed as a relay, not as one of the people.
+    pub(crate) fn placed_relay(&self, i: u32) -> bool {
+        i < self.n_relays && self.person_of[i as usize] == u32::MAX
     }
 
     /// The link table.
@@ -2212,33 +2111,8 @@ impl Sim {
                 }
             }
         }
-        if let (Some(u), Event::Received { bytes, .. }) = (self.update.as_mut(), &ev) {
-            use bark_proto::wire::{Packet, Update};
-            match Packet::decode(bytes) {
-                Ok(Packet::Update(Update::Piece {
-                    version,
-                    block,
-                    index,
-                    ..
-                })) => {
-                    let r = &self.relays[node as usize];
-                    let gathers =
-                        !r.sleepy() && r.gathering().is_some_and(|(i, _)| i.version == version);
-                    if gathers {
-                        u.gatherer_heard(node, block, index);
-                    }
-                    u.piece_heard(node, block, index)
-                }
-                Ok(Packet::Heartbeat(hb)) => {
-                    self.beat_from.insert(node, (key(hb.id), now));
-                    let forger = u.forger.map(|(f, _)| self.relays[f as usize].id());
-                    let section = bark_proto::wire::decode_section(bytes);
-                    if forger == Some(hb.id) && section.and_then(|s| s.image) == Some(u.forged) {
-                        u.heard_forged(node);
-                    }
-                }
-                _ => {}
-            }
+        if let Event::Received { bytes, .. } = &ev {
+            self.update_received(node, bytes);
         }
         self.handover_before(node, &ev);
         let clock = self.clocks[node as usize];
@@ -2664,46 +2538,6 @@ impl Sim {
         }
     }
 
-    /// Whether relay `a`, an anchor of the sleepy nodes `own`, opens the
-    /// slot after its heartbeat on its home channel, and if not, why, by
-    /// the simulator's truth against its table.
-    fn slot_opens(&self, a: u32, own: &[u32], u: &crate::update::UpdateRun) -> &'static str {
-        let r = &self.relays[a as usize];
-        let image = u.image;
-        let whole = r.image().is_some();
-        let holds = |b: u8| whole || u.has.contains(&(a, b));
-        if !whole && !(0..image.blocks).any(holds) {
-            return "anchor holds no block";
-        }
-        let me = r.id();
-        let lacking = own.iter().any(|&s| {
-            let c = &self.relays[s as usize];
-            self.nodes[s as usize].alive
-                && c.anchor().is_some_and(|x| x.id == me)
-                && c.gathering().is_some()
-                && (0..image.blocks).any(|b| holds(b) && !u.has.contains(&(s, b)))
-        });
-        if !lacking {
-            return "no sleepy node of its own lacks a block it holds";
-        }
-        let local = self.clocks[a as usize].local(self.now);
-        let table = r.neighbour_table();
-        let table_says = table
-            .live(local)
-            .map(|(_, n)| n)
-            .filter(|n| n.sleepy && n.home == r.home())
-            .filter_map(|n| table.section(n))
-            .filter(|x| x.gathers(image.version))
-            .any(|x| {
-                (x.complete..image.blocks)
-                    .any(|b| holds(b) && (b > x.complete || x.have < image.pieces(b)))
-            });
-        if !table_says {
-            return "its table's sleepy sections show nothing lacking";
-        }
-        "opens"
-    }
-
     /// A node hears the beat of a sleepy node that came back into reach,
     /// and is its anchor, or any node if it has none: the network knows the
     /// sleepy node is back.
@@ -2770,143 +2604,18 @@ impl Sim {
             Action::Listen(c) => self.listen(node, c),
             Action::Lbt(c) => self.check(node, ExKind::Lbt, c, scripted),
             Action::Rssi(c) => self.check(node, ExKind::Rssi, c, scripted),
-            Action::Offered(image) => {
-                if let Some(u) = self.update.as_mut() {
-                    u.offered(node, image, self.now);
-                }
-            }
-            Action::Unproven(version) => {
-                if let Some(u) = self.update.as_mut() {
-                    u.unproven(node, version, self.now);
-                }
-            }
-            Action::StorePiece(p) => {
-                if let Some(u) = self.update.as_mut() {
-                    if self.relays[node as usize].sleepy() {
-                        u.stored_sleepy += 1;
-                    }
-                    u.piece(node, p, self.now);
-                }
-            }
+            Action::Offered(_)
+            | Action::Unproven(_)
+            | Action::StorePiece(_)
+            | Action::Trace(Trace::SlotPiece(_)) => self.update_action(node, a),
             // The piece's bytes are the driver's; here there are none.
             Action::Transmit(mut f) | Action::Serve(mut f) => {
                 if let Some(u) = self.update.as_ref() {
                     u.forge(node, &mut f, self.now);
                 }
+                self.update_transmit(node, &f);
                 let mark = std::mem::take(&mut self.next_tx[node as usize]);
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros();
-                let home_beat = f.channel == self.relays[node as usize].home()
-                    && matches!(
-                        bark_proto::wire::Packet::decode(f.payload()),
-                        Ok(bark_proto::wire::Packet::Heartbeat(_))
-                    );
-                let open = match (home_beat, self.update.as_ref(), self.sleepers.get(&node)) {
-                    (true, Some(u), Some(own)) => Some(self.slot_opens(node, own, u)),
-                    _ => None,
-                };
-                if let Some(u) = self.update.as_mut() {
-                    use bark_proto::wire::{Packet, Update, HEARTBEAT_LEN};
-                    let home = self.relays[node as usize].home();
-                    let decoded = Packet::decode(f.payload());
-                    if matches!(decoded, Ok(Packet::Heartbeat(_))) && f.channel == home {
-                        u.home_beat(node, self.now);
-                        if let Some(why) = open {
-                            u.slot_open_fate(why, self.now);
-                        }
-                    }
-                    match decoded {
-                        // A heartbeat's section: what it adds to the frame.
-                        Ok(Packet::Heartbeat(_)) if usize::from(f.len) > HEARTBEAT_LEN => {
-                            let bare =
-                                time_on_air(HEARTBEAT_LEN as u8, f.preamble_symbols).as_micros();
-                            u.aired(Some(0), air - bare);
-                            u.aired(None, bare);
-                        }
-                        Ok(Packet::Update(Update::Piece { block, index, .. })) => {
-                            u.aired(Some(2), air);
-                            let image = u.image;
-                            let table = self.relays[node as usize].neighbour_table();
-                            let (relays, sleepy) = (&self.relay_index, &self.sleepy_index);
-                            let me = self.relays[node as usize].id();
-                            let cores = &self.relays;
-                            // A sleepy node listens only for its anchor's
-                            // piece right after the anchor's slot heartbeat.
-                            let slot = u.after_home_beat(node, self.now);
-                            let targets = table
-                                .live(self.clocks[node as usize].local(self.now))
-                                .map(|(_, n)| n)
-                                .filter(|n| n.home == f.channel)
-                                .filter(|n| {
-                                    table.section(n).is_some_and(|s| {
-                                        s.gathers(image.version)
-                                            && (s.complete < block
-                                                || s.complete == block
-                                                    && s.have < image.pieces(block))
-                                    })
-                                })
-                                .filter_map(|n| {
-                                    let i = relays.get(&key(n.id)).or(sleepy.get(&key(n.id)));
-                                    i.map(|&i| (i, n.sleepy))
-                                })
-                                .filter(|&(i, sleepy)| {
-                                    !sleepy
-                                        || slot
-                                            && cores[i as usize]
-                                                .anchor()
-                                                .is_some_and(|a| a.id == me)
-                                })
-                                .collect::<Vec<_>>();
-                            let foreign = f.channel != home;
-                            u.piece_gap(node, f.channel.index(), self.now);
-                            u.piece_sent(node, foreign, self.now, block, index, targets);
-                            if slot && !foreign {
-                                let me_key = key(me);
-                                for &s in self.sleepers.get(&node).into_iter().flatten() {
-                                    let c = &self.relays[s as usize];
-                                    let st = &self.nodes[s as usize];
-                                    if c.anchor().is_none_or(|a| a.id != me) {
-                                        u.slot_fate(s, block, index, Some("anchor changed"));
-                                        continue;
-                                    }
-                                    let fate = if !st.alive || !st.present {
-                                        Some("absent")
-                                    } else if let Some((g, first)) = c.gathering() {
-                                        let local = self.clocks[s as usize].local(self.now);
-                                        let t = c.neighbour_table();
-                                        let anchor_says = t
-                                            .live(local)
-                                            .find(|(_, n)| n.id == me)
-                                            .and_then(|(_, n)| t.section(n))
-                                            .filter(|x| {
-                                                x.image.is_some_and(|i| i.version == g.version)
-                                            })
-                                            .map_or(0, |x| x.complete);
-                                        let heard_beat =
-                                            self.beat_from.get(&s).is_some_and(|&(k, t)| {
-                                                k == me_key
-                                                    && self.now.since(t).as_micros() < 60_000
-                                            });
-                                        if u.has.contains(&(s, block)) {
-                                            Some("has the block")
-                                        } else if !heard_beat {
-                                            Some("missed the slot heartbeat")
-                                        } else if anchor_says <= first {
-                                            Some("anchor's section says it holds nothing more")
-                                        } else {
-                                            None
-                                        }
-                                    } else if u.holds_at[s as usize].is_some() {
-                                        Some("holds the image")
-                                    } else {
-                                        Some("not gathering")
-                                    };
-                                    u.slot_fate(s, block, index, fate);
-                                }
-                            }
-                        }
-                        _ => u.aired(None, air),
-                    }
-                }
                 self.metrics.boot_airtime.add(
                     self.now,
                     mark == TxMark::Burst,
@@ -2929,11 +2638,6 @@ impl Sim {
                 let w = &mut self.store_writes[node as usize];
                 w.all += 1;
                 w.settled += u32::from(self.now >= self.settle);
-            }
-            Action::Trace(Trace::SlotPiece(o)) => {
-                if let Some(u) = self.update.as_mut() {
-                    u.slot_piece(o);
-                }
             }
             Action::Trace(Trace::Dropped { msg_id, reason }) => {
                 self.power_trace(node, &Trace::Dropped { msg_id, reason });
