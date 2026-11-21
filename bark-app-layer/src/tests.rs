@@ -665,6 +665,22 @@ fn records_read_back_in_order() {
     let rs: Vec<_> = r.collect();
     assert_eq!(rs, [Ok(Record::Card(c)), Ok(t)]);
     assert!(plain::read(&[0x80, 0, 0, 0, 0]).is_err());
+    // A home given: its address and key, 46 bytes with its type, and
+    // records may follow it.
+    let home = Record::Home {
+        address: f.home,
+        key: [7; 32],
+    };
+    let mut w = Writer::new(&mut b, &Header { address: None, ..h }).unwrap();
+    w.push(&home).unwrap();
+    w.push(&t).unwrap();
+    let n = w.finish();
+    assert_eq!(n, 5 + 46 + 4);
+    assert_eq!(b[5], 7);
+    let (_, r) = plain::read(&b[..n]).unwrap();
+    assert_eq!(r.collect::<Vec<_>>(), [Ok(home), Ok(t)]);
+    let (_, mut r) = plain::read(&b[..5 + 45]).unwrap();
+    assert_eq!(r.next(), Some(Err(Error::Malformed)), "cut short");
     let (_, mut r) = plain::read(&[0, 0, 0, 0, 0, 12]).unwrap();
     assert_eq!(r.next(), Some(Err(Error::Malformed)));
     assert_eq!(r.next(), None);

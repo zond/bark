@@ -256,6 +256,33 @@ pub fn json() -> String {
         ],
     ));
 
+    // A home given, Bob to Alice: his home node, and the mailbox key it
+    // took for her, with which she may make it her home.
+    let given: [u8; 32] = core::array::from_fn(|i| 0x80 + i as u8);
+    let header = Header {
+        greater: plain::greater(&f.bob.identity, &f.alice.identity),
+        sent: 1_000_090,
+        address: None,
+    };
+    let p = plaintext(
+        &header,
+        &[Record::Home {
+            address: f.home,
+            key: given,
+        }],
+    );
+    parts.push(entry(
+        "home_record",
+        &[
+            ("address", h(&f.home.encode())),
+            ("key", h(&given)),
+            ("sent", format!("{}", header.sent)),
+            ("greater", format!("{}", header.greater)),
+            ("plaintext", h(&p)),
+            ("payload", h(&boxed(&f.bob, &f.alice, f.away.node, &p))),
+        ],
+    ));
+
     // Reactions, Bob to Alice: a thumbs up, a heart of two code points,
     // and the longest, a kiss with two skin tones.
     for (name, emoji, sent) in [

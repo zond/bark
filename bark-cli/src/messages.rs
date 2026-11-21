@@ -95,6 +95,12 @@ fn told(state: &State, id: MsgId, o: &Opened) -> String {
             at(*to)
         ),
         Opened::Card { from } => format!("card {} from {}", msg(id), name(*from)),
+        Opened::Home { from, node } => format!(
+            "home {} from {} node {}",
+            msg(id),
+            name(*from),
+            crate::link::id_text(*node)
+        ),
         Opened::Mailbox => format!(
             "mailbox {}: a reply from a home's mailbox, which this tool does not read",
             msg(id)
