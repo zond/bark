@@ -218,6 +218,7 @@ dependencies = [
 name = "bark-app-layer"
 version = "0.1.0"
 dependencies = [
+ "bark-link",
  "bark-proto",
  "blake2",
  "crypto_box",
@@ -300,6 +301,7 @@ version = "0.1.0"
 dependencies = [
  "bark-app-layer",
  "bark-image",
+ "bark-link",
  "bark-proto",
  "serde",
  "serde_json",

@@ -12,6 +12,7 @@ use crypto_secretbox::XSalsa20Poly1305;
 use curve25519_dalek::montgomery::MontgomeryPoint;
 use subtle::ConstantTimeEq;
 
+use crate::command::{Command, Outcome, Summary, SUMMARY_PLAIN_LEN};
 use crate::keys::{kdf, KEY_LEN};
 use crate::{be, Address, Error, Identity, MAX_APP_PAYLOAD, MAX_PAYLOAD, VERSION};
 use bark_proto::NodeId;
@@ -347,7 +348,7 @@ pub fn open_intro(me: &SecretKey, payload: &[u8], out: &mut [u8]) -> Result<usiz
 
 /// A fetch (spec "Mailbox"): the requester asks its home node for the
 /// newest batch of the items it has not sent, to be sent to `address`
-/// for the `recipient` tag.
+/// for the `recipient` tag, and may give it a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Fetch {
     /// The requester's clock, as a text's `sent`; a fetch is taken only
@@ -358,20 +359,47 @@ pub struct Fetch {
     /// The requester's recipient tag at that address's node, which the
     /// home node cannot make, as it does not know the identity.
     pub recipient: u8,
+    /// A command for the home node (spec "Mailbox", The owner's commands).
+    pub command: Option<Command>,
+}
+
+/// A fetch as a payload: its bytes and their length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FetchPayload {
+    bytes: [u8; Fetch::MAX_LEN],
+    len: usize,
+}
+
+impl core::ops::Deref for FetchPayload {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+impl core::ops::DerefMut for FetchPayload {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        &mut self.bytes[..self.len]
+    }
 }
 
 impl Fetch {
-    /// Bytes of its plaintext.
+    /// Bytes of its plaintext without a command.
     pub const PLAIN_LEN: usize = 4 + Address::LEN + 1;
-    /// Bytes of its payload.
+    /// Bytes of its payload without a command.
     pub const LEN: usize = BOX_OVERHEAD + Self::PLAIN_LEN;
+    /// Bytes of its payload with the longest command.
+    pub const MAX_LEN: usize = Self::LEN + Command::MAX_LEN;
 
-    fn plain(&self) -> [u8; Self::PLAIN_LEN] {
-        let mut b = [0u8; Self::PLAIN_LEN];
+    /// The plaintext into `b`; its length.
+    fn plain(&self, b: &mut [u8; Self::PLAIN_LEN + Command::MAX_LEN]) -> usize {
         b[..4].copy_from_slice(&self.sent.to_be_bytes());
         b[4..4 + Address::LEN].copy_from_slice(&self.address.encode());
         b[4 + Address::LEN] = self.recipient;
-        b
+        Self::PLAIN_LEN
+            + self
+                .command
+                .map_or(0, |c| c.encode(&mut b[Self::PLAIN_LEN..]))
     }
 
     /// The fetch as a payload (form 2) under the keys of the mailbox
@@ -379,32 +407,45 @@ impl Fetch {
     /// recipient tag there. The home's ID is hashed into `siv`, so that
     /// another node holding the same key, an earlier home, cannot take it
     /// and answer the round a second time under the same reply nonces.
-    pub fn seal(&self, key: &[u8; KEY_LEN], home: NodeId, tag: u8) -> [u8; Self::LEN] {
-        let mut out = [0u8; Self::LEN];
-        // A plaintext of its own length fits.
+    pub fn seal(&self, key: &[u8; KEY_LEN], home: NodeId, tag: u8) -> FetchPayload {
+        let mut plain = [0u8; Self::PLAIN_LEN + Command::MAX_LEN];
+        let n = self.plain(&mut plain);
+        let mut out = FetchPayload {
+            bytes: [0u8; Self::MAX_LEN],
+            len: Self::LEN - Self::PLAIN_LEN + n,
+        };
+        // The longest plaintext fits.
         let _ = siv_seal(
             &SivKeys::of(key),
             Form::Fetch,
             tag,
             &home.0,
-            &self.plain(),
-            &mut out,
+            &plain[..n],
+            &mut out.bytes,
         );
         out
     }
 
     /// The fetch in `payload`, if it is one under the mailbox `key` for
     /// the node `me`.
+    /// A command it holds that the node does not read makes it no fetch.
     pub fn open(key: &[u8; KEY_LEN], me: NodeId, payload: &[u8]) -> Result<Fetch, Error> {
-        if Form::of(payload)? != Form::Fetch || payload.len() != Self::LEN {
+        if Form::of(payload)? != Form::Fetch
+            || !(Self::LEN..=Self::MAX_LEN).contains(&payload.len())
+        {
             return Err(Error::Malformed);
         }
-        let mut b = [0u8; Self::PLAIN_LEN];
-        siv_open(&SivKeys::of(key), &me.0, payload, &mut b)?;
+        let mut b = [0u8; Self::PLAIN_LEN + Command::MAX_LEN];
+        let n = siv_open(&SivKeys::of(key), &me.0, payload, &mut b)?;
+        let rest = &b[Self::PLAIN_LEN..n];
         Ok(Fetch {
             sent: be(&b[..4]),
             address: Address::decode(&b[4..])?,
             recipient: b[4 + Address::LEN],
+            command: match rest.is_empty() {
+                true => None,
+                false => Some(Command::decode(rest)?),
+            },
         })
     }
 }
@@ -422,14 +463,9 @@ pub const MAX_REPLIES: u8 = 32;
 /// item.
 pub const PLACE_LEN: usize = 1;
 
-/// Bytes of a summary's count of the round's items.
-pub const ITEMS_LEN: usize = 1;
-/// Bytes of a summary's count of the items still unsent after the round.
-pub const REMAINING_LEN: usize = 2;
-
-/// Bytes of the summary: the format byte, the recipient tag, the tag, the
-/// round's items and the items remaining.
-pub const SUMMARY_LEN: usize = HEAD_LEN + TAG_LEN + ITEMS_LEN + REMAINING_LEN;
+/// Bytes of a summary without an outcome: the format byte, the recipient
+/// tag, the tag, the round's items, the items remaining and the flags.
+pub const SUMMARY_LEN: usize = HEAD_LEN + TAG_LEN + SUMMARY_PLAIN_LEN;
 
 /// Bytes a reply adds to the item it carries: its own format byte and
 /// recipient tag stand for the item's, and the place is added.
@@ -459,50 +495,44 @@ pub fn forwardable(item: &[u8]) -> bool {
         && (HEAD_LEN..=MAX_APP_PAYLOAD).contains(&item.len())
 }
 
-/// The summary of the fetch of `round`, for its `recipient` tag: how many
-/// items the round carries and how many of the person's stay unsent
-/// after it, sealed under the mailbox `key` at place 0. Zero items says
-/// nothing is new.
+/// The summary of the fetch of `round`, for its `recipient` tag, sealed
+/// under the mailbox `key` at place 0, into `out`; its length. Zero items
+/// says nothing is new.
 pub fn seal_summary(
     key: &[u8; KEY_LEN],
     recipient: u8,
     round: u32,
-    items: u8,
-    remaining: u16,
-) -> [u8; SUMMARY_LEN] {
-    let mut out = [0u8; SUMMARY_LEN];
-    let mut plain = [0u8; ITEMS_LEN + REMAINING_LEN];
-    plain[0] = items;
-    plain[ITEMS_LEN..].copy_from_slice(&remaining.to_be_bytes());
+    summary: &Summary,
+    out: &mut [u8; MAX_PAYLOAD],
+) -> usize {
+    let mut plain = [0u8; SUMMARY_PLAIN_LEN + Outcome::MAX_LEN];
+    let n = summary.encode(&mut plain);
     let head: [u8; HEAD_LEN] = head(Form::Summary, recipient, &[]);
-    // Three bytes fit their own length.
-    let _ = seal_into(
+    // The longest outcome fits a payload (`command::LIST_LEN`).
+    seal_into(
         &secretbox(&reply_key(key)),
         &reply_nonce(round, 0),
         &head,
-        &plain,
-        &mut out,
-    );
-    out
+        &plain[..n],
+        out,
+    )
+    .unwrap_or(0)
 }
 
-/// A summary of the fetch of `round`, if it is one under `key`: the
-/// round's items and the items remaining after it.
-pub fn open_summary(key: &[u8; KEY_LEN], round: u32, payload: &[u8]) -> Result<(u8, u16), Error> {
-    if Form::of(payload)? != Form::Summary || payload.len() != SUMMARY_LEN {
+/// A summary of the fetch of `round`, if it is one under `key`.
+pub fn open_summary(key: &[u8; KEY_LEN], round: u32, payload: &[u8]) -> Result<Summary, Error> {
+    if Form::of(payload)? != Form::Summary || !(SUMMARY_LEN..=MAX_PAYLOAD).contains(&payload.len())
+    {
         return Err(Error::Malformed);
     }
-    let mut plain = [0u8; ITEMS_LEN + REMAINING_LEN];
-    open_into(
+    let mut plain = [0u8; MAX_PAYLOAD];
+    let n = open_into(
         &secretbox(&reply_key(key)),
         &reply_nonce(round, 0),
         &payload[HEAD_LEN..],
         &mut plain,
     )?;
-    Ok((
-        plain[0],
-        u16::from_be_bytes([plain[ITEMS_LEN], plain[ITEMS_LEN + 1]]),
-    ))
+    Summary::decode(&plain[..n])
 }
 
 /// A reply carrying `item` at `place` in the round of `round`, for the

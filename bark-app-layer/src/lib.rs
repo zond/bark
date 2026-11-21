@@ -16,6 +16,7 @@
 
 pub mod card;
 pub mod carry;
+pub mod command;
 pub mod flash_ring;
 pub mod keys;
 pub mod mailbox;

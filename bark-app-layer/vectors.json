@@ -119,8 +119,9 @@
     "round": 1000500,
     "items": 2,
     "remaining": 0,
+    "owner": true,
     "nonce": "000f44340000000000000000000000000000000000000000",
-    "payload": "23cf55cc9fe8d9ba1dc006f9f17407637259583b7a"
+    "payload": "23cf4d695ba37d218e41d23aeadb152842bb583b7a27"
   },
   "reply_box": {
     "round": 1000500,
@@ -141,6 +142,27 @@
   "nothing_new": {
     "round": 1000560,
     "nonce": "000f44700000000000000000000000000000000000000000",
-    "payload": "23cf29b6b948992422f501f80aa97176b5d9b35018"
+    "payload": "23cf13788bbdc5905ce0e772c83ca508dd6db35018c9"
+  },
+  "command_add": {
+    "sent": 1000620,
+    "command": "0191128d63af8d43e96e4b42d3d07658e8c6b3d26a85f4722c644e1078fe2a997388426f62",
+    "fetch": "22aa573e2381badade43b6a703b670bbfac5bffac8ee4c01cc4442196e064fa162e801008f719d4f4eb4e86ae91440c81dec443f12c2dfb7a1da8596dbebe69b3877f2e2c50328c771",
+    "outcome": "00",
+    "summary": "23cfac8f0768976099d4436539aefa5e0421b65e837f39"
+  },
+  "command_list": {
+    "sent": 1000680,
+    "command": "03",
+    "fetch": "22aa42091880b7cea0d8bd0a07c2f42bf7204d0579cde713ab734f8fefad1a791d0a4ec640",
+    "outcome": "0000013f0000aa05416c696365000212014a8803426f62",
+    "summary": "23cf166eb216d3e56096f6414a0e7445716520fc32c4ca8cee334293eceb8a99db96fb6cb19122fbecdabad735"
+  },
+  "commands": {
+    "remove": "020002",
+    "hand_over": "040002",
+    "leave": "05",
+    "not_allowed_round": 1000740,
+    "not_allowed_summary": "23cf226827a7672a1ac324fd4d1376dd3b8b8ef37f7c89"
   }
 }

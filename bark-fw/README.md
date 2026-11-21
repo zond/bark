@@ -1409,7 +1409,12 @@ the rounds of several records in turn. An item sent to a record, or
 confirmed by its phone, has that record's bit cleared, a program of
 one byte without an erase; it stays in the ring. A record claims
 nothing from before it was made. The keys and what each record has read
-and fetched are kept with the records (Phone link, above).
+and fetched are kept with the records (Phone link, above). A fetch's
+command, the owner's, runs on the records as the fetch is taken, the
+records' lock inside the mailbox's, and its outcome goes in the summary,
+which waits, as every first reply does, for the records to be on flash
+(`src/phones.rs` `fetched`, `bark_app_layer::command`; spec "Mailbox",
+The owner's commands).
 
 The mailbox reads a slot when asked, about a millisecond on the
 external flash's bus, and never waits on a write: its writes and erases

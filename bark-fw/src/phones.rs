@@ -11,7 +11,8 @@
 
 use core::cell::RefCell;
 
-use bark_link::phones::{Phones, Record};
+use bark_app_layer::mailbox::Person;
+use bark_link::phones::Phones;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 
@@ -52,6 +53,25 @@ pub fn take_dirty() -> bark_link::phones::Dirty {
     PHONES.lock(|p| p.borrow_mut().take_dirty())
 }
 
+/// A fetch the mailbox took for record `i`: the record keeps it and the
+/// day, and its command runs on the records, the mailbox given its
+/// outcome for the summary (`bark_app_layer::command::obey`). The two are
+/// changed together, the records' lock inside the mailbox's, so that
+/// neither sees the other half done; the rest follow after.
+pub fn fetched(i: usize, command: Option<bark_app_layer::command::Command>) {
+    let (day, linked) = (today(), crate::ble::linked_records());
+    crate::mailbox::with(|m| {
+        PHONES.lock(|p| {
+            bark_app_layer::command::obey(m, &mut p.borrow_mut(), i, command, day, linked)
+        })
+    });
+    changed();
+    if command.is_some() {
+        // A record made or freed: the phone link follows.
+        crate::ble::records_changed();
+    }
+}
+
 /// Hand the store, the mailbox, the screen and the phone link what the
 /// records say now.
 fn changed() {
@@ -64,24 +84,12 @@ fn changed() {
 /// Hand the mailbox each person as their record says them; at its
 /// opening, and at each change.
 pub fn to_mailbox() {
-    let people = read(|p| p.records.map(|r| r.as_ref().map(person)));
+    let people = read(|p| p.records.map(|r| r.as_ref().map(Person::of)));
     crate::mailbox::with(|m| {
         for (i, p) in people.into_iter().enumerate() {
             m.set_person(i, p);
         }
     });
-}
-
-/// A record as the mailbox needs it.
-fn person(r: &Record) -> bark_app_layer::mailbox::Person {
-    bark_app_layer::mailbox::Person {
-        number: r.number,
-        tag: r.tag,
-        key: r.key,
-        from: r.from,
-        read: r.read,
-        last_fetch: r.last_fetch,
-    }
 }
 
 /// The mailbox moved person `i` on: their record keeps it.

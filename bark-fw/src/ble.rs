@@ -1282,7 +1282,7 @@ pub async fn close_all() {
 /// The records changed: the links, the advertising, the node's loop and
 /// the phones follow what they say now (the mailbox and the screen follow
 /// in `phones.rs`).
-fn records_changed() {
+pub fn records_changed() {
     let (public, numbers) =
         crate::phones::read(|p| (p.public(), p.records.map(|r| r.map(|r| r.number))));
     let was = LINK.lock(|l| {
@@ -1304,6 +1304,11 @@ fn records_changed() {
         close_guests: was && !public,
         ..Notify::default()
     });
+}
+
+/// The records whose phones are linked now, a bit each.
+pub fn linked_records() -> u8 {
+    LINK.lock(|l| l.borrow().linked())
 }
 
 /// What Phones lists may have changed: the records, as `with` changed

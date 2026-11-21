@@ -6,12 +6,15 @@
 //!
 //! What a person's record keeps (the key, the last fetch, the last item
 //! confirmed) lives with the record (`bark-link` `phones`), not here: the
-//! mailbox says when they change.
+//! mailbox says when they change. A fetch's command changes the records,
+//! and runs on them beside the mailbox (`command::obey`).
 
 use core::cell::Cell;
 
+use bark_link::phones::{Record, RECORDS};
 use bark_proto::{MsgId, NodeId};
 
+use crate::command::{Command, Outcome, Summary};
 use crate::keys::KEY_LEN;
 use crate::seal::{self, Fetch, Form, MAX_REPLIES};
 use crate::{be, Address, MAX_PAYLOAD};
@@ -39,8 +42,10 @@ const ID_AT: usize = CHECK_AT - 4;
 const MARK_AT: usize = ID_AT - 1;
 const _: () = assert!(PAYLOAD_AT + MAX_PAYLOAD <= MARK_AT);
 
-/// People a node keeps: a bit for each in a slot's mark, a byte.
+/// People a node keeps: a bit for each in a slot's mark, a byte, a
+/// record each.
 pub const PEOPLE: usize = 8;
+const _: () = assert!(PEOPLE == RECORDS);
 
 /// The flash a mailbox keeps its items in: pages of [`SLOTS_PER_PAGE`]
 /// slots, erased to `0xFF` a page at a time. The firmware backs it with
@@ -93,9 +98,17 @@ fn slot_check(b: &[u8; SLOT_LEN]) -> u32 {
 pub enum Arrival {
     /// Kept as this item.
     Kept(u32),
-    /// A fetch that opened under this person's key, taken: its answer
-    /// follows, and the person's last fetch is its `sent`.
-    Fetch(usize),
+    /// A fetch that opened under the key of the person at `person`,
+    /// taken: its answer follows, and the person's last fetch is its
+    /// `sent`. A command it holds is to run on the records, and its
+    /// outcome to be handed back ([`Mailbox::answer`]) before the summary
+    /// goes.
+    Fetch {
+        /// The person's place.
+        person: usize,
+        /// The fetch's command.
+        command: Option<Command>,
+    },
     /// A fetch that opens under no key, or is not later than the last
     /// its person took, or an item the ring has no number for: dropped.
     Refused,
@@ -120,11 +133,31 @@ pub struct Person {
     pub read: u32,
     /// The `sent` of the last fetch they took.
     pub last_fetch: u32,
+    /// Their key is the node's owner's.
+    pub owner: bool,
+}
+
+impl Person {
+    /// The person a record holds.
+    pub fn of(r: &Record) -> Person {
+        Person {
+            number: r.number,
+            tag: r.tag,
+            key: r.key,
+            from: r.from,
+            read: r.read,
+            last_fetch: r.last_fetch,
+            owner: r.owner,
+        }
+    }
 }
 
 /// The fetch the mailbox answers for a person.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Reply {
+    /// The key the fetch opened under: the replies are under its reply
+    /// key, even once the person no longer holds it.
+    key: [u8; KEY_LEN],
     /// The fetch's `sent`: the replies' round.
     round: u32,
     /// Where they go.
@@ -146,11 +179,34 @@ struct Reply {
     again: Option<(u32, u8)>,
     /// The summary has been handed to the core.
     answered: bool,
+    /// The fetch's command, whose outcome the summary waits for.
+    command: bool,
+    /// What the command did.
+    outcome: Option<Outcome>,
+    /// The person no longer holds the key, as their command removed it:
+    /// the round is its summary alone.
+    orphan: bool,
 }
 
 impl Reply {
+    /// The summary first, once its command's outcome is in; then the
+    /// items.
     fn due(&self) -> bool {
-        self.again.is_some() || self.next >= self.bottom || !self.answered
+        match self.answered {
+            false => !self.command || self.outcome.is_some(),
+            true => self.again.is_some() || self.next >= self.bottom,
+        }
+    }
+
+    /// The round carries no item from now; those it would have stay
+    /// unsent, and the summary counts them so.
+    fn summary_alone(&mut self) {
+        self.remaining = self.remaining.saturating_add(u16::from(self.items));
+        self.items = 0;
+        self.bottom = 1;
+        self.next = 0;
+        self.again = None;
+        self.orphan = true;
     }
 }
 
@@ -250,7 +306,10 @@ impl<R: Ring> Mailbox<R> {
 
     /// The person at place `i`, from their record, or none. A person of
     /// another number than the one there is another person: their round
-    /// ends, as does one whose key changed.
+    /// ends, as does one whose key changed. But a command's round whose
+    /// summary has not gone, as when the command took the key itself, a
+    /// leave or the owner's removal of their own home, still sends its
+    /// summary, under the key it was taken with, and no item.
     pub fn set_person(&mut self, i: usize, person: Option<Person>) {
         let was = self.people[i];
         if was == person {
@@ -259,7 +318,10 @@ impl<R: Ring> Mailbox<R> {
         let same = was.zip(person).is_some_and(|(w, p)| w.number == p.number);
         let keyed = was.and_then(|w| w.key) == person.and_then(|p| p.key);
         if !same || !keyed {
-            self.replies[i] = None;
+            match self.replies[i].as_mut() {
+                Some(r) if r.command && !r.answered => r.summary_alone(),
+                _ => self.replies[i] = None,
+            }
             if self.in_flight.is_some_and(|f| f.person == i) {
                 self.in_flight = None;
             }
@@ -525,18 +587,31 @@ impl<R: Ring> Mailbox<R> {
     fn fetch(&mut self, payload: &[u8]) -> Arrival {
         let opened = (0..PEOPLE).find_map(|i| {
             let key = self.people[i]?.key?;
-            Fetch::open(&key, self.node, payload).ok().map(|f| (i, f))
+            Fetch::open(&key, self.node, payload)
+                .ok()
+                .map(|f| (i, key, f))
         });
         match opened {
-            Some((i, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
-                self.take(i, f);
-                Arrival::Fetch(i)
+            Some((i, key, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
+                self.take(i, key, f);
+                Arrival::Fetch {
+                    person: i,
+                    command: f.command,
+                }
             }
             _ => Arrival::Refused,
         }
     }
 
-    fn take(&mut self, i: usize, f: Fetch) {
+    /// What the command of the round of the person at `i` did, for its
+    /// summary, which waits for it.
+    pub fn answer(&mut self, i: usize, outcome: Outcome) {
+        if let Some(r) = self.replies[i].as_mut().filter(|r| r.command) {
+            r.outcome = Some(outcome);
+        }
+    }
+
+    fn take(&mut self, i: usize, key: [u8; KEY_LEN], f: Fetch) {
         let lowest = self.lowest();
         let mut count: u8 = 0;
         let mut bottom = self.newest + 1;
@@ -553,6 +628,7 @@ impl<R: Ring> Mailbox<R> {
             p.last_fetch = f.sent;
         }
         self.replies[i] = Some(Reply {
+            key,
             round: f.sent,
             address: f.address,
             recipient: f.recipient,
@@ -563,6 +639,9 @@ impl<R: Ring> Mailbox<R> {
             remaining: u16::try_from(remaining).unwrap_or(u16::MAX),
             again: None,
             answered: false,
+            command: f.command.is_some(),
+            outcome: None,
+            orphan: false,
         });
         if self.in_flight.is_some_and(|f| f.person == i) {
             self.in_flight = None;
@@ -577,7 +656,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     fn due(&self, i: usize) -> bool {
-        self.people[i].is_some_and(|p| p.key.is_some()) && self.replies[i].is_some_and(|r| r.due())
+        let keyed = self.people[i].is_some_and(|p| p.key.is_some());
+        self.replies[i].is_some_and(|r| r.due() && (keyed || r.orphan))
     }
 
     /// The next reply to hand the core, sealed into `out`, if one is due;
@@ -598,14 +678,22 @@ impl<R: Ring> Mailbox<R> {
     }
 
     fn next_of(&mut self, i: usize, out: &mut [u8; MAX_PAYLOAD]) -> Option<Outgoing> {
-        let key = self.people[i]?.key?;
         let mut r = self.replies[i]?;
+        let key = r.key;
         let mut sealed = None;
         // The summary first, so that the phone counts what is on its way.
+        if !r.due() {
+            return None;
+        }
         if !r.answered {
-            let s = seal::seal_summary(&key, r.recipient, r.round, r.items, r.remaining);
-            out[..s.len()].copy_from_slice(&s);
-            sealed = Some((0, 0, s.len()));
+            let summary = Summary {
+                items: r.items,
+                remaining: r.remaining,
+                owner: !r.orphan && self.people[i].is_some_and(|p| p.owner),
+                outcome: r.outcome,
+            };
+            let n = seal::seal_summary(&key, r.recipient, r.round, &summary, out);
+            sealed = Some((0, 0, n));
             r.answered = true;
         }
         if sealed.is_none() {

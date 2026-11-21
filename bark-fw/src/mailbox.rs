@@ -103,13 +103,19 @@ pub fn idle() -> bool {
 }
 
 /// A payload the core delivered, into the mailbox; a fetch taken moves
-/// its person's last fetch, which their record keeps.
+/// its person's last fetch, which their record keeps, and its command
+/// runs on the records (`phones::fetched`).
 pub fn arrive(msg_id: MsgId, payload: &[u8]) {
     match with(|m| m.arrive(msg_id, payload)) {
         Some(Arrival::Kept(n)) => log::info!("mailbox: id={:08x} kept as {}", msg_id.0, n),
-        Some(Arrival::Fetch(i)) => {
-            log::info!("mailbox: fetch id={:08x} taken for record {}", msg_id.0, i);
-            crate::phones::progress(i);
+        Some(Arrival::Fetch { person, command }) => {
+            log::info!(
+                "mailbox: fetch id={:08x} taken for record {}, command {:?}",
+                msg_id.0,
+                person,
+                command.map(|c| c.op())
+            );
+            crate::phones::fetched(person, command);
         }
         Some(a) => log::info!("mailbox: id={:08x} {:?}", msg_id.0, a),
         None => {}
