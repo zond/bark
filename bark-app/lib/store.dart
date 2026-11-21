@@ -67,10 +67,15 @@ abstract class Store {
 class FileStore extends Store {
   @override
   final String name;
-  FileStore(this.name);
+  final Future<Directory> Function() _dir;
+  FileStore(this.name, {Future<Directory> Function()? dir})
+    : _dir = dir ?? getApplicationSupportDirectory;
 
-  Future<File> _file() async =>
-      File('${(await getApplicationSupportDirectory()).path}/$name');
+  Future<File> _file() async => File('${(await _dir()).path}/$name');
+
+  /// The write before, done or failed: two of one file run in turn, as
+  /// each is written aside under one name, and the later one stays.
+  Future<void> _written = Future.value();
 
   @override
   Future<String?> read() async {
@@ -80,7 +85,13 @@ class FileStore extends Store {
   }
 
   @override
-  Future<void> write(String text) async {
+  Future<void> write(String text) {
+    final w = _written.then((_) => _write(text));
+    _written = w.then((_) {}, onError: (_) {});
+    return w;
+  }
+
+  Future<void> _write(String text) async {
     final f = await _file();
     // Written aside and renamed, so a crash leaves the old or the new.
     final tmp = File('${f.path}.tmp');

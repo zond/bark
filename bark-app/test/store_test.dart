@@ -2,6 +2,7 @@
 // set aside and the app starts, with the fact in the log.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
@@ -149,4 +150,15 @@ void main() {
     ]);
     app.dispose();
   });
+  test(
+    'two writes of one file at once: both end, the later one stays',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('bark-store');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = FileStore('x.json', dir: () async => dir);
+      await Future.wait([for (var i = 0; i < 20; i++) store.write('{"n":$i}')]);
+      expect(await store.read(), '{"n":19}');
+      expect(dir.listSync().map((f) => f.uri.pathSegments.last), ['x.json']);
+    },
+  );
 }
