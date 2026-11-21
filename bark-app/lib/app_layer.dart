@@ -112,7 +112,13 @@ class Keys {
       subkeyId: BigInt.from(id),
       subkeyLen: keyLen,
     );
-    final pair = s.crypto.box.seedKeyPair(sub(1, 'bark-key'));
+    final boxSeed = sub(1, 'bark-key');
+    final KeyPair pair;
+    try {
+      pair = s.crypto.box.seedKeyPair(boxSeed);
+    } finally {
+      boxSeed.dispose();
+    }
     final mailbox = sub(2, 'bark-mbx');
     master.dispose();
     return Keys._(Uint8List.fromList(seed), pair, mailbox);
