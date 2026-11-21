@@ -256,8 +256,8 @@ void main() {
 
     test('with the messages: the same person, contacts and texts', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: true));
-        done(async, fresh.restoreFile(file, 'pw'));
+        final file = done(async, old.moving.identityFile('pw', messages: true));
+        done(async, fresh.moving.restoreFile(file, 'pw'));
         expect(fresh.me.key, old.me.key);
         expect(fresh.me.name, 'Ann');
         expect(fresh.me.lastSent, old.me.lastSent);
@@ -281,8 +281,11 @@ void main() {
         final given = Uint8List.fromList(List.filled(32, 7));
         final home = Address.parse('01020304050607fa4e00000009')!;
         done(async, old.me.setHome(home, key: given));
-        final file = done(async, old.identityFile('pw', messages: false));
-        done(async, fresh.restoreFile(file, 'pw'));
+        final file = done(
+          async,
+          old.moving.identityFile('pw', messages: false),
+        );
+        done(async, fresh.moving.restoreFile(file, 'pw'));
         expect(fresh.me.home.toString(), home.toString());
         expect(fresh.me.givenKey, given);
         expect(fresh.me.mailboxKey.extractBytes(), given);
@@ -292,8 +295,11 @@ void main() {
 
     test('without the messages: none, the contacts still there', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: false));
-        done(async, fresh.restoreFile(file, 'pw'));
+        final file = done(
+          async,
+          old.moving.identityFile('pw', messages: false),
+        );
+        done(async, fresh.moving.restoreFile(file, 'pw'));
         expect(fresh.me.key, old.me.key);
         expect(fresh.contacts.list, hasLength(1));
         expect(fresh.session.received, isEmpty);
@@ -303,8 +309,11 @@ void main() {
 
     test('the home and its key survive, its node to pair again', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: false));
-        done(async, fresh.restoreFile(file, 'pw'));
+        final file = done(
+          async,
+          old.moving.identityFile('pw', messages: false),
+        );
+        done(async, fresh.moving.restoreFile(file, 'pw'));
         final home = nodeName(FakeNode.id);
         expect(fresh.me.home.toString(), old.me.home.toString());
         expect(fresh.homeName, home);
@@ -331,9 +340,12 @@ void main() {
     test('restored on the phone the pairing was made on, the node is its '
         'own once heard', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: false));
+        final file = done(
+          async,
+          old.moving.identityFile('pw', messages: false),
+        );
         done(async, old.session.disconnect());
-        done(async, fresh.restoreFile(file, 'pw'));
+        done(async, fresh.moving.restoreFile(file, 'pw'));
         final home = nodeName(FakeNode.id);
         expect(fresh.nodes[home]!.moved, isTrue);
         // Android holds the bond, as the fake Bluetooth does.
@@ -349,9 +361,12 @@ void main() {
 
     test('restored on another phone, the node heard stays to pair again', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: false));
+        final file = done(
+          async,
+          old.moving.identityFile('pw', messages: false),
+        );
         done(async, old.session.disconnect());
-        done(async, fresh.restoreFile(file, 'pw'));
+        done(async, fresh.moving.restoreFile(file, 'pw'));
         final home = nodeName(FakeNode.id);
         old.fakeBle!.bonds.clear();
         fresh.scan();
@@ -368,7 +383,7 @@ void main() {
         expect(old.me.home, isNotNull);
         expect(old.session.connected, isTrue);
         final seed = Uint8List.fromList(List.generate(seedLen, (i) => 9 + i));
-        done(async, old.restoreWords(seed));
+        done(async, old.moving.restoreWords(seed));
         expect(old.session.connected, isFalse);
         expect(old.me.key, hex(Keys.fromSeed(sodium, seed).identity));
         expect(old.me.home, isNull);
@@ -380,10 +395,10 @@ void main() {
 
     test('a wrong password changes nothing', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: true));
+        final file = done(async, old.moving.identityFile('pw', messages: true));
         final before = fresh.me.key;
         expect(
-          () => done(async, fresh.restoreFile(file, 'not it')),
+          () => done(async, fresh.moving.restoreFile(file, 'not it')),
           throwsA(isA<WrongPassword>()),
         );
         expect(fresh.me.key, before);
@@ -394,11 +409,11 @@ void main() {
 
     test('a damaged file changes nothing', () {
       run((async, old, fresh) {
-        final file = done(async, old.identityFile('pw', messages: true));
+        final file = done(async, old.moving.identityFile('pw', messages: true));
         file[file.length ~/ 2] ^= 0x80;
         final before = fresh.me.key;
         expect(
-          () => done(async, fresh.restoreFile(file, 'pw')),
+          () => done(async, fresh.moving.restoreFile(file, 'pw')),
           throwsA(isA<WrongPassword>()),
         );
         expect(fresh.me.key, before);
@@ -410,9 +425,12 @@ void main() {
       'restoring ends the link, which belonged to the identity replaced',
       () {
         run((async, old, fresh) {
-          final file = done(async, fresh.identityFile('pw', messages: false));
+          final file = done(
+            async,
+            fresh.moving.identityFile('pw', messages: false),
+          );
           expect(old.session.connected, isTrue);
-          done(async, old.restoreFile(file, 'pw'));
+          done(async, old.moving.restoreFile(file, 'pw'));
           expect(old.session.connected, isFalse);
           expect(old.me.key, fresh.me.key);
           expect(old.contacts.list, isEmpty);

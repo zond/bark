@@ -63,7 +63,7 @@ class IdentitySection extends StatelessWidget {
         action: 'Save',
         twice: true,
         run: (password, messages) =>
-            app.identityFile(password, messages: messages),
+            app.moving.identityFile(password, messages: messages),
       ),
     );
     if (file == null || !context.mounted) return;
@@ -99,7 +99,7 @@ class IdentitySection extends StatelessWidget {
         action: 'Restore',
         twice: false,
         run: (password, _) async {
-          await app.restoreFile(f, password);
+          await app.moving.restoreFile(f, password);
           return true;
         },
       ),

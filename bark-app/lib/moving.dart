@@ -1,10 +1,32 @@
 // Moving to a new phone: the person's identity file, saved here and
-// restored there (`identity_file.dart`).
+// restored there (`identity_file.dart`), and the identity brought back
+// from its 12 words.
 
-part of '../app.dart';
+import 'dart:typed_data';
 
-mixin _Moving on _AppCore {
-  PasswordKey get passwordKey;
+import 'package:sodium/sodium.dart';
+
+import 'contacts.dart';
+import 'identity_file.dart';
+import 'me.dart';
+import 'session.dart';
+
+class Moving {
+  final Sodium sodium;
+
+  /// The key an identity file is sealed under, from its password.
+  final PasswordKey passwordKey;
+  final Me me;
+  final Contacts contacts;
+  final Session session;
+
+  Moving({
+    required this.sodium,
+    required this.passwordKey,
+    required this.me,
+    required this.contacts,
+    required this.session,
+  });
 
   /// The person's identity file under `password`, their messages in it if
   /// `messages`.
@@ -25,7 +47,7 @@ mixin _Moving on _AppCore {
       contacts: [...contacts.list],
       archived: {...contacts.archived},
       nodes: [
-        for (final r in nodes.records)
+        for (final r in session.nodes.records)
           if (r.paired || r.ringAfter != 0)
             (name: r.name, paired: r.paired, ringAfter: r.ringAfter),
       ],
@@ -66,7 +88,6 @@ mixin _Moving on _AppCore {
       'Identity restored from a file, ${f.contacts.length} contacts, '
       '${m == null ? 'no' : m.received.length + m.outbox.length} messages',
     );
-    notifyListeners();
   }
 
   /// Replaces the person by the one of `seed`, from their 12 words. The
@@ -76,6 +97,5 @@ mixin _Moving on _AppCore {
     await session.disconnect();
     await me.restore(seed);
     session.note('Identity restored from words');
-    notifyListeners();
   }
 }

@@ -21,6 +21,7 @@ import 'identity_file.dart';
 import 'link.dart';
 import 'me.dart';
 import 'messenger.dart';
+import 'moving.dart';
 import 'node_link.dart';
 import 'nodes.dart';
 import 'phone_notifier.dart';
@@ -33,7 +34,6 @@ import 'updater.dart';
 part 'app/connect.dart';
 part 'app/home.dart';
 part 'app/installs.dart';
-part 'app/moving.dart';
 part 'app/owner.dart';
 part 'app/pairing.dart';
 part 'app/scan.dart';
@@ -104,13 +104,10 @@ abstract class _AppCore extends ChangeNotifier {
 }
 
 class AppModel extends _AppCore
-    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Owner, _Moving {
+    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Owner {
   @override
   final Sodium sodium;
 
-  /// The key an identity file is sealed under, from its password.
-  @override
-  final PasswordKey passwordKey;
   @override
   final Me me;
   @override
@@ -122,6 +119,9 @@ class AppModel extends _AppCore
   @override
   final DateTime Function() now;
   final Notifier notifier;
+
+  /// The identity file and the 12 words: moving to another phone.
+  late final Moving moving;
   late final Alerts alerts;
 
   /// The latest release, against this app and the connected node.
@@ -146,7 +146,7 @@ class AppModel extends _AppCore
     this.notifier = const NoNotifier(),
     Releases? releases,
     this.apks = const NoApks(),
-    this.passwordKey = argon2id,
+    PasswordKey passwordKey = argon2id,
     this.place = const AndroidPlace(),
     Future<bool> Function()? bluetoothAllowed,
     Future<void> Function()? requestBluetooth,
@@ -154,6 +154,13 @@ class AppModel extends _AppCore
        _bluetoothAllowed = bluetoothAllowed ?? UniversalBle.hasPermissions,
        _requestBluetooth = requestBluetooth ?? _askAndroid {
     this.releases.noted = session.note;
+    moving = Moving(
+      sodium: sodium,
+      passwordKey: passwordKey,
+      me: me,
+      contacts: contacts,
+      session: session,
+    );
     messenger = Messenger(sodium, me, contacts, session, now)
       ..summarised = _answered
       ..itemCame = _itemCame;
