@@ -652,7 +652,7 @@ void main() {
   });
 
   testWidgets('the words and the identity file\'s password are kept out of '
-      'screenshots while shown', (t) async {
+      'screenshots and the keyboard\'s memory while shown', (t) async {
     final secure = <bool>[];
     final m = t.binding.defaultBinaryMessenger;
     m.setMockMethodCallHandler(Secret.channel, (c) async {
@@ -674,6 +674,17 @@ void main() {
       await t.pumpAndSettle();
     }
 
+    // Each field shown takes a secret, and the keyboard keeps none of it.
+    void keepsNoWords(int fields) {
+      final fs = t.widgetList<TextField>(find.byType(TextField));
+      expect(fs, hasLength(fields));
+      for (final f in fs) {
+        expect(f.enableSuggestions, isFalse);
+        expect(f.autocorrect, isFalse);
+        expect(f.enableIMEPersonalizedLearning, isFalse);
+      }
+    }
+
     await tap('Show my words');
     expect(secure, [true]);
     await t.tap(find.text('I wrote them down'));
@@ -686,12 +697,14 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('Your 12 words'), findsOneWidget);
     expect(secure, [true, false, true]);
+    keepsNoWords(1);
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(secure, [true, false, true, false]);
 
     await tap('Save to a file');
     expect(secure, [true, false, true, false, true]);
+    keepsNoWords(2);
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(secure, [true, false, true, false, true, false]);

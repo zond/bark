@@ -702,6 +702,10 @@ Future<String?> askText(
           controller: c,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
+          // The keyboard keeps no word of a secret.
+          enableSuggestions: !secret,
+          autocorrect: !secret,
+          enableIMEPersonalizedLearning: !secret,
           onSubmitted: (v) => Navigator.pop(context, v.trim()),
         ),
         actions: [
