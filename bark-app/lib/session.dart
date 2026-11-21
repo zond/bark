@@ -426,7 +426,7 @@ class Session extends ChangeNotifier {
 
   /// The version of `bark.json`'s format; an identity file carries its
   /// messages in it too.
-  static const version = 4;
+  static const version = 3;
 
   Future<void> load() async {
     final j = await store.load(
@@ -473,7 +473,7 @@ class Session extends ChangeNotifier {
   /// messages: those of another identity are no one's here now. Applied at
   /// once, saved after.
   Future<void> moveIn(
-    Iterable<MovedNode> ns, {
+    Iterable<({String name, bool paired, int ringAfter})> ns, {
     List<Outgoing> outbox = const [],
     List<Received> received = const [],
     Map<String, int> reactionsUsed = const {},

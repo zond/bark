@@ -18,7 +18,6 @@ import 'package:sodium/sodium_sumo.dart';
 import 'app_layer.dart';
 import 'contacts.dart';
 import 'link.dart';
-import 'nodes.dart';
 import 'session.dart';
 
 /// The layout's version, the header's byte after [magic]; a stored layout,
@@ -143,7 +142,7 @@ class IdentityFile {
 
   final List<Contact> contacts;
   final Set<String> archived;
-  final List<MovedNode> nodes;
+  final List<({String name, bool paired, int ringAfter})> nodes;
 
   /// Null when the person left the messages out.
   final FileMessages? messages;
@@ -191,12 +190,7 @@ class IdentityFile {
     },
     'nodes': [
       for (final n in nodes)
-        {
-          'name': n.name,
-          'paired': n.paired,
-          'lost': n.lost,
-          'ringAfter': n.ringAfter,
-        },
+        {'name': n.name, 'paired': n.paired, 'ringAfter': n.ringAfter},
     ],
     'messages': switch (messages) {
       null => null,
@@ -244,7 +238,6 @@ class IdentityFile {
           (
             name: (e as Map<String, dynamic>)['name'] as String,
             paired: e['paired'] as bool,
-            lost: e['lost'] as bool,
             ringAfter: e['ringAfter'] as int,
           ),
       ],

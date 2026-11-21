@@ -30,12 +30,7 @@ mixin _Moving on _AppCore {
       nodes: [
         for (final r in nodes.records)
           if (r.paired || r.ringAfter != 0)
-            (
-              name: r.name,
-              paired: r.paired,
-              lost: r.lost && !r.moved,
-              ringAfter: r.ringAfter,
-            ),
+            (name: r.name, paired: r.paired, ringAfter: r.ringAfter),
       ],
       messages: messages
           ? (

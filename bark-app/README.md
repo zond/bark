@@ -205,10 +205,11 @@ is a prototype for the bench, not the app people will carry.
     "connected", "not in reach" while the search looks, "Needs an
     update. Tap to try again" for one passed over for its version,
     "Not looking. Tap to connect" once the person has stopped the
-    search, or "No
-    longer yours", with **Pair again** while the app has heard it in
-    the last 30 s and **Forget** (Unpairing, below); a tap on that row
-    opens a few sentences on what happened and what each does. A tap on
+    search, or "Does not know this phone", with **Pair again** while
+    the app has heard it in the last 30 s and **Forget** (Unpairing,
+    below); a tap on that row opens a few sentences on why, someone
+    removed the phone, the node lost its memory, or the person moved
+    from another phone (The identity file, below), and what each does. A tap on
     another paired node's row connects to it as its owner: at once when
     the app heard it in the last 30 s, the span the search takes to
     call a node out of reach, else after a scan of one round, saying it
@@ -1093,10 +1094,10 @@ person, the contacts and the messages, none if the file has none. A
 pairing is the phone's: Android keeps the bond, and the node knows the
 phone by it (Old bonds, above), so the nodes the old phone was paired
 with come back paired but not this phone's, until the person pairs
-again. Settings lists them under "Paired with" as "Paired on your old
-phone", with **Pair again** while in reach and **Forget**, as a node
-that no longer knows the phone (Settings, above), and a tap on the row
-says why; the connection line's help names them. The search does not
+again: they come back as nodes that do not know the phone, "Does not
+know this phone" under "Paired with", with **Pair again** while in
+reach and **Forget** (Settings, above), and no mark of their own, as
+that is all they are to this phone. The search does not
 use them meanwhile, and a public one serves the phone as a guest. A node
 this phone is paired with already stays its own. The home needs no
 pairing, as it holds the mailbox key: texts to the card go on arriving
@@ -1452,7 +1453,8 @@ a phone (Trying it).
     or the node's stored state is discarded. Connect the first phone
     once, which finds the node no longer its own, and **Not now**.
     **Settings** lists the node under
-    "Paired with" as no longer yours, with **Pair again** and **Forget**;
+    "Paired with" as "Does not know this phone", with **Pair again** and
+    **Forget**;
     a tap on the row says what happened. **Pair again**: the log shows
     `Pairing: the phone forgot its bond with …`, the node logs one
     link, shows a code, and the pairing completes; the row says the node
@@ -1481,7 +1483,7 @@ a phone (Trying it).
     file**, the file; a wrong password says so and changes nothing; the
     right one says "Identity restored. Pair again with your nodes.", and
     the conversations, contacts, name and card are the old phone's.
-    **Settings** lists the old nodes as "Paired on your old phone"; a
+    **Settings** lists the old nodes as "Does not know this phone"; a
     text to the restored person's card arrives at the home, and **Fetch
     my mail** from another node brings it. **Pair again** on the home's
     row, with the code on its screen: the row says "Your home".

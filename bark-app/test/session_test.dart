@@ -921,7 +921,6 @@ void main() {
         'name': name,
         'paired': true,
         'lost': false,
-        'moved': false,
         'ringAfter': 0,
       });
       s.nodes[name]!.paired = false;

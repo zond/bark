@@ -72,9 +72,7 @@ void main() {
       rounds: [1200, 1100],
       contacts: const [],
       archived: const {},
-      nodes: const [
-        (name: 'bark-fa4e00000001', paired: true, lost: false, ringAfter: 7),
-      ],
+      nodes: const [(name: 'bark-fa4e00000001', paired: true, ringAfter: 7)],
       messages: null,
     );
   }
@@ -254,18 +252,18 @@ void main() {
         expect(fresh.homeName, home);
         expect(fresh.me.keys.mailbox.extractBytes(), old.fakeNode!.homeKey);
         final r = fresh.nodes[home]!;
-        expect((r.paired, r.lost, r.moved), (true, true, true));
+        expect((r.paired, r.lost), (true, true));
         expect(fresh.nodes.own, isEmpty);
-        expect(fresh.nodes.moved, {home});
+        expect(fresh.nodes.lost, {home});
         // Kept as such across a restart.
         final again = Session(store: fresh.session.store, now: fresh.now);
         again.load();
         async.flushMicrotasks();
-        expect(again.nodes[home]!.moved, isTrue);
+        expect(again.nodes[home]!.lost, isTrue);
         again.dispose();
         // Pairing anew makes it the phone's own again.
         done(async, fresh.session.setPaired(home));
-        expect(fresh.nodes[home]!.moved, isFalse);
+        expect(fresh.nodes[home]!.lost, isFalse);
         expect(fresh.nodes.own, {home});
       });
     });
@@ -412,15 +410,18 @@ void main() {
     expect(fresh.me.key, old.me.key);
     expect(fresh.me.name, 'Ann');
     await t.scrollUntilVisible(
-      find.text('Paired on your old phone'),
+      find.text('Does not know this phone'),
       -100,
       scrollable: find.byType(Scrollable).first,
     );
-    await t.tap(find.text('Paired on your old phone'));
+    await t.tap(find.text('Does not know this phone'));
     await t.pumpAndSettle();
-    expect(find.text('Pair again with ID FA4E00000001'), findsOneWidget);
     expect(
-      find.textContaining('a pairing stays on the phone it was made on'),
+      find.text('ID FA4E00000001 does not know this phone'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('or you moved here from another phone'),
       findsOneWidget,
     );
     await t.pumpWidget(const SizedBox());

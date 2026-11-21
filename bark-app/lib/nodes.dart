@@ -13,11 +13,6 @@ import 'link.dart';
 /// pairing (spec "Phone link", Pairing).
 typedef GuestReading = ({Address? address, bool homeable, int? room});
 
-/// A node as an identity file lists it: whether the old phone was paired
-/// with it and, if so, whether the node had forgotten that phone, and the
-/// number of the last item it took from the node's ring as a guest.
-typedef MovedNode = ({String name, bool paired, bool lost, int ringAfter});
-
 /// Whether a node, by its status, can be a home: one that stays on power
 /// at a fixed place, so that its address stays (spec "Mailbox").
 bool canBeHome(Status? s) => s != null && !s.sleepy && !s.carried;
@@ -36,11 +31,6 @@ class NodeRecord {
   /// link", The removed phone). The person decides, with Pair again or
   /// Forget.
   bool lost = false;
-
-  /// Paired on the phone the person's identity came from, by its file
-  /// (`identity_file.dart`): the bond is in that phone's Bluetooth, so
-  /// this one pairs anew. A moved node is [lost] too.
-  bool moved = false;
 
   /// The number of the last item taken from its ring as a guest: the
   /// node keeps nothing for a guest, so the phone keeps where it is
@@ -90,7 +80,6 @@ class NodeRecord {
     'name': name,
     'paired': paired,
     'lost': lost,
-    'moved': moved,
     'ringAfter': ringAfter,
   };
 
@@ -98,7 +87,6 @@ class NodeRecord {
       NodeRecord(j['name'] as String)
         ..paired = j['paired'] as bool
         ..lost = j['lost'] as bool
-        ..moved = j['moved'] as bool
         ..ringAfter = j['ringAfter'] as int;
 }
 
@@ -121,17 +109,10 @@ class NodeStore {
       if (r.paired) r.name,
   };
 
-  /// The paired nodes that no longer hold the phone's bond, the moved
-  /// ones apart.
+  /// The paired nodes that no longer hold the phone's bond.
   Set<String> get lost => {
     for (final r in _all.values)
-      if (r.paired && r.lost && !r.moved) r.name,
-  };
-
-  /// The paired nodes the old phone was paired with ([NodeRecord.moved]).
-  Set<String> get moved => {
-    for (final r in _all.values)
-      if (r.paired && r.moved) r.name,
+      if (r.paired && r.lost) r.name,
   };
 
   /// The paired nodes that still hold it: the phone is their owner.
@@ -164,15 +145,11 @@ class NodeStore {
   /// The node `name` holds the phone's bond, or no longer does: moved to
   /// the end of the paired. Whether anything changed.
   bool setPaired(String name, {bool lost = false}) {
-    final same =
-        paired.lastOrNull == name &&
-        _all[name]!.lost == lost &&
-        !_all[name]!.moved;
+    final same = paired.lastOrNull == name && _all[name]!.lost == lost;
     final r = _all.remove(name) ?? NodeRecord(name);
     _all[name] = r
       ..paired = true
-      ..lost = lost
-      ..moved = false;
+      ..lost = lost;
     return !same;
   }
 
@@ -182,26 +159,25 @@ class NodeStore {
     if (r == null || !r.paired) return false;
     r
       ..paired = false
-      ..lost = false
-      ..moved = false;
+      ..lost = false;
     return true;
   }
 
-  /// Takes the nodes of an identity file: one the old phone was paired
-  /// with is paired and [NodeRecord.moved], unless this phone is its owner
-  /// already, and where the old phone stood in each node's ring as a guest
+  /// Takes the nodes of an identity file. One the old phone was paired
+  /// with does not hold this phone's bond, as a bond stays in the phone it
+  /// was made on, so it is paired and lost, unless this phone is its owner
+  /// already; and where the old phone stood in each node's ring as a guest
   /// is where this one does. Of what this phone knew, only its own nodes
   /// stay paired, as Android holds their bonds; its places in the rings
   /// were another identity's tag's.
-  void moveIn(Iterable<MovedNode> ns) {
+  void moveIn(Iterable<({String name, bool paired, int ringAfter})> ns) {
     for (final r in _all.values) {
       r.ringAfter = 0;
       r.ringReadAt = null;
       if (!r.own) {
         r
           ..paired = false
-          ..lost = false
-          ..moved = false;
+          ..lost = false;
       }
     }
     for (final n in ns) {
@@ -209,8 +185,7 @@ class NodeStore {
       if (n.paired && !r.own) {
         r
           ..paired = true
-          ..lost = true
-          ..moved = !n.lost;
+          ..lost = true;
       }
     }
     guest = null;
