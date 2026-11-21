@@ -16,7 +16,6 @@ import 'package:latlong2/latlong.dart';
 
 import '../app.dart';
 import '../asks.dart';
-import '../contacts.dart';
 import '../link.dart';
 import '../session.dart';
 import 'common.dart';
@@ -177,15 +176,47 @@ Fact _position(Position p, {required bool mapPoint}) => !_placed(p)
         'from GPS\n${_where(p)}',
       );
 
-/// The names of the contacts whose home, or node last used, has `id`:
-/// a node on the map is often a person's.
-String? contactsAt(Contacts contacts, List<int> id) {
+/// The people at the node `id`: those whose home it is, "You" first when
+/// it is the person's, and the contacts last seen there, with when. A node
+/// on the map is often a person's.
+({List<String> home, List<(String, DateTime)> seen}) peopleAt(
+  AppModel app,
+  List<int> id,
+) {
   bool at(Address? a) => a != null && hex(a.id) == hex(id);
-  final names = [
-    for (final c in contacts.active)
-      if (at(c.card.home) || at(c.place)) c.name,
+  return (
+    home: [
+      if (at(app.me.home)) 'You',
+      for (final c in app.contacts.active)
+        if (at(c.card.home)) c.name,
+    ],
+    seen: [
+      for (final c in app.contacts.active)
+        if (at(c.place) && c.placeAt != null) (c.name, c.placeAt!),
+    ],
+  );
+}
+
+/// The people at `id` in one line, as a list of the nodes at one place
+/// says them under each node: no times.
+String? peopleLine(AppModel app, List<int> id) {
+  final p = peopleAt(app, id);
+  final parts = [
+    if (p.home.isNotEmpty) 'Home: ${p.home.join(', ')}',
+    if (p.seen.isNotEmpty) 'Last seen: ${p.seen.map((s) => s.$1).join(', ')}',
   ];
-  return names.isEmpty ? null : names.join(', ');
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
+/// The people at `id` as a node's details say them: a line for its homes
+/// and one for those last seen there, each with when.
+List<String> peopleLines(AppModel app, List<int> id) {
+  final p = peopleAt(app, id);
+  return [
+    if (p.home.isNotEmpty) 'Home: ${p.home.join(', ')}',
+    if (p.seen.isNotEmpty)
+      'Last seen: ${p.seen.map((s) => '${s.$1} ${ago(app.now().difference(s.$2))}').join(', ')}',
+  ];
 }
 
 LatLng _at(Position p) => LatLng(p.latDeg, p.lonDeg);
@@ -225,6 +256,9 @@ class _Spot {
   final double width;
   final double height;
   final String name;
+
+  /// The people at it, as [peopleLine] says them.
+  final String? people;
   final String kind;
   final IconData icon;
   final Color color;
@@ -238,6 +272,7 @@ class _Spot {
     required this.width,
     required this.height,
     required this.name,
+    required this.people,
     required this.kind,
     required this.icon,
     required this.color,
@@ -464,10 +499,10 @@ class _MapScreenState extends State<MapScreen> {
   /// where several share a place: this node, then relays, then sleepy
   /// nodes, each kind in the table's order.
   List<_Spot> _spots(BuildContext context, NeighbourTable t, LatLng? own) {
-    final contacts = widget.app.contacts;
+    final app = widget.app;
     _Spot neighbour(Neighbour m) {
       final said = _s.answers[hex(m.id)];
-      final look = _NeighbourMarker(m, t, own, said, contacts);
+      final look = _NeighbourMarker(m, t, own, said);
       return _Spot(
         _at(m.position),
         width: said == null
@@ -476,7 +511,8 @@ class _MapScreenState extends State<MapScreen> {
         height: said == null
             ? _NeighbourMarker.size
             : _NeighbourMarker.labelledHeight,
-        name: contactsAt(contacts, m.id) ?? nodeLabel(m.id),
+        name: nodeLabel(m.id),
+        people: peopleLine(app, m.id),
         kind: m.carried
             ? 'carried'
             : m.sleepy
@@ -497,13 +533,14 @@ class _MapScreenState extends State<MapScreen> {
           own,
           width: _NodeMarker.size,
           height: _NodeMarker.size,
-          name: contactsAt(contacts, id) ?? nodeLabel(id),
+          name: nodeLabel(id),
+          people: peopleLine(app, id),
           kind: 'this node',
           icon: _NodeMarker.icon,
           color: Theme.of(context).colorScheme.primary,
           look: (count) => _NodeMarker.look(context, count),
           sheet: () => _Sheet(
-            contactsAt(contacts, id),
+            peopleLines(app, id),
             nodeLabel(id),
             _NodeMarker(widget.app, t).facts(),
           ),
@@ -536,7 +573,6 @@ class _MapScreenState extends State<MapScreen> {
       table,
       placed ? _at(table.own) : null,
       said,
-      widget.app.contacts,
     );
     final facts = look.facts();
     final sleepy = said?.sleepy ?? n.sleepy;
@@ -555,7 +591,7 @@ class _MapScreenState extends State<MapScreen> {
             _ => null,
           };
     return _Sheet(
-      contactsAt(widget.app.contacts, n.id),
+      peopleLines(widget.app, n.id),
       nodeLabel(n.id),
       facts,
       line: line,
@@ -632,8 +668,8 @@ class _MapScreenState extends State<MapScreen> {
                     button: true,
                     child: ListTile(
                       leading: Icon(s.icon, color: s.color),
-                      title: Text(s.name),
-                      subtitle: Text(s.kind),
+                      title: Text('${s.name} · ${s.kind}'),
+                      subtitle: s.people == null ? null : Text(s.people!),
                       onTap: () {
                         Navigator.pop(sheet);
                         _open(context, s);
@@ -757,8 +793,7 @@ class _NeighbourMarker {
 
   /// What it answered when asked, if it did.
   final NeighbourStatus? said;
-  final Contacts contacts;
-  const _NeighbourMarker(this.n, this.t, this.own, this.said, this.contacts);
+  const _NeighbourMarker(this.n, this.t, this.own, this.said);
 
   static const size = 40.0;
   static const _label = 14.0;
@@ -926,16 +961,16 @@ class _Line extends StatelessWidget {
   );
 }
 
-/// A node's details: whose it is, if a contact's, its ID, and a row a
-/// fact, in plain words, none of its screen's, with `line` before the
+/// A node's details: its ID, the people at it ([peopleLines]), and a row
+/// a fact, in plain words, none of its screen's, with `line` before the
 /// row at `lineAt`.
 class _Sheet extends StatelessWidget {
-  final String? whose;
+  final List<String> people;
   final String id;
   final List<Fact> facts;
   final Widget? line;
   final int lineAt;
-  const _Sheet(this.whose, this.id, this.facts, {this.line, this.lineAt = 0});
+  const _Sheet(this.people, this.id, this.facts, {this.line, this.lineAt = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -947,8 +982,8 @@ class _Sheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (whose != null) Text(whose!, style: text.titleLarge),
-            Text(id, style: whose == null ? text.titleLarge : text.titleSmall),
+            Text(id, style: text.titleLarge),
+            for (final p in people) Text(p),
             const SizedBox(height: 8),
             for (final (i, f) in facts.indexed) ...[
               if (i == lineAt) ?line,

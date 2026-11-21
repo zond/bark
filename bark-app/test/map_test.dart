@@ -10,6 +10,7 @@
 // not answer. Last, nodes a finger cannot tell apart: one marker with
 // their count, which lists them.
 
+import 'package:bark_app/app_layer.dart' show sentOf;
 import 'package:bark_app/app.dart';
 import 'package:bark_app/asks.dart';
 import 'package:bark_app/card.dart';
@@ -318,9 +319,10 @@ void main() {
         find.descendant(of: sheet, matching: find.text(text));
     Finder named(String label) =>
         find.descendant(of: sheet, matching: icon(label));
+    // Named by its ID, the people at it under it.
     expect(
-      t.getTopLeft(line('Olena')).dy,
-      lessThan(t.getTopLeft(line(nodeLabel(sleepy.id))).dy),
+      t.getTopLeft(line(nodeLabel(sleepy.id))).dy,
+      lessThan(t.getTopLeft(line('Home: Olena')).dy),
     );
     expect(line('SLEEPY ANCHORED'), findsNothing);
     final rows = [
@@ -792,28 +794,36 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.bySemanticsLabel('2 nodes here: ${nodeLabel(anchor.id)}, Olena'),
+      find.bySemanticsLabel(
+        '2 nodes here: ${nodeLabel(anchor.id)}, ${nodeLabel(s.id)}',
+      ),
       findsOneWidget,
     );
 
-    // A tap lists both, the relay first, each a labelled button.
+    // A tap lists both, the relay first, each a labelled button named by
+    // its ID and kind, the people at it under it.
     await t.tap(badge);
     await t.pumpAndSettle();
     expect(find.text('2 nodes here'), findsOneWidget);
-    final relay = find.widgetWithText(ListTile, nodeLabel(anchor.id));
-    final sleepy = find.widgetWithText(ListTile, 'Olena');
-    expect(
-      find.descendant(of: relay, matching: find.text('relay')),
-      findsOneWidget,
+    final relay = find.widgetWithText(
+      ListTile,
+      '${nodeLabel(anchor.id)} · relay',
     );
+    final sleepy = find.widgetWithText(ListTile, '${nodeLabel(s.id)} · sleepy');
+    expect(relay, findsOneWidget);
+    expect(find.descendant(of: relay, matching: find.byType(Text)), findsOne);
     expect(
-      find.descendant(of: sleepy, matching: find.text('sleepy')),
+      find.descendant(of: sleepy, matching: find.text('Home: Olena')),
       findsOneWidget,
     );
     expect(t.getTopLeft(relay).dy, lessThan(t.getTopLeft(sleepy).dy));
     expect(
       t.getSemantics(sleepy),
-      isSemantics(label: 'Olena\nsleepy', isButton: true, hasTapAction: true),
+      isSemantics(
+        label: '${nodeLabel(s.id)} · sleepy\nHome: Olena',
+        isButton: true,
+        hasTapAction: true,
+      ),
     );
 
     // Back closes the list.
@@ -835,12 +845,27 @@ void main() {
     );
     await closeSheet(t);
 
-    // A node alone at its place opens its sheet with no list.
+    // A node alone at its place opens its sheet with no list: the
+    // person's home, "You" under Home, and a contact last seen there,
+    // with when.
     final alone = fake.neighbours[3]!;
+    final at = Address(alone.position, alone.id);
+    await t.runAsync(() async {
+      await app.me.setHome(at);
+      await app.contacts.put(
+        Contact(
+          PersonCard(List.filled(32, 8), null, 0, 'Bo'),
+          '',
+        ).heard(sentOf(app.now()) - 300, at, app.now()),
+      );
+    });
+    await t.pump();
     await t.tap(icon(nodeLabel(alone.id)));
     await t.pumpAndSettle();
     expect(find.textContaining('nodes here'), findsNothing);
     expect(find.text(nodeLabel(alone.id)), findsOneWidget);
+    expect(find.text('Home: You'), findsOneWidget);
+    expect(find.text('Last seen: Bo 5 min ago'), findsOneWidget);
     await closeSheet(t);
     semantics.dispose();
     await shut(t, app);
