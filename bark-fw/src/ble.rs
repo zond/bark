@@ -1081,7 +1081,7 @@ fn start(
             continue;
         };
         let Some(b) = r.bond else {
-            let what = if r.removed {
+            let what = if r.only_removed() {
                 "a removed home"
             } else {
                 "a home"
@@ -1096,7 +1096,7 @@ fn start(
                 r.number,
                 b.seen,
                 b.service_changed,
-                r.home().is_some(),
+                r.key.home().is_some(),
                 Whose(&b)
             ),
             Err(e) => log::error!("ble: record {}'s bond {}", i, HostError(&e)),
@@ -2596,7 +2596,7 @@ fn node_now() -> [u8; Node::LEN] {
 /// phone's person's home.
 fn home_now(record: Option<usize>) -> bark_link::home::Home {
     let mine = record
-        .is_some_and(|i| crate::phones::read(|p| p.get(i).is_some_and(|r| r.home().is_some())));
+        .is_some_and(|i| crate::phones::read(|p| p.get(i).is_some_and(|r| r.key.home().is_some())));
     crate::mailbox::with(|m| bark_link::home::Home {
         set: m.is_home(),
         mine,

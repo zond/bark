@@ -11,7 +11,7 @@
 
 use core::cell::Cell;
 
-use bark_link::phones::{Record, RECORDS};
+use bark_link::phones::{HomeKey, Record, RECORDS};
 use bark_proto::{MsgId, NodeId};
 
 use crate::command::{Code, Command, Outcome, Summary};
@@ -126,10 +126,7 @@ pub struct Person {
     /// items are those with it.
     pub tag: Option<u8>,
     /// Their mailbox key, while the node is their home or once was.
-    pub key: Option<[u8; KEY_LEN]>,
-    /// Their home was removed: a fetch under the key is told so, and
-    /// nothing else.
-    pub removed: bool,
+    pub key: HomeKey,
     /// The newest item when their record was made: their bit in the
     /// marks of items up to it was another's, and counts for nothing.
     pub from: u32,
@@ -148,7 +145,6 @@ impl Person {
             number: r.number,
             tag: r.tag,
             key: r.key,
-            removed: r.removed,
             from: r.from,
             read: r.read,
             last_fetch: r.last_fetch,
@@ -347,8 +343,7 @@ impl<R: Ring> Mailbox<R> {
             return;
         }
         let same = was.zip(person).is_some_and(|(w, p)| w.number == p.number);
-        let home = |p: Option<Person>| p.and_then(|p| p.key.map(|k| (k, p.removed)));
-        let keyed = home(was) == home(person);
+        let keyed = was.map(|w| w.key) == person.map(|p| p.key);
         if !same || !keyed {
             match self.replies[i].as_mut() {
                 Some(r) if r.command != Commanded::No && !r.answered => r.summary_alone(),
@@ -537,10 +532,7 @@ impl<R: Ring> Mailbox<R> {
 
     /// Whether the node is anyone's home.
     pub fn is_home(&self) -> bool {
-        self.people
-            .iter()
-            .flatten()
-            .any(|p| p.key.is_some() && !p.removed)
+        self.people.iter().flatten().any(|p| p.key.home().is_some())
     }
 
     /// The highest number kept, 0 before any.
@@ -623,15 +615,15 @@ impl<R: Ring> Mailbox<R> {
     fn fetch(&mut self, payload: &[u8]) -> Arrival {
         let opened = [false, true].into_iter().find_map(|removed| {
             (0..PEOPLE).find_map(|i| {
-                let key = self.people[i].filter(|p| p.removed == removed)?.key?;
+                let (key, _) = self.people[i]?.key.opens().filter(|&(_, r)| r == removed)?;
                 Fetch::open(&key, self.node, payload)
                     .ok()
-                    .map(|f| (i, key, f))
+                    .map(|f| (i, key, removed, f))
             })
         });
         match opened {
-            Some((i, key, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
-                let removed = self.take(i, key, f);
+            Some((i, key, removed, f)) if self.people[i].is_some_and(|p| f.sent > p.last_fetch) => {
+                self.take(i, key, removed, f);
                 Arrival::Fetch {
                     person: i,
                     command: f.command.filter(|_| !removed),
@@ -653,10 +645,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     /// The round of the fetch `f` of the person at `i`, opened under
-    /// `key`; whether their home is removed, its round the summary that
-    /// says so alone.
-    fn take(&mut self, i: usize, key: [u8; KEY_LEN], f: Fetch) -> bool {
-        let removed = self.people[i].is_some_and(|p| p.removed);
+    /// `key`; under a removed home's, the summary that says so alone.
+    fn take(&mut self, i: usize, key: [u8; KEY_LEN], removed: bool, f: Fetch) {
         let lowest = self.lowest();
         let mut count: u8 = 0;
         let mut bottom = self.newest + 1;
@@ -697,7 +687,6 @@ impl<R: Ring> Mailbox<R> {
         if self.in_flight.is_some_and(|f| f.person == i) {
             self.in_flight = None;
         }
-        removed
     }
 
     /// Whether a reply may be due: [`Mailbox::next`] then gives it, or
@@ -708,7 +697,8 @@ impl<R: Ring> Mailbox<R> {
     }
 
     fn due(&self, i: usize) -> bool {
-        let keyed = self.people[i].is_some_and(|p| p.key.is_some());
+        // A removed home's round is an orphan's: its summary alone.
+        let keyed = self.people[i].is_some_and(|p| p.key.home().is_some());
         self.replies[i].is_some_and(|r| r.due() && (keyed || r.orphan))
     }
 

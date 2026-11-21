@@ -835,6 +835,7 @@ mod mailbox {
     use std::boxed::Box;
     use std::vec::Vec;
 
+    use bark_link::phones::HomeKey;
     use bark_proto::MsgId;
 
     use crate::mailbox::{Arrival, Mailbox, Person, RamRing, Ring};
@@ -852,7 +853,7 @@ mod mailbox {
         Person {
             number: 1,
             tag: Some(ITEM_TAG),
-            key: Some(fixture().alice.mailbox),
+            key: HomeKey::Home(fixture().alice.mailbox),
             ..Person::default()
         }
     }
@@ -974,7 +975,7 @@ mod mailbox {
             m.arrive(MsgId(2), &f),
             Arrival::Fetch {
                 person: 0,
-                command: None
+                command: None,
             }
         );
         assert!(m.reply_due());
@@ -998,7 +999,7 @@ mod mailbox {
             Some(Person {
                 number: 2,
                 tag: Some(6),
-                key: None,
+                key: HomeKey::None,
                 ..alice()
             }),
         );
@@ -1054,7 +1055,7 @@ mod mailbox {
             m.arrive(MsgId(9), &f),
             Arrival::Fetch {
                 person: 0,
-                command: None
+                command: None,
             }
         );
         assert_eq!(m.person(0).map(|p| p.last_fetch), Some(50));
@@ -1069,7 +1070,7 @@ mod mailbox {
         let bob = Person {
             number: 2,
             tag: Some(ITEM_TAG),
-            key: Some(fixture().bob.mailbox),
+            key: HomeKey::Home(fixture().bob.mailbox),
             ..Person::default()
         };
         m.set_person(0, Some(alice()));
@@ -1085,7 +1086,7 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&k, 7)),
             Arrival::Fetch {
                 person: 3,
-                command: None
+                command: None,
             }
         );
         let mut out = [0u8; MAX_PAYLOAD];
@@ -1104,7 +1105,7 @@ mod mailbox {
         let bob = Person {
             number: 2,
             tag: Some(ITEM_TAG),
-            key: Some(fixture().bob.mailbox),
+            key: HomeKey::Home(fixture().bob.mailbox),
             ..Person::default()
         };
         m.set_person(1, Some(alice()));
@@ -1116,14 +1117,14 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 9)),
             Arrival::Fetch {
                 person: 1,
-                command: None
+                command: None,
             }
         );
         assert_eq!(
             m.arrive(MsgId(0), &fetch(&fixture().bob.mailbox, 9)),
             Arrival::Fetch {
                 person: 4,
-                command: None
+                command: None,
             }
         );
         let mut out = [0u8; MAX_PAYLOAD];
@@ -1193,7 +1194,7 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 5)),
             Arrival::Fetch {
                 person: 2,
-                command: None
+                command: None,
             }
         );
         while m.next(&mut out).is_some() {}
@@ -1203,7 +1204,7 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 6)),
             Arrival::Fetch {
                 person: 6,
-                command: None
+                command: None,
             }
         );
         assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 0)));
@@ -1276,7 +1277,7 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&k, round)),
             Arrival::Fetch {
                 person: 0,
-                command: None
+                command: None,
             }
         );
         let got = drain(m, round);
@@ -1424,7 +1425,7 @@ mod mailbox {
             m.arrive(MsgId(0), &f),
             Arrival::Fetch {
                 person: 0,
-                command: None
+                command: None,
             }
         );
         assert_eq!(m.arrive(MsgId(0), &f), Arrival::Refused);
@@ -1440,7 +1441,7 @@ mod mailbox {
             m.arrive(MsgId(0), &fetch(&k, 101)),
             Arrival::Fetch {
                 person: 0,
-                command: None
+                command: None,
             }
         );
     }
@@ -1494,7 +1495,7 @@ mod mailbox {
         m.set_person(
             0,
             Some(Person {
-                key: None,
+                key: HomeKey::None,
                 ..alice()
             }),
         );
@@ -1617,6 +1618,7 @@ mod flash_ring {
     use crate::seal::Fetch;
     use crate::vectors::fixture;
     use crate::MAX_PAYLOAD;
+    use bark_link::phones::HomeKey;
 
     /// The ring's pages.
     const PAGES: u32 = 4;
@@ -1689,7 +1691,7 @@ mod flash_ring {
         Person {
             number: 1,
             tag: Some(b't'),
-            key: Some(fixture().alice.mailbox),
+            key: HomeKey::Home(fixture().alice.mailbox),
             ..Person::default()
         }
     }
@@ -1733,7 +1735,7 @@ mod flash_ring {
                 m.arrive(MsgId(0), &fetch(100)),
                 Arrival::Fetch {
                     person: 0,
-                    command: None
+                    command: None,
                 }
             )
         });
@@ -1932,7 +1934,7 @@ mod flash_ring {
             m.arrive(MsgId(0), &fetch(100)),
             Arrival::Fetch {
                 person: 0,
-                command: None
+                command: None,
             }
         );
         let mut ops = take_ops(&mut m);
@@ -1995,7 +1997,7 @@ mod flash_ring {
 mod commands {
     use std::vec::Vec;
 
-    use bark_link::phones::{Keys, Name, Phones, RECORDS};
+    use bark_link::phones::{HomeKey, Keys, Name, Phones, RECORDS};
     use bark_proto::MsgId;
 
     use crate::command::{self, Code, Command, Outcome, Summary};
@@ -2054,7 +2056,10 @@ mod commands {
         sent: u32,
         c: Option<Command>,
     ) -> (Summary, usize) {
-        let Arrival::Fetch { person, command } = m.arrive(MsgId(sent), &fetch(key, sent, c)) else {
+        let Arrival::Fetch {
+            person, command, ..
+        } = m.arrive(MsgId(sent), &fetch(key, sent, c))
+        else {
             panic!("the fetch is taken");
         };
         assert_eq!(command, c);
@@ -2221,8 +2226,9 @@ mod commands {
             m.set_person(i, p.get(i).map(Person::of));
         }
         let k = fixture().alice.mailbox;
-        let Arrival::Fetch { person, command } =
-            m.arrive(MsgId(1), &fetch(&k, 1, Some(Command::List)))
+        let Arrival::Fetch {
+            person, command, ..
+        } = m.arrive(MsgId(1), &fetch(&k, 1, Some(Command::List)))
         else {
             panic!()
         };
@@ -2260,9 +2266,9 @@ mod commands {
         let r = *p.get(2).unwrap();
         assert_eq!(
             (r.bond, r.key, r.tag, r.day),
-            (None, Some(carol), Some(0x33), 300)
+            (None, HomeKey::Home(carol), Some(0x33), 300)
         );
-        assert_eq!(m.person(2).map(|p| p.key), Some(Some(carol)));
+        assert_eq!(m.person(2).map(|p| p.key), Some(HomeKey::Home(carol)));
         // A retry, its answer lost, changes nothing.
         let (s, _) = ask(&mut m, &mut p, &alice, 11, Some(add));
         assert_eq!(s.outcome, done(Code::Already));
@@ -2302,7 +2308,7 @@ mod commands {
         );
         assert_eq!(s.outcome, done(Code::Ok));
         assert_eq!(
-            p.get(1).map(|r| (r.bond.is_some(), r.home())),
+            p.get(1).map(|r| (r.bond.is_some(), r.key.home())),
             Some((true, None))
         );
         let (s, _) = ask(
@@ -2355,7 +2361,7 @@ mod commands {
         );
         assert_eq!(
             p.get(1).map(|r| (r.bond.is_some(), r.key)),
-            Some((true, None))
+            Some((true, HomeKey::None))
         );
         assert_eq!(
             m.arrive(MsgId(11), &fetch(&f.bob.mailbox, 11, None)),
@@ -2376,8 +2382,9 @@ mod commands {
         let f = fixture();
         let (mut m, mut p) = node();
         let key = f.bob.mailbox;
-        let Arrival::Fetch { person, command } =
-            m.arrive(MsgId(1), &fetch(&key, 1, Some(Command::Leave)))
+        let Arrival::Fetch {
+            person, command, ..
+        } = m.arrive(MsgId(1), &fetch(&key, 1, Some(Command::Leave)))
         else {
             panic!()
         };
@@ -2410,16 +2417,19 @@ mod commands {
         let bob = f.bob.mailbox;
         let (mut m, mut p) = node();
         let leave = fetch(&bob, 10, Some(Command::Leave));
-        let Arrival::Fetch { person, command } = m.arrive(MsgId(1), &leave) else {
+        let Arrival::Fetch {
+            person, command, ..
+        } = m.arrive(MsgId(1), &leave)
+        else {
             panic!("taken")
         };
         command::obey(&mut m, &mut p, person, command, 0, 0);
-        assert_eq!(p.get(1).map(|r| r.key), Some(None));
+        assert_eq!(p.get(1).map(|r| r.key), Some(HomeKey::None));
         // Home again, from his phone, at its `sent` of 50.
         p.set_home(1, Some(bob), 50);
         sync(&mut m, &p);
         assert_eq!(m.arrive(MsgId(2), &leave), Arrival::Refused);
-        assert_eq!(p.get(1).map(|r| r.key), Some(Some(bob)));
+        assert_eq!(p.get(1).map(|r| r.key), Some(HomeKey::Home(bob)));
         let (s, _) = ask(&mut m, &mut p, &bob, 51, None);
         assert_eq!(s.outcome, None, "a later fetch is taken");
     }
@@ -2441,7 +2451,7 @@ mod commands {
         sync(&mut m, &p);
         assert_eq!(p.owner(), Some(alice), "the empty seat");
         assert_eq!(m.arrive(MsgId(3), &remove), Arrival::Refused);
-        assert_eq!(p.get(1).map(|r| r.key), Some(Some(f.bob.mailbox)));
+        assert_eq!(p.get(1).map(|r| r.key), Some(HomeKey::Home(f.bob.mailbox)));
     }
 
     /// A person added again after a leave takes none of their fetches from
@@ -2484,7 +2494,10 @@ mod commands {
         sent: u32,
         c: Option<Command>,
     ) -> Summary {
-        let Arrival::Fetch { person, command } = m.arrive(MsgId(sent), &fetch(key, sent, c)) else {
+        let Arrival::Fetch {
+            person, command, ..
+        } = m.arrive(MsgId(sent), &fetch(key, sent, c))
+        else {
             panic!("the fetch is taken");
         };
         assert_eq!(command, None, "no command runs");
@@ -2518,7 +2531,11 @@ mod commands {
             Some(Command::Remove(bob_number)),
         );
         assert_eq!(s.outcome, done(Code::Ok));
-        assert!(m.person(1).is_some_and(|p| p.removed) && m.is_home());
+        assert!(
+            m.person(1)
+                .is_some_and(|p| matches!(p.key, HomeKey::Removed(_)))
+                && m.is_home()
+        );
         let removed = Summary {
             items: 0,
             remaining: 0,
@@ -2537,10 +2554,7 @@ mod commands {
             told(&mut m, &mut p, &bob, 22, Some(Command::Leave)),
             removed
         );
-        assert_eq!(
-            p.get(1).map(|r| (r.key, r.removed)),
-            Some((Some(bob), true))
-        );
+        assert_eq!(p.get(1).map(|r| r.key), Some(HomeKey::Removed(bob)));
         let alice_number = p.get(0).unwrap().number;
         assert_eq!(
             told(
@@ -2552,7 +2566,7 @@ mod commands {
             ),
             removed
         );
-        assert_eq!(p.get(0).and_then(|r| r.home()), Some(alice));
+        assert_eq!(p.get(0).and_then(|r| r.key.home()), Some(alice));
         // Home again from his phone, from that write's `sent`: his mail
         // waited.
         p.set_home(1, Some(bob), 30);
