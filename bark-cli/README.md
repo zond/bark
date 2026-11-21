@@ -94,10 +94,7 @@ Rust, so the build needs no system libraries.
 A node has a random static address and no BR/EDR, as its advertisement's
 flags say, so the tool scans for LE alone, by the service's and the
 public node's UUIDs, and connects through the device BlueZ made from that
-scan. Should BlueZ still try BR/EDR, its error names it
-(`br-connection-...`), and the tool asks the adapter to connect to the
-address as a random one instead, which BlueZ offers only with its
-experimental interfaces on (`bluetoothd -E`).
+scan, which BlueZ then reaches over LE.
 
 Another program may keep a discovery running all the time, and then the
 controller reports a node only now and then. So a scan counts as heard a
@@ -114,12 +111,11 @@ BlueZ last saw it public still looks public; it refuses the guest's
 first read, and the tool says it is private now. Whether a paired node
 is public, `public <id>` says.
 
-An attempt to connect to a node without a bond is given ten advertising
-intervals; one that fails is stopped by removing the device from BlueZ,
-the only way BlueZ stops one, and the tool listens for the node again,
-up to three scans' time, before the next of three tries. An attempt over
-a bond is left to BlueZ to end, as removing the device would remove the
-bond.
+An attempt to connect is given 70 s, longer than BlueZ's own bound: 40 s
+for the link, then the discovery of the node's table. One BlueZ has not
+answered by then is stopped with Disconnect, which keeps the device; the
+tool then tries once more on the same device. With `-v` it logs when the
+link comes up and when the table is read, in seconds since Connect.
 
 Pairing is by passkey entry: the node shows the code and the tool types
 it. The tool answers BlueZ as its pairing agent, with a keyboard alone,

@@ -179,6 +179,8 @@ pub struct FakeRadio {
     pub scans: usize,
     /// Connects that time out before one goes through.
     pub failing: usize,
+    /// Connects that find the device forgotten, before one goes through.
+    pub lost: usize,
     /// The last scan stopped before its time.
     pub scan_ended_early: bool,
 }
@@ -194,6 +196,7 @@ impl FakeRadio {
             connects: 0,
             scans: 0,
             failing: 0,
+            lost: 0,
             scan_ended_early: false,
         }
     }
@@ -245,7 +248,11 @@ impl Transport for FakeRadio {
         self.connects += 1;
         if self.failing > 0 {
             self.failing -= 1;
-            return Err(Error::TimedOut("no connection within 10.2 s".into()));
+            return Err(Error::TimedOut("no connection within 70 s".into()));
+        }
+        if self.lost > 0 {
+            self.lost -= 1;
+            return Err(Error::NoDevice);
         }
         let node = self.nodes[i].clone();
         let address = Self::address(i);

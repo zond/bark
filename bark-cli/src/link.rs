@@ -125,6 +125,9 @@ pub enum Error {
     Ended,
     /// A step took longer than the tool waits for it.
     TimedOut(String),
+    /// The transport no longer holds the device to connect to: it is to
+    /// be heard in a scan again.
+    NoDevice,
     /// What the transport said, verbatim.
     Transport(String),
     /// Anything else the tool cannot go on from.
@@ -136,6 +139,7 @@ impl fmt::Display for Error {
         match self {
             Error::Att(code) => write!(f, "the node answered ATT error 0x{code:02x}"),
             Error::Ended => f.write_str("the link ended"),
+            Error::NoDevice => f.write_str("Bluetooth no longer knows the node"),
             Error::TimedOut(s) | Error::Transport(s) | Error::Other(s) => f.write_str(s),
         }
     }

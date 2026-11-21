@@ -28,9 +28,10 @@ pub const SCAN_TIME: Duration = Duration::from_micros(10 * ADVERTISING_US);
 /// advertises twice.
 const SETTLE: Duration = Duration::from_micros(2 * ADVERTISING_US);
 
-/// Attempts to connect before the tool gives up: the first and two more,
-/// a choice; each waits ten advertising intervals (`bluez.rs`).
-const CONNECT_TRIES: usize = 3;
+/// Attempts to connect before the tool gives up: the first and one more, a
+/// choice. Each is long, as long as BlueZ's own (`bluez.rs`); the second
+/// is for an attempt BlueZ ended early.
+const CONNECT_TRIES: usize = 2;
 
 /// How long the tool waits for an answer to an ask before it asks again,
 /// and how many asks it makes: the app's (`bark-app/lib/asks.dart`), 2 s
@@ -125,7 +126,10 @@ pub fn find<T: Transport>(t: &mut T, sel: &Select, time: Duration) -> Result<Fou
 
 /// What may go better at another try: the radio, not the node's answer.
 fn retried(e: &Error) -> bool {
-    matches!(e, Error::TimedOut(_) | Error::Transport(_) | Error::Ended)
+    matches!(
+        e,
+        Error::TimedOut(_) | Error::Transport(_) | Error::Ended | Error::NoDevice
+    )
 }
 
 fn gave_up(id: NodeId, e: &Error) -> Error {
@@ -135,15 +139,16 @@ fn gave_up(id: NodeId, e: &Error) -> Error {
     ))
 }
 
-/// How many scans' time the look for a node before a new try may take.
-/// A failed attempt leaves BlueZ no device to try, and while another
-/// program's discovery runs the controller may report the node again only
-/// after a while: on the bench, scans of 30 s heard nodes that scans of
-/// 10 s missed (2026-11-21). A look ends as soon as the node is heard.
+/// How many scans' time the look for a node may take when the transport
+/// no longer holds its device before a new try. While another program's
+/// discovery runs, the controller may report the node again only after a
+/// while: on the bench, scans of 30 s heard nodes that scans of 10 s
+/// missed (2026-11-21). A look ends as soon as the node is heard.
 const RETRY_SCANS: u32 = 3;
 
-/// Connects to `found`, heard in a scan for `sel`, looking for it again
-/// before each new try.
+/// Connects to `found`, heard in a scan for `sel`, trying again on the
+/// same device, and looking for the node again only where the transport
+/// no longer holds it.
 fn connect_heard<T: Transport>(
     t: &mut T,
     sel: &Select,
@@ -154,10 +159,11 @@ fn connect_heard<T: Transport>(
     loop {
         match t.connect(&found) {
             Ok(l) => return Ok(l),
-            Err(e) if retried(&e) && tries < CONNECT_TRIES => {
+            Err(Error::NoDevice) if tries < CONNECT_TRIES => {
                 tries += 1;
                 found = find(t, sel, time * RETRY_SCANS)?;
             }
+            Err(e) if retried(&e) && tries < CONNECT_TRIES => tries += 1,
             Err(e) if retried(&e) => return Err(gave_up(found.id, &e)),
             Err(e) => return Err(e),
         }
@@ -643,14 +649,22 @@ mod tests {
     }
 
     #[test]
-    fn a_connect_that_times_out_is_tried_again_after_a_scan() {
+    fn a_connect_that_times_out_is_tried_again_on_the_same_device() {
         let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
-        radio.failing = 2;
+        radio.failing = 1;
         guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
-        assert_eq!((radio.connects, radio.scans), (3, 3));
-        radio.failing = 3;
+        assert_eq!((radio.connects, radio.scans), (2, 1));
+        radio.failing = 2;
         let e = guest(&mut radio, &sel("1"), SCAN_TIME).err().unwrap();
-        assert!(e.to_string().contains("in 3 tries"), "{e}");
+        assert!(e.to_string().contains("in 2 tries"), "{e}");
+    }
+
+    #[test]
+    fn a_device_forgotten_is_looked_for_again() {
+        let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
+        radio.lost = 1;
+        guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
+        assert_eq!((radio.connects, radio.scans), (2, 2));
     }
 
     #[test]

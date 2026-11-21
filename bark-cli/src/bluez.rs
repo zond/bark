@@ -35,12 +35,15 @@ const AGENT_PATH: &str = "/org/bark/agent";
 /// itself after the ATT transaction's 30 s (Vol 3 Part F §3.3.3).
 const CALL_TIMEOUT: Duration = Duration::from_secs(4 * 30);
 
-/// How long one attempt to connect to a device without a bond is waited
-/// for: ten of the node's advertising intervals of 1022.5 ms
-/// (spec "Phone link", Finding the node). The connection request answers
-/// an advertisement, so a node in reach is caught within a few intervals;
-/// past ten, the attempt is stopped and the tool tries again.
-const CONNECT_WAIT: Duration = Duration::from_micros(10 * 1_022_500);
+/// How long one attempt to connect is waited for, past which the tool
+/// stops it. BlueZ bounds an attempt itself: the kernel gives the LE
+/// channel BlueZ opens to the device 40 s to connect (Linux,
+/// `L2CAP_CONN_TIMEOUT`), and BlueZ answers Connect once the attribute
+/// table is discovered too ([`RESOLVE_WAIT`]). This waits for both, so
+/// that BlueZ's own answer comes first. On the bench a connect to a node
+/// 30 cm away took 9 to 25 s while another program's discovery ran on the
+/// same controller (2026-11-21).
+const CONNECT_WAIT: Duration = Duration::from_secs(40 + 30);
 
 /// How long the GATT discovery may take after the link is up. BlueZ
 /// discovers the whole table before it says the services are resolved;
@@ -376,35 +379,50 @@ impl Bluez {
             .call(&self.adapter, ADAPTER, "StopDiscovery", &(), "");
     }
 
-    /// Ends what an attempt to connect left. BlueZ stops a connection it is
-    /// still making only when the device is removed, which a device with
-    /// a bond must not be; its attempts are left to end by themselves
-    /// ([`Bluez::link_up`]). While another program's discovery runs, a
-    /// device removed may be reported again only after a while, so the
-    /// tool listens longer before it tries again (`phone.rs`).
-    fn cancel(&self, device: &str, paired: bool) {
+    /// Stops an attempt to connect that is still under way: BlueZ's
+    /// Disconnect drops a connection it is making, and answers the
+    /// attempt's Connect with `br-connection-canceled`. The device stays,
+    /// so the next try needs no scan.
+    fn cancel(&self, device: &str) {
         let _ = self.bus.call(device, DEVICE, "Disconnect", &(), "");
-        if !paired {
-            let _ = self.bus.remove(&self.adapter, device);
+    }
+
+    /// Logs a change of the device's link, with the seconds since `start`.
+    fn progress(&self, device: &str, start: Instant, s: Signal) -> Option<Props> {
+        let Signal::Changed(path, iface, p) = s else {
+            return None;
+        };
+        if path.as_str() != device || iface != DEVICE {
+            return None;
         }
+        let link: Vec<String> = ["Connected", "ServicesResolved"]
+            .iter()
+            .filter_map(|k| Some(format!("{k}={}", boolean(&p, k)?)))
+            .collect();
+        if !link.is_empty() {
+            self.bus.say(1, || {
+                format!(
+                    "after {:.1} s: {}",
+                    start.elapsed().as_secs_f64(),
+                    link.join(", ")
+                )
+            });
+        }
+        Some(p)
     }
 
     /// Waits until the device's services are resolved, which BlueZ says
     /// once it has discovered the attribute table.
-    fn resolved(&self, device: &str) -> Result<()> {
+    fn resolved(&self, device: &str, start: Instant) -> Result<()> {
         let p = self.bus.properties(device, DEVICE)?;
         if boolean(&p, "ServicesResolved") == Some(true) {
             return Ok(());
         }
         let deadline = Instant::now() + RESOLVE_WAIT;
         while let Some(s) = self.bus.next(deadline) {
-            let Signal::Changed(path, iface, p) = s else {
+            let Some(p) = self.progress(device, start, s) else {
                 continue;
             };
-            if path.as_str() != device || iface != DEVICE {
-                continue;
-            }
-            self.bus.say(1, || format!("device changed {}", shown(&p)));
             if boolean(&p, "Connected") == Some(false) {
                 return Err(Error::Ended);
             }
@@ -418,64 +436,66 @@ impl Bluez {
         )))
     }
 
-    /// Connects by the device's own method; where BlueZ chose the wrong
-    /// bearer for it, BR/EDR, which a node has none of (its advertisement's
-    /// flags say so), by the adapter's, which takes the address's type.
-    /// That one refuses an address BlueZ has an object for, so the object
-    /// goes first, unless it holds a bond. A bonded device's attempt is
-    /// waited for until BlueZ ends it, as nothing else stops it.
-    fn link_up(&self, device: &str, address: &str, paired: bool) -> Result<String> {
-        let c = match paired {
-            true => &self.bus.conn,
-            false => &self.bus.connecting,
-        };
-        match self.bus.call_on(c, device, DEVICE, "Connect", &(), "") {
-            Ok(_) => return Ok(device.to_string()),
-            Err(Error::Transport(e)) if e.contains("br-connection") && !paired => {
-                self.bus
-                    .say(1, || "BlueZ tried BR/EDR; asking the adapter for LE".into());
+    /// Connects by the device's own method, logging the link's changes
+    /// while BlueZ makes it; on no answer within [`CONNECT_WAIT`], stops
+    /// the attempt.
+    fn link_up(&self, device: &str, start: Instant) -> Result<()> {
+        self.bus
+            .say(1, || format!("call {DEVICE}.Connect() on {device}"));
+        let (tx, rx) = mpsc::channel();
+        let conn = self.bus.connecting.clone();
+        let path = device.to_string();
+        std::thread::spawn(move || {
+            let r = conn.call_method(Some(BLUEZ), path.as_str(), Some(DEVICE), "Connect", &());
+            let _ = tx.send(r.map(|_| ()));
+        });
+        loop {
+            while let Some(s) = self.bus.next(Instant::now()) {
+                self.progress(device, start, s);
             }
-            Err(Error::TimedOut(_)) => {
-                return Err(Error::TimedOut(format!(
-                    "no connection within {:.1} s",
-                    match paired {
-                        true => CALL_TIMEOUT,
-                        false => CONNECT_WAIT,
-                    }
-                    .as_secs_f64()
-                )))
+            match rx.recv_timeout(SCAN_TICK) {
+                Ok(Ok(())) => {
+                    self.bus.say(1, || {
+                        format!(
+                            "Connect answered after {:.1} s",
+                            start.elapsed().as_secs_f64()
+                        )
+                    });
+                    return Ok(());
+                }
+                Ok(Err(e)) => {
+                    self.bus.say(1, || {
+                        format!(
+                            "error from {DEVICE}.Connect after {:.1} s: {}",
+                            start.elapsed().as_secs_f64(),
+                            verbatim(&e)
+                        )
+                    });
+                    return Err(match error_of(&e) {
+                        Error::TimedOut(_) => {
+                            self.cancel(device);
+                            Error::TimedOut(format!(
+                                "no connection within {} s",
+                                CONNECT_WAIT.as_secs()
+                            ))
+                        }
+                        e => e,
+                    });
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(Error::Transport("the Connect call was lost".into()))
+                }
             }
-            Err(e) => return Err(e),
-        }
-        self.bus.remove(&self.adapter, device)?;
-        let mut to: HashMap<&str, Value> = HashMap::new();
-        to.insert("Address", Value::from(address));
-        to.insert("AddressType", Value::from("random"));
-        let shown = format!("Address={address}, AddressType=random");
-        match self
-            .bus
-            .call_on(c, &self.adapter, ADAPTER, "ConnectDevice", &(to,), &shown)
-        {
-            Ok(m) => {
-                let path: OwnedObjectPath = m
-                    .body()
-                    .deserialize()
-                    .map_err(|e| Error::Transport(e.to_string()))?;
-                Ok(path.to_string())
-            }
-            Err(Error::Transport(e)) if e.contains("UnknownMethod") => Err(Error::Other(
-                "BlueZ connected over BR/EDR and has no ConnectDevice: \
-                 it needs bluetoothd's experimental interfaces (-E)"
-                    .into(),
-            )),
-            Err(e) => Err(e),
         }
     }
 
     /// The link to `device`, up and its table read.
-    fn open(&self, device: &str, address: &str, paired: bool) -> Result<BluezLink> {
-        let device = self.link_up(device, address, paired)?;
-        self.resolved(&device)?;
+    fn open(&self, device: &str, address: &str) -> Result<BluezLink> {
+        let start = Instant::now();
+        self.link_up(device, start)?;
+        self.resolved(device, start)?;
+        let device = device.to_string();
         let mut chars = HashMap::new();
         let mut service = None;
         let objects = self.bus.objects()?;
@@ -696,15 +716,15 @@ impl Transport for Bluez {
     }
 
     fn connect(&mut self, node: &Found) -> Result<BluezLink> {
-        let (device, before) = self
-            .device(&node.address)?
-            .ok_or_else(|| Error::Other(format!("BlueZ holds no device {}", node.address)))?;
+        let (device, before) = self.device(&node.address)?.ok_or(Error::NoDevice)?;
         self.bus
             .say(1, || format!("device {device}: {}", shown(&before)));
-        let paired = boolean(&before, "Paired") == Some(true);
-        let link = self.open(&device, &node.address, paired);
+        let link = self.open(&device, &node.address);
+        // Whatever is left of a failed attempt, a connection being made or
+        // a link whose table was not read, ends, so that the next try
+        // starts afresh with Connect.
         if link.is_err() {
-            self.cancel(&device, paired);
+            self.cancel(&device);
         }
         link
     }
