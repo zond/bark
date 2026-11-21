@@ -2726,10 +2726,13 @@ On a public node:
   transaction's timeout (Vol 3 Part F §3.3.3); a phone that is not paired
   and writes Recipient while another guest's link is up is closed at
   once. Made private again, the node closes the guest's link.
-- *A guest's messages* are those in the ring that no record's tag claims
-  ([receiving](#receiving)): written with every bit of the mark clear, so
-  that no fetch sends them ([mailbox](#mailbox), The ring), they leave
-  the ring only as it wraps. A guest reads its own through Inbox, after
+- *A guest's messages* are those in the ring with its tag, whatever
+  their marks say ([mailbox](#mailbox), The ring): one that no record's
+  tag claims, written with every bit clear, no fetch sends and only the
+  ring's wrapping takes; one a record's tag claims a guest of that tag
+  reads too, so a person linked to their home without a pairing reads
+  their mail there, and their fetches still send it, as a guest's
+  reading clears no bit. A guest reads its own through Inbox, after
   the number of the last item it took, which it writes to Guest, 0 at
   first: a read gives the oldest item after it with the guest's tag, its
   number, the message ID it arrived with and the payload, or nothing; a
@@ -3018,8 +3021,9 @@ which the node keeps for each; the record's items are those with its
 tag. The node has that `sent` on flash before it hands the round's first
 reply to the core, so a fetch it answered is refused after a reboot, and
 no round is answered twice with other items at its places (roadmap
-D224). A fetch is sent only when the person asks, so that a mailbox
-costs air only then (roadmap D128).
+D224). A fetch is sent only on a person's act: when they ask, or as a
+choice they made calls for, as to empty a home they leave, so that a
+mailbox costs air only then (roadmap D128).
 
 **The answer.** The node answers a fetch once, to the fetch's address,
 one reply at a time through its send slot: first a summary, then one
