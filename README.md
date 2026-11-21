@@ -92,6 +92,9 @@ bark-image/   no_std: the flash layout, the image header and the swap,
               of its pieces; tested on the host.
 bark-app/     Flutter Android app for the phone link, sealing its texts end to
               end (bark-app-layer).
+bark-cli/     `bark`, a phone on the command line: does what the app does
+              over the phone link, from a Linux computer's Bluetooth
+              (bark-cli/README.md).
 docs/         design notes, research, decisions.
 ```
 
