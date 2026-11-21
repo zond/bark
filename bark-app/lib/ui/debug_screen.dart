@@ -223,6 +223,7 @@ class DebugScreen extends StatelessWidget {
         st.batteryMv == 0 ? 'not read or on USB' : '${st.batteryMv} mV',
       ),
       _row('Messages in the inbox', '${st.inbox}'),
+      _row('GPS signal', st.gpsCn0 == 0 ? 'no reading' : '${st.gpsCn0} dB-Hz'),
     ];
   }
 }

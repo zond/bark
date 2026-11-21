@@ -127,6 +127,21 @@ Fact _power({required bool usb, String? battery}) => usb
 /// What a node does for others: a relay passes texts on; a sleepy node
 /// sleeps between windows and sends and receives through its anchor
 /// (spec "Nodes").
+/// The mean C/N0 under which a node drops its GPS's fix (spec
+/// "Position", roadmap D234): below it a reading is too weak for one.
+const int gpsFixFloorDbHz = 22;
+
+/// The GPS's signal: its number and, by [gpsFixFloorDbHz], whether a fix
+/// is taken at it; 0 is no reading (spec "Neighbour status").
+Fact gpsFact(int cn0) => Fact(
+  Icons.satellite_alt,
+  'GPS signal',
+  'GPS signal',
+  cn0 == 0
+      ? 'no reading'
+      : '$cn0 dB-Hz · ${cn0 < gpsFixFloorDbHz ? 'too weak for a fix' : 'good'}',
+);
+
 Fact _role(bool sleepy) => sleepy
     ? const Fact(
         Icons.bedtime,
@@ -324,6 +339,7 @@ class _MapScreenState extends State<MapScreen> {
   void initState() {
     super.initState();
     _seen = _s.statusSeen.listen((_) => _read());
+    _readGps();
     _read();
   }
 
@@ -355,7 +371,15 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _refresh() {
     _ask = true;
+    _readGps();
     return _read();
+  }
+
+  /// This node's GPS signal, read as the map opens and is refreshed, as
+  /// the node does not notify it.
+  void _readGps() {
+    if (!_readable) return;
+    _s.readGps().catchError((Object e) => _s.note('Status: $e'));
   }
 
   @override
@@ -765,6 +789,7 @@ class _NodeMarker {
         battery: st.batteryMv == 0 ? null : '${st.batteryMv} mV',
       ),
       Fact(Icons.hub, 'Known', 'neighbours known', knownOf(t)),
+      gpsFact(st.gpsCn0),
       Fact(Icons.sell, 'Version', 'firmware version', 'V${s.node!.image}'),
       const Fact(Icons.smartphone, 'Paired', 'paired', 'with this phone'),
     ];
@@ -855,6 +880,7 @@ class _NeighbourMarker {
           'neighbours known',
           known(s.heard, s.strong, s.proven),
         ),
+        gpsFact(s.gpsCn0),
         if (s.version != 0)
           Fact(
             Icons.sell,

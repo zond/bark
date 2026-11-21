@@ -146,6 +146,7 @@ class FakeNode implements NodeLink {
       placed: true,
       usb: true,
       heard: 6,
+      gpsCn0: 38,
       strong: 4,
       proven: 3,
       version: 9,
@@ -160,6 +161,7 @@ class FakeNode implements NodeLink {
       carried: true,
       battery: 82,
       heard: 2,
+      gpsCn0: 18,
       version: 8,
     ),
     _neighbourHex(4): const NeighbourStatus(
@@ -226,6 +228,10 @@ class FakeNode implements NodeLink {
   /// Whether its GPS has a fix; without one and no map point it has no
   /// place. A test may change it.
   bool fixed = true;
+
+  /// Its GPS's signal while it has a fix and is awake, in dB-Hz: an
+  /// open sky's, about 40 (spec "Position").
+  int gpsCn0 = 40;
   Position _fix = gps;
 
   /// A new GPS fix, notified as the node does.
@@ -567,6 +573,7 @@ class FakeNode implements NodeLink {
       inbox: g == null ? _inbox.length : 0,
       installing: (installing ?? 0) & 0xffff,
       phones: g == null ? _phonesNow : 0,
+      gpsCn0: fixed && !sleepy ? gpsCn0 : 0,
     );
   }
 

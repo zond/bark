@@ -335,6 +335,7 @@ void main() {
       ('Last heard', named('last heard')),
       ('Distance', named('distance')),
       ('Known', named('neighbours known')),
+      ('GPS signal', named('GPS signal')),
       ('Version', named('firmware version')),
     ];
     final ys = <double>[];
@@ -369,6 +370,8 @@ void main() {
     expect(line('57%'), findsOneWidget);
     expect(line('4 heard \u00b7 2 strong \u00b7 1 exchanged'), findsOneWidget);
     expect(line('V9'), findsOneWidget);
+    // An anchored sleepy node's GPS rests.
+    expect(line('no reading'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
     expect(named('exchanged'), findsNothing);
     await closeSheet(t);
@@ -381,6 +384,8 @@ void main() {
     await t.tap(icon(nodeLabel(carried.id)));
     await t.pumpAndSettle();
     expect(line('carried'), findsOneWidget);
+    // Under the floor at which a fix is dropped.
+    expect(line('18 dB-Hz · too weak for a fix'), findsOneWidget);
     expect(
       (named('moving').evaluate().single.widget as Icon).icon,
       Icons.directions_walk,

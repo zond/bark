@@ -75,6 +75,12 @@ const Map<String, String> factHelp = {
       'heard well enough that a full text gets through a fade, so they '
       'likely hear it too. Exchanged: of those, the ones that have taken '
       'a text from it, which proves they hear it.',
+  // Spec "Neighbour status", "Position", Checks.
+  'GPS signal':
+      'How strongly the node\'s GPS hears the satellites, in dB-Hz, as its '
+      'last reading had it. Under 22 the node takes no position from it; '
+      'an open sky gives about 40. Move a node to where it reads higher, '
+      'or set its place by hand.',
   // Spec "Updates over the mesh".
   'Version':
       'The version of the firmware the node runs. A new version spreads '

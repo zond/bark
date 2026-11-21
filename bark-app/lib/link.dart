@@ -274,7 +274,7 @@ class NodeInfo {
 
 /// Status, read and notify.
 class Status {
-  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1;
+  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
   final bool ready;
   final bool externalPower;
   final bool sleepy;
@@ -302,6 +302,10 @@ class Status {
   /// reads Phones again; 0 on a guest's link (spec "Phone link", Status).
   final int phones;
 
+  /// The GPS's signal: the mean C/N0, dB-Hz, of the satellites its latest
+  /// reading used; 0 for no reading (spec "Neighbour status").
+  final int gpsCn0;
+
   const Status({
     this.ready = false,
     this.externalPower = false,
@@ -319,6 +323,7 @@ class Status {
     this.heard = 0,
     this.installing = 0,
     this.phones = 0,
+    this.gpsCn0 = 0,
   });
 
   Status copyWith({
@@ -338,6 +343,7 @@ class Status {
     int? heard,
     int? installing,
     int? phones,
+    int? gpsCn0,
   }) => Status(
     ready: ready ?? this.ready,
     externalPower: externalPower ?? this.externalPower,
@@ -355,6 +361,7 @@ class Status {
     heard: heard ?? this.heard,
     installing: installing ?? this.installing,
     phones: phones ?? this.phones,
+    gpsCn0: gpsCn0 ?? this.gpsCn0,
   );
 
   int get _flags => [
@@ -378,6 +385,7 @@ class Status {
     ..._be16(installing),
     inbox,
     phones,
+    gpsCn0,
   ]);
 
   static Status decode(List<int> b) {
@@ -401,6 +409,7 @@ class Status {
       installing: _u16(b, at + 6),
       inbox: b[at + 8],
       phones: b[at + 9],
+      gpsCn0: b[at + 10],
     );
   }
 }
@@ -963,11 +972,11 @@ Uint8List encodeAsk(List<int> id) {
 /// What a neighbour's own screen shows, as it answers an ask (spec
 /// "Phone link", Ask).
 class NeighbourStatus {
-  static const len = 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
+  static const len = 1 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
 
   /// Its bytes before the image gathered, which a notification at the
   /// default MTU carries whole.
-  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 4;
+  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 1 + 4;
 
   /// The battery byte at or below the level at which a fixed relay turns
   /// sleepy.
@@ -1000,6 +1009,9 @@ class NeighbourStatus {
   /// Of them, those that have taken a message from it.
   final int proven;
 
+  /// Its GPS's signal, as [Status.gpsCn0].
+  final int gpsCn0;
+
   /// The firmware image's version it runs; 0 when unknown.
   final int version;
 
@@ -1021,6 +1033,7 @@ class NeighbourStatus {
     this.heard = 0,
     this.strong = 0,
     this.proven = 0,
+    this.gpsCn0 = 0,
     this.version = 0,
     this.gathers = 0,
     this.blocks = 0,
@@ -1047,6 +1060,7 @@ class NeighbourStatus {
     heard,
     strong,
     proven,
+    gpsCn0,
     ..._be32(version),
     ..._be32(gathers),
     blocks,
@@ -1070,11 +1084,12 @@ class NeighbourStatus {
       heard: b[2],
       strong: b[3],
       proven: b[4],
-      version: _u32(b, 5),
-      gathers: whole ? _u32(b, 9) : 0,
-      blocks: whole ? b[13] : 0,
-      complete: whole ? b[14] : 0,
-      have: whole ? b[15] : 0,
+      gpsCn0: b[5],
+      version: _u32(b, 6),
+      gathers: whole ? _u32(b, 10) : 0,
+      blocks: whole ? b[14] : 0,
+      complete: whole ? b[15] : 0,
+      have: whole ? b[16] : 0,
     );
   }
 
