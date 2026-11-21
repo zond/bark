@@ -247,6 +247,9 @@ void main() {
       async.elapse(answered);
       expect(app.me.home.toString(), away.toString());
       expect(app.me.givenKey, isNull);
+      // What it reads, as its summary said, kept with the home.
+      expect(app.me.homeReads, 2);
+      expect((app.me.store as MemoryStore).state!['homeReads'], 2);
       expect(app.isOwner, isTrue);
       expect(app.tried, isNull);
       expect(news(app), '${nodeLabel(away.id)} is your home');

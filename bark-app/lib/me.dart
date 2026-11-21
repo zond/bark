@@ -86,6 +86,11 @@ class Me extends ChangeNotifier {
   /// owner).
   bool owner = false;
 
+  /// The newest payload version the home reads, as its last summary said;
+  /// null before one. There is one version, so nothing is chosen by it
+  /// yet (spec "Phone link", The payload, Forms).
+  int? homeReads;
+
   /// The home the person is leaving, until its mail is fetched and it is
   /// told to forget them.
   Leaving? leaving;
@@ -146,6 +151,7 @@ class Me extends ChangeNotifier {
         final k => parseHex(k as String)!,
       };
       final owner = j['owner'] as bool? ?? false;
+      final homeReads = j['homeReads'] as int?;
       final leaving = switch (j['leaving']) {
         null => null,
         final l => Leaving.fromJson(l as Map<String, dynamic>),
@@ -153,6 +159,7 @@ class Me extends ChangeNotifier {
       return () {
         this.givenKey = givenKey;
         this.owner = owner;
+        this.homeReads = homeReads;
         this.leaving = leaving;
         this.keys = keys;
         this.name = name;
@@ -199,6 +206,7 @@ class Me extends ChangeNotifier {
     'rounds': rounds,
     if (givenKey case final k?) 'homeKey': hex(k),
     'owner': owner,
+    'homeReads': ?homeReads,
     if (leaving case final l?) 'leaving': l.toJson(),
   });
 
@@ -268,6 +276,7 @@ class Me extends ChangeNotifier {
     );
     // The next summary says it again.
     owner = false;
+    homeReads = null;
     leaving = null;
     nodeAddress = f.nodeAddress;
     nodeAt = f.nodeAt;
@@ -299,6 +308,7 @@ class Me extends ChangeNotifier {
     if (a == null || home == null || hex(a.id) != hex(home!.id)) {
       _givenKey(key);
       owner = false;
+      homeReads = null;
     }
     home = a;
     // One past the last, so that a second change within a second is still
@@ -343,6 +353,7 @@ class Me extends ChangeNotifier {
     if (rounds.isEmpty || round != rounds.first) return;
     remaining = o.remaining;
     owner = o.owner;
+    homeReads = o.newest;
     await _changed();
   }
 

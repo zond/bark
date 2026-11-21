@@ -549,12 +549,17 @@ class RoundSummary {
   final int items;
   final int remaining;
   final bool owner;
+
+  /// The newest payload version the home reads, in the flags' high four
+  /// bits (spec "Mailbox", The answer).
+  final int newest;
   final Outcome? outcome;
   final List<PhoneRecord>? list;
   const RoundSummary(
     this.items,
     this.remaining, {
     this.owner = false,
+    this.newest = formatVersion,
     this.outcome,
     this.list,
   });
@@ -563,7 +568,7 @@ class RoundSummary {
   Uint8List encode() => Uint8List.fromList([
     ...be(items, itemsLen),
     ...be(remaining, remainingLen),
-    owner ? 1 : 0,
+    newest << 4 | (owner ? 1 : 0),
     ...?switch (outcome) {
       null => null,
       final o => [o.index],
@@ -594,6 +599,7 @@ class RoundSummary {
       fromBe(b.sublist(0, itemsLen)),
       fromBe(b.sublist(itemsLen, itemsLen + remainingLen)),
       owner: b[itemsLen + remainingLen] & 1 != 0,
+      newest: b[itemsLen + remainingLen] >> 4,
       outcome: outcome,
       list: list,
     );

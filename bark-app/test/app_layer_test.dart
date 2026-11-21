@@ -75,7 +75,13 @@ void main() {
       expect(c.now?.toString(), m['now']);
       expect(c.time, m['time']);
       expect(c.name, m['name']);
+      expect(c.reads, m['reads']);
       expect(hex(c.encode()), m['bytes']);
+      // Bits 2 and 3 of the flags are zero; set, it is no card.
+      for (final bit in [4, 8]) {
+        final b = c.encode()..[1] |= bit;
+        expect(() => PersonCard.decode(b), throwsA(isA<BadCard>()));
+      }
       expect(c.toText(), m['text']);
       expect(
         PersonCard.parse((m['text'] as String).toLowerCase()).name,
@@ -394,7 +400,7 @@ void main() {
       expect(h(m, 'payload').length, summaryLen);
       final o = openSummary(s, alice.mailbox, round, h(m, 'payload'))!;
       expect((o.items, o.remaining, o.nothingNew), (items, 0, items == 0));
-      expect((o.owner, o.outcome), (true, null));
+      expect((o.owner, o.outcome, o.newest), (true, null, m['newest'] ?? 2));
       expect(openSummary(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
       expect(openSummary(s, bob.mailbox, round, h(m, 'payload')), isNull);
       final flipped = h(m, 'payload')..[summaryLen - 1] ^= 1;

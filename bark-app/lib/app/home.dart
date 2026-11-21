@@ -217,7 +217,9 @@ mixin _Home on _AppCore {
     if (o == null) return;
     if (me.home == null && o.command == null) {
       if (await me.setHome(o.dst)) await messenger.sendCardToAll();
-      await me.setOwner(s.owner);
+      // Its summary is now the home's: what it keeps, its owner, what it
+      // reads.
+      await me.gotSummary(round, s);
       session.note('Home: ${nodeName(o.dst.id)} answered, now the home');
       session.fetchNews = '${nodeLabel(o.dst.id)} is your home';
       notifyListeners();
