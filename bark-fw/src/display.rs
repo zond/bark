@@ -29,8 +29,6 @@ use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::Peri;
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 
-#[cfg(not(feature = "console"))]
-use bark_screen::State;
 use bark_screen::{Picture, HEIGHT, ROW_BYTES};
 
 use crate::board;
@@ -277,251 +275,244 @@ pub async fn show(
     core::future::pending().await
 }
 
-/// What the screen is told: the node's state, as its loop last
-/// published it ([`publish`]), but for the phone's line, which the phone
-/// link gives as the records say it ([`phone`]), and what shows over that
-/// line for a while ([`Over`]). [`CHANGED`] is raised at each change.
 #[cfg(not(feature = "console"))]
-#[derive(Clone, Copy)]
-struct Told {
-    state: State,
-    phone: bark_screen::Phone,
-    over: Over,
-}
+pub use node::{confirm, full, lines, pairing, phone, phone_at_boot, pressed, publish, run};
 
+/// The node's screen: what it is told and when it draws. The console
+/// draws one picture at boot ([`show`]).
 #[cfg(not(feature = "console"))]
-static TOLD: embassy_sync::blocking_mutex::Mutex<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    core::cell::Cell<Told>,
-> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Told {
-    state: State {
-        starting: true,
-        placed: false,
-        sleepy: false,
-        anchored: false,
-        carried: false,
-        battery: bark_screen::Battery::NotRead,
-        battery_left: None,
-        heard: 0,
-        strong: 0,
-        both_ways: 0,
+mod node {
+    use bark_screen::State;
+
+    use super::*;
+
+    /// What the screen is told: the node's state, as its loop last
+    /// published it ([`publish`]), but for the phone's line, which the phone
+    /// link gives as the records say it ([`phone`]), and what shows over that
+    /// line for a while ([`Over`]). [`CHANGED`] is raised at each change.
+    #[derive(Clone, Copy)]
+    struct Told {
+        state: State,
+        phone: bark_screen::Phone,
+        over: Over,
+    }
+
+    static TOLD: embassy_sync::blocking_mutex::Mutex<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        core::cell::Cell<Told>,
+    > = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Told {
+        state: State {
+            starting: true,
+            placed: false,
+            sleepy: false,
+            anchored: false,
+            carried: false,
+            battery: bark_screen::Battery::NotRead,
+            battery_left: None,
+            heard: 0,
+            strong: 0,
+            both_ways: 0,
+            phone: bark_screen::Phone::Unpaired,
+            getting: None,
+        },
         phone: bark_screen::Phone::Unpaired,
-        getting: None,
-    },
-    phone: bark_screen::Phone::Unpaired,
-    over: Over {
-        pairing: None,
-        confirm: None,
-        full: None,
-    },
-}));
+        over: Over {
+            pairing: None,
+            confirm: None,
+            full: None,
+        },
+    }));
 
-/// Change what the screen is told, under one lock.
-#[cfg(not(feature = "console"))]
-fn told<R>(f: impl FnOnce(&mut Told) -> R) -> R {
-    TOLD.lock(|c| {
-        let mut t = c.get();
-        let r = f(&mut t);
-        c.set(t);
-        r
-    })
-}
+    /// Change what the screen is told, under one lock.
+    fn told<R>(f: impl FnOnce(&mut Told) -> R) -> R {
+        TOLD.lock(|c| {
+            let mut t = c.get();
+            let r = f(&mut t);
+            c.set(t);
+            r
+        })
+    }
 
-#[cfg(not(feature = "console"))]
-static CHANGED: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    (),
-> = embassy_sync::signal::Signal::new();
+    static CHANGED: embassy_sync::signal::Signal<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        (),
+    > = embassy_sync::signal::Signal::new();
 
-/// A person at the node: true asks for the lines, false is a brief
-/// press of the button, which flips the picture.
-#[cfg(not(feature = "console"))]
-static PERSON: embassy_sync::signal::Signal<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    bool,
-> = embassy_sync::signal::Signal::new();
+    /// A person at the node: true asks for the lines, false is a brief
+    /// press of the button, which flips the picture.
+    static PERSON: embassy_sync::signal::Signal<
+        embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+        bool,
+    > = embassy_sync::signal::Signal::new();
 
-/// The button's side (`button.rs`): a brief press.
-#[cfg(not(feature = "console"))]
-pub fn pressed() {
-    PERSON.signal(false);
-}
+    /// The button's side (`button.rs`): a brief press.
+    pub fn pressed() {
+        PERSON.signal(false);
+    }
 
-/// The button's side (`button.rs`): the lines, for the role it forced.
-#[cfg(not(feature = "console"))]
-pub fn lines() {
-    PERSON.signal(true);
-}
+    /// The button's side (`button.rs`): the lines, for the role it forced.
+    pub fn lines() {
+        PERSON.signal(true);
+    }
 
-/// What the phone link shows over its line for a while (spec "Screen and buttons"):
-/// a pairing's code until the pairing ends, the code of a change to the
-/// phones and a pairing refused for want of room each for [`SHOWN`] at most.
-#[cfg(not(feature = "console"))]
-#[derive(Clone, Copy)]
-struct Over {
-    pairing: Option<u32>,
-    confirm: Option<(u32, Instant)>,
-    full: Option<Instant>,
-}
+    /// What the phone link shows over its line for a while (spec "Screen and buttons"):
+    /// a pairing's code until the pairing ends, the code of a change to the
+    /// phones and a pairing refused for want of room each for [`SHOWN`] at most.
+    #[derive(Clone, Copy)]
+    struct Over {
+        pairing: Option<u32>,
+        confirm: Option<(u32, Instant)>,
+        full: Option<Instant>,
+    }
 
-/// How long the code of a change to the phones and `PHONES FULL` show: the time a pairing
-/// gives its person to type a code (`bark_link::phones::CODE_MS`).
-#[cfg(not(feature = "console"))]
-const SHOWN: Duration = Duration::from_millis(bark_link::phones::CODE_MS);
+    /// How long the code of a change to the phones and `PHONES FULL` show: the time a pairing
+    /// gives its person to type a code (`bark_link::phones::CODE_MS`).
+    const SHOWN: Duration = Duration::from_millis(bark_link::phones::CODE_MS);
 
-#[cfg(not(feature = "console"))]
-fn over(f: impl FnOnce(&mut Over)) {
-    told(|t| f(&mut t.over));
-    CHANGED.signal(());
-}
-
-/// The phone line as shown at `now`, and when what shows over it ends.
-#[cfg(not(feature = "console"))]
-fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
-    use bark_screen::Phone;
-    let Told { over: o, phone, .. } = TOLD.lock(core::cell::Cell::get);
-    let confirm = o.confirm.filter(|&(_, until)| now < until);
-    let full = o.full.filter(|&until| now < until);
-    let ends = confirm.map(|(_, u)| u).into_iter().chain(full).min();
-    let phone = match (o.pairing, confirm, full) {
-        (Some(c), ..) => Phone::Code(c),
-        (None, Some((c, _)), _) => Phone::Confirm(c),
-        (None, None, Some(_)) => Phone::Full,
-        (None, None, None) => phone,
-    };
-    (phone, ends)
-}
-
-/// The phone link's line at boot, drawn with the first picture.
-#[cfg(not(feature = "console"))]
-pub fn phone_at_boot(phone: bark_screen::Phone) {
-    told(|t| t.phone = phone);
-}
-
-/// The phone link's side: its line, as the records say it; any change
-/// is drawn about one refresh after it (`bark_screen::schedule`).
-#[cfg(not(feature = "console"))]
-pub fn phone(phone: bark_screen::Phone) {
-    if told(|t| core::mem::replace(&mut t.phone, phone)) != phone {
+    fn over(f: impl FnOnce(&mut Over)) {
+        told(|t| f(&mut t.over));
         CHANGED.signal(());
     }
-}
 
-/// The phone link's side: a pairing's code, drawn at once, or its end.
-#[cfg(not(feature = "console"))]
-pub fn pairing(code: Option<u32>) {
-    over(|o| o.pairing = code);
-}
-
-/// The phone link's side: the code of a change to the phones, drawn at
-/// once and shown for [`SHOWN`] at most, or its end.
-#[cfg(not(feature = "console"))]
-pub fn confirm(code: Option<u32>) {
-    over(|o| o.confirm = code.map(|c| (c, Instant::now() + SHOWN)));
-}
-
-/// The phone link's side: a pairing refused for want of room, `PHONES
-/// FULL` for [`SHOWN`].
-#[cfg(not(feature = "console"))]
-pub fn full() {
-    over(|o| o.full = Some(Instant::now() + SHOWN));
-}
-
-/// The node's side, after a step: its state as the screen says it, but
-/// for the phone's line, which the phone link gives ([`phone`]).
-#[cfg(not(feature = "console"))]
-pub fn publish(state: State) {
-    if told(|t| core::mem::replace(&mut t.state, state)) != state {
-        CHANGED.signal(());
-    }
-}
-
-/// How long the first picture waits for the node's first state.
-#[cfg(not(feature = "console"))]
-const FIRST_STATE: Duration = Duration::from_secs(5);
-
-/// Draw the node's screen at boot, and again as `bark_screen::schedule`
-/// says: the code, the lines for a while after a brief press of the
-/// button ([`pressed`]) or a long press ([`lines`]), a new
-/// pairing code at once, and a change a person acts on in the picture
-/// shown about one refresh after it. Each picture is drawn to its end
-/// before the next is considered, so none starts while a refresh runs.
-#[cfg(not(feature = "console"))]
-pub async fn run(
-    pins: board::Eink,
-    spim: Peri<'static, peripherals::TWISPI1>,
-    irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
-    fixed: bark_screen::Fixed<'static>,
-) -> ! {
-    use bark_screen::Face;
-    use embassy_futures::select::{select3, Either3};
-    // In a static, so that no 5000-byte value is built or moved through a
-    // stack frame: the stack beside the relay is tight (`main.rs`,
-    // `screen`).
-    static PICTURE: static_cell::ConstStaticCell<Picture> =
-        static_cell::ConstStaticCell::new(Picture::zeroed());
-    let picture = PICTURE.take();
-    let mut screen = Screen::new(pins, spim, irq).await;
-    let mut schedule = bark_screen::schedule::Schedule::new();
-    // The first picture shows what the node knows once its loop has run,
-    // which is within a second of the radio coming up.
-    let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
-    loop {
-        let now = Instant::now();
-        let (phone, ends) = phone_shown(now);
-        let state = State {
-            phone,
-            ..TOLD.lock(core::cell::Cell::get).state
+    /// The phone line as shown at `now`, and when what shows over it ends.
+    fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
+        use bark_screen::Phone;
+        let Told { over: o, phone, .. } = TOLD.lock(core::cell::Cell::get);
+        let confirm = o.confirm.filter(|&(_, until)| now < until);
+        let full = o.full.filter(|&until| now < until);
+        let ends = confirm.map(|(_, u)| u).into_iter().chain(full).min();
+        let phone = match (o.pairing, confirm, full) {
+            (Some(c), ..) => Phone::Code(c),
+            (None, Some((c, _)), _) => Phone::Confirm(c),
+            (None, None, Some(_)) => Phone::Full,
+            (None, None, None) => phone,
         };
-        let ms = now.as_millis();
-        let due = schedule.due(&state, ms);
-        if due.is_none_or(|d| d > ms) {
-            // A code or `PHONES FULL` ending is a change of the line too.
-            let at = due.map_or(Instant::MAX, Instant::from_millis);
-            let at = ends.map_or(at, |e| e.min(at));
-            if let Either3::Second(lines) =
-                select3(CHANGED.wait(), PERSON.wait(), Timer::at(at)).await
-            {
-                match lines {
-                    true => schedule.lines(Instant::now().as_millis()),
-                    false => schedule.pressed(&state, Instant::now().as_millis()),
-                }
-            }
-            continue;
+        (phone, ends)
+    }
+
+    /// The phone link's line at boot, drawn with the first picture.
+    pub fn phone_at_boot(phone: bark_screen::Phone) {
+        told(|t| t.phone = phone);
+    }
+
+    /// The phone link's side: its line, as the records say it; any change
+    /// is drawn about one refresh after it (`bark_screen::schedule`).
+    pub fn phone(phone: bark_screen::Phone) {
+        if told(|t| core::mem::replace(&mut t.phone, phone)) != phone {
+            CHANGED.signal(());
         }
-        let face = schedule.face(&state, ms);
-        picture.clear();
-        match face {
-            Face::Lines => {
-                let up_min = (now.as_secs() / 60) as u32;
-                let t = crate::utc::time();
-                let clock = t.utc_s.map(|utc_s| bark_screen::Clock {
-                    utc_s,
-                    offset_min: t.offset_min,
-                });
-                for (text, y) in bark_screen::lines(&fixed, &state, up_min, clock)
-                    .iter()
-                    .flatten()
+    }
+
+    /// The phone link's side: a pairing's code, drawn at once, or its end.
+    pub fn pairing(code: Option<u32>) {
+        over(|o| o.pairing = code);
+    }
+
+    /// The phone link's side: the code of a change to the phones, drawn at
+    /// once and shown for [`SHOWN`] at most, or its end.
+    pub fn confirm(code: Option<u32>) {
+        over(|o| o.confirm = code.map(|c| (c, Instant::now() + SHOWN)));
+    }
+
+    /// The phone link's side: a pairing refused for want of room, `PHONES
+    /// FULL` for [`SHOWN`].
+    pub fn full() {
+        over(|o| o.full = Some(Instant::now() + SHOWN));
+    }
+
+    /// The node's side, after a step: its state as the screen says it, but
+    /// for the phone's line, which the phone link gives ([`phone`]).
+    pub fn publish(state: State) {
+        if told(|t| core::mem::replace(&mut t.state, state)) != state {
+            CHANGED.signal(());
+        }
+    }
+
+    /// How long the first picture waits for the node's first state.
+    const FIRST_STATE: Duration = Duration::from_secs(5);
+
+    /// Draw the node's screen at boot, and again as `bark_screen::schedule`
+    /// says: the code, the lines for a while after a brief press of the
+    /// button ([`pressed`]) or a long press ([`lines`]), a new
+    /// pairing code at once, and a change a person acts on in the picture
+    /// shown about one refresh after it. Each picture is drawn to its end
+    /// before the next is considered, so none starts while a refresh runs.
+    pub async fn run(
+        pins: board::Eink,
+        spim: Peri<'static, peripherals::TWISPI1>,
+        irq: impl Binding<TWISPI1, spim::InterruptHandler<peripherals::TWISPI1>> + 'static,
+        fixed: bark_screen::Fixed<'static>,
+    ) -> ! {
+        use bark_screen::Face;
+        use embassy_futures::select::{select3, Either3};
+        // In a static, so that no 5000-byte value is built or moved through a
+        // stack frame: the stack beside the relay is tight (`main.rs`,
+        // `screen`).
+        static PICTURE: static_cell::ConstStaticCell<Picture> =
+            static_cell::ConstStaticCell::new(Picture::zeroed());
+        let picture = PICTURE.take();
+        let mut screen = Screen::new(pins, spim, irq).await;
+        let mut schedule = bark_screen::schedule::Schedule::new();
+        // The first picture shows what the node knows once its loop has run,
+        // which is within a second of the radio coming up.
+        let _ = with_timeout(FIRST_STATE, CHANGED.wait()).await;
+        loop {
+            let now = Instant::now();
+            let (phone, ends) = phone_shown(now);
+            let state = State {
+                phone,
+                ..TOLD.lock(core::cell::Cell::get).state
+            };
+            let ms = now.as_millis();
+            let due = schedule.due(&state, ms);
+            if due.is_none_or(|d| d > ms) {
+                // A code or `PHONES FULL` ending is a change of the line too.
+                let at = due.map_or(Instant::MAX, Instant::from_millis);
+                let at = ends.map_or(at, |e| e.min(at));
+                if let Either3::Second(lines) =
+                    select3(CHANGED.wait(), PERSON.wait(), Timer::at(at)).await
                 {
-                    picture.text(text.bytes(), bark_screen::SCALE, *y);
-                    embassy_futures::yield_now().await;
+                    match lines {
+                        true => schedule.lines(Instant::now().as_millis()),
+                        false => schedule.pressed(&state, Instant::now().as_millis()),
+                    }
                 }
-                for (label, y) in bark_screen::labels(&state) {
-                    picture.label(label.as_bytes(), y);
+                continue;
+            }
+            let face = schedule.face(&state, ms);
+            picture.clear();
+            match face {
+                Face::Lines => {
+                    let up_min = (now.as_secs() / 60) as u32;
+                    let t = crate::utc::time();
+                    let clock = t.utc_s.map(|utc_s| bark_screen::Clock {
+                        utc_s,
+                        offset_min: t.offset_min,
+                    });
+                    for (text, y) in bark_screen::lines(&fixed, &state, up_min, clock)
+                        .iter()
+                        .flatten()
+                    {
+                        picture.text(text.bytes(), bark_screen::SCALE, *y);
+                        embassy_futures::yield_now().await;
+                    }
+                    for (label, y) in bark_screen::labels(&state) {
+                        picture.label(label.as_bytes(), y);
+                    }
+                }
+                Face::Code => {
+                    for part in 0..bark_screen::qr::PARTS {
+                        bark_screen::qr::draw(picture, part);
+                        embassy_futures::yield_now().await;
+                    }
+                    let line = bark_screen::code_line(&fixed, &state);
+                    picture.text(line.bytes(), bark_screen::SCALE, bark_screen::qr::LINE_TOP);
                 }
             }
-            Face::Code => {
-                for part in 0..bark_screen::qr::PARTS {
-                    bark_screen::qr::draw(picture, part);
-                    embassy_futures::yield_now().await;
-                }
-                let line = bark_screen::code_line(&fixed, &state);
-                picture.text(line.bytes(), bark_screen::SCALE, bark_screen::qr::LINE_TOP);
-            }
+            let outcome = screen.draw(picture).await;
+            // The boot's outcome is the first picture's.
+            OUTCOME.lock(|o| o.set(o.get().or(Some(outcome))));
+            schedule.drawn(face, state);
         }
-        let outcome = screen.draw(picture).await;
-        // The boot's outcome is the first picture's.
-        OUTCOME.lock(|o| o.set(o.get().or(Some(outcome))));
-        schedule.drawn(face, state);
     }
 }
