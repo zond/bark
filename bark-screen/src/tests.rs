@@ -425,11 +425,11 @@ fn the_phone_paired_or_its_code() {
     let three = |private| Phone::Phones { count: 3, private };
     assert_eq!(phone(three(false)), "3 PHONES  PUBLIC");
     assert_eq!(phone(three(true)), "3 PHONES PRIVATE");
-    assert_eq!(phone(Phone::Remove(7)), "REMOVE    000007");
+    assert_eq!(phone(Phone::Confirm(7)), "CONFIRM   000007");
     assert_eq!(phone(Phone::Full), "PHONES      FULL");
 }
 
-/// Under the code: the ID, but for a pairing or a removal code and a
+/// Under the code: the ID, but for a pairing code or a change's and a
 /// pairing refused for want of room, which a person at the node acts on.
 #[test]
 fn the_code_s_line() {
@@ -454,7 +454,7 @@ fn the_code_s_line() {
         id
     );
     assert_eq!(line(Phone::Code(5)), "PAIR CODE 000005");
-    assert_eq!(line(Phone::Remove(5)), "REMOVE    000005");
+    assert_eq!(line(Phone::Confirm(5)), "CONFIRM   000005");
     assert_eq!(line(Phone::Full), "PHONES      FULL");
 }
 

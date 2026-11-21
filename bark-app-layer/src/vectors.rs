@@ -11,11 +11,13 @@ use bark_proto::{NodeId, Position};
 use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
+use crate::command::{self, Code, Command, Outcome, Summary};
 use crate::keys::{self, Keys};
 use crate::plain::{self, Header, Record, Writer};
 use crate::seal::{self, Fetch, SivKeys};
 use crate::text;
 use crate::{Address, MAX_PAYLOAD};
+use bark_link::phones::{self, Name, Phones};
 
 pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -150,6 +152,7 @@ pub fn json() -> String {
     ));
 
     let alice_card = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: Some(card::Linked {
@@ -160,6 +163,7 @@ pub fn json() -> String {
         name: "Аліса",
     };
     let bob_card = Card {
+        reads: crate::VERSION,
         identity: f.bob.identity,
         home: None,
         now: Some(card::Linked {
@@ -189,6 +193,7 @@ pub fn json() -> String {
                 ),
                 ("time", format!("{}", c.time)),
                 ("name", q(c.name)),
+                ("reads", format!("{}", c.reads)),
                 ("bytes", h(&cb[..n])),
                 ("text", q(core::str::from_utf8(&ct[..tn]).unwrap())),
             ],
@@ -244,6 +249,33 @@ pub fn json() -> String {
         "box_utf8",
         &[
             ("text", q(words)),
+            ("sent", format!("{}", header.sent)),
+            ("greater", format!("{}", header.greater)),
+            ("plaintext", h(&p)),
+            ("payload", h(&boxed(&f.bob, &f.alice, f.away.node, &p))),
+        ],
+    ));
+
+    // A home given, Bob to Alice: his home node, and the mailbox key it
+    // took for her, with which she may make it her home.
+    let given: [u8; 32] = core::array::from_fn(|i| 0x80 + i as u8);
+    let header = Header {
+        greater: plain::greater(&f.bob.identity, &f.alice.identity),
+        sent: 1_000_090,
+        address: None,
+    };
+    let p = plaintext(
+        &header,
+        &[Record::Home {
+            address: f.home,
+            key: given,
+        }],
+    );
+    parts.push(entry(
+        "home_record",
+        &[
+            ("address", h(&f.home.encode())),
+            ("key", h(&given)),
             ("sent", format!("{}", header.sent)),
             ("greater", format!("{}", header.greater)),
             ("plaintext", h(&p)),
@@ -363,6 +395,7 @@ pub fn json() -> String {
         sent: 1_000_500,
         address: f.away,
         recipient: seal::recipient(&f.alice.identity, f.away.node),
+        command: None,
     };
     let home = seal::recipient(&f.alice.identity, f.home.node);
     let payload = fetch.seal(&f.alice.mailbox, f.home.node, home);
@@ -396,21 +429,32 @@ pub fn json() -> String {
     ));
 
     // Her home answers: first the summary, two items and none left after
-    // them, then a box and an introduction from Bob that waited for her
-    // there, at places 1 and 2.
+    // them, and that she is its owner, then a box and an introduction
+    // from Bob that waited for her there, at places 1 and 2.
     let round = fetch.sent;
     let to = fetch.recipient;
+    let summary = |round: u32, items: u8, owner: bool, outcome: Option<Outcome>| {
+        let s = Summary {
+            newest: crate::VERSION,
+            items,
+            remaining: 0,
+            owner,
+            outcome,
+        };
+        let mut out = [0u8; MAX_PAYLOAD];
+        let n = seal::seal_summary(&f.alice.mailbox, to, round, &s, &mut out);
+        out[..n].to_vec()
+    };
     parts.push(entry(
         "summary",
         &[
             ("round", format!("{round}")),
             ("items", "2".into()),
             ("remaining", "0".into()),
+            ("owner", "true".into()),
+            ("newest", format!("{}", crate::VERSION)),
             ("nonce", h(&seal::reply_nonce(round, 0))),
-            (
-                "payload",
-                h(&seal::seal_summary(&f.alice.mailbox, to, round, 2, 0)),
-            ),
+            ("payload", h(&summary(round, 2, true, None))),
         ],
     ));
     let header = Header {
@@ -464,12 +508,69 @@ pub fn json() -> String {
         &[
             ("round", format!("{round}")),
             ("nonce", h(&seal::reply_nonce(round, 0))),
-            (
-                "payload",
-                h(&seal::seal_summary(&f.alice.mailbox, to, round, 0, 0)),
-            ),
+            ("payload", h(&summary(round, 0, true, None))),
         ],
     ));
+
+    // As the owner she adds Bob, who has no phone at the node, by his
+    // mailbox key, his tag there and his name; then lists the records.
+    let mut records = Phones::EMPTY;
+    let bond = phones::Keys {
+        kind: 1,
+        addr: [1, 2, 3, 4, 5, 0xc6],
+        irk: None,
+        ltk: [7; 16],
+        seen: 1,
+        service_changed: false,
+    };
+    records.pair(bond, 0).unwrap();
+    records.set_recipient(0, home, Name::new(b"Alice").unwrap());
+    records.set_home(0, Some(f.alice.mailbox), 1_000_000);
+    let add = Command::Add {
+        key: f.bob.mailbox,
+        tag: seal::recipient(&f.bob.identity, f.home.node),
+        name: Name::new(b"Bob").unwrap(),
+    };
+    let mut cb = [0u8; Command::MAX_LEN];
+    for (name, sent, c) in [
+        ("command_add", fetch.sent + 120, add),
+        ("command_list", fetch.sent + 180, Command::List),
+    ] {
+        let n = c.encode(&mut cb);
+        let fetch = Fetch {
+            sent,
+            command: Some(c),
+            ..fetch
+        };
+        let outcome = command::run(&mut records, 0, &c, sent, 0, 330, 1);
+        let mut ob = [0u8; Outcome::MAX_LEN];
+        let o = outcome.encode(&mut ob);
+        parts.push(entry(
+            name,
+            &[
+                ("sent", format!("{sent}")),
+                ("command", h(&cb[..n])),
+                ("fetch", h(&fetch.seal(&f.alice.mailbox, f.home.node, home))),
+                ("outcome", h(&ob[..o])),
+                ("summary", h(&summary(sent, 0, true, Some(outcome)))),
+            ],
+        ));
+    }
+    // The rest of the commands, as bytes, and a refusal.
+    let mut rest = Vec::new();
+    for (name, c) in [
+        ("remove", Command::Remove(2)),
+        ("hand_over", Command::HandOver(2)),
+        ("leave", Command::Leave),
+    ] {
+        let n = c.encode(&mut cb);
+        rest.push((name, h(&cb[..n])));
+    }
+    let round = fetch.sent + 240;
+    let refused = Some(Outcome::Done(Code::NotAllowed));
+    rest.push(("not_allowed_round", format!("{round}")));
+    rest.push(("not_allowed_summary", h(&summary(round, 0, false, refused))));
+    parts.push(entry("commands", &rest));
 
     format!("{{\n{}\n}}\n", parts.join(",\n"))
 }

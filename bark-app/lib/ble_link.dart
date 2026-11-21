@@ -9,8 +9,8 @@ import 'link.dart';
 import 'node_link.dart';
 
 /// A node seen in a scan; [public] unless it advertised the service's
-/// UUID, as a node whose owner made it private does: a node is public,
-/// serving phones that have not paired with it, unless its owner says
+/// UUID, as a node whose paired phones made it private does: a node is public,
+/// serving phones that have not paired with it, unless its paired phones say
 /// otherwise (spec "Phone link", Public).
 class FoundNode {
   final String deviceId;
@@ -256,7 +256,7 @@ class BleLink implements NodeLink {
     await UniversalBle.connect(
       deviceId,
       // The node takes one connection; one left open by a killed app
-      // would keep the owner out until the supervision timeout.
+      // would keep the paired phone out until the supervision timeout.
       platformConfig: ConnectionPlatformConfig(
         android: AndroidConnectionOptions(closeGattOnDetach: true),
       ),
@@ -443,7 +443,7 @@ class BleLink implements NodeLink {
       NodeTime.decode(await _read(Uuids.clock));
 
   @override
-  Future<void> setHome(List<int>? key) => _write(Uuids.home, encodeHome(key));
+  Future<void> setHome(HomeSet? set) => _write(Uuids.home, encodeHome(set));
 
   @override
   Future<NodeHome> readHome() async => NodeHome.decode(await _read(Uuids.home));
@@ -469,18 +469,11 @@ class BleLink implements NodeLink {
       PhonesPage.decode(await _read(Uuids.phones));
 
   @override
-  Future<void> askRemovalCode() => _write(Uuids.phones, encodeRemovalCode());
+  Future<void> askCode() => _write(Uuids.phones, encodeCodeAsk());
 
   @override
-  Future<void> removePhone(
-    int number, {
-    required bool bond,
-    required bool home,
-    required int code,
-  }) => _write(
-    Uuids.phones,
-    encodeRemove(number, bond: bond, home: home, code: code),
-  );
+  Future<void> byCode(int number, RecordChange change, int code) =>
+      _write(Uuids.phones, encodeByCode(number, change, code));
 
   @override
   Future<bool> readPublic() async => decodePublic(await _read(Uuids.public));

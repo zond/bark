@@ -8,7 +8,8 @@
 // overruled, where someone removed it.
 
 import 'package:bark_app/app.dart';
-import 'package:bark_app/app_layer.dart' show recipientTag;
+import 'package:bark_app/app_layer.dart'
+    show Fetch, LeaveCommand, Outcome, recipientTag;
 import 'package:bark_app/card.dart';
 import 'package:bark_app/contacts.dart';
 
@@ -80,6 +81,40 @@ void main() {
     });
   });
 
+  test('the Home write carries a fresh sent: a fetch right after is taken, '
+      'one from before is not', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      final before = app.me.lastSent;
+      said(async, app.makeHome(app.session.address!));
+      final start = f.homeRecords.first.lastFetch;
+      expect(start, greaterThan(before));
+      expect(app.me.lastSent, greaterThanOrEqualTo(start));
+      // A fetch sealed before the write, sent now, is refused.
+      final home = app.me.home!;
+      final stale =
+          Fetch(
+            before,
+            home,
+            recipientTag(sodium, app.me.identity, home.id),
+          ).seal(
+            sodium,
+            app.me.mailboxKey,
+            home.id,
+            recipientTag(sodium, app.me.identity, home.id),
+          );
+      app.session.queue(
+        Outgoing(home, stale, at: app.now(), kind: OutKind.fetch, sent: before),
+      );
+      async.elapse(const Duration(minutes: 1));
+      expect(f.commands, isEmpty);
+      // The next one is later, and taken.
+      said(async, app.askList());
+      async.elapse(const Duration(minutes: 1));
+      expect(f.commands.map((c) => c.$2), [Outcome.ok]);
+    });
+  });
+
   test('no home node, connected to it: the node forgets the key', () {
     run((async, app) {
       said(async, app.makeHome(app.session.address!));
@@ -90,19 +125,85 @@ void main() {
     });
   });
 
-  test('no home node elsewhere: the old home keeps the key until cleared '
-      'there', () {
+  test('no home node elsewhere: the old home is fetched from, then left, '
+      'by itself', () {
     run((async, app) {
+      final f = app.fakeNode!;
       said(async, app.makeHome(app.session.address!));
+      final home = app.me.home!;
       app.session.disconnect();
       async.flushMicrotasks();
       expect(
         said(async, app.noHome()),
-        contains('Your old home keeps your mail'),
+        'No home node. Your old home sends you its mail, then forgets you.',
       );
       expect(app.me.home, isNull);
-      expect(app.fakeNode!.homeKey, isNotNull);
+      expect(app.me.leaving!.home.toString(), home.toString());
+      // Nothing goes while no node is linked to answer to.
+      async.elapse(const Duration(seconds: 5));
+      expect(app.session.outbox.where((o) => o.kind == OutKind.fetch), isEmpty);
 
+      app.connectFake();
+      async.flushMicrotasks();
+      // The fake is the home away too: it answers each fetch, the first
+      // with the item it kept, then the leave with its summary alone.
+      async.elapse(const Duration(minutes: 2));
+      final fetches = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+      expect(fetches.map((o) => o.dst.toString()), [
+        home.toString(),
+        home.toString(),
+      ]);
+      expect(fetches.first.command, isNull);
+      expect(fetches.last.command, const LeaveCommand().encode());
+      expect(
+        app.session.received.map((r) => r.body),
+        contains('Left at your home node while you were away.'),
+      );
+      expect(f.homeRecords, isEmpty);
+      expect(app.me.leaving, isNull);
+      expect(log(app), contains(contains('forgot the person')));
+    });
+  });
+
+  test('a leave whose answer is lost is not sent again; the old home is '
+      'forgotten once its wait is over', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      said(async, app.noHome());
+      // The first fetch is answered; the leave is taken, its answer lost.
+      f.losesAnswer = (c) => c is LeaveCommand;
+      app.connectFake();
+      async.flushMicrotasks();
+      for (var i = 0; i < 120 && app.me.leaving!.leaveRound == null; i++) {
+        async.elapse(const Duration(seconds: 1));
+      }
+      expect(f.homeRecords, isEmpty);
+      async.elapse(Session.fetchAnswerWait - const Duration(seconds: 5));
+      expect(app.me.leaving, isNotNull);
+      final fetches = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+      expect(fetches.length, 2);
+      async.elapse(const Duration(seconds: 7));
+      expect(app.me.leaving, isNull);
+      expect(
+        app.session.outbox.where((o) => o.kind == OutKind.fetch).length,
+        2,
+      );
+      expect(log(app), contains(contains('did not answer the leave')));
+    });
+  });
+
+  test('a node that kept the key from when it was the home can be told to '
+      'stop', () {
+    run((async, app) {
+      said(async, app.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      // The home away never hears the leave: its node still holds the key.
+      app.fakeNode!.homeAnswers = false;
+      said(async, app.noHome());
       app.connectFake();
       async.flushMicrotasks();
       expect(app.holdsOtherKey, isTrue);

@@ -203,6 +203,9 @@ impl App for LinkApp<'_> {
         if let Some(position) = crate::gps::take_fix() {
             return Some(Request::Fix(position));
         }
+        if let Some(cn0) = crate::gps::take_signal() {
+            return Some(Request::Signal(cn0));
+        }
         // What is placed for good, confirmed to the core.
         if let Some(id) = self.placed() {
             self.placing = None;
@@ -469,6 +472,7 @@ fn status(core: &Role, now: Instant, battery_mv: u16, installing: Option<u32>) -
         installing: installing.map_or(0, |v| v as u16),
         // Each link's own, as its phone reads it (`ble.rs`).
         phones: 0,
+        gps_cn0: core.status(now).gps_cn0,
     }
 }
 

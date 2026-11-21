@@ -437,7 +437,7 @@ class _Steps {
       _friend ??= await BenchFriend.at(app, await _toAddress());
 
   /// Gives up the phone's bond with `name`, as the person does: Unpair
-  /// on an owner's link, which the node forgets too, else Forget.
+  /// on a paired phone's link, which the node forgets too, else Forget.
   Future<void> _letGo(String name) async {
     final s = app.session;
     final bool? gone;
@@ -491,7 +491,7 @@ class _Steps {
         '${shownName('bark-${bench.to}')}';
   }
 
-  /// The phone is on its node as its owner, linked again by the search
+  /// The phone is on its node as a paired phone, linked again by the search
   /// if the link dropped, and the node has a place, which the person's
   /// card names.
   Future<void> _here() async {

@@ -344,7 +344,7 @@ pub enum Phone {
     /// No phone has paired; the node is public all the same.
     #[default]
     Unpaired,
-    /// One phone is paired, and the node is its owners' alone.
+    /// One phone is paired, and the node is its paired phones' alone.
     Private,
     /// One phone is paired, and the node serves guests too.
     Public,
@@ -353,9 +353,9 @@ pub enum Phone {
     Phones { count: u8, private: bool },
     /// A phone is pairing: the six-digit code to type into it.
     Code(u32),
-    /// A removal waits: the six-digit code to type into the phone that
-    /// removes.
-    Remove(u32),
+    /// A change to the phones waits, a removal or a new owner: the
+    /// six-digit code to type into the phone that makes it.
+    Confirm(u32),
     /// A pairing was refused, as every phone the node keeps is taken.
     Full,
 }
@@ -365,7 +365,7 @@ impl Phone {
     /// shows the lines for, and draws at once (`schedule`).
     pub fn code(&self) -> Option<u32> {
         match *self {
-            Phone::Code(c) | Phone::Remove(c) => Some(c),
+            Phone::Code(c) | Phone::Confirm(c) => Some(c),
             _ => None,
         }
     }
@@ -386,7 +386,7 @@ fn phone_line(phone: Phone) -> Text {
             row(label, format_args!("{set}"))
         }
         Phone::Code(c) => row("PAIR CODE", format_args!("{c:06}")),
-        Phone::Remove(c) => row("REMOVE", format_args!("{c:06}")),
+        Phone::Confirm(c) => row("CONFIRM", format_args!("{c:06}")),
         Phone::Full => row("PHONES", format_args!("FULL")),
     }
 }
@@ -551,12 +551,12 @@ pub enum Face {
 }
 
 /// The line under the code: the pairing code while a phone pairs, the
-/// removal code while a removal waits, and `PHONES FULL` after a pairing
+/// code of a change to the phones while it waits, and `PHONES FULL` after a pairing
 /// refused for want of room, as on the lines; else the node's ID, which
 /// its name in the app ends with.
 pub fn code_line(fixed: &Fixed<'_>, state: &State) -> Text {
     match state.phone {
-        p @ (Phone::Code(_) | Phone::Remove(_) | Phone::Full) => phone_line(p),
+        p @ (Phone::Code(_) | Phone::Confirm(_) | Phone::Full) => phone_line(p),
         _ if fixed.discharge_bench => plain(format_args!("{BENCH}")),
         _ => row("ID", format_args!("{}", Hex(fixed.id))),
     }

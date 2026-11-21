@@ -8,6 +8,21 @@ import 'link.dart';
 import 'session.dart';
 import 'store.dart';
 
+/// A home node and the mailbox key that seals fetches to it.
+typedef HomeKey = ({Address home, Uint8List key});
+
+Map<String, dynamic>? _homeKeyJson(HomeKey? h) =>
+    h == null ? null : {'home': h.home.toString(), 'key': hex(h.key)};
+
+HomeKey? _homeKeyOf(Object? j) => switch (j) {
+  null => null,
+  final Map<String, dynamic> m => (
+    home: Address.parse(m['home'] as String)!,
+    key: parseHex(m['key'] as String)!,
+  ),
+  _ => throw FormatException('a home and key $j'),
+};
+
 /// A card with the name this phone gives it.
 class Contact {
   final PersonCard card;
@@ -62,6 +77,15 @@ class Contact {
   /// message, as a card taken from its holder's hand needs no proof.
   bool get unverified => cameByMessage && !verified;
 
+  /// The person's home, of which they are the owner, shared with this
+  /// contact: the key made for them there, kept and used again for that
+  /// home, so that a lost answer asked again adds no second record.
+  final HomeKey? share;
+
+  /// A home this contact, its owner, gave the person, until they use it
+  /// or say not now.
+  final HomeKey? gift;
+
   Contact(
     this.card,
     this.chosen, {
@@ -74,6 +98,8 @@ class Contact {
     this.heardAt,
     this.archived = false,
     this.cameByMessage = false,
+    this.share,
+    this.gift,
   });
 
   /// How long where they wrote from is taken as where they are: in a
@@ -143,6 +169,8 @@ class Contact {
     DateTime? heardAt,
     bool? archived,
     bool? cameByMessage,
+    Object? share = _keep,
+    Object? gift = _keep,
   }) => Contact(
     card ?? this.card,
     name ?? chosen,
@@ -155,7 +183,12 @@ class Contact {
     heardAt: heardAt ?? this.heardAt,
     archived: archived ?? this.archived,
     cameByMessage: cameByMessage ?? this.cameByMessage,
+    share: identical(share, _keep) ? this.share : share as HomeKey?,
+    gift: identical(gift, _keep) ? this.gift : gift as HomeKey?,
   );
+
+  /// What [copyWith] keeps when a share or a gift is not given.
+  static const _keep = Object();
 
   /// After a message from them, written at `sent` with `address` in its
   /// header, that arrived at `arrived`: only the newest counts, and one
@@ -189,6 +222,8 @@ class Contact {
     'heardAt': heardAt?.toIso8601String(),
     'archived': archived,
     'cameByMessage': cameByMessage,
+    if (share != null) 'share': _homeKeyJson(share),
+    if (gift != null) 'gift': _homeKeyJson(gift),
   };
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
@@ -211,6 +246,9 @@ class Contact {
         : DateTime.parse(j['heardAt'] as String),
     archived: j['archived'] as bool,
     cameByMessage: j['cameByMessage'] as bool,
+    // Absent from a contact without one.
+    share: _homeKeyOf(j['share']),
+    gift: _homeKeyOf(j['gift']),
   );
 }
 

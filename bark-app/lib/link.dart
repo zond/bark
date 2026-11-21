@@ -274,7 +274,7 @@ class NodeInfo {
 
 /// Status, read and notify.
 class Status {
-  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1;
+  static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
   final bool ready;
   final bool externalPower;
   final bool sleepy;
@@ -302,6 +302,10 @@ class Status {
   /// reads Phones again; 0 on a guest's link (spec "Phone link", Status).
   final int phones;
 
+  /// The GPS's signal: the mean C/N0, dB-Hz, of the satellites its latest
+  /// reading used; 0 for no reading (spec "Neighbour status").
+  final int gpsCn0;
+
   const Status({
     this.ready = false,
     this.externalPower = false,
@@ -319,6 +323,7 @@ class Status {
     this.heard = 0,
     this.installing = 0,
     this.phones = 0,
+    this.gpsCn0 = 0,
   });
 
   Status copyWith({
@@ -338,6 +343,7 @@ class Status {
     int? heard,
     int? installing,
     int? phones,
+    int? gpsCn0,
   }) => Status(
     ready: ready ?? this.ready,
     externalPower: externalPower ?? this.externalPower,
@@ -355,6 +361,7 @@ class Status {
     heard: heard ?? this.heard,
     installing: installing ?? this.installing,
     phones: phones ?? this.phones,
+    gpsCn0: gpsCn0 ?? this.gpsCn0,
   );
 
   int get _flags => [
@@ -378,6 +385,7 @@ class Status {
     ..._be16(installing),
     inbox,
     phones,
+    gpsCn0,
   ]);
 
   static Status decode(List<int> b) {
@@ -401,6 +409,7 @@ class Status {
       installing: _u16(b, at + 6),
       inbox: b[at + 8],
       phones: b[at + 9],
+      gpsCn0: b[at + 10],
     );
   }
 }
@@ -501,12 +510,17 @@ Uint8List encodeMapPoint(Position? p) => p == null
 /// Bytes of the mailbox key.
 const int mailboxKeyLen = 32;
 
-/// Home, write: 0, the node is nobody's home; 1 and the mailbox key, the
-/// person's.
-Uint8List encodeHome(List<int>? key) {
-  if (key == null) return Uint8List.fromList([0]);
-  if (key.length != mailboxKeyLen) throw const Malformed('mailbox key');
-  return Uint8List.fromList([1, ...key]);
+/// A Home write's key and `sent`.
+typedef HomeSet = ({List<int> key, int sent});
+
+/// Home, write: 0, the node is nobody's home; 1, the mailbox key and the
+/// phone's `sent`, later than any it gave before, the person's: the node
+/// takes no fetch of the key that is not later (spec "Phone link",
+/// Settings).
+Uint8List encodeHome(HomeSet? set) {
+  if (set == null) return Uint8List.fromList([0]);
+  if (set.key.length != mailboxKeyLen) throw const Malformed('mailbox key');
+  return Uint8List.fromList([1, ...set.key, ..._be32(set.sent)]);
 }
 
 /// Home, read: whether the node holds a mailbox key, anyone's, whether
@@ -958,11 +972,11 @@ Uint8List encodeAsk(List<int> id) {
 /// What a neighbour's own screen shows, as it answers an ask (spec
 /// "Phone link", Ask).
 class NeighbourStatus {
-  static const len = 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
+  static const len = 1 + 1 + 1 + 1 + 1 + 1 + 4 + 4 + 1 + 1 + 1;
 
   /// Its bytes before the image gathered, which a notification at the
   /// default MTU carries whole.
-  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 4;
+  static const ungatheredLen = 1 + 1 + 1 + 1 + 1 + 1 + 4;
 
   /// The battery byte at or below the level at which a fixed relay turns
   /// sleepy.
@@ -995,6 +1009,9 @@ class NeighbourStatus {
   /// Of them, those that have taken a message from it.
   final int proven;
 
+  /// Its GPS's signal, as [Status.gpsCn0].
+  final int gpsCn0;
+
   /// The firmware image's version it runs; 0 when unknown.
   final int version;
 
@@ -1016,6 +1033,7 @@ class NeighbourStatus {
     this.heard = 0,
     this.strong = 0,
     this.proven = 0,
+    this.gpsCn0 = 0,
     this.version = 0,
     this.gathers = 0,
     this.blocks = 0,
@@ -1042,6 +1060,7 @@ class NeighbourStatus {
     heard,
     strong,
     proven,
+    gpsCn0,
     ..._be32(version),
     ..._be32(gathers),
     blocks,
@@ -1065,11 +1084,12 @@ class NeighbourStatus {
       heard: b[2],
       strong: b[3],
       proven: b[4],
-      version: _u32(b, 5),
-      gathers: whole ? _u32(b, 9) : 0,
-      blocks: whole ? b[13] : 0,
-      complete: whole ? b[14] : 0,
-      have: whole ? b[15] : 0,
+      gpsCn0: b[5],
+      version: _u32(b, 6),
+      gathers: whole ? _u32(b, 10) : 0,
+      blocks: whole ? b[14] : 0,
+      complete: whole ? b[15] : 0,
+      have: whole ? b[16] : 0,
     );
   }
 
@@ -1138,8 +1158,9 @@ const int maxPhones = 8;
 DateTime? dayOf(int day) =>
     day == 0 ? null : DateTime.utc(2026).add(Duration(days: day - 1));
 
-/// A record of Phones, read: a phone paired with the node, or a home a
-/// phone left there, or both (spec "Phone link", Phones).
+/// A record of Phones, read, or of the owner's list in a summary: a
+/// phone paired with the node, a home, or both (spec "Phone link",
+/// Phones).
 class PhoneRecord {
   /// Bytes before the name.
   static const header = 2 + 1 + 2 + 1 + 1;
@@ -1154,16 +1175,19 @@ class PhoneRecord {
   /// Its phone is linked now.
   final bool linked;
 
-  /// It is the reading phone's own.
+  /// It is the reading phone's own, or in a list the sender's.
   final bool mine;
 
-  /// Its person's recipient tag at the node, once its phone wrote one.
+  /// Its key is the owner's (spec "Phone link", The node's owner).
+  final bool owner;
+
+  /// Its person's recipient tag at the node, once known.
   final int? tag;
 
-  /// The day its phone was last linked ([dayOf]).
+  /// The day its person was last seen ([dayOf]).
   final int day;
 
-  /// Its person's name, empty when their phone wrote none.
+  /// Its person's name, empty when none was given.
   final String name;
 
   const PhoneRecord({
@@ -1172,10 +1196,23 @@ class PhoneRecord {
     this.home = false,
     this.linked = false,
     this.mine = false,
+    this.owner = false,
     this.tag,
     this.day = 0,
     this.name = '',
   });
+
+  PhoneRecord copyWith({bool? paired, bool? home, bool? owner}) => PhoneRecord(
+    number: number,
+    paired: paired ?? this.paired,
+    home: home ?? this.home,
+    linked: linked,
+    mine: mine,
+    owner: owner ?? this.owner,
+    tag: tag,
+    day: day,
+    name: name,
+  );
 
   Uint8List encode() {
     final n = nameBytes(name);
@@ -1186,13 +1223,50 @@ class PhoneRecord {
           flag(home, 0x02) |
           flag(linked, 0x04) |
           flag(mine, 0x08) |
-          flag(tag != null, 0x10),
+          flag(tag != null, 0x10) |
+          flag(owner, 0x20),
       ..._be16(day),
       tag ?? 0,
       n.length,
       ...n,
     ]);
   }
+}
+
+/// The records `b` holds whole, as Phones and the owner's list give them.
+List<PhoneRecord> decodeRecords(List<int> b) {
+  final records = <PhoneRecord>[];
+  var at = 0;
+  while (at < b.length) {
+    if (at + PhoneRecord.header > b.length) throw const Malformed('records');
+    final nameLen = b[at + 6];
+    final end = at + PhoneRecord.header + nameLen;
+    if (nameLen > nameMax || end > b.length || records.length == maxPhones) {
+      throw const Malformed('records');
+    }
+    final flags = b[at + 2];
+    final String name;
+    try {
+      name = utf8.decode(b.sublist(at + PhoneRecord.header, end));
+    } on FormatException {
+      throw const Malformed('records');
+    }
+    records.add(
+      PhoneRecord(
+        number: _u16(b, at),
+        paired: flags & 0x01 != 0,
+        home: flags & 0x02 != 0,
+        linked: flags & 0x04 != 0,
+        mine: flags & 0x08 != 0,
+        owner: flags & 0x20 != 0,
+        tag: flags & 0x10 != 0 ? b[at + 5] : null,
+        day: _u16(b, at + 3),
+        name: name,
+      ),
+    );
+    at = end;
+  }
+  return records;
 }
 
 /// Phones, read: the records from the place written, and the place to
@@ -1207,39 +1281,11 @@ class PhonesPage {
 
   static PhonesPage decode(List<int> b) {
     if (b.isEmpty) throw const Malformed('Phones');
-    final records = <PhoneRecord>[];
-    var at = 1;
-    while (at < b.length) {
-      if (at + PhoneRecord.header > b.length) {
-        throw const Malformed('Phones');
-      }
-      final nameLen = b[at + 6];
-      final end = at + PhoneRecord.header + nameLen;
-      if (nameLen > nameMax || end > b.length || records.length == maxPhones) {
-        throw const Malformed('Phones');
-      }
-      final flags = b[at + 2];
-      final String name;
-      try {
-        name = utf8.decode(b.sublist(at + PhoneRecord.header, end));
-      } on FormatException {
-        throw const Malformed('Phones');
-      }
-      records.add(
-        PhoneRecord(
-          number: _u16(b, at),
-          paired: flags & 0x01 != 0,
-          home: flags & 0x02 != 0,
-          linked: flags & 0x04 != 0,
-          mine: flags & 0x08 != 0,
-          tag: flags & 0x10 != 0 ? b[at + 5] : null,
-          day: _u16(b, at + 3),
-          name: name,
-        ),
-      );
-      at = end;
+    try {
+      return PhonesPage(b[0], decodeRecords(b.sublist(1)));
+    } on Malformed {
+      throw const Malformed('Phones');
     }
-    return PhonesPage(b[0], records);
   }
 }
 
@@ -1249,31 +1295,49 @@ Uint8List encodePhonesFrom(int slot) {
   return Uint8List.fromList([0, slot]);
 }
 
-/// Phones, write: the node draws a removal code on its screen.
-Uint8List encodeRemovalCode() => Uint8List.fromList([1]);
+/// Phones, write: the node draws a fresh code on its screen, which a
+/// change by code takes.
+Uint8List encodeCodeAsk() => Uint8List.fromList([1]);
 
-/// The numbers a removal code takes: six digits.
-const int removalCodes = 1000000;
+/// The numbers a code takes: six digits.
+const int codes = 1000000;
 
-/// How long a node takes a removal code after drawing it: the time a
-/// pairing gives its person to type a code, the Security Manager's
-/// timeout (Bluetooth Core Specification 5.0, Vol 3 Part H §3.4).
-const Duration removalCodeTime = Duration(seconds: 30);
+/// How long a node takes a code after drawing it: the time a pairing
+/// gives its person to type a code, the Security Manager's timeout
+/// (Bluetooth Core Specification 5.0, Vol 3 Part H §3.4).
+const Duration codeTime = Duration(seconds: 30);
 
-/// Phones, write: remove the bond, the home or both of record `number`,
-/// with the code the node's screen shows.
-Uint8List encodeRemove(
-  int number, {
-  required bool bond,
-  required bool home,
-  required int code,
-}) {
-  if (!bond && !home) throw const Malformed('removal');
-  if (code < 0 || code >= removalCodes) throw const Malformed('code');
+/// What a change by code does to a record (spec "Phone link", Phones),
+/// by its `what`: remove its bond, its home or both, or make its key the
+/// owner's.
+enum RecordChange {
+  bond(1),
+  home(2),
+  both(3),
+  owner(4);
+
+  final int what;
+  const RecordChange(this.what);
+
+  /// The removal of all that `r` holds.
+  static RecordChange removal(PhoneRecord r) => r.paired && r.home
+      ? both
+      : r.paired
+      ? bond
+      : home;
+
+  bool get removesBond => this == both || this == bond;
+  bool get removesHome => this == both || this == home;
+}
+
+/// Phones, write: `change` to record `number`, with the code the node's
+/// screen shows.
+Uint8List encodeByCode(int number, RecordChange change, int code) {
+  if (code < 0 || code >= codes) throw const Malformed('code');
   return Uint8List.fromList([
     2,
     ..._be16(number),
-    (bond ? 1 : 0) | (home ? 2 : 0),
+    change.what,
     ..._be32(code).sublist(1),
   ]);
 }

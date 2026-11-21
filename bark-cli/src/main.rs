@@ -235,7 +235,7 @@ fn run(args: Args) -> Result<Vec<String>> {
                 | Command::Phones { node } => node.clone(),
                 _ => unreachable!("handled above"),
             };
-            let (_, mut l) = phone::owner(r, &mut state, &node, now())?;
+            let (_, mut l) = phone::paired_link(r, &mut state, &node, now())?;
             let lines = owned(&mut l, command);
             let _ = l.disconnect();
             lines?
@@ -244,7 +244,7 @@ fn run(args: Args) -> Result<Vec<String>> {
     Ok(lines)
 }
 
-/// An owner's command, on its link.
+/// A paired phone's command, on its link.
 fn owned<L: Link>(l: &mut L, command: Command) -> Result<Vec<String>> {
     Ok(match command {
         Command::Neighbours { .. } => {
@@ -269,7 +269,7 @@ fn owned<L: Link>(l: &mut L, command: Command) -> Result<Vec<String>> {
             vec![format!("public {}", if public { "yes" } else { "no" })]
         }
         Command::Phones { .. } => show::phones(&phone::phones(l)?),
-        _ => unreachable!("not an owner's command"),
+        _ => unreachable!("not a paired phone's command"),
     })
 }
 

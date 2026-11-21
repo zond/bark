@@ -1,6 +1,6 @@
 // A phone's Bluetooth in Dart, for the tests: fake nodes by device ID,
 // each advertising while in reach and answering as its node does, and a
-// way to link the app to one as its owner, as a phone paired with it is.
+// way to link the app to one as a paired phone.
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -15,7 +15,7 @@ import 'fake_node.dart';
 
 /// Fake nodes behind Bluetooth, by device ID: each advertises while in
 /// reach and not connected, a public one by the public node's UUID, and
-/// answers reads and writes as its fake: as its owner's link to a phone
+/// answers reads and writes as its fake: as a paired phone's link to a phone
 /// that holds its bond or to a node that is not public, else as a
 /// guest's.
 class FakeNodes extends UniversalBlePlatform {
@@ -264,7 +264,7 @@ class FakeNodes extends UniversalBlePlatform {
   /// The person types a code that is not the one on the node's screen.
   bool wrongCode = false;
 
-  /// Pairs, which makes a guest's link the owner's.
+  /// Pairs, which makes a guest's link a paired phone's.
   @override
   Future<bool> pair(String deviceId) async {
     pairings++;
@@ -274,7 +274,7 @@ class FakeNodes extends UniversalBlePlatform {
     final n = nodes[deviceId]!..pair();
     final guest = _links[deviceId];
     if (guest is FakeGuest) {
-      // The owner's link first, so that the guest's end is not the link's.
+      // The paired phone's link first, so that the guest's end is not the link's.
       _take(deviceId, n.connect());
       await guest.close();
     }
@@ -339,13 +339,12 @@ class FakeNodes extends UniversalBlePlatform {
       case Uuids.phones when value.first == 0:
         await n.setPhonesFrom(value[1]);
       case Uuids.phones when value.first == 1:
-        await n.askRemovalCode();
+        await n.askCode();
       case Uuids.phones:
-        await n.removePhone(
+        await n.byCode(
           (value[1] << 8) | value[2],
-          bond: value[3] & 1 != 0,
-          home: value[3] & 2 != 0,
-          code: (value[4] << 16) | (value[5] << 8) | value[6],
+          RecordChange.values.firstWhere((c) => c.what == value[3]),
+          (value[4] << 16) | (value[5] << 8) | value[6],
         );
       case Uuids.public when value.single == encodeUnpair().single:
         if (refusesUnpair) {
@@ -372,8 +371,18 @@ class FakeNodes extends UniversalBlePlatform {
         await n.send(value);
       case Uuids.inbox:
         await n.confirm(ByteData.sublistView(value).getUint32(0));
+      case Uuids.home when value.first == 1 && value.length != 37:
+        throw const AttException(AttError.invalidLength);
       case Uuids.home:
-        await n.setHome(value.first == 1 ? value.sublist(1) : null);
+        await n.setHome(
+          value.first == 1
+              ? (
+                  key: value.sublist(1, 1 + mailboxKeyLen),
+                  sent: ByteData.sublistView(value)
+                      .getUint32(1 + mailboxKeyLen),
+                )
+              : null,
+        );
       case Uuids.update:
         await n.writeUpdate(value);
       case Uuids.image:
@@ -440,7 +449,7 @@ extension FakeNodeOf on AppModel {
   /// The fake Bluetooth the node is on.
   FakeNodes? get fakeBle => _bluetooth[this];
 
-  /// Links the app to [fakeNode] as its owner, as the person's tap on it
+  /// Links the app to [fakeNode] as a paired phone, as the person's tap on it
   /// in Settings does; it counts as paired with the phone first.
   Future<void> connectFake() async {
     final n = fakeNode ??= FakeNode(

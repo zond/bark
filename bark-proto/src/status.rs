@@ -35,6 +35,9 @@ pub struct Status {
     pub battery: Battery,
     /// Its live neighbours: heard, heard with margin, proven.
     pub neighbours: NeighbourCounts,
+    /// The mean C/N0, dB-Hz, of the satellites its GPS used in its latest
+    /// reading, whether or not the fix was kept; 0 when it has none.
+    pub gps_cn0: u8,
     /// The version of the firmware image it runs, 0 if not known
     /// ([`crate::Config::version`]).
     pub version: u32,

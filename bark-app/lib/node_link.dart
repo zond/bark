@@ -32,7 +32,7 @@ class NotOurs implements Exception {
 
 /// Android kept its bond with the node `node`, which the app does not
 /// count as the phone's, when asked to remove it. Android encrypts every
-/// link to the node with it, which the node takes as its owner's or ends,
+/// link to the node with it, which the node takes as a paired phone's or ends,
 /// and pairs with its old keys while the node runs a new pairing (bench,
 /// 2026-11-10), so the phone cannot use the node until the person
 /// forgets it in the phone's Bluetooth settings (spec "Phone link",
@@ -93,7 +93,7 @@ abstract class NodeLink {
   Future<NodeTime> readClock();
 
   /// The mailbox key, or none.
-  Future<void> setHome(List<int>? key);
+  Future<void> setHome(HomeSet? set);
   Future<NodeHome> readHome();
 
   /// The next read of Neighbours starts at `slot`.
@@ -149,19 +149,15 @@ abstract class NodeLink {
   Future<void> setPhonesFrom(int slot);
   Future<PhonesPage> readPhones();
 
-  /// The node draws a fresh removal code on its screen.
-  Future<void> askRemovalCode();
+  /// The node draws a fresh code on its screen.
+  Future<void> askCode();
 
-  /// Removes the `bond`, the `home` or both of record `number`, with the
-  /// `code` the node's screen shows; throws [AttException] 0x81 for
-  /// another code or one past [removalCodeTime], which the node then
-  /// forgets, and 0x13 for a record or part the node does not hold.
-  Future<void> removePhone(
-    int number, {
-    required bool bond,
-    required bool home,
-    required int code,
-  });
+  /// Makes `change` to record `number`, with the `code` the node's screen
+  /// shows; throws [AttException] 0x81 for another code or one past
+  /// [codeTime], which the node then forgets, and 0x13 for a record or
+  /// part the node does not hold, or a record without a home to make the
+  /// owner's.
+  Future<void> byCode(int number, RecordChange change, int code);
 
   /// Asks for the shortest connection interval, for a transfer; where
   /// the platform chooses the interval itself, nothing.

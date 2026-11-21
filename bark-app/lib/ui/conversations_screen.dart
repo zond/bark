@@ -91,6 +91,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           NoticeCard(app),
           BondKeptLine(app),
           HomeOfferLine(app),
+          GiftLines(app),
           ..._gettingStarted(context),
           // Once there is a contact, there is someone to lose.
           if (!app.me.backedUp && app.contacts.list.isNotEmpty)

@@ -27,7 +27,9 @@ use crate::scenario::{
 };
 use crate::trace::{Names, Tracer};
 use crate::walk::{MovingLink, Walks};
+use bark_app_layer::command;
 use bark_app_layer::mailbox::{Arrival as Kept, Mailbox, Person, RamRing};
+use bark_link::phones::{Name, Phones};
 use bark_proto::radio::{time_on_air, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff::{DETECT_SYMBOLS, LONG_PREAMBLE_SYMBOLS};
 use bark_proto::{
@@ -659,9 +661,21 @@ struct ScriptEntry {
     preamble: u16,
 }
 
+/// The mean C/N0 of every simulated GPS reading, dB-Hz: an open sky's,
+/// about 40 on the boards (`docs/gps-bench-2026-11-20.md`). The simulator
+/// has no satellites; the number only fills the node's status.
+const SIM_CN0: u8 = 40;
+
 /// A home node's mailbox in the simulator: the board's 16 pages of 16
 /// slots, in RAM.
 pub(crate) type HomeMailbox = Mailbox<RamRing<256>>;
+
+/// A home node's mailbox and the records its people come from, which a
+/// fetch's command changes (spec "Mailbox", The owner's commands).
+pub(crate) struct Home {
+    pub(crate) mailbox: HomeMailbox,
+    pub(crate) records: Phones,
+}
 
 /// The simulator.
 pub struct Sim {
@@ -827,8 +841,8 @@ pub struct Sim {
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
     /// Per node, its mailbox if it is a person's home (spec "Mailbox"),
-    /// on a ring in RAM of the board's 256 slots.
-    pub(crate) mailboxes: Vec<Option<Box<HomeMailbox>>>,
+    /// on a ring in RAM of the board's 256 slots, and its records.
+    pub(crate) mailboxes: Vec<Option<Box<Home>>>,
     /// The mailbox replies nodes' applications received, with the node,
     /// for the tests to open.
     pub(crate) replies: Vec<(u32, Vec<u8>)>,
@@ -1244,20 +1258,20 @@ impl Sim {
                 ids[p.b as usize] = ids[p.a as usize];
             }
         }
-        let mut mailboxes: Vec<Option<Box<HomeMailbox>>> = (0..n).map(|_| None).collect();
+        let mut mailboxes: Vec<Option<Box<Home>>> = (0..n).map(|_| None).collect();
         for m in &sc.mailboxes {
             let i = resolve(&placed, m)?;
-            let mut mb = Box::new(Mailbox::new(RamRing::new(), ids[i as usize]));
-            mb.set_person(
-                0,
-                Some(Person {
-                    number: 1,
-                    tag: Some(Sim::mailbox_tag(sc.seed, i)),
-                    key: Some(Sim::mailbox_key(sc.seed, i)),
-                    ..Person::default()
-                }),
-            );
-            mailboxes[i as usize] = Some(mb);
+            // The home's one person, its owner, at place 0, with no phone.
+            let mut records = Phones::EMPTY;
+            let key = Sim::mailbox_key(sc.seed, i);
+            let tag = Sim::mailbox_tag(sc.seed, i);
+            let at = records
+                .add(key, tag, Name::EMPTY, 0, 0, 0)
+                .expect("a free place");
+            records.make_owner(records.get(at).expect("added").number);
+            let mut mailbox = Mailbox::new(RamRing::new(), ids[i as usize]);
+            mailbox.set_person(at, records.get(at).map(Person::of));
+            mailboxes[i as usize] = Some(Box::new(Home { mailbox, records }));
         }
         let mut homes = vec![None; n];
         for h in &sc.homes {
@@ -2397,7 +2411,7 @@ impl Sim {
         // (docs/core-interface.md, "Application").
         let reply_due = self.mailboxes[node as usize]
             .as_ref()
-            .is_some_and(|m| m.reply_due());
+            .is_some_and(|h| h.mailbox.reply_due());
         if self.offers[node as usize].is_some() || reply_due || self.has_kept(node) {
             self.offer(node);
         }
@@ -3601,6 +3615,9 @@ impl Sim {
         if !self.nodes[n as usize].alive {
             return false;
         }
+        // Every reading's signal, as an open sky's, the fix kept or not.
+        let cn0 = SIM_CN0;
+        self.deliver(n, Event::App(AppCommand::Signal { cn0 }));
         let mut at = self.place(n);
         let fault = self.gps_fault[n as usize].filter(|f| self.now >= f.0);
         if let Some((from, kind, size, dir)) = fault {
@@ -3983,8 +4000,8 @@ impl Sim {
                 if !self.msg_tags.contains_key(&msg_id.0)
                     && self.mailboxes[node as usize].is_some() =>
             {
-                if let Some(m) = self.mailboxes[node as usize].as_mut() {
-                    m.given_back(msg_id);
+                if let Some(h) = self.mailboxes[node as usize].as_mut() {
+                    h.mailbox.given_back(msg_id);
                 }
                 return;
             }
@@ -4770,12 +4787,20 @@ impl Sim {
             self.replies.push((node, payload.to_vec()));
             return true;
         }
-        let Some(m) = self.mailboxes[node as usize].as_mut() else {
+        let Some(h) = self.mailboxes[node as usize].as_mut() else {
             return false;
         };
         // Every payload but a fetch is kept; the texts are counted as
-        // delivered as at any node.
-        !matches!(m.arrive(msg_id, payload), Kept::Kept(_))
+        // delivered as at any node. A fetch's command runs on the records
+        // as on a board; the simulator has no time of day, and no phones.
+        match h.mailbox.arrive(msg_id, payload) {
+            Kept::Kept(_) => false,
+            Kept::Fetch { person, command } => {
+                command::obey(&mut h.mailbox, &mut h.records, person, command, 0, 0);
+                true
+            }
+            Kept::Refused => true,
+        }
     }
 
     /// The mailbox's next reply, handed to the core while its application
@@ -4785,7 +4810,7 @@ impl Sim {
         let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
         let Some(o) = self.mailboxes[src as usize]
             .as_mut()
-            .and_then(|m| m.next(&mut out))
+            .and_then(|h| h.mailbox.next(&mut out))
         else {
             return;
         };
@@ -5772,7 +5797,7 @@ mod tests {
         }
         let t = sim.now + Duration::from_secs(60);
         sim.run_until(t);
-        assert_eq!(sim.mailboxes[0].as_ref().unwrap().newest(), 3);
+        assert_eq!(sim.mailboxes[0].as_ref().unwrap().mailbox.newest(), 3);
         let key = Sim::mailbox_key(1, 0);
         let address = Address {
             position: sim.relays[2].address(),
@@ -5784,6 +5809,7 @@ mod tests {
                 sent,
                 address,
                 recipient: 0,
+                command: None,
             }
             .seal(&key, home, 0)
         };
@@ -5797,7 +5823,8 @@ mod tests {
         for (node, r) in sim.replies.drain(..) {
             assert_eq!(node, 2);
             if Form::of(&r) == Ok(Form::Summary) {
-                summaries.push(seal::open_summary(&key, 7, &r).unwrap());
+                let s = seal::open_summary(&key, 7, &r).unwrap();
+                summaries.push((s.items, s.remaining, s.owner));
                 continue;
             }
             let mut out = [0u8; bark_proto::wire::MAX_PAYLOAD];
@@ -5805,7 +5832,7 @@ mod tests {
             got.push(out[..n].to_vec());
         }
         summaries.dedup();
-        assert_eq!(summaries, [(3, 0)]);
+        assert_eq!(summaries, [(3, 0, true)]);
         got.sort();
         got.dedup();
         let want: Vec<Vec<u8>> = items
@@ -5824,8 +5851,87 @@ mod tests {
         let answers: Vec<_> = sim
             .replies
             .iter()
-            .map(|(_, r)| seal::open_summary(&key, 8, r))
+            .map(|(_, r)| seal::open_summary(&key, 8, r).map(|s| (s.items, s.remaining)))
             .collect();
         assert_eq!(answers, [Ok((0, 0))]);
+    }
+
+    /// The owner, away, adds a person to their home and lists its records
+    /// by commands on fetches, answered in the summaries; the person added
+    /// fetches as any homed person does (spec "Mailbox", The owner's
+    /// commands).
+    #[test]
+    fn the_owner_s_commands_are_answered_over_the_mesh() {
+        use bark_app_layer::command::{Code, Command, Outcome};
+        use bark_app_layer::seal::{self, Fetch};
+        use bark_app_layer::Address;
+        use bark_link::phones::RECORDS;
+        let mut sc = Scenario::new("owner", 1, 1800.0)
+            .point("A", RoleSpec::Relay, 0.0, 0.0)
+            .point("B", RoleSpec::Relay, 400.0, 0.0)
+            .point("C", RoleSpec::Relay, 800.0, 0.0)
+            .link("A", "B", -80.0)
+            .link("B", "C", -80.0);
+        sc.mailboxes = vec!["A".into()];
+        let mut sim = Sim::new(&sc).unwrap();
+        sim.run_until(Instant::ZERO + Duration::from_secs(300));
+        let owner = Sim::mailbox_key(1, 0);
+        let eve = [9u8; 32];
+        let address = Address {
+            position: sim.relays[2].address(),
+            node: sim.node_id(2),
+        };
+        let home = sim.node_id(0);
+        // A fetch from C, answered within 300 s: its summary.
+        let ask = |sim: &mut Sim, key: &[u8; 32], sent: u32, command: Option<Command>| {
+            let f = Fetch {
+                sent,
+                address,
+                recipient: 0,
+                command,
+            }
+            .seal(key, home, 0);
+            while !sim.send_raw(2, 0, &f) {
+                let t = sim.now + Duration::from_secs(1);
+                sim.run_until(t);
+            }
+            let t = sim.now + Duration::from_secs(300);
+            sim.run_until(t);
+            let summaries: Vec<_> = sim
+                .replies
+                .drain(..)
+                .filter_map(|(_, r)| seal::open_summary(key, sent, &r).ok())
+                .collect();
+            assert!(!summaries.is_empty(), "answered");
+            summaries[0]
+        };
+        let add = Command::Add {
+            key: eve,
+            tag: 0x45,
+            name: Name::new(b"Eve").unwrap(),
+        };
+        let s = ask(&mut sim, &owner, 10, Some(add));
+        assert_eq!((s.owner, s.outcome), (true, Some(Outcome::Done(Code::Ok))));
+        let s = ask(&mut sim, &eve, 11, Some(Command::List));
+        assert_eq!(
+            (s.owner, s.outcome),
+            (false, Some(Outcome::Done(Code::NotAllowed)))
+        );
+        let s = ask(&mut sim, &owner, 12, Some(Command::List));
+        let Some(Outcome::List(list)) = s.outcome else {
+            panic!("a list, not {:?}", s.outcome)
+        };
+        let mut listed = [None; RECORDS];
+        assert_eq!(list.records(&mut listed), Ok(2));
+        let eve_listed = listed[1].unwrap();
+        assert_eq!(
+            (
+                eve_listed.name,
+                eve_listed.home,
+                eve_listed.paired,
+                eve_listed.tag
+            ),
+            (&b"Eve"[..], true, false, Some(0x45))
+        );
     }
 }

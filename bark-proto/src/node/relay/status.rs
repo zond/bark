@@ -50,6 +50,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             carried: self.carried(),
             battery: self.battery.status(),
             neighbours: self.neighbour_counts(now),
+            gps_cn0: self.gps_cn0(now),
             version: self.config.version,
             gathering: self.spread.gathering_status(),
         }

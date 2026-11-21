@@ -83,7 +83,7 @@ pub fn drains(m: Moment) -> bool {
 
 /// Whether the node reboots into the staged image now
 /// (spec "Updates over the mesh"). A standing link does not hold it back:
-/// else a home node whose owner is at home would never install.
+/// else a home node whose paired phone stays in reach would never install.
 pub fn quiet(m: Moment) -> bool {
     drains(m)
         && m.drained

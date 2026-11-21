@@ -89,6 +89,7 @@ impl FakeNode {
                 address: Position::from_degrees(50.45, 30.52),
                 relays: 3,
                 heard: 4,
+                gps_cn0: 38,
                 ..Status::EMPTY
             },
             code: 123_456,
@@ -161,6 +162,7 @@ impl FakeNode {
                     id,
                     bark_proto::status::Status {
                         placed: true,
+                        gps_cn0: 21,
                         version: 46,
                         ..Default::default()
                     },
@@ -317,7 +319,7 @@ impl Transport for FakeRadio {
             node,
             bonds: self.bonds.clone(),
             address,
-            owner: bonded && held,
+            paired: bonded && held,
             // A node that no longer holds this computer's bond ends the
             // link as soon as it is encrypted (spec "Phone link", The
             // removed phone).
@@ -364,7 +366,7 @@ pub struct FakeLink {
     node: Rc<RefCell<FakeNode>>,
     bonds: Rc<RefCell<HashSet<String>>>,
     address: String,
-    owner: bool,
+    paired: bool,
     ended: bool,
     subscribed: HashSet<Char>,
     queue: VecDeque<(Char, Vec<u8>)>,
@@ -381,7 +383,7 @@ impl FakeLink {
         if self.ended {
             return Err(Error::Ended);
         }
-        if self.owner || self.node.borrow().open(c) {
+        if self.paired || self.node.borrow().open(c) {
             Ok(())
         } else {
             Err(Error::Att(0x05))
@@ -461,7 +463,7 @@ impl Link for FakeLink {
                         i.0 > after && bark_app_layer::seal::recipient_of(&i.2) == Some(tag)
                     })
                 };
-                if self.owner {
+                if self.paired {
                     let Some((_, id, p)) = ours(n.confirmed) else {
                         return Ok(Vec::new());
                     };
@@ -507,7 +509,7 @@ impl Link for FakeLink {
             Char::Public => match taken(PublicWrite::decode(v))? {
                 PublicWrite::Set(p) => n.public = p.0,
                 PublicWrite::Unpair => {
-                    let i = n.mine().expect("an owner's link");
+                    let i = n.mine().expect("a paired phone's link");
                     n.phones.unpair(i);
                     n.relisted();
                     // The node answers, then ends the link.
@@ -581,7 +583,7 @@ impl Link for FakeLink {
                     return Err(Error::Att(bark_link::att::INCOMPATIBLE));
                 }
                 self.tag = Some(rec.tag);
-                if let (true, Some(i)) = (self.owner, n.mine()) {
+                if let (true, Some(i)) = (self.paired, n.mine()) {
                     n.phones.set_recipient(i, rec.tag, rec.name);
                     n.relisted();
                 }
@@ -611,13 +613,13 @@ impl Link for FakeLink {
                     .find(|i| i.0 > n.confirmed && bark_app_layer::seal::recipient_of(&i.2) == tag)
                     .map(|i| (i.0, i.1));
                 match next {
-                    Some((number, msg)) if self.owner && msg == id => n.confirmed = number,
+                    Some((number, msg)) if self.paired && msg == id => n.confirmed = number,
                     _ => return Err(Error::Att(bark_link::att::VALUE_NOT_ALLOWED)),
                 }
             }
             Char::Guest => self.after = taken(After::decode(v))?.0,
             Char::Home => match taken(SetHome::decode(v))? {
-                SetHome::Set(k) => n.home = Some(k),
+                SetHome::Set { key, .. } => n.home = Some(key),
                 SetHome::Clear => n.home = None,
             },
             Char::Ask => {
@@ -688,7 +690,7 @@ impl Link for FakeLink {
         }
         n.relisted();
         self.bonds.borrow_mut().insert(self.address.clone());
-        self.owner = true;
+        self.paired = true;
         Ok(())
     }
 

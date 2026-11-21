@@ -4,6 +4,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::card::{self, Card};
+use crate::keys::KEY_LEN;
 use crate::text::Encoding;
 use crate::{be, Address, Error, Identity};
 
@@ -16,6 +17,10 @@ const TYPE_REACTION: u8 = 3;
 const TYPE_CARD: u8 = 4;
 const TYPE_UTF8_PART: u8 = 5;
 const TYPE_1251_PART: u8 = 6;
+const TYPE_HOME: u8 = 7;
+
+/// Bytes of a home record after its type: the address and the key.
+pub const HOME_LEN: usize = Address::LEN + KEY_LEN;
 
 /// The most bytes of a reaction's emoji: the longest in Unicode 17.0's
 /// emoji list, a kiss of two people each with a skin tone, ten code
@@ -106,6 +111,15 @@ pub enum Record<'a> {
     },
     /// A card: the sender's own, or one passed on.
     Card(Card<'a>),
+    /// A home given: a home node's address and the mailbox key its owner
+    /// had it take for the receiver, with which the receiver may make it
+    /// their home (spec "Mailbox", The owner's commands).
+    Home {
+        /// The home node's address.
+        address: Address,
+        /// The mailbox key it holds for the receiver.
+        key: [u8; KEY_LEN],
+    },
 }
 
 /// Writes a plaintext: the header, then records.
@@ -184,6 +198,11 @@ impl<'a> Writer<'a> {
                 let n = c.encode(&mut b)?;
                 self.put(&[TYPE_CARD, n as u8])?;
                 self.put(&b[..n])?;
+            }
+            Record::Home { address, key } => {
+                self.put(&[TYPE_HOME])?;
+                self.put(&address.encode())?;
+                self.put(key)?;
             }
         }
         Ok(())
@@ -268,6 +287,14 @@ impl<'a> Iterator for Records<'a> {
                 (
                     Card::decode(&body[1..1 + n]).map(Record::Card),
                     &body[1 + n..],
+                )
+            }
+            TYPE_HOME if body.len() >= HOME_LEN => {
+                let mut key = [0u8; KEY_LEN];
+                key.copy_from_slice(&body[Address::LEN..HOME_LEN]);
+                (
+                    Address::decode(body).map(|address| Record::Home { address, key }),
+                    &body[HOME_LEN..],
                 )
             }
             _ => (Err(Error::Malformed), &[][..]),

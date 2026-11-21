@@ -311,7 +311,7 @@ static TOLD: embassy_sync::blocking_mutex::Mutex<
     phone: bark_screen::Phone::Unpaired,
     over: Over {
         pairing: None,
-        removal: None,
+        confirm: None,
         full: None,
     },
 }));
@@ -354,17 +354,17 @@ pub fn lines() {
 }
 
 /// What the phone link shows over its line for a while (spec "Screen and buttons"):
-/// a pairing's code until the pairing ends, a removal's code and a pairing
-/// refused for want of room each for [`SHOWN`] at most.
+/// a pairing's code until the pairing ends, the code of a change to the
+/// phones and a pairing refused for want of room each for [`SHOWN`] at most.
 #[cfg(not(feature = "console"))]
 #[derive(Clone, Copy)]
 struct Over {
     pairing: Option<u32>,
-    removal: Option<(u32, Instant)>,
+    confirm: Option<(u32, Instant)>,
     full: Option<Instant>,
 }
 
-/// How long a removal's code and `PHONES FULL` show: the time a pairing
+/// How long the code of a change to the phones and `PHONES FULL` show: the time a pairing
 /// gives its person to type a code (`bark_link::phones::CODE_MS`).
 #[cfg(not(feature = "console"))]
 const SHOWN: Duration = Duration::from_millis(bark_link::phones::CODE_MS);
@@ -380,12 +380,12 @@ fn over(f: impl FnOnce(&mut Over)) {
 fn phone_shown(now: Instant) -> (bark_screen::Phone, Option<Instant>) {
     use bark_screen::Phone;
     let Told { over: o, phone, .. } = TOLD.lock(core::cell::Cell::get);
-    let removal = o.removal.filter(|&(_, until)| now < until);
+    let confirm = o.confirm.filter(|&(_, until)| now < until);
     let full = o.full.filter(|&until| now < until);
-    let ends = removal.map(|(_, u)| u).into_iter().chain(full).min();
-    let phone = match (o.pairing, removal, full) {
+    let ends = confirm.map(|(_, u)| u).into_iter().chain(full).min();
+    let phone = match (o.pairing, confirm, full) {
         (Some(c), ..) => Phone::Code(c),
-        (None, Some((c, _)), _) => Phone::Remove(c),
+        (None, Some((c, _)), _) => Phone::Confirm(c),
         (None, None, Some(_)) => Phone::Full,
         (None, None, None) => phone,
     };
@@ -413,11 +413,11 @@ pub fn pairing(code: Option<u32>) {
     over(|o| o.pairing = code);
 }
 
-/// The phone link's side: a removal's code, drawn at once and shown for
-/// [`SHOWN`] at most, or its end.
+/// The phone link's side: the code of a change to the phones, drawn at
+/// once and shown for [`SHOWN`] at most, or its end.
 #[cfg(not(feature = "console"))]
-pub fn removal(code: Option<u32>) {
-    over(|o| o.removal = code.map(|c| (c, Instant::now() + SHOWN)));
+pub fn confirm(code: Option<u32>) {
+    over(|o| o.confirm = code.map(|c| (c, Instant::now() + SHOWN)));
 }
 
 /// The phone link's side: a pairing refused for want of room, `PHONES

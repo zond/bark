@@ -48,8 +48,13 @@ class PersonCard {
   /// an earlier one, also one that drops the home.
   final int time;
 
-  /// The name its owner chose.
+  /// The name its person chose.
   final String name;
+
+  /// The newest payload version their app reads, in the flags' high four
+  /// bits (spec "Phone link", The payload, the card): a sender writes
+  /// them none newer. This app's is [formatVersion].
+  final int reads;
 
   PersonCard(
     List<int> identity,
@@ -58,6 +63,7 @@ class PersonCard {
     this.name, {
     this.now,
     this.nowAt = 0,
+    this.reads = formatVersion,
   }) : identity = Uint8List.fromList(identity);
 
   /// The identity in hex: what a contact and a conversation are known by.
@@ -73,7 +79,7 @@ class PersonCard {
     final h = home, w = now;
     return Uint8List.fromList([
       version,
-      (h != null ? _flagHome : 0) | (w != null ? _flagNow : 0),
+      reads << 4 | (h != null ? _flagHome : 0) | (w != null ? _flagNow : 0),
       ...identity,
       ...be(time, 4),
       ...?h?.encode(),
@@ -90,7 +96,7 @@ class PersonCard {
     if (b[0] < version) {
       throw BadCard('A card from an older app (card version ${b[0]})');
     }
-    if (b.length < fixedLen || b[1] & ~(_flagHome | _flagNow) != 0) {
+    if (b.length < fixedLen || b[1] & 0x0f & ~(_flagHome | _flagNow) != 0) {
       throw const BadCard('Not a card');
     }
     var at = fixedLen;
@@ -117,6 +123,7 @@ class PersonCard {
         utf8.decode(b.sublist(at)),
         now: now,
         nowAt: nowAt,
+        reads: b[1] >> 4,
       );
     } on FormatException {
       throw const BadCard('Not a card: the name is not UTF-8');

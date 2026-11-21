@@ -42,6 +42,7 @@ mixin _Home on _AppCore {
       : 'Your card changed: new home address';
 
   /// The connected node is the person's home.
+  @override
   bool get atHome {
     final n = session.node;
     return n != null && messenger.isHome(n.id);
@@ -117,13 +118,13 @@ mixin _Home on _AppCore {
   Future<void>? _fetchSend;
   void _queuedFetch() => unawaited(_sendQueuedFetch());
 
-  static const _oldHomeKeeps =
-      'Your old home keeps your mail until you stop it there.';
+  static const _oldHomeLets =
+      'Your old home sends you its mail, then forgets you.';
 
   /// Makes the connected node, at `a`, the person's home: it is given the
   /// mailbox key and is the home only if it then says it holds one. The
-  /// new card goes to every contact if its address changed. Returns what
-  /// to tell the person.
+  /// home before is left ([_leave]). The new card goes to every contact
+  /// if its address changed. Returns what to tell the person.
   Future<String> makeHome(Address a) async {
     final n = session.node;
     if (n == null) return 'Not connected to a node';
@@ -131,15 +132,16 @@ mixin _Home on _AppCore {
     if (!h.mine) {
       return 'The node refused. Nothing changed.';
     }
-    final away = me.home != null && !atHome;
+    final left = !atHome && await _leave();
     if (await me.setHome(a)) await messenger.sendCardToAll();
-    return away
-        ? 'This node is your home. $_oldHomeKeeps'
+    _ownerSeen();
+    return left
+        ? 'This node is your home. $_oldHomeLets'
         : 'This node is your home';
   }
 
   /// No home node. Connected to the home, it forgets the mailbox key;
-  /// elsewhere the home keeps it, and the person is told.
+  /// elsewhere the home is left ([_leave]).
   Future<String> noHome() async {
     if (me.home == null) return 'No home node';
     final at = atHome;
@@ -147,8 +149,174 @@ mixin _Home on _AppCore {
     if (h != null && h.mine) {
       return 'The node refused. It is still your home.';
     }
+    final left = !at && await _leave();
     if (await me.setHome(null)) await messenger.sendCardToAll();
-    return at ? 'No home node' : 'No home node. $_oldHomeKeeps';
+    return left ? 'No home node. $_oldHomeLets' : 'No home node';
+  }
+
+  /// Makes the home that `c`, its owner, gave the person theirs, with the
+  /// key they were given; the home before is left ([_leave]). A fetch
+  /// from the node the phone is on, or the next one, shows the home holds
+  /// the key. Nothing goes back to `c`.
+  Future<String> useGift(Contact was) async {
+    final c = contacts.byKey(was.key) ?? was;
+    final g = c.gift;
+    if (g == null) return 'No home to use';
+    final left =
+        me.home != null && hex(me.home!.id) != hex(g.home.id) && await _leave();
+    if (await me.setHome(g.home, key: g.key)) await messenger.sendCardToAll();
+    await contacts.put(c.copyWith(gift: null));
+    final here = session.connected ? session.address : null;
+    if (here == null) {
+      await me.setFetchQueued(true);
+    } else {
+      session.fetchNews = null;
+      await messenger.fetch(here);
+    }
+    final home = '${nodeLabel(g.home.id)} is your home';
+    return left ? '$home. $_oldHomeLets' : home;
+  }
+
+  /// The person declines the home `c` gave them.
+  Future<void> declineGift(Contact c) => contacts.put(c.copyWith(gift: null));
+
+  /// The person's home is `a`, they say, as after their identity came
+  /// back from its words: a fetch to it with the key their identity makes,
+  /// from the node the phone is on, makes it the home once its summary
+  /// comes ([_answered]); without one nothing changes.
+  Future<String> tryHome(Address a) async {
+    if (me.home != null) return 'You have a home already';
+    final here = session.connected ? session.address : null;
+    if (here == null) return 'Connect to a node first';
+    session.fetchNews = null;
+    await messenger.fetch(here, to: a);
+    return 'Asking ${nodeLabel(a.id)} for your mail';
+  }
+
+  /// The home the person named last ([tryHome]) while it has not
+  /// answered, and whether its wait is over: it did not answer.
+  ({Address home, bool over})? get tried {
+    if (me.home != null) return null;
+    final o = session.outbox.where((o) => o.kind == OutKind.fetch).lastOrNull;
+    final l = me.leaving?.home;
+    if (o == null || o.answered || o.command != null) return null;
+    if (l != null && hex(l.id) == hex(o.dst.id)) return null;
+    return (home: o.dst, over: session.fetchWaiting != o);
+  }
+
+  /// A summary of the fetch of `round` came: from the home being left, of
+  /// a home the person named, or of a command.
+  Future<void> _answered(int round, RoundSummary s) async {
+    final l = me.leaving;
+    if (l != null && (round == l.round || round == l.leaveRound)) {
+      return _leavingAnswered(l, round, s);
+    }
+    final o = session.outbox
+        .where((o) => o.kind == OutKind.fetch && o.sent == round)
+        .firstOrNull;
+    if (o == null) return;
+    if (me.home == null && o.command == null) {
+      if (await me.setHome(o.dst)) await messenger.sendCardToAll();
+      // Its summary is now the home's: what it keeps, its owner, what it
+      // reads.
+      await me.gotSummary(round, s);
+      session.note('Home: ${nodeName(o.dst.id)} answered, now the home');
+      session.fetchNews = '${nodeLabel(o.dst.id)} is your home';
+      notifyListeners();
+      return;
+    }
+    await _obeyed(o, s);
+  }
+
+  /// Leaves the person's home, which is about to change: the app fetches
+  /// the mail it keeps and then tells it to forget the person, by itself
+  /// ([_leaveStep]). Whether there was one.
+  Future<bool> _leave() async {
+    final h = me.home;
+    if (h == null) return false;
+    final was = me.leaving;
+    if (was != null) {
+      session.note('Leaving: ${nodeName(was.home.id)} given up for another');
+    }
+    await me.setLeaving(Leaving(h, me.mailboxKey.extractBytes()));
+    session.note('Leaving: ${nodeName(h.id)}');
+    unawaited(_leaveStep());
+    return true;
+  }
+
+  /// The step of leaving under way, one at a time.
+  Future<void>? _leaving;
+
+  /// Takes the next step of leaving the old home, once the phone is on a
+  /// node with a place for the answers: a fetch, again while the home
+  /// keeps more than a batch, once every item of the last has come or its
+  /// wait is over; then the leave. The leave's answer may be lost, and a
+  /// leave asked again is not answered, as the home no longer holds the
+  /// key, so it is sent once and the old home forgotten when its answer
+  /// comes or its wait is over.
+  Future<void> _leaveStep() =>
+      _leaving ??= _stepLeaving().whenComplete(() => _leaving = null);
+
+  Future<void> _stepLeaving() async {
+    final l = me.leaving;
+    if (l == null) return;
+    final t = now();
+    bool over(DateTime? at) =>
+        at != null && t.difference(at) >= Session.fetchAnswerWait;
+    if (l.leaveRound != null) {
+      if (!over(l.leaveAt)) return;
+      session.note('Leaving: ${nodeName(l.home.id)} did not answer the leave');
+      await me.setLeaving(null);
+      return;
+    }
+    final here = session.connected ? session.address : null;
+    if (here == null) return;
+    final got = l.items != null && l.got >= l.items!;
+    final fetch = l.round == null || (got && l.remaining > 0);
+    if (!fetch && !got && !over(l.at)) return;
+    final key = SecureKey.fromList(sodium, l.key);
+    try {
+      if (fetch) {
+        l.round = await messenger.fetchFrom(l.home, key, here);
+        l.at = t;
+        l.items = null;
+        l.got = 0;
+      } else {
+        l.leaveRound = await messenger.fetchFrom(
+          l.home,
+          key,
+          here,
+          command: const LeaveCommand(),
+        );
+        l.leaveAt = t;
+      }
+    } finally {
+      key.dispose();
+    }
+    session.note(
+      'Leaving: ${fetch ? 'a fetch' : 'the leave'} to ${nodeName(l.home.id)}',
+    );
+    await me.leavingChanged();
+  }
+
+  Future<void> _leavingAnswered(Leaving l, int round, RoundSummary s) async {
+    if (round == l.leaveRound) {
+      session.note('Leaving: ${nodeName(l.home.id)} forgot the person');
+      await me.setLeaving(null);
+      return;
+    }
+    l.items = s.items;
+    l.remaining = s.remaining;
+    await me.leavingChanged();
+    unawaited(_leaveStep());
+  }
+
+  /// An item of the fetch of `round` came: one more of the old home's.
+  void _itemCame(int round) {
+    final l = me.leaving;
+    if (l == null || round != l.round) return;
+    l.got++;
+    unawaited(me.leavingChanged().then((_) => _leaveStep()));
   }
 
   /// Takes the mailbox key from a connected node that is not the home.

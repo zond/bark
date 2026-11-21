@@ -265,7 +265,7 @@ pub fn guest_node<L: Link>(l: &mut L) -> Result<Node> {
 }
 
 /// Writes Recipient: this person's tag at the node, the tool's link
-/// versions, and on an owner's link their name (spec "Phone link", The
+/// versions, and on a paired phone's link their name (spec "Phone link", The
 /// service). The node answers 0x82 and ends the link when it and the
 /// tool do not serve each other (spec "Versions").
 pub fn recipient<L: Link>(l: &mut L, me: &Me, n: &Node, name: &str) -> Result<()> {
@@ -324,12 +324,12 @@ fn no_longer(id: NodeId) -> Error {
     ))
 }
 
-/// An owner's link to the paired node `sel` names, as the app makes one:
+/// A paired phone's link to the node `sel` names, as the app makes one:
 /// over the bond, without a scan, as BlueZ finds a bonded device itself;
 /// Node read first, which shows whether the node still holds the bond
 /// (spec "Phone link", The removed phone); then the computer's time, at
 /// every connection (spec "Settings").
-pub fn owner<T: Transport>(
+pub fn paired_link<T: Transport>(
     t: &mut T,
     state: &mut State,
     sel: &Select,
@@ -366,7 +366,7 @@ pub fn owner<T: Transport>(
         Err(Error::Ended | Error::Att(0x05 | 0x0F)) => return Err(no_longer(p.id)),
         n => n?,
     };
-    attach_owner(&mut l, state, &n, p.id, clock)?;
+    attach_paired(&mut l, state, &n, p.id, clock)?;
     // The person's home tells whether it still keeps their mail; a phone
     // paired with it may have removed it (spec "Phones"), which the person
     // is told rather than overruled, as the app does.
@@ -384,9 +384,9 @@ pub fn owner<T: Transport>(
     Ok((n, l))
 }
 
-/// An owner's link as the app sets it up: Node read, then Recipient with
+/// A paired phone's link as the app sets it up: Node read, then Recipient with
 /// the person's tag and name, the computer's time, and Status.
-fn attach_owner<L: Link>(
+fn attach_paired<L: Link>(
     l: &mut L,
     state: &mut State,
     n: &Node,
@@ -438,7 +438,7 @@ pub fn pair<T: Transport>(
         )));
     }
     let n = node(&mut l)?;
-    attach_owner(&mut l, state, &n, found.id, clock)?;
+    attach_paired(&mut l, state, &n, found.id, clock)?;
     state.add(Paired {
         id: found.id,
         address: found.address,
@@ -458,7 +458,7 @@ pub fn unpair<T: Transport>(
     clock: Clock,
 ) -> Result<NodeId> {
     let p = state.pick(sel)?;
-    let (_, mut l) = owner(t, &mut *state, sel, clock)?;
+    let (_, mut l) = paired_link(t, &mut *state, sel, clock)?;
     match l.write(Char::Public, &PublicWrite::Unpair.encode()) {
         Ok(()) | Err(Error::Ended) => {}
         Err(e) => {
@@ -592,6 +592,7 @@ pub struct Record {
     pub home: bool,
     pub linked: bool,
     pub mine: bool,
+    pub owner: bool,
     pub tag: Option<u8>,
     pub day: u16,
     pub name: String,
@@ -618,6 +619,7 @@ pub fn phones<L: Link>(l: &mut L) -> Result<Vec<Record>> {
                 home: r.home,
                 linked: r.linked,
                 mine: r.mine,
+                owner: r.owner,
                 tag: r.tag,
                 day: r.day,
                 name: String::from_utf8_lossy(r.name).into_owned(),
@@ -647,7 +649,7 @@ const READY_WAIT: Duration = Duration::from_millis(12_640);
 /// holds a queue, waits for as long as its link lasts.
 const SEND_ASKS: usize = 5;
 
-/// The link to the node `sel` names: an owner's if this computer is
+/// The link to the node `sel` names: a paired phone's if this computer is
 /// paired with it, else a guest's.
 pub fn connect<T: Transport>(
     t: &mut T,
@@ -657,7 +659,7 @@ pub fn connect<T: Transport>(
     clock: Clock,
 ) -> Result<(Node, T::Link)> {
     if state.pick(sel).is_ok() {
-        return owner(t, state, sel, clock);
+        return paired_link(t, state, sel, clock);
     }
     let mut l = guest(t, sel, time)?;
     let (n, _) = attach_guest(&mut l, state, u64::from(clock.utc_s))?;
@@ -761,10 +763,11 @@ fn home_of<L: Link>(l: &mut L) -> Result<bark_link::home::Home> {
 }
 
 /// Makes the node this person's home with their mailbox `key`, or, with
-/// none, forgets it there (spec "Settings", Home). A home is a fixed
-/// relay, neither sleepy nor carried, so that its address stays
+/// none, forgets it there (spec "Settings", Home); `sent` is this
+/// person's next, from which the node takes their fetches. A home is a
+/// fixed relay, neither sleepy nor carried, so that its address stays
 /// (spec "Mailbox").
-pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>) -> Result<bark_link::home::Home> {
+pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>, sent: u32) -> Result<bark_link::home::Home> {
     if key.is_some() {
         let s = status(l)?;
         if s.sleepy || s.carried {
@@ -774,7 +777,7 @@ pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>) -> Result<bark_link::home
         }
     }
     let set = match key {
-        Some(k) => bark_link::home::SetHome::Set(k),
+        Some(key) => bark_link::home::SetHome::Set { key, sent },
         None => bark_link::home::SetHome::Clear,
     };
     let mut b = [0; bark_link::home::SetHome::MAX_LEN];
@@ -919,7 +922,7 @@ mod tests {
             CLOCK,
         )
         .unwrap();
-        let (_, mut l) = owner(&mut radio, &mut state, &sel("f4f5"), CLOCK).unwrap();
+        let (_, mut l) = paired_link(&mut radio, &mut state, &sel("f4f5"), CLOCK).unwrap();
         assert!(!public(&mut l, Some(false)).unwrap());
         assert_eq!(
             scan(&mut radio, SCAN_TIME).unwrap()[0].public,
@@ -1047,10 +1050,10 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_connects_without_a_scan() {
+    fn a_paired_phone_connects_without_a_scan() {
         let (mut radio, mut state) = paired();
         let scans = radio.scans;
-        let (n, mut l) = owner(&mut radio, &mut state, &sel("f4f5"), CLOCK).unwrap();
+        let (n, mut l) = paired_link(&mut radio, &mut state, &sel("f4f5"), CLOCK).unwrap();
         assert_eq!(n.id, id(0xbae6_e6cb_f4f5));
         assert_eq!(radio.scans, scans);
         assert!(!public(&mut l, None).unwrap());
@@ -1058,9 +1061,9 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_command_needs_a_pairing() {
+    fn a_paired_command_needs_a_pairing() {
         let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
-        let e = owner(&mut radio, &mut State::in_memory(), &sel("1"), CLOCK)
+        let e = paired_link(&mut radio, &mut State::in_memory(), &sel("1"), CLOCK)
             .err()
             .unwrap();
         assert!(e.to_string().contains("bark pair 1"), "{e}");
@@ -1070,7 +1073,7 @@ mod tests {
     fn a_node_that_lost_the_bond_says_so() {
         let (mut radio, mut state) = paired();
         radio.nodes[0].borrow_mut().phones.unpair(0);
-        let e = owner(&mut radio, &mut state, &sel("f4f5"), CLOCK)
+        let e = paired_link(&mut radio, &mut state, &sel("f4f5"), CLOCK)
             .err()
             .unwrap();
         assert!(e.to_string().contains("no longer knows"), "{e}");
@@ -1098,7 +1101,7 @@ mod tests {
             CLOCK,
         )
         .unwrap();
-        let (_, mut l) = owner(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
+        let (_, mut l) = paired_link(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
         let (header, list) = neighbours(&mut l).unwrap();
         assert_eq!(list.len(), 30);
         assert_eq!(header.floor_dbm, -110);
@@ -1123,7 +1126,7 @@ mod tests {
             CLOCK,
         )
         .unwrap();
-        let (_, mut l) = owner(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
+        let (_, mut l) = paired_link(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
         let list = phones(&mut l).unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Olga");

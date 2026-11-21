@@ -10,6 +10,7 @@
 // not answer. Last, nodes a finger cannot tell apart: one marker with
 // their count, which lists them.
 
+import 'package:bark_app/app_layer.dart' show sentOf;
 import 'package:bark_app/app.dart';
 import 'package:bark_app/asks.dart';
 import 'package:bark_app/card.dart';
@@ -17,17 +18,20 @@ import 'package:bark_app/contacts.dart';
 
 import 'fake_ble.dart';
 import 'fake_node.dart';
+import 'fake_place.dart';
 
 import 'package:bark_app/link.dart';
 import 'package:bark_app/main.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/node_link.dart';
+import 'package:bark_app/phone_place.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:bark_app/ui/fact_help.dart';
 import 'package:bark_app/ui/map_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart' show LatLng;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
@@ -239,6 +243,7 @@ void main() {
     WidgetTester t, {
     FakeNode Function(DateTime Function(), List<int>)? make,
     int loseEvery = 0,
+    PhonePlace place = const NoPhonePlace(),
   }) async {
     // The test's clock, which its timers follow.
     DateTime now() => t.binding.clock.now();
@@ -248,6 +253,7 @@ void main() {
       session: Session(store: MemoryStore(), now: now),
       contacts: Contacts(MemoryStore()),
       now: now,
+      place: place,
     );
     await t.runAsync(app.load);
     if (make != null) app.fakeNode = make(now, app.me.identity);
@@ -318,9 +324,10 @@ void main() {
         find.descendant(of: sheet, matching: find.text(text));
     Finder named(String label) =>
         find.descendant(of: sheet, matching: icon(label));
+    // Named by its ID, the people at it under it.
     expect(
-      t.getTopLeft(line('Olena')).dy,
-      lessThan(t.getTopLeft(line(nodeLabel(sleepy.id))).dy),
+      t.getTopLeft(line(nodeLabel(sleepy.id))).dy,
+      lessThan(t.getTopLeft(line('Home: Olena')).dy),
     );
     expect(line('SLEEPY ANCHORED'), findsNothing);
     final rows = [
@@ -333,6 +340,7 @@ void main() {
       ('Last heard', named('last heard')),
       ('Distance', named('distance')),
       ('Known', named('neighbours known')),
+      ('GPS signal', named('GPS signal')),
       ('Version', named('firmware version')),
     ];
     final ys = <double>[];
@@ -367,6 +375,8 @@ void main() {
     expect(line('57%'), findsOneWidget);
     expect(line('4 heard \u00b7 2 strong \u00b7 1 exchanged'), findsOneWidget);
     expect(line('V9'), findsOneWidget);
+    // An anchored sleepy node's GPS rests.
+    expect(line('no reading'), findsOneWidget);
     expect(line('40 s ago'), findsOneWidget);
     expect(named('exchanged'), findsNothing);
     await closeSheet(t);
@@ -379,6 +389,8 @@ void main() {
     await t.tap(icon(nodeLabel(carried.id)));
     await t.pumpAndSettle();
     expect(line('carried'), findsOneWidget);
+    // Under the floor at which a fix is dropped.
+    expect(line('18 dB-Hz · too weak for a fix'), findsOneWidget);
     expect(
       (named('moving').evaluate().single.widget as Icon).icon,
       Icons.directions_walk,
@@ -670,13 +682,12 @@ void main() {
     fake.sleepy = true;
     fake.changed();
     await t.pump(FakeNode.answerAfter);
-    await t.tap(
-      find.byWidgetPredicate(
-        (w) => w is Icon && w.semanticLabel == 'this node',
-      ),
-    );
+    // With no place of its own, it is drawn at its address, where others
+    // reach it.
+    await openThisNode(t);
     await t.pumpAndSettle();
     expect(find.text('anchored to ${nodeLabel(a.id)}'), findsOneWidget);
+    expect(find.textContaining('its anchor\'s\n'), findsOneWidget);
     expect(
       find.text('sleepy: wakes in windows, speaks through its anchor'),
       findsOneWidget,
@@ -792,28 +803,36 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.bySemanticsLabel('2 nodes here: ${nodeLabel(anchor.id)}, Olena'),
+      find.bySemanticsLabel(
+        '2 nodes here: ${nodeLabel(anchor.id)}, ${nodeLabel(s.id)}',
+      ),
       findsOneWidget,
     );
 
-    // A tap lists both, the relay first, each a labelled button.
+    // A tap lists both, the relay first, each a labelled button named by
+    // its ID and kind, the people at it under it.
     await t.tap(badge);
     await t.pumpAndSettle();
     expect(find.text('2 nodes here'), findsOneWidget);
-    final relay = find.widgetWithText(ListTile, nodeLabel(anchor.id));
-    final sleepy = find.widgetWithText(ListTile, 'Olena');
-    expect(
-      find.descendant(of: relay, matching: find.text('relay')),
-      findsOneWidget,
+    final relay = find.widgetWithText(
+      ListTile,
+      '${nodeLabel(anchor.id)} · relay',
     );
+    final sleepy = find.widgetWithText(ListTile, '${nodeLabel(s.id)} · sleepy');
+    expect(relay, findsOneWidget);
+    expect(find.descendant(of: relay, matching: find.byType(Text)), findsOne);
     expect(
-      find.descendant(of: sleepy, matching: find.text('sleepy')),
+      find.descendant(of: sleepy, matching: find.text('Home: Olena')),
       findsOneWidget,
     );
     expect(t.getTopLeft(relay).dy, lessThan(t.getTopLeft(sleepy).dy));
     expect(
       t.getSemantics(sleepy),
-      isSemantics(label: 'Olena\nsleepy', isButton: true, hasTapAction: true),
+      isSemantics(
+        label: '${nodeLabel(s.id)} · sleepy\nHome: Olena',
+        isButton: true,
+        hasTapAction: true,
+      ),
     );
 
     // Back closes the list.
@@ -835,15 +854,98 @@ void main() {
     );
     await closeSheet(t);
 
-    // A node alone at its place opens its sheet with no list.
+    // A node alone at its place opens its sheet with no list: the
+    // person's home, "You" under Home, and a contact last seen there,
+    // with when.
     final alone = fake.neighbours[3]!;
+    final at = Address(alone.position, alone.id);
+    await t.runAsync(() async {
+      await app.me.setHome(at);
+      await app.contacts.put(
+        Contact(
+          PersonCard(List.filled(32, 8), null, 0, 'Bo'),
+          '',
+        ).heard(sentOf(app.now()) - 300, at, app.now()),
+      );
+    });
+    await t.pump();
     await t.tap(icon(nodeLabel(alone.id)));
     await t.pumpAndSettle();
     expect(find.textContaining('nodes here'), findsNothing);
     expect(find.text(nodeLabel(alone.id)), findsOneWidget);
+    expect(find.text('Home: You'), findsOneWidget);
+    expect(find.text('Last seen: Bo 5 min ago'), findsOneWidget);
     await closeSheet(t);
     semantics.dispose();
     await shut(t, app);
+    debugPrint = print;
+  });
+
+  testWidgets('Show where I am: asked only on its tap, a dot there, and a '
+      'node with no place of its own drawn at it, joined to its anchor', (
+    t,
+  ) async {
+    final print = debugPrint;
+    debugPrint = (_, {wrapWidth}) {};
+    final here = Position.fromDegrees(50.4502, 30.5231);
+    final place = FakePlace(here);
+    final app = await openMap(
+      t,
+      place: place,
+      make: (now, me) =>
+          FakeNode(now: now, sodium: sodium, app: me)..sleepy = true,
+    );
+    await t.pumpAndSettle();
+    final fake = app.fakeNode!;
+    // A neighbour marked as this sleepy node's anchor.
+    final a = fake.neighbours[0]!;
+    fake.neighbours[0] = Neighbour(
+      a.id,
+      a.position,
+      rssiDdbm: a.rssiDdbm,
+      ageS: a.ageS,
+      anchor: true,
+    );
+    fake.changed();
+    await t.pumpAndSettle();
+    final youDot = find.byWidgetPredicate(
+      (w) => w is Semantics && w.properties.label == 'You',
+    );
+    expect(place.asked, 0);
+    expect(youDot, findsNothing);
+    expect(find.textContaining('drawn without lines to it'), findsOneWidget);
+    PolylineLayer lines() =>
+        t.widgetList<PolylineLayer>(find.byType(PolylineLayer)).single;
+
+    await t.tap(find.byTooltip('Show where I am'));
+    await t.pumpAndSettle();
+    expect(place.asked, 1);
+    expect(youDot, findsOneWidget);
+    expect(find.textContaining('it is drawn where you are'), findsOneWidget);
+    expect(find.textContaining('never sent or kept'), findsOneWidget);
+    // The thin line from where the node is drawn to its anchor, and no
+    // other.
+    final [line] = lines().polylines;
+    expect(line.points, [_latLng(here), _latLng(a.position)]);
+    // Its details say where others reach it: its anchor's place.
+    await openThisNode(t);
+    await t.pumpAndSettle();
+    expect(find.textContaining('its anchor\'s\n'), findsOneWidget);
+    await closeSheet(t);
+
+    // Without the permission, nothing changes but a line saying so.
+    final none = FakePlace(null);
+    await shut(t, app);
+    final app2 = await openMap(t, place: none);
+    await t.pumpAndSettle();
+    await t.tap(find.byTooltip('Show where I am'));
+    await t.pump();
+    expect(find.text('Location permission denied'), findsOneWidget);
+    expect(youDot, findsNothing);
+    await t.pumpAndSettle();
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
+    await shut(t, app2);
     debugPrint = print;
   });
 
@@ -947,5 +1049,18 @@ void main() {
 /// Closes the open bottom sheet, which may cover the whole screen.
 Future<void> closeSheet(WidgetTester t) async {
   Navigator.pop(t.element(find.byType(BottomSheet)));
+  await t.pumpAndSettle();
+}
+
+LatLng _latLng(Position p) => LatLng(p.latDeg, p.lonDeg);
+
+/// Opens this node's sheet by its marker's tap, which a banner over the
+/// map's top may cover on the test's small screen.
+Future<void> openThisNode(WidgetTester t) async {
+  final icon = find.byWidgetPredicate(
+    (w) => w is Icon && w.semanticLabel == 'this node',
+  );
+  final tap = find.ancestor(of: icon, matching: find.byType(GestureDetector));
+  t.widget<GestureDetector>(tap.first).onTap!();
   await t.pumpAndSettle();
 }

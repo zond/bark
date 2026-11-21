@@ -979,7 +979,9 @@ void main() {
     await t.pageBack();
     await t.pumpAndSettle();
 
-    // The home itself: its mail is in its inbox, nothing is sent.
+    // The home itself: its mail is in its inbox, nothing is sent. (Leaving
+    // the home before is the home tests', as it waits on the clock.)
+    await app.me.setHome(null);
     await app.makeHome(app.session.address!);
     await t.pump();
     final before = app.session.outbox.length;
@@ -1322,22 +1324,50 @@ void main() {
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
     // The name from the card went to the node.
-    expect(f.ownerName, 'Ann');
+    expect(f.pairedName, 'Ann');
     expect(find.text('Phones paired with this node'), findsOneWidget);
     expect(find.text('Phones with a home here'), findsOneWidget);
     // On the node's list and under My name.
     expect(find.text('Ann'), findsNWidgets(2));
     expect(find.text('This phone, linked now'), findsOneWidget);
-    expect(
-      find.text('Has a home here too, last linked yesterday'),
-      findsOneWidget,
-    );
-    expect(find.text('Paired too, last linked yesterday'), findsOneWidget);
+    expect(find.text('Has a home here too, seen yesterday'), findsOneWidget);
+    expect(find.text('Paired too, seen yesterday'), findsOneWidget);
     expect(find.text('A phone with no name'), findsOneWidget);
-    expect(find.text('Last linked 3 days ago'), findsOneWidget);
-    expect(find.text('Last linked never'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Remove'), findsNWidgets(4));
+    expect(find.text('Seen 3 days ago'), findsOneWidget);
+    expect(find.text('Seen never'), findsOneWidget);
+    // A paired phone's row has Remove; a home's has Make owner too.
+    expect(find.widgetWithText(TextButton, 'Remove'), findsNWidgets(2));
+    final choices = find.byTooltip('Choices');
+    expect(choices, findsNWidgets(2));
     expect(find.widgetWithText(TextButton, 'Unpair'), findsOneWidget);
+    // Not the person's home, so no seat to take here.
+    expect(find.text('This node has no owner'), findsOneWidget);
+    expect(find.text('Become owner'), findsNothing);
+
+    // Cy made the owner, by the code on the node's screen.
+    await t.ensureVisible(choices.last);
+    await t.tap(choices.last);
+    await t.pumpAndSettle();
+    await t.tap(find.text('Make owner'));
+    await t.pumpAndSettle();
+    expect(find.text('Make Cy the owner?'), findsOneWidget);
+    expect(find.textContaining('chooses who has a home here'), findsOneWidget);
+    await t.tap(find.text('Show the code'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('under CONFIRM'), findsOneWidget);
+    await t.enterText(
+      find.byKey(const Key('node code')),
+      f.shownCode!.toString().padLeft(6, '0'),
+    );
+    await t.pump();
+    await t.tap(find.widgetWithText(FilledButton, 'Make owner'));
+    await t.pumpAndSettle();
+    expect(find.text('Cy is the owner'), findsOneWidget);
+    expect(f.others.singleWhere((r) => r.number == 4).owner, isTrue);
+    expect(find.text('Owner, seen never'), findsOneWidget);
+    expect(find.text('This node has no owner'), findsNothing);
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
 
     // A wrong code: not removed, and a new code asked for.
     final remove = find.widgetWithText(TextButton, 'Remove').at(1);
@@ -1350,9 +1380,9 @@ void main() {
     await t.tap(find.text('Show the code'));
     await t.pumpAndSettle();
     final first = f.shownCode!;
-    final wrong = (first + 1) % removalCodes;
+    final wrong = (first + 1) % codes;
     await t.enterText(
-      find.byKey(const Key('removal code')),
+      find.byKey(const Key('node code')),
       wrong.toString().padLeft(6, '0'),
     );
     await t.pump();
@@ -1364,7 +1394,7 @@ void main() {
     await t.pumpAndSettle();
     expect(f.shownCode, isNotNull);
     await t.enterText(
-      find.byKey(const Key('removal code')),
+      find.byKey(const Key('node code')),
       f.shownCode!.toString().padLeft(6, '0'),
     );
     await t.pump();
@@ -1607,8 +1637,8 @@ void main() {
     app.disposeWithNode();
   });
 
-  testWidgets('the owner\'s Public switch; a guest\'s line, without the '
-      'owner\'s settings', (t) async {
+  testWidgets('the paired phone\'s Public switch; a guest\'s line, without the '
+      'paired phone\'s settings', (t) async {
     final app = await model(t);
     await app.connectFake();
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
@@ -1670,7 +1700,7 @@ void main() {
         sodium: sodium,
         app: app.me.identity,
         id: [0x0c, 0xe4, 0, 0, 0, 4],
-      )..owned = false,
+      )..hasPhones = false,
     }, bonds: {});
     UniversalBle.setInstance(ble);
     app.startSearch();

@@ -75,7 +75,13 @@ void main() {
       expect(c.now?.toString(), m['now']);
       expect(c.time, m['time']);
       expect(c.name, m['name']);
+      expect(c.reads, m['reads']);
       expect(hex(c.encode()), m['bytes']);
+      // Bits 2 and 3 of the flags are zero; set, it is no card.
+      for (final bit in [4, 8]) {
+        final b = c.encode()..[1] |= bit;
+        expect(() => PersonCard.decode(b), throwsA(isA<BadCard>()));
+      }
       expect(c.toText(), m['text']);
       expect(
         PersonCard.parse((m['text'] as String).toLowerCase()).name,
@@ -281,17 +287,120 @@ void main() {
     );
   });
 
+  test('a fetch with a command: made and opened, each command its bytes', () {
+    final f = at('fetch');
+    final homeTag = tag(alice, home);
+    final add = AddCommand(bob.mailbox.extractBytes(), tag(bob, home), 'Bob');
+    for (final (name, c) in [
+      ('command_add', add as Command),
+      ('command_list', const ListCommand()),
+    ]) {
+      final m = at(name);
+      expect(hex(c.encode()), m['command'], reason: name);
+      final fetch = Fetch(m['sent'] as int, away, tag(alice, away), c);
+      expect(
+        hex(fetch.seal(s, alice.mailbox, home.id, homeTag)),
+        m['fetch'],
+        reason: name,
+      );
+      final g = Fetch.open(s, alice.mailbox, home.id, h(m, 'fetch'));
+      expect(hex(g.command!.encode()), m['command']);
+    }
+    final rest = at('commands');
+    for (final (name, c) in [
+      ('remove', const RemoveCommand(2) as Command),
+      ('hand_over', const HandOverCommand(2)),
+      ('leave', const LeaveCommand()),
+    ]) {
+      expect(hex(c.encode()), rest[name], reason: name);
+      expect(hex(Command.decode(c.encode()).encode()), rest[name]);
+    }
+    final a = Command.decode(h(at('command_add'), 'command')) as AddCommand;
+    expect((hex(a.key), a.tag, a.name), (at('bob')['mailbox'], 136, 'Bob'));
+    // No command, and a fetch's without one, is the plain fetch's.
+    expect(
+      Fetch.open(s, alice.mailbox, home.id, h(f, 'payload')).command,
+      isNull,
+    );
+    for (final b in [
+      <int>[],
+      [6],
+      [2, 0],
+      [3, 0],
+      [5, 0],
+    ]) {
+      expect(() => Command.decode(b), throwsA(isA<BadPayload>()), reason: '$b');
+    }
+  });
+
+  test('a command\'s summary: the owner, the outcome and the list', () {
+    final to = at('fetch')['recipient'] as int;
+    final add = at('command_add');
+    final o = openSummary(
+      s,
+      alice.mailbox,
+      add['sent'] as int,
+      h(add, 'summary'),
+    )!;
+    expect(
+      (o.items, o.remaining, o.owner, o.outcome, o.list),
+      (0, 0, true, Outcome.ok, null),
+    );
+    final l = at('command_list');
+    final round = l['sent'] as int;
+    final listed = openSummary(s, alice.mailbox, round, h(l, 'summary'))!;
+    expect(listed.outcome, Outcome.ok);
+    final [mine, other] = listed.list!;
+    expect(
+      (
+        mine.number,
+        mine.paired,
+        mine.home,
+        mine.linked,
+        mine.mine,
+        mine.owner,
+        mine.tag,
+        mine.name,
+      ),
+      (1, true, true, true, true, true, tag(alice, home), 'Alice'),
+    );
+    expect(
+      (
+        other.number,
+        other.paired,
+        other.home,
+        other.mine,
+        other.owner,
+        other.tag,
+        other.day,
+        other.name,
+      ),
+      (2, false, true, false, false, tag(bob, home), 330, 'Bob'),
+    );
+    expect(hex(listed.encode().sublist(4)), l['outcome']);
+    expect(hex(sealSummary(s, alice.mailbox, to, round, listed)), l['summary']);
+    final c = at('commands');
+    final refused = openSummary(
+      s,
+      alice.mailbox,
+      c['not_allowed_round'] as int,
+      h(c, 'not_allowed_summary'),
+    )!;
+    expect((refused.owner, refused.outcome), (false, Outcome.notAllowed));
+  });
+
   test('a summary: made, opened in its round only, nothing new its zero', () {
     final to = at('fetch')['recipient'] as int;
     for (final (name, items) in [('summary', 2), ('nothing_new', 0)]) {
       final m = at(name);
       final round = m['round'] as int;
       expect(hex(replyNonce(round, 0)), m['nonce']);
-      final want = RoundSummary(items, m['remaining'] as int? ?? 0);
+      final want = RoundSummary(items, 0, owner: true);
       expect(hex(sealSummary(s, alice.mailbox, to, round, want)), m['payload']);
       expect(h(m, 'payload').length, summaryLen);
       final o = openSummary(s, alice.mailbox, round, h(m, 'payload'))!;
       expect((o.items, o.remaining, o.nothingNew), (items, 0, items == 0));
+      expect((o.owner, o.outcome, o.newest), (true, null, m['newest'] ?? 2));
       expect(openSummary(s, alice.mailbox, round + 1, h(m, 'payload')), isNull);
       expect(openSummary(s, bob.mailbox, round, h(m, 'payload')), isNull);
       final flipped = h(m, 'payload')..[summaryLen - 1] ^= 1;
@@ -345,6 +454,40 @@ void main() {
       throwsA(isA<BadPayload>()),
     );
     expect(openItem(s, alice.mailbox, 1, h(at('summary'), 'payload')), isNull);
+  });
+
+  test('a home given: the Rust vector, Bob to Alice, made and opened', () {
+    final m = at('home_record');
+    final header = Header(m['greater'] as bool, m['sent'] as int);
+    final p = writePlain(header, [
+      HomeRecord(Address.parse(m['address'] as String)!, h(m, 'key')),
+    ]);
+    expect(hex(p), m['plaintext']);
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    final ba = SivKeys.pair(s, alice.identity, bob.pair.secretKey);
+    final payload = h(m, 'payload');
+    expect(hex(sealBox(ba, payload[1], p)), m['payload']);
+    final (got, rs) = readPlain(openBox(ab, payload));
+    expect((got.greater, got.sent), (true, m['sent']));
+    final g = rs.single as HomeRecord;
+    expect((g.home.toString(), hex(g.key)), (m['address'], m['key']));
+  });
+
+  test('a home given: type 7, the address and the key, of fixed length', () {
+    final key = List.generate(keyLen, (i) => i);
+    final p = writePlain(const Header(false, 9), [
+      HomeRecord(home, key),
+      const TextRecord('Yours too.'),
+    ]);
+    expect(p.sublist(5, 6 + HomeRecord.len), [7, ...home.encode(), ...key]);
+    final (_, rs) = readPlain(p);
+    final g = rs.first as HomeRecord;
+    expect((g.home.toString(), hex(g.key)), (home.toString(), hex(key)));
+    expect((rs.last as TextRecord).text, 'Yours too.');
+    expect(
+      () => readPlain(p.sublist(0, 5 + HomeRecord.len)),
+      throwsA(isA<BadPayload>()),
+    );
   });
 
   test('windows-1251 when it holds the text', () {

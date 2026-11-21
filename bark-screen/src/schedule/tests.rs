@@ -215,12 +215,12 @@ fn a_flip_draws_the_lines_at_once() {
     assert_eq!(s.due(&battery(), 9_500), Some(9_000 + LINES_MS));
 }
 
-/// A removal code shows the lines as a pairing code does, and both it and
+/// A change's code shows the lines as a pairing code does, and both it and
 /// a pairing refused for want of room are drawn at once on the code.
 #[test]
-fn a_removal_code_and_phones_full() {
+fn a_change_s_code_and_phones_full() {
     let removing = State {
-        phone: Phone::Remove(4),
+        phone: Phone::Confirm(4),
         ..battery()
     };
     let mut s = shown(battery());

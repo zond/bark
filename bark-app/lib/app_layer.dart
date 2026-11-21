@@ -45,14 +45,15 @@ const int placeLen = 1;
 /// recipient tag stand for the item's, and the place is added.
 const int replyOverhead = placeLen;
 
-/// The summary's counts: the round's items, and those still unsent after
-/// them.
+/// The summary's counts, the round's items and those still unsent after
+/// them, and its flags.
 const int itemsLen = 1;
 const int remainingLen = 2;
+const int flagsLen = 1;
 
-/// The summary: the format byte, the recipient tag, the tag and the two
-/// counts.
-const int summaryLen = headLen + tagLen + itemsLen + remainingLen;
+/// The shortest summary: the format byte, the recipient tag, the tag, the
+/// two counts and the flags.
+const int summaryLen = headLen + tagLen + itemsLen + remainingLen + flagsLen;
 
 /// `crypto_generichash`'s shortest output, of which the recipient tag is
 /// the first byte.
@@ -341,14 +342,105 @@ Uint8List openIntro(Sodium s, Keys me, List<int> payload) {
   }
 }
 
+/// What the owner, or for [LeaveCommand] anyone homed, asks their home
+/// node on a fetch (spec "Mailbox", The owner's commands).
+sealed class Command {
+  const Command();
+
+  Uint8List encode();
+
+  /// The command `b` holds whole.
+  static Command decode(List<int> b) {
+    if (b.isEmpty) throw const BadPayload('no command');
+    int number() => b.length == 3
+        ? fromBe(b.sublist(1))
+        : throw const BadPayload('not a command');
+    final add = b.length >= 2 + keyLen && b.length <= AddCommand.maxLen;
+    return switch (b[0]) {
+      AddCommand.op when add => AddCommand(
+        b.sublist(1, 1 + keyLen),
+        b[1 + keyLen],
+        _utf8(b.sublist(2 + keyLen)),
+      ),
+      RemoveCommand.op => RemoveCommand(number()),
+      ListCommand.op when b.length == 1 => const ListCommand(),
+      HandOverCommand.op => HandOverCommand(number()),
+      LeaveCommand.op when b.length == 1 => const LeaveCommand(),
+      _ => throw const BadPayload('not a command'),
+    };
+  }
+}
+
+String _utf8(List<int> b) {
+  try {
+    return utf8.decode(b);
+  } on FormatException {
+    throw const BadPayload('not UTF-8');
+  }
+}
+
+/// A record for a person with no phone at the node: their mailbox key,
+/// their recipient tag there and their name, cut to [nameMax] bytes.
+class AddCommand extends Command {
+  static const op = 1;
+  static const maxLen = 2 + keyLen + nameMax;
+  final Uint8List key;
+  final int tag;
+  final String name;
+  AddCommand(List<int> key, this.tag, this.name)
+    : key = Uint8List.fromList(key) {
+    if (key.length != keyLen) throw const BadPayload('a key is 32 bytes');
+  }
+  @override
+  Uint8List encode() =>
+      Uint8List.fromList([op, ...key, tag, ...nameBytes(name)]);
+}
+
+/// The record of that number loses its home.
+class RemoveCommand extends Command {
+  static const op = 2;
+  final int number;
+  const RemoveCommand(this.number);
+  @override
+  Uint8List encode() => Uint8List.fromList([op, ...be(number, 2)]);
+}
+
+/// Every record, in the summary.
+class ListCommand extends Command {
+  static const op = 3;
+  const ListCommand();
+  @override
+  Uint8List encode() => Uint8List.fromList([op]);
+}
+
+/// The key of the record of that number, which holds a home, is the
+/// owner's.
+class HandOverCommand extends Command {
+  static const op = 4;
+  final int number;
+  const HandOverCommand(this.number);
+  @override
+  Uint8List encode() => Uint8List.fromList([op, ...be(number, 2)]);
+}
+
+/// The node forgets the sender's key.
+class LeaveCommand extends Command {
+  static const op = 5;
+  const LeaveCommand();
+  @override
+  Uint8List encode() => Uint8List.fromList([op]);
+}
+
 /// A fetch: send the newest batch of the items not yet sent to
 /// [address], for the requester's [recipient] tag at that address's node,
-/// which the home cannot make as it does not know the identity.
+/// which the home cannot make as it does not know the identity; it may
+/// end in a [command].
 class Fetch {
   final int sent;
   final Address address;
   final int recipient;
-  const Fetch(this.sent, this.address, this.recipient);
+  final Command? command;
+  const Fetch(this.sent, this.address, this.recipient, [this.command]);
 
   static const plainLen = 4 + Address.len + 1;
   static const len = boxOverhead + plainLen;
@@ -364,6 +456,7 @@ class Fetch {
         ...be(sent, 4),
         ...address.encode(),
         recipient,
+        ...?command?.encode(),
       ], bound: home);
     } finally {
       keys.dispose();
@@ -371,9 +464,11 @@ class Fetch {
   }
 
   /// The fetch in `payload` under the mailbox `key`, at the node of ID
-  /// `me`.
+  /// `me`; one whose command does not read is no fetch.
   static Fetch open(Sodium s, SecureKey key, List<int> me, List<int> payload) {
-    if (formOf(payload) != Form.fetch || payload.length != len) {
+    if (formOf(payload) != Form.fetch ||
+        payload.length < len ||
+        payload.length > len + AddCommand.maxLen) {
       throw const BadPayload('not a fetch');
     }
     final keys = SivKeys.of(s, key);
@@ -390,6 +485,7 @@ class Fetch {
       fromBe(b.sublist(0, 4)),
       Address(Position.decode(a), a.sublist(Position.wireLen)),
       b[4 + Address.len],
+      b.length == plainLen ? null : Command.decode(b.sublist(plainLen)),
     );
   }
 }
@@ -426,13 +522,88 @@ Uint8List replyNonce(int round, int place) => Uint8List.fromList([
   ...List.filled(nonceLen - 4 - placeLen, 0),
 ]);
 
+/// What a command did, as its summary says (spec "Mailbox", The owner's
+/// commands), by its code.
+enum Outcome {
+  /// Done; for a list, the records follow.
+  ok,
+
+  /// The sender's key is not the owner's; nothing changed.
+  notAllowed,
+
+  /// An add, and no record is free.
+  full,
+
+  /// An add of a key a record holds; nothing changed.
+  already,
+
+  /// No record of that number holds a home.
+  noSuchHome,
+}
+
 /// What a round's summary says: how many items it carries, and how many
-/// stay unsent at home after them; no items is nothing new.
+/// stay unsent at home after them, no items being nothing new; whether
+/// the requester's key is the owner's; and what the fetch's command did,
+/// with the records after an ok to a list.
 class RoundSummary {
   final int items;
   final int remaining;
-  const RoundSummary(this.items, this.remaining);
+  final bool owner;
+
+  /// The newest payload version the home reads, in the flags' high four
+  /// bits (spec "Mailbox", The answer).
+  final int newest;
+  final Outcome? outcome;
+  final List<PhoneRecord>? list;
+  const RoundSummary(
+    this.items,
+    this.remaining, {
+    this.owner = false,
+    this.newest = formatVersion,
+    this.outcome,
+    this.list,
+  });
   bool get nothingNew => items == 0;
+
+  Uint8List encode() => Uint8List.fromList([
+    ...be(items, itemsLen),
+    ...be(remaining, remainingLen),
+    newest << 4 | (owner ? 1 : 0),
+    ...?switch (outcome) {
+      null => null,
+      final o => [o.index],
+    },
+    for (final r in list ?? const <PhoneRecord>[]) ...r.encode(),
+  ]);
+
+  /// The plaintext `b` holds whole.
+  static RoundSummary decode(List<int> b) {
+    const fixed = itemsLen + remainingLen + flagsLen;
+    if (b.length < fixed) throw const BadPayload('not a summary');
+    final rest = b.sublist(fixed);
+    final code = rest.firstOrNull;
+    if (code != null && code >= Outcome.values.length) {
+      throw const BadPayload('no such outcome');
+    }
+    final outcome = code == null ? null : Outcome.values[code];
+    if (rest.length > 1 && outcome != Outcome.ok) {
+      throw const BadPayload('records after a refusal');
+    }
+    final List<PhoneRecord>? list;
+    try {
+      list = rest.length > 1 ? decodeRecords(rest.sublist(1)) : null;
+    } on Malformed {
+      throw const BadPayload('not a list');
+    }
+    return RoundSummary(
+      fromBe(b.sublist(0, itemsLen)),
+      fromBe(b.sublist(itemsLen, itemsLen + remainingLen)),
+      owner: b[itemsLen + remainingLen] & 1 != 0,
+      newest: b[itemsLen + remainingLen] >> 4,
+      outcome: outcome,
+      list: list,
+    );
+  }
 }
 
 /// The summary of the fetch of [round], as the home sends it for the
@@ -450,10 +621,7 @@ Uint8List sealSummary(
     s,
     key,
     (k) => s.crypto.secretBox.easy(
-      message: Uint8List.fromList([
-        ...be(summary.items, itemsLen),
-        ...be(summary.remaining, remainingLen),
-      ]),
+      message: summary.encode(),
       nonce: replyNonce(round, 0),
       key: k,
     ),
@@ -467,7 +635,9 @@ RoundSummary? openSummary(
   int round,
   List<int> payload,
 ) {
-  if (formOf(payload) != Form.summary || payload.length != summaryLen) {
+  if (formOf(payload) != Form.summary ||
+      payload.length < summaryLen ||
+      payload.length > maxPayload) {
     return null;
   }
   try {
@@ -480,11 +650,10 @@ RoundSummary? openSummary(
         key: k,
       ),
     );
-    return RoundSummary(
-      fromBe(p.sublist(0, itemsLen)),
-      fromBe(p.sublist(itemsLen)),
-    );
+    return RoundSummary.decode(p);
   } on SodiumException {
+    return null;
+  } on BadPayload {
     return null;
   }
 }
@@ -611,12 +780,23 @@ class CardRecord extends Record {
   CardRecord(List<int> card) : card = Uint8List.fromList(card);
 }
 
+/// A home the sender, its owner, gives the receiver: the home node's
+/// address and the mailbox key made for them there (spec "Phone link",
+/// The payload).
+class HomeRecord extends Record {
+  final Address home;
+  final Uint8List key;
+  HomeRecord(this.home, List<int> key) : key = Uint8List.fromList(key);
+  static const len = Address.len + keyLen;
+}
+
 const int _typeUtf8 = 1;
 const int _type1251 = 2;
 const int _typeReaction = 3;
 const int _typeCard = 4;
 const int _typeUtf8Part = 5;
 const int _type1251Part = 6;
+const int _typeHome = 7;
 
 /// The most parts a text is split into: a part's number and the count
 /// share one byte, four bits each.
@@ -653,6 +833,8 @@ Uint8List writePlain(Header h, List<Record> records) {
         b.addAll([_typeReaction, ...be(sent, 4), ...utf8.encode(emoji)]);
       case CardRecord(:final card):
         b.addAll([_typeCard, card.length, ...card]);
+      case HomeRecord(:final home, :final key):
+        b.addAll([_typeHome, ...home.encode(), ...key]);
     }
   }
   return Uint8List.fromList(b);
@@ -708,6 +890,15 @@ Uint8List writePlain(Header h, List<Record> records) {
       case _typeCard when at < p.length && at + 1 + p[at] <= p.length:
         records.add(CardRecord(p.sublist(at + 1, at + 1 + p[at])));
         at += 1 + p[at];
+      case _typeHome when at + HomeRecord.len <= p.length:
+        final a = p.sublist(at, at + Address.len);
+        records.add(
+          HomeRecord(
+            Address(Position.decode(a), a.sublist(Position.wireLen)),
+            p.sublist(at + Address.len, at + HomeRecord.len),
+          ),
+        );
+        at += HomeRecord.len;
       default:
         throw const BadPayload('a record this app does not read');
     }

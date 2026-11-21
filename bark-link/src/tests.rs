@@ -25,14 +25,14 @@ proptest! {
     }
 
     #[test]
-    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8, phones: u8) {
+    fn status_round_trips(flags: u8, address in pos(), battery_mv: u16, relays: u8, heard: u8, boot_left_s: u16, installing: u16, inbox: u8, phones: u8, gps_cn0: u8) {
         let bit = |b: u8| flags & (1 << b) != 0;
         let placed = bit(5);
         let s = Status {
             ready: bit(0), external_power: bit(1), sleepy: bit(2), carried: bit(3),
             map_point: bit(4), placed, booting: bit(6), anchorless: bit(7),
             address: if placed { address } else { Position::default() },
-            battery_mv, relays, heard, boot_left_s, installing, inbox, phones,
+            battery_mv, relays, heard, boot_left_s, installing, inbox, phones, gps_cn0,
         };
         let b = s.encode();
         prop_assert_eq!(b[0], flags);
@@ -144,11 +144,15 @@ fn vectors() {
         heard: 5,
         installing: 0x0118,
         phones: 7,
+        gps_cn0: 31,
         ..Status::default()
     };
     assert_eq!(
         status.encode(),
-        [0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2, 7]
+        [
+            0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, 0x01, 0x18, 2, 7,
+            31
+        ]
     );
 
     let given = GivenBack {
@@ -190,16 +194,17 @@ fn vectors() {
     assert_eq!(none.encode(), [0, 0, 0, 0, 0, 60, 0]);
     assert_eq!(&name(to), b"bark-010203040506");
 
-    // The app's vector: a sleepy node anchored, placed, at 57 %, hearing
-    // 5, 3 strong, 2 proven, running version 0x01020304, gathering
-    // version 14 of 31 blocks, holding 14 and 40 pieces of the next.
+    // The app's vector: a sleepy node without an anchor, placed, at 57 %,
+    // hearing 5, 3 strong, 2 proven, its GPS's satellites at 23 dB-Hz,
+    // running version 0x01020304, gathering version 14 of 31 blocks,
+    // holding 14 and 40 pieces of the next.
     assert_eq!(Ask(to).encode(), [1, 2, 3, 4, 5, 6]);
     let answer = Answer {
         from: to,
         status: bark_proto::status::Status {
             placed: true,
             sleepy: true,
-            anchored: true,
+            anchored: false,
             carried: false,
             battery: bark_proto::status::Battery::Percent(57),
             neighbours: bark_proto::NeighbourCounts {
@@ -207,6 +212,7 @@ fn vectors() {
                 strong: 3,
                 both_ways: 2,
             },
+            gps_cn0: 23,
             version: 0x0102_0304,
             gathering: bark_proto::status::Gathering {
                 version: 14,
@@ -218,7 +224,7 @@ fn vectors() {
     };
     assert_eq!(
         answer.encode(),
-        [1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
+        [1, 2, 3, 4, 5, 6, 0x03, 57, 5, 3, 2, 23, 1, 2, 3, 4, 0, 0, 0, 14, 31, 14, 40]
     );
     assert_eq!(Answer::decode(&answer.encode()), Ok(Some(answer)));
     // A notification's 20 bytes at the default MTU, and the least it may
@@ -230,7 +236,7 @@ fn vectors() {
         },
         ..answer
     };
-    for cut in [15, 20] {
+    for cut in [16, 20] {
         assert_eq!(
             Answer::decode(&answer.encode()[..cut]),
             Ok(Some(gathers_none))
@@ -399,7 +405,8 @@ fn versions_serve_each_other_when_each_meets_the_other_s_oldest() {
 fn every_value_fits_its_pdu() {
     assert_eq!(value_room(ATT_MTU), 244);
     assert_eq!(value_room(DEFAULT_ATT_MTU), 20);
-    assert_eq!(Status::LEN, 18);
+    assert_eq!(Status::LEN, 19);
+    assert_eq!(Answer::LEN, 23);
     assert_eq!(Node::LEN, 13);
     assert_eq!(home::Home::LEN, 8);
 }

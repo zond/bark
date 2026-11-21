@@ -84,7 +84,8 @@ void main() {
       nowAt: 0x01020304,
     ).encode();
     expect(b[0], 3);
-    expect(b[1], 3);
+    // This app reads payload version 2, in the high four bits.
+    expect(b[1], 2 << 4 | 3);
     expect(b.length, PersonCard.fixedLen + 2 * Address.len + 4 + 5);
     final at = PersonCard.fixedLen + 2 * Address.len;
     expect(b.sublist(at, at + 4), [1, 2, 3, 4]);

@@ -12,6 +12,7 @@ import 'package:sodium/sodium.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'alerts.dart';
+import 'app_layer.dart';
 import 'app_update.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
@@ -23,6 +24,7 @@ import 'messenger.dart';
 import 'node_link.dart';
 import 'nodes.dart';
 import 'phone_notifier.dart';
+import 'phone_place.dart';
 import 'releases.dart';
 import 'session.dart';
 import 'store.dart';
@@ -32,6 +34,7 @@ part 'app/connect.dart';
 part 'app/home.dart';
 part 'app/installs.dart';
 part 'app/moving.dart';
+part 'app/owner.dart';
 part 'app/pairing.dart';
 part 'app/scan.dart';
 part 'app/search.dart';
@@ -39,6 +42,7 @@ part 'app/search.dart';
 /// What the parts of [AppModel] use of each other, each declared in the
 /// part that keeps it.
 abstract class _AppCore extends ChangeNotifier {
+  Sodium get sodium;
   Session get session;
   Me get me;
   Contacts get contacts;
@@ -92,10 +96,15 @@ abstract class _AppCore extends ChangeNotifier {
 
   // The home ([_Home]).
   Future<void> _sendQueuedFetch();
+  bool get atHome;
+
+  // The owner ([_Owner]).
+  void _ownerSeen();
+  Future<void> _obeyed(Outgoing o, RoundSummary s);
 }
 
 class AppModel extends _AppCore
-    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Moving {
+    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Owner, _Moving {
   @override
   final Sodium sodium;
 
@@ -125,6 +134,9 @@ class AppModel extends _AppCore
   /// Where a newer app's APK is kept.
   final Apks apks;
 
+  /// Where the phone is, asked only on the person's tap.
+  final PhonePlace place;
+
   AppModel({
     required this.sodium,
     required this.me,
@@ -135,13 +147,16 @@ class AppModel extends _AppCore
     Releases? releases,
     this.apks = const NoApks(),
     this.passwordKey = argon2id,
+    this.place = const AndroidPlace(),
     Future<bool> Function()? bluetoothAllowed,
     Future<void> Function()? requestBluetooth,
   }) : releases = releases ?? Releases(MemoryStore('release'), now: now),
        _bluetoothAllowed = bluetoothAllowed ?? UniversalBle.hasPermissions,
        _requestBluetooth = requestBluetooth ?? _askAndroid {
     this.releases.noted = session.note;
-    messenger = Messenger(sodium, me, contacts, session, now);
+    messenger = Messenger(sodium, me, contacts, session, now)
+      ..summarised = _answered
+      ..itemCame = _itemCame;
     alerts = Alerts(notifier, contacts);
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
@@ -151,15 +166,18 @@ class AppModel extends _AppCore
     session.addListener(_nodeAddress);
     session.addListener(_installs);
     session.addListener(_queuedFetch);
+    session.addListener(_ownerSeen);
     session.addListener(_link);
     session.addListener(_search);
     addListener(_link);
     addListener(_search);
-    // The countdowns move without a word from the node, and the check for
-    // a release is due a day after the last.
+    // The countdowns move without a word from the node, the check for a
+    // release is due a day after the last, and leaving a home waits for
+    // a node and for the mail its fetch brings.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       notifyListeners();
       unawaited(this.releases.check());
+      unawaited(_leaveStep());
     });
   }
 
@@ -374,6 +392,7 @@ class AppModel extends _AppCore
     session.removeListener(_nodeAddress);
     session.removeListener(_installs);
     session.removeListener(_queuedFetch);
+    session.removeListener(_ownerSeen);
     session.removeListener(_link);
     session.removeListener(_search);
     updater.dispose();

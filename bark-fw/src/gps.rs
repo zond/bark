@@ -67,11 +67,15 @@ struct News {
     fix: Option<Position>,
     /// The receiver lost its fix since the node last took one.
     lost: bool,
+    /// The latest reading's signal not yet taken (`Fix::signal`), 0 as
+    /// the receiver comes to rest.
+    signal: Option<u8>,
 }
 
 static NEWS: Mutex<CriticalSectionRawMutex, Cell<News>> = Mutex::new(Cell::new(News {
     fix: None,
     lost: false,
+    signal: None,
 }));
 
 /// Change the news, under one lock.
@@ -105,6 +109,19 @@ pub fn take_fix() -> Option<Position> {
     news(|n| n.fix.take())
 }
 
+/// The node's side: the latest reading's signal, if one waits.
+pub fn take_signal() -> Option<u8> {
+    news(|n| n.signal.take())
+}
+
+/// Hand the node the reading's signal, kept fix or not.
+fn signal(cn0: u8) {
+    if !LOAD_ONLY {
+        news(|n| n.signal = Some(cn0));
+        crate::node::WAKE.gps_has_news();
+    }
+}
+
 /// The node's side: whether the receiver lost its fix since it last
 /// asked. It hands this before the fix waiting, which came after.
 pub fn take_lost() -> bool {
@@ -119,7 +136,7 @@ pub fn awake() -> bool {
 /// The node's side: whether anything its wake was raised for waits,
 /// so that a signal whose fix was taken wakes no one.
 pub fn waiting() -> bool {
-    news(|n| n.fix.is_some() || n.lost)
+    news(|n| n.fix.is_some() || n.lost || n.signal.is_some())
 }
 
 /// What the task takes.
@@ -243,6 +260,8 @@ async fn work(mut p: Parts) {
         drop((tx, rx));
         wake.set_low();
         AWAKE.store(false, Ordering::Relaxed);
+        // At rest it reads no sky.
+        signal(0);
         // The line in a poll of its own, as every line of the task.
         embassy_futures::yield_now().await;
         let found = if state == State::Fixed {
@@ -288,6 +307,7 @@ fn note(state: &'static str) {
 /// some 0.2 ms, and more with each value it formats (README, "Work
 /// beside the radio").
 async fn fixed(f: Fix, state: State) -> State {
+    signal(f.signal());
     let Some(position) = f.position else {
         if state != State::Searching {
             log::info!("gps: no fix, searching");

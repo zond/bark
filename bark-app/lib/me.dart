@@ -68,6 +68,33 @@ class Me extends ChangeNotifier {
   int remaining = 0;
   final List<int> rounds = [];
 
+  /// The mailbox key the home holds when it is someone else's, who gave
+  /// it to the person with the home; null for the person's own, made of
+  /// their identity.
+  Uint8List? givenKey;
+  SecureKey? _given;
+
+  /// The key the home holds, which seals the person's fetches to it.
+  SecureKey get mailboxKey {
+    final g = givenKey;
+    if (g == null) return keys.mailbox;
+    return _given ??= SecureKey.fromList(sodium, g);
+  }
+
+  /// The home says the person's key is its owner's, as last told: by a
+  /// summary, or by Phones at the home (spec "Phone link", The node's
+  /// owner).
+  bool owner = false;
+
+  /// The newest payload version the home reads, as its last summary said;
+  /// null before one. There is one version, so nothing is chosen by it
+  /// yet (spec "Phone link", The payload, Forms).
+  int? homeReads;
+
+  /// The home the person is leaving, until its mail is fetched and it is
+  /// told to forget them.
+  Leaving? leaving;
+
   /// The rounds whose replies are still opened: a reply of the round
   /// before may still be on its way.
   static const keptRounds = 2;
@@ -117,7 +144,23 @@ class Me extends ChangeNotifier {
       final fetchQueued = j['fetchQueued'] as bool;
       final remaining = j['remaining'] as int;
       final rounds = (j['rounds'] as List).cast<int>().toList();
+      // A file without these has the person's own home, if any, of which
+      // they are not known as the owner, and leaves none.
+      final givenKey = switch (j['homeKey']) {
+        null => null,
+        final k => parseHex(k as String)!,
+      };
+      final owner = j['owner'] as bool? ?? false;
+      final homeReads = j['homeReads'] as int?;
+      final leaving = switch (j['leaving']) {
+        null => null,
+        final l => Leaving.fromJson(l as Map<String, dynamic>),
+      };
       return () {
+        this.givenKey = givenKey;
+        this.owner = owner;
+        this.homeReads = homeReads;
+        this.leaving = leaving;
         this.keys = keys;
         this.name = name;
         this.home = home;
@@ -161,6 +204,10 @@ class Me extends ChangeNotifier {
     'fetchQueued': fetchQueued,
     'remaining': remaining,
     'rounds': rounds,
+    if (givenKey case final k?) 'homeKey': hex(k),
+    'owner': owner,
+    'homeReads': ?homeReads,
+    if (leaving case final l?) 'leaving': l.toJson(),
   });
 
   Future<void> _changed() async {
@@ -223,6 +270,14 @@ class Me extends ChangeNotifier {
     keys = Keys.fromSeed(sodium, f.seed);
     name = f.name;
     home = f.home?.address;
+    final k = f.home?.key;
+    _givenKey(
+      k == null || hex(k) == hex(keys.mailbox.extractBytes()) ? null : k,
+    );
+    // The next summary says it again.
+    owner = false;
+    homeReads = null;
+    leaving = null;
     nodeAddress = f.nodeAddress;
     nodeAt = f.nodeAt;
     linked = false;
@@ -239,9 +294,22 @@ class Me extends ChangeNotifier {
     return _save();
   }
 
-  /// Sets or clears the home node; true if the card changed.
-  Future<bool> setHome(Address? a) async {
+  void _givenKey(Uint8List? k) {
+    _given?.dispose();
+    _given = null;
+    givenKey = k;
+  }
+
+  /// Sets or clears the home node, with the `key` its owner gave the
+  /// person if it is someone else's, none for their own: the same node at
+  /// a new place keeps its key and owner. True if the card changed.
+  Future<bool> setHome(Address? a, {Uint8List? key}) async {
     final changed = a?.toString() != home?.toString();
+    if (a == null || home == null || hex(a.id) != hex(home!.id)) {
+      _givenKey(key);
+      owner = false;
+      homeReads = null;
+    }
     home = a;
     // One past the last, so that a second change within a second is still
     // a newer card.
@@ -279,10 +347,83 @@ class Me extends ChangeNotifier {
   }
 
   /// The summary of the fetch of `round` has come: if it is the latest
-  /// fetch's, its count of the items the home has not sent is current.
+  /// fetch's, its count of the items the home has not sent, and whether
+  /// the person is its owner, are current.
   Future<void> gotSummary(int round, RoundSummary o) async {
     if (rounds.isEmpty || round != rounds.first) return;
     remaining = o.remaining;
+    owner = o.owner;
+    homeReads = o.newest;
     await _changed();
+  }
+
+  /// Whether the home holds the person's key as its owner's, as the home
+  /// said at the node or the app learnt otherwise.
+  Future<void> setOwner(bool o) async {
+    if (owner == o) return;
+    owner = o;
+    await _changed();
+  }
+
+  /// Starts leaving `l`, or ends it with null.
+  Future<void> setLeaving(Leaving? l) async {
+    leaving = l;
+    await _changed();
+  }
+
+  /// The leaving's state changed.
+  Future<void> leavingChanged() => _changed();
+}
+
+/// A home the person is leaving: its address and the key it holds. The
+/// app fetches the mail it keeps, then tells it to forget the person
+/// (spec "Mailbox", The owner's commands), as a home left behind would
+/// keep their mail where nobody fetches it.
+class Leaving {
+  final Address home;
+  final Uint8List key;
+
+  /// The latest fetch from it, as `sent`, and when it was queued; null
+  /// before the first.
+  int? round;
+  DateTime? at;
+
+  /// What that fetch's summary said, once it came: the items it carries
+  /// and those still kept after them; and the items of it opened so far.
+  int? items;
+  int remaining = 0;
+  int got = 0;
+
+  /// The leave once sent, as `sent`, and when it was queued.
+  int? leaveRound;
+  DateTime? leaveAt;
+
+  Leaving(this.home, List<int> key) : key = Uint8List.fromList(key);
+
+  Map<String, dynamic> toJson() => {
+    'home': home.toString(),
+    'key': hex(key),
+    'round': round,
+    'at': at?.toIso8601String(),
+    'items': items,
+    'remaining': remaining,
+    'got': got,
+    'leaveRound': leaveRound,
+    'leaveAt': leaveAt?.toIso8601String(),
+  };
+
+  static Leaving fromJson(Map<String, dynamic> j) {
+    DateTime? time(Object? t) => t == null ? null : DateTime.parse(t as String);
+    return Leaving(
+        Address.parse(j['home'] as String)!,
+        parseHex(j['key'] as String)!,
+      )
+      ..round = j['round'] as int?
+      ..at = time(j['at'])
+      ..items = j['items'] as int?
+      ..remaining = j['remaining'] as int
+      ..got = j['got'] as int
+      ..leaveRound = j['leaveRound'] as int?
+      ..leaveAt = time(j['leaveAt']);
   }
 }

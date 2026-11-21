@@ -50,9 +50,9 @@ class _UpdatesSectionState extends State<UpdatesSection> {
         latest.apk != null &&
         r.app != 0 &&
         latest.app > r.app;
-    final owner = n != null && !s.guest;
+    final paired = n != null && !s.guest;
     final newerImage =
-        owner &&
+        paired &&
         latest != null &&
         latest.image != null &&
         n.image != 0 &&

@@ -282,11 +282,15 @@ pub struct Status {
     /// Moves, wrapping, whenever what a Phones read lists changes; 0 on a
     /// guest's link (spec "Phone link", Status).
     pub phones: u8,
+    /// The mean C/N0, dB-Hz, of the satellites its GPS used in its latest
+    /// reading, the fix kept or not; 0 when it has none
+    /// (spec "Neighbour status").
+    pub gps_cn0: u8,
 }
 
 impl Status {
     /// Bytes in the value.
-    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1 + 1;
+    pub const LEN: usize = 1 + POS + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
     const AT_ADDRESS: usize = 1;
     const AT_BATTERY: usize = Self::AT_ADDRESS + POS;
     const AT_RELAYS: usize = Self::AT_BATTERY + 2;
@@ -295,6 +299,7 @@ impl Status {
     const AT_INSTALLING: usize = Self::AT_BOOT_LEFT + 2;
     const AT_INBOX: usize = Self::AT_INSTALLING + 2;
     const AT_PHONES: usize = Self::AT_INBOX + 1;
+    const AT_GPS: usize = Self::AT_PHONES + 1;
 
     /// Every flag clear and every count zero.
     pub const EMPTY: Status = Status {
@@ -314,6 +319,7 @@ impl Status {
         installing: 0,
         inbox: 0,
         phones: 0,
+        gps_cn0: 0,
     };
 
     fn flags(&self) -> u8 {
@@ -346,6 +352,7 @@ impl Status {
         b[Self::AT_INSTALLING..Self::AT_INBOX].copy_from_slice(&self.installing.to_be_bytes());
         b[Self::AT_INBOX] = self.inbox;
         b[Self::AT_PHONES] = self.phones;
+        b[Self::AT_GPS] = self.gps_cn0;
         b
     }
 
@@ -372,6 +379,7 @@ impl Status {
             installing: u16_at(b, Self::AT_INSTALLING),
             inbox: b[Self::AT_INBOX],
             phones: b[Self::AT_PHONES],
+            gps_cn0: b[Self::AT_GPS],
         })
     }
 }
@@ -747,7 +755,7 @@ impl Public {
     }
 }
 
-/// Public, as the owner writes it: set public or private, or unpair
+/// Public, as a paired phone writes it: set public or private, or unpair
 /// (spec "Public nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicWrite {
@@ -923,8 +931,9 @@ impl Answer {
 const STATUS: usize = bark_proto::wire::STATUS_LEN;
 
 /// Bytes of a status before the image it gathers, which a notification at
-/// the default MTU carries whole.
-const STATUS_UNGATHERED: usize = 9;
+/// the default MTU carries whole: the flags, battery, the three counts,
+/// the GPS's signal and the version.
+const STATUS_UNGATHERED: usize = 10;
 
 // Every value fits one ATT PDU at the MTU the node offers; Status and
 // Given back fit one at the default MTU, and Ask's answer all but the

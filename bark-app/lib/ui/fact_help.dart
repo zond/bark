@@ -44,7 +44,7 @@ const Map<String, String> factHelp = {
       'On battery the figure is read from the cell\'s voltage, so it is '
       'rough; on this node\'s own sheet it is the raw reading in '
       'millivolts. At about a fifth left the battery counts as low, and '
-      'a relay on it turns sleepy to save the rest for its owner.',
+      'a relay on it turns sleepy to save the rest.',
   // Spec "Phone link", Neighbours; "Neighbour table".
   'Link':
       'How well this node hears the other one: how far its signal is '
@@ -75,6 +75,12 @@ const Map<String, String> factHelp = {
       'heard well enough that a full text gets through a fade, so they '
       'likely hear it too. Exchanged: of those, the ones that have taken '
       'a text from it, which proves they hear it.',
+  // Spec "Neighbour status", "Position", Checks.
+  'GPS signal':
+      'How strongly the node\'s GPS hears the satellites, in dB-Hz, as its '
+      'last reading had it. Under 22 the node takes no position from it; '
+      'an open sky gives about 40. Move a node to where it reads higher, '
+      'or set its place by hand.',
   // Spec "Updates over the mesh".
   'Version':
       'The version of the firmware the node runs. A new version spreads '

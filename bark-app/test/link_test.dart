@@ -72,10 +72,11 @@ void main() {
       heard: 5,
       installing: 0x0118,
       phones: 7,
+      gpsCn0: 31,
     );
     final bytes = [
       0x63, 0x47, 0xc0, 0x49, 0x0a, 0xd9, 0xff, 0x80, 0, 0, 3, 5, 0, 100, //
-      0x01, 0x18, 2, 7,
+      0x01, 0x18, 2, 7, 31,
     ];
     expect(s.encode(), bytes);
     final d = Status.decode(bytes);
@@ -90,8 +91,9 @@ void main() {
         d.heard,
         d.installing,
         d.phones,
+        d.gpsCn0,
       ],
-      [3, 100, 0, 2, 5, 0x0118, 7],
+      [3, 100, 0, 2, 5, 0x0118, 7, 31],
     );
     expect(d.address, kyiv);
     // Each flag is its own bit.
@@ -197,8 +199,9 @@ void main() {
   test('home', () {
     expect(encodeHome(null), [0]);
     final k = List.generate(mailboxKeyLen, (i) => i);
-    expect(encodeHome(k), [1, ...k]);
-    expect(() => encodeHome([1, 2]), throwsA(isA<Malformed>()));
+    expect(encodeHome((key: k, sent: 0x01020304)), [1, ...k, 1, 2, 3, 4]);
+    expect(encodeHome((key: k, sent: 0)).length, 37);
+    expect(() => encodeHome((key: [1, 2], sent: 1)), throwsA(isA<Malformed>()));
     final h = NodeHome.decode([1, 0, 0, 0, 17, 1, 2, 3, 9]);
     expect((h.set, h.mine, h.oldest, h.newest), (true, false, 17, 0x010203));
     expect(h.encode(), [1, 0, 0, 0, 17, 1, 2, 3]);
@@ -254,25 +257,25 @@ void main() {
   test('phones', () {
     expect(encodePhonesFrom(4), [0, 4]);
     expect(() => encodePhonesFrom(8), throwsA(isA<Malformed>()));
-    expect(encodeRemovalCode(), [1]);
-    expect(encodeRemove(0x0102, bond: true, home: false, code: 123456), [
+    expect(encodeCodeAsk(), [1]);
+    expect(encodeByCode(0x0102, RecordChange.bond, 123456), [
       2, 1, 2, 1, 0x01, 0xe2, 0x40, //
     ]);
-    expect(encodeRemove(3, bond: true, home: true, code: 0), [
-      2, 0, 3, 3, 0, 0, 0, //
+    expect(encodeByCode(3, RecordChange.both, 0), [2, 0, 3, 3, 0, 0, 0]);
+    // `phones_writes_are_taken_whole`: the home of 0x0102 with 999 999,
+    // and what 4, the owner's mark.
+    expect(encodeByCode(0x0102, RecordChange.home, 999999), [
+      2, 1, 2, 2, 0x0f, 0x42, 0x3f, //
     ]);
+    expect(encodeByCode(1, RecordChange.owner, 9), [2, 0, 1, 4, 0, 0, 9]);
     expect(
-      () => encodeRemove(3, bond: false, home: false, code: 1),
-      throwsA(isA<Malformed>()),
-    );
-    expect(
-      () => encodeRemove(3, bond: true, home: false, code: removalCodes),
+      () => encodeByCode(3, RecordChange.bond, codes),
       throwsA(isA<Malformed>()),
     );
     final page = PhonesPage.decode([
       5,
       0, 7, 0x1b, 0x01, 0x3a, 0x2a, 3, 0x41, 0x6e, 0x6e, //
-      0, 9, 0x02, 0, 0, 0, 0, //
+      0, 9, 0x22, 0, 0, 0, 0, //
     ]);
     expect(page.next, 5);
     final [a, b] = page.records;
@@ -281,9 +284,10 @@ void main() {
       (7, true, true, false, true, 0x2a, 0x013a, 'Ann'),
     );
     expect(
-      (b.number, b.paired, b.home, b.tag, b.name),
-      (9, false, true, null, ''),
+      (b.number, b.paired, b.home, b.owner, b.tag, b.name),
+      (9, false, true, true, null, ''),
     );
+    expect(a.owner, isFalse);
     expect(PhonesPage.decode(page.encode()).encode(), page.encode());
     expect(PhonesPage.decode([0]).records, isEmpty);
     expect(() => PhonesPage.decode([]), throwsA(isA<Malformed>()));
@@ -347,11 +351,11 @@ void main() {
     final s = NeighbourStatus(
       placed: true,
       sleepy: true,
-      anchored: true,
       battery: 57,
       heard: 5,
       strong: 3,
       proven: 2,
+      gpsCn0: 23,
       version: 0x01020304,
       gathers: 14,
       blocks: 31,
@@ -360,25 +364,27 @@ void main() {
     );
     final b = Answer(to, s).encode();
     expect(b, [
-      1, 2, 3, 4, 5, 6, 0x07, 57, 5, 3, 2, 1, 2, 3, 4, //
+      1, 2, 3, 4, 5, 6, 0x03, 57, 5, 3, 2, 23, 1, 2, 3, 4, //
       0, 0, 0, 14, 31, 14, 40,
     ]);
-    expect(Answer.len, 22);
+    expect(Answer.len, 23);
     final d = Answer.decode(b)!;
     expect(d.id, to);
     expect(d.status.encode(), s.encode());
+    expect(d.status.gpsCn0, 23);
     expect(d.status.lines, [
-      'SLEEPY ANCHORED',
+      'SLEEPY NO ANCHOR',
       'BATTERY 57%',
       'KNOWN 5/3/2',
       'V16909060',
       'GET V14 14/31',
     ]);
     // A notification's 20 bytes at the default MTU, and the least it may
-    // carry: gathering none.
-    for (final cut in [15, 20]) {
+    // carry: gathering none, the GPS's signal still there.
+    for (final cut in [16, 20]) {
+      expect(Answer.decode(b.sublist(0, cut))!.status.gpsCn0, 23);
       expect(Answer.decode(b.sublist(0, cut))!.status.lines, [
-        'SLEEPY ANCHORED',
+        'SLEEPY NO ANCHOR',
         'BATTERY 57%',
         'KNOWN 5/3/2',
         'V16909060',
@@ -387,12 +393,12 @@ void main() {
     // Empty before the first answer; short is malformed; the flags'
     // spare bits and what a later version appends are ignored.
     expect(Answer.decode([]), isNull);
-    expect(() => Answer.decode(b.sublist(0, 14)), throwsA(isA<Malformed>()));
-    final later = [...b.sublist(0, 6), 0xe7, ...b.sublist(7), 0xaa];
+    expect(() => Answer.decode(b.sublist(0, 15)), throwsA(isA<Malformed>()));
+    final later = [...b.sublist(0, 6), 0xe3, ...b.sublist(7), 0xaa];
     expect(Answer.decode(later)!.status.encode(), s.encode());
     // Each flag is its own bit.
     for (var bit = 0; bit < 5; bit++) {
-      final one = NeighbourStatus.decode([1 << bit, ...List.filled(8, 0)]);
+      final one = NeighbourStatus.decode([1 << bit, ...List.filled(9, 0)]);
       expect(one.encode()[0], 1 << bit);
     }
   });
