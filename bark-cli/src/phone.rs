@@ -256,7 +256,10 @@ pub fn status<L: Link>(l: &mut L) -> Result<Status> {
 /// it then refuses the read for want of a bond, or ends the link.
 pub fn guest_node<L: Link>(l: &mut L) -> Result<Node> {
     match node(l) {
-        Err(Error::Ended | Error::Att(0x05 | 0x0F)) => Err(Error::Other(
+        Err(
+            Error::Ended
+            | Error::Att(att::INSUFFICIENT_AUTHENTICATION | att::INSUFFICIENT_ENCRYPTION),
+        ) => Err(Error::Other(
             "the node refused this guest: it is private now, and only its paired phones use it"
                 .into(),
         )),
@@ -363,7 +366,10 @@ pub fn paired_link<T: Transport>(
         }
     };
     let n = match node(&mut l) {
-        Err(Error::Ended | Error::Att(0x05 | 0x0F)) => return Err(no_longer(p.id)),
+        Err(
+            Error::Ended
+            | Error::Att(att::INSUFFICIENT_AUTHENTICATION | att::INSUFFICIENT_ENCRYPTION),
+        ) => return Err(no_longer(p.id)),
         n => n?,
     };
     attach_paired(&mut l, state, &n, p.id, clock)?;

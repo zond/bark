@@ -15,6 +15,7 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use zbus::MatchRule;
 
 use crate::link::{id_of_name, uuid_text, Char, Error, Found, Link, Reach, Result, Transport};
+use crate::person::hex;
 
 const BLUEZ: &str = "org.bluez";
 const ADAPTER: &str = "org.bluez.Adapter1";
@@ -172,7 +173,7 @@ fn error_of(e: &zbus::Error) -> Error {
             // BlueZ says "Not paired" for insufficient authentication and
             // for the encryption errors alike.
             if text == "Not paired" {
-                return Error::Att(0x05);
+                return Error::Att(bark_link::att::INSUFFICIENT_AUTHENTICATION);
             }
             if text == "Invalid Length" {
                 return Error::Att(bark_link::att::INVALID_LENGTH);
@@ -189,8 +190,13 @@ fn error_of(e: &zbus::Error) -> Error {
     }
 }
 
-fn string(p: &Props, key: &str) -> Option<String> {
+/// The property `key` as a `T`, if it is there and is one.
+fn prop<T: TryFrom<OwnedValue>>(p: &Props, key: &str) -> Option<T> {
     p.get(key)?.try_clone().ok()?.try_into().ok()
+}
+
+fn string(p: &Props, key: &str) -> Option<String> {
+    prop(p, key)
 }
 
 fn strings(p: &Props, key: &str) -> Vec<String> {
@@ -201,23 +207,23 @@ fn strings(p: &Props, key: &str) -> Vec<String> {
 }
 
 fn boolean(p: &Props, key: &str) -> Option<bool> {
-    p.get(key)?.try_clone().ok()?.try_into().ok()
+    prop(p, key)
 }
 
 fn int16(p: &Props, key: &str) -> Option<i16> {
-    p.get(key)?.try_clone().ok()?.try_into().ok()
+    prop(p, key)
 }
 
 fn uint16(p: &Props, key: &str) -> Option<u16> {
-    p.get(key)?.try_clone().ok()?.try_into().ok()
+    prop(p, key)
 }
 
 fn path_of(p: &Props, key: &str) -> Option<OwnedObjectPath> {
-    p.get(key)?.try_clone().ok()?.try_into().ok()
+    prop(p, key)
 }
 
 fn bytes(p: &Props, key: &str) -> Option<Vec<u8>> {
-    p.get(key)?.try_clone().ok()?.try_into().ok()
+    prop(p, key)
 }
 
 /// A device as the scan has it so far.
@@ -956,10 +962,6 @@ impl BluezLink {
             .call(&self.device, DEVICE, "Disconnect", &(), "")
             .map(|_| ())
     }
-}
-
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// BlueZ's answers to an agent's refusal.

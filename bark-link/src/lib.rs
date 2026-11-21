@@ -123,6 +123,10 @@ pub const NAME_LEN: usize = NAME_PREFIX.len() + 2 * NodeId::LEN;
 
 /// ATT error codes the node answers a write with (Vol 3 Part F §3.4.1.1).
 pub mod att {
+    /// The link is not authenticated: the node no longer holds the bond.
+    pub const INSUFFICIENT_AUTHENTICATION: u8 = 0x05;
+    /// The link is not encrypted: as above, from a phone that has a key.
+    pub const INSUFFICIENT_ENCRYPTION: u8 = 0x0F;
     /// The value's length is not one the characteristic takes.
     pub const INVALID_LENGTH: u8 = 0x0D;
     /// The value has the right length and a field it does not take.
