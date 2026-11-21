@@ -475,7 +475,7 @@ pub fn unpair<T: Transport>(
 }
 
 /// Whether the link ends within `wait`.
-fn ends<L: Link>(l: &mut L, wait: Duration) -> bool {
+pub(crate) fn ends<L: Link>(l: &mut L, wait: Duration) -> bool {
     let until = std::time::Instant::now() + wait;
     loop {
         let left = until.saturating_duration_since(std::time::Instant::now());

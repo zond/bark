@@ -795,6 +795,28 @@ impl BluezLink {
             .map(String::as_str)
             .ok_or_else(|| Error::Other(format!("the node has no {c:?} characteristic")))
     }
+
+    /// WriteValue of `kind`: `request`, which the node answers, or
+    /// `command`, a write without response. BlueZ writes a value longer
+    /// than one PDU as a long write. A command is logged by its length
+    /// alone, as an image's pieces would fill the log.
+    fn write_as(&mut self, c: Char, value: &[u8], kind: &str) -> Result<()> {
+        let path = self.path(c)?;
+        let mut options: HashMap<&str, Value> = HashMap::new();
+        options.insert("type", Value::from(kind));
+        let shown = match kind {
+            "command" => format!("{c:?} {} bytes, type={kind}", value.len()),
+            _ => format!("{c:?} {}, type={kind}", hex(value)),
+        };
+        self.bus.call(
+            path,
+            CHARACTERISTIC,
+            "WriteValue",
+            &(value, options),
+            &shown,
+        )?;
+        Ok(())
+    }
 }
 
 impl Link for BluezLink {
@@ -821,18 +843,11 @@ impl Link for BluezLink {
     }
 
     fn write(&mut self, c: Char, value: &[u8]) -> Result<()> {
-        let path = self.path(c)?;
-        let mut options: HashMap<&str, Value> = HashMap::new();
-        options.insert("type", Value::from("request"));
-        let shown = format!("{c:?} {}, type=request", hex(value));
-        self.bus.call(
-            path,
-            CHARACTERISTIC,
-            "WriteValue",
-            &(value, options),
-            &shown,
-        )?;
-        Ok(())
+        self.write_as(c, value, "request")
+    }
+
+    fn write_command(&mut self, c: Char, value: &[u8]) -> Result<()> {
+        self.write_as(c, value, "command")
     }
 
     fn subscribe(&mut self, c: Char) -> Result<()> {

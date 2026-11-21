@@ -106,6 +106,18 @@ it needs one, from a random seed kept in `--dir`.
   mailbox keeps their mail, or no longer, and puts it on their card,
   which is then to be sent again.
 
+## Updating a node
+
+- `update <id> <image>`: updates the paired node's firmware from an image
+  file, a release's `bark-fw-<version>.img` or one built and signed here
+  (`bark-fw/README.md`, "Updates"), as the app does (protocol.md,
+  "Updates from the phone"): the header to begin, the image in pieces,
+  seven between reads of what the node holds, so that a lost piece or
+  link goes on from there, then the commit and the reboot. An image not
+  newer than the node runs is refused before anything is sent. A line at
+  each step and at each tenth of the image sent. The node is away about a
+  minute as it swaps; `node <id>` shows it back, with its new version.
+
 Output is one fact a line, a name and then its value. A command that
 fails exits non-zero and prints one line on stderr saying why.
 

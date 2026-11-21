@@ -225,6 +225,8 @@ pub trait Link {
     fn read(&mut self, c: Char) -> Result<Vec<u8>>;
     /// A write request, which the node answers.
     fn write(&mut self, c: Char, value: &[u8]) -> Result<()>;
+    /// A write without response, which the node does not answer.
+    fn write_command(&mut self, c: Char, value: &[u8]) -> Result<()>;
     /// Subscribes to the characteristic's notifications.
     fn subscribe(&mut self, c: Char) -> Result<()>;
     /// The next value notified within `wait`, if any.

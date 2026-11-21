@@ -128,6 +128,9 @@ enum Command {
     /// Make the node your home, whose mailbox keeps your mail, or no
     /// longer.
     Home { node: Select, set: OnOff },
+    /// Update the paired node's firmware from an image file, such as a
+    /// release's bark-fw-<version>.img, and reboot it into the image.
+    Update { node: Select, image: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -200,6 +203,15 @@ fn run(args: Args) -> Result<Vec<String>> {
             text,
         } => messages::send(r, &mut state, &node, &contact, &text, time, now())?,
         Command::Inbox { node } => messages::inbox(r, &mut state, &node, time, now())?,
+        Command::Update { node, image } => {
+            let file = std::fs::read(&image)
+                .map_err(|e| Error::Other(format!("reading {}: {e}", image.display())))?;
+            let image = bark_cli::update::Image::parse(&file)?;
+            bark_cli::update::update(r, &mut state, &node, &image, now(), &mut |l| {
+                println!("{l}")
+            })?;
+            Vec::new()
+        }
         Command::Home { node, set } => {
             messages::home(r, &mut state, &node, matches!(set, OnOff::On), now())?
         }

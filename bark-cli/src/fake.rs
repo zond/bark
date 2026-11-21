@@ -10,6 +10,7 @@ use std::time::Duration;
 use bark_link::home::{Home, SetHome};
 use bark_link::neighbours::{self, Neighbour};
 use bark_link::phones::{Keys, Phones, PhonesWrite};
+use bark_link::update::{Command, Piece, Progress, Refusal, State as UpdateState};
 use bark_link::{
     After, Answer, Ask, Clock, Confirm, GivenBack, GuestItem, MapPoint, Message, Node, NodeTime,
     Public, PublicWrite, Recipient, Send, Status, TimeSource,
@@ -60,6 +61,12 @@ pub struct FakeNode {
     /// The message it gives back, if any.
     pub given_back: Option<GivenBack>,
     pub home: Option<[u8; 32]>,
+    /// Where an update from the phone stands, and the bytes held.
+    pub update: Progress,
+    pub staged: Vec<u8>,
+    staging: u32,
+    /// Pieces it drops, as a full host queue does.
+    pub drops: usize,
 }
 
 impl FakeNode {
@@ -96,6 +103,10 @@ impl FakeNode {
             busy: 0,
             given_back: None,
             home: None,
+            update: Progress::IDLE,
+            staged: Vec::new(),
+            staging: 0,
+            drops: 0,
         };
         n.node.room = n.phones.room();
         n
@@ -431,6 +442,7 @@ impl Link for FakeLink {
                 let len = neighbours::encode(&header, &page, &mut b);
                 Ok(b[..len].to_vec())
             }
+            Char::Update => Ok(n.update.encode().to_vec()),
             Char::GivenBack => Ok(n.given_back.map_or(Vec::new(), |g| g.encode().to_vec())),
             Char::Home => Ok(Home {
                 set: n.home.is_some(),
@@ -516,6 +528,52 @@ impl Link for FakeLink {
                 PhonesWrite::From(s) => self.phones_from = s,
                 _ => return Err(Error::Other("the fake removes no phone".into())),
             },
+            Char::Update => {
+                let refuse = |n: &mut FakeNode, why| {
+                    n.update.refused = Some(why);
+                    Err(Error::Att(bark_link::att::REFUSED))
+                };
+                match taken(Command::decode(v))? {
+                    Command::Begin(h) => {
+                        let word =
+                            |at: usize| u32::from_le_bytes(h[at..at + 4].try_into().unwrap());
+                        if &h[..4] != b"bark" {
+                            return refuse(&mut n, Refusal::Header);
+                        }
+                        if word(8) <= n.node.image {
+                            return refuse(&mut n, Refusal::Version);
+                        }
+                        n.staged.clear();
+                        n.staging = word(12);
+                        n.update = Progress {
+                            state: UpdateState::Receiving,
+                            refused: None,
+                            held: 0,
+                            version: word(8),
+                            hash: h[16..48].try_into().unwrap(),
+                        };
+                    }
+                    Command::Commit => {
+                        if n.update.state != UpdateState::Staged {
+                            return refuse(&mut n, Refusal::Incomplete);
+                        }
+                        use sha2::Digest;
+                        if sha2::Sha256::digest(&n.staged)[..] != n.update.hash {
+                            n.update = Progress::IDLE;
+                            return refuse(&mut n, Refusal::Hash);
+                        }
+                        n.update.state = UpdateState::Committed;
+                    }
+                    Command::Reboot => {
+                        if n.update.state == UpdateState::Committed {
+                            n.node.image = n.update.version;
+                            n.update = Progress::IDLE;
+                        }
+                        // It answers, then resets.
+                        self.ended = true;
+                    }
+                }
+            }
             Char::Recipient => {
                 let rec = taken(Recipient::decode(v))?;
                 if !rec.compatible() {
@@ -573,6 +631,29 @@ impl Link for FakeLink {
                 }
             }
             _ => return Err(Error::Other(format!("the fake does not write {c:?}"))),
+        }
+        Ok(())
+    }
+
+    fn write_command(&mut self, c: Char, v: &[u8]) -> Result<()> {
+        self.allowed(c)?;
+        let mut n = self.node.borrow_mut();
+        if c != Char::Image {
+            return Err(Error::Other(format!("the fake takes no command on {c:?}")));
+        }
+        if n.drops > 0 {
+            n.drops -= 1;
+            return Ok(());
+        }
+        let piece = taken(Piece::decode(v))?;
+        // A piece only where the bytes held end
+        // (spec "Updates from the phone").
+        if n.update.state == UpdateState::Receiving && piece.offset == n.update.held {
+            n.staged.extend_from_slice(piece.bytes);
+            n.update.held += piece.bytes.len() as u32;
+            if n.update.held == n.staging {
+                n.update.state = UpdateState::Staged;
+            }
         }
         Ok(())
     }
