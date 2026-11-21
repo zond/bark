@@ -9,7 +9,7 @@
 //! words, the unit the nRF52840 writes, and a record cut short by a power
 //! cut fails its checksum.
 
-use crate::ids::NodeId;
+use crate::ids::{fnv1a, NodeId};
 use crate::node::Anchor;
 use crate::position::Position;
 use crate::radio::Channel;
@@ -65,13 +65,6 @@ const AT_DRAIN: usize = AT_SCALE + 2;
 const AT_CHECK: usize = RECORD_LEN - 4;
 const _: () = assert!(AT_DRAIN + 2 <= AT_CHECK);
 
-/// 32-bit FNV-1a, as the message ID uses (`ids.rs`).
-fn fnv1a(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0x811c_9dc5, |h, &b| {
-        (h ^ b as u32).wrapping_mul(0x0100_0193)
-    })
-}
-
 impl Stored {
     /// The fixed-size record, its last four bytes a checksum of the rest.
     pub fn record(&self) -> [u8; RECORD_LEN] {
@@ -98,7 +91,7 @@ impl Stored {
             r[AT_ANCHOR_POS..AT_ANCHOR_POS + Position::WIRE_LEN]
                 .copy_from_slice(&a.position.encode());
         }
-        let check = fnv1a(&r[..AT_CHECK]);
+        let check = fnv1a(&[&r[..AT_CHECK]]);
         r[AT_CHECK..].copy_from_slice(&check.to_be_bytes());
         r
     }
@@ -111,7 +104,7 @@ impl Stored {
             r[AT_CHECK + 2],
             r[AT_CHECK + 3],
         ]);
-        if r[AT_VERSION] != VERSION || fnv1a(&r[..AT_CHECK]) != check {
+        if r[AT_VERSION] != VERSION || fnv1a(&[&r[..AT_CHECK]]) != check {
             return None;
         }
         let pos = |at: usize| {

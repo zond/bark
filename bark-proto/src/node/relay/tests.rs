@@ -729,7 +729,7 @@ fn a_packet_that_cannot_be_answered_is_not_taken() {
         !actions.iter().any(|x| matches!(x, Action::Transmit(_))),
         "the radio is held: {actions:?}"
     );
-    assert!(r.radio.replies().pending());
+    assert!(r.radio.replies.pending());
 
     now += Duration::from_millis(1);
     actions.clear();

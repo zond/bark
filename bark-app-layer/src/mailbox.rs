@@ -12,6 +12,7 @@
 use core::cell::Cell;
 
 use bark_link::phones::{HomeKey, Record, RECORDS};
+use bark_proto::ids::fnv1a;
 use bark_proto::{MsgId, NodeId};
 
 use crate::command::{Code, Command, Outcome, Summary};
@@ -77,20 +78,9 @@ pub trait Ring {
     }
 }
 
-fn fnv1a(bytes: &[u8]) -> u32 {
-    fnv1a_on(0x811c_9dc5, bytes)
-}
-
-fn fnv1a_on(h: u32, bytes: &[u8]) -> u32 {
-    bytes
-        .iter()
-        .fold(h, |h, &b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193))
-}
-
 /// A slot's check, its mark read as erased.
 fn slot_check(b: &[u8; SLOT_LEN]) -> u32 {
-    let h = fnv1a_on(fnv1a(&b[..MARK_AT]), &[0xff]);
-    fnv1a_on(h, &b[MARK_AT + 1..CHECK_AT])
+    fnv1a(&[&b[..MARK_AT], &[0xff], &b[MARK_AT + 1..CHECK_AT]])
 }
 
 /// What a payload delivered to the node was.

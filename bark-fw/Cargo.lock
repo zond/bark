@@ -116,6 +116,7 @@ dependencies = [
 name = "bark-image"
 version = "0.1.0"
 dependencies = [
+ "bark-proto",
  "ed25519-compact",
  "embassy-boot",
  "embassy-embedded-hal",

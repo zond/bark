@@ -313,9 +313,9 @@ const RX_DEFAULT_MS: u32 = 10_000;
 const NOISE_MAX: usize = 1000;
 /// How long `ping` listens for its pong: ten ACK timeouts (spec "Hand-over"),
 /// so a late pong is still seen and timed.
-const PING_WAIT: Duration = Duration::from_millis(1000);
+const PING_WAIT: Duration = Duration::from_micros(10 * ACK_TIMEOUT_US as u64);
 /// The per-hop ACK timeout the pong is measured against (spec "Hand-over").
-const ACK_TIMEOUT_US: u32 = 100_000;
+const ACK_TIMEOUT_US: u32 = bark_proto::Config::DEFAULT.ack_timeout.as_micros() as u32;
 
 const HELP: &str = "ch <k> | tx <k> <hex|len> | rx <k> [ms] | cad <k> | lbt <k> | tcxo | probe | rssi <k> [dwell_us] | sweep | \
 noise <k> <n> [gap_us] | power <dbm> | preamble <short|long|n> | beacon <k> <ms> [len] | stop | ping <k> | status [reset] | \

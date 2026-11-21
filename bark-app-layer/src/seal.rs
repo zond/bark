@@ -555,7 +555,11 @@ pub fn seal_item(
         Ok(Form::Introduction) => Form::IntroductionItem,
         _ => return Err(Error::Malformed),
     };
-    if !forwardable(item) || !(1..=MAX_REPLIES).contains(&place) {
+    // Place 0 is the summary's, and no place passes the batch.
+    if item.len() < HEAD_LEN || !(1..=MAX_REPLIES).contains(&place) {
+        return Err(Error::Malformed);
+    }
+    if item.len() > MAX_APP_PAYLOAD {
         return Err(Error::TooLong);
     }
     let at = HEAD_LEN + PLACE_LEN;

@@ -310,6 +310,17 @@ pub struct Held {
 }
 
 impl Held {
+    /// Note a chip failure: what it holds is unknown, so it is reset
+    /// before its next operation. On the state, not the radio, so that
+    /// `self.held.note(self.chip.x().await)` borrows two fields, not the
+    /// radio twice.
+    fn note<T, E>(&mut self, r: Result<T, E>) -> Result<T, Error<E>> {
+        if r.is_err() {
+            *self = Held::UNKNOWN;
+        }
+        r.map_err(Error::Chip)
+    }
+
     const UNKNOWN: Held = Held {
         mode: Mode::Unknown,
         configured: false,
@@ -569,17 +580,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         &mut self,
         buf: &mut [u8; MAX_FRAME],
     ) -> Result<(u8, i16, i8), Error<C::Error>> {
-        let r = self.chip.read_frame(buf).await;
-        self.note(r)
-    }
-
-    /// Note a chip failure: what it holds is unknown, so it is reset
-    /// before its next operation.
-    fn note<T>(&mut self, r: Result<T, C::Error>) -> Result<T, Error<C::Error>> {
-        if r.is_err() {
-            self.held = Held::UNKNOWN;
-        }
-        r.map_err(Error::Chip)
+        self.held.note(self.chip.read_frame(buf).await)
     }
 
     /// Bring the chip to a standby that holds the configuration: a reset
@@ -602,8 +603,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                         }
                     }
                 }
-                let r = self.chip.reset().await;
-                self.note(r)?;
+                self.held.note(self.chip.reset().await)?;
                 self.stats.resets += 1;
                 // Cold: the reset cut the oscillator's supply.
                 self.held = Held {
@@ -614,19 +614,15 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
                 self.remeasure = true;
                 // With a TCXO the flag is set at power-up, before the
                 // chip knows its clock (DS §13.3.6).
-                let r = self.chip.clear_errors().await;
-                self.note(r)?;
+                self.held.note(self.chip.clear_errors().await)?;
                 // The calibrations get the longest delay, not the probed
                 // one: a TCXO's frequency settles after it starts.
                 self.set_tcxo(tcxo::MAX).await?;
-                let r = self.chip.calibrate().await;
-                self.note(r)?;
-                let r = self.chip.errors().await;
-                let (errors, _) = self.note(r)?;
+                self.held.note(self.chip.calibrate().await)?;
+                let (errors, _) = self.held.note(self.chip.errors().await)?;
                 if errors != 0 {
                     log::warn!("radio: calibration errors {:#x}", errors);
-                    let r = self.chip.clear_errors().await;
-                    self.note(r)?;
+                    self.held.note(self.chip.clear_errors().await)?;
                 }
                 self.last_start = Start::Running;
                 self.unread = Start::Running;
@@ -639,8 +635,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             self.held.configured = false;
         }
         if !self.held.configured {
-            let r = self.chip.configure().await;
-            self.note(r)?;
+            self.held.note(self.chip.configure().await)?;
             self.stats.configured += 1;
             self.held = Held {
                 configured: true,
@@ -652,8 +647,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             };
             // The image calibration survives a sleep; a reset loses it.
             if reset {
-                let r = self.chip.calibrate_image().await;
-                self.note(r)?;
+                self.held.note(self.chip.calibrate_image().await)?;
             }
         }
         Ok(())
@@ -672,16 +666,12 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         // A wake edge that comes as the chip goes to sleep is ignored
         // (§13.1.1), BUSY then high for the sleep: try once more.
         if self.chip.wake().await.is_err() {
-            let r = self.chip.wake().await;
-            self.note(r)?;
+            self.held.note(self.chip.wake().await)?;
         }
-        let r = self.chip.standby(false).await;
-        self.note(r)?;
-        let r = self.chip.errors().await;
-        let (errors, status) = self.note(r)?;
+        self.held.note(self.chip.standby(false).await)?;
+        let (errors, status) = self.held.note(self.chip.errors().await)?;
         if errors != 0 {
-            let r = self.chip.clear_errors().await;
-            self.note(r)?;
+            self.held.note(self.chip.clear_errors().await)?;
         }
         if status::mode(status) != status::STBY_RC {
             self.held = Held::UNKNOWN;
@@ -698,8 +688,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// From receiving into a standby with the oscillator running.
     async fn standby_xosc(&mut self) -> Result<(), Error<C::Error>> {
         if self.held.mode == Mode::Rx {
-            let r = self.chip.standby(true).await;
-            self.note(r)?;
+            self.held.note(self.chip.standby(true).await)?;
             self.held.mode = Mode::StandbyXosc;
         }
         debug_assert!(matches!(
@@ -714,8 +703,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// would read no done flag (the bench's `NotDone(4)` and `NotDone(20)`).
     /// From a standby, where no new packet can be flagged.
     async fn clear_stale_irq(&mut self) -> Result<(), Error<C::Error>> {
-        let r = self.chip.clear_irq().await;
-        self.note(r)
+        self.held.note(self.chip.clear_irq().await)
     }
 
     /// Into STDBY_RC, the oscillator stopped.
@@ -723,8 +711,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         if matches!(self.held.mode, Mode::Rx | Mode::StandbyXosc) {
             // It stops no sooner than the command is sent.
             let sent = self.clock.now();
-            let r = self.chip.standby(false).await;
-            self.note(r)?;
+            self.held.note(self.chip.standby(false).await)?;
             self.held.mode = Mode::StandbyRc;
             self.held.osc_stopped = Some(sent);
         }
@@ -734,8 +721,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     async fn set_frequency(&mut self, channel: Channel) -> Result<(), Error<C::Error>> {
         if self.held.freq != Some(channel) {
-            let r = self.chip.set_frequency(channel).await;
-            self.note(r)?;
+            self.held.note(self.chip.set_frequency(channel).await)?;
             self.held.freq = Some(channel);
         }
         Ok(())
@@ -743,8 +729,8 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     async fn set_packet_params(&mut self, params: (u16, u8)) -> Result<(), Error<C::Error>> {
         if self.held.packet != Some(params) {
-            let r = self.chip.set_packet_params(params.0, params.1).await;
-            self.note(r)?;
+            self.held
+                .note(self.chip.set_packet_params(params.0, params.1).await)?;
             self.held.packet = Some(params);
         }
         Ok(())
@@ -752,8 +738,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     async fn set_tx_power(&mut self, dbm: i8) -> Result<(), Error<C::Error>> {
         if self.held.power != Some(dbm) {
-            let r = self.chip.set_tx_power(dbm).await;
-            self.note(r)?;
+            self.held.note(self.chip.set_tx_power(dbm).await)?;
             self.held.power = Some(dbm);
         }
         Ok(())
@@ -763,8 +748,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     async fn set_tcxo(&mut self, delay: Duration) -> Result<(), Error<C::Error>> {
         if self.held.tcxo != Some(delay) {
             debug_assert_eq!(self.held.mode, Mode::StandbyRc);
-            let r = self.chip.set_tcxo(delay).await;
-            self.note(r)?;
+            self.held.note(self.chip.set_tcxo(delay).await)?;
             self.held.tcxo = Some(delay);
         }
         Ok(())
@@ -819,12 +803,10 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
     /// stepped up if it failed. Returns whether it started cleanly, and
     /// the status byte read with the word.
     async fn start_errors(&mut self, start: Start) -> Result<(bool, u8), Error<C::Error>> {
-        let r = self.chip.errors().await;
-        let (errors, status) = self.note(r)?;
+        let (errors, status) = self.held.note(self.chip.errors().await)?;
         self.unread = Start::Running;
         if errors != 0 {
-            let r = self.chip.clear_errors().await;
-            self.note(r)?;
+            self.held.note(self.chip.clear_errors().await)?;
         }
         let failed = errors & START_ERRORS != 0;
         if failed {
@@ -910,14 +892,12 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let mut last = None;
         for _ in 0..2 {
             if last.is_some() {
-                let r = self.chip.standby(false).await;
-                self.note(r)?;
+                self.held.note(self.chip.standby(false).await)?;
                 self.held.mode = Mode::StandbyRc;
                 self.held.osc_stopped = None;
             }
             let start = self.before_start().await?;
-            let r = self.chip.rx().await;
-            self.note(r)?;
+            self.held.note(self.chip.rx().await)?;
             self.held.mode = Mode::Rx;
             let (clean, status) = self.after_start(start).await?;
             if clean && status.is_none_or(|s| status::mode(s) == status::RX) {
@@ -943,8 +923,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         // The cycle's wakes are cold starts, read together after it.
         self.set_tcxo(self.cold.delay).await?;
         let (rx, sleep) = periods(self.cold.delay);
-        let r = self.chip.rx_duty_cycle(rx, sleep).await;
-        self.note(r)?;
+        self.held.note(self.chip.rx_duty_cycle(rx, sleep).await)?;
         self.held.mode = Mode::Sniff;
         self.held.slept = true;
         self.held.osc_stopped = None;
@@ -960,8 +939,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     /// Wait for the chip to have something to report. Cancel-safe.
     pub async fn wait(&mut self) -> Result<(), Error<C::Error>> {
-        let r = self.chip.await_irq(None).await;
-        self.note(r)
+        self.held.note(self.chip.await_irq(None).await)
     }
 
     /// What the chip reported: a frame into `buf`, a packet begun, a
@@ -973,13 +951,10 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let sniffing = self.held.mode == Mode::Sniff;
         if sniffing {
             // It may have gone back to sleep since its interrupt.
-            let r = self.chip.wake().await;
-            self.note(r)?;
+            self.held.note(self.chip.wake().await)?;
         }
-        let r = self.chip.irq_status().await;
-        let flags = self.note(r)?;
-        let r = self.chip.clear_irq().await;
-        self.note(r)?;
+        let flags = self.held.note(self.chip.irq_status().await)?;
+        self.held.note(self.chip.clear_irq().await)?;
         // The payload is checked only after the header passed, so a
         // payload error says the header was good.
         let heard = if flags & irq::CRC_ERR != 0 {
@@ -989,8 +964,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         } else if flags & irq::TIMEOUT != 0 {
             Heard::Failed(Failure::Timeout)
         } else if flags & irq::RX_DONE != 0 {
-            let r = self.chip.read_frame(buf).await;
-            let (len, rssi_dbm, snr_db) = self.note(r)?;
+            let (len, rssi_dbm, snr_db) = self.held.note(self.chip.read_frame(buf).await)?;
             Heard::Frame {
                 len,
                 rssi_dbm,
@@ -1009,8 +983,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     /// The instantaneous RSSI of the channel being listened to.
     pub async fn rssi(&mut self) -> Result<i16, Error<C::Error>> {
-        let r = self.chip.rssi().await;
-        self.note(r)
+        self.held.note(self.chip.rssi().await)
     }
 
     /// One CAD on `channel`, with the RSSI read inside it if `read`.
@@ -1024,8 +997,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             self.clear_stale_irq().await?;
         }
         self.set_frequency(channel).await?;
-        let r = self.chip.cad_params().await;
-        self.note(r)?;
+        self.held.note(self.chip.cad_params().await)?;
         let start = self.before_start().await?;
         let sent = self.clock.now();
         // From the command to the reading inside the CAD no other task
@@ -1041,12 +1013,10 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             wake,
             read,
         } = sampled?;
-        let r = self.chip.await_irq(Some(CAD_TIME + IRQ_SLACK)).await;
-        self.note(r)?;
-        let r = self.chip.irq_status().await;
-        let flags = self.note(r)?;
-        let r = self.chip.clear_irq().await;
-        self.note(r)?;
+        self.held
+            .note(self.chip.await_irq(Some(CAD_TIME + IRQ_SLACK)).await)?;
+        let flags = self.held.note(self.chip.irq_status().await)?;
+        self.held.note(self.chip.clear_irq().await)?;
         let ended = self.clock.now();
         self.held.mode = Mode::StandbyRc;
         // The oscillator stopped at the CAD's end, no sooner than its
@@ -1073,8 +1043,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
 
     /// `SetCAD`, and the reading [`RSSI_SETTLE`] into the CAD if `read`.
     async fn sample(&mut self, read: bool) -> Result<Sampled, Error<C::Error>> {
-        let r = self.chip.cad().await;
-        self.note(r)?;
+        self.held.note(self.chip.cad().await)?;
         self.held.mode = Mode::Cad;
         let started = self.clock.now();
         let mut s = Sampled {
@@ -1088,8 +1057,7 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
             let t_read = self.clock.now();
             s.wake = t_read.since(started);
             if t_read <= started + CAD_SAMPLING {
-                let r = self.chip.rssi().await;
-                s.inside = Some(self.note(r)?);
+                s.inside = Some(self.held.note(self.chip.rssi().await)?);
             }
             s.read = self.clock.now().since(t_read);
         }
@@ -1154,20 +1122,17 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.set_packet_params((frame.preamble_symbols, frame.len))
             .await?;
         self.set_tx_power(dbm).await?;
-        let r = self.chip.write_payload(frame.payload()).await;
-        self.note(r)?;
+        self.held
+            .note(self.chip.write_payload(frame.payload()).await)?;
         let start = self.before_start().await?;
-        let r = self.chip.tx().await;
-        self.note(r)?;
+        self.held.note(self.chip.tx().await)?;
         self.held.mode = Mode::Tx;
         let started = self.clock.now();
         let airtime = time_on_air(frame.len, frame.preamble_symbols);
-        let r = self.chip.await_irq(Some(airtime + IRQ_SLACK)).await;
-        self.note(r)?;
-        let r = self.chip.irq_status().await;
-        let flags = self.note(r)?;
-        let r = self.chip.clear_irq().await;
-        self.note(r)?;
+        self.held
+            .note(self.chip.await_irq(Some(airtime + IRQ_SLACK)).await)?;
+        let flags = self.held.note(self.chip.irq_status().await)?;
+        self.held.note(self.chip.clear_irq().await)?;
         // The fallback mode set in the configuration.
         self.held.mode = Mode::StandbyXosc;
         if flags & irq::TX_DONE == 0 {
@@ -1190,17 +1155,13 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         let off_since = self.held.osc_stopped.unwrap_or(self.clock.now());
         self.clock.at(off_since + tcxo::COLD_WAIT).await;
         self.set_tcxo(delay).await?;
-        let r = self.chip.clear_errors().await;
-        self.note(r)?;
-        let r = self.chip.rx().await;
-        self.note(r)?;
+        self.held.note(self.chip.clear_errors().await)?;
+        self.held.note(self.chip.rx().await)?;
         self.held.mode = Mode::Rx;
         self.held.osc_stopped = None;
-        let r = self.chip.errors().await;
-        let (errors, _) = self.note(r)?;
+        let (errors, _) = self.held.note(self.chip.errors().await)?;
         let ok = errors & START_ERRORS == 0;
-        let r = self.chip.clear_errors().await;
-        self.note(r)?;
+        self.held.note(self.chip.clear_errors().await)?;
         self.standby_rc().await?;
         let temp = self.chip.die_temperature().await;
         self.cold.probed(tcxo::Probe {
@@ -1233,21 +1194,17 @@ impl<C: Chip, K: Clock> Sx1262<C, K> {
         self.set_tcxo(delay).await?;
         let stopped = self.held.osc_stopped.unwrap_or(Instant::ZERO);
         let gap = self.clock.now().since(stopped);
-        let r = self.chip.rx().await;
-        self.note(r)?;
+        self.held.note(self.chip.rx().await)?;
         self.held.mode = Mode::Rx;
         self.held.osc_stopped = None;
-        let r = self.chip.errors().await;
-        let (errors, _) = self.note(r)?;
+        let (errors, _) = self.held.note(self.chip.errors().await)?;
         if errors != 0 {
-            let r = self.chip.clear_errors().await;
-            self.note(r)?;
+            self.held.note(self.chip.clear_errors().await)?;
         }
         let ok = errors & START_ERRORS == 0;
         if !ok {
             // Perhaps left in STDBY_RC: the next probe starts it cold.
-            let r = self.chip.standby(false).await;
-            self.note(r)?;
+            self.held.note(self.chip.standby(false).await)?;
             self.held.mode = Mode::StandbyRc;
         }
         if gap >= tcxo::STILL_RUNNING {

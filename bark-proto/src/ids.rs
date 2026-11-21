@@ -46,40 +46,44 @@ impl MsgId {
     /// "Phone link"), so IDs collide only by chance: about 5 × 10⁻⁵ among
     /// the 649 a relay remembers (spec "Message records").
     pub fn of(dst_pos: Position, dst_id: NodeId, payload: &[u8]) -> MsgId {
-        let mut h: u32 = 0x811c_9dc5;
-        for part in [&dst_pos.encode()[..], &dst_id.0, payload] {
-            for &b in part {
-                h ^= b as u32;
-                h = h.wrapping_mul(0x0100_0193);
-            }
-        }
-        MsgId(h)
+        MsgId(fnv1a(&[&dst_pos.encode(), &dst_id.0, payload]))
     }
+}
+
+/// 32-bit FNV-1a of `parts`, concatenated. The message ID, the stored
+/// records' checks and the phone's own copies of both use it, so one
+/// definition keeps them the same.
+pub fn fnv1a(parts: &[&[u8]]) -> u32 {
+    parts
+        .iter()
+        .flat_map(|p| p.iter())
+        .fold(0x811c_9dc5, |h, &b| {
+            (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// FNV-1a as published, for its test vectors.
-    fn fnv1a(bytes: &[u8]) -> u32 {
-        bytes.iter().fold(0x811c_9dc5, |h, &b| {
-            (h ^ b as u32).wrapping_mul(0x0100_0193)
-        })
+    #[test]
+    fn fnv1a_is_as_published() {
+        assert_eq!(fnv1a(&[]), 0x811c_9dc5);
+        assert_eq!(fnv1a(&[b""]), 0x811c_9dc5);
+        assert_eq!(fnv1a(&[b"a"]), 0xe40c_292c);
+        assert_eq!(fnv1a(&[b"foobar"]), 0xbf9c_f968);
+        assert_eq!(fnv1a(&[b"foo", b"", b"bar"]), 0xbf9c_f968);
     }
 
     #[test]
     fn msg_id_is_fnv1a_over_the_concatenation() {
-        assert_eq!(fnv1a(b""), 0x811c_9dc5);
-        assert_eq!(fnv1a(b"a"), 0xe40c_292c);
-        assert_eq!(fnv1a(b"foobar"), 0xbf9c_f968);
         let p = Position::from_degrees(50.45, 30.52);
         let leaf = NodeId([1, 2, 3, 4, 5, 6]);
         let mut all = [0u8; 7 + 6 + 5];
         all[..7].copy_from_slice(&p.encode());
         all[7..13].copy_from_slice(&leaf.0);
         all[13..].copy_from_slice(b"hello");
-        assert_eq!(MsgId::of(p, leaf, b"hello"), MsgId(fnv1a(&all)));
+        assert_eq!(MsgId::of(p, leaf, b"hello"), MsgId(fnv1a(&[&all])));
     }
 
     #[test]

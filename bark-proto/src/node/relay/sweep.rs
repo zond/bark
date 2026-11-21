@@ -153,7 +153,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     }
 
     pub(super) fn sweep_due(&self, now: Instant) -> bool {
-        self.sweeping() && now >= self.radio.sweep_at()
+        self.sweeping() && now >= self.radio.sweep.next_at()
     }
 
     /// Whether the node sweeps: a relay, and a sleepy node while it boots;
@@ -201,7 +201,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn move_rule(&mut self, now: Instant) {
         let excess = self.excess();
         let (dwell, wait_max) = (self.config.move_dwell, self.config.move_wait_max);
-        self.radio.move_rule(
+        self.radio.sweep.move_rule(
             excess,
             dwell,
             || self.rng.duration(Duration::ZERO, wait_max),
@@ -233,6 +233,6 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         // that sweeps has the shortest.
         let len = len.min(u8::MAX as usize) as u8;
         let airtime = time_on_air(len, MIN_PREAMBLE_SYMBOLS);
-        self.radio.set_aside_home_reading(airtime, now);
+        self.radio.sweep.set_aside(airtime, now);
     }
 }

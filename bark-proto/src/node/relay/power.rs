@@ -280,7 +280,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let at = now + self.rng.duration(Duration::ZERO, interval);
         self.radio.beacon.beat(at, 0);
         self.radio.beacon.burst(0);
-        self.radio.restart_sweep(now);
+        self.radio.sweep.restart(now);
         emit(Action::Listen(self.home));
         emit(Action::Trace(Trace::Role { sleepy: false }));
         self.changed();
@@ -303,7 +303,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 ..h
             });
         }
-        self.radio.clear_move();
+        self.radio.sweep.clear_move();
         self.radio.beacon.sleepy();
         self.unwatch();
         emit(Action::Trace(Trace::Role { sleepy: true }));

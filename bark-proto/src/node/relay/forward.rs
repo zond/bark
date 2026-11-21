@@ -1248,7 +1248,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Report a DATA that a reply given up left untaken: refused, for its
     /// sender retries it (spec "The ACK").
     fn note_untaken(&mut self, emit: &mut dyn FnMut(Action)) {
-        if let Some(msg_id) = self.radio.untaken() {
+        if let Some(msg_id) = self.radio.replies.untaken() {
             emit(Action::Trace(Trace::Refused {
                 msg_id,
                 reason: DropReason::Unanswered,
@@ -2106,7 +2106,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         now: Instant,
         emit: &mut dyn FnMut(Action),
     ) -> Option<Outgoing> {
-        if self.radio.replies().pending() {
+        if self.radio.replies.pending() {
             if let Some((mut h, _)) = self.handover() {
                 h.hold(now);
             }
@@ -2575,7 +2575,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// Send the owed reply if it is ready (spec "The ACK"); without budget
     /// it is abandoned (spec "Duty cycle cap").
     pub(super) fn start_reply(&mut self, now: Instant, emit: &mut dyn FnMut(Action)) -> bool {
-        let due = self.radio.reply_due(now);
+        let due = self.radio.replies.due(now);
         self.note_untaken(emit);
         let Some(o) = due else {
             return false;
@@ -2587,7 +2587,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 msg_id: o.reply.msg_id,
                 owed: false,
             }));
-            self.radio.abandon_reply();
+            self.radio.replies.abandon();
             self.note_untaken(emit);
             return true;
         }

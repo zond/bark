@@ -2,16 +2,17 @@
 //! that owns it, the duty-cycle budget (spec "Duty cycle cap"), the busy
 //! estimate (spec "Busy estimate"), the time away from listening, and the
 //! replies owed (spec "The ACK"). It also holds what each job keeps between
-//! excursions; each job's module owns that state.
+//! excursions; each job's module owns that state and works on it in place,
+//! and the methods here are those that join it to the excursion, the budget
+//! or the busy estimate.
 
 use super::heartbeat::Beacon;
 use super::status::Asking;
 use super::sweep::Sweep;
 use super::Job;
 use crate::event::{Action, Frame};
-use crate::ids::MsgId;
 use crate::node::mac::{airtime, Excursion};
-use crate::node::transfer::{Owed, Replies, Take};
+use crate::node::transfer::{Replies, Take};
 use crate::node::Config;
 use crate::radio::Channel;
 use crate::tables::budget::Budget;
@@ -28,8 +29,8 @@ pub(super) struct Radio {
     /// How long it has been away in all before that, µs, wrapping: only
     /// differences are read.
     away_total_us: u32,
-    replies: Replies,
-    sweep: Sweep,
+    pub(super) replies: Replies,
+    pub(super) sweep: Sweep,
     pub(super) beacon: Beacon,
     pub(super) asking: Asking,
     busy: BusyEstimator,
@@ -111,19 +112,7 @@ impl Radio {
         &self.busy
     }
 
-    // --- The sweep (`relay/sweep.rs`) ---
-
-    pub(super) fn sweep_at(&self) -> Instant {
-        self.sweep.next_at()
-    }
-
-    pub(super) fn restart_sweep(&mut self, now: Instant) {
-        self.sweep.restart(now);
-    }
-
-    pub(super) fn forget_home_reading(&mut self) {
-        self.sweep.forget_home();
-    }
+    // --- The sweep's readings (`relay/sweep.rs`) ---
 
     pub(super) fn start_sweep(&mut self, step: Duration, emit: &mut dyn FnMut(Action)) {
         let channel = self.sweep.start(step);
@@ -142,35 +131,6 @@ impl Radio {
         if let Some((c, dbm)) = self.sweep.sampled(channel, dbm, home, step, now) {
             self.busy.sample(c, dbm, now);
         }
-    }
-
-    /// A reception that follows this node, of `airtime`, ended at `now`
-    /// ([`Sweep::set_aside`]).
-    pub(super) fn set_aside_home_reading(&mut self, airtime: Duration, now: Instant) {
-        self.sweep.set_aside(airtime, now);
-    }
-
-    pub(super) fn move_at(&self) -> Option<Instant> {
-        self.sweep.move_at()
-    }
-
-    pub(super) fn move_due(&self, now: Instant) -> bool {
-        self.sweep.move_at().is_some_and(|t| now >= t)
-    }
-
-    pub(super) fn clear_move(&mut self) {
-        self.sweep.clear_move();
-    }
-
-    /// A round of readings ended ([`Sweep::move_rule`]).
-    pub(super) fn move_rule(
-        &mut self,
-        excess: bool,
-        dwell: Duration,
-        wait: impl FnOnce() -> Duration,
-        now: Instant,
-    ) {
-        self.sweep.move_rule(excess, dwell, wait, now);
     }
 
     // --- Away from listening ---
@@ -211,11 +171,7 @@ impl Radio {
         !core::mem::replace(&mut self.heard, true)
     }
 
-    // --- The replies owed (`transfer.rs`) ---
-
-    pub(super) fn replies(&self) -> &Replies {
-        &self.replies
-    }
+    // --- Owing a reply (`transfer.rs`) ---
 
     /// Whether `reply` on `channel` can be owed now ([`Replies::can_owe`]).
     pub(super) fn can_owe(&mut self, reply: Ack, channel: Channel, now: Instant) -> bool {
@@ -236,26 +192,6 @@ impl Radio {
         let sending = self.out_for(Job::Reply);
         self.replies
             .owe(reply, channel, deadline, renews, takes, sending, now);
-    }
-
-    /// The message of a reply abandoned since last asked, whose DATA the
-    /// node did not take.
-    pub(super) fn untaken(&mut self) -> Option<MsgId> {
-        self.replies.untaken()
-    }
-
-    pub(super) fn reply_due(&mut self, now: Instant) -> Option<Owed> {
-        self.replies.due(now)
-    }
-
-    /// Give up the first owed reply: no budget for it.
-    pub(super) fn abandon_reply(&mut self) {
-        self.replies.abandon();
-    }
-
-    /// The reply being sent left the antenna ([`Replies::sent`]).
-    pub(super) fn reply_sent(&mut self) -> (bool, Option<Take>) {
-        self.replies.sent()
     }
 
     /// A listen-before-talk reading of a node that does not sweep, for

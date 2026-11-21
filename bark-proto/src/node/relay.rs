@@ -476,7 +476,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     fn radio_free(&self) -> bool {
         self.radio.idle()
             && self.handover_idle()
-            && !self.radio.replies().pending()
+            && !self.radio.replies.pending()
             && !self.radio.beacon.under_way()
     }
 
@@ -651,8 +651,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             self.reconsider_anchor(now, emit);
         }
         self.watch_anchor(now, emit);
-        if self.radio.move_due(now) {
-            self.radio.clear_move();
+        if self.radio.sweep.move_at().is_some_and(|t| now >= t) {
+            self.radio.sweep.clear_move();
             // Re-check after the random wait (spec "Channel moves").
             if self.excess() {
                 let old = self.home;
@@ -679,7 +679,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         [
             self.boot.next_wakeup(),
             self.listen.next_wakeup(),
-            self.radio.move_at(),
+            self.radio.sweep.move_at(),
             self.power_wakeup(),
             self.gps.next_wakeup(&self.gps_situation(), &self.config),
             self.delivery_wakeup(),
@@ -740,7 +740,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let free = self.radio.idle();
         match job {
             // Owed, a reply is ready at once: a time past is now.
-            Job::Reply => (free && self.radio.replies().pending()).then_some(Instant::ZERO),
+            Job::Reply => (free && self.radio.replies.pending()).then_some(Instant::ZERO),
             Job::Heartbeat => {
                 if !free || self.awaiting_ack() || !self.heartbeats() {
                     return None;
@@ -756,9 +756,8 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                     .filter(|_| self.handover_idle() && free);
                 earlier(flight, queued)
             }
-            Job::Sweep => {
-                (free && !self.awaiting_ack() && self.sweeping()).then_some(self.radio.sweep_at())
-            }
+            Job::Sweep => (free && !self.awaiting_ack() && self.sweeping())
+                .then_some(self.radio.sweep.next_at()),
             Job::Update => {
                 if !free || self.awaiting_ack() {
                     return None;
@@ -953,7 +952,7 @@ impl<const H: usize, const Q: usize> Core for Node<H, Q> {
                     }
                 }
                 Some(Job::Reply) => {
-                    let (listens_on, taken) = self.radio.reply_sent();
+                    let (listens_on, taken) = self.radio.replies.sent();
                     if listens_on {
                         self.took(now);
                     }

@@ -427,11 +427,12 @@ async fn fill(flash: &super::Flash, named: Named, ahead: bool) -> bool {
             .map(|r| r.table.image())
     });
     let gathered = STORE.lock(|s| s.borrow().image());
-    let (n, from_store) = match (running, gathered) {
-        (Some(i), _) if i.version == version => (i.pieces(block), false),
-        (_, Some(i)) if i.version == version => (i.pieces(block), true),
+    let (image, from_store) = match (running, gathered) {
+        (Some(i), _) if i.version == version => (i, false),
+        (_, Some(i)) if i.version == version => (i, true),
         _ => return false,
     };
+    let n = usize::from(image.pieces(block));
     let Ok(mut encoder) = Encoder::start(n, index) else {
         return false;
     };
@@ -617,7 +618,7 @@ async fn running(flash: &super::Flash) -> Option<Image> {
         RUNNING.lock(|r| *r.borrow_mut() = None);
         return None;
     }
-    Some(core_image(&image))
+    Some(image)
 }
 
 /// Bytes of the running image hashed by one of its two hashes between two
@@ -626,24 +627,6 @@ async fn running(flash: &super::Flash) -> Option<Image> {
 /// blocks, the longest poll at boot was 2.7 ms (2026-11-14, the bench
 /// build's `hash`).
 const HASHED_AT_ONCE: usize = 64;
-
-fn core_image(i: &pieces::Image) -> Image {
-    Image {
-        version: i.version,
-        blocks: i.blocks,
-        last: i.last,
-        key: i.key,
-    }
-}
-
-fn store_image(i: &Image) -> pieces::Image {
-    pieces::Image {
-        blocks: i.blocks,
-        last: i.last,
-        version: i.version,
-        key: i.key,
-    }
-}
 
 /// One step of the store: `None` without the chip.
 fn step() -> Option<Result<Poll, bark_image::ext_flash::Error>> {
@@ -760,11 +743,7 @@ async fn work(flash: &'static super::Flash, internal: &'static SharedFlash) -> !
         if let Some(i) = gather.filter(|_| !told) {
             if STORE.lock(|s| s.borrow().ready()) {
                 let from = STORE.lock(|s| s.borrow().lacks()).unwrap_or(i.blocks);
-                tell(Request::Gather {
-                    image: core_image(&i),
-                    from,
-                })
-                .await;
+                tell(Request::Gather { image: i, from }).await;
                 told = true;
                 set_phase(gathering(&i));
                 embassy_futures::yield_now().await;
@@ -923,7 +902,7 @@ fn holds_proof() -> bool {
 /// Whether blocks 0 and 1 the store holds prove `i`
 /// (`pieces::check_proof`): its header signed by a key this firmware
 /// holds, and naming the table gathered.
-async fn proof(i: &pieces::Image) -> Result<(), pieces::ProofError> {
+async fn proof(i: &Image) -> Result<(), pieces::ProofError> {
     let mut header = [0u8; HEADER_LEN];
     let at = STORE.lock(|s| s.borrow().header_at());
     let read = match at {
@@ -943,7 +922,7 @@ async fn proof(i: &pieces::Image) -> Result<(), pieces::ProofError> {
 
 /// While a new image's regions are cleared the store is busy, never
 /// idle; this only covers the moment between.
-async fn until_ready(gather: Option<pieces::Image>, told: bool) {
+async fn until_ready(gather: Option<Image>, told: bool) {
     match gather.is_some() && !told {
         true => Timer::after_millis(10).await,
         false => core::future::pending().await,
@@ -951,7 +930,7 @@ async fn until_ready(gather: Option<pieces::Image>, told: bool) {
 }
 
 /// The phase of gathering `i`: the blocks decoded so far.
-fn gathering(i: &pieces::Image) -> Phase {
+fn gathering(i: &Image) -> Phase {
     let held = STORE.lock(|s| s.borrow().decoded());
     Phase::Gathering {
         version: i.version,
@@ -962,7 +941,7 @@ fn gathering(i: &pieces::Image) -> Phase {
 
 /// A neighbour offers `image`: the image to gather, if the policy takes
 /// it and the store can. Each line in a poll of its own.
-async fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<pieces::Image> {
+async fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Option<Image> {
     crate::at("offer");
     let o = policy::Offer {
         version: image.version,
@@ -988,8 +967,7 @@ async fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Opt
     }
     embassy_futures::yield_now().await;
     crate::at("offer");
-    let i = store_image(image);
-    let begun = STORE.lock(|s| s.borrow_mut().begin(i));
+    let begun = STORE.lock(|s| s.borrow_mut().begin(*image));
     GENERATION.fetch_add(1, Ordering::Relaxed);
     match begun {
         Begin::Unfit => {
@@ -1003,14 +981,14 @@ async fn offer(flash: &super::Flash, image: &Image, refused: Option<u32>) -> Opt
                 image.blocks,
                 b
             );
-            Some(i)
+            Some(*image)
         }
     }
 }
 
 /// The gathered image is whole: check its header and its bytes, record
 /// it and ask for the swap, as the phone's update does (`super::commit`).
-async fn install(internal: &'static SharedFlash, i: &pieces::Image) -> Result<(), ()> {
+async fn install(internal: &'static SharedFlash, i: &Image) -> Result<(), ()> {
     set_phase(Phase::Installing(i.version));
     let mut header = [0u8; HEADER_LEN];
     let at = STORE.lock(|s| s.borrow().header_at());

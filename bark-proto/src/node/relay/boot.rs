@@ -61,7 +61,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         let ends = self.boot_end(now);
         self.stage = Stage::Booting;
         self.boot.ends_at(ends);
-        self.radio.restart_sweep(now);
+        self.radio.sweep.restart(now);
         // One with no place is carried at none: its first fix is its
         // place, fixed (`relay/motion.rs`).
         if self.motion.placed() && self.config.stored.is_some_and(|s| s.carried) {
@@ -178,7 +178,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn retune(&mut self, to: Channel, emit: &mut dyn FnMut(Action)) {
         if to != self.home {
             // What was heard on the old channel says nothing of the new.
-            self.radio.forget_home_reading();
+            self.radio.sweep.forget_home();
             emit(Action::Trace(Trace::HomeChannelMoved {
                 from: self.home,
                 to,
