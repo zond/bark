@@ -12,6 +12,7 @@ import 'package:sodium/sodium.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'alerts.dart';
+import 'app_update.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
 import 'decision.dart';
@@ -110,6 +111,13 @@ class AppModel extends _AppCore
   /// The latest release, against this app and the connected node.
   final Releases releases;
 
+  /// The download and install of a newer app.
+  late final AppUpdate appUpdate = AppUpdate(apks, notifier.installApk)
+    ..noted = session.note;
+
+  /// Where a newer app's APK is kept.
+  final Apks apks;
+
   AppModel({
     required this.sodium,
     required this.me,
@@ -118,6 +126,7 @@ class AppModel extends _AppCore
     required this.now,
     this.notifier = const NoNotifier(),
     Releases? releases,
+    this.apks = const NoApks(),
     Future<bool> Function()? bluetoothAllowed,
     Future<void> Function()? requestBluetooth,
   }) : releases = releases ?? Releases(MemoryStore('release'), now: now),
@@ -163,6 +172,7 @@ class AppModel extends _AppCore
         fetch: fetchLatest,
         app: appVersion,
       ),
+      apks: ApkDir(),
     );
   }
 
@@ -177,8 +187,15 @@ class AppModel extends _AppCore
   );
 
   /// Everything a screen redraws on.
-  Listenable get changes =>
-      Listenable.merge([this, session, contacts, me, updater, releases]);
+  Listenable get changes => Listenable.merge([
+    this,
+    session,
+    contacts,
+    me,
+    updater,
+    releases,
+    appUpdate,
+  ]);
 
   Future<void> load() async {
     await Future.wait([
@@ -353,6 +370,7 @@ class AppModel extends _AppCore
     session.removeListener(_search);
     updater.dispose();
     releases.dispose();
+    appUpdate.dispose();
     session.dispose();
     contacts.dispose();
     me.dispose();

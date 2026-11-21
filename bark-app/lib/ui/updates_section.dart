@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../app_update.dart';
 import '../releases.dart';
 import 'settings_parts.dart';
 import 'update_screen.dart';
@@ -57,6 +58,24 @@ class _UpdatesSectionState extends State<UpdatesSection> {
         n.image != 0 &&
         latest.firmware > n.image;
     final reached = _reached;
+    final get = newerApp ? app.appUpdate.state(latest.app) : AppGet.idle;
+    final percent = app.appUpdate.percent;
+    final appLine = r.app == 0
+        ? 'A development build'
+        : !newerApp
+        ? 'Version ${r.app}'
+        : switch (get) {
+            AppGet.idle =>
+              'Version ${r.app}; ${latest.app} is out. Tap to install',
+            AppGet.downloading =>
+              'Version ${r.app}; downloading ${latest.app}…'
+                  '${percent == null ? '' : ' $percent%'}',
+            AppGet.ready =>
+              'Version ${r.app}; ${latest.app} is downloaded. Tap to install',
+            AppGet.failed =>
+              'Version ${r.app}; ${latest.app} did not download. '
+                  'Tap to try again',
+          };
     return [
       SettingsHeading('Updates'),
       Row(
@@ -86,14 +105,12 @@ class _UpdatesSectionState extends State<UpdatesSection> {
         contentPadding: EdgeInsets.zero,
         title: const Text('App'),
         subtitle: Text(
-          (r.app == 0
-                  ? 'A development build'
-                  : newerApp
-                  ? 'Version ${r.app}; ${latest.app} is out. Tap to download'
-                  : 'Version ${r.app}') +
+          appLine +
               (s.nodeNewer ? '. Update it for the node\'s new features' : ''),
         ),
-        onTap: newerApp ? () => app.notifier.openLink(latest.apk!) : null,
+        onTap: newerApp && get != AppGet.downloading
+            ? () => app.appUpdate.get(latest)
+            : null,
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,

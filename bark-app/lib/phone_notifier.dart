@@ -24,8 +24,8 @@ class PhoneNotifier implements Notifier {
   /// (MainActivity.kt).
   static const _power = MethodChannel('org.bark.bark_app/power');
 
-  /// The browser, for a link to download (MainActivity.kt).
-  static const _browser = MethodChannel('org.bark.bark_app/browser');
+  /// Android's installer, for a newer app (MainActivity.kt).
+  static const _installer = MethodChannel('org.bark.bark_app/installer');
 
   /// The share sheet, which no plugin used here offers (MainActivity.kt).
   static const _share = MethodChannel('org.bark.bark_app/share');
@@ -156,7 +156,8 @@ class PhoneNotifier implements Notifier {
   Future<void> askBatteryExempt() => _power.invokeMethod<void>('askExempt');
 
   @override
-  Future<void> openLink(String url) => _browser.invokeMethod<void>('open', url);
+  Future<void> installApk(String path) =>
+      _installer.invokeMethod<void>('install', path);
 
   @override
   Future<void> openBluetoothSettings() =>

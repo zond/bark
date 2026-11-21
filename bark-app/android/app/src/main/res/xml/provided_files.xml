@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the folders the app hands files from: the share sheet's image,
+     and a newer app's APK, for the installer. -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+    <cache-path name="apk" path="apk/" />
+</paths>

@@ -73,7 +73,7 @@ class FakeNotifier implements Notifier {
   @override
   Future<void> askBatteryExempt() async => log.add('ask exempt');
   @override
-  Future<void> openLink(String url) async => log.add('open $url');
+  Future<void> installApk(String path) async => log.add('install $path');
   @override
   Future<void> openBluetoothSettings() async => log.add('Bluetooth settings');
   @override
