@@ -97,6 +97,17 @@ class Keys {
   final SecureKey mailbox;
   Keys._(this.seed, this.pair, this.mailbox);
 
+  /// Frees the secret keys, once the identity is replaced; any use of
+  /// them after is a use of freed memory.
+  void dispose() {
+    if (disposed) return;
+    disposed = true;
+    pair.secretKey.dispose();
+    mailbox.dispose();
+  }
+
+  bool disposed = false;
+
   /// The identity: the public key.
   Uint8List get identity => pair.publicKey;
 
