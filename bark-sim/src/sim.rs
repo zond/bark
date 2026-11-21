@@ -697,7 +697,7 @@ pub struct Sim {
     /// Where the local grid is on the Earth.
     pub(crate) origin: Origin,
     /// Whether the core being handed a GPS fix (`Ev::Fix`) is.
-    fixing: bool,
+    pub(crate) fixing: bool,
     /// Each node's ID, assigned here (spec "Addresses"): one per node but
     /// for the pairs the scenario forces to share one.
     ids: Vec<NodeId>,
@@ -726,7 +726,7 @@ pub struct Sim {
     arrival_hops: [u64; 256],
     /// Whether the relay a core event is being delivered to was booting
     /// before it, so that its boot choice is not counted as a move.
-    was_booting: bool,
+    pub(crate) was_booting: bool,
     positions: Vec<Position>,
     /// Nodes `0..n_relays` are not sleepy at boot; the rest, placed as
     /// leaves, are.
@@ -2595,30 +2595,7 @@ impl Sim {
             | Action::Unproven(_)
             | Action::StorePiece(_)
             | Action::Trace(Trace::SlotPiece(_)) => self.update_action(node, a),
-            // The piece's bytes are the driver's; here there are none.
-            Action::Transmit(mut f) | Action::Serve(mut f) => {
-                if let Some(u) = self.update.as_ref() {
-                    u.forge(node, &mut f, self.now);
-                }
-                self.update_transmit(node, &f);
-                let mark = std::mem::take(&mut self.next_tx[node as usize]);
-                let air = time_on_air(f.len, f.preamble_symbols).as_micros();
-                self.metrics.boot_airtime.add(
-                    self.now,
-                    mark == TxMark::Burst,
-                    mark == TxMark::Answer,
-                    air,
-                );
-                self.carried_transmit(node, &f);
-                self.handover_transmit(node, &f);
-                if self.changing.remove(&node) {
-                    self.power_changed(&f);
-                    self.carried_changed(node, &f);
-                } else {
-                    self.note_beat_fix(node, &f, scripted);
-                }
-                self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
-            }
+            Action::Transmit(f) | Action::Serve(f) => self.transmit(node, f, scripted),
             Action::App(e) => self.app_event(node, e),
             Action::Store(s) => {
                 self.stored[node as usize] = Some(s);
@@ -2630,152 +2607,55 @@ impl Sim {
                 self.power_trace(node, &Trace::Dropped { msg_id, reason });
                 self.message_dropped(node, msg_id, reason)
             }
-            Action::Trace(t) => {
-                self.power_trace(node, &t);
-                self.carried_trace(node, &t);
-                self.handover_trace(node, &t);
-                self.holders_trace(node, &t);
-                if let Trace::Role { sleepy } = t {
-                    self.battery_turn(sleepy);
-                }
-                // The core's instant is on its own clock.
-                let busy_wait = match t {
-                    Trace::ChannelBusy { until, .. } => self.clocks[node as usize]
-                        .true_time(until)
-                        .since(self.now)
-                        .as_micros(),
-                    _ => 0,
-                };
-                let c = &mut self.metrics.nodes[node as usize].core;
-                match t {
-                    Trace::HomeChannelMoved { from, to } if !self.was_booting => {
-                        c.home_moves += 1;
-                        if node < self.n_relays {
-                            let t = self.now.as_micros() as f64 / 1e6;
-                            let m = (t, node, from.index(), to.index());
-                            self.metrics.research.moves.push(m);
-                        }
-                    }
-                    Trace::HeartbeatSkipped { .. } => c.heartbeats_skipped += 1,
-                    Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
-                    Trace::Refused { reason, .. } => c.refused.add(reason),
-                    Trace::TurnedAway { .. } => c.turned_away += 1,
-                    Trace::HandOverDeferred { .. } => c.handovers_deferred += 1,
-                    Trace::ChannelBusy { .. } => {
-                        c.lbt_gave_up += 1;
-                        c.busy_wait_us += busy_wait;
-                    }
-                    Trace::Demoted { .. } => c.demoted += 1,
-                    Trace::AnchorCheck => {
-                        c.anchor_checks += 1;
-                        if self.fixing && self.now >= self.settle {
-                            self.metrics.sleep.fix_checks += 1;
-                        }
-                    }
-                    Trace::AnchorWatch {
-                        heard,
-                        offset_us,
-                        listened,
-                    } if self.now >= self.settle => {
-                        let s = &mut self.metrics.sleep;
-                        s.watches[usize::from(!heard)] += 1;
-                        s.watch_listen_us += listened.as_micros();
-                        if heard && offset_us < 0 {
-                            s.watch_early += 1;
-                        }
-                        if heard {
-                            s.watch_earliest_us = s.watch_earliest_us.min(offset_us as i64);
-                        }
-                    }
-                    Trace::Delivered { msg_id, .. } => {
-                        c.delivered += 1;
-                        self.first_try.remove(&(node, msg_id.0));
-                    }
-                    Trace::Changed => {
-                        self.changing.insert(node);
-                    }
-                    Trace::Burst => self.next_tx[node as usize] = TxMark::Burst,
-                    Trace::Answer => self.next_tx[node as usize] = TxMark::Answer,
-                    Trace::DeliveryWaits {
-                        msg_id,
-                        node: to,
-                        tried,
-                    } => {
-                        if tried {
-                            c.deliveries_failed += 1;
-                        } else {
-                            c.deliveries_late += 1;
-                        }
-                        self.delivery_waits(node, msg_id.0, key(to), tried)
-                    }
-                    Trace::Forwarded { hops, .. } => {
-                        c.handed_over += 1;
-                        c.originated_out += u64::from(hops == 1);
-                    }
-                    Trace::HandOverFailed {
-                        msg_id,
-                        to,
-                        moves_on,
-                    } => {
-                        c.failed += 1;
-                        let had = self
-                            .relay_index
-                            .get(&key(to))
-                            .is_some_and(|&r| self.relays[r as usize].knows(msg_id));
-                        c.failed_taken += u64::from(had);
-                        c.moved_on += u64::from(moves_on);
-                        c.moved_on_taken += u64::from(moves_on && had);
-                    }
-                    Trace::Copy {
-                        returned,
-                        merged,
-                        seen,
-                        ..
-                    } => {
-                        if returned {
-                            c.returns_in += 1;
-                        } else {
-                            c.copies += 1;
-                            c.merged += u64::from(merged);
-                            c.seen += u64::from(seen);
-                        }
-                    }
-                    Trace::Seen { .. } => c.seen_acted += 1,
-                    Trace::ReturnedToParent { .. } => {
-                        c.handed_over += 1;
-                        c.returned += 1;
-                    }
-                    _ => {}
-                }
-            }
+            Action::Trace(t) => self.trace(node, t),
         }
         if let (Some(a), Some(t)) = (traced, &mut self.tracer) {
             t.action(self.now, node, &a, &self.msg_tags);
         }
     }
 
-    /// A delivery by `holder` of `msg` to the node `to` waits for its next
-    /// beat: count it by its window and its first DATA.
-    fn delivery_waits(&mut self, holder: u32, msg: u32, to: u64, tried: bool) {
-        let first = self.first_try.remove(&(holder, msg));
-        let Some(&n) = self.sleepy_index.get(&to) else {
-            return;
-        };
-        if self.now < self.settle {
-            return;
+    /// `node` sends `f`: what is counted of it, then the frame goes out.
+    fn transmit(&mut self, node: u32, mut f: Frame, scripted: bool) {
+        // The piece's bytes are the driver's; here there are none.
+        if let Some(u) = self.update.as_ref() {
+            u.forge(node, &mut f, self.now);
         }
-        let (window, how) = match (first, tried) {
-            (Some(f), _) => f,
-            (None, t) => {
-                let how = if t {
-                    FirstTry::NotSent
-                } else {
-                    FirstTry::NotStarted
-                };
-                (self.window_of(n), how)
+        self.update_transmit(node, &f);
+        let mark = std::mem::take(&mut self.next_tx[node as usize]);
+        let air = time_on_air(f.len, f.preamble_symbols).as_micros();
+        self.metrics
+            .boot_airtime
+            .add(self.now, mark == TxMark::Burst, mark == TxMark::Answer, air);
+        self.carried_transmit(node, &f);
+        self.handover_transmit(node, &f);
+        if self.changing.remove(&node) {
+            self.power_changed(&f);
+            self.carried_changed(node, &f);
+        } else {
+            self.note_beat_fix(node, &f, scripted);
+        }
+        self.begin_excursion(node, ExKind::Transmit, f.channel, Some(f), scripted)
+    }
+
+    /// A trace of `node`'s core: what it changes here, then what is
+    /// counted of it.
+    fn trace(&mut self, node: u32, t: Trace) {
+        match t {
+            Trace::Changed => {
+                self.changing.insert(node);
             }
-        };
-        self.metrics.sleep.waited[window][how as usize] += 1;
+            Trace::Burst => self.next_tx[node as usize] = TxMark::Burst,
+            Trace::Answer => self.next_tx[node as usize] = TxMark::Answer,
+            _ => {}
+        }
+        self.power_trace(node, &t);
+        self.carried_trace(node, &t);
+        self.handover_trace(node, &t);
+        self.holders_trace(node, &t);
+        if let Trace::Role { sleepy } = t {
+            self.battery_turn(sleepy);
+        }
+        self.count_trace(node, &t);
     }
 
     /// The window the sleepy node `n` listens in now: after its beat, or

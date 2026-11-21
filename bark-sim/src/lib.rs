@@ -12,6 +12,7 @@
 mod battery;
 pub mod boots;
 mod carried;
+mod counts;
 pub mod geo;
 mod gps;
 mod handovers;
