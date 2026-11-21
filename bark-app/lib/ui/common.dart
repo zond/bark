@@ -436,21 +436,67 @@ Future<void> askToForget(BuildContext context, AppModel app, String text) =>
 /// its answer the button is off and says so; "No new mail", or how many
 /// more the home holds, is told once, and the count stays on the button
 /// until a fetch brings them.
-class FetchButton extends StatelessWidget {
+class FetchButton extends StatefulWidget {
   final AppModel app;
   const FetchButton(this.app, {super.key});
+
+  @override
+  State<FetchButton> createState() => _FetchButtonState();
+}
+
+class _FetchButtonState extends State<FetchButton> {
+  AppModel get app => widget.app;
+  Listenable? _changes;
+  bool _current = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _changes = app.changes..addListener(_tell);
+  }
+
+  @override
+  void didUpdateWidget(FetchButton old) {
+    super.didUpdateWidget(old);
+    if (old.app == app) return;
+    _changes?.removeListener(_tell);
+    _changes = app.changes..addListener(_tell);
+  }
+
+  // Told again as the screen above this one closes.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _current = ModalRoute.of(context)?.isCurrent != false;
+    _tell();
+  }
+
+  @override
+  void dispose() {
+    _changes?.removeListener(_tell);
+    super.dispose();
+  }
+
+  /// Says the home's news once, on the screen in front, after the frame:
+  /// another screen's button would take it unseen.
+  void _tell() {
+    if (!_current || app.me.home == null || app.session.fetchNews == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final news = app.session.fetchNews;
+      if (!mounted || !_current || app.me.home == null || news == null) {
+        return;
+      }
+      app.session.fetchNews = null;
+      say(context, news);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     if (app.me.home == null) return const SizedBox.shrink();
     final s = app.session;
-    final news = s.fetchNews;
-    if (news != null && ModalRoute.of(context)?.isCurrent != false) {
-      s.fetchNews = null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) say(context, news);
-      });
-    }
     if (app.me.fetchQueued) {
       return const IconButton(
         tooltip: 'Fetch waits for a node',

@@ -978,6 +978,23 @@ void main() {
     await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsNothing);
+
+    // News that comes while a screen without the button is in front is
+    // said once that screen closes.
+    await t.tap(find.byType(PopupMenuButton<Widget Function()>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Settings'));
+    await t.pumpAndSettle();
+    await app.session.fetchAnswered(f.last.sent, nothingNew: true);
+    await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsNothing);
+    await t.pageBack();
+    await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsOneWidget);
+    expect(app.session.fetchNews, isNull);
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
 
     // The home itself: its mail is in its inbox, nothing is sent. (Leaving
     // the home before is the home tests', as it waits on the clock.)
