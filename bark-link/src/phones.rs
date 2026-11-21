@@ -329,7 +329,7 @@ impl Progress {
 /// The settings entry: the node's own, one for all its phones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// The node's owners have made it private (spec "Public nodes").
+    /// The node's paired phones have made it private (spec "Public nodes").
     pub private: bool,
     /// The number the next record takes.
     pub next: u16,

@@ -29,8 +29,8 @@ pub enum Access<'a> {
 /// private one, any link may but for the `open` handles, those the host
 /// leaves open for a guest (spec "Phone link", Public). A read by type
 /// reads an open value only by the type of one (Vol 3 Part F §3.4.4.1).
-pub fn allowed(owner: bool, public: bool, open: &[u16], access: Access<'_>) -> bool {
-    if owner || public {
+pub fn allowed(paired: bool, public: bool, open: &[u16], access: Access<'_>) -> bool {
+    if paired || public {
         return true;
     }
     let touches = |h: u16| open.contains(&h);
@@ -58,8 +58,8 @@ pub fn takes_link(links: usize, paired: usize, most: usize) -> bool {
 
 /// Whether a link is a guest's: on a public node, neither a paired
 /// phone's nor one that pairs.
-pub fn guest(public: bool, pairing: bool, owner: bool) -> bool {
-    public && !pairing && !owner
+pub fn guest(public: bool, pairing: bool, paired: bool) -> bool {
+    public && !pairing && !paired
 }
 
 /// When a link's task is to look again: when the turn ends, or a guest's
@@ -75,7 +75,7 @@ pub fn wake_at<T: Ord>(turn_ends: Option<T>, guest_ends: Option<T>) -> Option<T>
 #[derive(Clone, Copy, Debug)]
 pub struct Other {
     pub live: bool,
-    pub owner: bool,
+    pub paired: bool,
     /// It wrote a recipient tag.
     pub tagged: bool,
 }
@@ -83,8 +83,8 @@ pub struct Other {
 /// Whether a link that writes its recipient tag is a second guest, to be
 /// closed: not a paired phone's, while another link is a guest's that
 /// wrote its tag. The other links are the paired phones' to take.
-pub fn second_guest(owner: bool, others: impl IntoIterator<Item = Other>) -> bool {
-    !owner && others.into_iter().any(|o| o.live && !o.owner && o.tagged)
+pub fn second_guest(paired: bool, others: impl IntoIterator<Item = Other>) -> bool {
+    !paired && others.into_iter().any(|o| o.live && !o.paired && o.tagged)
 }
 
 /// A link, as [`doing`] sees it.
@@ -126,7 +126,7 @@ mod tests {
             end,
             open_type,
         };
-        // (owner, public, access) -> allowed
+        // (paired, public, access) -> allowed
         let table: [(bool, bool, Access<'_>, bool); 14] = [
             (false, false, Access::One(3), false),
             (false, false, Access::One(4), true),
@@ -143,11 +143,11 @@ mod tests {
             (false, true, Access::Several(&open_two), true),
             (false, true, by_type(1, 0xffff, true), true),
         ];
-        for (owner, public, access, want) in table {
+        for (paired, public, access, want) in table {
             assert_eq!(
-                allowed(owner, public, &OPEN, access),
+                allowed(paired, public, &OPEN, access),
                 want,
-                "owner {owner} public {public} {access:?}"
+                "paired {paired} public {public} {access:?}"
             );
         }
     }
@@ -171,14 +171,14 @@ mod tests {
 
     #[test]
     fn a_guest_is_a_public_nodes_link_that_neither_pairs_nor_is_paired() {
-        // (public, pairing, owner) -> guest
-        for (public, pairing, owner, g) in [
+        // (public, pairing, paired) -> guest
+        for (public, pairing, paired, g) in [
             (true, false, false, true),
             (true, true, false, false),
             (true, false, true, false),
             (false, false, false, false),
         ] {
-            assert_eq!(guest(public, pairing, owner), g);
+            assert_eq!(guest(public, pairing, paired), g);
         }
     }
 
@@ -197,12 +197,12 @@ mod tests {
 
     #[test]
     fn one_guest_with_a_tag_at_a_time() {
-        let other = |live, owner, tagged| Other {
+        let other = |live, paired, tagged| Other {
             live,
-            owner,
+            paired,
             tagged,
         };
-        // (owner, others) -> a second guest
+        // (paired, others) -> a second guest
         let table: [(bool, &[Other], bool); 6] = [
             (false, &[], false),
             (false, &[other(true, false, true)], true),
@@ -211,8 +211,8 @@ mod tests {
             (false, &[other(true, true, true)], false),
             (true, &[other(true, false, true)], false),
         ];
-        for (owner, others, second) in table {
-            assert_eq!(second_guest(owner, others.iter().copied()), second);
+        for (paired, others, second) in table {
+            assert_eq!(second_guest(paired, others.iter().copied()), second);
         }
     }
 

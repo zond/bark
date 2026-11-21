@@ -747,7 +747,7 @@ impl Public {
     }
 }
 
-/// Public, as the owner writes it: set public or private, or unpair
+/// Public, as a paired phone writes it: set public or private, or unpair
 /// (spec "Public nodes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublicWrite {

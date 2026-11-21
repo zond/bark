@@ -344,7 +344,7 @@ pub enum Phone {
     /// No phone has paired; the node is public all the same.
     #[default]
     Unpaired,
-    /// One phone is paired, and the node is its owners' alone.
+    /// One phone is paired, and the node is its paired phones' alone.
     Private,
     /// One phone is paired, and the node serves guests too.
     Public,

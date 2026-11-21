@@ -1078,7 +1078,7 @@ its value flush right. Top to bottom:
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
 | `GET V14 14/31` | while it gathers an image over the mesh: its version, the blocks held from the first of all its blocks; no line otherwise | the core's `Status::gathering` (spec "Neighbour status") |
-| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then with one phone paired `PHONE PUBLIC` or, once its owners have made it theirs alone, `PHONE PRIVATE`, with more `3 PHONES  PUBLIC` or `3 PHONES PRIVATE`; while a phone pairs, `PAIR CODE 012345`; while a removal waits, `REMOVE    012345`; for 30 s after a pairing refused for want of room, `PHONES      FULL`, which the code's line shows too | the phone link (Phone link, below) |
+| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then with one phone paired `PHONE PUBLIC` or, once its paired phones have made it theirs alone, `PHONE PRIVATE`, with more `3 PHONES  PUBLIC` or `3 PHONES PRIVATE`; while a phone pairs, `PAIR CODE 012345`; while a removal waits, `REMOVE    012345`; for 30 s after a pairing refused for want of room, `PHONES      FULL`, which the code's line shows too | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the node can go on as it runs now, a relay until it turns sleepy at its low level, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -1191,8 +1191,8 @@ sleep mode 1. The front light (P1.11) stays off.
 ## Phone link
 
 The link (`src/ble.rs`, spec "Phone link") is the paired phones', up
-to eight, each an owner (roadmap D135, D168), and on a public node, as
-every node is unless its owners make it private, also its guests'
+to eight, all alike (roadmap D135, D168), and on a public node, as
+every node is unless its paired phones make it private, also its guests'
 (below). Every characteristic of the service needs a link encrypted
 with an authenticated key; any other connection's read, write or
 subscription gets ATT's insufficient authentication, and an Android

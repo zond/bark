@@ -93,7 +93,7 @@ relay on battery still turns sleepy at its low battery level, which
 returns it to those rules, and on battery at that level a flip to relay
 is not taken. A reboot forgets the force, and a node built only to be
 sleepy takes none. The heartbeat's flags say the role as it is. The
-power says what the node is on, not what its owner knows, as with a
+power says what the node is on, not what the person with it knows, as with a
 power bank (roadmap D160).
 
 Terms used in the rest of this document. Each names a state a node is
@@ -1778,8 +1778,8 @@ reads every sample within 1.1 % rms and 3.1 % at most
 board's, uncalibrated, so a full cell's calibrated reading is the
 curve's own 100 %. A relay's lighter load reads some 10 to 20 mV higher
 at the same charge, which the calibration at full partly scales away.
-A relay keeps a fifth of its cell for its owner when it turns sleepy,
-and relays again only at 30 %, far above a reading's noise and the few
+A relay keeps a fifth of its cell for the person who carries it when it
+turns sleepy, and relays again only at 30 %, far above a reading's noise and the few
 millivolts a change of load moves it; ±3 % is the SAADC's gain error at
 gain 1/6 (nRF52840 Product Specification, SAADC). On battery a fixed relay draws about 6.4 mA
 (5.8 mA listening, 32 mA for its airtime), so 80 % of the cell lasts it
@@ -2255,8 +2255,8 @@ with it.
 A person's app talks to their node over Bluetooth LE, through one GATT
 service on the nRF52840 (TrouBLE, roadmap D5). The app owns identity and
 end-to-end encryption; the node sees opaque payloads. A node serves the
-phones paired with it, its **owners**, and on a public node any other
-phone too, as a **guest**. Section numbers below are of the Bluetooth
+phones paired with it, its **paired phones**, and on a public node any
+other phone too, as a **guest**. Section numbers below are of the Bluetooth
 Core Specification 5.0 ([sources](#sources)). How the app chooses a node
 and where it sends a text are the app's own (`bark-app/README.md`).
 
@@ -2276,8 +2276,7 @@ an accessory quickly ([sources](#sources)); it costs a sleepy node about
 
 ### Pairing
 
-A node has up to eight paired phones, each an owner (roadmap D135,
-D168). Every characteristic of the service needs a link encrypted with
+A node has up to eight paired phones (roadmap D135, D168). Every characteristic of the service needs a link encrypted with
 an authenticated key, but on a public node those a guest needs
 ([public nodes](#public-nodes)); a read, write or subscription on any
 other link is answered with the ATT error 0x05, insufficient
@@ -2290,8 +2289,8 @@ into the phone (Vol 3 Part H §2.3.5.1). The node draws the passkey on its
 screen as soon as the pairing asks for it
 ([screen and buttons](#screen-and-buttons)); only a build for the bench
 alone also writes it to its USB log (roadmap D226). Being at the node is
-the only guard, for every person who pairs: each paired phone is an
-owner with every owner's setting. The app pairs only once the phone holds
+the only guard, for every person who pairs: every paired phone may do
+all that any paired phone does. The app pairs only once the phone holds
 no bond for the node: it has the phone remove any first, and where the
 phone keeps the bond it tells the person and does not pair (roadmap
 D194).
@@ -2416,8 +2415,8 @@ paired with that has none free ([pairing](#pairing)).
 **Recipient.** The app writes it as it connects, after reading Node: the
 person's recipient tag at this node ([the payload](#the-payload)), by
 which the node hands the phone its own messages; the app's link version
-and the oldest node version it serves ([versions](#versions)); and on an
-owner's link the person's name as their card has it, which the phone's
+and the oldest node version it serves ([versions](#versions)); and on a
+paired phone's link the person's name as their card has it, which the phone's
 record keeps with the tag ([pairing](#pairing)). A guest writes no name,
 and the node keeps a guest's tag only for its link
 ([public nodes](#public-nodes)).
@@ -2441,7 +2440,7 @@ a connection:
 | boot_left | seconds left of its first rotation, rounded up; 0 once it is over |
 | installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none. The node ends its phones' links for the minute a swap takes, and the app waits for it (roadmap D182) |
 | inbox | the phone's messages not yet confirmed ([receiving](#receiving)) |
-| phones | a count, wrapping, that moves at each change to what Phones lists for this phone ([phones](#phones)): a phone paired, removed or unpaired, a home set or cleared, a name or tag written, a phone's link up or down, its day; 0 on a guest's link. The node tells its linked owners once the records are written; at a change, the app reads Phones again |
+| phones | a count, wrapping, that moves at each change to what Phones lists for this phone ([phones](#phones)): a phone paired, removed or unpaired, a home set or cleared, a name or tag written, a phone's link up or down, its day; 0 on a guest's link. The node tells its linked paired phones once the records are written; at a change, the app reads Phones again |
 
 ### Sending
 
@@ -2452,7 +2451,7 @@ the app hears of it again only if the node gives it back
 ([addresses](#addresses)). The node holds one message of its app's at a
 time ([receiving DATA](#receiving-data)), so the phone is the queue.
 
-The node's phones, owners and guests, take turns at that one message, and
+The node's phones, paired and guests, take turns at that one message, and
 the turn is ready: the node sets it, while it takes a message, for one
 phone at a time, and gives it only to a phone that wants it. A phone asks
 for it by writing Send while ready is not set for it, and so wants it
@@ -2662,8 +2661,8 @@ again only when told it changed (Vol 3 Part G §2.5.2).
 
 ### Public nodes
 
-A node is public, serving guests as well as its owners, unless its owners
-make it private. Any paired phone writes 0 to Public to make the node
+A node is public, serving guests as well as its paired phones, unless
+they make it private. Any paired phone writes 0 to Public to make the node
 private and 1 to make it public again; a read gives 1 for public. The
 setting is the node's, one for all its phones. A node nobody has paired
 with is public. The node keeps the setting across reboots, and a pairing
@@ -2673,7 +2672,7 @@ only a paired phone sets it.
 A paired phone writes 2 to **unpair**: the node forgets that phone's
 bond, in flash too, and keeps its record's home, if it has one
 ([pairing](#pairing)). The node answers the write, then ends the link,
-which is no longer an owner's. With the last bond gone the node is one
+which is no longer a paired phone's. With the last bond gone the node is one
 nobody has paired with, public; anyone at the node may pair with it by
 the code its screen shows. No code is asked, as a phone that unpairs
 takes nothing from anyone but itself. The phone keeps its own copy of the
