@@ -4,6 +4,7 @@
 //! fails can be read from the log.
 
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -20,18 +21,35 @@ const ADAPTER: &str = "org.bluez.Adapter1";
 const DEVICE: &str = "org.bluez.Device1";
 const SERVICE: &str = "org.bluez.GattService1";
 const CHARACTERISTIC: &str = "org.bluez.GattCharacteristic1";
+const AGENT_MANAGER: &str = "org.bluez.AgentManager1";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const OBJECTS: &str = "org.freedesktop.DBus.ObjectManager";
 
-/// Longer than any one step BlueZ takes: an LE connection it gives up
-/// after 20 s by the kernel's default, and a read or write it gives up
-/// after the ATT transaction's 30 s (Vol 3 Part F §3.3.3).
-const CALL_TIMEOUT: Duration = Duration::from_secs(40);
+/// Where the tool's pairing agent lives on the bus.
+const AGENT_PATH: &str = "/org/bark/agent";
+
+/// The longest any call to BlueZ is waited for: a pairing, while the
+/// person types the code. The Security Manager gives up 30 s after any
+/// step (Vol 3 Part H §3.4), and a pairing has a few; four times that only
+/// keeps the tool from waiting for ever. A read or a write BlueZ gives up
+/// itself after the ATT transaction's 30 s (Vol 3 Part F §3.3.3).
+const CALL_TIMEOUT: Duration = Duration::from_secs(4 * 30);
+
+/// How long one attempt to connect is waited for: ten of the node's
+/// advertising intervals of 1022.5 ms (spec "Phone link", Finding the
+/// node). The connection request answers an advertisement, so a node in
+/// reach is caught within a few intervals; past ten, BlueZ is told to stop
+/// and the tool tries again.
+const CONNECT_WAIT: Duration = Duration::from_micros(10 * 1_022_500);
 
 /// How long the GATT discovery may take after the link is up. BlueZ
 /// discovers the whole table before it says the services are resolved;
 /// the node's table is three services, a few round trips.
 const RESOLVE_WAIT: Duration = Duration::from_secs(30);
+
+/// How often a scan asks whether it has heard enough while nothing new
+/// comes: a tenth of an advertising interval.
+const SCAN_TICK: Duration = Duration::from_millis(100);
 
 type Props = HashMap<String, OwnedValue>;
 type Interfaces = HashMap<String, Props>;
@@ -45,13 +63,16 @@ enum Signal {
 
 struct Bus {
     conn: Connection,
-    verbose: bool,
+    /// For Connect alone, whose wait is its own ([`CONNECT_WAIT`]).
+    connecting: Connection,
+    /// 1 logs the steps and the nodes; 2 every device heard too.
+    verbose: u8,
     signals: Receiver<Signal>,
 }
 
 impl Bus {
-    fn say(&self, s: impl FnOnce() -> String) {
-        if self.verbose {
+    fn say(&self, level: u8, s: impl FnOnce() -> String) {
+        if self.verbose >= level {
             eprintln!("bluez: {}", s());
         }
     }
@@ -67,14 +88,28 @@ impl Bus {
     where
         B: serde::ser::Serialize + zbus::zvariant::DynamicType,
     {
-        self.say(|| format!("call {iface}.{method}({shown}) on {path}"));
-        match self
-            .conn
-            .call_method(Some(BLUEZ), path, Some(iface), method, body)
-        {
+        self.call_on(&self.conn, path, iface, method, body, shown)
+    }
+
+    fn call_on<B>(
+        &self,
+        conn: &Connection,
+        path: &str,
+        iface: &str,
+        method: &str,
+        body: &B,
+        shown: &str,
+    ) -> Result<zbus::Message>
+    where
+        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+    {
+        self.say(1, || format!("call {iface}.{method}({shown}) on {path}"));
+        match conn.call_method(Some(BLUEZ), path, Some(iface), method, body) {
             Ok(m) => Ok(m),
             Err(e) => {
-                self.say(|| format!("error from {iface}.{method}: {}", verbatim(&e)));
+                self.say(1, || {
+                    format!("error from {iface}.{method}: {}", verbatim(&e))
+                });
                 Err(error_of(&e))
             }
         }
@@ -99,6 +134,13 @@ impl Bus {
         let left = deadline.saturating_duration_since(Instant::now());
         self.signals.recv_timeout(left).ok()
     }
+
+    fn remove(&self, adapter: &str, device: &str) -> Result<()> {
+        let path = OwnedObjectPath::try_from(device.to_string())
+            .map_err(|e| Error::Transport(e.to_string()))?;
+        self.call(adapter, ADAPTER, "RemoveDevice", &(path,), device)
+            .map(|_| ())
+    }
 }
 
 /// D-Bus's error, as BlueZ wrote it.
@@ -115,27 +157,33 @@ fn verbatim(e: &zbus::Error) -> String {
 /// one (its `src/gatt-client.c`, `create_gatt_dbus_error`): most codes in
 /// its text, and some by words of their own.
 fn error_of(e: &zbus::Error) -> Error {
-    if let zbus::Error::MethodError(name, text, _) = e {
-        let text = text.as_deref().unwrap_or("");
-        if let Some(code) = text
-            .split_once("ATT error: 0x")
-            .and_then(|(_, h)| u8::from_str_radix(h.get(..2)?, 16).ok())
-        {
-            return Error::Att(code);
+    match e {
+        zbus::Error::MethodError(name, text, _) => {
+            let text = text.as_deref().unwrap_or("");
+            if let Some(code) = text
+                .split_once("ATT error: 0x")
+                .and_then(|(_, h)| u8::from_str_radix(h.get(..2)?, 16).ok())
+            {
+                return Error::Att(code);
+            }
+            // BlueZ says "Not paired" for insufficient authentication and
+            // for the encryption errors alike.
+            if text == "Not paired" {
+                return Error::Att(0x05);
+            }
+            if text == "Invalid Length" {
+                return Error::Att(bark_link::att::INVALID_LENGTH);
+            }
+            if name.as_str() == "org.bluez.Error.NotConnected" || text == "Not connected" {
+                return Error::Ended;
+            }
+            Error::Transport(verbatim(e))
         }
-        // BlueZ says "Not paired" for insufficient authentication and
-        // for the encryption errors alike.
-        if text == "Not paired" {
-            return Error::Att(0x05);
+        zbus::Error::InputOutput(io) if io.kind() == std::io::ErrorKind::TimedOut => {
+            Error::TimedOut(verbatim(e))
         }
-        if text == "Invalid Length" {
-            return Error::Att(bark_link::att::INVALID_LENGTH);
-        }
-        if name.as_str() == "org.bluez.Error.NotConnected" || text == "Not connected" {
-            return Error::Ended;
-        }
+        e => Error::Transport(verbatim(e)),
     }
-    Error::Transport(verbatim(e))
 }
 
 fn string(p: &Props, key: &str) -> Option<String> {
@@ -165,6 +213,10 @@ fn path_of(p: &Props, key: &str) -> Option<OwnedObjectPath> {
     p.get(key)?.try_clone().ok()?.try_into().ok()
 }
 
+fn bytes(p: &Props, key: &str) -> Option<Vec<u8>> {
+    p.get(key)?.try_clone().ok()?.try_into().ok()
+}
+
 /// A device as the scan has it so far.
 #[derive(Default)]
 struct Device {
@@ -172,6 +224,7 @@ struct Device {
     name: Option<String>,
     rssi: Option<i16>,
     uuids: Vec<String>,
+    paired: bool,
     /// Heard since the scan began, not only known from before.
     heard: bool,
 }
@@ -187,6 +240,9 @@ impl Device {
         if let Some(r) = int16(p, "RSSI") {
             self.rssi = Some(self.rssi.map_or(r, |was| was.max(r)));
         }
+        if let Some(b) = boolean(p, "Paired") {
+            self.paired = b;
+        }
         for u in strings(p, "UUIDs") {
             if !self.uuids.contains(&u) {
                 self.uuids.push(u);
@@ -194,15 +250,20 @@ impl Device {
         }
     }
 
-    /// The node it is, if it is one: named as a node, and public unless
-    /// it advertised the service's UUID, as a private node does
-    /// (spec "Phone link", Public).
+    /// The node it is, if it is one: named as a node. Public when it
+    /// advertised the public node's UUID, which no attribute has (spec
+    /// "Phone link", Public): BlueZ adds to a device's UUIDs the services
+    /// it finds on a link, so the service's own UUID there does not tell a
+    /// private node.
     fn found(&self) -> Option<Found> {
         Some(Found {
             id: id_of_name(self.name.as_deref()?)?,
             address: self.address.clone(),
             rssi: self.rssi,
-            public: !self.uuids.contains(&uuid_text(bark_link::uuid::SERVICE)),
+            public: self
+                .uuids
+                .contains(&uuid_text(bark_link::uuid::PUBLIC_NODE)),
+            bonded: self.paired,
         })
     }
 }
@@ -210,21 +271,24 @@ impl Device {
 pub struct Bluez {
     bus: Rc<Bus>,
     adapter: String,
-    /// The D-Bus object of each device a scan found, by address.
-    devices: HashMap<String, OwnedObjectPath>,
 }
 
 impl Bluez {
     /// On the system bus, with the adapter named `adapter`, such as
-    /// `hci0`, or else the first BlueZ lists.
-    pub fn new(adapter: Option<&str>, verbose: bool) -> Result<Bluez> {
-        let conn = zbus::blocking::connection::Builder::system()
-            .and_then(|b| b.method_timeout(CALL_TIMEOUT).build())
-            .map_err(|e| Error::Transport(format!("the system D-Bus: {e}")))?;
+    /// `hci0`, or else the first BlueZ lists; `verbose` as [`Bus`] says.
+    pub fn new(adapter: Option<&str>, verbose: u8) -> Result<Bluez> {
+        let bus_with = |timeout| {
+            zbus::blocking::connection::Builder::system()
+                .and_then(|b| b.method_timeout(timeout).build())
+                .map_err(|e| Error::Transport(format!("the system D-Bus: {e}")))
+        };
+        let conn = bus_with(CALL_TIMEOUT)?;
+        let connecting = bus_with(CONNECT_WAIT)?;
         let (tx, rx) = mpsc::channel();
         listen(&conn, tx)?;
         let bus = Rc::new(Bus {
             conn,
+            connecting,
             verbose,
             signals: rx,
         });
@@ -234,7 +298,7 @@ impl Bluez {
             .filter_map(|(path, mut i)| Some((path.to_string(), i.remove(ADAPTER)?)))
             .collect();
         adapters.sort_by(|a, b| a.0.cmp(&b.0));
-        bus.say(|| {
+        bus.say(1, || {
             let names: Vec<&str> = adapters.iter().map(|a| a.0.as_str()).collect();
             format!("adapters {names:?}")
         });
@@ -247,7 +311,7 @@ impl Bluez {
                     None => "no Bluetooth adapter".into(),
                 })
             })?;
-        bus.say(|| {
+        bus.say(1, || {
             format!(
                 "adapter {path}: address {:?}, powered {:?}, discovering {:?}",
                 string(&props, "Address"),
@@ -260,11 +324,20 @@ impl Bluez {
                 "Bluetooth is off on {path}: turn it on (bluetoothctl power on)"
             )));
         }
-        Ok(Bluez {
-            bus,
-            adapter: path,
-            devices: HashMap::new(),
-        })
+        Ok(Bluez { bus, adapter: path })
+    }
+
+    fn mine(&self, path: &str) -> bool {
+        path.starts_with(&format!("{}/", self.adapter))
+    }
+
+    /// The device object BlueZ holds for `address`, with its properties.
+    fn device(&self, address: &str) -> Result<Option<(String, Props)>> {
+        Ok(self.bus.objects()?.into_iter().find_map(|(path, mut i)| {
+            let p = i.remove(DEVICE)?;
+            (self.mine(path.as_str()) && string(&p, "Address").as_deref() == Some(address))
+                .then(|| (path.to_string(), p))
+        }))
     }
 
     fn stop_discovery(&self) {
@@ -272,6 +345,17 @@ impl Bluez {
         let _ = self
             .bus
             .call(&self.adapter, ADAPTER, "StopDiscovery", &(), "");
+    }
+
+    /// Ends what an attempt to connect left: BlueZ drops a connection it
+    /// is still making when told to disconnect, and forgets a device
+    /// without a bond when it is removed, so that the next scan hears it
+    /// afresh.
+    fn cancel(&self, device: &str, paired: bool) {
+        let _ = self.bus.call(device, DEVICE, "Disconnect", &(), "");
+        if !paired {
+            let _ = self.bus.remove(&self.adapter, device);
+        }
     }
 
     /// Waits until the device's services are resolved, which BlueZ says
@@ -289,7 +373,7 @@ impl Bluez {
             if path.as_str() != device || iface != DEVICE {
                 continue;
             }
-            self.bus.say(|| format!("device changed {}", shown(&p)));
+            self.bus.say(1, || format!("device changed {}", shown(&p)));
             if boolean(&p, "Connected") == Some(false) {
                 return Err(Error::Ended);
             }
@@ -297,8 +381,8 @@ impl Bluez {
                 return Ok(());
             }
         }
-        Err(Error::Other(format!(
-            "the node's services were not resolved within {} s",
+        Err(Error::TimedOut(format!(
+            "the node's services were not found within {} s",
             RESOLVE_WAIT.as_secs()
         )))
     }
@@ -309,25 +393,29 @@ impl Bluez {
     /// That one refuses an address BlueZ has an object for, so the object
     /// goes first, unless it holds a bond.
     fn link_up(&self, device: &str, address: &str, paired: bool) -> Result<String> {
-        match self.bus.call(device, DEVICE, "Connect", &(), "") {
+        let c = &self.bus.connecting;
+        match self.bus.call_on(c, device, DEVICE, "Connect", &(), "") {
             Ok(_) => return Ok(device.to_string()),
             Err(Error::Transport(e)) if e.contains("br-connection") && !paired => {
                 self.bus
-                    .say(|| "BlueZ tried BR/EDR; asking the adapter for LE".into());
+                    .say(1, || "BlueZ tried BR/EDR; asking the adapter for LE".into());
+            }
+            Err(Error::TimedOut(_)) => {
+                return Err(Error::TimedOut(format!(
+                    "no connection within {:.1} s",
+                    CONNECT_WAIT.as_secs_f64()
+                )))
             }
             Err(e) => return Err(e),
         }
-        let path = OwnedObjectPath::try_from(device.to_string())
-            .map_err(|e| Error::Transport(e.to_string()))?;
-        self.bus
-            .call(&self.adapter, ADAPTER, "RemoveDevice", &(path,), device)?;
+        self.bus.remove(&self.adapter, device)?;
         let mut to: HashMap<&str, Value> = HashMap::new();
         to.insert("Address", Value::from(address));
         to.insert("AddressType", Value::from("random"));
         let shown = format!("Address={address}, AddressType=random");
         match self
             .bus
-            .call(&self.adapter, ADAPTER, "ConnectDevice", &(to,), &shown)
+            .call_on(c, &self.adapter, ADAPTER, "ConnectDevice", &(to,), &shown)
         {
             Ok(m) => {
                 let path: OwnedObjectPath = m
@@ -343,6 +431,61 @@ impl Bluez {
             )),
             Err(e) => Err(e),
         }
+    }
+
+    /// The link to `device`, up and its table read.
+    fn open(&self, device: &str, address: &str, paired: bool) -> Result<BluezLink> {
+        let device = self.link_up(device, address, paired)?;
+        self.resolved(&device)?;
+        let mut chars = HashMap::new();
+        let mut service = None;
+        let objects = self.bus.objects()?;
+        for (path, i) in &objects {
+            if let Some(p) = i.get(SERVICE) {
+                if path.as_str().starts_with(&format!("{device}/")) {
+                    self.bus
+                        .say(1, || format!("service {path}: {:?}", string(p, "UUID")));
+                    if string(p, "UUID") == Some(uuid_text(bark_link::uuid::SERVICE)) {
+                        service = Some(path.clone());
+                    }
+                }
+            }
+        }
+        let service =
+            service.ok_or_else(|| Error::Other(format!("{address} offers no bark service")))?;
+        let mut mtu = None;
+        for (path, i) in &objects {
+            let Some(p) = i.get(CHARACTERISTIC) else {
+                continue;
+            };
+            if path_of(p, "Service").as_ref() != Some(&service) {
+                continue;
+            }
+            let uuid = string(p, "UUID").unwrap_or_default();
+            if let Some(c) = Char::ALL.into_iter().find(|c| uuid_text(c.uuid()) == uuid) {
+                chars.insert(c, path.to_string());
+                mtu = mtu.or(uint16(p, "MTU"));
+            }
+        }
+        self.bus.say(1, || {
+            format!(
+                "{} of {} characteristics found; MTU {mtu:?}",
+                chars.len(),
+                Char::ALL.len()
+            )
+        });
+        Ok(BluezLink {
+            bus: self.bus.clone(),
+            adapter: self.adapter.clone(),
+            device,
+            chars,
+            closed: false,
+            // BlueZ exchanges the MTU itself as the link comes up, asking
+            // for its most, which the node meets with the 247 it offers
+            // (spec "Phone link", The service). Before BlueZ said it, the
+            // default.
+            mtu: mtu.unwrap_or(bark_link::DEFAULT_ATT_MTU),
+        })
     }
 }
 
@@ -412,7 +555,7 @@ impl Transport for Bluez {
     fn scan(
         &mut self,
         time: Duration,
-        enough: &mut dyn FnMut(&[Found]) -> bool,
+        enough: &mut dyn FnMut(&[Found], Duration) -> bool,
     ) -> Result<Vec<Found>> {
         // LE alone, and only what advertises the service or the public
         // node's UUID, as the app scans (spec "Phone link", Finding the
@@ -433,54 +576,67 @@ impl Transport for Bluez {
             &(filter,),
             &shown_filter,
         )?;
+        // A node's device BlueZ kept from before holds what earlier links
+        // added to it and may still be connecting; one without a bond goes,
+        // so that what the scan says of it is its advertisement's.
         let mut devices: HashMap<OwnedObjectPath, Device> = HashMap::new();
         for (path, mut i) in self.bus.objects()? {
-            if let Some(p) = i.remove(DEVICE) {
-                if !path.as_str().starts_with(&format!("{}/", self.adapter)) {
+            let Some(p) = i.remove(DEVICE) else { continue };
+            if !self.mine(path.as_str()) {
+                continue;
+            }
+            let mut d = Device::default();
+            d.update(&p);
+            if d.found().is_some() && !d.paired {
+                self.bus.say(1, || {
+                    format!("forgetting {}, kept without a bond", d.address)
+                });
+                if self.bus.remove(&self.adapter, path.as_str()).is_ok() {
                     continue;
                 }
-                let mut d = Device::default();
-                d.update(&p);
-                // An RSSI from before the scan is not this scan's.
-                d.rssi = None;
-                devices.insert(path, d);
             }
+            // An RSSI from before the scan is not this scan's.
+            d.rssi = None;
+            devices.insert(path, d);
         }
         self.bus
             .call(&self.adapter, ADAPTER, "StartDiscovery", &(), "")?;
-        let deadline = Instant::now() + time;
-        let mut nodes = Vec::new();
-        let mut done = false;
-        while !done {
-            let Some(s) = self.bus.next(deadline) else {
-                break;
-            };
-            let (path, p) = match s {
-                Signal::Added(path, mut i) => match i.remove(DEVICE) {
-                    Some(p) => (path, p),
-                    None => continue,
-                },
-                Signal::Changed(path, iface, p) if iface == DEVICE => (path, p),
-                Signal::Changed(..) => continue,
-            };
-            if !path.as_str().starts_with(&format!("{}/", self.adapter)) {
-                continue;
-            }
-            let d = devices.entry(path.clone()).or_default();
-            d.update(&p);
-            if p.contains_key("RSSI") {
-                d.heard = true;
-            }
-            self.bus.say(|| format!("device {path}: {}", shown(&p)));
-            let heard: Vec<Found> = devices
+        let start = Instant::now();
+        let deadline = start + time;
+        let heard = |devices: &HashMap<OwnedObjectPath, Device>| -> Vec<Found> {
+            let mut f: Vec<Found> = devices
                 .values()
                 .filter(|d| d.heard)
                 .filter_map(Device::found)
                 .collect();
-            if heard != nodes {
-                nodes = heard;
-                done = enough(&nodes);
+            f.sort_by(|a, b| a.address.cmp(&b.address));
+            f
+        };
+        let mut done = false;
+        while !done && Instant::now() < deadline {
+            let tick = deadline.min(Instant::now() + SCAN_TICK);
+            if let Some(s) = self.bus.next(tick) {
+                let (path, p) = match s {
+                    Signal::Added(path, mut i) => match i.remove(DEVICE) {
+                        Some(p) => (path, p),
+                        None => continue,
+                    },
+                    Signal::Changed(path, iface, p) if iface == DEVICE => (path, p),
+                    Signal::Changed(..) => continue,
+                };
+                if !self.mine(path.as_str()) {
+                    continue;
+                }
+                let d = devices.entry(path.clone()).or_default();
+                d.update(&p);
+                if p.contains_key("RSSI") {
+                    d.heard = true;
+                }
+                let level = if d.found().is_some() { 1 } else { 2 };
+                self.bus
+                    .say(level, || format!("device {path}: {}", shown(&p)));
             }
+            done = enough(&heard(&devices), start.elapsed());
         }
         // What BlueZ holds now: a device heard at the same RSSI as before
         // the scan sends no change, but its RSSI is set while discovery
@@ -496,94 +652,52 @@ impl Transport for Bluez {
             }
         }
         self.stop_discovery();
-        let mut found = Vec::new();
-        for (path, d) in &devices {
-            if !d.heard {
-                continue;
-            }
-            match d.found() {
-                Some(f) => {
-                    self.devices.insert(f.address.clone(), path.clone());
-                    found.push(f);
-                }
-                None => self.bus.say(|| {
-                    format!(
-                        "{} at {path} is not named as a node: {:?}",
-                        d.address, d.name
-                    )
-                }),
-            }
-        }
-        Ok(found)
+        let others = devices
+            .values()
+            .filter(|d| d.heard && d.found().is_none())
+            .count();
+        self.bus.say(1, || {
+            format!("{others} other devices heard (-vv lists them)")
+        });
+        Ok(heard(&devices))
     }
 
     fn connect(&mut self, node: &Found) -> Result<BluezLink> {
-        let device = self
-            .devices
-            .get(&node.address)
-            .ok_or_else(|| Error::Other(format!("{} was not heard in a scan", node.address)))?
-            .to_string();
-        let before = self.bus.properties(&device, DEVICE)?;
+        let (device, before) = self
+            .device(&node.address)?
+            .ok_or_else(|| Error::Other(format!("BlueZ holds no device {}", node.address)))?;
         self.bus
-            .say(|| format!("device {device}: {}", shown(&before)));
+            .say(1, || format!("device {device}: {}", shown(&before)));
         let paired = boolean(&before, "Paired") == Some(true);
-        let device = self.link_up(&device, &node.address, paired)?;
-        self.resolved(&device)?;
-        let mut chars = HashMap::new();
-        let mut service = None;
-        let objects = self.bus.objects()?;
-        for (path, i) in &objects {
-            if let Some(p) = i.get(SERVICE) {
-                if path.as_str().starts_with(&format!("{device}/")) {
-                    self.bus
-                        .say(|| format!("service {path}: {:?}", string(p, "UUID")));
-                    if string(p, "UUID") == Some(uuid_text(bark_link::uuid::SERVICE)) {
-                        service = Some(path.clone());
-                    }
-                }
-            }
+        let link = self.open(&device, &node.address, paired);
+        if link.is_err() {
+            self.cancel(&device, paired);
         }
-        let service = service
-            .ok_or_else(|| Error::Other(format!("{} offers no bark service", node.address)))?;
-        let mut mtu = None;
-        for (path, i) in &objects {
-            let Some(p) = i.get(CHARACTERISTIC) else {
-                continue;
-            };
-            if path_of(p, "Service").as_ref() != Some(&service) {
-                continue;
-            }
-            let uuid = string(p, "UUID").unwrap_or_default();
-            if let Some(c) = Char::ALL.into_iter().find(|c| uuid_text(c.uuid()) == uuid) {
-                chars.insert(c, path.to_string());
-                mtu = mtu.or(uint16(p, "MTU"));
-            }
+        link
+    }
+
+    fn bonded(&mut self, address: &str) -> Result<bool> {
+        Ok(self
+            .device(address)?
+            .is_some_and(|(_, p)| boolean(&p, "Paired") == Some(true)))
+    }
+
+    fn forget(&mut self, address: &str) -> Result<()> {
+        match self.device(address)? {
+            Some((device, _)) => self.bus.remove(&self.adapter, &device),
+            None => Ok(()),
         }
-        self.bus.say(|| {
-            format!(
-                "{} of {} characteristics found; MTU {mtu:?}",
-                chars.len(),
-                Char::ALL.len()
-            )
-        });
-        Ok(BluezLink {
-            bus: self.bus.clone(),
-            device,
-            chars,
-            // BlueZ exchanges the MTU itself as the link comes up, asking
-            // for its most, which the node meets with the 247 it offers
-            // (spec "Phone link", The service). Before BlueZ said it, the
-            // default.
-            mtu: mtu.unwrap_or(bark_link::DEFAULT_ATT_MTU),
-        })
     }
 }
 
 pub struct BluezLink {
     bus: Rc<Bus>,
+    adapter: String,
     device: String,
     chars: HashMap<Char, String>,
     mtu: u16,
+    /// Disconnected already, by [`Link::disconnect`].
+    closed: bool,
 }
 
 impl BluezLink {
@@ -592,6 +706,12 @@ impl BluezLink {
             .get(&c)
             .map(String::as_str)
             .ok_or_else(|| Error::Other(format!("the node has no {c:?} characteristic")))
+    }
+
+    fn paired(&self) -> bool {
+        self.bus
+            .properties(&self.device, DEVICE)
+            .is_ok_and(|p| boolean(&p, "Paired") == Some(true))
     }
 }
 
@@ -614,7 +734,7 @@ impl Link for BluezLink {
             .body()
             .deserialize()
             .map_err(|e| Error::Transport(e.to_string()))?;
-        self.bus.say(|| format!("read {c:?}: {}", hex(&v)));
+        self.bus.say(1, || format!("read {c:?}: {}", hex(&v)));
         Ok(v)
     }
 
@@ -633,13 +753,288 @@ impl Link for BluezLink {
         Ok(())
     }
 
-    fn disconnect(self) -> Result<()> {
+    fn subscribe(&mut self, c: Char) -> Result<()> {
+        let path = self.path(c)?;
         self.bus
-            .call(&self.device, DEVICE, "Disconnect", &(), "")
+            .call(path, CHARACTERISTIC, "StartNotify", &(), &format!("{c:?}"))
             .map(|_| ())
+    }
+
+    fn notified(&mut self, wait: Duration) -> Result<Option<(Char, Vec<u8>)>> {
+        let deadline = Instant::now() + wait;
+        while let Some(s) = self.bus.next(deadline) {
+            let Signal::Changed(path, iface, p) = s else {
+                continue;
+            };
+            if path.as_str() == self.device
+                && iface == DEVICE
+                && boolean(&p, "Connected") == Some(false)
+            {
+                self.bus.say(1, || "the link ended".into());
+                return Err(Error::Ended);
+            }
+            if iface != CHARACTERISTIC {
+                continue;
+            }
+            let Some(v) = bytes(&p, "Value") else {
+                continue;
+            };
+            if let Some((&c, _)) = self
+                .chars
+                .iter()
+                .find(|(_, cp)| cp.as_str() == path.as_str())
+            {
+                self.bus.say(1, || format!("notified {c:?}: {}", hex(&v)));
+                return Ok(Some((c, v)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn pair(&mut self, code: Option<u32>) -> Result<()> {
+        let agent = Agent {
+            code,
+            verbose: self.bus.verbose,
+        };
+        let path = OwnedObjectPath::try_from(AGENT_PATH).expect("a valid path");
+        self.bus
+            .conn
+            .object_server()
+            .at(AGENT_PATH, agent)
+            .map_err(|e| Error::Transport(format!("serving the pairing agent: {e}")))?;
+        // The node shows a passkey and takes none (its DisplayOnly), and
+        // this side types it, so the agent is one with a keyboard alone:
+        // passkey entry (Vol 3 Part H §2.3.5.1, Table 2.8). BlueZ asks the
+        // agent of the one who asks for the pairing.
+        let registered = self.bus.call(
+            "/org/bluez",
+            AGENT_MANAGER,
+            "RegisterAgent",
+            &(&path, "KeyboardOnly"),
+            &format!("{AGENT_PATH}, KeyboardOnly"),
+        );
+        let paired = registered.and_then(|_| {
+            self.bus
+                .call(&self.device, DEVICE, "Pair", &(), "")
+                .map(|_| ())
+        });
+        let _ = self.bus.call(
+            "/org/bluez",
+            AGENT_MANAGER,
+            "UnregisterAgent",
+            &(&path,),
+            AGENT_PATH,
+        );
+        let _ = self.bus.conn.object_server().remove::<Agent, _>(AGENT_PATH);
+        paired?;
+        let p = self.bus.properties(&self.device, DEVICE)?;
+        self.bus
+            .say(1, || format!("device after pairing: {}", shown(&p)));
+        // A pairing that does not bond the node takes as none.
+        if boolean(&p, "Bonded") == Some(false) {
+            return Err(Error::Other("paired but not bonded".into()));
+        }
+        Ok(())
+    }
+
+    fn disconnect(mut self) -> Result<()> {
+        self.close()
+    }
+}
+
+/// BlueZ keeps a link up after the program that made it has gone, so a
+/// link dropped on an error is ended too.
+impl Drop for BluezLink {
+    fn drop(&mut self) {
+        if !self.closed {
+            let _ = self.close();
+        }
+    }
+}
+
+impl BluezLink {
+    fn close(&mut self) -> Result<()> {
+        self.closed = true;
+        let paired = self.paired();
+        let done = self
+            .bus
+            .call(&self.device, DEVICE, "Disconnect", &(), "")
+            .map(|_| ());
+        // A guest's device goes, so that the next scan hears what the node
+        // advertises then and not what this link added (see [`Device::found`]).
+        if !paired {
+            let _ = self.bus.remove(&self.adapter, &self.device);
+        }
+        done
     }
 }
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// BlueZ's answers to an agent's refusal.
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.bluez.Error")]
+enum AgentError {
+    Rejected(String),
+}
+
+/// The pairing agent: answers BlueZ's request for the passkey with the
+/// code given, or asks the person on the terminal, and refuses every other
+/// kind of pairing, as the node offers none (spec "Phone link", Pairing).
+struct Agent {
+    code: Option<u32>,
+    verbose: u8,
+}
+
+impl Agent {
+    fn say(&self, s: &str) {
+        if self.verbose >= 1 {
+            eprintln!("agent: {s}");
+        }
+    }
+}
+
+#[zbus::interface(name = "org.bluez.Agent1")]
+impl Agent {
+    fn release(&self) {
+        self.say("Release");
+    }
+
+    async fn request_passkey(
+        &self,
+        device: OwnedObjectPath,
+    ) -> std::result::Result<u32, AgentError> {
+        self.say(&format!("RequestPasskey {device}"));
+        let code = match self.code {
+            Some(c) => Some(c),
+            None => {
+                blocking::unblock(|| {
+                    eprint!("The code on the node's screen: ");
+                    let mut line = String::new();
+                    std::io::stdin().lock().read_line(&mut line).ok()?;
+                    line.trim().parse::<u32>().ok()
+                })
+                .await
+            }
+        };
+        match code {
+            Some(c) if c < bark_link::phones::CODES => {
+                self.say(&format!("answering passkey {c:06}"));
+                Ok(c)
+            }
+            _ => Err(AgentError::Rejected("not a six-digit code".into())),
+        }
+    }
+
+    fn request_pin_code(&self, device: OwnedObjectPath) -> std::result::Result<String, AgentError> {
+        self.say(&format!("RequestPinCode {device}: refused"));
+        Err(AgentError::Rejected("the node pairs by passkey".into()))
+    }
+
+    fn display_pin_code(
+        &self,
+        device: OwnedObjectPath,
+        pincode: String,
+    ) -> std::result::Result<(), AgentError> {
+        self.say(&format!("DisplayPinCode {device} {pincode}: refused"));
+        Err(AgentError::Rejected("the node pairs by passkey".into()))
+    }
+
+    fn display_passkey(&self, device: OwnedObjectPath, passkey: u32, entered: u16) {
+        self.say(&format!(
+            "DisplayPasskey {device} {passkey:06} entered {entered}"
+        ));
+    }
+
+    fn request_confirmation(
+        &self,
+        device: OwnedObjectPath,
+        passkey: u32,
+    ) -> std::result::Result<(), AgentError> {
+        self.say(&format!(
+            "RequestConfirmation {device} {passkey:06}: refused"
+        ));
+        Err(AgentError::Rejected(
+            "the node pairs by passkey entry".into(),
+        ))
+    }
+
+    fn request_authorization(
+        &self,
+        device: OwnedObjectPath,
+    ) -> std::result::Result<(), AgentError> {
+        self.say(&format!("RequestAuthorization {device}: refused"));
+        Err(AgentError::Rejected("the node pairs by passkey".into()))
+    }
+
+    fn authorize_service(
+        &self,
+        device: OwnedObjectPath,
+        uuid: String,
+    ) -> std::result::Result<(), AgentError> {
+        self.say(&format!("AuthorizeService {device} {uuid}: refused"));
+        Err(AgentError::Rejected("no service is offered".into()))
+    }
+
+    fn cancel(&self) {
+        self.say("Cancel: BlueZ ended the request");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn props(kv: &[(&str, Value<'_>)]) -> Props {
+        kv.iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    OwnedValue::try_from(v.try_clone().unwrap()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// Seen public, linked, seen again: the link adds the service's UUID
+    /// to the device, and the node stays public.
+    #[test]
+    fn a_node_linked_once_stays_public() {
+        let mut d = Device::default();
+        d.update(&props(&[
+            ("Address", Value::from("E2:49:1C:03:EF:88")),
+            ("Name", Value::from("bark-bae6e6cbf4f5")),
+            ("RSSI", Value::from(-53i16)),
+            (
+                "UUIDs",
+                Value::from(vec![uuid_text(bark_link::uuid::PUBLIC_NODE)]),
+            ),
+        ]));
+        assert!(d.found().unwrap().public);
+        d.update(&props(&[(
+            "UUIDs",
+            Value::from(vec![
+                uuid_text(bark_link::uuid::PUBLIC_NODE),
+                uuid_text(bark_link::uuid::SERVICE),
+            ]),
+        )]));
+        let f = d.found().unwrap();
+        assert!(f.public);
+        assert_eq!(crate::link::id_text(f.id), "bae6e6cbf4f5");
+    }
+
+    #[test]
+    fn a_private_node_advertises_the_service_alone() {
+        let mut d = Device::default();
+        d.update(&props(&[
+            ("Name", Value::from("bark-bae6e6cbf4f5")),
+            (
+                "UUIDs",
+                Value::from(vec![uuid_text(bark_link::uuid::SERVICE)]),
+            ),
+        ]));
+        assert!(!d.found().unwrap().public);
+    }
 }

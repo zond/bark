@@ -13,7 +13,10 @@ path = "src/main.rs"
 [dependencies]
 bark-link = { path = "../bark-link" }
 bark-proto = { path = "../bark-proto" }
-clap = { version = "4", features = ["derive"] }
+# Reads the pairing code from the terminal without holding up the D-Bus
+# connection's own thread, on which the pairing agent answers.
+blocking = "1"
+clap ={ version = "4", features = ["derive"] }
 serde = "1"
 # BlueZ is driven over D-Bus. zbus speaks D-Bus in Rust alone, so the
 # build needs no libdbus headers, here or on CI's runner.

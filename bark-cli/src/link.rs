@@ -95,9 +95,10 @@ pub struct Found {
     pub address: String,
     /// The strongest RSSI it was heard at, in dBm.
     pub rssi: Option<i16>,
-    /// It advertised the public node's UUID and never the service's
-    /// (spec "Phone link", Public).
+    /// It advertised the public node's UUID (spec "Phone link", Public).
     pub public: bool,
+    /// This computer holds a bond with it.
+    pub bonded: bool,
 }
 
 /// The node's ID from its advertised name, or none for a name that is not
@@ -122,6 +123,8 @@ pub enum Error {
     Att(u8),
     /// The link ended.
     Ended,
+    /// A step took longer than the tool waits for it.
+    TimedOut(String),
     /// What the transport said, verbatim.
     Transport(String),
     /// Anything else the tool cannot go on from.
@@ -133,7 +136,7 @@ impl fmt::Display for Error {
         match self {
             Error::Att(code) => write!(f, "the node answered ATT error 0x{code:02x}"),
             Error::Ended => f.write_str("the link ended"),
-            Error::Transport(s) | Error::Other(s) => f.write_str(s),
+            Error::TimedOut(s) | Error::Transport(s) | Error::Other(s) => f.write_str(s),
         }
     }
 }
@@ -146,17 +149,25 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub trait Transport {
     type Link: Link;
 
-    /// Listens for `time`, or until `enough` says the nodes heard so far
-    /// suffice; every node heard, each once.
+    /// Listens for `time`, or until `enough`, asked as nodes are heard and
+    /// as time passes, says the nodes heard so far suffice, given how long
+    /// the scan has run; every node heard, each once.
     fn scan(
         &mut self,
         time: Duration,
-        enough: &mut dyn FnMut(&[Found]) -> bool,
+        enough: &mut dyn FnMut(&[Found], Duration) -> bool,
     ) -> Result<Vec<Found>>;
 
-    /// Connects to a node heard in a scan, with the service's
-    /// characteristics found and the MTU exchanged.
+    /// Connects to a node heard in a scan, or one this computer holds a
+    /// bond with, with the service's characteristics found and the MTU
+    /// exchanged. An attempt that fails leaves nothing pending.
     fn connect(&mut self, node: &Found) -> Result<Self::Link>;
+
+    /// Whether this computer holds a bond with the device at `address`.
+    fn bonded(&mut self, address: &str) -> Result<bool>;
+
+    /// Forgets the device at `address`, its bond too.
+    fn forget(&mut self, address: &str) -> Result<()>;
 }
 
 /// One connection to a node.
@@ -166,5 +177,13 @@ pub trait Link {
     fn read(&mut self, c: Char) -> Result<Vec<u8>>;
     /// A write request, which the node answers.
     fn write(&mut self, c: Char, value: &[u8]) -> Result<()>;
+    /// Subscribes to the characteristic's notifications.
+    fn subscribe(&mut self, c: Char) -> Result<()>;
+    /// The next value notified within `wait`, if any.
+    fn notified(&mut self, wait: Duration) -> Result<Option<(Char, Vec<u8>)>>;
+    /// Pairs over this link by passkey entry: the node shows the code and
+    /// this side types it (spec "Phone link", Pairing). `code` is the
+    /// code, or none to ask the person for it.
+    fn pair(&mut self, code: Option<u32>) -> Result<()>;
     fn disconnect(self) -> Result<()>;
 }
