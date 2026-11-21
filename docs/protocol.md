@@ -2856,18 +2856,26 @@ comes back with ([channel at boot](#channel-at-boot)):
 | whether it is a relay | a fixed relay that boots on battery relays on, its grace counted from the boot ([sleepy nodes](#sleepy-nodes)) |
 | its battery readings' scale | from its last calibration ([sleepy nodes](#sleepy-nodes)) |
 | the drains it learned on battery | a relay's and a sleepy node's, each in steps of 2.2 % of its first, up to 16 times it either way ([sleepy nodes](#sleepy-nodes)); one write a sample at most |
-| record | 32 bytes with a checksum, appended to a 4 KiB page of flash, erased when its 128 slots are full (`bark-fw/src/store.rs`) |
+| record | 32 bytes with a checksum, appended to one of two 4 KiB pages of flash of 128 slots (`bark-fw/logic/src/store.rs`) |
 
 Not kept: any timer; a carried node's place; a carried sleepy node's
 anchor; the noise floor.
 
-The same page keeps the phone link's state, in entries of one record or
+The same pages keep the phone link's state, in entries of one record or
 four of their own: each phone's record ([pairing](#pairing)), the last
 message its phone confirmed and the last fetch it took
 ([mailbox](#mailbox)), the public setting ([public nodes](#public-nodes))
-and the UTC offset ([settings](#settings)). The page's first record names
-its layout. A page of another layout is read as holding nothing and erased
-at its first write (roadmap D188).
+and the UTC offset ([settings](#settings)). The last whole entry of each
+kind holds; an entry spans its slots, whole or not.
+
+Pages: a page's first slot is its head, the layout (3) and a 16-bit
+generation, and is written last; a page whose head is whole and of
+layout 3 is valid. At
+boot the valid page of the later generation holds, compared modulo 2^16.
+On a full page: erase the other page, write the latest entry of each
+kind into it from its second slot, then its head, generation + 1; the
+full page stays until the next such turn. No valid page: nothing is kept,
+and the first write turns to the first page (roadmap D188, D241).
 
 The bring-up order and the test rig: `roadmap.md`, Phase 2.
 

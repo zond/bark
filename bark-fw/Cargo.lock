@@ -107,7 +107,9 @@ version = "0.1.0"
 dependencies = [
  "bark-app-layer",
  "bark-image",
+ "bark-link",
  "bark-proto",
+ "embedded-storage-async",
 ]
 
 [[package]]

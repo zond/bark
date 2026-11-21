@@ -15,3 +15,7 @@ bark-image = { path = "../../bark-image", default-features = false }
 bark-proto = { path = "../../bark-proto" }
 # An address as the app writes it, 26 hex digits (spec "Addresses").
 bark-app-layer = { path = "../../bark-app-layer" }
+# The phones' entries the store keeps (`src/store.rs`).
+bark-link = { path = "../../bark-link" }
+# The flash the store writes, which may wait for the radio's events.
+embedded-storage-async = "=0.4.2"

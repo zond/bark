@@ -15,7 +15,7 @@
 //! | [`RECORD`] | the staged image's header, which the loader checks |
 //! | [`GIVEN_UP`] | the images this node swapped back, never gathered again |
 //! | [`SPARE`] | nothing yet: room for secrets to come |
-//! | [`STORE`] | the node's stored state |
+//! | [`STORE`] | the node's stored state, two pages that take turns |
 //! | `0xF4000`–`0x100000` | the bootloader, its settings, the MBR's parameters |
 //!
 //! What is large and not secret lies on the [`external`] flash. What
@@ -84,7 +84,11 @@ const LOADER_PAGES: u32 = 4;
 /// writes it erased. 227 pages, 908 KiB.
 const ACTIVE_PAGES: u32 = (DRIVE_END - PAGE - STATE.end()) / PAGE;
 
-const STORE_START: u32 = BOOTLOADER_START - PAGE;
+/// Pages for the stored state: two, so that one is whole while the other
+/// is erased and written (`bark_fw_logic::store`).
+const STORE_PAGES: u32 = 2;
+
+const STORE_START: u32 = BOOTLOADER_START - STORE_PAGES * PAGE;
 
 /// The loader.
 pub const LOADER: Region = Region::pages_from(APPLICATION_START, LOADER_PAGES);
@@ -105,8 +109,9 @@ pub const SPARE: Region = Region {
     start: GIVEN_UP.end(),
     len: STORE_START - GIVEN_UP.end(),
 };
-/// The node's stored state.
-pub const STORE: Region = Region::pages_from(STORE_START, 1);
+/// The node's stored state. Its first page was the spare's last before
+/// the store took two, and the store erases a page before it writes it.
+pub const STORE: Region = Region::pages_from(STORE_START, STORE_PAGES);
 
 /// The external flash, a ZD25WQ16B of 2 MiB in sectors of 4 KiB
 /// (`docs/external-flash-2026-11-06.md`). Addresses are the chip's, from 0,
@@ -230,7 +235,7 @@ const _: () = {
     // No UF2 erases what the node gave up.
     assert!(GIVEN_UP.start >= DRIVE_END);
     assert!(SPARE.end() == STORE.start);
-    assert!(STORE.start == 0xF3000);
+    assert!(STORE.start == 0xF2000);
     assert!(STORE.end() == BOOTLOADER_START);
     assert!(external::DFU.len == ACTIVE.len + external::SECTOR);
     // The chip is full.
@@ -326,10 +331,16 @@ mod tests {
             SPARE,
             Region {
                 start: 0xEB000,
-                len: 8 * PAGE
+                len: 7 * PAGE
             }
         );
-        assert_eq!(STORE.start, 0xF3000);
+        assert_eq!(
+            STORE,
+            Region {
+                start: 0xF2000,
+                len: 2 * PAGE
+            }
+        );
         assert_eq!(
             external::DFU,
             Region {

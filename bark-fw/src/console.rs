@@ -1527,7 +1527,7 @@ impl fmt::Display for CutOp {
 }
 
 /// Whether the node is public, as the phones the node keeps say (spec
-/// "Phone link", Public; `store.rs`): its page read where it lies in the
+/// "Phone link", Public; `store.rs`): its pages read where they lie in the
 /// chip's address space, as the console writes no flash of the node's.
 fn public() -> bool {
     kept().phones.phones().public()
@@ -1542,11 +1542,13 @@ fn drains() -> [u32; 2] {
     [Running::Relay, Running::Sleepy].map(|r| (d.rate(r) * 10_000.0) as u32)
 }
 
-/// What the store's page holds (`store.rs`).
-fn kept() -> crate::store::Kept {
-    let (_, kept) = crate::store::scan(|at, out| {
+/// What the store's pages hold (`store.rs`).
+fn kept() -> bark_fw_logic::store::Kept {
+    use bark_image::layout::STORE;
+    let (_, kept) = bark_fw_logic::store::scan(|at, out| {
+        let at = STORE.start + at;
         // SAFETY: flash is mapped from address 0 (nRF52840 Product
-        // Specification, Memory), and the store's page lies in it.
+        // Specification, Memory), and the store's pages lie in it.
         let bytes = unsafe { core::slice::from_raw_parts(at as *const u8, out.len()) };
         out.copy_from_slice(bytes);
         true

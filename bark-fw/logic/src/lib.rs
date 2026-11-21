@@ -13,3 +13,4 @@ pub mod bench;
 pub mod install;
 pub mod line;
 pub mod link;
+pub mod store;

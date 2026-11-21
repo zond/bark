@@ -56,6 +56,7 @@ mod protect;
 mod radio;
 #[cfg(not(feature = "console"))]
 mod stack;
+#[cfg(not(feature = "console"))]
 mod store;
 #[cfg(not(feature = "console"))]
 mod tables;
