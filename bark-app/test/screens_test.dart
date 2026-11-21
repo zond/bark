@@ -118,6 +118,7 @@ void main() {
         'Updates',
         'My name',
         'Backup',
+        'My identity',
         'Debug',
       ])
         t.getTopLeft(find.text(h, skipOffstage: false)).dy,

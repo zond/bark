@@ -7,6 +7,7 @@
 
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart' as file_selector;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -32,6 +33,10 @@ class PhoneNotifier implements Notifier {
 
   /// The phone's Bluetooth settings (MainActivity.kt).
   static const _bluetooth = MethodChannel('org.bark.bark_app/bluetooth');
+
+  /// Android's dialog to save a file, which the file picker used here
+  /// does not offer there (MainActivity.kt).
+  static const _files = MethodChannel('org.bark.bark_app/files');
 
   /// The link's foreground service and its notification (LinkService.kt).
   static const _link = MethodChannel('org.bark.bark_app/link');
@@ -166,4 +171,13 @@ class PhoneNotifier implements Notifier {
   @override
   Future<void> share(String text, Uint8List png) =>
       _share.invokeMethod<void>('share', {'text': text, 'png': png});
+
+  @override
+  Future<bool> saveFile(String name, Uint8List bytes) async =>
+      await _files.invokeMethod<bool>('save', {'name': name, 'bytes': bytes}) ??
+      false;
+
+  @override
+  Future<Uint8List?> openFile() async =>
+      (await file_selector.openFile())?.readAsBytes();
 }

@@ -2,9 +2,9 @@
 // is on and the nodes it is paired with; the home node; on a paired node,
 // its own settings, whether it serves phones without pairing, its place
 // and the phones paired with it; updates of the app and the node; the
-// person's name and backup words; the battery exemption that keeps the
-// link with the screen off; then Debug. The Node, Home node and Updates
-// sections are widgets of their own.
+// person's name, backup words and identity file; the battery exemption
+// that keeps the link with the screen off; then Debug. The Node, Home node, Updates and
+// My identity sections are widgets of their own.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -18,6 +18,7 @@ import '../node_link.dart';
 import 'common.dart';
 import 'debug_screen.dart';
 import 'home_section.dart';
+import 'identity_section.dart';
 import 'node_section.dart';
 import 'settings_parts.dart';
 import 'updates_section.dart';
@@ -209,6 +210,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: _backup(),
                 ),
               ),
+              IdentitySection(app),
               ..._battery(),
               const SizedBox(height: 24),
               ListTile(

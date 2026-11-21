@@ -13,13 +13,30 @@ import 'package:bark_app/identity_file.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/session.dart';
+import 'package:bark_app/alerts.dart';
 import 'package:bark_app/store.dart';
+import 'package:bark_app/ui/settings_screen.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 
 import 'fake_ble.dart';
 import 'fake_node.dart';
+
+/// The phone's file dialogs: what was saved, and the file to open.
+class FileNotifier extends NoNotifier {
+  final List<(String, Uint8List)> saved = [];
+  Uint8List? toOpen;
+  @override
+  Future<bool> saveFile(String name, Uint8List bytes) async {
+    saved.add((name, bytes));
+    return true;
+  }
+
+  @override
+  Future<Uint8List?> openFile() async => toOpen;
+}
 
 void main() {
   late Sodium sodium;
@@ -297,5 +314,117 @@ void main() {
         });
       },
     );
+  });
+
+  testWidgets('Settings: save to a file, then restore it on another phone', (
+    t,
+  ) async {
+    AppModel phone(FileNotifier n) => AppModel(
+      sodium: sodium,
+      me: Me(MemoryStore(), sodium, DateTime.now),
+      session: Session(store: MemoryStore(), now: DateTime.now),
+      contacts: Contacts(MemoryStore()),
+      now: DateTime.now,
+      notifier: n,
+      passwordKey: quickKey,
+    );
+    final files = FileNotifier();
+    final old = phone(files);
+    final fresh = phone(files);
+    await t.runAsync(() async {
+      await old.load();
+      await fresh.load();
+      await old.me.setName('Ann');
+      await old.session.setPaired(nodeName(FakeNode.id));
+    });
+
+    Future<void> to(String text) async {
+      await t.scrollUntilVisible(
+        find.text(text),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.pumpAndSettle();
+    }
+
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(old)));
+    await to('Save to a file');
+    expect(find.text('My identity'), findsOneWidget);
+    expect(
+      find.text('Save it to a file to move to a new phone.'),
+      findsOneWidget,
+    );
+    await t.tap(find.text('Save to a file'));
+    await t.pumpAndSettle();
+    expect(find.text('Use it on one phone at a time.'), findsOneWidget);
+    final save = find.widgetWithText(FilledButton, 'Save');
+    await t.enterText(find.byKey(const Key('password')), 'pw');
+    await t.enterText(find.byKey(const Key('password again')), 'px');
+    await t.pump();
+    expect(find.text('Not the same'), findsOneWidget);
+    expect(t.widget<FilledButton>(save).enabled, isFalse);
+    await t.enterText(find.byKey(const Key('password again')), 'pw');
+    await t.tap(find.text('Add my messages'));
+    await t.pump();
+    await t.tap(save);
+    await t.pumpAndSettle();
+    expect(find.text('Saved'), findsOneWidget);
+    expect(files.saved, hasLength(1));
+    expect(
+      files.saved.single.$1,
+      matches(RegExp(r'^bark-identity-\d{4}-\d\d-\d\d\.bark$')),
+    );
+
+    // The line goes before the next one shows.
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
+
+    files.toOpen = files.saved.single.$2;
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(fresh)));
+    await to('Restore from a file');
+    await t.tap(find.text('Restore from a file'));
+    await t.pumpAndSettle();
+    expect(
+      find.text(
+        'This replaces the identity, contacts and messages on this phone.',
+      ),
+      findsOneWidget,
+    );
+    await t.tap(find.text('Choose file'));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('password')), 'not it');
+    await t.pump();
+    await t.tap(find.widgetWithText(FilledButton, 'Restore'));
+    await t.pumpAndSettle();
+    expect(
+      find.text('Wrong password, or the file is damaged. Nothing changed.'),
+      findsOneWidget,
+    );
+    expect(fresh.me.key, isNot(old.me.key));
+    await t.enterText(find.byKey(const Key('password')), 'pw');
+    await t.pump();
+    await t.tap(find.widgetWithText(FilledButton, 'Restore'));
+    await t.pumpAndSettle();
+    expect(
+      find.text('Identity restored. Pair again with your nodes.'),
+      findsOneWidget,
+    );
+    expect(fresh.me.key, old.me.key);
+    expect(fresh.me.name, 'Ann');
+    await t.scrollUntilVisible(
+      find.text('Paired on your old phone'),
+      -100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await t.tap(find.text('Paired on your old phone'));
+    await t.pumpAndSettle();
+    expect(find.text('Pair again with ID FA4E00000001'), findsOneWidget);
+    expect(
+      find.textContaining('a pairing stays on the phone it was made on'),
+      findsOneWidget,
+    );
+    await t.pumpWidget(const SizedBox());
+    old.dispose();
+    fresh.dispose();
   });
 }

@@ -139,9 +139,10 @@ class NodeSection extends StatelessWidget {
     ];
   }
 
-  /// The row of `n`, a paired node that no longer knows this phone: Pair
-  /// again while it is in reach, as the person most likely wants it back,
-  /// and Forget, to give it up; a tap explains.
+  /// The row of `n`, a paired node that no longer knows this phone, or
+  /// one paired on the phone the identity came from: Pair again while it
+  /// is in reach, as the person most likely wants it back, and Forget, to
+  /// give it up; a tap explains.
   Widget _lostRow(BuildContext context, String n, {required bool home}) =>
       ListTile(
         contentPadding: EdgeInsets.zero,
@@ -170,15 +171,26 @@ class NodeSection extends StatelessWidget {
 
   /// What happened to `n`, a node that no longer knows this phone, and
   /// what each button does.
-  Future<void> _lostHelp(BuildContext context, String n) => showHelp(
-    context,
-    '${shownName(n)} no longer knows this phone',
-    'Someone paired with it removed this phone, or the node lost its '
-        'memory.\n\n'
-        'Pair again: pair anew with the code on its screen. Shown while the '
-        'node is in reach.\n\n'
-        'Forget: stop listing the node here.',
-  );
+  Future<void> _lostHelp(BuildContext context, String n) {
+    final moved = app.nodes[n]!.moved;
+    return showHelp(
+      context,
+      moved
+          ? 'Pair again with ${shownName(n)}'
+          : '${shownName(n)} no longer knows this phone',
+      '${moved ? _movedWhy : _lostWhy}\n\n'
+      'Pair again: pair anew with the code on its screen. Shown while the '
+      'node is in reach.\n\n'
+      'Forget: stop listing the node here.',
+    );
+  }
+
+  static const _lostWhy =
+      'Someone paired with it removed this phone, or the node lost its '
+      'memory.';
+  static const _movedWhy =
+      'You paired with it on your old phone, and a pairing stays on the '
+      'phone it was made on.';
 
   /// How a paired node stands, in words. A paired node the search hears
   /// it connects to, so one not connected while it looks is out of reach,
@@ -191,6 +203,8 @@ class NodeSection extends StatelessWidget {
         if (home) 'your home',
         if (on)
           'connected'
+        else if (r?.moved ?? false)
+          'paired on your old phone'
         else if (r?.lost ?? false)
           'no longer yours'
         else if (r?.unserved ?? false)

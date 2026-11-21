@@ -550,7 +550,17 @@ String connectionHelp(AppModel app) {
       '\n\n${unserved.join(', ')} cannot be used yet: they or this app '
           'need an update. Tap one in Settings to try again.',
   };
-  final others = '$lostLine$unservedLine';
+  final moved = [for (final n in app.nodes.moved) shownName(n)];
+  final movedLine = switch (moved) {
+    [] => '',
+    [final n] =>
+      '\n\n$n was paired on your old phone: pair again with it in '
+          'Settings.',
+    _ =>
+      '\n\n${moved.join(', ')} were paired on your old phone: pair again '
+          'with them in Settings.',
+  };
+  final others = '$lostLine$movedLine$unservedLine';
   final install = app.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
