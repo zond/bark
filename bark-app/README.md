@@ -324,7 +324,12 @@ is a prototype for the bench, not the app people will carry.
   floor, in the link's colour, and in its help the numbers, such as
   "This link: −71 dBm, +19 dB over the noise floor."), Last heard (a clock), Distance (a ruler), Known
   (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
-  exchanged`), Version (a price tag, the Material set having no version
+  exchanged`), GPS signal (signal bars, its GPS's mean C/N0 as its last
+  reading had it, `31 dB-Hz · good`, or `· too weak for a fix` under the
+  22 dB-Hz below which a node drops a fix, spec "Position", roadmap
+  D234, or `no reading` for 0, as while its GPS rests; read from Status
+  again as the map opens and is refreshed, as the node does not notify
+  it, and from a neighbour's answer), Version (a price tag, the Material set having no version
   icon, such as `V18 · getting V19 14/32` while it gathers an image)
   and Exchanged (a ticked box) if it has taken a message from this
   node; then this node's own view of it: Anchor, `this node's anchor`,
@@ -357,15 +362,34 @@ is a prototype for the bench, not the app people will carry.
   does. The rows appear in the open details when the answer comes. This
   node's own details ask nothing. The
   node is drawn at its own position, not its address, so a sleepy node
-  is not drawn on its anchor; a sleepy neighbour with an anchor is drawn
+  with a fix is not drawn on its anchor; a sleepy neighbour with an anchor is drawn
   at its address, the anchor's position, which its heartbeats carry, so
-  it shares its anchor's marker; a node without a place has its
-  neighbours drawn with no lines. Tiles come from the network and are
+  it shares its anchor's marker; a node without a place of its own has its
+  neighbours drawn with no lines, and a line says so.
+  **Show where I am**, a button in the bar, asks Android for the phone's
+  position, and the first time for the location permission while the
+  app is in use; the map opening asks nothing. A blue dot marks it while
+  the map is open, and the legend adds "you: your position stays on this
+  phone, never sent or kept": it is in the screen alone. The connected
+  node, when it has no position of its own, a sleepy node with an
+  anchor, whose address is its anchor's, or one with no place yet, is
+  then drawn at the dot, as the Bluetooth link puts it within metres of
+  the phone, with a thin line to its anchor, and the line says "The node
+  has no place of its own: it is drawn where you are."; without the dot
+  it is drawn at its address, if it has one. Its details' Place then
+  says `its anchor's` and that place, where others reach it. A node with
+  a position of its own stays there, apart from the dot. The refresh
+  button reads the position again once it is shown. With no permission
+  or no fix it says why, "Location permission denied" or "No location: …",
+  and the map is as before. The position comes from the geolocator
+  plugin the app has for **Use this phone's location**, behind one
+  interface for both (`lib/phone_place.dart`), with the foreground
+  location permissions it had; no background location. Tiles come from the network and are
   kept on the phone for a year, so an area seen once draws again
   without internet; without either, the markers and lines are drawn on
   a blank background and a line says why.
 - **Debug**, at the bottom of Settings. Your identity, card address, home node and
-  mailbox state; Node, what Home reads, every Status field, the last
+  mailbox state; Node, what Home reads, every Status field, its GPS signal among them, the last
   Given back value, each sent and received message's kind, `sent`, ID
   and payload in hex, and a log of the link's events since the app
   started. Each log line also goes to the Android log, so on the bench
@@ -725,7 +749,7 @@ the phone's UTC time and offset to Clock,
 silently, and the debug screen shows what the node then has.
 
 On every connection the app reads Home. To the person's home, known by its node ID, it first writes the
-key, silently, with a line in the log: the node may have been reflashed,
+key and a fresh `sent` (Making a node the home, below), silently, with a line in the log: the node may have been reflashed,
 or the identity restored from its words, and a node that holds that key
 already changes nothing. When a fixed, awake home's position is not
 the one the person has for it, the app takes the new one, which changes
@@ -760,7 +784,8 @@ renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 ever overwritten; the debug screen's log says so, and the app starts that
 file empty (for the person, with a new identity). The app reads only
 the forms it writes. A field added to a form that every file before
-lacks, such as a home's given key, the owner's mark or a home being left
+lacks, such as a home's given key, the owner's mark, the home's newest
+payload version or a home being left
 in `me.json`, a share and a home given in `contacts.json`, a fetch's
 command in `bark.json`, is optional and its absence means none: such a
 file reads in full, and the version stays, as a raised one would set
@@ -1062,9 +1087,19 @@ second byte, in the clear, is its recipient's tag at the node it goes
 to, made from the recipient's identity and that node's ID, by which a
 public node tells whose it is (Public nodes, above); a fetch carries
 your tag at your home, and inside it your tag at the node the replies
-are to come to, which the replies carry. No receiver checks it.
+are to come to, which the replies carry. No receiver checks it. The
+person's card says, in its flags' high four bits, the newest payload
+version this app reads, 2, and a home's summary says its own in its
+flags' (spec "Phone link", The payload; roadmap D238); the app keeps a
+contact's with their card and the home's with the home in `me.json`.
+There is one version, so no choice is made by them yet.
 
-**Making a node the home.** The app writes 1 and the mailbox key to Home, reads Home
+**Making a node the home.** The app writes 1, the mailbox key and a
+fresh `sent` to Home, 37 bytes, the next of its own rising count, so
+that every later fetch is later than it: a node takes no fetch of a key
+that is not later than the write that set it (spec "Phone link",
+Settings; roadmap D236). Every write of a key does so, in one place
+(`Session.writeHome`, and the silent one at the home). It reads Home
 back, and makes the node the home only if it then says it holds the
 person's (`mine`); otherwise it says so and changes nothing. A key
 written takes the owner's seat if it is empty, so the first person to
@@ -1669,6 +1704,24 @@ a phone (Trying it).
     card that arrived at A is read at the next errand, though A's record
     for P claims it; **Fetch my mail** says "At your home, your mail comes
     by itself".
+28. Home's start. On a phone whose home is A, at A: **No home node**,
+    then **Make this node my home** again: the node's log shows `ble:
+    home of record … set`; a **Fetch my mail** from B right after is
+    answered as usual.
+29. GPS signal. **Nearby nodes**, a tap on this node: the GPS signal row
+    says the node's number, such as `38 dB-Hz · good` outdoors; indoors,
+    away from a window, it falls under 22 to `too weak for a fix`, and a
+    sleepy node with an anchor says `no reading`. The refresh button
+    reads it again. A neighbour's row comes with its answer. Debug's
+    Status shows the same number.
+30. Show where I am. **Nearby nodes**: no permission is asked as it
+    opens. **Show where I am**: Android asks for location while the app
+    is in use (the first time only); a blue dot shows where the phone is.
+    On a sleepy node with an anchor, the node's marker is at the dot,
+    with a thin line to its anchor, and its details' Place says
+    `its anchor's`; on a relay with a GPS fix, its marker stays at its
+    own place, apart from the dot. Denied, it says "Location permission
+    denied" and the map is as before.
 
 ## The phone test
 
