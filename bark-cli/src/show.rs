@@ -186,6 +186,7 @@ pub fn phones(list: &[Record]) -> Vec<String> {
                     (r.home, "home"),
                     (r.linked, "linked"),
                     (r.mine, "mine"),
+                    (r.owner, "owner"),
                 ]),
                 r.name
             )
@@ -285,13 +286,14 @@ mod tests {
             home: false,
             linked: true,
             mine: true,
+            owner: true,
             tag: Some(0x5a),
             day: 1,
             name: "Olga".into(),
         };
         assert_eq!(
             phones(&[r])[0],
-            "number 3 flags paired linked mine tag 5a day 2026-01-01 name Olga"
+            "number 3 flags paired linked mine owner tag 5a day 2026-01-01 name Olga"
         );
     }
 }

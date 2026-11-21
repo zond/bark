@@ -74,8 +74,10 @@ first, and a paired one their name too, so the node hands them their mail.
 - `public <id> [on|off]`: makes the node public or private, and prints
   what it is.
 - `phones <id>`: a line for each record the node keeps: its number, its
-  flags (`mine` is this computer's), its tag, the day its phone was last
-  linked, and its name.
+  flags (`mine` is this computer's, `owner` the node's owner's), its tag,
+  the day its person was last seen, and its name. The tool neither removes a
+  record nor makes an owner; the app does both, by the code the node's
+  screen shows.
 
 ## Messages
 

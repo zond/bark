@@ -448,7 +448,7 @@ Another's row has **Remove**, for what its record holds. Its dialog says
 what goes, "Ann's phone can no longer use the node unless paired
 again." and "The node stops keeping their mail.", and "You type the
 code the node then shows." **Show the code** asks the node for one, and
-its screen shows `REMOVE` and six digits; the person types them within
+its screen shows `CONFIRM` and six digits; the person types them within
 30 s and **Remove** writes the removal. A removed phone's app finds the
 node no longer its own at its next link; a removed home tells its
 person at their next link there, and their fetches from elsewhere go
@@ -1243,7 +1243,7 @@ a phone (Trying it).
     first phone's row shows under "Phones with a home here" too, on both
     phones at once, the second linked all along. On the first
     phone, **Remove** on the second's row under "Phones paired with this
-    node", **Show the code**: the node's screen shows `REMOVE` and six
+    node", **Show the code**: the node's screen shows `CONFIRM` and six
     digits. Type a wrong code: "Not removed", and the log shows `ble:
     removal refused`; **New code**, type the one shown: "Removed", the
     log shows `ble: record … removed`, the second phone's link ends, and

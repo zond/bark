@@ -557,9 +557,9 @@ pub struct State {
     told_counts: [u8; RECORDS],
     /// The flags byte last logged.
     flags: Option<u8>,
-    /// The removal code on the screen, if one is (spec "Phone link",
+    /// The code of a change to the phones on the screen, if one is (spec "Phone link",
     /// Phones).
-    removal: Option<bark_link::phones::Code>,
+    confirm: Option<bark_link::phones::Code>,
     /// What Phones lists as last followed: the records' `listed` and the
     /// places whose phones are linked ([`phones_moved`]).
     listed: (u8, u8),
@@ -638,7 +638,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     told: Status::EMPTY,
     told_counts: [0; RECORDS],
     flags: None,
-    removal: None,
+    confirm: None,
     listed: (0, 0),
     phones_told: 0,
 }));
@@ -2076,7 +2076,7 @@ fn linked(conn: &GattConnection<'_, '_, DefaultPacketPool>) {
     let day = crate::phones::today();
     let known = crate::phones::read(|p| p.get(i).map(|r| r.day));
     if day != 0 && known.is_some_and(|d| d != day) {
-        crate::phones::with(|p| p.linked(i, day));
+        crate::phones::with(|p| p.seen(i, day));
     }
 }
 
@@ -2649,8 +2649,8 @@ fn ms_now() -> u64 {
 }
 
 /// Phones, written by a paired phone: the place to read from, a code
-/// drawn on the screen, or a removal with that code, taken within 30 s
-/// and on one try (spec "Phone link", Phones).
+/// drawn on the screen, or a removal or a new owner with that code, taken
+/// within 30 s and on one try (spec "Phone link", Phones).
 fn write_phones(
     from: From,
     stack: &Stack,
@@ -2677,14 +2677,14 @@ fn write_phones(
                     break c;
                 }
             };
-            LINK.lock(|l| l.borrow_mut().removal = Some(code));
+            LINK.lock(|l| l.borrow_mut().confirm = Some(code));
             // The code only in a bench-only build, as a pairing's
             // (spec "Phone link", Pairing).
             match crate::BENCH_ONLY {
-                true => log::info!("ble: removal, the code shown: {:06}", code.code),
-                false => log::info!("ble: removal, the code shown"),
+                true => log::info!("ble: phones, the code shown: {:06}", code.code),
+                false => log::info!("ble: phones, the code shown"),
             }
-            crate::display::removal(Some(code.code));
+            crate::display::confirm(Some(code.code));
             Ok(())
         }
         PhonesWrite::Remove {
@@ -2695,8 +2695,8 @@ fn write_phones(
             if crate::phones::read(|p| p.holding(number, parts)).is_none() {
                 return Err(malformed(Malformed::Value));
             }
-            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().removal, code, ms_now()));
-            crate::display::removal(None);
+            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().confirm, code, ms_now()));
+            crate::display::confirm(None);
             if !taken {
                 log::info!("ble: removal refused: not the code shown, or too late");
                 return Err(REFUSED);
@@ -2728,6 +2728,26 @@ fn write_phones(
                 }
             }
             records_changed();
+            Ok(())
+        }
+        PhonesWrite::Owner { number, code } => {
+            let home = bark_link::phones::Parts {
+                bond: false,
+                home: true,
+            };
+            if crate::phones::read(|p| p.holding(number, home)).is_none() {
+                return Err(malformed(Malformed::Value));
+            }
+            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().confirm, code, ms_now()));
+            crate::display::confirm(None);
+            if !taken {
+                log::info!("ble: owner refused: not the code shown, or too late");
+                return Err(REFUSED);
+            }
+            if crate::phones::with(|p| p.make_owner(number)).is_none() {
+                return Err(malformed(Malformed::Value));
+            }
+            log::info!("ble: record number {} the owner's", number);
             Ok(())
         }
     }
