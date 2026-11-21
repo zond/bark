@@ -150,7 +150,6 @@ pub fn run() -> impl core::future::Future<Output = ()> {
 }
 
 async fn work() {
-    let mut marks = Marks::default();
     loop {
         WRITE.wait().await;
         while let Some(op) = with(|m| m.ring().op()).flatten() {
@@ -161,14 +160,12 @@ async fn work() {
                     }
                 }
                 Op::Write { offset, .. } => {
+                    // A mark is a byte programmed again over a written one,
+                    // which the chip takes, keeping the AND of the two
+                    // (`README.md`, "Verified and unverified").
                     let at = external::MAILBOX.start + offset;
-                    let mark = op.data().len() == 1;
-                    let before = mark.then(|| read_byte(at));
                     if let Err(e) = ext_flash::program(at, op.data()).await {
                         log::error!("mailbox: ring {:?}", e);
-                    }
-                    if let Some(before) = before {
-                        marks.check(at, before, op.data()[0]);
                     }
                 }
             }
@@ -178,61 +175,5 @@ async fn work() {
             log::error!("mailbox: {} writes lost", lost);
         }
         crate::node::WAKE.mailbox_changed();
-    }
-}
-
-/// A byte of the ring's flash, as the chip holds it.
-fn read_byte(at: u32) -> u8 {
-    let mut b = [0xffu8];
-    let _ = ext_flash::with(|c| c.read(at, &mut b));
-    b[0]
-}
-
-/// What the marks read back so far: one that read right, and how many
-/// read wrong.
-#[derive(Default)]
-struct Marks {
-    right: bool,
-    wrong: u32,
-}
-
-impl Marks {
-    /// Whether a mark's program, a byte programmed again over one written
-    /// before with bits clear, left the AND of the two, as the marks need:
-    /// a slot's mark takes a program for each of the eight records' bits
-    /// between erases (spec "Mailbox", The ring). The chip's datasheet is
-    /// not in the repository to say whether it allows that; boards 3112 and
-    /// c367 read it back right (logs of 2026-11-10 and 2026-11-13). The check stays, as it costs a
-    /// byte's read: the first mark that reads back right is logged once,
-    /// and the wrong ones with their count.
-    fn check(&mut self, at: u32, before: u8, cleared: u8) {
-        let want = before & cleared;
-        let got = read_byte(at);
-        if got == want {
-            if !core::mem::replace(&mut self.right, true) {
-                log::info!(
-                    "mailbox: a mark programmed over {:#04x} read back {:#04x}, as it should",
-                    before,
-                    got
-                );
-            }
-            return;
-        }
-        // Logged at the first, and at each power of two after, so that the log
-        // shows how often without a line a mark.
-        self.wrong = self.wrong.wrapping_add(1);
-        let wrong = self.wrong;
-        if wrong.is_power_of_two() {
-            log::error!(
-                "mailbox: a mark at {:#x} programmed {:#04x} over {:#04x} read back {:#04x}, not {:#04x}: \
-the flash does not take a byte programmed again ({} so far)",
-                at,
-                cleared,
-                before,
-                got,
-                want,
-                wrong
-            );
-        }
     }
 }

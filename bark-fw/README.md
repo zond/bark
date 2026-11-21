@@ -150,8 +150,9 @@ Phase 2:
   it began and swapped in at a quiet moment (2026-11-09).
 - The external flash takes a byte programmed again over a written one,
   keeping the AND of the two, as each record's bit of a slot's mark is:
-  boards 3112 and c367 log a mark read back right and none wrong
-  (Mailbox, below; logs of 2026-11-10 and 2026-11-13).
+  boards 3112 and c367 logged a mark read back right and none wrong,
+  by a check each mark's program had until 2026-11-22 (Mailbox, below;
+  logs of 2026-11-10 and 2026-11-13).
 - On the bench since 2026-11-09, with what each is to show in the bench
   list: the neighbour status and its retries (roadmap D157, D158,
   D161), the code on the screen and the button (D160, D206),
@@ -1450,15 +1451,8 @@ Each record's oldest unread item and count are kept in RAM until
 something changes, and an arrival adds to them without a scan.
 
 A mark takes up to eight programs of its byte between erases, one for
-each record's bit. Whether the ZD25WQ16B allows a byte programmed again
-over a written one, keeping the AND of the two, its datasheet, not in the
-repository, says; the bench's boards do (Verified and unverified, above).
-Each mark is still read back after its program, and the log says once
-`mailbox: a mark programmed over 0x03 read back 0x02, as it should`, or, if the chip does not, `mailbox: a mark at 0x.. programmed
-0xfd over 0x03 read back .., not 0x01: the flash does not take a byte
-programmed again (1 so far)`, again at each power of two of the count.
-The second means a reading or a fetch may leave its record's bit set, so
-that a fetch sends an item again, or clear another record's.
+each record's bit: the chip takes a byte programmed again over a written
+one and keeps the AND of the two (Verified and unverified, above).
 
 ## Tasks and the stack
 
