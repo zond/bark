@@ -96,7 +96,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _life.dispose();
     lat.dispose();
     lon.dispose();
-    if (app.scanning) app.stopScan();
+    if (app.links.scanning) app.links.stopScan();
     super.dispose();
   }
 
@@ -314,7 +314,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _askUnpair() async {
     final s = app.session;
     final name = nodeName(s.node!.id);
-    final others = app.nodes.paired.length > 1
+    final others = app.session.nodes.paired.length > 1
         ? ' It stays paired with your other nodes.'
         : '';
     // With the last phone gone a node is public, whatever its phones set.
@@ -345,7 +345,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await trySay(context, () async {
       // The home is the node's mailbox key, which it keeps.
       final home = app.mailbox.atHome ? ' It stays your home.' : '';
-      final forgotten = await app.unpair();
+      final forgotten = await app.links.unpair();
       if (!mounted) return;
       if (forgotten) {
         say(context, '$done$home');

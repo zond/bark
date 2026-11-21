@@ -209,7 +209,7 @@ Future<(T?, bool)> _whileListed<T>(
     if (c != null && c.mounted) Navigator.pop(c);
   }
 
-  app.addListener(check);
+  app.mailbox.addListener(check);
   app.session.addListener(check);
   try {
     final v = await showDialog<T>(
@@ -221,7 +221,7 @@ Future<(T?, bool)> _whileListed<T>(
     );
     return (v, gone);
   } finally {
-    app.removeListener(check);
+    app.mailbox.removeListener(check);
     app.session.removeListener(check);
   }
 }

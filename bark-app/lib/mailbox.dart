@@ -30,11 +30,11 @@ class Mailbox extends ChangeNotifier {
   final DateTime Function() now;
 
   /// The public node the phone uses as a guest, once an errand has read
-  /// it (`AppModel.guestHere`).
+  /// it (`Links.guestHere`).
   final NodeRecord? Function() guestHere;
 
   /// Connects to a node as the person's tap does, pairing with it
-  /// (`AppModel.connect`).
+  /// (`Links.connect`).
   final Future<void> Function(FoundNode) connect;
 
   Mailbox({

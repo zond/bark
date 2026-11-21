@@ -23,6 +23,7 @@ import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart' show Form, formatByte, recipientTag;
 import 'package:bark_app/app.dart';
+import 'package:bark_app/links.dart' show Linking;
 import 'package:bark_app/installs.dart' show updatedShown;
 import 'package:bark_app/mailbox.dart' show fullNode;
 import 'package:bark_app/ble_link.dart';
@@ -311,7 +312,7 @@ void main() {
         UniversalBle.setInstance(ble);
         app.session.setPaired(nodeName(FakeNode.id));
         async.flushMicrotasks();
-        app.startSearch();
+        app.links.startSearch();
         body(async, app, ble);
         app.dispose();
         ble.dispose();
@@ -322,7 +323,7 @@ void main() {
     test('at start it connects once the node is seen', () {
       run(pairedInReach: false, (async, app, ble) {
         async.elapse(const Duration(seconds: 1));
-        expect(app.lookingFor, 'bark-fa4e00000001');
+        expect(app.links.lookingFor, 'bark-fa4e00000001');
         expect(
           lookingLine(app),
           'Not connected. Looking for ID FA4E00000001; texts wait on the phone',
@@ -334,8 +335,8 @@ void main() {
         ble.inReach.add(paired);
         async.elapse(lookRound);
         expect(app.session.connected, isTrue);
-        expect(app.linkDevice, paired);
-        expect(app.lookingFor, isNull);
+        expect(app.links.linkDevice, paired);
+        expect(app.links.lookingFor, isNull);
         final scans = ble.scans;
         async.elapse(const Duration(minutes: 1));
         expect(ble.scans, scans);
@@ -360,7 +361,7 @@ void main() {
         ble.power(false);
         async.elapse(const Duration(seconds: 1));
         expect(app.session.connected, isFalse);
-        expect(app.lookingFor, isNull);
+        expect(app.links.lookingFor, isNull);
         expect(
           lookingLine(app),
           'Not connected. Bluetooth is off: turn it on to reach ID FA4E00000001',
@@ -397,12 +398,12 @@ void main() {
     test('after the person disconnects it does not', () {
       run((async, app, ble) {
         async.elapse(const Duration(seconds: 1));
-        app.disconnect();
+        app.links.disconnect();
         async.elapse(const Duration(seconds: 1));
         final scans = ble.scans;
         async.elapse(const Duration(minutes: 5));
         expect(app.session.connected, isFalse);
-        expect(app.lookingFor, isNull);
+        expect(app.links.lookingFor, isNull);
         expect(ble.scans, scans);
       });
     });
@@ -416,8 +417,8 @@ void main() {
         ble.drop(paired);
         async.elapse(const Duration(seconds: 1));
         expect(app.session.nodes.lost, contains(nodeName(FakeNode.id)));
-        expect(app.pairAgain, isNotNull);
-        expect(app.lookingFor, isNull);
+        expect(app.links.pairAgain, isNotNull);
+        expect(app.links.lookingFor, isNull);
         async.elapse(const Duration(minutes: 5));
         expect(ble.bonds, isEmpty);
         expect(ble.pairings, 0);
@@ -436,7 +437,7 @@ void main() {
         final name = nodeName(FakeNode.id);
         expect(app.session.nodes.lost, contains(name));
         bool? gone;
-        app.forget(name).then((v) => gone = v);
+        app.links.forget(name).then((v) => gone = v);
         async.elapse(const Duration(seconds: 1));
         expect(gone, isTrue);
         expect(app.session.nodes.paired, isEmpty);
@@ -454,7 +455,7 @@ void main() {
         app.session.setPaired(name, lost: true);
         async.elapse(const Duration(seconds: 1));
         bool? gone = false;
-        app.forget(name).then((v) => gone = v);
+        app.links.forget(name).then((v) => gone = v);
         async.elapse(const Duration(seconds: 1));
         expect(gone, isNull);
         expect(app.session.nodes.paired, isEmpty);
@@ -473,15 +474,15 @@ void main() {
       run(pairedInReach: false, (async, app, ble) {
         // A round's scan is under way.
         async.elapse(const Duration(seconds: 1));
-        expect(app.lookingFor, 'bark-fa4e00000001');
-        app.connect(FoundNode(other, nodeName(OtherNode.otherId), -60));
+        expect(app.links.lookingFor, 'bark-fa4e00000001');
+        app.links.connect(FoundNode(other, nodeName(OtherNode.otherId), -60));
         async.elapse(const Duration(seconds: 1));
         expect(app.session.connected, isTrue);
-        expect(app.linkDevice, other);
+        expect(app.links.linkDevice, other);
         expect(app.session.nodes.paired, contains('bark-0ce400000002'));
         ble.inReach.add(paired);
         async.elapse(const Duration(minutes: 1));
-        expect(app.linkDevice, other);
+        expect(app.links.linkDevice, other);
         expect(ble.connects, [other]);
       });
     });
@@ -536,7 +537,7 @@ void main() {
         UniversalBle.setInstance(ble);
         if (withPaired && stored) app.session.setPaired(nodeName(FakeNode.id));
         async.flushMicrotasks();
-        app.startSearch();
+        app.links.startSearch();
         body(async, app, ble);
         app.dispose();
         ble.dispose();
@@ -636,14 +637,14 @@ void main() {
         // One round's miss is no proof.
         async.elapse(round);
         expect(ble.connects, isEmpty);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         expect(
           connectionLine(app),
           'Not connected. Looking for ID FA4E00000001; texts wait on the phone',
         );
         // The second, 30 s at a round every 15 s.
         async.elapse(lookRound);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects, [strong]);
         expect(app.session.connected, isFalse);
         const using = 'Connected to ID 0CE400000004 as a guest';
@@ -660,11 +661,11 @@ void main() {
         expect(connectionLine(app), using);
         ble.inReach.add(paired);
         async.elapse(lookRound);
-        expect((app.session.guest, app.linkDevice), (false, paired));
+        expect((app.session.guest, app.links.linkDevice), (false, paired));
         expect(app.session.connected, isTrue);
         expect(ble.connects, [strong, paired]);
-        expect(app.ownAway, isFalse);
-        expect(app.guestNode, isNull);
+        expect(app.links.ownAway, isFalse);
+        expect(app.links.guestNode, isNull);
         expect(connectionLine(app), 'Connected to ID FA4E00000001, paired');
         expect(app.me.nodeAddress!.id, FakeNode.id);
         expect(app.held?.title, 'Connected to ID FA4E00000001, paired');
@@ -686,7 +687,7 @@ void main() {
         ble.rssi[paired] = weakDbm;
         async.elapse(lookRound);
         expect(ble.connects, [strong, paired]);
-        expect((app.session.guest, app.linkDevice), (false, paired));
+        expect((app.session.guest, app.links.linkDevice), (false, paired));
       });
     });
 
@@ -702,14 +703,14 @@ void main() {
           async.elapse(lookRound);
           ble.inReach.add(paired);
           async.elapse(lookRound);
-          expect(app.linkDevice, paired);
+          expect(app.links.linkDevice, paired);
         }
         expect(ble.connects.where((d) => d != paired), isEmpty);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         ble.inReach.remove(paired);
         ble.drop(paired);
         async.elapse(lookRound * 2);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects.last, strong);
       });
     });
@@ -729,7 +730,7 @@ void main() {
         );
         async.elapse(lookRound);
         expect(ble.connects, [paired, strong]);
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.guestNode, nodeName(strongId));
         expect(connectionHelp(app), contains('cannot be used yet'));
         app.session.dismissNotice();
         async.elapse(const Duration(minutes: 3));
@@ -754,10 +755,10 @@ void main() {
         expect(ble.connects.where((d) => d == strong), hasLength(1));
         expect(ble.connects.last, weak);
         // A tap tries it again.
-        app.connectGuest(FoundNode(strong, nodeName(strongId), -50));
+        app.links.connectGuest(FoundNode(strong, nodeName(strongId), -50));
         async.elapse(const Duration(seconds: 1));
         expect(ble.connects.where((d) => d == strong), hasLength(2));
-        expect(app.nodes[nodeName(strongId)]!.unserved, isTrue);
+        expect(app.session.nodes[nodeName(strongId)]!.unserved, isTrue);
       });
     });
 
@@ -793,7 +794,7 @@ void main() {
         'waits through its swap, and it comes back updated', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         async.elapse(round);
-        expect(app.linkDevice, paired);
+        expect(app.links.linkDevice, paired);
         final node = ble.nodes[paired]!;
         node.gathered(24);
         async.flushMicrotasks();
@@ -815,14 +816,14 @@ void main() {
         expect(connectionHelp(app), contains('reconnects by itself'));
         // Past the two rounds that call a node out of reach, it waits on.
         async.elapse(lookRound * 3);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         expect(ble.connects, [paired]);
         expect(connectionLine(app), away);
         // Back after its swap, on the new version.
         async.elapse(swapAway - lookRound * 3);
         ble.inReach.add(paired);
         async.elapse(lookRound);
-        expect(app.linkDevice, paired);
+        expect(app.links.linkDevice, paired);
         expect(app.session.connected, isTrue);
         expect(node.image, 24);
         expect(
@@ -845,9 +846,9 @@ void main() {
         node.install();
         ble.drop(paired);
         async.elapse(swapAway);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         async.elapse(lookRound * 2);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects.last, strong);
         expect(connectionLine(app), 'Connected to ID 0CE400000004 as a guest');
       });
@@ -860,7 +861,7 @@ void main() {
     FakeNode installs(FakeAsync async, AppModel app, FakeNodes ble) {
       ble.nodes[strong]!.paired = false;
       async.elapse(round);
-      expect(app.linkDevice, paired);
+      expect(app.links.linkDevice, paired);
       final node = ble.nodes[paired]!;
       node.gathered(24);
       async.flushMicrotasks();
@@ -920,11 +921,11 @@ void main() {
         installs(async, app, ble);
         async.elapse(swapAway + lookRound);
         expect(ble.connects, [paired]);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         async.elapse(lookRound * 2 + seenWait);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.bonds, isNot(contains(strong)));
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.guestNode, nodeName(strongId));
       });
     });
 
@@ -936,7 +937,7 @@ void main() {
       ) {
         installs(async, app, ble);
         async.elapse(lookRound);
-        app.connectGuest(FoundNode(weak, nodeName(weakId), -70));
+        app.links.connectGuest(FoundNode(weak, nodeName(weakId), -70));
         async.elapse(const Duration(seconds: 1));
         expect(ble.connects, [paired, weak]);
         expect((app.session.connected, app.session.guest), (true, true));
@@ -954,7 +955,7 @@ void main() {
     /// of reach meanwhile.
     FakeNode rebooted(FakeAsync async, AppModel app, FakeNodes ble) {
       async.elapse(round);
-      expect(app.linkDevice, paired);
+      expect(app.links.linkDevice, paired);
       final u = app.updater;
       u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
       u.send();
@@ -982,7 +983,7 @@ void main() {
         // Past the swap and the two rounds that call a node out of reach.
         async.elapse(swapAway + lookRound * 3);
         expect(ble.connects, [paired]);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         expect(
           connectionLine(app),
           'ID FA4E00000001 is installing version 2, not back yet',
@@ -1006,13 +1007,13 @@ void main() {
         rebooted(async, app, ble);
         async.elapse(backWithin);
         expect(ble.connects, [paired]);
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
         expect(
           app.updater.message,
           'The node is not back; it may be out of reach',
         );
         async.elapse(lookRound * 2 + seenWait);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects.last, strong);
         expect(app.installs.installingLine, isNull);
         // Another node is not judged; the update still waits for its own.
@@ -1025,7 +1026,7 @@ void main() {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         rebooted(async, app, ble);
         async.elapse(lookRound);
-        app.connectGuest(FoundNode(weak, nodeName(weakId), -70));
+        app.links.connectGuest(FoundNode(weak, nodeName(weakId), -70));
         async.elapse(const Duration(seconds: 1));
         expect(ble.connects, [paired, weak]);
         expect(app.session.guest, isTrue);
@@ -1042,9 +1043,9 @@ void main() {
         expect(ble.connects, isEmpty);
         expect(ble.bonds, {paired});
         async.elapse(lookRound + seenWait);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects, [strong]);
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.guestNode, nodeName(strongId));
       });
     });
 
@@ -1063,7 +1064,7 @@ void main() {
         ble.inReach.remove(paired);
         ble.drop(paired);
         async.elapse(lookRound * 2);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
       });
     });
 
@@ -1097,8 +1098,8 @@ void main() {
         expect(ble.connects, [strong]);
         expect(ble.bonds, isEmpty);
         expect(ble.pairings, 0);
-        expect(app.bondKept, isNull);
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.bondKept, isNull);
+        expect(app.links.guestNode, nodeName(strongId));
         expect(app.session.nodes.paired, isEmpty);
       });
     });
@@ -1110,9 +1111,9 @@ void main() {
         ble.keepsBonds = true;
         async.elapse(round + const Duration(seconds: 3));
         expect(ble.connects, isNot(contains(strong)));
-        expect(app.bondKept, nodeName(strongId));
+        expect(app.links.bondKept, nodeName(strongId));
         expect(
-          bondKeptLine(app.bondKept!),
+          bondKeptLine(app.links.bondKept!),
           'The phone kept its old pairing with ID 0CE400000004, so it cannot '
           'use the node. Forget it in Bluetooth settings.',
         );
@@ -1125,7 +1126,7 @@ void main() {
         // The person forgets it in the phone's settings.
         ble.bonds.remove(strong);
         async.elapse(lookRound * 4);
-        expect(app.bondKept, isNull);
+        expect(app.links.bondKept, isNull);
         expect(ble.connects.last, strong);
         expect(ble.bonds, isEmpty);
       });
@@ -1145,7 +1146,7 @@ void main() {
         expect(ble.pairings, 0);
         expect((app.session.connected, app.session.guest), (false, false));
         expect(app.session.nodes.paired, isEmpty);
-        expect(app.guestNode, nodeName(FakeNode.id));
+        expect(app.links.guestNode, nodeName(FakeNode.id));
         // Made the home, it is paired by the code on its screen.
         expect(app.mailbox.offerHome, isTrue);
       });
@@ -1155,20 +1156,20 @@ void main() {
         'bond, and the node serves it as a guest after', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         async.elapse(round);
-        expect((app.session.guest, app.linkDevice), (false, paired));
+        expect((app.session.guest, app.links.linkDevice), (false, paired));
         ble.inReach.removeAll({weak, strong});
         bool? forgotten;
-        app.unpair().then((v) => forgotten = v);
+        app.links.unpair().then((v) => forgotten = v);
         async.elapse(const Duration(seconds: 1));
         expect(forgotten, isTrue);
         expect(ble.nodes[paired]!.paired, isFalse);
         expect(ble.bonds, isEmpty);
         expect(app.session.nodes.paired, isEmpty);
-        expect(app.bondKept, isNull);
+        expect(app.links.bondKept, isNull);
         async.elapse(lookRound * 5);
         expect(ble.connects.last, paired);
-        expect(app.guestNode, nodeName(FakeNode.id));
-        expect(app.bondKept, isNull);
+        expect(app.links.guestNode, nodeName(FakeNode.id));
+        expect(app.links.bondKept, isNull);
       });
     });
 
@@ -1182,7 +1183,7 @@ void main() {
           ..dropsOnUnpair = true;
         Object? failed;
         bool? forgotten;
-        app.unpair().then(
+        app.links.unpair().then(
           (v) => forgotten = v,
           onError: (Object e) {
             failed = e;
@@ -1196,7 +1197,7 @@ void main() {
         expect(app.session.nodes.paired, isEmpty);
         async.elapse(lookRound * 3);
         expect(ble.connects.last, paired);
-        expect(app.guestNode, nodeName(FakeNode.id));
+        expect(app.links.guestNode, nodeName(FakeNode.id));
       });
     });
 
@@ -1205,7 +1206,10 @@ void main() {
         async.elapse(round);
         ble.refusesUnpair = true;
         Object? failed;
-        app.unpair().then<void>((_) {}, onError: (Object e) => failed = e);
+        app.links.unpair().then<void>(
+          (_) {},
+          onError: (Object e) => failed = e,
+        );
         // Not before the link could have ended.
         async.elapse(unpairEnd - const Duration(seconds: 1));
         expect(failed, isNull);
@@ -1228,19 +1232,19 @@ void main() {
             ..inReach.removeAll({weak, strong})
             ..keepsBonds = true;
           bool? forgotten;
-          app.unpair().then((v) => forgotten = v);
+          app.links.unpair().then((v) => forgotten = v);
           async.elapse(const Duration(seconds: 3));
           expect(forgotten, isFalse);
           expect(ble.bonds, {paired});
-          expect(app.bondKept, nodeName(FakeNode.id));
+          expect(app.links.bondKept, nodeName(FakeNode.id));
           final connects = ble.connects.length;
           async.elapse(lookRound * 4);
           expect(ble.connects, hasLength(connects));
           ble.bonds.remove(paired);
           async.elapse(lookRound * 2);
-          expect(app.bondKept, isNull);
+          expect(app.links.bondKept, isNull);
           expect(ble.connects.last, paired);
-          expect(app.guestNode, nodeName(FakeNode.id));
+          expect(app.links.guestNode, nodeName(FakeNode.id));
         });
       },
     );
@@ -1253,7 +1257,7 @@ void main() {
         app.session.setPaired(nodeName(FakeNode.id), lost: true);
         async.elapse(lookRound * 2);
         expect(ble.connects, [paired]);
-        expect(app.guestNode, nodeName(FakeNode.id));
+        expect(app.links.guestNode, nodeName(FakeNode.id));
         expect(ble.bonds, isEmpty);
         // Still listed as no longer the phone's, for the person to decide.
         expect(app.session.nodes.lost, {nodeName(FakeNode.id)});
@@ -1263,7 +1267,7 @@ void main() {
     test('the paired node before a stronger public node', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         async.elapse(round);
-        expect((app.session.guest, app.linkDevice), (false, paired));
+        expect((app.session.guest, app.links.linkDevice), (false, paired));
         expect(ble.connects, [paired]);
         final node = ble.nodes[paired]!;
         expect(
@@ -1277,7 +1281,7 @@ void main() {
       run((async, app, ble) {
         async.elapse(round);
         expect(ble.connects, [strong]);
-        app.stopLooking();
+        app.links.stopLooking();
         async.elapse(const Duration(seconds: 1));
         final scans = ble.scans;
         async.elapse(const Duration(minutes: 2));
@@ -1293,18 +1297,18 @@ void main() {
       run(allowed: false, (async, app, ble) {
         async.elapse(const Duration(minutes: 1));
         expect(ble.scans, 0);
-        expect(app.lookingNow, isFalse);
+        expect(app.links.lookingNow, isFalse);
         expect(app.held, isNull);
         expect(lookingLine(app), isNull);
-        app.scan();
+        app.links.scan();
         async.elapse(const Duration(seconds: 1));
         expect(ble.asked, 1);
-        expect(app.bluetoothAllowed, isTrue);
+        expect(app.links.bluetoothAllowed, isTrue);
         expect(
           app.held?.title,
           'Not connected. Looking for a public node; texts wait on the phone',
         );
-        app.stopScan();
+        app.links.stopScan();
         async.elapse(round);
         expect(ble.connects, [strong]);
         expect(app.held?.title, 'Connected to ID 0CE400000004 as a guest');
@@ -1320,14 +1324,14 @@ void main() {
           return true;
         }
 
-        app.askForBluetooth(why);
+        app.links.askForBluetooth(why);
         async.elapse(const Duration(seconds: 1));
         expect((whys, ble.asked), (1, 1));
-        expect(app.bluetoothAllowed, isTrue);
+        expect(app.links.bluetoothAllowed, isTrue);
         expect(app.me.askedBluetooth, isTrue);
         async.elapse(round);
         expect(ble.connects, [strong]);
-        app.askForBluetooth(why);
+        app.links.askForBluetooth(why);
         async.flushMicrotasks();
         expect((whys, ble.asked), (1, 1));
       });
@@ -1387,7 +1391,7 @@ void main() {
       run((async, app, ble) {
         async.elapse(round);
         expect(app.session.connected, isFalse);
-        expect(app.guestHere?.name, nodeName(strongId));
+        expect(app.links.guestHere?.name, nodeName(strongId));
         expect(app.mailbox.offerHome, isTrue);
         String? told;
         app.mailbox.homeHere().then((r) => told = r);
@@ -1396,7 +1400,7 @@ void main() {
         expect(ble.pairings, 1);
         expect(ble.bonds, {strong});
         expect((app.session.connected, app.session.guest), (true, false));
-        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.links.pairedNodes, contains(nodeName(strongId)));
         expect(ble.nodes[strong]!.homeKey, app.me.keys.mailbox.extractBytes());
         expect(app.me.home?.id, strongId);
         expect(app.mailbox.offerHome, isFalse);
@@ -1409,21 +1413,21 @@ void main() {
         (async, app, ble) {
           async.elapse(round);
           expect(app.session.connected && !app.session.guest, isTrue);
-          app.disconnect();
+          app.links.disconnect();
           async.elapse(lookRound * 3);
           expect((app.session.connected, app.session.stopped), (false, true));
-          app.connectPaired(nodeName(FakeNode.id));
+          app.links.connectPaired(nodeName(FakeNode.id));
           async.elapse(round);
           expect(app.session.connected && !app.session.guest, isTrue);
           expect(nodeName(app.session.node!.id), nodeName(FakeNode.id));
           expect(app.session.stopped, isFalse);
           // Out of reach and not heard for the span the search takes to
           // call it so, it says it was not seen.
-          app.disconnect();
+          app.links.disconnect();
           ble.inReach.remove(paired);
           async.elapse(lookRound * ownGone);
           Object? failed;
-          app
+          app.links
               .connectPaired(nodeName(FakeNode.id))
               .then<void>((_) {}, onError: (Object e) => failed = e);
           async.elapse(lookRound * 3);
@@ -1444,7 +1448,7 @@ void main() {
               PhoneRecord(number: n, paired: true),
           ]);
         async.elapse(round);
-        expect(app.guestHere?.asGuest?.room, 0);
+        expect(app.links.guestHere?.asGuest?.room, 0);
         expect(app.mailbox.offerHome, isFalse);
         String? told;
         app.mailbox.homeHere().then((r) => told = r);
@@ -1453,7 +1457,7 @@ void main() {
         expect(ble.pairings, 0);
         // Pairing anyway, from a scan's tap, the node refuses it.
         Object? failed;
-        app
+        app.links
             .connect(FoundNode(strong, nodeName(strongId), -50))
             .then<void>((_) {}, onError: (Object e) => failed = e);
         async.elapse(round);
@@ -1487,7 +1491,7 @@ void main() {
         async.elapse(guestCheck + round);
         expect(ble.connects.length, greaterThan(connects));
         expect(ble.connects.last, strong);
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.guestNode, nodeName(strongId));
         expect(app.mailbox.offerHome, isTrue);
       });
     });
@@ -1498,12 +1502,12 @@ void main() {
         ble.nodes[strong]!.sleepy = true;
         ble.nodes[weak]!.fixed = false;
         async.elapse(round);
-        expect(app.guestHere?.asGuest?.homeable, isFalse);
+        expect(app.links.guestHere?.asGuest?.homeable, isFalse);
         expect(app.mailbox.offerHome, isFalse);
         ble.inReach.remove(strong);
         async.elapse(guestCheck + round);
-        expect(app.guestHere?.name, nodeName(weakId));
-        expect(app.guestHere?.asGuest?.address, isNull);
+        expect(app.links.guestHere?.name, nodeName(weakId));
+        expect(app.links.guestHere?.asGuest?.address, isNull);
         expect(app.mailbox.offerHome, isFalse);
       });
     });
@@ -1515,7 +1519,7 @@ void main() {
         app.mailbox.notHome();
         expect(app.mailbox.offerHome, isFalse);
         async.elapse(guestCheck * 3);
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.guestNode, nodeName(strongId));
         expect(app.mailbox.offerHome, isFalse);
       });
     });
@@ -1524,28 +1528,30 @@ void main() {
         'making it the home', () {
       run((async, app, ble) {
         async.elapse(round);
-        app.connect(app.guestHere!.heard!);
+        app.links.connect(app.links.guestHere!.heard!);
         async.elapse(round);
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
-        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.links.pairedNodes, contains(nodeName(strongId)));
         expect(app.me.home, isNull);
         expect(ble.nodes[strong]!.homeKey, isNull);
-        expect(app.guestHere, isNull);
+        expect(app.links.guestHere, isNull);
       });
     });
 
     test('Pair on a node that still holds the phone\'s bond: the bond goes '
         'first, and the new pairing takes its place', () {
       run(bonds: {strong}, (async, app, ble) {
-        app.stopLooking();
+        app.links.stopLooking();
         async.flushMicrotasks();
-        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        app.links.connect(
+          FoundNode(strong, nodeName(strongId), -50, public: true),
+        );
         async.elapse(round + seenWait);
         expect(ble.connects, [strong]);
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
-        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.links.pairedNodes, contains(nodeName(strongId)));
         expect(ble.bonds, {strong});
       });
     });
@@ -1556,17 +1562,19 @@ void main() {
       run(bonds: {strong}, (async, app, ble) {
         ble.nodes[strong]!.paired = false;
         app.session.setPaired(nodeName(strongId), lost: true);
-        app.stopLooking();
+        app.links.stopLooking();
         async.flushMicrotasks();
-        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        app.links.connect(
+          FoundNode(strong, nodeName(strongId), -50, public: true),
+        );
         async.elapse(round + seenWait);
         // No link over the old bond, which the node would end.
         expect(ble.connects, [strong]);
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
-        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.links.pairedNodes, contains(nodeName(strongId)));
         expect(app.session.nodes.lost, isEmpty);
-        expect(app.bondKept, isNull);
+        expect(app.links.bondKept, isNull);
       });
     });
 
@@ -1577,10 +1585,10 @@ void main() {
           ..keepsBonds = true
           ..nodes[strong]!.paired = false;
         app.session.setPaired(nodeName(strongId), lost: true);
-        app.stopLooking();
+        app.links.stopLooking();
         async.flushMicrotasks();
         Object? failed;
-        app
+        app.links
             .connect(FoundNode(strong, nodeName(strongId), -50, public: true))
             .then<void>((_) {}, onError: (Object e) => failed = e);
         async.elapse(round);
@@ -1592,7 +1600,7 @@ void main() {
         );
         expect(ble.connects, isEmpty);
         expect(ble.pairings, 0);
-        expect(app.connecting, isFalse);
+        expect(app.links.connecting, isFalse);
       });
     });
 
@@ -1602,34 +1610,34 @@ void main() {
         final name = nodeName(strongId);
         ble.nodes[strong]!.paired = false;
         app.session.setPaired(name, lost: true);
-        expect(app.lostInReach(name), isFalse);
+        expect(app.links.lostInReach(name), isFalse);
         async.elapse(round);
-        expect(app.lostInReach(name), isTrue);
-        app.pairLost(name);
+        expect(app.links.lostInReach(name), isTrue);
+        app.links.pairLost(name);
         async.elapse(round + seenWait);
         expect(ble.pairings, 1);
         expect(ble.bonds, {strong});
-        expect(app.linkDevice, strong);
+        expect(app.links.linkDevice, strong);
         expect((app.session.connected, app.session.guest), (true, false));
         expect(app.session.nodes.lost, isEmpty);
         // Out of reach for the span the search takes to call it so, the
         // row offers it no more.
         app.session.setPaired(name, lost: true);
-        app.disconnect();
+        app.links.disconnect();
         ble.inReach.remove(strong);
         async.elapse(lookRound * (ownGone + 1));
-        expect(app.lostInReach(name), isFalse);
+        expect(app.links.lostInReach(name), isFalse);
       });
     });
 
     test('a pairing whose link the node ends: its reason, and nothing '
         'counted paired', () {
       run((async, app, ble) {
-        app.stopLooking();
+        app.links.stopLooking();
         async.flushMicrotasks();
         ble.endsLinks.add(strong);
         Object? failed;
-        app
+        app.links
             .connect(FoundNode(strong, nodeName(strongId), -50, public: true))
             .then<void>((_) {}, onError: (Object e) => failed = e);
         async.elapse(round);
@@ -1642,14 +1650,14 @@ void main() {
           ..endsLinks.clear()
           ..endsAfterNode.add(strong);
         failed = null;
-        app
+        app.links
             .connect(FoundNode(strong, nodeName(strongId), -50, public: true))
             .then<void>((_) {}, onError: (Object e) => failed = e);
         async.elapse(round);
         expect(failed, isA<LinkEnded>());
         expect(app.session.connected, isFalse);
         expect(app.session.nodes.paired, isEmpty);
-        expect(app.connecting, isFalse);
+        expect(app.links.connecting, isFalse);
       });
     });
 
@@ -1659,8 +1667,10 @@ void main() {
         // The round's errand at the strongest is being set up.
         ble.setUp = const Duration(seconds: 1);
         async.elapse(lookScan + const Duration(milliseconds: 500));
-        expect(app.linking, isNot(Linking.none));
-        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        expect(app.links.linking, isNot(Linking.none));
+        app.links.connect(
+          FoundNode(strong, nodeName(strongId), -50, public: true),
+        );
         async.elapse(round);
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
@@ -1671,7 +1681,7 @@ void main() {
         'node the phone links to', () {
       run((async, app, ble) {
         final home = Address(Position.fromDegrees(50, 30), [9, 9, 9, 9, 9, 9]);
-        app.stopLooking();
+        app.links.stopLooking();
         async.flushMicrotasks();
         app.me.setHome(home);
         String? told;
@@ -1739,7 +1749,7 @@ void main() {
         app.session.setPaired(nodeName(FakeNode.id));
         app.session.setPaired(nodeName(nearId));
         async.flushMicrotasks();
-        app.startSearch();
+        app.links.startSearch();
         body(async, app, ble);
         app.dispose();
         ble.dispose();
@@ -1758,7 +1768,10 @@ void main() {
         expect(app.held?.title, 'Connected to your home, ID FA4E00000001');
         expect(connectionHelp(app), startsWith('Your home.'));
         // Both stay paired.
-        expect(app.pairedNodes, {nodeName(FakeNode.id), nodeName(nearId)});
+        expect(app.links.pairedNodes, {
+          nodeName(FakeNode.id),
+          nodeName(nearId),
+        });
       });
     });
 
@@ -1773,7 +1786,7 @@ void main() {
           connectionLine(app),
           'Connected to ID 0CE400000006, paired. Home at ID FA4E00000001',
         );
-        expect(app.ownAway, isFalse);
+        expect(app.links.ownAway, isFalse);
       });
     });
 
@@ -1791,7 +1804,7 @@ void main() {
         ble.inReach.removeAll({home, near});
         async.elapse(const Duration(seconds: 1));
         // The home, though the other was paired with last.
-        expect(app.lookingFor, nodeName(FakeNode.id));
+        expect(app.links.lookingFor, nodeName(FakeNode.id));
         expect(
           connectionLine(app),
           'Not connected. Looking for ID FA4E00000001; texts wait on the phone',
@@ -1799,7 +1812,7 @@ void main() {
         async.elapse(round);
         expect(ble.connects, isEmpty);
         async.elapse(lookRound);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects, [strong]);
         expect(
           connectionLine(app),
@@ -1808,7 +1821,7 @@ void main() {
         // The other paired node back in reach: on it at once.
         ble.inReach.add(near);
         async.elapse(lookRound);
-        expect((app.linkDevice, app.session.guest), (near, false));
+        expect((app.links.linkDevice, app.session.guest), (near, false));
       });
     });
 
@@ -1823,12 +1836,12 @@ void main() {
         final scans = ble.scans;
         async.elapse(lookAround);
         expect(ble.scans, scans + 1);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         // Usable: the next look-around moves the phone to it.
         ble.rssi[home] = weakDbm;
         async.elapse(lookAround);
         expect(ble.connects, [near, home]);
-        expect((app.linkDevice, app.session.guest), (home, false));
+        expect((app.links.linkDevice, app.session.guest), (home, false));
         expect(connectionLine(app), 'Connected to your home, ID FA4E00000001');
         // On the home nothing is higher: no more scans.
         final after = ble.scans;
@@ -1849,13 +1862,13 @@ void main() {
         async.elapse(round);
         expect(ble.connects, [home]);
         expect(app.session.notice?.text, said);
-        expect(app.nodes[name]!.unserved, isTrue);
+        expect(app.session.nodes[name]!.unserved, isTrue);
         // The next round takes the other paired node, as a paired phone.
         async.elapse(lookRound);
         expect(ble.connects, [home, near]);
-        expect((app.linkDevice, app.session.guest), (near, false));
+        expect((app.links.linkDevice, app.session.guest), (near, false));
         expect(app.session.notice?.text, said);
-        expect(app.movesHome, isFalse);
+        expect(app.links.movesHome, isFalse);
         // No look-around for a home it would not move to, and no retry.
         app.session.dismissNotice();
         final scans = ble.scans;
@@ -1864,27 +1877,27 @@ void main() {
         expect(ble.connects, [home, near]);
         expect(app.session.notice, isNull);
         // The person's tap tries it, and is refused again.
-        app.connectPaired(name);
+        app.links.connectPaired(name);
         async.elapse(const Duration(seconds: 1));
         expect(app.session.notice?.text, said);
-        expect(app.nodes[name]!.unserved, isTrue);
+        expect(app.session.nodes[name]!.unserved, isTrue);
         // The tap closed the link to the other node; the search goes back
         // to it at once, not to the home.
         expect(ble.connects, [home, near, home, near]);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         // Updated, a tap links to it, and the search uses it again.
         h
           ..version = linkVersion
           ..oldest = linkVersion;
-        app.connectPaired(name);
+        app.links.connectPaired(name);
         async.elapse(const Duration(seconds: 1));
-        expect((app.linkDevice, app.session.guest), (home, false));
-        expect(app.nodes[name]!.unserved, isFalse);
+        expect((app.links.linkDevice, app.session.guest), (home, false));
+        expect(app.session.nodes[name]!.unserved, isFalse);
         expect(app.session.notice?.text, isNot(said));
         ble.drop(home);
         async.elapse(round);
         expect(ble.connects.last, home);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
       });
     });
 
@@ -1902,9 +1915,9 @@ void main() {
           'Not connected. Looking for ID 0CE400000006; texts wait on the phone',
         );
         async.elapse(lookRound);
-        expect(app.ownAway, isTrue);
+        expect(app.links.ownAway, isTrue);
         expect(ble.connects, [home, strong]);
-        expect(app.guestNode, nodeName(strongId));
+        expect(app.links.guestNode, nodeName(strongId));
         expect(connectionHelp(app), contains('cannot be used yet'));
       });
     });
@@ -1915,7 +1928,7 @@ void main() {
         ble.inReach.removeAll({near, strong});
         async.elapse(round);
         expect(ble.connects, [home]);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
       });
     });
 
@@ -1924,7 +1937,7 @@ void main() {
       run((async, app, ble) {
         ble.inReach.remove(home);
         async.elapse(round);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         final scans = ble.scans;
         async.elapse(const Duration(minutes: 5));
         expect(ble.scans - scans, 5);
@@ -1937,13 +1950,13 @@ void main() {
       run((async, app, ble) {
         ble.inReach.remove(home);
         async.elapse(round);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         ble.nodes[near]!.gathered(24);
         async.flushMicrotasks();
         expect(app.installs.install, isNotNull);
         ble.inReach.add(home);
         async.elapse(lookAround);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
         expect(app.installs.install, isNull);
         final log = [for (final l in app.session.log) l.text];
         expect(log.where((l) => l.contains('reboots')), isEmpty);
@@ -1955,7 +1968,7 @@ void main() {
         'the phone is back on it', () {
       run((async, app, ble) {
         async.elapse(round);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
         final u = app.updater;
         u.choose(parseImage(imageFile(2, 5000)), 'bark-fw-2.img');
         u.send();
@@ -1965,9 +1978,9 @@ void main() {
         u.reboot();
         async.flushMicrotasks();
         expect(app.installs.install?.sent, isTrue);
-        app.connectPaired(nodeName(nearId));
+        app.links.connectPaired(nodeName(nearId));
         async.elapse(round);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         expect(app.installs.install, isNull);
         expect(u.phase, Phase.rebooting);
         // The tapped link is the person's until it drops; then the phone
@@ -1977,7 +1990,7 @@ void main() {
         ble.inReach.remove(near);
         ble.drop(near);
         async.elapse(round);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
         expect(u.phase, Phase.done, reason: u.message);
       });
     });
@@ -1987,7 +2000,7 @@ void main() {
       run(withHome: false, (async, app, ble) {
         ble.inReach.remove(home);
         async.elapse(round);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         ble.inReach.add(home);
         ble.rssi[home] = -30;
         final scans = ble.scans;
@@ -2002,7 +2015,7 @@ void main() {
       run((async, app, ble) {
         ble.inReach.remove(home);
         async.elapse(round);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         final s = app.session;
         final fetch = Outgoing(
           Address(Position.fromDegrees(50, 30), FakeNode.id),
@@ -2015,13 +2028,13 @@ void main() {
         async.elapse(const Duration(seconds: 1));
         expect(fetch.state, OutState.taken);
         expect(s.fetchWaiting, fetch);
-        expect(app.settled, isFalse);
+        expect(app.links.settled, isFalse);
         ble.inReach.add(home);
         async.elapse(lookAround);
         expect(ble.connects, [near]);
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         s.fetchAnswered(1, nothingNew: true);
-        expect(app.settled, isTrue);
+        expect(app.links.settled, isTrue);
         async.elapse(lookAround);
         expect(ble.connects, [near, home]);
       });
@@ -2031,18 +2044,20 @@ void main() {
       run((async, app, ble) {
         ble.inReach.remove(home);
         async.elapse(round);
-        app.disconnect();
+        app.links.disconnect();
         async.elapse(const Duration(seconds: 1));
-        app.connect(FoundNode(near, nodeName(nearId), -60, public: false));
+        app.links.connect(
+          FoundNode(near, nodeName(nearId), -60, public: false),
+        );
         async.elapse(const Duration(seconds: 1));
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         ble.inReach.add(home);
         async.elapse(const Duration(minutes: 3));
-        expect(app.linkDevice, near);
+        expect(app.links.linkDevice, near);
         // Dropped, the search takes it from there: the home, as heard.
         ble.drop(near);
         async.elapse(const Duration(seconds: 6));
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
       });
     });
     test('a tap on a public node from the home holds: the next link is '
@@ -2050,9 +2065,9 @@ void main() {
         'lasts until the node ends it', () {
       run((async, app, ble) {
         async.elapse(round);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
         final scans = ble.scans;
-        app.connectGuest(
+        app.links.connectGuest(
           FoundNode(strong, nodeName(strongId), -50, public: true),
         );
         async.elapse(const Duration(seconds: 1));
@@ -2068,7 +2083,7 @@ void main() {
         async.elapse(const Duration(seconds: 25));
         expect(ble.connects, [home, strong]);
         expect(ble.scans, scans);
-        expect(app.linkDevice, strong);
+        expect(app.links.linkDevice, strong);
         // The node ends it after its 30 s; the search takes the home.
         async.elapse(const Duration(seconds: 10));
         expect(ble.connects, [home, strong, home]);
@@ -2079,15 +2094,17 @@ void main() {
         'with no errand first and no round between', () {
       run((async, app, ble) {
         async.elapse(round);
-        expect(app.linkDevice, home);
+        expect(app.links.linkDevice, home);
         final scans = ble.scans;
-        app.connect(FoundNode(strong, nodeName(strongId), -50, public: true));
+        app.links.connect(
+          FoundNode(strong, nodeName(strongId), -50, public: true),
+        );
         async.elapse(const Duration(seconds: 1));
         expect(ble.connects, [home, strong]);
         expect(ble.scans, scans);
         expect(ble.pairings, 1);
         expect((app.session.connected, app.session.guest), (true, false));
-        expect(app.pairedNodes, contains(nodeName(strongId)));
+        expect(app.links.pairedNodes, contains(nodeName(strongId)));
         expect(app.me.home?.id, FakeNode.id);
       });
     });
@@ -2130,7 +2147,7 @@ void main() {
         UniversalBle.setInstance(ble);
         app.session.setPaired(nodeName(FakeNode.id));
         async.flushMicrotasks();
-        app.startSearch();
+        app.links.startSearch();
         body(async, app, ble);
         app.dispose();
         ble.dispose();
@@ -2146,8 +2163,8 @@ void main() {
         expect(ble.connects, isEmpty);
         async.elapse(lookRound + seenWait);
         expect(ble.connects, [bonded]);
-        expect(app.guestNode, nodeName(bondedId));
-        expect(app.pairedNodes, {nodeName(FakeNode.id)});
+        expect(app.links.guestNode, nodeName(bondedId));
+        expect(app.links.pairedNodes, {nodeName(FakeNode.id)});
         expect(ble.pairings, 0);
       });
     });
@@ -2155,14 +2172,14 @@ void main() {
     test('a tap on it as a public node: the bond goes first, then a '
         'guest\'s link', () {
       run((async, app, ble) {
-        app.stopLooking();
+        app.links.stopLooking();
         async.flushMicrotasks();
-        app.connectGuest(FoundNode(bonded, nodeName(bondedId), -50));
+        app.links.connectGuest(FoundNode(bonded, nodeName(bondedId), -50));
         async.elapse(seenWait);
         expect(ble.connects, [bonded]);
         expect((app.session.connected, app.session.guest), (true, true));
         expect(ble.bonds, {mine});
-        expect(app.pairedNodes, {nodeName(FakeNode.id)});
+        expect(app.links.pairedNodes, {nodeName(FakeNode.id)});
       });
     });
   });

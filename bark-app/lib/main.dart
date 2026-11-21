@@ -15,7 +15,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final app = await AppModel.onPhone(await SodiumInit.init());
   await app.load();
-  app.startSearch();
+  app.links.startSearch();
   runApp(BarkApp(app));
 }
 
@@ -46,8 +46,8 @@ class _BarkAppState extends State<BarkApp> {
       // The person may have allowed Bluetooth in Android's settings, or
       // forgotten a node there.
       onResume: () {
-        unawaited(app.checkBluetooth());
-        unawaited(app.recheckKept());
+        unawaited(app.links.checkBluetooth());
+        unawaited(app.links.recheckKept());
       },
     );
     _taps = app.notifier.tapped.listen(_openThread);

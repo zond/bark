@@ -107,7 +107,7 @@ class IdentitySection extends StatelessWidget {
     if (done != true || !context.mounted) return;
     say(
       context,
-      app.nodes.lost.isEmpty
+      app.session.nodes.lost.isEmpty
           ? 'Identity restored'
           : 'Identity restored. Pair again with your nodes.',
     );

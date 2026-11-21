@@ -316,14 +316,14 @@ void main() {
         done(async, fresh.moving.restoreFile(file, 'pw'));
         final home = nodeName(FakeNode.id);
         expect(fresh.me.home.toString(), old.me.home.toString());
-        expect(fresh.homeName, home);
+        expect(fresh.links.homeName, home);
         expect(fresh.me.keys.mailbox.extractBytes(), old.fakeNode!.homeKey);
         // The identity's own key is not kept as a given one.
         expect(fresh.me.givenKey, isNull);
-        final r = fresh.nodes[home]!;
+        final r = fresh.session.nodes[home]!;
         expect((r.paired, r.lost), (true, true));
-        expect(fresh.nodes.own, isEmpty);
-        expect(fresh.nodes.lost, {home});
+        expect(fresh.session.nodes.own, isEmpty);
+        expect(fresh.session.nodes.lost, {home});
         // Kept as such across a restart.
         final again = Session(store: fresh.session.store, now: fresh.now);
         again.load();
@@ -332,8 +332,8 @@ void main() {
         again.dispose();
         // Pairing anew makes it the phone's own again.
         done(async, fresh.session.setPaired(home));
-        expect(fresh.nodes[home]!.lost, isFalse);
-        expect(fresh.nodes.own, {home});
+        expect(fresh.session.nodes[home]!.lost, isFalse);
+        expect(fresh.session.nodes.own, {home});
       });
     });
 
@@ -347,15 +347,15 @@ void main() {
         done(async, old.session.disconnect());
         done(async, fresh.moving.restoreFile(file, 'pw'));
         final home = nodeName(FakeNode.id);
-        expect(fresh.nodes[home]!.moved, isTrue);
+        expect(fresh.session.nodes[home]!.moved, isTrue);
         // Android holds the bond, as the fake Bluetooth does.
         expect(old.fakeBle!.bonds, {fakeDevice});
-        fresh.scan();
+        fresh.links.scan();
         async.elapse(const Duration(seconds: 1));
-        expect(fresh.nodes.own, {home});
-        expect(fresh.nodes[home]!.moved, isFalse);
+        expect(fresh.session.nodes.own, {home});
+        expect(fresh.session.nodes[home]!.moved, isFalse);
         expect(old.fakeBle!.bonds, {fakeDevice});
-        done(async, fresh.stopScan());
+        done(async, fresh.links.stopScan());
       });
     });
 
@@ -369,11 +369,11 @@ void main() {
         done(async, fresh.moving.restoreFile(file, 'pw'));
         final home = nodeName(FakeNode.id);
         old.fakeBle!.bonds.clear();
-        fresh.scan();
+        fresh.links.scan();
         async.elapse(const Duration(seconds: 1));
-        expect(fresh.nodes.lost, {home});
-        expect(fresh.nodes[home]!.moved, isFalse);
-        done(async, fresh.stopScan());
+        expect(fresh.session.nodes.lost, {home});
+        expect(fresh.session.nodes[home]!.moved, isFalse);
+        done(async, fresh.links.stopScan());
       });
     });
 
@@ -403,7 +403,7 @@ void main() {
         );
         expect(fresh.me.key, before);
         expect(fresh.contacts.list, isEmpty);
-        expect(fresh.nodes.paired, isEmpty);
+        expect(fresh.session.nodes.paired, isEmpty);
       });
     });
 
@@ -436,7 +436,7 @@ void main() {
           expect(old.contacts.list, isEmpty);
           expect(old.session.received, isEmpty);
           // This phone's own pairing stays: Android holds its bond.
-          expect(old.nodes.own, {nodeName(FakeNode.id)});
+          expect(old.session.nodes.own, {nodeName(FakeNode.id)});
         });
       },
     );
