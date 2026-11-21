@@ -372,12 +372,12 @@ pub enum Fate {
     },
 }
 
-struct OriginRecord {
+pub(crate) struct OriginRecord {
     src: u32,
-    dst: u32,
+    pub(crate) dst: u32,
     /// When the traffic model first had it for its origin.
     t: Instant,
-    fate: Fate,
+    pub(crate) fate: Fate,
     /// Whether the destination could be reached from the origin at the
     /// start of the run; see [`Sim::reachable`].
     reachable: bool,
@@ -393,12 +393,12 @@ struct OriginRecord {
     /// The node that queued it for its destination node
     /// (spec "Delivery queue"), the beats of that node it heard while the
     /// message was queued, and the DATA it sent it.
-    holder: Option<u32>,
-    holder_beats: u32,
+    pub(crate) holder: Option<u32>,
+    pub(crate) holder_beats: u32,
     holder_tries: u32,
     /// What became of its destination node's beats at the holder while
     /// it was queued.
-    watch: HolderWatch,
+    pub(crate) watch: HolderWatch,
     /// Frames that carried it or answered it (DATA and their ACKs),
     /// and their time on air, µs.
     frames: u32,
@@ -814,7 +814,7 @@ pub struct Sim {
     /// Sleepy nodes whose anchor the scenario removed or restarted, and
     /// when; and, once an anchor hears them again, when that was.
     pub(crate) orphans: HashMap<u32, (Instant, Option<Instant>)>,
-    origins: Vec<OriginRecord>,
+    pub(crate) origins: Vec<OriginRecord>,
     /// Per node, the message its application waits to send.
     offers: Vec<Option<Offer>>,
     /// Per node, its mailbox if it is a person's home (spec "Mailbox"),
@@ -834,14 +834,9 @@ pub struct Sim {
     pub(crate) data_hops: HashMap<(u32, u64), u32>,
     /// Per minute and message tag, airtime by frame kind, when asked for.
     msg_minutes: Option<HashMap<(u32, u32), [u64; 5]>>,
-    /// Messages queued, by holder and destination node's ID, for counting
-    /// the beats the holder hears.
-    queued_for: HashMap<(u32, u64), Vec<u32>>,
-    /// The holders of messages queued for each node, by the node's ID.
-    holders_of: HashMap<u64, Vec<u32>>,
-    /// Beats on the air of a node with messages queued: key to each
-    /// holder and the beat's fate there so far.
-    pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<BeatFate>)>>,
+    /// The beats of sleepy nodes at the holders of messages for them
+    /// (`holders.rs`).
+    pub(crate) holder_beats: crate::holders::HolderBeats,
     script: Vec<ScriptEntry>,
     /// Results of scripted excursions, in completion order.
     pub script_log: Vec<ScriptResult>,
@@ -1354,9 +1349,7 @@ impl Sim {
             offered: HashMap::new(),
             data_hops: HashMap::new(),
             msg_minutes: None,
-            queued_for: HashMap::new(),
-            holders_of: HashMap::new(),
-            beat_watch: HashMap::new(),
+            holder_beats: Default::default(),
             script: Vec::new(),
             script_log: Vec::new(),
             cadence: sc.metrics.cadence_s.map(secs),
@@ -2552,13 +2545,7 @@ impl Sim {
         else {
             return;
         };
-        if let Some(tags) = self.queued_for.get_mut(&(receiver, key(hb.id))) {
-            let origins = &mut self.origins;
-            tags.retain(|&t| origins[t as usize].fate == Fate::Unaccounted);
-            for &t in tags.iter() {
-                origins[t as usize].holder_beats += 1;
-            }
-        }
+        self.holder_heard(receiver, hb.id);
         let Some(&leaf) = self.leaf_nodes.get(&hb.id.0) else {
             return;
         };
@@ -2647,6 +2634,7 @@ impl Sim {
                 self.power_trace(node, &t);
                 self.carried_trace(node, &t);
                 self.handover_trace(node, &t);
+                self.holders_trace(node, &t);
                 if let Trace::Role { sleepy } = t {
                     self.battery_turn(sleepy);
                 }
@@ -2668,16 +2656,7 @@ impl Sim {
                             self.metrics.research.moves.push(m);
                         }
                     }
-                    Trace::HeartbeatSkipped { channel } => {
-                        c.heartbeats_skipped += 1;
-                        let r = &self.relays[node as usize];
-                        if r.sleepy() && r.anchor().is_some() && channel == r.home() {
-                            let id = key(r.id());
-                            for h in self.holders_waiting(id) {
-                                self.watch_note(h, id, BeatFate::Skipped, false);
-                            }
-                        }
-                    }
+                    Trace::HeartbeatSkipped { .. } => c.heartbeats_skipped += 1,
                     Trace::HeartbeatDeferred { .. } => c.heartbeats_deferred += 1,
                     Trace::Refused { reason, .. } => c.refused.add(reason),
                     Trace::TurnedAway { .. } => c.turned_away += 1,
@@ -2717,29 +2696,6 @@ impl Sim {
                     }
                     Trace::Burst => self.next_tx[node as usize] = TxMark::Burst,
                     Trace::Answer => self.next_tx[node as usize] = TxMark::Answer,
-                    Trace::Queued { msg_id, node: to } => {
-                        if let Some(&tag) = self.msg_tags.get(&msg_id.0) {
-                            let r = &self.relays[node as usize];
-                            let dst = self.origins[tag as usize].dst as usize;
-                            let w = &mut self.origins[tag as usize].watch;
-                            w.queued_at = Some(self.now);
-                            w.known = r.heard_nodes().get(to).is_some();
-                            w.anchored = self.relays[dst].anchor().is_some_and(|a| a.id == r.id());
-                            let row = self.links.row(dst as u32);
-                            let to_relay = row.iter().filter(|l| l.rx < self.n_relays);
-                            w.best_dbm = to_relay.map(|l| l.base_dbm).reduce(f32::max);
-                            w.holder_dbm = row.iter().find(|l| l.rx == node).map(|l| l.base_dbm);
-                            let holders = self.holders_of.entry(key(to)).or_default();
-                            if !holders.contains(&node) {
-                                holders.push(node);
-                            }
-                            self.origins[tag as usize].holder = Some(node);
-                            self.queued_for
-                                .entry((node, key(to)))
-                                .or_default()
-                                .push(tag);
-                        }
-                    }
                     Trace::DeliveryWaits {
                         msg_id,
                         node: to,
@@ -3291,45 +3247,6 @@ impl Sim {
             if o.fate != Fate::Delivered {
                 o.fate = Fate::Dropped { node, reason };
                 o.dropped_at = Some(self.now);
-            }
-        }
-    }
-
-    /// A DATA of the message `msg` went from `src` with the long preamble.
-    pub(crate) fn note_long_try(&mut self, msg: u32, src: u32) {
-        if let Some(&tag) = self.msg_tags.get(&msg) {
-            let o = &mut self.origins[tag as usize];
-            if o.holder == Some(src) {
-                o.watch.long_tries += 1;
-            }
-        }
-    }
-
-    /// The holders with messages for the node `id` not yet accounted for.
-    pub(crate) fn holders_waiting(&mut self, id: u64) -> Vec<u32> {
-        let Some(holders) = self.holders_of.get_mut(&id) else {
-            return Vec::new();
-        };
-        let (queued, origins) = (&self.queued_for, &self.origins);
-        holders.retain(|&h| {
-            queued.get(&(h, id)).is_some_and(|tags| {
-                tags.iter()
-                    .any(|&t| origins[t as usize].fate == Fate::Unaccounted)
-            })
-        });
-        holders.clone()
-    }
-
-    /// Count a beat of the node `id` with `fate` at `holder` for each
-    /// message the holder holds for it.
-    pub(crate) fn watch_note(&mut self, holder: u32, id: u64, fate: BeatFate, elsewhere: bool) {
-        if let Some(tags) = self.queued_for.get(&(holder, id)) {
-            for &t in tags {
-                let o = &mut self.origins[t as usize];
-                if o.fate == Fate::Unaccounted {
-                    o.watch.beats[fate as usize] += 1;
-                    o.watch.elsewhere += u32::from(elsewhere);
-                }
             }
         }
     }
