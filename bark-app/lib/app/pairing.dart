@@ -53,12 +53,23 @@ mixin _Pairing on _AppCore {
 
   /// Removes the bond Android holds with each node of `heard` that the app
   /// does not count as its own, as it hears it, so that the node is a
-  /// public node like any other.
+  /// public node like any other. A node of an identity file whose bond
+  /// Android holds is the phone's own still: the file came back to the
+  /// phone that made the pairing. If the node forgot it since, the first
+  /// link says so.
   @override
   Future<void> _forgetBonds(Iterable<FoundNode> heard) async {
     for (final n in heard) {
       if (n.name == n.deviceId) continue;
       final r = nodes.of(n.name);
+      if (r.moved) {
+        r.moved = false;
+        if (await BleLink.bonded(n.deviceId)) {
+          await session.setPaired(n.name);
+          continue;
+        }
+        await session.save();
+      }
       if (r.own || r.bondKept) continue;
       await _forgetBond(n.name, n.deviceId);
     }

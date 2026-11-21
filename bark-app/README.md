@@ -269,7 +269,8 @@ is a prototype for the bench, not the app people will carry.
   - **Updates** (Newer releases, below).
   - **My name** and **Backup**: show the 12 words, or restore an
     identity from them, after a warning that contacts reach it only
-    once they have its card.
+    once they have its card. A restore ends the link and drops the home,
+    which were the identity replaced's.
   - **My identity**: "Save it to a file to move to a new phone.", with
     **Save to a file** and **Restore from a file**, and an info button
     on what the file holds, that a pairing stays on the old phone, and
@@ -1250,7 +1251,10 @@ know this phone" under "Paired with", with **Pair again** while in
 reach and **Forget** (Settings, above), and no mark of their own, as
 that is all they are to this phone. The search does not
 use them meanwhile, and a public one serves the phone as a guest. A node
-this phone is paired with already stays its own. The home needs no
+this phone is paired with already stays its own; and where the file
+comes back to the phone it was saved on, the app's files gone, Android
+holds the bonds still, so a node whose bond Android lists when a scan
+first hears it is the phone's own again, without a code. The home needs no
 pairing, as it holds the mailbox key: texts to the card go on arriving
 there, and **Fetch my mail** from any other node brings them. Each
 saved file holds the state of its moment: two phones restored from one,

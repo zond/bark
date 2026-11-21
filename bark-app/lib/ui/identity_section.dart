@@ -171,6 +171,8 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.title),
+    // Its fields stay in reach above the keyboard on a phone held sideways.
+    scrollable: true,
     content: Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,

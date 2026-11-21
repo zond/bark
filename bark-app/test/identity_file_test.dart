@@ -290,6 +290,56 @@ void main() {
       });
     });
 
+    test('restored on the phone the pairing was made on, the node is its '
+        'own once heard', () {
+      run((async, old, fresh) {
+        final file = done(async, old.identityFile('pw', messages: false));
+        done(async, old.session.disconnect());
+        done(async, fresh.restoreFile(file, 'pw'));
+        final home = nodeName(FakeNode.id);
+        expect(fresh.nodes[home]!.moved, isTrue);
+        // Android holds the bond, as the fake Bluetooth does.
+        expect(old.fakeBle!.bonds, {fakeDevice});
+        fresh.scan();
+        async.elapse(const Duration(seconds: 1));
+        expect(fresh.nodes.own, {home});
+        expect(fresh.nodes[home]!.moved, isFalse);
+        expect(old.fakeBle!.bonds, {fakeDevice});
+        done(async, fresh.stopScan());
+      });
+    });
+
+    test('restored on another phone, the node heard stays to pair again', () {
+      run((async, old, fresh) {
+        final file = done(async, old.identityFile('pw', messages: false));
+        done(async, old.session.disconnect());
+        done(async, fresh.restoreFile(file, 'pw'));
+        final home = nodeName(FakeNode.id);
+        old.fakeBle!.bonds.clear();
+        fresh.scan();
+        async.elapse(const Duration(seconds: 1));
+        expect(fresh.nodes.lost, {home});
+        expect(fresh.nodes[home]!.moved, isFalse);
+        done(async, fresh.stopScan());
+      });
+    });
+
+    test('restoring from words ends the link and drops the home, which were '
+        'the identity replaced\'s', () {
+      run((async, old, fresh) {
+        expect(old.me.home, isNotNull);
+        expect(old.session.connected, isTrue);
+        final seed = Uint8List.fromList(List.generate(seedLen, (i) => 9 + i));
+        done(async, old.restoreWords(seed));
+        expect(old.session.connected, isFalse);
+        expect(old.me.key, hex(Keys.fromSeed(sodium, seed).identity));
+        expect(old.me.home, isNull);
+        expect(old.me.givenKey, isNull);
+        expect(old.me.owner, isFalse);
+        expect(old.me.leaving, isNull);
+      });
+    });
+
     test('a wrong password changes nothing', () {
       run((async, old, fresh) {
         final file = done(async, old.identityFile('pw', messages: true));

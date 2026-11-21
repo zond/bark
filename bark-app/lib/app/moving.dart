@@ -68,4 +68,14 @@ mixin _Moving on _AppCore {
     );
     notifyListeners();
   }
+
+  /// Replaces the person by the one of `seed`, from their 12 words. The
+  /// link ends first, as for a file: the node gives it the mail of the
+  /// identity replaced.
+  Future<void> restoreWords(Uint8List seed) async {
+    await session.disconnect();
+    await me.restore(seed);
+    session.note('Identity restored from words');
+    notifyListeners();
+  }
 }

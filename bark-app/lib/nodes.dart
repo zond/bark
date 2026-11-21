@@ -32,6 +32,11 @@ class NodeRecord {
   /// Forget.
   bool lost = false;
 
+  /// Taken from an identity file as paired, and not heard since. Restored
+  /// on the phone it was saved on, Android holds its bond still, and the
+  /// first scan that hears the node asks ([NodeStore.moveIn]).
+  bool moved = false;
+
   /// The number of the last item taken from its ring as a guest: the
   /// node keeps nothing for a guest, so the phone keeps where it is
   /// (spec "Phone link", Public).
@@ -80,6 +85,7 @@ class NodeRecord {
     'name': name,
     'paired': paired,
     'lost': lost,
+    if (moved) 'moved': true,
     'ringAfter': ringAfter,
   };
 
@@ -87,6 +93,7 @@ class NodeRecord {
       NodeRecord(j['name'] as String)
         ..paired = j['paired'] as bool
         ..lost = j['lost'] as bool
+        ..moved = j['moved'] as bool? ?? false
         ..ringAfter = j['ringAfter'] as int;
 }
 
@@ -149,7 +156,8 @@ class NodeStore {
     final r = _all.remove(name) ?? NodeRecord(name);
     _all[name] = r
       ..paired = true
-      ..lost = lost;
+      ..lost = lost
+      ..moved = false;
     return !same;
   }
 
@@ -159,14 +167,15 @@ class NodeStore {
     if (r == null || !r.paired) return false;
     r
       ..paired = false
-      ..lost = false;
+      ..lost = false
+      ..moved = false;
     return true;
   }
 
   /// Takes the nodes of an identity file. One the old phone was paired
   /// with does not hold this phone's bond, as a bond stays in the phone it
   /// was made on, so it is paired and lost, unless this phone is paired with it
-  /// already; and where the old phone stood in each node's ring as a guest
+  /// already, or turns out to be that phone ([NodeRecord.moved]); and where the old phone stood in each node's ring as a guest
   /// is where this one does. Of what this phone knew, only its own nodes
   /// stay paired, as Android holds their bonds; its places in the rings
   /// were another identity's tag's.
@@ -177,7 +186,8 @@ class NodeStore {
       if (!r.own) {
         r
           ..paired = false
-          ..lost = false;
+          ..lost = false
+          ..moved = false;
       }
     }
     for (final n in ns) {
@@ -185,7 +195,8 @@ class NodeStore {
       if (n.paired && !r.own) {
         r
           ..paired = true
-          ..lost = true;
+          ..lost = true
+          ..moved = true;
       }
     }
     guest = null;

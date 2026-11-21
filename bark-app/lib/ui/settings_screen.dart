@@ -457,7 +457,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) say(context, 'Those are not 12 words of a backup');
       return;
     }
-    await app.me.restore(seed);
+    await app.restoreWords(seed);
     if (mounted) say(context, 'Identity restored');
   }
 

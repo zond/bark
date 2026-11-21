@@ -254,10 +254,17 @@ class Me extends ChangeNotifier {
     await _changed();
   }
 
-  /// Replaces the identity by the one of `seed`, from its 12 words.
+  /// Replaces the identity by the one of `seed`, from its 12 words. The
+  /// home, its key and a leave under way were the identity replaced's.
   Future<void> restore(Uint8List seed) async {
     keys = Keys.fromSeed(sodium, seed);
     backedUp = true;
+    home = null;
+    _givenKey(null);
+    owner = false;
+    homeReads = null;
+    leaving = null;
+    fetchQueued = false;
     remaining = 0;
     rounds.clear();
     await _changed();
