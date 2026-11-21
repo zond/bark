@@ -28,8 +28,12 @@
     <!-- Asking to be exempt from battery optimisation, which some phones
          need to keep the service running for hours. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Internet: the map's street tiles, kept once fetched. -->
+    <!-- Internet: the map's street tiles, kept once fetched, and the
+         releases. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Handing a newer app's APK to the installer, which asks the person
+         before it installs it over this one. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.bluetooth_le"
         android:required="true" />
     <uses-feature android:name="android.hardware.camera"
@@ -68,15 +72,16 @@
             android:stopWithTask="false"
             android:foregroundServiceType="connectedDevice" />
         <!-- The card's QR image, handed to the app the person shares it
-             with for that one share. -->
+             with for that one share, and a newer app's APK, handed to the
+             installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.share"
+            android:authorities="${applicationId}.files"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/share_paths" />
+                android:resource="@xml/provided_files" />
         </provider>
         <!-- Not exported: the system still delivers its own broadcasts. -->
         <receiver

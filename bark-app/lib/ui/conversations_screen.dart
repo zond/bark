@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../app_update.dart';
 import 'archived_screen.dart';
 import '../conversations.dart';
 import '../link.dart';
@@ -201,8 +202,18 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
         _bar(
           context,
           title: 'App version ${a.app} is out',
-          subtitle: 'Tap to download.',
-          onTap: () => app.notifier.openLink(a.apk!),
+          subtitle: switch (app.appUpdate.state(a.app)) {
+            AppGet.idle => 'Tap to install.',
+            AppGet.downloading => switch (app.appUpdate.percent) {
+              null => 'Downloading…',
+              final p => 'Downloading… $p%',
+            },
+            AppGet.ready => 'Downloaded. Tap to install.',
+            AppGet.failed => 'Download failed. Tap to try again.',
+          },
+          onTap: app.appUpdate.state(a.app) == AppGet.downloading
+              ? null
+              : () => app.appUpdate.get(a),
           dismiss: () => r.dismissApp(a.app),
         ),
       if (i != null && node != null)

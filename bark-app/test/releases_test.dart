@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sodium/sodium.dart';
 
+import 'app_update_test.dart' show FakeApks;
 import 'update_test.dart' show imageFile;
 
 /// The API's answer for release `v<n>` of app and firmware `n`, with its
@@ -109,12 +110,12 @@ class SocketException implements Exception {
   String toString() => message;
 }
 
-/// Writes down the links the app opens.
-class LinkNotifier extends NoNotifier {
-  final List<String> opened = [];
-  LinkNotifier();
+/// Writes down the APKs the app hands to the installer.
+class InstallNotifier extends NoNotifier {
+  final List<String> installed = [];
+  InstallNotifier();
   @override
-  Future<void> openLink(String url) async => opened.add(url);
+  Future<void> installApk(String path) async => installed.add(path);
 }
 
 NodeInfo node(int image, {int last = 1}) =>
@@ -365,8 +366,8 @@ void main() {
     late Sodium sodium;
     setUpAll(() async => sodium = await SodiumInit.init());
 
-    Future<(AppModel, LinkNotifier)> model(WidgetTester t, int app) async {
-      final n = LinkNotifier();
+    Future<(AppModel, InstallNotifier)> model(WidgetTester t, int app) async {
+      final n = InstallNotifier();
       final a = AppModel(
         sodium: sodium,
         me: Me(MemoryStore(), sodium, DateTime.now),
@@ -374,6 +375,7 @@ void main() {
         contacts: Contacts(MemoryStore()),
         now: DateTime.now,
         notifier: n,
+        apks: FakeApks(),
         releases: Releases(
           MemoryStore(),
           now: DateTime.now,
@@ -390,14 +392,17 @@ void main() {
     const appBar = 'App version 5 is out';
     const nodeBar = 'Node firmware 5 is out';
 
-    testWidgets('a newer app: opened in the browser, or dismissed', (t) async {
+    testWidgets('a newer app: downloaded and installed, or dismissed', (
+      t,
+    ) async {
       final (app, n) = await model(t, 3);
       await t.pumpWidget(BarkApp(app));
       expect(find.text(appBar), findsOneWidget);
       expect(find.text(nodeBar), findsNothing);
       await t.tap(find.text(appBar));
       await t.pump();
-      expect(n.opened, ['https://x/apk5']);
+      await t.pump();
+      expect(n.installed, ['/apk/bark-5.apk']);
       await t.tap(find.byTooltip('Not for this version'));
       await t.pump();
       expect(find.text(appBar), findsNothing);
@@ -452,7 +457,7 @@ void main() {
         session: Session(store: MemoryStore(), now: DateTime.now),
         contacts: Contacts(MemoryStore()),
         now: DateTime.now,
-        notifier: LinkNotifier(),
+        notifier: InstallNotifier(),
         releases: Releases(
           MemoryStore(),
           now: DateTime.now,
@@ -504,7 +509,7 @@ void main() {
         find.text('App 5 is out: tap App below; no node linked'),
         findsOneWidget,
       );
-      expect(find.textContaining('5 is out. Tap to download'), findsOneWidget);
+      expect(find.textContaining('5 is out. Tap to install'), findsOneWidget);
       await shut(t, a);
     });
 
@@ -541,7 +546,7 @@ void main() {
         find.text('App 22 is out: tap App below; node firmware 21, up to date'),
         findsOneWidget,
       );
-      expect(find.textContaining('22 is out. Tap to download'), findsOneWidget);
+      expect(find.textContaining('22 is out. Tap to install'), findsOneWidget);
       expect(find.text('Send to the node'), findsNothing);
       await shut(t, a);
     });

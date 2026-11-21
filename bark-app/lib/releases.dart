@@ -29,20 +29,59 @@ const releasesUrl = 'https://api.github.com/repos/zond/bark/releases/latest';
 /// "Rate limits"); once a day is plenty for releases made by hand.
 const checkEvery = Duration(days: 1);
 
+/// The answer to a GET of `url` from `client`; an HTTP status other than
+/// 200 throws.
+Future<HttpClientResponse> _get(
+  HttpClient client,
+  String url, {
+  bool json = false,
+}) async {
+  final rq = await client.getUrl(Uri.parse(url));
+  // GitHub's API refuses a request without a user agent.
+  rq.headers.set(HttpHeaders.userAgentHeader, 'bark-app');
+  if (json) rq.headers.set(HttpHeaders.acceptHeader, 'application/json');
+  final rs = await rq.close();
+  if (rs.statusCode != HttpStatus.ok) {
+    throw HttpException('$url: HTTP ${rs.statusCode}');
+  }
+  return rs;
+}
+
 /// The body of a GET of `url`; an HTTP status other than 200 throws.
 Future<List<int>> httpGet(String url, {bool json = false}) async {
   final client = HttpClient();
   try {
-    final rq = await client.getUrl(Uri.parse(url));
-    // GitHub's API refuses a request without a user agent.
-    rq.headers.set(HttpHeaders.userAgentHeader, 'bark-app');
-    if (json) rq.headers.set(HttpHeaders.acceptHeader, 'application/json');
-    final rs = await rq.close();
-    if (rs.statusCode != HttpStatus.ok) {
-      throw HttpException('$url: HTTP ${rs.statusCode}');
-    }
+    final rs = await _get(client, url, json: json);
     return [for (final chunk in await rs.toList()) ...chunk];
   } finally {
+    client.close();
+  }
+}
+
+/// Writes the body of a GET of `url` to `to`, telling `progress` the
+/// bytes come so far and the whole length, if the server gave it. A body
+/// shorter than that length throws.
+Future<void> httpGetTo(
+  String url,
+  File to,
+  void Function(int got, int? total) progress,
+) async {
+  final client = HttpClient();
+  final sink = to.openWrite();
+  try {
+    final rs = await _get(client, url);
+    final total = rs.contentLength < 0 ? null : rs.contentLength;
+    var got = 0;
+    await for (final chunk in rs) {
+      sink.add(chunk);
+      got += chunk.length;
+      progress(got, total);
+    }
+    if (total != null && got != total) {
+      throw HttpException('$url: $got of $total bytes');
+    }
+  } finally {
+    await sink.close();
     client.close();
   }
 }

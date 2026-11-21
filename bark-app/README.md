@@ -923,8 +923,17 @@ version A and the node firmware's F that the release carries, each N
 when the release built it or an earlier release's carried on unchanged;
 a release without the file is not read. When the release carries an APK
 newer than the app, a bar at the top of the conversations says "App
-version A is out", "Tap to download"; a tap opens the APK's download in
-the browser, and Android asks before it installs it over the app. When
+version A is out", "Tap to install". A tap downloads the APK into the
+app's cache, the bar saying "Downloading…" and the percent done,
+and hands it to Android's installer, which asks the person before it
+installs it over the app (`lib/app_update.dart`). A tap while it
+downloads does nothing; a failed download says so, and a tap tries
+again. Only the latest APK is kept, and only once whole, so a tap after
+the installer was left installs it again at once. The first time,
+Android sends the person to allow the app to install apps; if the
+installer does not come back by itself, a tap on the bar starts it
+again. Android refuses an APK signed with another key than the
+installed app's (Building). When
 the connected node runs a version below F, a bar says "Node firmware F
 is out", "Tap to update the node"; a tap opens **Update firmware**
 with the release's image downloaded and chosen (Updating a node). A
@@ -947,7 +956,8 @@ such as "App up to date (22); node firmware 21, up to date", "App up to
 date (22); node firmware 23 is out: send it below", "App 22 is out: tap
 App below; no node linked", or "Could not reach the release list"
 without a network. Under it the **App** row gives the app's version and,
-when the release is newer, a tap downloads it; the **Node firmware** row
+when the release is newer, a tap downloads and installs it as the bar
+does; the **Node firmware** row
 gives the node's version and, when the release's image is newer, **Send
 to the node**. A dismissed
 bar does not hide a newer version here.
@@ -1083,7 +1093,8 @@ words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
 messages, reactions of one character and no more, the stored files
 and cards in their current forms alone, a release read only with its
-manifest, the picker's first
+manifest, a newer app's APK kept only once whole and handed to the
+installer, the picker's first
 row after picks and a restart, a reflected
 message, a forged first message,
 the header's written-from address kept apart from the card's, the
@@ -1298,7 +1309,9 @@ a phone (Trying it).
     flashed by USB from a build with `BARK_IMAGE_VERSION=1`: Debug says
     app version 1 and "Latest release: N, app A, firmware F, checked" a
     moment ago, A and F as the release's `release.json` names them; the
-    bar "App version A is out" opens the APK in the browser, and its ×
+    bar "App version A is out", tapped, says "Downloading…" and opens
+    Android's installer for the APK, which refuses it over this debug
+    build, signed with another key (Building), and its ×
     hides it, also after the app is closed and opened again. Connected
     to the node, the bar "Node firmware F is out" opens **Update firmware** with
     "Version F" chosen, and its × hides it for that node; another node

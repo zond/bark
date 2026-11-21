@@ -52,8 +52,8 @@ abstract interface class Notifier {
   /// Opens the system's dialog to exempt the app.
   Future<void> askBatteryExempt();
 
-  /// Opens `url` in the browser.
-  Future<void> openLink(String url);
+  /// Starts Android's installer for the APK at `path`.
+  Future<void> installApk(String path);
 
   /// Opens the phone's Bluetooth settings, where the person forgets a
   /// node.
@@ -100,7 +100,7 @@ class NoNotifier implements Notifier {
   @override
   Future<void> askBatteryExempt() async {}
   @override
-  Future<void> openLink(String url) async {}
+  Future<void> installApk(String path) async {}
   @override
   Future<void> openBluetoothSettings() async {}
   @override

@@ -37,13 +37,25 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BROWSER).setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER).setMethodCallHandler { call, result ->
             when (call.method) {
-                "open" -> try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(call.arguments as String)))
+                // Through a content URI, as the installer may not read this
+                // app's files otherwise. The first time, it sends the
+                // person to allow this app to install apps.
+                "install" -> try {
+                    val file = File(call.arguments as String)
+                    val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                    )
                     result.success(null)
                 } catch (e: ActivityNotFoundException) {
-                    result.error("no-browser", e.message, null)
+                    result.error("no-installer", e.message, null)
+                } catch (e: IllegalArgumentException) {
+                    // A path outside the provider's folders.
+                    result.error("not-provided", e.message, null)
                 }
                 else -> result.notImplemented()
             }
@@ -70,7 +82,7 @@ class MainActivity : FlutterActivity() {
                     val dir = File(cacheDir, "shared").apply { mkdirs() }
                     val file = File(dir, "card.png")
                     file.writeBytes(call.argument<ByteArray>("png")!!)
-                    val uri = FileProvider.getUriForFile(this, "$packageName.share", file)
+                    val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
                     val send = Intent(Intent.ACTION_SEND)
                         .setType("image/png")
                         .putExtra(Intent.EXTRA_TEXT, call.argument<String>("text"))
@@ -87,14 +99,14 @@ class MainActivity : FlutterActivity() {
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler(null)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BROWSER).setMethodCallHandler(null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE).setMethodCallHandler(null)
     }
 
     private companion object {
         const val POWER = "org.bark.bark_app/power"
-        const val BROWSER = "org.bark.bark_app/browser"
+        const val INSTALLER = "org.bark.bark_app/installer"
         const val SHARE = "org.bark.bark_app/share"
         const val BLUETOOTH = "org.bark.bark_app/bluetooth"
     }
