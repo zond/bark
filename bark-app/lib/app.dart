@@ -171,6 +171,9 @@ class AppModel extends _AppCore
     session.addListener(_search);
     addListener(_link);
     addListener(_search);
+    // The home is the search's first node and the line's last words.
+    me.addListener(_link);
+    me.addListener(_search);
     // Leaving a home waits for a node with a place for the answers.
     session.addListener(_leaveNow);
   }
@@ -405,6 +408,8 @@ class AppModel extends _AppCore
     session.removeListener(_link);
     session.removeListener(_search);
     session.removeListener(_leaveNow);
+    me.removeListener(_link);
+    me.removeListener(_search);
     updater.dispose();
     releases.dispose();
     appUpdate.dispose();

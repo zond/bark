@@ -259,6 +259,24 @@ void main() {
       app.connectFake();
       async.flushMicrotasks();
       expect(n.log, ['let go', 'hold Connected to ID FA4E00000001, paired']);
+      // A home set elsewhere is in the line at once, with no word from the
+      // node.
+      n.log.clear();
+      final away = Address(Position.fromDegrees(50.5, 30.5), [
+        9,
+        9,
+        9,
+        9,
+        9,
+        9,
+      ]);
+      app.me.setHome(away);
+      async.flushMicrotasks();
+      expect(
+        n.log.last,
+        'hold Connected to ID FA4E00000001, paired. '
+        'Home at ${shownName(nodeName(away.id))}',
+      );
     });
   });
 
