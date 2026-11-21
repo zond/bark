@@ -2832,7 +2832,14 @@ keys do not change.
 *Forms.* A payload's first byte is its format: the version, 2, in the
 high four bits, the form in the low four. Its second is the recipient tag
 (below), which every version keeps there, as a node reads it. A receiver
-drops a payload of a version or form it does not know.
+drops a payload of a version or form it does not know, so a sender writes
+each payload in a version its receiver is known to read: to a contact,
+at most the newest their card says their app reads (*the card*, below);
+to the home, at most the newest its summaries say it reads
+([mailbox](#mailbox), The answer). Before either is known it writes the
+oldest version it writes. Version 2 is the only one, and nothing older
+exists, so there is nothing to choose yet: every payload is version 2
+(roadmap D238).
 
 | form | to | after the format byte and the recipient tag | over the plaintext |
 |---|---|---|---|
@@ -2936,7 +2943,9 @@ taken; 16 parts hold 3 168 bytes (roadmap D137, D221, D222).
 
 *The card*, what people exchange, shown as a QR code: version (1), 3;
 flags (1), bit 0 set when a home address follows, bit 1 when the node's
-address follows, the others zero; the identity (32); when the home was
+address follows, bits 2 and 3 zero, and in the high four bits the newest
+payload version the person's app reads, as a payload's format byte holds
+its version (*Forms*, above); the identity (32); when the home was
 set or cleared, as `sent` (4); the home node's address (0 or 13); the
 address of the node the phone is linked to, or was last, when the card is
 made or shown, unless it is the home, then when the phone was last linked
@@ -3020,8 +3029,9 @@ many of the record's items stay unsent after them, both as the fetch was
 taken; with no item it says nothing is new, so the person can tell "no
 mail" from a loss. Its flags, a byte, say in bit 0 that the record's key
 is the owner's ([the node's owner](#the-nodes-owner)) once any command
-of the fetch has run, the others zero, and a command's outcome follows
-them. A fetch taken counts as its person seen ([pairing](#pairing)). The
+of the fetch has run, in the high four bits the newest payload version
+the home reads ([the payload](#the-payload)), and the others zero; a
+command's outcome follows them. A fetch taken counts as its person seen ([pairing](#pairing)). The
 node clears an item's bit when it hands the item's reply to the core;
 nothing confirms it, and a reply lost on the way stays in the ring for
 the phone to read at home. A record has one round at a time, which a

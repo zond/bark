@@ -136,7 +136,8 @@ impl Code {
 }
 
 /// Bytes of a summary's plaintext without an outcome: the round's items
-/// (1), the items remaining (2) and the flags (1).
+/// (1), the items remaining (2) and the flags (1), whose high four bits
+/// are the home's newest payload version.
 pub const SUMMARY_PLAIN_LEN: usize = 1 + 2 + 1;
 
 /// Bytes of the summary's head, the tag and that plaintext.
@@ -235,16 +236,20 @@ pub struct Summary {
     pub remaining: u16,
     /// The requester's key is the owner's.
     pub owner: bool,
+    /// The newest payload version the home node reads
+    /// ([`crate::VERSION`]), so that the app away writes it one it reads
+    /// (spec "The payload").
+    pub newest: u8,
     /// What the fetch's command did; none for a fetch without one.
     pub outcome: Option<Outcome>,
 }
 
 impl Summary {
     /// The plaintext into `out`; its length.
-    pub(crate) fn encode(&self, out: &mut [u8; SUMMARY_PLAIN_LEN + Outcome::MAX_LEN]) -> usize {
+    pub fn encode(&self, out: &mut [u8; SUMMARY_PLAIN_LEN + Outcome::MAX_LEN]) -> usize {
         out[0] = self.items;
         out[1..3].copy_from_slice(&self.remaining.to_be_bytes());
-        out[3] = u8::from(self.owner);
+        out[3] = u8::from(self.owner) | (self.newest & 0x0f) << 4;
         SUMMARY_PLAIN_LEN
             + self
                 .outcome
@@ -252,7 +257,7 @@ impl Summary {
     }
 
     /// The plaintext `b` holds whole.
-    pub(crate) fn decode(b: &[u8]) -> Result<Summary, Error> {
+    pub fn decode(b: &[u8]) -> Result<Summary, Error> {
         if b.len() < SUMMARY_PLAIN_LEN {
             return Err(Error::Malformed);
         }
@@ -261,6 +266,7 @@ impl Summary {
             items: b[0],
             remaining: be(&b[1..3]) as u16,
             owner: b[3] & 1 != 0,
+            newest: b[3] >> 4,
             outcome: match rest.is_empty() {
                 true => None,
                 false => Some(Outcome::decode(rest)?),

@@ -152,6 +152,7 @@ pub fn json() -> String {
     ));
 
     let alice_card = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: Some(card::Linked {
@@ -162,6 +163,7 @@ pub fn json() -> String {
         name: "Аліса",
     };
     let bob_card = Card {
+        reads: crate::VERSION,
         identity: f.bob.identity,
         home: None,
         now: Some(card::Linked {
@@ -191,6 +193,7 @@ pub fn json() -> String {
                 ),
                 ("time", format!("{}", c.time)),
                 ("name", q(c.name)),
+                ("reads", format!("{}", c.reads)),
                 ("bytes", h(&cb[..n])),
                 ("text", q(core::str::from_utf8(&ct[..tn]).unwrap())),
             ],
@@ -405,6 +408,7 @@ pub fn json() -> String {
     let to = fetch.recipient;
     let summary = |round: u32, items: u8, owner: bool, outcome: Option<Outcome>| {
         let s = Summary {
+            newest: crate::VERSION,
             items,
             remaining: 0,
             owner,
@@ -421,6 +425,7 @@ pub fn json() -> String {
             ("items", "2".into()),
             ("remaining", "0".into()),
             ("owner", "true".into()),
+            ("newest", format!("{}", crate::VERSION)),
             ("nonce", h(&seal::reply_nonce(round, 0))),
             ("payload", h(&summary(round, 2, true, None))),
         ],

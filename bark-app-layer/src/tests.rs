@@ -369,6 +369,7 @@ fn a_forged_siv_opens_nothing() {
 /// from a person who is not the owner.
 fn counts(items: u8, remaining: u16) -> Summary {
     Summary {
+        newest: crate::VERSION,
         items,
         remaining,
         owner: false,
@@ -503,6 +504,7 @@ fn a_reply_gives_back_its_item_which_proves_itself() {
 fn a_card_reads_back_as_bytes_and_as_text() {
     let f = fixture();
     let c = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: None,
@@ -512,8 +514,20 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     let mut b = [0u8; card::MAX_LEN];
     let n = c.encode(&mut b).unwrap();
     assert_eq!(n, 51 + 7);
-    assert_eq!(&b[..2], &[3, 1]);
+    // The flags' high four bits: the newest payload version Alice reads.
+    assert_eq!(&b[..2], &[3, 0x21]);
     assert_eq!(Card::decode(&b[..n]), Ok(c));
+    let later = Card { reads: 15, ..c };
+    let m = later.encode(&mut b).unwrap();
+    assert_eq!(
+        (b[1], Card::decode(&b[..m]).map(|c| c.reads)),
+        (0xf1, Ok(15))
+    );
+    assert_eq!(
+        Card { reads: 16, ..c }.encode(&mut b),
+        Err(Error::Malformed)
+    );
+    c.encode(&mut b).unwrap();
     let away = card::Linked {
         address: f.away,
         at: 0x0102_0304,
@@ -524,7 +538,7 @@ fn a_card_reads_back_as_bytes_and_as_text() {
     };
     let n = both.encode(&mut b).unwrap();
     assert_eq!(n, 68 + 7);
-    assert_eq!(b[1], 3);
+    assert_eq!(b[1], 0x23);
     assert_eq!(&b[51..64], &f.away.encode());
     assert_eq!(&b[64..68], &[1, 2, 3, 4]);
     assert_eq!(Card::decode(&b[..n]), Ok(both));
@@ -540,12 +554,12 @@ fn a_card_reads_back_as_bytes_and_as_text() {
         Card::decode(&b[..card::FIXED_LEN + 15]),
         Err(Error::Malformed)
     );
-    assert_eq!(b[1], 2);
+    assert_eq!(b[1], 0x22);
     assert_eq!(Card::decode(&b[..n]), Ok(temporary));
     let homeless = Card { home: None, ..c };
     let n = homeless.encode(&mut b).unwrap();
     assert_eq!(n, 38 + 7);
-    assert_eq!(b[1], 0);
+    assert_eq!(b[1], 0x20);
     assert_eq!(Card::decode(&b[..n]), Ok(homeless));
     let mut t = [0u8; card::MAX_TEXT_LEN];
     let tn = c.to_text(&mut t).unwrap();
@@ -566,6 +580,7 @@ fn a_card_that_is_not_one_is_refused() {
     }
     let f = fixture();
     let long = Card {
+        reads: crate::VERSION,
         identity: f.alice.identity,
         home: Some(f.home),
         now: None,
@@ -577,7 +592,7 @@ fn a_card_that_is_not_one_is_refused() {
     let short = Card { name: "", ..long };
     let mut b = [0u8; card::MAX_LEN];
     let n = short.encode(&mut b).unwrap();
-    for (at, v) in [(0, 1), (0, 2), (0, 4), (1, 4)] {
+    for (at, v) in [(0, 1), (0, 2), (0, 4), (1, 4), (1, 0x28)] {
         let mut bad = b;
         bad[at] = v;
         assert_eq!(Card::decode(&bad[..n]), Err(Error::Malformed), "{at}");
@@ -618,6 +633,7 @@ fn text_takes_windows_1251_when_it_can() {
 fn records_read_back_in_order() {
     let f = fixture();
     let c = Card {
+        reads: crate::VERSION,
         identity: f.bob.identity,
         home: None,
         now: Some(card::Linked {
@@ -2132,12 +2148,14 @@ mod commands {
         let mut out = [0u8; MAX_PAYLOAD];
         for s in [
             Summary {
+                newest: crate::VERSION,
                 items: 3,
                 remaining: 700,
                 owner: true,
                 outcome: None,
             },
             Summary {
+                newest: crate::VERSION,
                 items: 0,
                 remaining: 0,
                 owner: false,
@@ -2148,6 +2166,23 @@ mod commands {
             assert_eq!(n, seal::SUMMARY_LEN + usize::from(s.outcome.is_some()));
             assert_eq!(seal::open_summary(&k, 10, &out[..n]), Ok(s));
         }
+        // The flags: the owner in bit 0, the home's newest payload version
+        // in the high four bits.
+        let s = Summary {
+            items: 0,
+            remaining: 0,
+            owner: true,
+            newest: 9,
+            outcome: None,
+        };
+        let mut plain = [0u8; command::SUMMARY_PLAIN_LEN + Outcome::MAX_LEN];
+        assert_eq!(s.encode(&mut plain), command::SUMMARY_PLAIN_LEN);
+        assert_eq!(plain[3], 0x91);
+        assert_eq!(Summary::decode(&plain[..4]), Ok(s));
+        // A home's mailbox says its own.
+        let (mut m, mut p) = node();
+        let (s, _) = ask(&mut m, &mut p, &fixture().alice.mailbox, 1, None);
+        assert_eq!(s.newest, crate::VERSION);
     }
 
     /// Eight records with names of 32 bytes: the list all but fills a

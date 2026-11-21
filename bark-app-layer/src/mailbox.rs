@@ -721,6 +721,7 @@ impl<R: Ring> Mailbox<R> {
                 items: r.items,
                 remaining: r.remaining,
                 owner: !r.orphan && self.people[i].is_some_and(|p| p.owner),
+                newest: crate::VERSION,
                 outcome: r.command.outcome(),
             };
             let n = seal::seal_summary(&key, r.recipient, r.round, &summary, out);

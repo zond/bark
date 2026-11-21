@@ -101,6 +101,7 @@ impl Me {
             .filter(|(a, _)| self.home.is_none_or(|h| h.node != a.node))
             .map(|(address, at)| Linked { address, at });
         let c = Card {
+            reads: bark_app_layer::VERSION,
             identity: self.keys().identity,
             home: self.home,
             now,
