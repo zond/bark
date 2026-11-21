@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use bark_cli::bluez::Bluez;
-use bark_cli::link::{Error, Link, Result};
+use bark_cli::link::{Error, Link, Result, Transport};
 use bark_cli::messages;
 use bark_cli::phone::{self, Change, Select};
 use bark_cli::show;
@@ -168,7 +168,9 @@ enum ContactDo {
 }
 
 /// This computer's time and UTC offset, for the node's clock
-/// (spec "Settings"). The offset is the system's, as `date` gives it.
+/// (spec "Settings"). The offset is the system's, as `date` gives it:
+/// the standard library knows no time zone, and reading the zone files
+/// and `TZ` here would take a dependency or a parser of our own.
 fn now() -> Clock {
     let utc_s = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -196,26 +198,26 @@ fn run(args: Args) -> Result<Vec<String>> {
         .or_else(state::default_dir)
         .ok_or_else(|| Error::Other("no state directory: give --dir".into()))?;
     let mut state = State::load(&dir)?;
-    // The person's own, which need no radio.
-    match args.command {
-        Command::Me { name } => return messages::me(&mut state, name),
+    // Opened only for a command that needs it: the person's own need none.
+    let radio = || Bluez::new(args.adapter.as_deref(), args.verbose);
+    let state = &mut state;
+    Ok(match args.command {
+        Command::Me { name } => messages::me(state, name)?,
         Command::Contact {
             what: ContactDo::Add { card, name },
-        } => return messages::add_contact(&mut state, &card, name),
-        Command::Contacts => return Ok(messages::contacts(&state)),
-        _ => {}
-    }
-    let mut radio = Bluez::new(args.adapter.as_deref(), args.verbose)?;
-    let r = &mut radio;
-    let lines = match args.command {
-        Command::Scan => phone::scan(r, time)?.iter().map(show::found).collect(),
+        } => messages::add_contact(state, &card, name)?,
+        Command::Contacts => messages::contacts(state),
+        Command::Scan => phone::scan(&mut radio()?, time)?
+            .iter()
+            .map(show::found)
+            .collect(),
         Command::Node { node } => {
-            let (n, l) = phone::connect(r, &mut state, &node, time, now())?;
+            let (n, l) = phone::connect(&mut radio()?, state, &node, time, now())?;
             let _ = l.disconnect();
             show::node(&n)
         }
         Command::Status { node } => {
-            let (_, mut l) = phone::connect(r, &mut state, &node, time, now())?;
+            let (_, mut l) = phone::connect(&mut radio()?, state, &node, time, now())?;
             let s = phone::status(&mut l);
             let _ = l.disconnect();
             show::status(&s?)
@@ -224,90 +226,91 @@ fn run(args: Args) -> Result<Vec<String>> {
             node,
             contact,
             text,
-        } => messages::send(r, &mut state, &node, &contact, &text, time, now())?,
-        Command::Inbox { node } => messages::inbox(r, &mut state, &node, time, now())?,
+        } => messages::send(&mut radio()?, state, &node, &contact, &text, time, now())?,
+        Command::Inbox { node } => messages::inbox(&mut radio()?, state, &node, time, now())?,
         Command::Update { node, image } => {
             let file = std::fs::read(&image)
                 .map_err(|e| Error::Other(format!("reading {}: {e}", image.display())))?;
             let image = bark_cli::update::Image::parse(&file)?;
-            bark_cli::update::update(r, &mut state, &node, &image, now(), &mut |l| {
+            bark_cli::update::update(&mut radio()?, state, &node, &image, now(), &mut |l| {
                 println!("{l}")
             })?;
             Vec::new()
         }
         Command::Home { node, set } => {
-            messages::home(r, &mut state, &node, matches!(set, OnOff::On), now())?
+            messages::home(&mut radio()?, state, &node, matches!(set, OnOff::On), now())?
         }
         Command::Pair { node, code } => {
-            let n = phone::pair(r, &mut state, &node, time, code, now())?;
+            let n = phone::pair(&mut radio()?, state, &node, time, code, now())?;
             let mut lines = vec![format!("paired {}", bark_cli::link::id_text(n.id))];
             lines.extend(show::node(&n));
             lines
         }
         Command::Unpair { node } => {
-            let id = phone::unpair(r, &mut state, &node, now())?;
+            let id = phone::unpair(&mut radio()?, state, &node, now())?;
             vec![format!("unpaired {}", bark_cli::link::id_text(id))]
         }
-        command => {
-            let node = match &command {
-                Command::Neighbours { node }
-                | Command::Ask { node, .. }
-                | Command::Clock { node }
-                | Command::MapPoint { node, .. }
-                | Command::Public { node, .. }
-                | Command::Phones { node }
-                | Command::Remove { node, .. }
-                | Command::Owner { node, .. } => node.clone(),
-                _ => unreachable!("handled above"),
-            };
-            let (_, mut l) = phone::paired_link(r, &mut state, &node, now())?;
-            let lines = owned(&mut l, command);
-            let _ = l.disconnect();
-            lines?
-        }
-    };
-    Ok(lines)
-}
-
-/// A paired phone's command, on its link.
-fn owned<L: Link>(l: &mut L, command: Command) -> Result<Vec<String>> {
-    Ok(match command {
-        Command::Neighbours { .. } => {
+        Command::Neighbours { node } => paired(&mut radio()?, state, &node, |l| {
             let (h, list) = phone::neighbours(l)?;
-            show::neighbours(&h, &list)
-        }
-        Command::Ask { neighbour, .. } => {
+            Ok(show::neighbours(&h, &list))
+        })?,
+        Command::Ask { node, neighbour } => paired(&mut radio()?, state, &node, |l| {
             let id = phone::neighbour(l, &neighbour)?;
-            show::answer(&phone::ask(l, id)?)
-        }
-        Command::Clock { .. } => show::node_time(&phone::clock(l)?),
-        Command::MapPoint { what, .. } => {
+            Ok(show::answer(&phone::ask(l, id)?))
+        })?,
+        Command::Clock { node } => paired(&mut radio()?, state, &node, |l| {
+            Ok(show::node_time(&phone::clock(l)?))
+        })?,
+        Command::MapPoint { node, what } => {
             let at = match what {
                 MapPointDo::Set { lat, lon } => Some(Position::from_degrees(lat, lon)),
                 MapPointDo::Clear => None,
             };
-            show::status(&phone::map_point(l, at)?)
+            paired(&mut radio()?, state, &node, |l| {
+                Ok(show::status(&phone::map_point(l, at)?))
+            })?
         }
-        Command::Public { set, .. } => {
+        Command::Public { node, set } => {
             let set = set.map(|s| matches!(s, OnOff::On));
-            let public = phone::public(l, set)?;
-            vec![format!("public {}", if public { "yes" } else { "no" })]
+            paired(&mut radio()?, state, &node, |l| {
+                let public = phone::public(l, set)?;
+                Ok(vec![format!(
+                    "public {}",
+                    if public { "yes" } else { "no" }
+                )])
+            })?
         }
-        Command::Phones { .. } => show::phones(&phone::phones(l)?),
-        Command::Remove { number, what, .. } => {
+        Command::Phones { node } => paired(&mut radio()?, state, &node, |l| {
+            Ok(show::phones(&phone::phones(l)?))
+        })?,
+        Command::Remove { node, number, what } => {
             let parts = Parts {
                 bond: matches!(what, Part::Pairing | Part::Both),
                 home: matches!(what, Part::Home | Part::Both),
             };
-            phone::change(l, number, Change::Remove(parts), typed_code)?;
-            show::phones(&phone::phones(l)?)
+            paired(&mut radio()?, state, &node, |l| {
+                phone::change(l, number, Change::Remove(parts), typed_code)?;
+                Ok(show::phones(&phone::phones(l)?))
+            })?
         }
-        Command::Owner { number, .. } => {
+        Command::Owner { node, number } => paired(&mut radio()?, state, &node, |l| {
             phone::change(l, number, Change::Owner, typed_code)?;
-            show::phones(&phone::phones(l)?)
-        }
-        _ => unreachable!("not a paired phone's command"),
+            Ok(show::phones(&phone::phones(l)?))
+        })?,
     })
+}
+
+/// A paired phone's command `f`, on its link to `node`.
+fn paired<T: Transport>(
+    radio: &mut T,
+    state: &mut State,
+    node: &Select,
+    f: impl FnOnce(&mut T::Link) -> Result<Vec<String>>,
+) -> Result<Vec<String>> {
+    let (_, mut l) = phone::paired_link(radio, state, node, now())?;
+    let lines = f(&mut l);
+    let _ = l.disconnect();
+    lines
 }
 
 /// The code the person reads on the node's screen, typed here.
