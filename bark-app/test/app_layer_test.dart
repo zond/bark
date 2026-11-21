@@ -456,8 +456,23 @@ void main() {
     expect(openItem(s, alice.mailbox, 1, h(at('summary'), 'payload')), isNull);
   });
 
-  // No Rust vector: the record is the app's alone (spec "Phone link", The
-  // payload).
+  test('a home given: the Rust vector, Bob to Alice, made and opened', () {
+    final m = at('home_record');
+    final header = Header(m['greater'] as bool, m['sent'] as int);
+    final p = writePlain(header, [
+      HomeRecord(Address.parse(m['address'] as String)!, h(m, 'key')),
+    ]);
+    expect(hex(p), m['plaintext']);
+    final ab = SivKeys.pair(s, bob.identity, alice.pair.secretKey);
+    final ba = SivKeys.pair(s, alice.identity, bob.pair.secretKey);
+    final payload = h(m, 'payload');
+    expect(hex(sealBox(ba, payload[1], p)), m['payload']);
+    final (got, rs) = readPlain(openBox(ab, payload));
+    expect((got.greater, got.sent), (true, m['sent']));
+    final g = rs.single as HomeRecord;
+    expect((g.home.toString(), hex(g.key)), (m['address'], m['key']));
+  });
+
   test('a home given: type 7, the address and the key, of fixed length', () {
     final key = List.generate(keyLen, (i) => i);
     final p = writePlain(const Header(false, 9), [
