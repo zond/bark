@@ -589,52 +589,86 @@ impl LoadStats {
 /// happened.
 pub use bark_proto::DropReason;
 
-/// Drop counters by reason.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct DropCounts {
+/// `DropCounts`, its counter per reason and its methods, from one list
+/// of the reasons.
+macro_rules! drop_counts {
+    ($($(#[$attr:meta])* $field:ident: $reason:ident,)*) => {
+        /// Drop counters by reason.
+        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+        pub struct DropCounts {
+            $($(#[$attr])* pub $field: u64,)*
+        }
+
+        impl DropCounts {
+            /// The number of reasons.
+            pub const N: usize = [$(stringify!($field),)*].len();
+
+            pub fn add(&mut self, r: DropReason) {
+                let c = match r {
+                    $(DropReason::$reason => &mut self.$field,)*
+                };
+                *c += 1;
+            }
+
+            /// Every counter with its name, as in the JSON output.
+            pub fn fields(&self) -> [(&'static str, u64); Self::N] {
+                [$((stringify!($field), self.$field),)*]
+            }
+
+            /// These counts less `other`'s, counter by counter.
+            pub fn minus(&self, other: &DropCounts) -> DropCounts {
+                DropCounts {
+                    $($field: self.$field.saturating_sub(other.$field),)*
+                }
+            }
+        }
+    };
+}
+
+drop_counts! {
     /// No neighbour left at the origin (spec "Return to parent").
-    pub no_route: u64,
+    no_route: NoRoute,
     /// The hop cap (spec "Hop count").
-    pub hop_cap: u64,
+    hop_cap: HopCap,
     /// The wrong-hop cap (spec "Hop count"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub wrong_hop_cap: u64,
+    wrong_hop_cap: WrongHopCap,
     /// No place for its record (spec "Message records").
-    pub no_record: u64,
+    no_record: NoRecord,
     /// The send queue was full (spec "Send queue").
-    pub send_queue_full: u64,
+    send_queue_full: SendQueueFull,
     /// The duty-cycle budget (spec "Duty cycle cap").
-    pub budget: u64,
+    budget: Budget,
     /// Fresh work refused while every way on was banned
     /// (spec "Receiving DATA").
-    pub banned: u64,
+    banned: Banned,
     /// Refused while another message here went to the same next hop
     /// (spec "Receiving DATA"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub same_hop: u64,
+    same_hop: SameHop,
     /// The return to the parent failed (spec "Return to parent").
-    pub return_failed: u64,
+    return_failed: ReturnFailed,
     /// The parent answered the return seen (spec "Return to parent");
     /// left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub return_seen: u64,
+    return_seen: ReturnSeen,
     /// The delivery TTL ran out (spec "Delivery queue").
-    pub queue_expired: u64,
+    queue_expired: QueueExpired,
     /// The delivery queue was full (spec "Delivery queue").
-    pub delivery_full: u64,
+    delivery_full: DeliveryFull,
     /// The payload was too long (spec "Packet formats").
-    pub payload_too_long: u64,
+    payload_too_long: PayloadTooLong,
     /// A sleepy node's own message given back to its application with a
     /// wait (spec "A sleepy node's own message").
-    pub pushback: u64,
+    pushback: Pushback,
     /// Received and not taken because the ACK that takes it could not go
     /// out (spec "The ACK"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub unanswered: u64,
+    unanswered: Unanswered,
     /// Refused while the node drained for a reboot into a new image
     /// (spec "Send queue"); left out where none was.
     #[serde(skip_serializing_if = "is_zero")]
-    pub draining: u64,
+    draining: Draining,
 }
 
 /// Whether a counter is zero: counters of what only some scenarios do are
@@ -644,83 +678,9 @@ pub(crate) fn is_zero(n: &u64) -> bool {
 }
 
 impl DropCounts {
-    pub fn add(&mut self, r: DropReason) {
-        let c = match r {
-            DropReason::NoRoute => &mut self.no_route,
-            DropReason::HopCap => &mut self.hop_cap,
-            DropReason::WrongHopCap => &mut self.wrong_hop_cap,
-            DropReason::NoRecord => &mut self.no_record,
-            DropReason::SendQueueFull => &mut self.send_queue_full,
-            DropReason::Budget => &mut self.budget,
-            DropReason::Banned => &mut self.banned,
-            DropReason::SameHop => &mut self.same_hop,
-            DropReason::ReturnFailed => &mut self.return_failed,
-            DropReason::ReturnSeen => &mut self.return_seen,
-            DropReason::QueueExpired => &mut self.queue_expired,
-            DropReason::DeliveryFull => &mut self.delivery_full,
-            DropReason::PayloadTooLong => &mut self.payload_too_long,
-            DropReason::Pushback => &mut self.pushback,
-            DropReason::Unanswered => &mut self.unanswered,
-            DropReason::Draining => &mut self.draining,
-        };
-        *c += 1;
-    }
-
-    /// Every counter with its name, as in the JSON output.
-    pub fn fields(&self) -> [(&'static str, u64); 16] {
-        [
-            ("no_route", self.no_route),
-            ("hop_cap", self.hop_cap),
-            ("wrong_hop_cap", self.wrong_hop_cap),
-            ("no_record", self.no_record),
-            ("send_queue_full", self.send_queue_full),
-            ("budget", self.budget),
-            ("banned", self.banned),
-            ("same_hop", self.same_hop),
-            ("return_failed", self.return_failed),
-            ("return_seen", self.return_seen),
-            ("queue_expired", self.queue_expired),
-            ("delivery_full", self.delivery_full),
-            ("payload_too_long", self.payload_too_long),
-            ("pushback", self.pushback),
-            ("unanswered", self.unanswered),
-            ("draining", self.draining),
-        ]
-    }
-
     /// The counters that are not zero, with their names.
     pub fn nonzero(&self) -> Vec<(&'static str, u64)> {
         self.fields().into_iter().filter(|&(_, n)| n > 0).collect()
-    }
-
-    /// These counts less `other`'s, counter by counter.
-    pub fn minus(&self, other: &DropCounts) -> DropCounts {
-        let mut out = *self;
-        let o = other.fields();
-        for (c, (_, n)) in [
-            &mut out.no_route,
-            &mut out.hop_cap,
-            &mut out.wrong_hop_cap,
-            &mut out.no_record,
-            &mut out.send_queue_full,
-            &mut out.budget,
-            &mut out.banned,
-            &mut out.same_hop,
-            &mut out.return_failed,
-            &mut out.return_seen,
-            &mut out.queue_expired,
-            &mut out.delivery_full,
-            &mut out.payload_too_long,
-            &mut out.pushback,
-            &mut out.unanswered,
-            &mut out.draining,
-        ]
-        .into_iter()
-        .zip(o)
-        {
-            *c = c.saturating_sub(n);
-        }
-        out
     }
 
     pub fn total(&self) -> u64 {

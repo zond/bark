@@ -22,7 +22,7 @@ use crate::walk::MovingLink;
 use bark_proto::radio::{header_end, CHANNELS, MIN_PREAMBLE_SYMBOLS, SYMBOL_TIME};
 use bark_proto::sniff;
 use bark_proto::wire::Packet as WirePacket;
-use bark_proto::{Duration, Event, Instant, MAX_FRAME};
+use bark_proto::{Channel, Duration, Event, Instant, MAX_FRAME};
 
 /// Tolerance for threshold comparisons in dB, so that an exact 5.0 dB
 /// margin computed through milliwatts counts as 5.0 dB.
@@ -354,16 +354,7 @@ impl Sim {
         }
         if let Some(d) = to.and_then(|(name, kind)| self.relay_index.get(&name).map(|&d| (d, kind)))
         {
-            let st = &self.nodes[d.0 as usize];
-            let state = if st.resting != Some(ch) {
-                AddrFate::OffChannel
-            } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
-                AddrFate::Deaf
-            } else if matches!(st.lock, Lock::Rx(_)) {
-                AddrFate::Receiving
-            } else {
-                AddrFate::Free
-            };
+            let state = self.rx_state(d.0, ch);
             self.addressed.insert(tx_key, (d.0, d.1, state));
         }
         if let Some(WirePacket::Data(d)) = &decoded {
@@ -450,6 +441,21 @@ impl Sim {
         };
         let bin = (off / 40_000).min(24) as usize;
         self.metrics.addressed.heartbeat_late[bin] += 1;
+    }
+
+    /// What `node` is doing as a frame on `ch` starts there, as the fate
+    /// of the frame if `node` loses it (`metrics::Addressed`).
+    pub(crate) fn rx_state(&self, node: u32, ch: Channel) -> AddrFate {
+        let st = &self.nodes[node as usize];
+        if st.resting != Some(ch) {
+            AddrFate::OffChannel
+        } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
+            AddrFate::Deaf
+        } else if matches!(st.lock, Lock::Rx(_)) {
+            AddrFate::Receiving
+        } else {
+            AddrFate::Free
+        }
     }
 
     /// How the frame `key` on the air at `b` is classed for

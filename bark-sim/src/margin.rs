@@ -111,18 +111,7 @@ impl Sim {
         else {
             return;
         };
-        // The receiver's state as the frame starts, as `metrics::Addressed`
-        // classes it.
-        let st = &self.nodes[dst as usize];
-        let state = if st.resting != Some(ch) {
-            AddrFate::OffChannel
-        } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
-            AddrFate::Deaf
-        } else if matches!(st.lock, Lock::Rx(_)) {
-            AddrFate::Receiving
-        } else {
-            AddrFate::Free
-        };
+        let state = self.rx_state(dst, ch);
         let sender = self.relay(src);
         let kind = if sender.sleepy() {
             AddrKind::SleepyData
