@@ -2893,6 +2893,7 @@ Payloads are not padded.
 | text part | 1 + 1 + rest | type 5, UTF-8, or 6, windows-1251 when that page holds the whole part; then the part's number less one in the high four bits and the count of parts less one in the low four, the count 2 to 16; runs to the end, so it comes last |
 | reaction | 1 + 4 + rest | type 3, the `sent` of the text it answers, then one emoji in UTF-8: one extended grapheme cluster of at most 35 bytes, the longest in Unicode 17.0's emoji list; runs to the end, so it comes last |
 | card | 1 + 1 + 38 to 100 | type 4, the card's length, then the card |
+| home | 1 + 13 + 32 | type 7, a home node's address, then the mailbox key its owner had it take for the receiver ([mailbox](#mailbox), The owner's commands), with which the receiver may make it their home |
 
 A receiver drops a message whose bit 1 is not what the two identities
 say, and a text whose contact and `sent` it already has. The address is
