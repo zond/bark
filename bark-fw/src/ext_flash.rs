@@ -70,7 +70,11 @@ pub fn init(pins: board::Flash) {
     let mut chip = Driver::new(bus);
     match chip.init() {
         Ok(status) => {
-            log::info!("ext flash: id ba 60 15, status {:#04x}, asleep", status);
+            log::info!(
+                "ext flash: id {:02x?}, status {:#04x}, asleep",
+                bark_image::ext_flash::JEDEC_ID,
+                status
+            );
             CHIP.lock(|c| *c.borrow_mut() = Some(chip));
         }
         Err(e) => {
@@ -102,14 +106,16 @@ const _: () = assert!(
 );
 
 #[cfg(not(feature = "console"))]
-pub use mailbox::{erase, erase_region, free, program, read};
+pub use stepped::{erase, erase_region, free, program, read};
 
 #[cfg(not(feature = "console"))]
 pub use dfu::Dfu;
 
-/// What the mailbox's ring writes with.
+/// Reads, programs and erases in steps, the executor free between them
+/// and while the chip works: what every asynchronous user of the chip
+/// goes through.
 #[cfg(not(feature = "console"))]
-mod mailbox {
+mod stepped {
     use bark_image::ext_flash::{
         Error, ERASE_MAX_US, ERASE_TYP_US, POLL_US, PROGRAM_MAX_US, SECTOR,
     };
@@ -121,10 +127,14 @@ mod mailbox {
 
     /// Resolves once no program or erase runs on the chip, whoever
     /// started it, so that the next command does not wait it out on the
-    /// processor.
+    /// processor. It waits no longer than the chip's longest operation,
+    /// an erase: past that the chip is stuck, and the command that follows
+    /// fails on the driver's own bounded wait.
     pub async fn free() {
-        while !with(|c| c.done()).unwrap_or(true) {
+        let mut waited = 0;
+        while waited < ERASE_MAX_US && !with(|c| c.done()).unwrap_or(true) {
             Timer::after_micros(POLL_US.into()).await;
+            waited += POLL_US;
         }
     }
 
