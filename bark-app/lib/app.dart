@@ -2,10 +2,11 @@
 // take what they use by their constructors: the person (`me.dart`), their
 // contacts, the session with the node, the messages sealed and opened
 // (`messenger.dart`), the home and its owner (`mailbox.dart`), moving to
-// a new phone (`moving.dart`), and the updates of the node and the app.
-// How the app reaches a node over Bluetooth is still parts of this model,
-// in `app/`: the links it makes, the search that chooses them, pairing
-// and Android's bonds, the person's scan, and a node's install.
+// a new phone (`moving.dart`), a node's install (`installs.dart`), and
+// the updates of the node and the app. How the app reaches a node over
+// Bluetooth is still parts of this model, in `app/`: the links it makes,
+// the search that chooses them, pairing and Android's bonds, and the
+// person's scan.
 
 import 'dart:async';
 
@@ -19,6 +20,7 @@ import 'ble_link.dart';
 import 'contacts.dart';
 import 'decision.dart';
 import 'identity_file.dart';
+import 'installs.dart';
 import 'link.dart';
 import 'mailbox.dart';
 import 'me.dart';
@@ -34,7 +36,6 @@ import 'store.dart';
 import 'updater.dart';
 
 part 'app/connect.dart';
-part 'app/installs.dart';
 part 'app/pairing.dart';
 part 'app/scan.dart';
 part 'app/search.dart';
@@ -62,12 +63,8 @@ abstract class _AppCore extends ChangeNotifier {
   bool get scanning;
   Future<void> stopScan();
 
-  // Installs ([_Installs]).
-  Install? get install;
-  set install(Install? i);
-  bool get _installsNow;
-  Awaited? get _awaited;
-  void _giveUp(String node);
+  // A node's install ([AppModel.installs]).
+  Installs get installs;
 
   // Pairing ([_Pairing]).
   Future<void> Function()? get pairAgain;
@@ -98,8 +95,7 @@ abstract class _AppCore extends ChangeNotifier {
   Mailbox get mailbox;
 }
 
-class AppModel extends _AppCore
-    with _Scan, _Installs, _Pairing, _Connect, _Search {
+class AppModel extends _AppCore with _Scan, _Pairing, _Connect, _Search {
   @override
   final Sodium sodium;
 
@@ -121,6 +117,14 @@ class AppModel extends _AppCore
   /// The person's home and its owner.
   @override
   late final Mailbox mailbox;
+
+  /// A node's install, which the search waits for.
+  @override
+  late final Installs installs = Installs(
+    session: session,
+    clock: now,
+    situation: situation,
+  );
   late final Alerts alerts;
 
   /// The latest release, against this app and the connected node.
@@ -178,15 +182,18 @@ class AppModel extends _AppCore
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     // Made first, so that the node's reboot is waited for before the
     // search hears its link ended.
-    updater.away = _rebooted;
-    session.addListener(_installs);
+    updater.away = installs.rebooted;
     session.addListener(_link);
     session.addListener(_search);
     addListener(_link);
     addListener(_search);
-    // The home is the search's first node and the line's last words.
-    me.addListener(_link);
-    me.addListener(_search);
+    // The home is the search's first node and the line's last words; an
+    // install is waited for, and in the line too.
+    for (final n in [me, installs]) {
+      n
+        ..addListener(_link)
+        ..addListener(_search);
+    }
   }
 
   static Future<AppModel> onPhone(Sodium s) async {
@@ -236,6 +243,7 @@ class AppModel extends _AppCore
   Listenable get changes => Listenable.merge([
     this,
     mailbox,
+    installs,
     session,
     contacts,
     me,
@@ -408,7 +416,7 @@ class AppModel extends _AppCore
     final g = n != null && session.guest ? nodeName(n.id) : guestNode;
     final h = homeName;
     final home = h == null ? '' : '. Home at ${shownName(h)}';
-    final installs = _installNote;
+    final installs = this.installs.note;
     if (g != null && tappedGuest) {
       return 'Connected to ${shownName(g)} as a guest for 30 s$installs$home';
     }
@@ -425,17 +433,19 @@ class AppModel extends _AppCore
   @override
   void dispose() {
     _releaseCheck?.cancel();
-    _installTimer?.cancel();
     _scanTimer?.cancel();
     _availability?.cancel();
     _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();
-    session.removeListener(_installs);
     session.removeListener(_link);
     session.removeListener(_search);
-    me.removeListener(_link);
-    me.removeListener(_search);
+    for (final n in [me, installs]) {
+      n
+        ..removeListener(_link)
+        ..removeListener(_search);
+    }
     mailbox.dispose();
+    installs.dispose();
     updater.dispose();
     releases.dispose();
     appUpdate.dispose();

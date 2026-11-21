@@ -23,6 +23,7 @@ import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart' show Form, formatByte, recipientTag;
 import 'package:bark_app/app.dart';
+import 'package:bark_app/installs.dart' show updatedShown;
 import 'package:bark_app/mailbox.dart' show fullNode;
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/contacts.dart';
@@ -777,7 +778,7 @@ void main() {
         ble.inReach.add(paired);
         async.elapse(lookRound);
         expect(ble.connects, [paired, paired]);
-        expect(app.installingLine, isNull);
+        expect(app.installs.installingLine, isNull);
         expect([
           for (final l in app.session.log) l.text,
         ], contains(contains('back from its install, but')));
@@ -972,7 +973,7 @@ void main() {
         'back', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         final node = rebooted(async, app, ble);
-        expect(app.install?.sent, isTrue);
+        expect(app.installs.install?.sent, isTrue);
         expect(
           connectionLine(app),
           'ID FA4E00000001 is installing version 2, back in about a minute',
@@ -1013,7 +1014,7 @@ void main() {
         async.elapse(lookRound * 2 + seenWait);
         expect(app.ownAway, isTrue);
         expect(ble.connects.last, strong);
-        expect(app.installingLine, isNull);
+        expect(app.installs.installingLine, isNull);
         // Another node is not judged; the update still waits for its own.
         expect(app.updater.phase, Phase.rebooting);
       });
@@ -1939,11 +1940,11 @@ void main() {
         expect(app.linkDevice, near);
         ble.nodes[near]!.gathered(24);
         async.flushMicrotasks();
-        expect(app.install, isNotNull);
+        expect(app.installs.install, isNotNull);
         ble.inReach.add(home);
         async.elapse(lookAround);
         expect(app.linkDevice, home);
-        expect(app.install, isNull);
+        expect(app.installs.install, isNull);
         final log = [for (final l in app.session.log) l.text];
         expect(log.where((l) => l.contains('reboots')), isEmpty);
       });
@@ -1963,11 +1964,11 @@ void main() {
         ble.inReach.remove(home);
         u.reboot();
         async.flushMicrotasks();
-        expect(app.install?.sent, isTrue);
+        expect(app.installs.install?.sent, isTrue);
         app.connectPaired(nodeName(nearId));
         async.elapse(round);
         expect(app.linkDevice, near);
-        expect(app.install, isNull);
+        expect(app.installs.install, isNull);
         expect(u.phase, Phase.rebooting);
         // The tapped link is the person's until it drops; then the phone
         // takes its home, back, and the update is judged.

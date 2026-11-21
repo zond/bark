@@ -738,7 +738,7 @@ String? lookingLine(AppModel app) {
 /// [connectionHelp]'s to say.
 String connectionLine(AppModel app) =>
     app.nodeLine ??
-    app.installingLine ??
+    app.installs.installingLine ??
     lookingLine(app) ??
     AppModel.notLookingLine;
 
@@ -770,7 +770,7 @@ String connectionHelp(AppModel app) {
           'need an update. Tap one in Settings to try again.',
   };
   final others = '$lostLine$unservedLine';
-  final install = app.installHelp;
+  final install = app.installs.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
     if (app.mailbox.atHome) {

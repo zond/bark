@@ -249,9 +249,7 @@ mixin _Connect on _AppCore {
     if (_tapHeld) nodes.of(name).unserved = false;
     try {
       await session.setStopped(false);
-      // The phone leaves a node that drains by its own choice: the link's
-      // end is no reboot, and nothing is waited for.
-      if (_installsNow) install = null;
+      installs.leaving();
       if (session.connected) await session.disconnect();
       linkDevice = device;
       final (link, m) = await open();
