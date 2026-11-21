@@ -238,6 +238,11 @@ pub struct Node<const H: usize, const Q: usize> {
     stored: Option<Stored>,
     id: NodeId,
     home: Channel,
+    /// The GPS receiver's latest reading, the mean C/N0 in dB-Hz of the
+    /// satellites it used, its fix kept or dropped; 0 for none
+    /// (spec "Neighbour status"). Here, in the byte the two before it
+    /// leave.
+    gps_signal: u8,
     plane: LocalPlane,
     rng: Rng,
     delivered: Delivered,
@@ -286,6 +291,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             queue: SendQueue::new(),
             forwarding: Forwarding::IDLE,
             heard: Heard::from_config(&config),
+            gps_signal: 0,
             motion: Motion::at_boot(&config),
             gps: gps::Gps::DEFAULT,
             delivery: DeliveryQueue::from_config(&config),
@@ -342,6 +348,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
             stage,
             mode,
             battery,
+            gps_signal,
             radio,
             neighbours,
             records,
@@ -363,6 +370,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         *stage = Stage::Off;
         *mode = Self::mode_at_boot();
         *battery = Battery::at_boot(config.stored);
+        *gps_signal = 0;
         *radio = Radio::new(
             &config,
             Channel::all().next().expect("the plan has channels"),

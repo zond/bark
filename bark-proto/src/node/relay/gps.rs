@@ -447,7 +447,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     /// The receiver's reading: the mean C/N0 of the satellites it used,
     /// kept or dropped, 0 for none (spec "Neighbour status").
     pub(super) fn signal(&mut self, cn0: u8) {
-        self.motion.cn0 = cn0;
+        self.gps_signal = cn0;
     }
 
     /// The latest reading's mean C/N0 at `now` while the node runs its
@@ -456,7 +456,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
     pub(super) fn gps_cn0(&self, now: Instant) -> u8 {
         let searching = at(self.gps.until).is_some_and(|end| now < end);
         match self.gps_tracks() || searching {
-            true => self.motion.cn0,
+            true => self.gps_signal,
             false => 0,
         }
     }

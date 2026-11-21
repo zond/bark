@@ -1122,7 +1122,7 @@ pub struct Listed<'a> {
     pub number: u16,
     /// It holds a bond.
     pub paired: bool,
-    /// It holds a mailbox key.
+    /// The node is its person's home.
     pub home: bool,
     /// Its phone is linked now.
     pub linked: bool,
