@@ -3,6 +3,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
@@ -109,6 +110,37 @@ void main() {
     // The next save writes the current version afresh.
     await s.save();
     expect(store.state!['version'], Session.version);
+  });
+
+  test('a current me.json round-trips, every field', () async {
+    final store = MemoryStore('me.json');
+    final m = Me(store, sodium, () => at);
+    await m.load();
+    await m.setName('Ann');
+    final home = Address.parse('47c0490ad9ff80fa4e00000001')!;
+    await m.setHome(home, key: Uint8List(32));
+    await m.setNodeAddress(home);
+    await m.nextSents(3);
+    await m.setCardSent(m.cardTime);
+    await m.setBackedUp();
+    await m.setAskedToNotify();
+    await m.setAskedBluetooth();
+    await m.setFetchQueued(true);
+    await m.fetched(9);
+    await m.setOwner(true);
+    await m.setLeaving(Leaving(home, Uint8List(32))..round = 9);
+    final saved = store.text!;
+    final again = Me(store, sodium, () => at);
+    await again.load();
+    expect(store.fault, isNull);
+    expect(again.key, m.key);
+    expect(again.name, 'Ann');
+    expect(again.home.toString(), home.toString());
+    expect(again.givenKey, Uint8List(32));
+    expect(again.rounds, [9]);
+    expect(again.leaving!.round, 9);
+    await again.setName('Ann');
+    expect(store.text, saved);
   });
 
   test('a me.json set aside gives a new identity and keeps the old', () async {
