@@ -225,7 +225,7 @@ pub fn home<T: Transport>(
     on: bool,
     clock: Clock,
 ) -> Result<Vec<String>> {
-    let (n, mut l) = phone::owner(t, state, sel, clock)?;
+    let (n, mut l) = phone::paired_link(t, state, sel, clock)?;
     let key = on.then(|| {
         state
             .me
@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_confirms_each_message_and_answers_in_a_box() {
+    fn a_paired_phone_confirms_each_message_and_answers_in_a_box() {
         let (mut radio, mut state) = at_node();
         crate::phone::pair(
             &mut radio,

@@ -19,7 +19,7 @@
 //! D135, D168): every characteristic of the service needs a link
 //! encrypted with an authenticated key, the node shows the passkey of a
 //! pairing on its screen, and it keeps a record for each phone paired,
-//! up to eight, in flash (`phones.rs`, `store.rs`), each phone an owner.
+//! up to eight, in flash (`phones.rs`, `store.rs`), all alike.
 //! On a public node guests use it too (spec "Phone link", Public; roadmap
 //! D150): a link for each paired phone and one more, [`LINKS`] at most,
 //! each served by a slot of its own ([`slot`]), the characteristics a
@@ -455,7 +455,7 @@ pub struct From {
 
 impl From {
     /// Whether it is a paired phone's.
-    pub fn owner(&self) -> bool {
+    pub fn paired(&self) -> bool {
         self.record.is_some()
     }
 }
@@ -557,9 +557,9 @@ pub struct State {
     told_counts: [u8; RECORDS],
     /// The flags byte last logged.
     flags: Option<u8>,
-    /// The removal code on the screen, if one is (spec "Phone link",
+    /// The code of a change to the phones on the screen, if one is (spec "Phone link",
     /// Phones).
-    removal: Option<bark_link::phones::Code>,
+    confirm: Option<bark_link::phones::Code>,
     /// What Phones lists as last followed: the records' `listed` and the
     /// places whose phones are linked ([`phones_moved`]).
     listed: (u8, u8),
@@ -638,7 +638,7 @@ pub static LINK: Mutex<CriticalSectionRawMutex, RefCell<State>> = Mutex::new(Ref
     told: Status::EMPTY,
     told_counts: [0; RECORDS],
     flags: None,
-    removal: None,
+    confirm: None,
     listed: (0, 0),
     phones_told: 0,
 }));
@@ -828,8 +828,8 @@ pub fn told_status(answer: bark_link::Answer) {
     let to = LINK.lock(|l| {
         let mut l = l.borrow_mut();
         l.told_status = Some(answer);
-        let owners = (0..LINKS).filter(|&i| l.phones[i].live && l.phones[i].record.is_some());
-        owners.fold(0u16, |m, i| m | 1 << i)
+        let paired = (0..LINKS).filter(|&i| l.phones[i].live && l.phones[i].record.is_some());
+        paired.fold(0u16, |m, i| m | 1 << i)
     });
     for slot in (0..LINKS).filter(|&i| to & (1 << i) != 0) {
         notify_one(
@@ -1282,7 +1282,7 @@ pub async fn close_all() {
 /// The records changed: the links, the advertising, the node's loop and
 /// the phones follow what they say now (the mailbox and the screen follow
 /// in `phones.rs`).
-fn records_changed() {
+pub fn records_changed() {
     let (public, numbers) =
         crate::phones::read(|p| (p.public(), p.records.map(|r| r.map(|r| r.number))));
     let was = LINK.lock(|l| {
@@ -1306,6 +1306,11 @@ fn records_changed() {
     });
 }
 
+/// The records whose phones are linked now, a bit each.
+pub fn linked_records() -> u8 {
+    LINK.lock(|l| l.borrow().linked())
+}
+
 /// What Phones lists may have changed: the records, as `with` changed
 /// them (`phones.rs`), or which of their phones are linked. If it did,
 /// Status's `phones` moves and every phone still paired whose link is up
@@ -1325,11 +1330,11 @@ pub fn phones_moved() {
         }
         l.listed = now;
         l.phones_told = l.phones_told.wrapping_add(1);
-        let owners = (0..LINKS).filter(|&s| {
+        let paired = (0..LINKS).filter(|&s| {
             let p = &l.phones[s];
             p.live && p.record.is_some_and(|i| bonded & (1 << i) != 0)
         });
-        owners.fold(0u16, |m, s| m | 1 << s)
+        paired.fold(0u16, |m, s| m | 1 << s)
     });
     for slot in (0..LINKS).filter(|&s| to & (1 << s) != 0) {
         notify_one(
@@ -1514,7 +1519,7 @@ async fn advertise<'v, 's>(
 /// The record whose phone the link is: encrypted with an authenticated
 /// key, which only a record's bond gives, as the host holds no other
 /// ([`hold_records`]), and the record whose bond names the peer.
-fn owner(conn: &GattConnection<'_, '_, DefaultPacketPool>) -> Option<usize> {
+fn record_of(conn: &GattConnection<'_, '_, DefaultPacketPool>) -> Option<usize> {
     let raw = conn.raw();
     if raw.security_level().ok() != Some(SecurityLevel::EncryptedAuthenticated) {
         return None;
@@ -1642,7 +1647,7 @@ impl Serving<'_, '_, '_> {
             // A guest's link, on a public node, ends at `ends`: neither a
             // paired phone's nor one that pairs.
             let pairing = LINK.lock(|l| l.borrow().phones[self.slot].pairing);
-            let guest = link::guest(public(), pairing, owner(self.conn).is_some()) && !closing;
+            let guest = link::guest(public(), pairing, record_of(self.conn).is_some()) && !closing;
             if guest && embassy_time::Instant::now() >= ends {
                 log::info!("ble: the guest in slot {} closed after its time", self.slot);
                 self.conn.raw().disconnect();
@@ -1665,7 +1670,7 @@ impl Serving<'_, '_, '_> {
                         u8::from(reason),
                         self.slot
                     );
-                    if owner(self.conn).is_some() {
+                    if record_of(self.conn).is_some() {
                         self.update.lock().await.phone.link_closed();
                     }
                     // A pairing cut short leaves no code on the screen.
@@ -1692,7 +1697,7 @@ impl Serving<'_, '_, '_> {
         let (slot, conn, link) = (self.slot, self.conn, &self.server.link);
         LINK.lock(|l| l.borrow_mut().phones[slot].sending = true);
         // A guest's link ends with the public setting.
-        if n.close_guests && owner(conn).is_none() {
+        if n.close_guests && record_of(conn).is_none() {
             log::info!("ble: no longer public; the guest in slot {} closed", slot);
             conn.raw().disconnect();
         }
@@ -1715,7 +1720,7 @@ impl Serving<'_, '_, '_> {
                 .notify(conn, &given_back_now(slot), true)
                 .await;
         }
-        if n.answer && owner(conn).is_some() {
+        if n.answer && record_of(conn).is_some() {
             let _ = link.ask.notify(conn, &answer_now(), true).await;
         }
         LINK.lock(|l| l.borrow_mut().phones[slot].sending = false);
@@ -1746,7 +1751,7 @@ impl Serving<'_, '_, '_> {
                 crate::display::pairing(None);
                 LINK.lock(|l| {
                     let p = &mut l.borrow_mut().phones[slot];
-                    p.record = owner(conn);
+                    p.record = record_of(conn);
                     p.pairing = false;
                 });
                 phones_moved();
@@ -1771,7 +1776,7 @@ impl Serving<'_, '_, '_> {
             }
             GattConnectionEvent::Encrypted { security_level, .. } => {
                 log::info!("ble: encrypted {:?}", security_level);
-                LINK.lock(|l| l.borrow_mut().phones[slot].record = owner(conn));
+                LINK.lock(|l| l.borrow_mut().phones[slot].record = record_of(conn));
                 phones_moved();
                 linked(conn);
                 return true;
@@ -1819,10 +1824,10 @@ impl Serving<'_, '_, '_> {
         }
         let from = From {
             slot,
-            record: owner(conn),
+            record: record_of(conn),
         };
         if !link::allowed(
-            from.owner(),
+            from.paired(),
             public(),
             &open_handles(link),
             access(&incoming),
@@ -1845,7 +1850,7 @@ impl Serving<'_, '_, '_> {
         );
         // A read of Neighbours asks the node for the page first: the table
         // is the core's, which only the node's task reads.
-        if !continued && from.owner() && read_of(&incoming) == Some(link.neighbours.handle) {
+        if !continued && from.paired() && read_of(&incoming) == Some(link.neighbours.handle) {
             let start = LINK.lock(|l| l.borrow().phones[slot].neighbours_from);
             ask(from, Request::Neighbours(start)).await;
         }
@@ -2025,7 +2030,7 @@ async fn tell_of_change(
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
     written: bool,
 ) {
-    let Some(i) = owner(conn) else {
+    let Some(i) = record_of(conn) else {
         return;
     };
     let Some(mut bond) = crate::phones::read(|p| p.get(i).and_then(|r| r.bond)) else {
@@ -2070,13 +2075,13 @@ async fn tell_of_change(
 /// The paired phone on `conn` is linked today: its record keeps the day,
 /// written when it changes (spec "Phone link", Phones).
 fn linked(conn: &GattConnection<'_, '_, DefaultPacketPool>) {
-    let Some(i) = owner(conn) else {
+    let Some(i) = record_of(conn) else {
         return;
     };
     let day = crate::phones::today();
     let known = crate::phones::read(|p| p.get(i).map(|r| r.day));
     if day != 0 && known.is_some_and(|d| d != day) {
-        crate::phones::with(|p| p.linked(i, day));
+        crate::phones::with(|p| p.seen(i, day));
     }
 }
 
@@ -2285,7 +2290,7 @@ fn refresh(
     update: &Update,
 ) {
     let link = &server.link;
-    let record = owner(conn);
+    let record = record_of(conn);
     // A pairing is refused while no record would take it: the phone's
     // own, a free one, or any on a node nobody is paired with.
     let refuses = !crate::phones::read(|p| p.takes(Some(identity(conn))));
@@ -2497,11 +2502,11 @@ this node speaks {} and serves apps from {}: they do not serve each other, close
             let p = &l.phones[i];
             link::Other {
                 live: p.live,
-                owner: p.record.is_some(),
+                paired: p.record.is_some(),
                 tagged: p.tag.is_some(),
             }
         });
-        let busy = link::second_guest(from.owner(), others);
+        let busy = link::second_guest(from.paired(), others);
         if !busy {
             l.phones[from.slot].tag = Some(r.tag);
         }
@@ -2542,7 +2547,7 @@ fn write_guest(from: From, w: &WriteEvent<'_, '_, DefaultPacketPool>) -> Result<
 }
 
 /// Public, written by a paired phone: 0 makes the node private, its
-/// owners' alone, and 1 public again, as it is by default, at once and
+/// paired phones' alone, and 1 public again, as it is by default, at once and
 /// across reboots, the node's one setting for all its phones; made
 /// private, its guests' links close; 2 unpairs the writing phone, for the
 /// caller to [`unpair`]. Whether it unpairs (spec "Phone link", Public).
@@ -2554,7 +2559,7 @@ fn write_public(
         0 => bark_link::PublicWrite::decode(data).map_err(malformed),
         _ => Err(AttErrorCode::INVALID_OFFSET),
     })?;
-    if !from.owner() {
+    if !from.paired() {
         // Only a paired phone's link writes it.
         return Err(AttErrorCode::INSUFFICIENT_AUTHENTICATION);
     }
@@ -2649,8 +2654,8 @@ fn ms_now() -> u64 {
 }
 
 /// Phones, written by a paired phone: the place to read from, a code
-/// drawn on the screen, or a removal with that code, taken within 30 s
-/// and on one try (spec "Phone link", Phones).
+/// drawn on the screen, or a removal or a new owner with that code, taken
+/// within 30 s and on one try (spec "Phone link", Phones).
 fn write_phones(
     from: From,
     stack: &Stack,
@@ -2677,14 +2682,14 @@ fn write_phones(
                     break c;
                 }
             };
-            LINK.lock(|l| l.borrow_mut().removal = Some(code));
+            LINK.lock(|l| l.borrow_mut().confirm = Some(code));
             // The code only in a bench-only build, as a pairing's
             // (spec "Phone link", Pairing).
             match crate::BENCH_ONLY {
-                true => log::info!("ble: removal, the code shown: {:06}", code.code),
-                false => log::info!("ble: removal, the code shown"),
+                true => log::info!("ble: phones, the code shown: {:06}", code.code),
+                false => log::info!("ble: phones, the code shown"),
             }
-            crate::display::removal(Some(code.code));
+            crate::display::confirm(Some(code.code));
             Ok(())
         }
         PhonesWrite::Remove {
@@ -2695,8 +2700,8 @@ fn write_phones(
             if crate::phones::read(|p| p.holding(number, parts)).is_none() {
                 return Err(malformed(Malformed::Value));
             }
-            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().removal, code, ms_now()));
-            crate::display::removal(None);
+            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().confirm, code, ms_now()));
+            crate::display::confirm(None);
             if !taken {
                 log::info!("ble: removal refused: not the code shown, or too late");
                 return Err(REFUSED);
@@ -2728,6 +2733,26 @@ fn write_phones(
                 }
             }
             records_changed();
+            Ok(())
+        }
+        PhonesWrite::Owner { number, code } => {
+            let home = bark_link::phones::Parts {
+                bond: false,
+                home: true,
+            };
+            if crate::phones::read(|p| p.holding(number, home)).is_none() {
+                return Err(malformed(Malformed::Value));
+            }
+            let taken = LINK.lock(|l| Code::take(&mut l.borrow_mut().confirm, code, ms_now()));
+            crate::display::confirm(None);
+            if !taken {
+                log::info!("ble: owner refused: not the code shown, or too late");
+                return Err(REFUSED);
+            }
+            if crate::phones::with(|p| p.make_owner(number)).is_none() {
+                return Err(malformed(Malformed::Value));
+            }
+            log::info!("ble: record number {} the owner's", number);
             Ok(())
         }
     }

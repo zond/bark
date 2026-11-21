@@ -6,6 +6,7 @@ use crypto_box::aead::{AeadInPlace, KeyInit};
 use crypto_box::{PublicKey, SecretKey};
 
 use crate::card::{self, Card};
+use crate::command::Summary;
 use crate::keys::{self, Keys};
 use crate::plain::{self, Header, Part, Record, Writer};
 use crate::seal::{self, Fetch, Form};
@@ -33,8 +34,10 @@ fn the_sizes_are_the_notes() {
     assert_eq!(seal::BOX_OVERHEAD, 18);
     assert_eq!(seal::INTRO_OVERHEAD, 50);
     assert_eq!(seal::REPLY_OVERHEAD, 1);
-    assert_eq!(seal::SUMMARY_LEN, 21);
+    assert_eq!(seal::SUMMARY_LEN, 22);
     assert_eq!(Fetch::LEN, 36);
+    assert_eq!(Fetch::MAX_LEN, 36 + 66);
+    assert_eq!(crate::command::LIST_LEN, 201);
     assert_eq!(card::FIXED_LEN, 38);
     assert_eq!(card::MAX_LEN, 100);
     assert_eq!(card::MAX_TEXT_LEN, 5 + 160);
@@ -260,6 +263,7 @@ fn a_fetch_opens_under_its_key_only() {
         sent: 3,
         address: f.away,
         recipient: 9,
+        command: None,
     };
     let p = fetch.seal(&f.alice.mailbox, f.home.node, 7);
     assert_eq!(seal::recipient_of(&p), Some(7));
@@ -361,17 +365,35 @@ fn a_forged_siv_opens_nothing() {
     assert!(out[..len].iter().all(|&b| b == 0));
 }
 
+/// A summary of the counts alone, as a fetch without a command gets
+/// from a person who is not the owner.
+fn counts(items: u8, remaining: u16) -> Summary {
+    Summary {
+        items,
+        remaining,
+        owner: false,
+        outcome: None,
+    }
+}
+
+/// That summary, sealed.
+fn summary_of(key: &[u8; 32], to: u8, round: u32, items: u8, remaining: u16) -> Vec<u8> {
+    let mut out = [0u8; MAX_PAYLOAD];
+    let n = seal::seal_summary(key, to, round, &counts(items, remaining), &mut out);
+    out[..n].to_vec()
+}
+
 #[test]
 fn a_summary_opens_in_its_round_only_and_tells_what_comes_and_what_remains() {
     let k = fixture().alice.mailbox;
-    let p = seal::seal_summary(&k, 7, 10, seal::MAX_REPLIES, 1000);
+    let p = summary_of(&k, 7, 10, seal::MAX_REPLIES, 1000);
     assert_eq!(
         (p[0], seal::recipient_of(&p)),
         (Form::Summary.format(), Some(7))
     );
     assert_eq!(
         seal::open_summary(&k, 10, &p),
-        Ok((seal::MAX_REPLIES, 1000))
+        Ok(counts(seal::MAX_REPLIES, 1000))
     );
     assert_eq!(seal::open_summary(&k, 11, &p), Err(Error::Open));
     assert_eq!(
@@ -383,14 +405,11 @@ fn a_summary_opens_in_its_round_only_and_tells_what_comes_and_what_remains() {
     let fetch = seal::SivKeys::of(&k);
     assert!(r != k && r != fetch.mac && r != fetch.enc);
     assert_eq!(
-        seal::open_summary(&r, 10, &seal::seal_summary(&r, 7, 10, 1, 0)),
-        Ok((1, 0))
+        seal::open_summary(&r, 10, &summary_of(&r, 7, 10, 1, 0)),
+        Ok(counts(1, 0))
     );
-    assert_ne!(
-        seal::seal_summary(&r, 7, 10, 1, 0),
-        seal::seal_summary(&k, 7, 10, 1, 0)
-    );
-    let mut q = p;
+    assert_ne!(summary_of(&r, 7, 10, 1, 0), summary_of(&k, 7, 10, 1, 0));
+    let mut q = p.clone();
     q[seal::SUMMARY_LEN - 1] ^= 1;
     assert_eq!(seal::open_summary(&k, 10, &q), Err(Error::Open));
     assert_eq!(
@@ -463,11 +482,12 @@ fn a_reply_gives_back_its_item_which_proves_itself() {
     assert_eq!(Form::of(&out[..n]), Ok(Form::IntroductionItem));
     let m = seal::open_item(&k, 10, &out[..n], &mut got).unwrap();
     assert!(seal::open_intro(&f.alice.secret_key(), &got[..m], &mut plain).is_ok());
-    let summary = seal::seal_summary(&k, 9, 10, 1, 0);
+    let summary = summary_of(&k, 9, 10, 1, 0);
     let fetch = Fetch {
         sent: 1,
         address: f.away,
         recipient: 9,
+        command: None,
     }
     .seal(&k, f.home.node, 7);
     for not in [&summary[..], &fetch[..], b"item"] {
@@ -829,11 +849,12 @@ mod mailbox {
         }
     }
 
-    fn fetch(key: &[u8; 32], sent: u32) -> [u8; Fetch::LEN] {
+    fn fetch(key: &[u8; 32], sent: u32) -> crate::seal::FetchPayload {
         Fetch {
             sent,
             address: fixture().away,
             recipient: 9,
+            command: None,
         }
         .seal(key, fixture().home.node, 7)
     }
@@ -851,8 +872,8 @@ mod mailbox {
     fn open(key: &[u8; 32], round: u32, reply: &[u8], number: u32) -> Got {
         if Form::of(reply) == Ok(Form::Summary) {
             assert_eq!(number, 0);
-            let (items, remaining) = seal::open_summary(key, round, reply).unwrap();
-            return Got::Summary(items, remaining);
+            let s = seal::open_summary(key, round, reply).unwrap();
+            return Got::Summary(s.items, s.remaining);
         }
         let mut item = [0u8; MAX_PAYLOAD];
         let len = seal::open_item(key, round, reply, &mut item).unwrap();
@@ -917,7 +938,13 @@ mod mailbox {
         assert_eq!(earlier.person(0).map(|p| p.last_fetch), Some(0));
         let mut m = home();
         m.arrive(MsgId(1), &item(1));
-        assert_eq!(m.arrive(MsgId(2), &f), Arrival::Fetch(0));
+        assert_eq!(
+            m.arrive(MsgId(2), &f),
+            Arrival::Fetch {
+                person: 0,
+                command: None
+            }
+        );
         assert!(m.reply_due());
     }
 
@@ -991,7 +1018,13 @@ mod mailbox {
         // A fetch sends its person's alone, and of those the unconfirmed:
         // hers are all confirmed, and the guests' are not hers.
         let f = fetch(&fixture().alice.mailbox, 50);
-        assert_eq!(m.arrive(MsgId(9), &f), Arrival::Fetch(0));
+        assert_eq!(
+            m.arrive(MsgId(9), &f),
+            Arrival::Fetch {
+                person: 0,
+                command: None
+            }
+        );
         assert_eq!(m.person(0).map(|p| p.last_fetch), Some(50));
         assert_eq!(drain(&mut m, 50), [Got::Summary(0, 0)]);
     }
@@ -1016,7 +1049,13 @@ mod mailbox {
         assert_eq!(numbers(&fetch_all(&mut m, 100)), [3, 1]);
         // Bob's fetch gets all three, his bits untouched.
         let k = fixture().bob.mailbox;
-        assert_eq!(m.arrive(MsgId(0), &fetch(&k, 7)), Arrival::Fetch(3));
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&k, 7)),
+            Arrival::Fetch {
+                person: 3,
+                command: None
+            }
+        );
         let mut out = [0u8; MAX_PAYLOAD];
         let mut got = Vec::new();
         while let Some(o) = m.next(&mut out) {
@@ -1043,11 +1082,17 @@ mod mailbox {
         }
         assert_eq!(
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 9)),
-            Arrival::Fetch(1)
+            Arrival::Fetch {
+                person: 1,
+                command: None
+            }
         );
         assert_eq!(
             m.arrive(MsgId(0), &fetch(&fixture().bob.mailbox, 9)),
-            Arrival::Fetch(4)
+            Arrival::Fetch {
+                person: 4,
+                command: None
+            }
         );
         let mut out = [0u8; MAX_PAYLOAD];
         let mut order = Vec::new();
@@ -1114,14 +1159,20 @@ mod mailbox {
         assert_eq!(m.unread(6, &mut out).map(|u| u.0), Some(1));
         assert_eq!(
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 5)),
-            Arrival::Fetch(2)
+            Arrival::Fetch {
+                person: 2,
+                command: None
+            }
         );
         while m.next(&mut out).is_some() {}
         // The second place's bit is still set: its own fetch gets it.
         m.set_person(2, None);
         assert_eq!(
             m.arrive(MsgId(0), &fetch(&fixture().alice.mailbox, 6)),
-            Arrival::Fetch(6)
+            Arrival::Fetch {
+                person: 6,
+                command: None
+            }
         );
         assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 0)));
         assert_eq!(m.next(&mut out).map(|o| (o.person, o.number)), Some((6, 1)));
@@ -1189,7 +1240,13 @@ mod mailbox {
     /// first, counting the items after it.
     fn fetch_all<R: Ring>(m: &mut Mailbox<R>, round: u32) -> Vec<Got> {
         let k = fixture().alice.mailbox;
-        assert_eq!(m.arrive(MsgId(0), &fetch(&k, round)), Arrival::Fetch(0));
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&k, round)),
+            Arrival::Fetch {
+                person: 0,
+                command: None
+            }
+        );
         let got = drain(m, round);
         let items = numbers(&got).len();
         assert!(matches!(got[0], Got::Summary(n, _) if usize::from(n) == items));
@@ -1254,7 +1311,7 @@ mod mailbox {
         let mut long = [0x42; MAX_PAYLOAD];
         long[0] = Form::Boxed.format();
         long[seal::RECIPIENT_AT] = ITEM_TAG;
-        let summary = seal::seal_summary(&fixture().alice.mailbox, ITEM_TAG, 5, 1, 0);
+        let summary = super::summary_of(&fixture().alice.mailbox, ITEM_TAG, 5, 1, 0);
         let mut other = item(4);
         other[0] = 0x30;
         for (n, p) in [(2, &long[..]), (3, &summary[..]), (4, &other[..])] {
@@ -1331,7 +1388,13 @@ mod mailbox {
         m.arrive(MsgId(1), &item(1));
         let k = fixture().alice.mailbox;
         let f = fetch(&k, 100);
-        assert_eq!(m.arrive(MsgId(0), &f), Arrival::Fetch(0));
+        assert_eq!(
+            m.arrive(MsgId(0), &f),
+            Arrival::Fetch {
+                person: 0,
+                command: None
+            }
+        );
         assert_eq!(m.arrive(MsgId(0), &f), Arrival::Refused);
         assert_eq!(m.arrive(MsgId(0), &fetch(&k, 99)), Arrival::Refused);
         let kept = m.person(0);
@@ -1341,7 +1404,13 @@ mod mailbox {
         assert!(m.is_home());
         assert_eq!(m.newest(), 1);
         assert_eq!(m.arrive(MsgId(0), &f), Arrival::Refused);
-        assert_eq!(m.arrive(MsgId(0), &fetch(&k, 101)), Arrival::Fetch(0));
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(&k, 101)),
+            Arrival::Fetch {
+                person: 0,
+                command: None
+            }
+        );
     }
 
     #[test]
@@ -1574,11 +1643,12 @@ mod flash_ring {
         b
     }
 
-    fn fetch(sent: u32) -> [u8; Fetch::LEN] {
+    fn fetch(sent: u32) -> crate::seal::FetchPayload {
         Fetch {
             sent,
             address: fixture().away,
             recipient: 9,
+            command: None,
         }
         .seal(&fixture().alice.mailbox, fixture().home.node, 7)
     }
@@ -1627,7 +1697,13 @@ mod flash_ring {
             });
         }
         alice = step(&mut flash, alice, |m| {
-            assert_eq!(m.arrive(MsgId(0), &fetch(100)), Arrival::Fetch(0))
+            assert_eq!(
+                m.arrive(MsgId(0), &fetch(100)),
+                Arrival::Fetch {
+                    person: 0,
+                    command: None
+                }
+            )
         });
         alice = step(&mut flash, alice, |m| assert!(m.confirm_read(0, 60)));
         let mut m = flash.open();
@@ -1820,7 +1896,13 @@ mod flash_ring {
         let view = flash.clone();
         let mut m = view.open();
         m.set_person(0, Some(alice));
-        assert_eq!(m.arrive(MsgId(0), &fetch(100)), Arrival::Fetch(0));
+        assert_eq!(
+            m.arrive(MsgId(0), &fetch(100)),
+            Arrival::Fetch {
+                person: 0,
+                command: None
+            }
+        );
         let mut ops = take_ops(&mut m);
         let mut out = [0u8; MAX_PAYLOAD];
         let mut sent = Vec::new();
@@ -1873,5 +1955,385 @@ mod flash_ring {
         assert!(!m.ring().idle());
         let mut b = [0u8; MAX_PAYLOAD];
         assert_eq!(m.item(1, &mut b), Some(item(1).len()));
+    }
+}
+
+/// The owner's commands, on a fetch, run on the node's records, answered
+/// in the summary (spec "Mailbox", The owner's commands).
+mod commands {
+    use std::vec::Vec;
+
+    use bark_link::phones::{Keys, Name, Phones, RECORDS};
+    use bark_proto::MsgId;
+
+    use crate::command::{self, Code, Command, Outcome, Summary};
+    use crate::mailbox::{Arrival, Mailbox, Person, RamRing};
+    use crate::seal::{self, Fetch, Form};
+    use crate::vectors::fixture;
+    use crate::{Error, MAX_PAYLOAD};
+
+    type Home = Mailbox<RamRing<32>>;
+
+    fn bond(n: u8) -> Keys {
+        Keys {
+            kind: 1,
+            addr: [n, 2, 3, 4, 5, 0xc6],
+            irk: None,
+            ltk: [n; 16],
+            seen: 1,
+            service_changed: false,
+        }
+    }
+
+    /// A node whose records are Alice's, the owner, paired, at place 0,
+    /// and Bob's, paired and homed, at place 1.
+    fn node() -> (Home, Phones) {
+        let f = fixture();
+        let mut p = Phones::EMPTY;
+        p.pair(bond(1), 0).unwrap();
+        p.set_recipient(0, 0x11, Name::new(b"Alice").unwrap());
+        p.set_home(0, Some(f.alice.mailbox));
+        p.pair(bond(2), 0).unwrap();
+        p.set_recipient(1, 0x22, Name::new(b"Bob").unwrap());
+        p.set_home(1, Some(f.bob.mailbox));
+        let mut m = Mailbox::new(RamRing::new(), f.home.node);
+        for i in 0..RECORDS {
+            m.set_person(i, p.get(i).map(Person::of));
+        }
+        (m, p)
+    }
+
+    fn fetch(key: &[u8; 32], sent: u32, command: Option<Command>) -> seal::FetchPayload {
+        Fetch {
+            sent,
+            address: fixture().away,
+            recipient: 9,
+            command,
+        }
+        .seal(key, fixture().home.node, 7)
+    }
+
+    /// The fetch arrives, its command runs on the records, and the
+    /// summary and the items come out, opened under `key`.
+    fn ask(
+        m: &mut Home,
+        p: &mut Phones,
+        key: &[u8; 32],
+        sent: u32,
+        c: Option<Command>,
+    ) -> (Summary, usize) {
+        let Arrival::Fetch { person, command } = m.arrive(MsgId(sent), &fetch(key, sent, c)) else {
+            panic!("the fetch is taken");
+        };
+        assert_eq!(command, c);
+        command::obey(m, p, person, command, 300, 0);
+        let mut out = [0u8; MAX_PAYLOAD];
+        let mut summary = None;
+        let mut items = 0;
+        while let Some(o) = m.next(&mut out) {
+            match Form::of(&out[..o.len]) {
+                Ok(Form::Summary) => {
+                    assert!(summary.is_none() && items == 0, "the summary first");
+                    summary = Some(seal::open_summary(key, sent, &out[..o.len]).unwrap());
+                }
+                _ => items += 1,
+            }
+        }
+        (summary.expect("a summary"), items)
+    }
+
+    fn done(code: Code) -> Option<Outcome> {
+        Some(Outcome::Done(code))
+    }
+
+    #[test]
+    fn a_command_is_read_whole_or_not_at_all() {
+        let mut b = [0u8; Command::MAX_LEN];
+        let add = Command::Add {
+            key: [7; 32],
+            tag: 0x42,
+            name: Name::new("Åsa".as_bytes()).unwrap(),
+        };
+        for c in [
+            add,
+            Command::Remove(0x0102),
+            Command::List,
+            Command::HandOver(9),
+            Command::Leave,
+        ] {
+            let n = c.encode(&mut b);
+            assert_eq!(Command::decode(&b[..n]), Ok(c));
+        }
+        let n = add.encode(&mut b);
+        assert_eq!((n, b[0], b[33]), (38, 1, 0x42));
+        let n = Command::Remove(0x0102).encode(&mut b);
+        assert_eq!(&b[..n], &[2, 1, 2]);
+        for bad in [
+            &[][..],
+            &[0],
+            &[6],
+            &[2, 1],
+            &[2, 1, 2, 3],
+            &[3, 0],
+            &[5, 0],
+            &[1; 33],
+        ] {
+            assert_eq!(Command::decode(bad), Err(Error::Malformed), "{bad:?}");
+        }
+        // A name that is not UTF-8, or longer than a card's.
+        let mut bad = [1u8; 2 + 32 + 33];
+        assert_eq!(
+            Command::decode(&bad[..35]),
+            Ok(Command::Add {
+                key: [1; 32],
+                tag: 1,
+                name: Name::new(&[1]).unwrap()
+            })
+        );
+        bad[34] = 0xff;
+        assert_eq!(Command::decode(&bad[..35]), Err(Error::Malformed));
+        bad[34] = b'a';
+        assert_eq!(Command::decode(&bad), Err(Error::Malformed));
+    }
+
+    /// A fetch with a command opens as one without; one whose command the
+    /// node does not read opens as nothing.
+    #[test]
+    fn a_fetch_carries_its_command_under_its_proof() {
+        let f = fixture();
+        let c = Some(Command::HandOver(3));
+        let p = fetch(&f.alice.mailbox, 5, c);
+        assert_eq!(p.len(), Fetch::LEN + 3);
+        let got = Fetch::open(&f.alice.mailbox, f.home.node, &p).unwrap();
+        assert_eq!((got.sent, got.command), (5, c));
+        let longest = fetch(
+            &f.alice.mailbox,
+            5,
+            Some(Command::Add {
+                key: [1; 32],
+                tag: 1,
+                name: Name::new(&[b'a'; 32]).unwrap(),
+            }),
+        );
+        assert_eq!(longest.len(), Fetch::MAX_LEN);
+        assert!(Fetch::open(&f.alice.mailbox, f.home.node, &longest).is_ok());
+        let mut q = p;
+        let last = q.len() - 1;
+        q[last] ^= 1;
+        assert_eq!(
+            Fetch::open(&f.alice.mailbox, f.home.node, &q),
+            Err(Error::Open)
+        );
+    }
+
+    #[test]
+    fn a_summary_carries_the_owner_and_what_a_command_did() {
+        let k = fixture().alice.mailbox;
+        let mut out = [0u8; MAX_PAYLOAD];
+        for s in [
+            Summary {
+                items: 3,
+                remaining: 700,
+                owner: true,
+                outcome: None,
+            },
+            Summary {
+                items: 0,
+                remaining: 0,
+                owner: false,
+                outcome: done(Code::NoSuchHome),
+            },
+        ] {
+            let n = seal::seal_summary(&k, 7, 10, &s, &mut out);
+            assert_eq!(n, seal::SUMMARY_LEN + usize::from(s.outcome.is_some()));
+            assert_eq!(seal::open_summary(&k, 10, &out[..n]), Ok(s));
+        }
+    }
+
+    /// Eight records with names of 32 bytes: the list all but fills a
+    /// payload.
+    #[test]
+    fn the_longest_list_fits_one_summary() {
+        let (mut m, mut p) = node();
+        for k in 2..RECORDS as u8 {
+            p.add([k; 32], k, Name::new(&[b'n'; 32]).unwrap(), 0, 0)
+                .unwrap();
+        }
+        p.set_recipient(0, 0x11, Name::new(&[b'a'; 32]).unwrap());
+        p.set_recipient(1, 0x22, Name::new(&[b'b'; 32]).unwrap());
+        for i in 0..RECORDS {
+            m.set_person(i, p.get(i).map(Person::of));
+        }
+        let k = fixture().alice.mailbox;
+        let Arrival::Fetch { person, command } =
+            m.arrive(MsgId(1), &fetch(&k, 1, Some(Command::List)))
+        else {
+            panic!()
+        };
+        command::obey(&mut m, &mut p, person, command, 0, 0);
+        let mut out = [0u8; MAX_PAYLOAD];
+        let o = m.next(&mut out).unwrap();
+        // Eight records of 25 bytes take 200 of the list's 201.
+        assert_eq!(o.len, MAX_PAYLOAD - 1);
+        let s = seal::open_summary(&k, 1, &out[..o.len]).unwrap();
+        let Some(Outcome::List(list)) = s.outcome else {
+            panic!("a list")
+        };
+        let mut listed = [None; RECORDS];
+        assert_eq!(list.records(&mut listed), Ok(RECORDS));
+        assert!(listed.iter().flatten().all(|l| l.name.len() == 18));
+        assert!(listed[0].unwrap().mine && listed[0].unwrap().owner);
+    }
+
+    /// The owner adds a person with no phone at the node, lists, removes
+    /// a home and hands the mark over; a person not the owner is not
+    /// allowed, and still gets their mail.
+    #[test]
+    fn the_owner_manages_the_node_over_the_mesh() {
+        let f = fixture();
+        let (alice, bob) = (f.alice.mailbox, f.bob.mailbox);
+        let carol = [3u8; 32];
+        let (mut m, mut p) = node();
+        let add = Command::Add {
+            key: carol,
+            tag: 0x33,
+            name: Name::new(b"Carol").unwrap(),
+        };
+        let (s, _) = ask(&mut m, &mut p, &alice, 10, Some(add));
+        assert_eq!((s.owner, s.outcome), (true, done(Code::Ok)));
+        let r = *p.get(2).unwrap();
+        assert_eq!(
+            (r.bond, r.key, r.tag, r.day),
+            (None, Some(carol), Some(0x33), 300)
+        );
+        assert_eq!(m.person(2).map(|p| p.key), Some(Some(carol)));
+        // A retry, its answer lost, changes nothing.
+        let (s, _) = ask(&mut m, &mut p, &alice, 11, Some(add));
+        assert_eq!(s.outcome, done(Code::Already));
+        // Bob is not the owner, but his fetch is answered and his mail
+        // comes.
+        let mut item = std::vec![Form::Boxed.format(), 0x22, 1, 2, 3];
+        m.arrive(MsgId(100), &item);
+        item[4] = 4;
+        m.arrive(MsgId(101), &item);
+        let (s, items) = ask(&mut m, &mut p, &bob, 12, Some(Command::Remove(1)));
+        assert_eq!(
+            (s.owner, s.outcome, s.items, items),
+            (false, done(Code::NotAllowed), 2, 2)
+        );
+        // Carol fetches, as anyone homed does.
+        let (s, _) = ask(&mut m, &mut p, &carol, 13, None);
+        assert_eq!((s.owner, s.outcome), (false, None));
+        // The list.
+        let (s, _) = ask(&mut m, &mut p, &alice, 14, Some(Command::List));
+        let Some(Outcome::List(list)) = s.outcome else {
+            panic!("a list")
+        };
+        let mut listed = [None; RECORDS];
+        assert_eq!(list.records(&mut listed), Ok(3));
+        let names: Vec<_> = listed.iter().flatten().map(|l| l.name).collect();
+        assert_eq!(names, [&b"Alice"[..], b"Bob", b"Carol"]);
+        assert!(listed[0].unwrap().mine && listed[0].unwrap().owner);
+        assert!(!listed[2].unwrap().paired && listed[2].unwrap().home);
+        // Bob's home goes; his bond stays.
+        let bob_number = p.get(1).unwrap().number;
+        let (s, _) = ask(
+            &mut m,
+            &mut p,
+            &alice,
+            15,
+            Some(Command::Remove(bob_number)),
+        );
+        assert_eq!(s.outcome, done(Code::Ok));
+        assert_eq!(
+            p.get(1).map(|r| (r.bond.is_some(), r.key)),
+            Some((true, None))
+        );
+        let (s, _) = ask(
+            &mut m,
+            &mut p,
+            &alice,
+            16,
+            Some(Command::Remove(bob_number)),
+        );
+        assert_eq!(s.outcome, done(Code::NoSuchHome));
+        let (s, _) = ask(
+            &mut m,
+            &mut p,
+            &alice,
+            17,
+            Some(Command::HandOver(bob_number)),
+        );
+        assert_eq!(s.outcome, done(Code::NoSuchHome));
+        // Carol is the owner now, and Alice stays homed.
+        let carol_number = p.get(2).unwrap().number;
+        let (s, _) = ask(
+            &mut m,
+            &mut p,
+            &alice,
+            18,
+            Some(Command::HandOver(carol_number)),
+        );
+        assert_eq!((s.owner, s.outcome), (false, done(Code::Ok)));
+        let (s, _) = ask(&mut m, &mut p, &alice, 19, Some(Command::List));
+        assert_eq!((s.owner, s.outcome), (false, done(Code::NotAllowed)));
+        let (s, _) = ask(&mut m, &mut p, &carol, 20, None);
+        assert!(s.owner);
+    }
+
+    /// A leave takes the key the round is under: the summary still goes,
+    /// under it, alone, counting what the person leaves behind, and no
+    /// later fetch of theirs is answered.
+    #[test]
+    fn a_leave_is_answered_by_its_summary_alone() {
+        let f = fixture();
+        let (mut m, mut p) = node();
+        let mut item = std::vec![Form::Boxed.format(), 0x22, 1, 2, 3];
+        m.arrive(MsgId(100), &item);
+        item[4] = 4;
+        m.arrive(MsgId(101), &item);
+        let (s, items) = ask(&mut m, &mut p, &f.bob.mailbox, 10, Some(Command::Leave));
+        assert_eq!(
+            (s.owner, s.outcome, s.items, s.remaining, items),
+            (false, done(Code::Ok), 0, 2, 0)
+        );
+        assert_eq!(
+            p.get(1).map(|r| (r.bond.is_some(), r.key)),
+            Some((true, None))
+        );
+        assert_eq!(
+            m.arrive(MsgId(11), &fetch(&f.bob.mailbox, 11, None)),
+            Arrival::Refused
+        );
+        // The owner who leaves leaves the seat empty, and the next home set
+        // takes it.
+        let (s, _) = ask(&mut m, &mut p, &f.alice.mailbox, 12, Some(Command::Leave));
+        assert_eq!((s.owner, s.outcome), (false, done(Code::Ok)));
+        assert_eq!(p.owner(), None);
+        p.set_home(1, Some(f.bob.mailbox));
+        assert_eq!(p.owner(), Some(f.bob.mailbox));
+    }
+
+    /// A summary given back goes again; an orphan's too.
+    #[test]
+    fn a_leave_s_summary_given_back_goes_again() {
+        let f = fixture();
+        let (mut m, mut p) = node();
+        let key = f.bob.mailbox;
+        let Arrival::Fetch { person, command } =
+            m.arrive(MsgId(1), &fetch(&key, 1, Some(Command::Leave)))
+        else {
+            panic!()
+        };
+        // Nothing goes before the command has run.
+        assert!(!m.reply_due());
+        command::obey(&mut m, &mut p, person, command, 0, 0);
+        let mut out = [0u8; MAX_PAYLOAD];
+        let o = m.next(&mut out).unwrap();
+        assert!(m.next(&mut out).is_none());
+        m.given_back(o.msg_id);
+        let again = m.next(&mut out).unwrap();
+        let s = seal::open_summary(&key, 1, &out[..again.len]).unwrap();
+        assert_eq!(s.outcome, done(Code::Ok));
     }
 }

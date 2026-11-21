@@ -114,7 +114,7 @@ pub fn update<T: Transport>(
     clock: Clock,
     say: &mut dyn FnMut(String),
 ) -> Result<()> {
-    let (n, mut l) = phone::owner(t, state, sel, clock)?;
+    let (n, mut l) = phone::paired_link(t, state, sel, clock)?;
     let version = image.fields.version;
     if version <= n.image {
         return Err(Error::Other(format!(

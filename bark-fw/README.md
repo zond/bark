@@ -1078,7 +1078,7 @@ its value flush right. Top to bottom:
 | `ID BAE6E6CBF4F5` | twelve hex digits, as in the log's `id=` and the USB serial number | the chip |
 | image | `NODE V12` | `BARK_IMAGE_VERSION` |
 | `GET V14 14/31` | while it gathers an image over the mesh: its version, the blocks held from the first of all its blocks; no line otherwise | the core's `Status::gathering` (spec "Neighbour status") |
-| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then with one phone paired `PHONE PUBLIC` or, once its owners have made it theirs alone, `PHONE PRIVATE`, with more `3 PHONES  PUBLIC` or `3 PHONES PRIVATE`; while a phone pairs, `PAIR CODE 012345`; while a removal waits, `REMOVE    012345`; for 30 s after a pairing refused for want of room, `PHONES      FULL`, which the code's line shows too | the phone link (Phone link, below) |
+| phone | `PHONE UNPAIRED` before anyone has paired (the node is public all the same), then with one phone paired `PHONE PUBLIC` or, once its paired phones have made it theirs alone, `PHONE PRIVATE`, with more `3 PHONES  PUBLIC` or `3 PHONES PRIVATE`; while a phone pairs, `PAIR CODE 012345`; while a removal or a new owner waits, `CONFIRM   012345`; for 30 s after a pairing refused for want of room, `PHONES      FULL`, which the code's line shows too | the phone link (Phone link, below) |
 | `KNOWN 5/4/2` | neighbours: those whose heartbeats it hears now; of them, those heard loudly enough that a full frame reaches it through a fade; of them, those that have taken a message from it | the neighbour table's live entries; their averaged RSSI against the margin the core routes by (spec "Next hop"); their `taken_at` |
 | battery | `POWER` `USB`, or `BATTERY` with `73%`, `LOW` or `NOT READ`, and after the level how long the node can go on as it runs now, a relay until it turns sleepy at its low level, `73%/9D`, `LOW/45M`: minutes below an hour, hours below two days, then days | the reading as the core calibrates it; the time left from the drain the core learns (spec "Sleepy nodes", How long the battery lasts) |
 | `UP 12 MIN` | time since boot, in minutes, then hours, then days | the clock |
@@ -1191,8 +1191,8 @@ sleep mode 1. The front light (P1.11) stays off.
 ## Phone link
 
 The link (`src/ble.rs`, spec "Phone link") is the paired phones', up
-to eight, each an owner (roadmap D135, D168), and on a public node, as
-every node is unless its owners make it private, also its guests'
+to eight, all alike (roadmap D135, D168), and on a public node, as
+every node is unless its paired phones make it private, also its guests'
 (below). Every characteristic of the service needs a link encrypted
 with an authenticated key; any other connection's read, write or
 subscription gets ATT's insufficient authentication, and an Android
@@ -1206,12 +1206,13 @@ The node keeps a record for each phone paired (`src/phones.rs`,
 resolving key and long-term key; the person's tag and name as the phone
 writes them to Recipient; their mailbox key once they make the node
 their home; the last of their items the phone confirmed and the last
-fetch taken; the day the phone was last linked; the record's number; and
+fetch taken; the day the person was last seen, their phone linked or
+their fetch taken; whether their key is the owner's; the record's number; and
 the ring's newest item when the record was made, so that bits of the
 marks left by a record freed before count for nothing (Mailbox, below).
 The store keeps them in the stored-state page beside the core's state
 (`src/store.rs`): a record as an entry of four slots, written when the
-bond, the tag, the name, the home or the day changes; what each read or
+bond, the tag, the name, the home, the owner's mark or the day changes; what each read or
 fetch moves, the last confirmed and the last fetch, as an entry of one
 slot; and the node's settings, private or not and the next record's
 number, one slot. The last entry of each kind is the one that holds, and
@@ -1224,7 +1225,8 @@ erases it at its first write (roadmap D188).
 A pairing that completes, is authenticated and bonds takes a free
 record, or replaces the bond of the record whose bond names the same
 phone; on a node nobody is paired with whose eight records all hold
-homes left behind it takes the one linked longest ago. With every
+homes without a phone it takes the one whose person was seen longest
+ago, the owner's last. With every
 record in use and a phone paired, the node refuses: each link's
 `set_refuses_pairing` (`vendor/README.md`) answers the phone's Pairing
 Request with Pairing Failed and the node shows no code, its screen
@@ -1347,16 +1349,18 @@ Home sets or clears the writing phone's person's key alone, in its
 record; a record that holds the same key and no bond, the home the
 person's earlier phone left, takes this phone's bond, name and tag, and
 the phone's own record is freed, so that the bits the person's unfetched
-mail has in the ring's marks stay theirs. Home's read says whether the
-node is the reading phone's person's home.
+mail has in the ring's marks stay theirs. A key set takes the owner's
+seat if no record holds the owner's mark (`bark_link::phones`
+`keep_mark`). Home's read says whether the node is the reading phone's
+person's home.
 
 Phones lists the records and removes one's bond, home
-or both (spec "Phone link", Phones): a write of 1 draws a fresh code on
-the screen, `REMOVE` and six digits, for 30 s, logged in a bench-only build
-as a pairing's is; a write of 2 with a record's number, the parts and
-that code removes them, within the 30 s and on one try (`bark_link::
-phones::Code`), the removed bond's phone's link closed and the bond
-gone from the host. Node's `room` says how many more phones may pair.
+or both, or makes its key the owner's (spec "Phone link", Phones, The
+node's owner): a write of 1 draws a fresh code on the screen, `CONFIRM`
+and six digits, for 30 s, logged in a bench-only build as a pairing's
+is; a write of 2 with a record's number, what to do and that code does
+it, within the 30 s and on one try (`bark_link::phones::Code`), a
+removed bond's phone's link closed and the bond gone from the host. Node's `room` says how many more phones may pair.
 Each change to what Phones lists, made by any writer of the records
 through `phones::with` or by a paired phone's link coming or going, moves
 Status's `phones` and notifies Status to every linked phone still paired,
@@ -1405,7 +1409,12 @@ the rounds of several records in turn. An item sent to a record, or
 confirmed by its phone, has that record's bit cleared, a program of
 one byte without an erase; it stays in the ring. A record claims
 nothing from before it was made. The keys and what each record has read
-and fetched are kept with the records (Phone link, above).
+and fetched are kept with the records (Phone link, above). A fetch's
+command, the owner's, runs on the records as the fetch is taken, the
+records' lock inside the mailbox's, and its outcome goes in the summary,
+which waits, as every first reply does, for the records to be on flash
+(`src/phones.rs` `fetched`, `bark_app_layer::command`; spec "Mailbox",
+The owner's commands).
 
 The mailbox reads a slot when asked, about a millisecond on the
 external flash's bus, and never waits on a write: its writes and erases

@@ -33,7 +33,7 @@ pub fn urgent(shown: &State, now: &State) -> bool {
 /// thing a person at the node acts on at once.
 fn on_code(state: &State) -> Option<Phone> {
     match state.phone {
-        p @ (Phone::Code(_) | Phone::Remove(_) | Phone::Full) => Some(p),
+        p @ (Phone::Code(_) | Phone::Confirm(_) | Phone::Full) => Some(p),
         _ => None,
     }
 }
@@ -84,7 +84,7 @@ impl Schedule {
     }
 
     /// The picture the screen is to show at `now`: the lines while a
-    /// pairing or a removal code shows, since the person typing it stands
+    /// pairing code or a change's shows, since the person typing it stands
     /// at the node and may want the rest, else the code but for a while
     /// after a press.
     pub fn face(&self, state: &State, now: u64) -> Face {

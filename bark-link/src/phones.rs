@@ -124,17 +124,22 @@ pub struct Record {
     /// The `sent` of the last fetch the record took (spec "Mailbox"); 0
     /// before any, and again once the key changes.
     pub last_fetch: u32,
-    /// The day the phone was last linked, from 1 on 2026-01-01 UTC; 0 when
-    /// the node had no time at any of its links.
+    /// The day its person was last seen, from 1 on 2026-01-01 UTC: their
+    /// phone linked, a fetch of theirs taken, or the record made; 0 when
+    /// the node had no time at any of those.
     pub day: u16,
+    /// Its key is the owner's (spec "The node's owner"): every record
+    /// that holds the owner's key has the mark, and no other.
+    pub owner: bool,
 }
 
 impl Record {
-    /// A record for a phone just paired, with the ring's newest item.
-    fn new(number: u16, bond: Keys, newest: u32) -> Record {
+    /// A record with the ring's newest item: a phone's just paired, or a
+    /// person's the owner adds.
+    fn new(number: u16, bond: Option<Keys>, newest: u32) -> Record {
         Record {
             number,
-            bond: Some(bond),
+            bond,
             name: Name::EMPTY,
             tag: None,
             key: None,
@@ -142,6 +147,7 @@ impl Record {
             read: 0,
             last_fetch: 0,
             day: 0,
+            owner: false,
         }
     }
 
@@ -177,7 +183,8 @@ const FLAG_IRK: u8 = 0x02;
 const FLAG_CHANGED: u8 = 0x04;
 const FLAG_TAG: u8 = 0x08;
 const FLAG_HOME: u8 = 0x10;
-const FLAGS: u8 = FLAG_BOND | FLAG_IRK | FLAG_CHANGED | FLAG_TAG | FLAG_HOME;
+const FLAG_OWNER: u8 = 0x20;
+const FLAGS: u8 = FLAG_BOND | FLAG_IRK | FLAG_CHANGED | FLAG_TAG | FLAG_HOME | FLAG_OWNER;
 
 /// 32-bit FNV-1a, as the store's other entries check theirs.
 fn fnv1a(bytes: &[u8]) -> u32 {
@@ -234,6 +241,9 @@ impl Record {
             if let Some(k) = rec.key {
                 flags |= FLAG_HOME;
                 r[AT_KEY..AT_KEY + KEY_LEN].copy_from_slice(&k);
+                if rec.owner {
+                    flags |= FLAG_OWNER;
+                }
             }
             r[AT_FLAGS] = flags;
             r[AT_DAY..AT_DAY + 2].copy_from_slice(&rec.day.to_be_bytes());
@@ -251,7 +261,9 @@ impl Record {
     pub fn decode(r: &[u8; RECORD_LEN]) -> Option<(usize, Option<Record>)> {
         let index = usize::from(r[AT_INDEX]);
         let flags = r[AT_FLAGS];
-        if !whole(r, RECORD_TAG) || index >= RECORDS || flags & !FLAGS != 0 {
+        // The mark is a home's.
+        let marked = flags & (FLAG_OWNER | FLAG_HOME) == FLAG_OWNER;
+        if !whole(r, RECORD_TAG) || index >= RECORDS || flags & !FLAGS != 0 || marked {
             return None;
         }
         if flags & (FLAG_BOND | FLAG_HOME) == 0 {
@@ -283,6 +295,7 @@ impl Record {
                     r[AT_FETCH..AT_FETCH + 4].try_into().expect("4 bytes"),
                 ),
                 day: u16::from_be_bytes([r[AT_DAY], r[AT_DAY + 1]]),
+                owner: flags & FLAG_OWNER != 0,
             }),
         ))
     }
@@ -329,7 +342,7 @@ impl Progress {
 /// The settings entry: the node's own, one for all its phones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// The node's owners have made it private (spec "Public nodes").
+    /// The node's paired phones have made it private (spec "Public nodes").
     pub private: bool,
     /// The number the next record takes.
     pub next: u16,
@@ -413,6 +426,10 @@ impl Load {
             listed: 0,
         };
         p.private &= p.paired() > 0;
+        // A power cut between the records a change of the mark writes
+        // leaves it on some of them: it goes with the first one's key.
+        p.mark(p.owner());
+        p.dirty = Dirty::default();
         p
     }
 }
@@ -436,8 +453,9 @@ pub enum Paired {
     Again(usize),
     /// A free place took it.
     Added(usize),
-    /// Nobody was paired and every place held a home left behind: the one
-    /// linked longest ago took it, its home forgotten.
+    /// Nobody was paired and every place held a home without a phone: the
+    /// one whose person was seen longest ago took it, its home forgotten,
+    /// the owner's last.
     Took(usize),
 }
 
@@ -462,6 +480,15 @@ pub struct Parts {
     pub bond: bool,
     /// The home.
     pub home: bool,
+}
+
+/// Why an owner's add made no record (spec "The node's owner").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotAdded {
+    /// Every place holds a record.
+    Full,
+    /// A record holds the key already: nothing changed.
+    Already,
 }
 
 /// What a removal took.
@@ -585,16 +612,18 @@ impl Phones {
             Some(i) => (i, Paired::Added(i)),
             None if self.paired() == 0 => {
                 let i = (0..RECORDS)
-                    .min_by_key(|&i| self.records[i].map(|r| (r.day, r.number)))
+                    .min_by_key(|&i| self.records[i].map(|r| (r.owner, r.day, r.number)))
                     .expect("eight places");
                 (i, Paired::Took(i))
             }
             None => return Err(Full),
         };
+        let owner = self.owner();
         let number = self.number();
-        self.records[i] = Some(Record::new(number, keys, newest));
+        self.records[i] = Some(Record::new(number, Some(keys), newest));
         self.touch(i);
         self.relisted();
+        self.keep_mark(owner, None);
         Ok(how)
     }
 
@@ -622,9 +651,10 @@ impl Phones {
         }
     }
 
-    /// The phone at `i` is linked on day `day`, 0 when the node has no
-    /// time: written when the day changes, so at most once a day.
-    pub fn linked(&mut self, i: usize, day: u16) {
+    /// The person of the record at `i` is seen on day `day`, their phone
+    /// linked or their fetch taken; 0 when the node has no time: written
+    /// when the day changes, so at most once a day.
+    pub fn seen(&mut self, i: usize, day: u16) {
         if let Some(r) = self.records[i]
             .as_mut()
             .filter(|r| day != 0 && r.day != day)
@@ -664,6 +694,44 @@ impl Phones {
         self.set_private(self.private);
     }
 
+    /// The owner's mailbox key: that of the records with the mark.
+    pub fn owner(&self) -> Option<[u8; KEY_LEN]> {
+        self.records
+            .iter()
+            .flatten()
+            .find(|r| r.owner)
+            .and_then(|r| r.key)
+    }
+
+    /// Whether the record at `i` is the owner's.
+    pub fn is_owner(&self, i: usize) -> bool {
+        self.get(i).is_some_and(|r| r.owner)
+    }
+
+    /// The mark on every record that holds `key`, and on no other.
+    fn mark(&mut self, key: Option<[u8; KEY_LEN]>) {
+        for i in 0..RECORDS {
+            let Some(r) = self.records[i].as_mut() else {
+                continue;
+            };
+            let owner = key.is_some() && r.key == key;
+            if r.owner != owner {
+                r.owner = owner;
+                self.touch(i);
+                self.relisted();
+            }
+        }
+    }
+
+    /// After a change to the records' keys: the mark stays with the key
+    /// `was`, the owner's before, while a record holds it, and else goes
+    /// to `seat`, a key that takes an empty seat (spec "The node's owner").
+    fn keep_mark(&mut self, was: Option<[u8; KEY_LEN]>, seat: Option<[u8; KEY_LEN]>) {
+        let held = |k: &[u8; KEY_LEN]| self.records.iter().flatten().any(|r| r.key == Some(*k));
+        let key = was.filter(held).or(seat.filter(held));
+        self.mark(key);
+    }
+
     /// The phone at `i` unpairs: its bond goes, its home stays
     /// (spec "Public nodes").
     pub fn unpair(&mut self, i: usize) -> Option<Keys> {
@@ -681,8 +749,16 @@ impl Phones {
     /// place that holds the phone's record after it. A home left by this
     /// person's earlier phone takes this phone's bond and keeps its place,
     /// whose bits in the ring's marks are their unfetched mail
-    /// (spec "Settings").
+    /// (spec "Settings"). A key set takes the owner's seat if it is empty
+    /// (spec "The node's owner").
     pub fn set_home(&mut self, i: usize, key: Option<[u8; KEY_LEN]>) -> usize {
+        let owner = self.owner();
+        let at = self.set_key(i, key);
+        self.keep_mark(owner, key);
+        at
+    }
+
+    fn set_key(&mut self, i: usize, key: Option<[u8; KEY_LEN]>) -> usize {
         let Some(r) = self.records[i].as_mut() else {
             return i;
         };
@@ -733,6 +809,7 @@ impl Phones {
     /// asked for.
     pub fn remove(&mut self, number: u16, parts: Parts) -> Option<Removed> {
         let i = self.holding(number, parts)?;
+        let owner = self.owner();
         let r = self.records[i].as_mut().expect("found");
         let bond = match parts.bond {
             true => r.bond.take(),
@@ -745,7 +822,75 @@ impl Phones {
         self.touch(i);
         self.free_if_empty(i);
         self.relisted();
+        self.keep_mark(owner, None);
         Some(Removed { index: i, bond })
+    }
+
+    /// The owner adds a person by their mailbox key and their tag at the
+    /// node: a record with a home and no bond, made on day `day` with the
+    /// ring's newest item `newest` (spec "The node's owner"). Its place.
+    pub fn add(
+        &mut self,
+        key: [u8; KEY_LEN],
+        tag: u8,
+        name: Name,
+        newest: u32,
+        day: u16,
+    ) -> Result<usize, NotAdded> {
+        if self.records.iter().flatten().any(|r| r.key == Some(key)) {
+            return Err(NotAdded::Already);
+        }
+        let i = self
+            .records
+            .iter()
+            .position(Option::is_none)
+            .ok_or(NotAdded::Full)?;
+        let number = self.number();
+        self.records[i] = Some(Record {
+            name,
+            tag: Some(tag),
+            key: Some(key),
+            day,
+            ..Record::new(number, None, newest)
+        });
+        self.touch(i);
+        self.relisted();
+        Ok(i)
+    }
+
+    /// The key of the record numbered `number`, which holds a home, is
+    /// the owner's from now (spec "The node's owner", "Phones"). Its
+    /// place; `None` when no record of that number holds a home.
+    pub fn make_owner(&mut self, number: u16) -> Option<usize> {
+        let i = self.holding(
+            number,
+            Parts {
+                bond: false,
+                home: true,
+            },
+        )?;
+        self.mark(self.records[i].and_then(|r| r.key));
+        Some(i)
+    }
+
+    /// The person of the record at `i` leaves: every record that holds
+    /// their key forgets it, and one with no bond is freed
+    /// (spec "The node's owner").
+    pub fn leave(&mut self, i: usize) {
+        let Some(key) = self.get(i).and_then(|r| r.key) else {
+            return;
+        };
+        let owner = self.owner();
+        for j in 0..RECORDS {
+            if let Some(r) = self.records[j].as_mut().filter(|r| r.key == Some(key)) {
+                r.key = None;
+                r.last_fetch = 0;
+                self.touch(j);
+                self.free_if_empty(j);
+            }
+        }
+        self.relisted();
+        self.keep_mark(owner, None);
     }
 
     /// What has changed since the last call, for the store to write.
@@ -782,31 +927,84 @@ impl Phones {
                 continue;
             };
             let name = r.name.as_bytes();
-            let need = PER_RECORD + name.len();
-            if len + need > out.len() {
+            if len + PER_RECORD + name.len() > out.len() {
                 out[0] = i as u8;
                 break;
             }
-            let flag = |set: bool, bit: u8| if set { bit } else { 0 };
-            let b = &mut out[len..len + need];
-            b[..2].copy_from_slice(&r.number.to_be_bytes());
-            b[2] = flag(r.bond.is_some(), 0x01)
-                | flag(r.key.is_some(), 0x02)
-                | flag(linked & (1 << i) != 0, 0x04)
-                | flag(reader == Some(i), 0x08)
-                | flag(r.tag.is_some(), 0x10);
-            b[3..5].copy_from_slice(&r.day.to_be_bytes());
-            b[5] = r.tag.unwrap_or(0);
-            b[6] = name.len() as u8;
-            b[PER_RECORD..].copy_from_slice(name);
-            len += need;
+            len += put(i, r, name, reader, linked, &mut out[len..]);
+        }
+        len
+    }
+
+    /// Every record, as a Phones read gives them, into `out`, whatever
+    /// its length: the owner's list, which a mailbox's summary carries
+    /// (spec "Mailbox"). The names are cut, at a character's end, to the
+    /// most bytes at which every record fits, so only as far as needed.
+    /// Its length.
+    pub fn list(&self, reader: usize, linked: u8, out: &mut [u8]) -> usize {
+        let names = || {
+            self.records
+                .iter()
+                .flatten()
+                .map(|r| r.name.as_bytes().len())
+        };
+        let fits = |most: usize| -> bool {
+            names().map(|n| PER_RECORD + n.min(most)).sum::<usize>() <= out.len()
+        };
+        let most = (0..=NAME_MAX).rev().find(|&m| fits(m)).unwrap_or(0);
+        let mut len = 0;
+        for (i, r) in self.records.iter().enumerate() {
+            let Some(r) = r else {
+                continue;
+            };
+            let name = cut(r.name.as_bytes(), most);
+            if len + PER_RECORD + name.len() > out.len() {
+                break;
+            }
+            len += put(i, r, name, Some(reader), linked, &mut out[len..]);
         }
         len
     }
 }
 
+/// `name` cut to at most `most` bytes at a character's end: UTF-8 never
+/// starts a character with `0b10`.
+fn cut(name: &[u8], most: usize) -> &[u8] {
+    let mut n = name.len().min(most);
+    while n > 0 && n < name.len() && name[n] & 0xc0 == 0x80 {
+        n -= 1;
+    }
+    &name[..n]
+}
+
+/// The record at `i` as a Phones read gives it, its name `name`, into
+/// `b`; its length.
+fn put(
+    i: usize,
+    r: &Record,
+    name: &[u8],
+    reader: Option<usize>,
+    linked: u8,
+    b: &mut [u8],
+) -> usize {
+    let flag = |set: bool, bit: u8| if set { bit } else { 0 };
+    let b = &mut b[..PER_RECORD + name.len()];
+    b[..2].copy_from_slice(&r.number.to_be_bytes());
+    b[2] = flag(r.bond.is_some(), 0x01)
+        | flag(r.key.is_some(), 0x02)
+        | flag(linked & (1 << i) != 0, 0x04)
+        | flag(reader == Some(i), 0x08)
+        | flag(r.tag.is_some(), 0x10)
+        | flag(r.owner, 0x20);
+    b[3..5].copy_from_slice(&r.day.to_be_bytes());
+    b[5] = r.tag.unwrap_or(0);
+    b[6] = name.len() as u8;
+    b[PER_RECORD..].copy_from_slice(name);
+    b.len()
+}
+
 /// Bytes of a record in a Phones read before its name.
-const PER_RECORD: usize = 2 + 1 + 2 + 1 + 1;
+pub const PER_RECORD: usize = 2 + 1 + 2 + 1 + 1;
 
 /// Bytes of a Phones read at most: as many as fill one value at the MTU the
 /// node offers.
@@ -828,9 +1026,11 @@ pub struct Listed<'a> {
     pub linked: bool,
     /// It is the reading phone's.
     pub mine: bool,
+    /// It is the owner's.
+    pub owner: bool,
     /// Its person's tag at the node, if known.
     pub tag: Option<u8>,
-    /// The day its phone was last linked.
+    /// The day its person was last seen.
     pub day: u16,
     /// Its person's name.
     pub name: &'a [u8],
@@ -842,7 +1042,16 @@ pub fn decode_page<'a>(
     b: &'a [u8],
     out: &mut [Option<Listed<'a>>; RECORDS],
 ) -> Result<(u8, usize), Malformed> {
-    let (&next, mut rest) = b.split_first().ok_or(Malformed::Length)?;
+    let (&next, rest) = b.split_first().ok_or(Malformed::Length)?;
+    Ok((next, decode_list(rest, out)?))
+}
+
+/// The records of a Phones read after its first byte, or of the owner's
+/// list ([`Phones::list`]), into `out`; their count.
+pub fn decode_list<'a>(
+    mut rest: &'a [u8],
+    out: &mut [Option<Listed<'a>>; RECORDS],
+) -> Result<usize, Malformed> {
     let mut n = 0;
     while !rest.is_empty() {
         let name_len = usize::from(*rest.get(6).ok_or(Malformed::Length)?);
@@ -857,6 +1066,7 @@ pub fn decode_page<'a>(
             home: flags & 0x02 != 0,
             linked: flags & 0x04 != 0,
             mine: flags & 0x08 != 0,
+            owner: flags & 0x20 != 0,
             tag: (flags & 0x10 != 0).then_some(rest[5]),
             day: u16::from_be_bytes([rest[3], rest[4]]),
             name: &rest[PER_RECORD..end],
@@ -864,7 +1074,7 @@ pub fn decode_page<'a>(
         n += 1;
         rest = &rest[end..];
     }
-    Ok((next, n))
+    Ok(n)
 }
 
 /// Phones, written (spec "Phones").
@@ -883,6 +1093,14 @@ pub enum PhonesWrite {
         /// The code, as a number.
         code: u32,
     },
+    /// Make the key of the record with this number the owner's, with the
+    /// code drawn.
+    Owner {
+        /// The record's number.
+        number: u16,
+        /// The code, as a number.
+        code: u32,
+    },
 }
 
 /// A removal code's numbers: six digits.
@@ -892,6 +1110,8 @@ impl PhonesWrite {
     const FROM: u8 = 0;
     const CODE: u8 = 1;
     const REMOVE: u8 = 2;
+    /// The `what` of a write of [`Self::REMOVE`] that makes an owner.
+    const OWNER: u8 = 4;
     /// Bytes in the longest value.
     pub const MAX_LEN: usize = 1 + 2 + 1 + 3;
 
@@ -917,6 +1137,13 @@ impl PhonesWrite {
                 put24(&mut b[4..], code);
                 Self::MAX_LEN
             }
+            PhonesWrite::Owner { number, code } => {
+                b[0] = Self::REMOVE;
+                b[1..3].copy_from_slice(&number.to_be_bytes());
+                b[3] = Self::OWNER;
+                put24(&mut b[4..], code);
+                Self::MAX_LEN
+            }
         }
     }
 
@@ -927,17 +1154,20 @@ impl PhonesWrite {
             (Some(&Self::CODE), 1) => Ok(PhonesWrite::Code),
             (Some(&Self::REMOVE), Self::MAX_LEN) => {
                 let code = be24(&b[4..]);
-                if !(1..=3).contains(&b[3]) || code >= CODES {
-                    return Err(Malformed::Value);
+                let number = u16::from_be_bytes([b[1], b[2]]);
+                match b[3] {
+                    _ if code >= CODES => Err(Malformed::Value),
+                    Self::OWNER => Ok(PhonesWrite::Owner { number, code }),
+                    what @ 1..=3 => Ok(PhonesWrite::Remove {
+                        number,
+                        parts: Parts {
+                            bond: what & 1 != 0,
+                            home: what & 2 != 0,
+                        },
+                        code,
+                    }),
+                    _ => Err(Malformed::Value),
                 }
-                Ok(PhonesWrite::Remove {
-                    number: u16::from_be_bytes([b[1], b[2]]),
-                    parts: Parts {
-                        bond: b[3] & 1 != 0,
-                        home: b[3] & 2 != 0,
-                    },
-                    code,
-                })
             }
             (Some(&Self::FROM), 2) => Err(Malformed::Value),
             (Some(&(Self::FROM | Self::CODE | Self::REMOVE)), _) | (None, _) => {
@@ -1014,6 +1244,7 @@ mod tests {
             read: 0x01_0203,
             last_fetch: 0x0405_0607,
             day: 314,
+            owner: true,
         }
     }
 
@@ -1029,12 +1260,17 @@ mod tests {
             },
             Record {
                 key: None,
+                owner: false,
                 bond: Some(Keys {
                     irk: None,
                     service_changed: false,
                     ..keys(4)
                 }),
                 ..full(4)
+            },
+            Record {
+                owner: false,
+                ..full(6)
             },
         ] {
             let r = Record::encode(5, Some(&rec));
@@ -1046,6 +1282,10 @@ mod tests {
                 assert_eq!(Record::decode(&cut), None);
             }
         }
+        // The mark without a home is no record.
+        let mut marked = Record::encode(5, Some(&full(5)));
+        marked[AT_FLAGS] &= !FLAG_HOME;
+        assert_eq!(Record::decode(&seal(marked)), None);
         let freed = Record::encode(7, None);
         assert_eq!(Record::decode(&freed), Some((7, None)));
         let mut far = freed;
@@ -1176,7 +1416,7 @@ mod tests {
         let mut p = Phones::EMPTY;
         for n in 0..RECORDS as u8 {
             p.pair(keys(n), 0).unwrap();
-            p.linked(n.into(), [50, 40, 10, 30, 20, 60, 70, 80][usize::from(n)]);
+            p.seen(n.into(), [50, 40, 10, 30, 20, 60, 70, 80][usize::from(n)]);
             p.set_home(n.into(), Some([n; 32]));
         }
         p.set_private(true);
@@ -1197,11 +1437,11 @@ mod tests {
         let mut p = Phones::EMPTY;
         p.pair(keys(1), 0).unwrap();
         p.take_dirty();
-        p.linked(0, 0);
-        p.linked(0, 300);
+        p.seen(0, 0);
+        p.seen(0, 300);
         assert_eq!(p.take_dirty().records, 1);
-        p.linked(0, 300);
-        p.linked(0, 0);
+        p.seen(0, 300);
+        p.seen(0, 0);
         assert_eq!(p.take_dirty(), Dirty::default());
         assert_eq!(p.get(0).map(|r| r.day), Some(300));
         p.progress(0, 7, 8);
@@ -1230,7 +1470,7 @@ mod tests {
         p.unpair(0);
         p.pair(keys(2), 50).unwrap();
         p.set_recipient(1, 0x11, Name::new(b"Eva").unwrap());
-        p.linked(1, 400);
+        p.seen(1, 400);
         assert_eq!(p.set_home(1, Some(k)), 0);
         assert_eq!(p.get(1), None);
         let r = p.get(0).unwrap();
@@ -1300,7 +1540,7 @@ mod tests {
         }
         p.set_home(2, Some([1; 32]));
         p.unpair(2);
-        p.linked(3, 9);
+        p.seen(3, 9);
         let mut out = [0u8; MAX_LEN];
         let mut listed = [None; RECORDS];
         let len = p.page(0, Some(1), 0b1000_0001, &mut out);
@@ -1385,8 +1625,8 @@ mod tests {
             p.set_recipient(1, 4, Name::EMPTY)
         });
         step(&mut p, "name", true, |p| p.set_recipient(1, 4, bo));
-        step(&mut p, "day", true, |p| p.linked(1, 300));
-        step(&mut p, "same day", false, |p| p.linked(1, 300));
+        step(&mut p, "day", true, |p| p.seen(1, 300));
+        step(&mut p, "same day", false, |p| p.seen(1, 300));
         step(&mut p, "progress", false, |p| p.progress(1, 9, 9));
         step(&mut p, "private", false, |p| p.set_private(true));
         step(&mut p, "home", true, |p| {
@@ -1410,6 +1650,233 @@ mod tests {
         step(&mut p, "remove", true, |p| {
             assert!(p.remove(number, bond).is_some())
         });
+        step(&mut p, "add", true, |p| {
+            assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0).is_ok())
+        });
+        let at = (0..RECORDS)
+            .find(|&i| p.get(i).is_some_and(|r| r.key == Some([3; 32])))
+            .unwrap();
+        let added = p.get(at).unwrap().number;
+        step(&mut p, "add again", false, |p| {
+            assert!(p.add([3; 32], 3, Name::EMPTY, 0, 0).is_err())
+        });
+        step(&mut p, "owner", true, |p| {
+            assert!(p.make_owner(added).is_some())
+        });
+        step(&mut p, "owner again", false, |p| {
+            assert!(p.make_owner(added).is_some())
+        });
+        step(&mut p, "seen", true, |p| p.seen(at, 400));
+        step(&mut p, "leave", true, |p| p.leave(at));
+    }
+
+    /// The mark is the key's: a Home write takes the empty seat, every
+    /// record holding the owner's key has it, and it goes with the last
+    /// of them (spec "The node's owner").
+    #[test]
+    fn the_owner_s_mark_follows_the_key() {
+        let mut p = Phones::EMPTY;
+        let (ann, bo) = ([1; 32], [2; 32]);
+        for n in 0..3 {
+            p.pair(keys(n), 0).unwrap();
+        }
+        assert_eq!(p.owner(), None);
+        p.set_home(0, Some(ann));
+        assert_eq!(p.owner(), Some(ann));
+        p.set_home(1, Some(bo));
+        assert!(p.is_owner(0) && !p.is_owner(1), "the seat is taken");
+        // Ann's second phone holds her key, and so the mark.
+        p.set_home(2, Some(ann));
+        assert!(p.is_owner(2));
+        p.set_home(0, None);
+        assert!(!p.is_owner(0) && p.is_owner(2));
+        // Her last home gone, the seat is empty, and Bo's own key, written
+        // again, takes it.
+        let home = Parts {
+            bond: false,
+            home: true,
+        };
+        p.remove(p.get(2).unwrap().number, home).unwrap();
+        assert_eq!(p.owner(), None);
+        p.set_home(1, Some(bo));
+        assert_eq!(p.owner(), Some(bo));
+        // Kept in the record, and in the page's flags.
+        let r = Record::encode(1, p.get(1));
+        assert_eq!(
+            Record::decode(&r).map(|(_, r)| r.unwrap().owner),
+            Some(true)
+        );
+        let mut out = [0u8; MAX_LEN];
+        let mut listed = [None; RECORDS];
+        let len = p.page(0, None, 0, &mut out);
+        decode_page(&out[..len], &mut listed).unwrap();
+        let owners: std::vec::Vec<_> = listed.iter().flatten().map(|l| l.owner).collect();
+        assert_eq!(owners, [false, true, false]);
+    }
+
+    /// The owner adds a person with a home and no bond, hands the mark to
+    /// another, and a person leaves (spec "The node's owner").
+    #[test]
+    fn an_owner_adds_hands_over_and_a_person_leaves() {
+        let mut p = Phones::EMPTY;
+        p.pair(keys(1), 0).unwrap();
+        p.set_home(0, Some([1; 32]));
+        let eva = Name::new(b"Eva").unwrap();
+        assert_eq!(p.add([5; 32], 0x55, eva, 40, 300), Ok(1));
+        let r = *p.get(1).unwrap();
+        assert_eq!(
+            (r.bond, r.key, r.tag, r.from, r.day, r.owner),
+            (None, Some([5; 32]), Some(0x55), 40, 300, false)
+        );
+        assert_eq!(r.name, eva);
+        // The same key again changes nothing, full or not.
+        assert_eq!(
+            p.add([5; 32], 0x56, Name::EMPTY, 41, 301),
+            Err(NotAdded::Already)
+        );
+        assert_eq!(p.get(1), Some(&r));
+        for k in 6..12 {
+            assert!(p.add([k; 32], k, Name::EMPTY, 0, 0).is_ok());
+        }
+        assert_eq!(p.add([12; 32], 1, Name::EMPTY, 0, 0), Err(NotAdded::Full));
+        assert_eq!(p.add([5; 32], 1, Name::EMPTY, 0, 0), Err(NotAdded::Already));
+        // Handed over: the old owner stays homed and loses the mark.
+        assert_eq!(p.make_owner(r.number), Some(1));
+        assert_eq!(p.owner(), Some([5; 32]));
+        assert_eq!(
+            p.get(0).map(|r| (r.key, r.owner)),
+            Some((Some([1; 32]), false))
+        );
+        // A record without a home cannot take it.
+        p.set_home(0, None);
+        assert_eq!(p.make_owner(p.get(0).unwrap().number), None);
+        assert_eq!(p.make_owner(999), None);
+        // Eva leaves: her record, which holds no bond, is freed, and the
+        // seat is empty.
+        p.leave(1);
+        assert_eq!(p.get(1), None);
+        assert_eq!(p.owner(), None);
+        // A person with a phone who leaves keeps the bond.
+        p.set_home(0, Some([1; 32]));
+        assert!(p.is_owner(0));
+        p.leave(0);
+        assert_eq!(
+            p.get(0).map(|r| (r.bond.is_some(), r.key, r.owner)),
+            Some((true, None, false))
+        );
+    }
+
+    /// A record the owner added has no phone, and is no more the first
+    /// to go than one a phone left: the pairing takes the home whose
+    /// person was seen longest ago, the owner's last (spec "Pairing").
+    #[test]
+    fn a_pairing_on_a_full_node_spares_the_owner_and_the_recently_seen() {
+        let mut p = Phones::EMPTY;
+        p.pair(keys(0), 0).unwrap();
+        p.seen(0, 5);
+        p.set_home(0, Some([0; 32]));
+        for k in 1..RECORDS as u8 {
+            p.add([k; 32], k, Name::EMPTY, 0, 100 + u16::from(k))
+                .unwrap();
+        }
+        // Record 3's person fetched on day 400.
+        p.seen(3, 400);
+        p.unpair(0);
+        assert_eq!(p.paired(), 0);
+        assert_eq!(p.pair(keys(9), 0), Ok(Paired::Took(1)));
+        assert_eq!(p.owner(), Some([0; 32]), "the owner's home stays");
+        // Each phone that pairs, is seen, makes the node its home and
+        // unpairs leaves the next to the one seen longest ago.
+        let mut took = std::vec::Vec::new();
+        let mut at = 1;
+        for n in 10..16 {
+            p.seen(at, 500);
+            p.set_home(at, Some([n; 32]));
+            p.unpair(at);
+            at = p.pair(keys(n), 0).unwrap().index();
+            took.push(at);
+        }
+        assert_eq!(took, [2, 4, 5, 6, 7, 3]);
+        assert!(p.get(0).is_some_and(|r| r.owner));
+    }
+
+    /// The owner's list holds every record, cutting the names only as far
+    /// as all of them need to fit, at a character's end.
+    #[test]
+    fn the_list_cuts_names_only_as_far_as_needed() {
+        /// The names the list holds in `room` bytes.
+        fn names(p: &Phones, room: usize) -> std::vec::Vec<std::vec::Vec<u8>> {
+            let mut out = [0u8; 256];
+            let mut listed = [None; RECORDS];
+            let n = p.list(0, 1, &mut out[..room]);
+            let count = decode_list(&out[..n], &mut listed).unwrap();
+            listed[..count]
+                .iter()
+                .map(|l| l.unwrap().name.to_vec())
+                .collect()
+        }
+        let mut p = Phones::EMPTY;
+        p.pair(keys(0), 0).unwrap();
+        p.set_home(0, Some([0; 32]));
+        // Two bytes a letter, but for the space: 31 bytes.
+        let long = "Олександра Ковал".as_bytes();
+        assert_eq!(long.len(), 31);
+        p.set_recipient(0, 1, Name::new(long).unwrap());
+        let mut out = [0u8; 200];
+        let mut listed = [None; RECORDS];
+        let n = p.list(0, 1, &mut out);
+        assert_eq!(decode_list(&out[..n], &mut listed), Ok(1));
+        let me = listed[0].unwrap();
+        assert_eq!(
+            (me.name, me.mine, me.owner, me.linked),
+            (long, true, true, true)
+        );
+        for k in 1..RECORDS as u8 {
+            p.add([k; 32], k, Name::new(long).unwrap(), 0, 0).unwrap();
+        }
+        // 200 bytes: 25 a record, 18 of a name, a character's end.
+        assert!(names(&p, 200).iter().all(|n| n == &long[..18]));
+        assert_eq!(names(&p, 200).len(), RECORDS);
+        // One byte less: 17 would split a letter, so 16.
+        assert!(names(&p, 199).iter().all(|n| n == &long[..16]));
+        // A short name stays whole, and the long ones take its room.
+        p.set_recipient(0, 1, Name::new(b"Bo").unwrap());
+        let got = names(&p, 200);
+        assert_eq!((&got[0][..], &got[1][..]), (&b"Bo"[..], &long[..20]));
+    }
+
+    /// A power cut between the records a hand-over writes leaves the mark
+    /// on two keys: the first record's holds it.
+    #[test]
+    fn a_mark_cut_short_goes_with_the_first_key() {
+        let mut load = Load::default();
+        load.entry(
+            &Settings {
+                private: false,
+                next: 9,
+            }
+            .encode(),
+        );
+        let one = Record {
+            key: Some([1; 32]),
+            ..full(1)
+        };
+        let two = Record {
+            key: Some([2; 32]),
+            ..full(2)
+        };
+        load.entry(&Record::encode(3, Some(&two)));
+        load.entry(&Record::encode(1, Some(&one)));
+        load.entry(&Record::encode(
+            5,
+            Some(&Record {
+                owner: false,
+                ..one
+            }),
+        ));
+        let p = load.phones();
+        assert_eq!(p.owner(), Some([1; 32]));
+        assert!(p.is_owner(1) && p.is_owner(5) && !p.is_owner(3));
     }
 
     #[test]
@@ -1418,6 +1885,18 @@ mod tests {
         for w in [
             PhonesWrite::From(7),
             PhonesWrite::Code,
+            PhonesWrite::Remove {
+                number: 0x0102,
+                parts: Parts {
+                    bond: false,
+                    home: true,
+                },
+                code: 999_999,
+            },
+            PhonesWrite::Owner {
+                number: 0x0304,
+                code: 5,
+            },
             PhonesWrite::Remove {
                 number: 0x0102,
                 parts: Parts {
@@ -1439,7 +1918,15 @@ mod tests {
             Err(Malformed::Value)
         );
         assert_eq!(
-            PhonesWrite::decode(&[2, 0, 1, 4, 0, 0, 0]),
+            PhonesWrite::decode(&[2, 0, 1, 4, 0, 0, 9]),
+            Ok(PhonesWrite::Owner { number: 1, code: 9 })
+        );
+        assert_eq!(
+            PhonesWrite::decode(&[2, 0, 1, 5, 0, 0, 0]),
+            Err(Malformed::Value)
+        );
+        assert_eq!(
+            PhonesWrite::decode(&[2, 0, 1, 4, 0x0f, 0x42, 0x40]),
             Err(Malformed::Value)
         );
         assert_eq!(

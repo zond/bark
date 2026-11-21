@@ -33,9 +33,9 @@ program helps.
 
 Until it pairs, the tool is a guest, and a guest uses only a public node
 (protocol.md, "Public nodes"): it refuses a private one before it
-connects. A command on a paired node uses the owner's link instead. As
+connects. A command on a paired node uses a paired phone's link instead. As
 the app does, every link writes this person's recipient tag at the node
-first, and an owner's their name too, so the node hands them their mail.
+first, and a paired one their name too, so the node hands them their mail.
 
 - `scan`: the nodes in reach, strongest first, one a line: ID, RSSI in
   dBm, `public`, `private` or `unknown`, whether this computer is paired
@@ -52,7 +52,7 @@ first, and an owner's their name too, so the node hands them their mail.
   wrapping, whenever the node's list of phones changes, so that a phone
   knows to read it again (protocol.md, "The service").
 
-## An owner's commands
+## A paired phone's commands
 
 - `pair <id> [--code N]`: pairs, by the six-digit code the node's screen
   shows when the pairing asks for it; without `--code` the tool asks for
@@ -67,15 +67,17 @@ first, and an owner's their name too, so the node hands them their mail.
 - `ask <id> <neighbour>`: asks the neighbour for its status through the
   node, three times at most, as the app does, and prints its answer.
 - `clock <id>`: the node's time, its UTC offset and where its time came
-  from. Every owner's command gives the node this computer's time first,
+  from. Every command here gives the node this computer's time first,
   as the app does at every connection.
 - `map-point <id> set <lat> <lon>`, `map-point <id> clear`: sets or
   clears the node's map point, then prints its status.
 - `public <id> [on|off]`: makes the node public or private, and prints
   what it is.
 - `phones <id>`: a line for each record the node keeps: its number, its
-  flags (`mine` is this computer's), its tag, the day its phone was last
-  linked, and its name.
+  flags (`mine` is this computer's, `owner` the node's owner's), its tag,
+  the day its person was last seen, and its name. The tool neither removes a
+  record nor makes an owner; the app does both, by the code the node's
+  screen shows.
 
 ## Messages
 
