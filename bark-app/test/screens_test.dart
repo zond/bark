@@ -1047,7 +1047,7 @@ void main() {
     // The home itself: its mail is in its inbox, nothing is sent. (Leaving
     // the home before is the home tests', as it waits on the clock.)
     await app.me.setHome(null);
-    await app.makeHome(app.session.address!);
+    await app.mailbox.makeHome(app.session.address!);
     await t.pump();
     final before = app.session.outbox.length;
     await fetch('At your home, your mail comes by itself');
@@ -1092,7 +1092,7 @@ void main() {
 
     // Setting and clearing the home both change the card.
     await press('Make this node my home', 'goes to your contact.');
-    expect(app.atHome, isTrue);
+    expect(app.mailbox.atHome, isTrue);
     // The home at a new place is still the home: no button to make it one.
     await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
     await t.pumpAndSettle();
@@ -1122,7 +1122,7 @@ void main() {
     final home = app.me.home!;
     await app.me.setHome(Address(home.pos, [1, 2, 3, 4, 5, 6]));
     await t.pumpAndSettle();
-    expect(app.atHome, isFalse);
+    expect(app.mailbox.atHome, isFalse);
     expect(find.text('Make this node my home'), findsOneWidget);
     await app.me.setHome(home);
     await t.pumpAndSettle();
@@ -1155,7 +1155,7 @@ void main() {
     );
     await app.connectFake();
     final f = app.fakeNode!;
-    await t.runAsync(() => app.makeHome(app.session.address!));
+    await t.runAsync(() => app.mailbox.makeHome(app.session.address!));
     expect(app.cardUnsent, isFalse);
     // The node takes a new place, and forgets what it stored.
     await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
@@ -1164,7 +1164,7 @@ void main() {
     await app.session.disconnect();
     f.homeKey = null;
     await app.connectFake();
-    expect(app.homeKeyGone, isTrue);
+    expect(app.mailbox.homeKeyGone, isTrue);
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
     const make = 'Make this node my home';
@@ -1189,7 +1189,7 @@ void main() {
     await t.tap(find.text('Make it my home'));
     await t.runAsync(() => Future<void>.delayed(Duration.zero));
     await t.pumpAndSettle();
-    expect(app.homeKeyGone, isFalse);
+    expect(app.mailbox.homeKeyGone, isFalse);
     expect(app.session.outbox.length, sent);
     expect(find.textContaining('new home address'), findsOneWidget);
 

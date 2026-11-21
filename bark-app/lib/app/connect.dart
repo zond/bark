@@ -158,7 +158,7 @@ mixin _Connect on _AppCore {
     if (session.guestRead) r.ringReadAt = now();
     if (!errand) return;
     final link = session.link;
-    await _sendQueuedFetch();
+    await mailbox.sendQueuedFetch();
     await _sent();
     // Only the errand's own link: a tap may have replaced it meanwhile.
     if (session.connected && session.link == link) await session.disconnect();

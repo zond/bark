@@ -209,11 +209,11 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     value: () => app.messenger.sendCard(contact),
                     child: const Text('Send my card'),
                   ),
-                  if (app.isOwner)
+                  if (app.mailbox.isOwner)
                     PopupMenuItem(
                       value: () async {
                         try {
-                          final r = await app.shareHome(contact);
+                          final r = await app.mailbox.shareHome(contact);
                           if (context.mounted) say(context, r);
                         } catch (e) {
                           if (context.mounted) say(context, 'Failed: $e');

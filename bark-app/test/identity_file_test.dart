@@ -228,7 +228,7 @@ void main() {
         old.me.setName('Ann');
         old.connectFake();
         async.flushMicrotasks();
-        old.makeHome(old.session.address!);
+        old.mailbox.makeHome(old.session.address!);
         async.elapse(const Duration(seconds: 2));
         expect(old.contacts.list, hasLength(1));
         expect(old.session.received, isNotEmpty);

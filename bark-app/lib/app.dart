@@ -1,9 +1,11 @@
-// What every screen shares: the person, their contacts, the session with
-// the node, the messages sealed and opened, and how the app reaches a
-// node over Bluetooth. The model is made of parts, each with one job, in
-// `app/`: the links it makes, the search that chooses them, pairing and
-// Android's bonds, the home and the card, the person's scan, a node's
-// install, and moving to a new phone.
+// What every screen shares, made of objects each with one job, which
+// take what they use by their constructors: the person (`me.dart`), their
+// contacts, the session with the node, the messages sealed and opened
+// (`messenger.dart`), the home and its owner (`mailbox.dart`), moving to
+// a new phone (`moving.dart`), and the updates of the node and the app.
+// How the app reaches a node over Bluetooth is still parts of this model,
+// in `app/`: the links it makes, the search that chooses them, pairing
+// and Android's bonds, the person's scan, and a node's install.
 
 import 'dart:async';
 
@@ -12,13 +14,13 @@ import 'package:sodium/sodium.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'alerts.dart';
-import 'app_layer.dart';
 import 'app_update.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
 import 'decision.dart';
 import 'identity_file.dart';
 import 'link.dart';
+import 'mailbox.dart';
 import 'me.dart';
 import 'messenger.dart';
 import 'moving.dart';
@@ -32,9 +34,7 @@ import 'store.dart';
 import 'updater.dart';
 
 part 'app/connect.dart';
-part 'app/home.dart';
 part 'app/installs.dart';
-part 'app/owner.dart';
 part 'app/pairing.dart';
 part 'app/scan.dart';
 part 'app/search.dart';
@@ -94,17 +94,12 @@ abstract class _AppCore extends ChangeNotifier {
   Situation situation({List<FoundNode>? heard});
   NodeRecord? get guestHere;
 
-  // The home ([_Home]).
-  Future<void> _sendQueuedFetch();
-  bool get atHome;
-
-  // The owner ([_Owner]).
-  void _ownerSeen();
-  Future<void> _obeyed(Outgoing o, RoundSummary s);
+  // The home and its owner ([AppModel.mailbox]).
+  Mailbox get mailbox;
 }
 
 class AppModel extends _AppCore
-    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Owner {
+    with _Scan, _Installs, _Pairing, _Connect, _Search {
   @override
   final Sodium sodium;
 
@@ -122,6 +117,10 @@ class AppModel extends _AppCore
 
   /// The identity file and the 12 words: moving to another phone.
   late final Moving moving;
+
+  /// The person's home and its owner.
+  @override
+  late final Mailbox mailbox;
   late final Alerts alerts;
 
   /// The latest release, against this app and the connected node.
@@ -161,19 +160,26 @@ class AppModel extends _AppCore
       contacts: contacts,
       session: session,
     );
-    messenger = Messenger(sodium, me, contacts, session, now)
-      ..summarised = _answered
-      ..itemCame = _itemCame;
+    messenger = Messenger(sodium, me, contacts, session, now);
+    // First of the session's listeners, so that the card's node is kept
+    // before anything else hears of the link.
+    mailbox = Mailbox(
+      sodium: sodium,
+      session: session,
+      me: me,
+      contacts: contacts,
+      messenger: messenger,
+      now: now,
+      guestHere: () => guestHere,
+      connect: connect,
+    );
     alerts = Alerts(notifier, contacts);
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     // Made first, so that the node's reboot is waited for before the
     // search hears its link ended.
     updater.away = _rebooted;
-    session.addListener(_nodeAddress);
     session.addListener(_installs);
-    session.addListener(_queuedFetch);
-    session.addListener(_ownerSeen);
     session.addListener(_link);
     session.addListener(_search);
     addListener(_link);
@@ -181,8 +187,6 @@ class AppModel extends _AppCore
     // The home is the search's first node and the line's last words.
     me.addListener(_link);
     me.addListener(_search);
-    // Leaving a home waits for a node with a place for the answers.
-    session.addListener(_leaveNow);
   }
 
   static Future<AppModel> onPhone(Sodium s) async {
@@ -231,6 +235,7 @@ class AppModel extends _AppCore
   /// Everything a screen redraws on.
   Listenable get changes => Listenable.merge([
     this,
+    mailbox,
     session,
     contacts,
     me,
@@ -315,6 +320,22 @@ class AppModel extends _AppCore
 
   void _unnotified(Object e) => session.note('Notifying failed: $e');
 
+  /// Sets the person's name, which their card carries and the node they
+  /// are paired with lists for its other phones.
+  Future<void> setName(String n) async {
+    await me.setName(n);
+    await session.nameChanged();
+  }
+
+  /// The card changed and has not gone to the contacts. Without contacts
+  /// there is no one to send it to.
+  bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;
+
+  /// Why the card changed, for the line that offers to send it.
+  String get cardChange => me.home == null
+      ? 'Your card changed: no home'
+      : 'Your card changed: new home address';
+
   /// Asks, once, to notify; `why` shows the person why first and says
   /// whether to go on.
   Future<void> askToNotify(Future<bool> Function() why) async {
@@ -395,28 +416,26 @@ class AppModel extends _AppCore
       return 'Connected to ${shownName(g)} as a guest$installs$home';
     }
     if (n == null) return null;
-    if (atHome) return 'Connected to your home, ${nodeLabel(n.id)}$installs';
+    if (mailbox.atHome) {
+      return 'Connected to your home, ${nodeLabel(n.id)}$installs';
+    }
     return 'Connected to ${nodeLabel(n.id)}, paired$installs$home';
   }
 
   @override
   void dispose() {
     _releaseCheck?.cancel();
-    _leaveTimer?.cancel();
     _installTimer?.cancel();
     _scanTimer?.cancel();
     _availability?.cancel();
     _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();
-    session.removeListener(_nodeAddress);
     session.removeListener(_installs);
-    session.removeListener(_queuedFetch);
-    session.removeListener(_ownerSeen);
     session.removeListener(_link);
     session.removeListener(_search);
-    session.removeListener(_leaveNow);
     me.removeListener(_link);
     me.removeListener(_search);
+    mailbox.dispose();
     updater.dispose();
     releases.dispose();
     appUpdate.dispose();

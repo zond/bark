@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../mailbox.dart' show fullNode;
 import '../card.dart';
 import '../link.dart';
 import '../nodes.dart';
@@ -33,7 +34,7 @@ class HomeSection extends StatelessWidget {
     final paired = s.connected && !s.guest;
     final guest = app.guestHere?.asGuest;
     final here = paired ? s.address : guest?.address;
-    final atHome = paired ? app.atHome : app.guestAtHome;
+    final atHome = paired ? app.mailbox.atHome : app.mailbox.guestAtHome;
     final homeable = paired ? canBeHome(st) : guest?.homeable ?? false;
     final full = guest?.room == 0;
     return [
@@ -52,7 +53,7 @@ class HomeSection extends StatelessWidget {
           padding: EdgeInsets.only(top: 8),
           child: Text('A home must stay on power in one place.'),
         ),
-      if (app.homeKeyGone)
+      if (app.mailbox.homeKeyGone)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text(
@@ -60,19 +61,19 @@ class HomeSection extends StatelessWidget {
             'or choose another.',
           ),
         ),
-      if (app.homeSilent)
+      if (app.mailbox.homeSilent)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text('Your home did not answer your last fetch.'),
         ),
-      if (app.holdsOtherKey)
+      if (app.mailbox.holdsOtherKey)
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: const Text(
             'This node still keeps your mail from when it was your home.',
           ),
         ),
-      if (app.othersHome)
+      if (app.mailbox.othersHome)
         const Padding(
           padding: EdgeInsets.only(top: 8),
           child: Text('This node is someone else\'s home.'),
@@ -85,7 +86,7 @@ class HomeSection extends StatelessWidget {
         children: [
           if ((paired || guest != null) &&
               here != null &&
-              (!atHome || app.homeKeyGone))
+              (!atHome || app.mailbox.homeKeyGone))
             FilledButton(
               onPressed: homeable && !app.connecting && (paired || !full)
                   ? () => _setHome(context, here, pair: !paired)
@@ -97,22 +98,22 @@ class HomeSection extends StatelessWidget {
               onPressed: () => _setHome(context, null),
               child: const Text('No home node'),
             ),
-          if (paired && app.holdsOtherKey)
+          if (paired && app.mailbox.holdsOtherKey)
             OutlinedButton(
               onPressed: () => trySay(context, () async {
-                final r = await app.clearKey();
+                final r = await app.mailbox.clearKey();
                 if (context.mounted) say(context, r);
               }, 'Failed'),
               child: const Text('Stop keeping my mail'),
             ),
-          if (home == null && app.tried?.over != false)
+          if (home == null && app.mailbox.tried?.over != false)
             OutlinedButton(
               onPressed: () => _tryHome(context),
               child: const Text('Use my existing home'),
             ),
         ],
       ),
-      if (app.tried case final t?)
+      if (app.mailbox.tried case final t?)
         Padding(
           padding: const EdgeInsets.only(top: 8),
           child: Text(
@@ -137,8 +138,8 @@ class HomeSection extends StatelessWidget {
   /// The owner's list of the people with a home there, away from it; at
   /// the home, This node lists them as the node's phones.
   List<Widget> _people(BuildContext context, {required bool atHome}) {
-    if (app.me.home == null || !app.isOwner || atHome) return [];
-    final rs = app.listed?.where((r) => r.home).toList();
+    if (app.me.home == null || !app.mailbox.isOwner || atHome) return [];
+    final rs = app.mailbox.listed?.where((r) => r.home).toList();
     return [
       Padding(
         padding: const EdgeInsets.only(top: 16),
@@ -161,7 +162,7 @@ class HomeSection extends StatelessWidget {
         alignment: Alignment.centerLeft,
         child: OutlinedButton(
           onPressed: () => trySay(context, () async {
-            final r = await app.askList();
+            final r = await app.mailbox.askList();
             if (context.mounted) say(context, r);
           }, 'Asking failed'),
           child: Text(rs == null ? 'Show them' : 'Ask again'),
@@ -178,7 +179,7 @@ class HomeSection extends StatelessWidget {
     );
     if (a == null || !context.mounted) return;
     await trySay(context, () async {
-      final r = await app.tryHome(a);
+      final r = await app.mailbox.tryHome(a);
       if (context.mounted) say(context, r);
     }, 'Asking failed');
   }
@@ -228,7 +229,7 @@ class HomeSection extends StatelessWidget {
       await connect(
         context,
         () async {
-          final r = await app.homeHere();
+          final r = await app.mailbox.homeHere();
           if (context.mounted) say(context, r);
         },
         pairs: true,
@@ -237,7 +238,9 @@ class HomeSection extends StatelessWidget {
       return;
     }
     await trySay(context, () async {
-      final r = await (a == null ? app.noHome() : app.makeHome(a));
+      final r = await (a == null
+          ? app.mailbox.noHome()
+          : app.mailbox.makeHome(a));
       if (context.mounted) say(context, r);
     }, 'Setting the home failed');
   }

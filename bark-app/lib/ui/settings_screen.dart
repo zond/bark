@@ -287,10 +287,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('This node has no owner'),
-            trailing: app.atHome
+            trailing: app.mailbox.atHome
                 ? TextButton(
                     onPressed: () => trySay(context, () async {
-                      final r = await app.becomeOwner();
+                      final r = await app.mailbox.becomeOwner();
                       if (mounted) say(context, r);
                     }, 'Failed'),
                     child: const Text('Become owner'),
@@ -344,7 +344,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok != true || !mounted) return;
     await trySay(context, () async {
       // The home is the node's mailbox key, which it keeps.
-      final home = app.atHome ? ' It stays your home.' : '';
+      final home = app.mailbox.atHome ? ' It stays your home.' : '';
       final forgotten = await app.unpair();
       if (!mounted) return;
       if (forgotten) {

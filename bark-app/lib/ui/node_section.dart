@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../mailbox.dart' show fullNode;
 import '../ble_link.dart';
 import '../link.dart';
 import 'common.dart';

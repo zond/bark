@@ -414,13 +414,13 @@ class GiftLines extends StatelessWidget {
                     children: [
                       HelpButton('A home given', _giftHelp),
                       TextButton(
-                        onPressed: () => app.declineGift(c),
+                        onPressed: () => app.mailbox.declineGift(c),
                         child: const Text('Not now'),
                       ),
                       TextButton(
                         onPressed: () async {
                           try {
-                            final r = await app.useGift(c);
+                            final r = await app.mailbox.useGift(c);
                             if (context.mounted) say(context, r);
                           } catch (e) {
                             if (context.mounted) say(context, 'Failed: $e');
@@ -450,7 +450,7 @@ class HomeOfferLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!app.offerHome) return const SizedBox.shrink();
+    if (!app.mailbox.offerHome) return const SizedBox.shrink();
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
@@ -466,7 +466,7 @@ class HomeOfferLine extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
-                  onPressed: app.notHome,
+                  onPressed: app.mailbox.notHome,
                   child: const Text('Not now'),
                 ),
                 TextButton(
@@ -474,7 +474,7 @@ class HomeOfferLine extends StatelessWidget {
                       ? null
                       : () async {
                           try {
-                            final r = await app.homeHere();
+                            final r = await app.mailbox.homeHere();
                             if (context.mounted) say(context, r);
                           } catch (e) {
                             if (context.mounted) say(context, notPairedLine(e));
@@ -631,7 +631,7 @@ class _FetchButtonState extends State<FetchButton> {
       ),
       onPressed: () async {
         try {
-          final r = await app.fetchNow();
+          final r = await app.mailbox.fetchNow();
           if (context.mounted) say(context, r);
         } catch (e) {
           if (context.mounted) say(context, 'Fetching failed: $e');
@@ -773,7 +773,7 @@ String connectionHelp(AppModel app) {
   final install = app.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
-    if (app.atHome) {
+    if (app.mailbox.atHome) {
       return 'Your home. The phone stays linked while it is in reach, so '
           'texts come at once, also with the screen off. It always goes to '
           'your home first.';

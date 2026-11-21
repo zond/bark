@@ -68,9 +68,9 @@ void main() {
     await t.tapAt(Offset.zero);
     await t.pumpAndSettle();
 
-    await app.makeHome(app.session.address!);
+    await app.mailbox.makeHome(app.session.address!);
     await t.pumpAndSettle();
-    expect(app.isOwner, isTrue);
+    expect(app.mailbox.isOwner, isTrue);
     await t.tap(find.byType(PopupMenuButton<void Function()>));
     await t.pumpAndSettle();
     await t.tap(find.text('Share my home node'));
@@ -140,7 +140,7 @@ void main() {
     await t.pump(FakeNode.fetchAnswerAfter);
     await t.pumpAndSettle();
     expect(app.me.home.toString(), away.toString());
-    expect(app.isOwner, isTrue);
+    expect(app.mailbox.isOwner, isTrue);
     await settle(t);
 
     // The owner's list, from away.
@@ -151,7 +151,7 @@ void main() {
     await t.ensureVisible(find.text('Show them'));
     await t.tap(find.text('Show them'));
     // Given back or answered, the home has it within the fake's waits.
-    for (var i = 0; i < 40 && app.listed == null; i++) {
+    for (var i = 0; i < 40 && app.mailbox.listed == null; i++) {
       await t.pump(const Duration(seconds: 1));
     }
     await t.pumpAndSettle();
