@@ -246,6 +246,13 @@ class Releases extends ChangeNotifier {
     'dismissedNodes': dismissedNodes,
   });
 
+  /// When the next fetch is due: at once when there was none in this run,
+  /// else a day after the last; null for an app that fetches none.
+  DateTime? get dueAt {
+    if (fetch == null) return null;
+    return _tried?.add(checkEvery) ?? now();
+  }
+
   /// A fetch is due: none yet in this run, or the last a day ago.
   bool get due =>
       fetch != null &&

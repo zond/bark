@@ -14,10 +14,14 @@ class DebugScreen extends StatelessWidget {
   final AppModel app;
   const DebugScreen(this.app, {super.key});
 
-  // The log tells only its own listeners.
+  // The log tells only its own listeners; the waits count down.
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([app.changes, app.session.log]),
+    listenable: Listenable.merge([
+      app.changes,
+      app.session.log,
+      Seconds.instance,
+    ]),
     builder: (context, _) => _build(context),
   );
 

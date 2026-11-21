@@ -876,7 +876,7 @@ void main() {
         Contact(
           PersonCard(List.filled(32, 8), null, 0, 'Bo'),
           '',
-        ).heard(sentOf(app.now()) - 300, at, app.now()),
+        ).heard(sentOf(app.now()) - 330, at, app.now()),
       );
     });
     await t.pump();

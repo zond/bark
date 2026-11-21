@@ -53,6 +53,64 @@ class _SecretState extends State<Secret> {
   Widget build(BuildContext context) => widget.child;
 }
 
+/// The second's tick of what a screen shows that moves with the clock
+/// alone, such as "sending again in 0:42" or "20 min ago". It runs only
+/// while a [Ticking] is shown and the app is in front, so it wakes nothing
+/// else: what changes the model's state at a set time has its own timer.
+class Seconds extends ChangeNotifier {
+  Seconds._();
+  static final Seconds instance = Seconds._();
+
+  Timer? _timer;
+  bool _front = true;
+
+  /// The app's window is in front; set by the app as that changes.
+  set front(bool f) {
+    _front = f;
+    _run();
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    super.addListener(listener);
+    _run();
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+    _run();
+  }
+
+  void _run() {
+    if (hasListeners && _front) {
+      _timer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => notifyListeners(),
+      );
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+}
+
+/// Builds `builder` again every second ([Seconds]) while `when` holds as
+/// it is built, else once.
+class Ticking extends StatelessWidget {
+  final bool when;
+  final WidgetBuilder builder;
+  const Ticking(this.builder, {this.when = true, super.key});
+
+  @override
+  Widget build(BuildContext context) => when
+      ? ListenableBuilder(
+          listenable: Seconds.instance,
+          builder: (c, _) => builder(c),
+        )
+      : builder(context);
+}
+
 void say(BuildContext context, String s) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
 
@@ -538,8 +596,12 @@ class _FetchButtonState extends State<FetchButton> {
     });
   }
 
+  // The wait counts down, and ends by the clock.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      Ticking(when: app.session.fetchWaiting != null, _button);
+
+  Widget _button(BuildContext context) {
     if (app.me.home == null) return const SizedBox.shrink();
     final s = app.session;
     if (app.me.fetchQueued) {

@@ -36,6 +36,33 @@ mixin _Installs on _AppCore {
   Install? install;
 
   void _installs() {
+    _followInstall();
+    _installLater();
+  }
+
+  /// Wakes the listeners when the line about [install] changes with the
+  /// clock alone: [updatedShown] after the node came back, and [swapAway]
+  /// after a node the phone sent an image went, when it is late.
+  Timer? _installTimer;
+  Install? _timed;
+
+  void _installLater() {
+    final i = install;
+    if (i == _timed) return;
+    _timed = i;
+    _installTimer?.cancel();
+    final back = i?.back, gone = i?.gone;
+    final at = back != null
+        ? back.add(updatedShown)
+        : i != null && i.sent && gone != null
+        ? gone.add(swapAway)
+        : null;
+    if (at == null) return;
+    final wait = at.difference(now());
+    if (wait > Duration.zero) _installTimer = Timer(wait, notifyListeners);
+  }
+
+  void _followInstall() {
     final n = session.connected ? session.node : null;
     final i = install;
     if (n == null) {
@@ -113,6 +140,7 @@ mixin _Installs on _AppCore {
       givenUp: false,
       back: null,
     );
+    _installLater();
     notifyListeners();
   }
 

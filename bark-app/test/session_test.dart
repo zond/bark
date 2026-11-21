@@ -407,6 +407,51 @@ void main() {
     });
   });
 
+  test('a fetch\'s wait ends by the clock, which the session tells', () {
+    fakeAsync((async) {
+      DateTime now() => start.add(async.elapsed);
+      final s = Session(store: MemoryStore(), now: now);
+      final f = Outgoing(
+        elsewhere,
+        Uint8List(8),
+        at: now(),
+        kind: OutKind.fetch,
+        sent: 1,
+      );
+      s.queue(f);
+      async.flushMicrotasks();
+      expect(s.fetchWaiting, f);
+      var told = 0;
+      s.addListener(() => told++);
+      async.elapse(Session.fetchAnswerWait - const Duration(seconds: 1));
+      expect(told, 0);
+      async.elapse(const Duration(seconds: 1));
+      expect(told, 1);
+      expect(s.fetchWaiting, isNull);
+      s.dispose();
+    });
+  });
+
+  test('the screens\' second ticks only while shown and in front', () {
+    fakeAsync((async) {
+      var ticks = 0;
+      void tick() => ticks++;
+      async.elapse(const Duration(seconds: 3));
+      expect(async.periodicTimerCount, 0);
+      Seconds.instance.addListener(tick);
+      async.elapse(const Duration(seconds: 3));
+      expect(ticks, 3);
+      Seconds.instance.front = false;
+      async.elapse(const Duration(seconds: 3));
+      expect(ticks, 3);
+      Seconds.instance.front = true;
+      async.elapse(const Duration(seconds: 1));
+      expect(ticks, 4);
+      Seconds.instance.removeListener(tick);
+      expect(async.periodicTimerCount, 0);
+    });
+  });
+
   test('a log line tells the log\'s listeners alone, and the oldest go', () {
     final s = Session(store: MemoryStore(), now: () => start);
     var session = 0, log = 0;

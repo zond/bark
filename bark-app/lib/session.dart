@@ -514,6 +514,7 @@ class Session extends ChangeNotifier {
     stopped = state.stopped;
     _rewriteNext = r.afresh;
     _retryWhenDue();
+    _fetchOverWhenDue();
     notifyListeners();
     if (_rewriteNext || _inFile > 2 * _live) await _rewrite();
   }
@@ -676,6 +677,7 @@ class Session extends ChangeNotifier {
     nodes.moveIn(ns);
     fetchNews = null;
     _retryWhenDue();
+    _fetchOverWhenDue();
     notifyListeners();
     return _rewrite();
   }
@@ -1383,6 +1385,7 @@ class Session extends ChangeNotifier {
     bool state = false,
   }) async {
     outbox.add(o);
+    if (o.kind == OutKind.fetch) _fetchOverWhenDue();
     notifyListeners();
     await save(out: [o], received: received, state: state);
     _pump();
@@ -1410,6 +1413,28 @@ class Session extends ChangeNotifier {
       return null;
     }
     return now().difference(o.at) < fetchAnswerWait ? o : null;
+  }
+
+  /// Wakes the listeners as a fetch's wait for its answer ends, when it is
+  /// no longer [fetchWaiting].
+  Timer? _fetchOver;
+
+  void _fetchOverWhenDue() {
+    _fetchOver?.cancel();
+    final t = now();
+    DateTime? first;
+    for (final o in outbox) {
+      if (o.kind != OutKind.fetch || o.answered) continue;
+      final end = o.at.add(fetchAnswerWait);
+      if (end.isAfter(t) && (first == null || end.isBefore(first))) {
+        first = end;
+      }
+    }
+    if (first == null) return;
+    _fetchOver = Timer(first.difference(t), () {
+      notifyListeners();
+      _fetchOverWhenDue();
+    });
   }
 
   /// Seconds left of the wait for [fetchWaiting]'s answer.
@@ -1594,6 +1619,7 @@ class Session extends ChangeNotifier {
   @override
   void dispose() {
     _retry?.cancel();
+    _fetchOver?.cancel();
     _askAgain?.cancel();
     for (final s in _subs) {
       s.cancel();

@@ -296,8 +296,29 @@ mixin _Home on _AppCore {
   /// leave asked again is not answered, as the home no longer holds the
   /// key, so it is sent once and the old home forgotten when its answer
   /// comes or its wait is over.
-  Future<void> _leaveStep() =>
-      _leaving ??= _stepLeaving().whenComplete(() => _leaving = null);
+  Future<void> _leaveStep() => _leaving ??= _stepLeaving().whenComplete(() {
+    _leaving = null;
+    _leaveLater();
+  });
+
+  /// Wakes the leave once the wait of its fetch or of the leave is over.
+  Timer? _leaveTimer;
+
+  /// Takes the next step of leaving, if there is one to take now.
+  void _leaveNow() {
+    if (me.leaving != null) unawaited(_leaveStep());
+  }
+
+  /// Takes the next step once the wait of the step under way is over; a
+  /// wait already over waits for the phone to be on a node instead.
+  void _leaveLater() {
+    _leaveTimer?.cancel();
+    final l = me.leaving;
+    final at = l?.leaveAt ?? l?.at;
+    if (at == null) return;
+    final wait = at.add(Session.fetchAnswerWait).difference(now());
+    if (wait > Duration.zero) _leaveTimer = Timer(wait, _leaveNow);
+  }
 
   Future<void> _stepLeaving() async {
     final l = me.leaving;

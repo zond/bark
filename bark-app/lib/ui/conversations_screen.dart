@@ -9,6 +9,7 @@ import '../app_update.dart';
 import 'archived_screen.dart';
 import '../conversations.dart';
 import '../link.dart';
+import '../session.dart' show OutState;
 import 'card_screen.dart';
 import 'common.dart';
 import 'contacts_screen.dart';
@@ -300,12 +301,15 @@ class ConversationRow extends StatelessWidget {
         child: Icon(c.contact == null ? Icons.person_outline : Icons.person),
       ),
       title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        last.mine
-            ? 'You: ${last.text}, ${textLabel(app.session, last.outs)}'
-            : last.text,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
+      subtitle: Ticking(
+        when: last.mine && last.outs.any((o) => o.state == OutState.givenBack),
+        (_) => Text(
+          last.mine
+              ? 'You: ${last.text}, ${textLabel(app.session, last.outs)}'
+              : last.text,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
       trailing: trailing ?? Text(when(last.at)),
       onTap: () => Navigator.of(context)

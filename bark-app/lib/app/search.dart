@@ -222,6 +222,8 @@ mixin _Search on _AppCore {
       final heard = await listen(until: until, stop: _wake.future);
       _heard(heard.values);
       _searchFailed = null;
+      // Which nodes are in reach moved ([heardLately]).
+      notifyListeners();
       return heard;
     } catch (e) {
       final f = 'Looking for nodes failed: $e';

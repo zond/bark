@@ -80,12 +80,15 @@ class _UpdateScreenState extends State<UpdateScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(
-              node == null
-                  ? 'Not connected to a node.'
-                  : '${nodeLabel(node.id)} runs version ${node.image}'
-                        '${updated == null ? '' : _from(updated)}.',
-              style: Theme.of(context).textTheme.titleMedium,
+            Ticking(
+              when: node != null && updated != null,
+              (context) => Text(
+                node == null
+                    ? 'Not connected to a node.'
+                    : '${nodeLabel(node.id)} runs version ${node.image}'
+                          '${updated == null ? '' : _from(updated)}.',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
             const SizedBox(height: 16),
             Wrap(

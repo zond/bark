@@ -171,14 +171,8 @@ class AppModel extends _AppCore
     session.addListener(_search);
     addListener(_link);
     addListener(_search);
-    // The countdowns move without a word from the node, the check for a
-    // release is due a day after the last, and leaving a home waits for
-    // a node and for the mail its fetch brings.
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      notifyListeners();
-      unawaited(this.releases.check());
-      unawaited(_leaveStep());
-    });
+    // Leaving a home waits for a node with a place for the answers.
+    session.addListener(_leaveNow);
   }
 
   static Future<AppModel> onPhone(Sodium s) async {
@@ -202,7 +196,19 @@ class AppModel extends _AppCore
     );
   }
 
-  late final Timer _ticker;
+  /// The check for a release, due a day after the last.
+  Timer? _releaseCheck;
+
+  void _checkWhenDue() {
+    _releaseCheck?.cancel();
+    final at = releases.dueAt;
+    if (at == null) return;
+    final wait = at.difference(now());
+    _releaseCheck = Timer(wait.isNegative ? Duration.zero : wait, () async {
+      await releases.check();
+      _checkWhenDue();
+    });
+  }
 
   /// The firmware update of the connected node.
   @override
@@ -233,6 +239,7 @@ class AppModel extends _AppCore
     for (final s in [me.store, session.store, contacts.store, releases.store]) {
       if (s.fault != null) session.note(s.fault!);
     }
+    _checkWhenDue();
   }
 
   /// Keeps the app running while a node is connected by Bluetooth, so
@@ -384,7 +391,9 @@ class AppModel extends _AppCore
 
   @override
   void dispose() {
-    _ticker.cancel();
+    _releaseCheck?.cancel();
+    _leaveTimer?.cancel();
+    _installTimer?.cancel();
     _scanTimer?.cancel();
     _availability?.cancel();
     _searchStarted = false;
@@ -395,6 +404,7 @@ class AppModel extends _AppCore
     session.removeListener(_ownerSeen);
     session.removeListener(_link);
     session.removeListener(_search);
+    session.removeListener(_leaveNow);
     updater.dispose();
     releases.dispose();
     appUpdate.dispose();

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:sodium/sodium.dart';
 
 import 'app.dart';
+import 'ui/common.dart' show Seconds;
 import 'ui/conversations_screen.dart';
 import 'ui/thread_screen.dart';
 
@@ -37,7 +38,11 @@ class _BarkAppState extends State<BarkApp> {
   void initState() {
     super.initState();
     _life = AppLifecycleListener(
-      onStateChange: (s) => app.alerts.front(s == AppLifecycleState.resumed),
+      onStateChange: (s) {
+        final front = s == AppLifecycleState.resumed;
+        app.alerts.front(front);
+        Seconds.instance.front = front;
+      },
       // The person may have allowed Bluetooth in Android's settings, or
       // forgotten a node there.
       onResume: () {
