@@ -10,6 +10,8 @@
 // not answer. Last, nodes a finger cannot tell apart: one marker with
 // their count, which lists them.
 
+import 'dart:io';
+
 import 'package:bark_app/app_layer.dart' show sentOf;
 import 'package:bark_app/app.dart';
 import 'package:bark_app/asks.dart';
@@ -611,6 +613,15 @@ void main() {
       final sentences = RegExp(r'[.!?](\s|$)').allMatches(value).length;
       expect(sentences, inInclusiveRange(2, 4), reason: key);
     }
+  });
+
+  test('the GPS floor is the firmware\'s, and its help says it', () {
+    final gnss = File('../bark-driver/src/gnss.rs').readAsStringSync();
+    final floor = RegExp(r'pub const CN0_FLOOR: u8 = (\d+);')
+        .firstMatch(gnss)
+        ?.group(1);
+    expect(floor, '$gpsFixFloorDbHz');
+    expect(factHelp['GPS signal'], contains('Under $gpsFixFloorDbHz '));
   });
 
   testWidgets('every row of a sheet opens its help', (t) async {

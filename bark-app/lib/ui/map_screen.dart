@@ -125,13 +125,6 @@ Fact _power({required bool usb, String? battery}) => usb
         battery ?? 'not read',
       );
 
-/// What a node does for others: a relay passes texts on; a sleepy node
-/// sleeps between windows and sends and receives through its anchor
-/// (spec "Nodes").
-/// The mean C/N0 under which a node drops its GPS's fix (spec
-/// "Position", roadmap D234): below it a reading is too weak for one.
-const int gpsFixFloorDbHz = 22;
-
 /// The GPS's signal: its number and, by [gpsFixFloorDbHz], whether a fix
 /// is taken at it; 0 is no reading (spec "Neighbour status").
 Fact gpsFact(int cn0) => Fact(
@@ -143,6 +136,9 @@ Fact gpsFact(int cn0) => Fact(
       : '$cn0 dB-Hz · ${cn0 < gpsFixFloorDbHz ? 'too weak for a fix' : 'enough for a fix'}',
 );
 
+/// What a node does for others: a relay passes texts on; a sleepy node
+/// sleeps between windows and sends and receives through its anchor
+/// (spec "Nodes").
 Fact _role(bool sleepy) => sleepy
     ? const Fact(
         Icons.bedtime,

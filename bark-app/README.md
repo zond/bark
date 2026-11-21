@@ -330,7 +330,7 @@ is a prototype for the bench, not the app people will carry.
   (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
   exchanged`), GPS signal (signal bars, its GPS's mean C/N0 as its last
   reading had it, `31 dB-Hz · enough for a fix`, or `· too weak for a fix` under the
-  22 dB-Hz below which a node drops a fix, spec "Position", roadmap
+  22 dB-Hz below which a node drops a fix (`gpsFixFloorDbHz`, which a test holds to the firmware's `CN0_FLOOR`), spec "Position", roadmap
   D234, or `no reading` for 0, as while its GPS rests; read from Status
   again as the map opens and is refreshed, as the node does not notify
   it, and from a neighbour's answer), Version (a price tag, the Material set having no version

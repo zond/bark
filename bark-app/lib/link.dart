@@ -276,6 +276,10 @@ class NodeInfo {
   }
 }
 
+/// The mean C/N0, dB-Hz, under which a node drops its GPS's fix (spec
+/// "Position", roadmap D234); the firmware's `CN0_FLOOR`.
+const int gpsFixFloorDbHz = 22;
+
 /// Status, read and notify.
 class Status {
   static const len = 1 + Position.wireLen + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 1;
