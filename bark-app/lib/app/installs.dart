@@ -49,6 +49,7 @@ mixin _Installs on _AppCore {
           back: null,
         );
         session.note('${i.node} reboots to install version ${i.version}');
+        notifyListeners();
       }
       return;
     }
@@ -57,6 +58,7 @@ mixin _Installs on _AppCore {
     // wait for one that installs (roadmap D202).
     if (i != null && i.node != name && !session.guest) {
       install = null;
+      notifyListeners();
       return;
     }
     final status = session.status;
@@ -74,6 +76,7 @@ mixin _Installs on _AppCore {
           back: null,
         );
         session.note('$name drains to install version $version');
+        notifyListeners();
       }
     } else if (i?.node == name && i!.back == null) {
       final on = n.image == i.version && i.gone != null;
@@ -95,6 +98,7 @@ mixin _Installs on _AppCore {
               : '$name does not install version ${i.version} now',
         );
       }
+      notifyListeners();
     }
   }
 
@@ -153,6 +157,7 @@ mixin _Installs on _AppCore {
                 'each other: passed over'
           : '$node not back from its install: out of reach',
     );
+    notifyListeners();
   }
 
   /// The line while a paired node is away to install a version; null

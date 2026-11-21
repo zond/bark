@@ -3,6 +3,7 @@
 // back to the messages it sent.
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
@@ -288,6 +289,22 @@ typedef Notice = ({String text, String? about});
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
 
+/// The link's events since the app started, newest last; the oldest go
+/// once there are [lines], more than a bench session scrolls back through.
+class EventLog extends ChangeNotifier with IterableMixin<LogLine> {
+  static const lines = 500;
+  final _all = ListQueue<LogLine>();
+
+  @override
+  Iterator<LogLine> get iterator => _all.iterator;
+
+  void add(LogLine l) {
+    _all.add(l);
+    if (_all.length > lines) _all.removeFirst();
+    notifyListeners();
+  }
+}
+
 /// A log line's local time of day, to the millisecond.
 String logTime(DateTime at) => at.toLocal().toIso8601String().substring(11, 23);
 
@@ -337,11 +354,8 @@ class Session extends ChangeNotifier {
   /// The last value of Given back read or notified.
   GivenBack? givenBack;
 
-  /// The link's events since the app started, newest last; the oldest
-  /// go once there are [logLines], which is more than a bench session
-  /// scrolls back through.
-  final List<LogLine> log = [];
-  static const logLines = 500;
+  /// The link's events since the app started ([EventLog]).
+  final EventLog log = EventLog();
 
   /// Told of each log line as it is added.
   void Function(LogLine)? noted;
@@ -698,13 +712,12 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Adds a line to the log.
+  /// Adds a line to the log, which tells its own listeners alone: a line
+  /// changes nothing the others show.
   void note(String s) {
     final l = (at: now(), text: s);
     log.add(l);
     noted?.call(l);
-    if (log.length > logLines) log.removeAt(0);
-    notifyListeners();
   }
 
   /// Takes a connected link through the checklist of the phone link's
@@ -741,6 +754,7 @@ class Session extends ChangeNotifier {
       '${nodeNewer ? ', newer than this app\'s $linkVersion' : ''}'
       '${guest ? ', as a guest' : ''}',
     );
+    notifyListeners();
     _subs
       ..add(link.statusNotified.listen(_onStatus, onError: _badValue))
       ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue))
@@ -1134,6 +1148,7 @@ class Session extends ChangeNotifier {
     final t = (floorDbm: page.floorDbm, own: page.own, list: list, at: now());
     if (_link == link) neighbours = t;
     note('Neighbours: ${list.length}, noise floor ${t.floorDbm} dBm');
+    notifyListeners();
     return t;
   }
 
@@ -1184,6 +1199,7 @@ class Session extends ChangeNotifier {
         if (_link != link) return;
         _asks.sent(id, now());
       }
+      notifyListeners();
       _askLater();
     });
   }
@@ -1221,6 +1237,7 @@ class Session extends ChangeNotifier {
     answers[key] = a.status;
     _asks.answered(key, now());
     note('Ask: ${nodeName(a.id)} answers ${a.status.lines.join(', ')}');
+    notifyListeners();
   }
 
   /// Gives the node the phone's time and UTC offset, silently: a node
@@ -1237,6 +1254,7 @@ class Session extends ChangeNotifier {
     } catch (e) {
       note('Clock: $e');
     }
+    notifyListeners();
   }
 
   /// Closes the link, which is detached once this returns: a link's own
@@ -1273,6 +1291,7 @@ class Session extends ChangeNotifier {
     _askedAt = null;
     _askAgain?.cancel();
     note('Disconnected');
+    notifyListeners();
   }
 
   void _onStatus(Status s) {
@@ -1301,7 +1320,7 @@ class Session extends ChangeNotifier {
           ? 'Given back: empty'
           : 'Given back: ${msgIdHex(g.msgId)}, wait ${g.waitS} s',
     );
-    if (g == null) return;
+    if (g == null) return notifyListeners();
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
       tell(
@@ -1312,7 +1331,9 @@ class Session extends ChangeNotifier {
     }
     // The value stays until the node takes another message, so it is
     // read again at every connect; only a message the node has means it.
-    if (o.state != OutState.taken && o.state != OutState.givenBack) return;
+    if (o.state != OutState.taken && o.state != OutState.givenBack) {
+      return notifyListeners();
+    }
     o.state = OutState.givenBack;
     o.retryAt = now().add(Duration(seconds: g.waitS));
     _retryWhenDue();

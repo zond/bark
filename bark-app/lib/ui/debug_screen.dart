@@ -14,8 +14,14 @@ class DebugScreen extends StatelessWidget {
   final AppModel app;
   const DebugScreen(this.app, {super.key});
 
+  // The log tells only its own listeners.
   @override
-  Widget build(BuildContext context) => Watch(app, (context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([app.changes, app.session.log]),
+    builder: (context, _) => _build(context),
+  );
+
+  Widget _build(BuildContext context) {
     final s = app.session;
     Widget heading(String t) => Padding(
       padding: const EdgeInsets.only(top: 24, bottom: 8),
@@ -69,7 +75,7 @@ class DebugScreen extends StatelessWidget {
               ),
             heading('Log'),
             if (s.log.isEmpty) const Text('Nothing yet'),
-            for (final l in s.log.reversed)
+            for (final l in s.log.toList().reversed)
               Text(
                 '${logTime(l.at)} ${l.text}',
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
@@ -78,7 +84,7 @@ class DebugScreen extends StatelessWidget {
         ),
       ),
     );
-  });
+  }
 
   /// Tools for the bench: a firmware file picked on the phone, sent to
   /// the paired node as a release is (`bark-app/README.md`, "Updating a

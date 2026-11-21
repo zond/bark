@@ -407,6 +407,22 @@ void main() {
     });
   });
 
+  test('a log line tells the log\'s listeners alone, and the oldest go', () {
+    final s = Session(store: MemoryStore(), now: () => start);
+    var session = 0, log = 0;
+    s.addListener(() => session++);
+    s.log.addListener(() => log++);
+    for (var i = 0; i <= EventLog.lines; i++) {
+      s.note('line $i');
+    }
+    expect(session, 0);
+    expect(log, EventLog.lines + 1);
+    expect(s.log.length, EventLog.lines);
+    expect(s.log.first.text, 'line 1');
+    expect(s.log.last.text, 'line ${EventLog.lines}');
+    s.dispose();
+  });
+
   test('a stored reaction is its emoji', () {
     final out = Outgoing(
       Address(const Position(0, 0), Uint8List(6)),
