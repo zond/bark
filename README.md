@@ -48,8 +48,9 @@ Read, in order:
    payload, the mailbox, updates over the mesh, packet formats, open
    items.
 2. `docs/roadmap.md`: phases, decisions taken, open questions, and the
-   reasons behind each decision; `docs/spec-reasons-2026-11-11.md` holds
-   the spec's longer reasons that no decision row carries.
+   reasons behind each decision; `docs/spec-reasons-2026-11-21.md` holds
+   the spec as it read with its reasons, and
+   `docs/spec-reasons-2026-11-11.md` what an earlier cut removed.
 3. `docs/core-interface.md`: the contract between the protocol core and
    its drivers (simulator, firmware).
 4. `docs/simulator-design.md`: the simulator.
