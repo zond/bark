@@ -1,12 +1,57 @@
 // Small pieces the screens share.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app.dart';
 import '../ble_link.dart' show strongDbm, weakDbm;
 import '../link.dart';
 import '../node_link.dart';
 import '../session.dart';
+
+/// Keeps the app's window out of screenshots, screen recordings and the
+/// recents thumbnail while it shows `child`, which holds the person's
+/// seed or a password that seals it (`FLAG_SECURE`, MainActivity.kt).
+class Secret extends StatefulWidget {
+  final Widget child;
+  const Secret({required this.child, super.key});
+
+  static const channel = MethodChannel('org.bark.bark_app/window');
+
+  /// How many are shown: a dialog over another clears the flag only once
+  /// both are gone.
+  static int _shown = 0;
+
+  static Future<void> _secure(bool on) async {
+    try {
+      await channel.invokeMethod<void>('secure', on);
+    } on MissingPluginException {
+      // No window to protect: the tests, without a phone.
+    }
+  }
+
+  @override
+  State<Secret> createState() => _SecretState();
+}
+
+class _SecretState extends State<Secret> {
+  @override
+  void initState() {
+    super.initState();
+    if (Secret._shown++ == 0) unawaited(Secret._secure(true));
+  }
+
+  @override
+  void dispose() {
+    if (--Secret._shown == 0) unawaited(Secret._secure(false));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 void say(BuildContext context, String s) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
@@ -575,32 +620,41 @@ Future<void> askMyName(BuildContext context, AppModel app) async {
   if (n != null) await app.setName(n);
 }
 
-/// Asks for one line of text; null if the person cancels.
-Future<String?> askText(BuildContext context, String label, String initial) {
+/// Asks for one line of text; null if the person cancels. A `secret` one,
+/// the 12 words, is kept out of screenshots ([Secret]).
+Future<String?> askText(
+  BuildContext context,
+  String label,
+  String initial, {
+  bool secret = false,
+}) {
   final c = TextEditingController(text: initial);
   return showDialog<String>(
     context: context,
-    builder: (context) => AlertDialog(
-      // Its field stays in reach above the keyboard on a phone held sideways.
-      scrollable: true,
-      title: Text(label),
-      content: TextField(
-        controller: c,
-        autofocus: true,
-        textCapitalization: TextCapitalization.words,
-        onSubmitted: (v) => Navigator.pop(context, v.trim()),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+    builder: (context) {
+      final ask = AlertDialog(
+        // Its field stays in reach above the keyboard on a phone held sideways.
+        scrollable: true,
+        title: Text(label),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (v) => Navigator.pop(context, v.trim()),
         ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, c.text.trim()),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, c.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      );
+      return secret ? Secret(child: ask) : ask;
+    },
   );
 }
 

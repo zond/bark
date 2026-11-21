@@ -36,7 +36,7 @@ import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/ble_link.dart' show FoundNode, strongDbm, weakDbm;
 import 'package:universal_ble/universal_ble.dart' show UniversalBle;
-import 'package:bark_app/ui/common.dart' show receivedMarks, signalWord;
+import 'package:bark_app/ui/common.dart' show Secret, receivedMarks, signalWord;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';
@@ -647,6 +647,54 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('Your 12 words'), findsNothing);
     expect(app.me.key, key);
+    await t.pumpWidget(const SizedBox());
+    app.disposeWithNode();
+  });
+
+  testWidgets('the words and the identity file\'s password are kept out of '
+      'screenshots while shown', (t) async {
+    final secure = <bool>[];
+    final m = t.binding.defaultBinaryMessenger;
+    m.setMockMethodCallHandler(Secret.channel, (c) async {
+      if (c.method == 'secure') secure.add(c.arguments as bool);
+      return null;
+    });
+    addTearDown(() => m.setMockMethodCallHandler(Secret.channel, null));
+    final app = await model(t);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    Future<void> tap(String text) async {
+      await t.scrollUntilVisible(
+        find.text(text),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.ensureVisible(find.text(text));
+      await t.pumpAndSettle();
+      await t.tap(find.text(text));
+      await t.pumpAndSettle();
+    }
+
+    await tap('Show my words');
+    expect(secure, [true]);
+    await t.tap(find.text('I wrote them down'));
+    await t.pumpAndSettle();
+    expect(secure, [true, false]);
+
+    await tap('Restore from words');
+    expect(secure, [true, false]);
+    await t.tap(find.text('Restore'));
+    await t.pumpAndSettle();
+    expect(find.text('Your 12 words'), findsOneWidget);
+    expect(secure, [true, false, true]);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(secure, [true, false, true, false]);
+
+    await tap('Save to a file');
+    expect(secure, [true, false, true, false, true]);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(secure, [true, false, true, false, true, false]);
     await t.pumpWidget(const SizedBox());
     app.disposeWithNode();
   });

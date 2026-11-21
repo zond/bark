@@ -169,75 +169,77 @@ class _PasswordDialogState<T> extends State<_PasswordDialog<T>> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.title),
-    // Its fields stay in reach above the keyboard on a phone held sideways.
-    scrollable: true,
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          key: const Key('password'),
-          controller: _password,
-          autofocus: true,
-          obscureText: true,
-          enabled: !_running,
-          decoration: const InputDecoration(labelText: 'Password'),
-          onChanged: (_) => setState(() {}),
-        ),
-        if (widget.twice) ...[
+  Widget build(BuildContext context) => Secret(
+    child: AlertDialog(
+      title: Text(widget.title),
+      // Its fields stay in reach above the keyboard on a phone held sideways.
+      scrollable: true,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           TextField(
-            key: const Key('password again'),
-            controller: _again,
+            key: const Key('password'),
+            controller: _password,
+            autofocus: true,
             obscureText: true,
             enabled: !_running,
-            decoration: InputDecoration(
-              labelText: 'Password again',
-              errorText: _differ && _again.text.isNotEmpty
-                  ? 'Not the same'
-                  : null,
-            ),
+            decoration: const InputDecoration(labelText: 'Password'),
             onChanged: (_) => setState(() {}),
           ),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: const Text('Add my messages'),
-            value: _messages,
-            onChanged: _running
-                ? null
-                : (v) => setState(() => _messages = v ?? false),
-          ),
-          Text(
-            'Use it on one phone at a time.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-        if (_refused case final r?)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              r,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+          if (widget.twice) ...[
+            TextField(
+              key: const Key('password again'),
+              controller: _again,
+              obscureText: true,
+              enabled: !_running,
+              decoration: InputDecoration(
+                labelText: 'Password again',
+                errorText: _differ && _again.text.isNotEmpty
+                    ? 'Not the same'
+                    : null,
+              ),
+              onChanged: (_) => setState(() {}),
             ),
-          ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Add my messages'),
+              value: _messages,
+              onChanged: _running
+                  ? null
+                  : (v) => setState(() => _messages = v ?? false),
+            ),
+            Text(
+              'Use it on one phone at a time.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+          if (_refused case final r?)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                r,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _running ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _ready ? _go : null,
+          child: _running
+              ? const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(widget.action),
+        ),
       ],
     ),
-    actions: [
-      TextButton(
-        onPressed: _running ? null : () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
-      FilledButton(
-        onPressed: _ready ? _go : null,
-        child: _running
-            ? const SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Text(widget.action),
-      ),
-    ],
   );
 }

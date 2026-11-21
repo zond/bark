@@ -424,18 +424,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _showWords() async {
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('My 12 words'),
-        content: SelectableText(
-          app.me.phrase.join(' '),
-          style: const TextStyle(fontSize: 18),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('I wrote them down'),
+      builder: (context) => Secret(
+        child: AlertDialog(
+          title: const Text('My 12 words'),
+          content: SelectableText(
+            app.me.phrase.join(' '),
+            style: const TextStyle(fontSize: 18),
           ),
-        ],
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('I wrote them down'),
+            ),
+          ],
+        ),
       ),
     );
     await app.me.setBackedUp();
@@ -450,7 +452,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'Restore',
     );
     if (!go || !mounted) return;
-    final w = await askText(context, 'Your 12 words', '');
+    final w = await askText(context, 'Your 12 words', '', secret: true);
     if (w == null || w.isEmpty) return;
     final seed = seedOfPhrase(w);
     if (seed == null) {

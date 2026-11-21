@@ -289,6 +289,11 @@ is a prototype for the bench, not the app people will carry.
     with "Nothing changed." A restore ends the link and says "Identity
     restored", adding "Pair again with your nodes." when the old phone
     was paired with some (The identity file, below).
+
+    While the 12 words, the dialog that takes them or an identity
+    file's password dialog is on screen, Android leaves the app's window
+    out of screenshots, screen recordings and the recent apps' thumbnail
+    (`FLAG_SECURE`, set through a channel in `MainActivity.kt`).
   - **Battery**: whether Android may close the link with the screen
     off, with **Let bark run**, which opens Android's dialog to exempt
     the app from battery optimisation (next section).
