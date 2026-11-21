@@ -89,6 +89,7 @@ impl FakeNode {
                 address: Position::from_degrees(50.45, 30.52),
                 relays: 3,
                 heard: 4,
+                gps_cn0: 38,
                 ..Status::EMPTY
             },
             code: 123_456,
@@ -161,6 +162,7 @@ impl FakeNode {
                     id,
                     bark_proto::status::Status {
                         placed: true,
+                        gps_cn0: 21,
                         version: 46,
                         ..Default::default()
                     },

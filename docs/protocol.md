@@ -765,6 +765,7 @@ and the node asking, and nothing else. The **answer**, the status, says
 | heard | 1 | its live neighbours, at most 64 ([neighbour table](#neighbour-table)) |
 | strong | 1 | of them, those with margin, likely to hear it too |
 | proven | 1 | of them, those that have taken a message from it |
+| gps | 1 | the mean C/N0, dB-Hz, of the satellites its GPS used in its latest reading, whether or not that fix was kept ([position](#position)); 0 while its GPS rests, as an anchored sleepy node's always does ([beats](#beats)), and when it used none |
 | version | 4 | the version of the firmware image it runs, 0 if not known, as in a heartbeat's section ([updates over the mesh](#updates-over-the-mesh)) |
 | gathers | 4 | the version of the image it gathers over the mesh, 0 if none |
 | blocks | 1 | that image's blocks, the table's among them; 0 if none |
@@ -787,10 +788,17 @@ one hop, neither answered nor sent again. A node:
   ask;
 - hands every answer addressed to it to its app.
 
-The ask is 14 bytes, 15.68 ms on air, the answer 30, 23.36 ms; with the
-long preamble 249.92 and 257.60 ms. Asked only on a look, the status
-costs the network nothing between looks. Its last fields make the answer
-fill 13 blocks of symbols exactly.
+The ask is 14 bytes, 15.68 ms on air, the answer 31, 24.64 ms; with the
+long preamble 249.92 and 258.88 ms. Asked only on a look, the status
+costs the network nothing between looks. The GPS's byte takes the
+answer from 13 blocks of symbols to 14, 1.28 ms, 5.5 % of its airtime
+and 0.5 % with the long preamble, and leaves room in the 14th for one
+byte more at no cost (roadmap D237). The GPS's number is told dropped
+fix or not because it tells most where the sky is poor, and it is what
+the floor of 22 dB-Hz is to be tuned by. It stands for the last second
+the receiver ran: once the node's GPS rests, as a relay's on battery
+does between searches and a sleepy node's with an anchor always does,
+there is no reading to tell.
 
 ## Forwarding
 
@@ -2364,7 +2372,7 @@ ATT PDU and one link-layer packet. The node also takes long writes and
 serves long reads (Vol 3 Part F §3.4.6, §3.4.4.5), so a phone that
 settles on less still works; iOS chooses the MTU itself. A notified value
 fits the 20 bytes a notification carries at the default MTU of 23 (Vol 3
-Part F §3.4.7.1) (roadmap D119), but Ask's, 22: at that MTU its
+Part F §3.4.7.1) (roadmap D119), but Ask's, 23: at that MTU its
 notification carries all but what the neighbour gathers, which the app
 then shows as nothing gathered (roadmap D158).
 
@@ -2375,7 +2383,7 @@ and its characteristics in the order of this table:
 |---|---|---|---|---|
 | service | `28bc0001-a1b8-4893-9537-2ee3559d7644` | | | |
 | Node | `28bc0002-…` | read | version(1) oldest(1) id(6) image(4) room(1) | 13 |
-| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) | 18 |
+| Status | `28bc0003-…` | read, notify | flags(1) address(7) battery(2) relays(1) heard(1) boot_left(2) installing(2) inbox(1) phones(1) gps(1) | 19 |
 | Send | `28bc0004-…` | write | dst_pos(7) dst_id(6) payload(0–224) | 13–237 |
 | Inbox | `28bc0005-…` | read | msg_id(4) payload(0–224), empty when none; a guest's: number(3) msg_id(4) payload(0–224) | 0, 4–228, 7–231 |
 | | | write | msg_id(4) | 4 |
@@ -2395,7 +2403,7 @@ and its characteristics in the order of this table:
 | | | write | 0 private, 1 public, 2 unpair | 1 |
 | Guest | `28bc000f-…` | write | number(3) | 3 |
 | Ask | `28bc0010-…` | write | id(6) | 6 |
-| | | read, notify | id(6) status(16), empty when none | 0, 22 |
+| | | read, notify | id(6) status(17), empty when none | 0, 23 |
 | Phones | `28bc0011-…` | write | 0 then slot(1) to read from; 1 for a code; 2 then number(2) what(1) code(3) to remove | 2, 1, 7 |
 | | | read | next(1), then per record number(2) flags(1) day(2) tag(1) name_len(1) name(0–32) | 1–244 |
 
@@ -2426,7 +2434,7 @@ and the node keeps a guest's tag only for its link
 ([public nodes](#public-nodes)).
 
 **Status.** How the node stands now, notified at every change but the
-countdown of `boot_left`; one value is one notification and one read at
+countdown of `boot_left` and `gps`'s moves; one value is one notification and one read at
 a connection:
 
 | | |
@@ -2445,6 +2453,7 @@ a connection:
 | installing | the low 16 bits of the image version it drains to install ([updates over the mesh](#updates-over-the-mesh), the install); 0 when none. The node ends its phones' links for the minute a swap takes, and the app waits for it (roadmap D182) |
 | inbox | the phone's messages not yet confirmed ([receiving](#receiving)) |
 | phones | a count, wrapping, that moves at each change to what Phones lists for this phone ([phones](#phones)): a phone paired, removed or unpaired, a home set or cleared, a person added or gone, the owner's mark moved, a name or tag written, a phone's link up or down, a day; 0 on a guest's link. The node tells its linked paired phones once the records are written; at a change, the app reads Phones again |
+| gps | the GPS's signal, as a status asked tells it ([neighbour status](#neighbour-status)); it moves every second while the GPS runs, so its changes are not notified, and the app reads it |
 
 ### Sending
 

@@ -848,6 +848,7 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
                 self.gps.after_fix(self.sleepy(), self.far());
             }
             AppCommand::NoFix => self.motion.no_fix(),
+            AppCommand::Signal { cn0 } => self.signal(cn0),
             AppCommand::Holds(image) => self.holds_image(image, now),
             AppCommand::Gather { image, from } => self.gather(image, from, now),
             AppCommand::Block { index, ok } => self.spread.block_done(index, ok),

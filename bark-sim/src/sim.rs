@@ -661,6 +661,11 @@ struct ScriptEntry {
     preamble: u16,
 }
 
+/// The mean C/N0 of every simulated GPS reading, dB-Hz: an open sky's,
+/// about 40 on the boards (`docs/gps-bench-2026-11-20.md`). The simulator
+/// has no satellites; the number only fills the node's status.
+const SIM_CN0: u8 = 40;
+
 /// A home node's mailbox in the simulator: the board's 16 pages of 16
 /// slots, in RAM.
 pub(crate) type HomeMailbox = Mailbox<RamRing<256>>;
@@ -3610,6 +3615,9 @@ impl Sim {
         if !self.nodes[n as usize].alive {
             return false;
         }
+        // Every reading's signal, as an open sky's, the fix kept or not.
+        let cn0 = SIM_CN0;
+        self.deliver(n, Event::App(AppCommand::Signal { cn0 }));
         let mut at = self.place(n);
         let fault = self.gps_fault[n as usize].filter(|f| self.now >= f.0);
         if let Some((from, kind, size, dir)) = fault {

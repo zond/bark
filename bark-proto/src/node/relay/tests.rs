@@ -3722,6 +3722,7 @@ fn a_status_asked_is_told_on_the_asker_s_channel() {
             strong: 2,
             both_ways: 0,
         },
+        gps_cn0: 0,
         version: 9,
         gathering: Default::default(),
     };

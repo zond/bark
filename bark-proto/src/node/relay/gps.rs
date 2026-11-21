@@ -444,6 +444,23 @@ impl<const H: usize, const Q: usize> Node<H, Q> {
         self.gps.tracks(&self.gps_situation())
     }
 
+    /// The receiver's reading: the mean C/N0 of the satellites it used,
+    /// kept or dropped, 0 for none (spec "Neighbour status").
+    pub(super) fn signal(&mut self, cn0: u8) {
+        self.motion.cn0 = cn0;
+    }
+
+    /// The latest reading's mean C/N0 at `now` while the node runs its
+    /// GPS, tracking or in a search not yet at its end; 0 while it rests,
+    /// as the reading is then of a sky the receiver no longer watches.
+    pub(super) fn gps_cn0(&self, now: Instant) -> u8 {
+        let searching = at(self.gps.until).is_some_and(|end| now < end);
+        match self.gps_tracks() || searching {
+            true => self.motion.cn0,
+            false => 0,
+        }
+    }
+
     /// Whether a fix at `position` passes the check against the relays this
     /// node knows (spec "Position"); with no place it cannot rebuild where
     /// they are, so it passes.

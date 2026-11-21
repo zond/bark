@@ -98,6 +98,17 @@ impl Cn0 {
     }
 }
 
+impl Fix {
+    /// What the node's status says of this second's reading: the mean
+    /// C/N0 of the satellites used, whether or not the fix passes
+    /// [`Cn0::real`], since it tells most where the sky is poor and is
+    /// what [`CN0_FLOOR`] is tuned by; 0 when none is used
+    /// (spec "Neighbour status").
+    pub fn signal(&self) -> u8 {
+        self.cn0.mean
+    }
+}
+
 /// What one second's sentences say.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fix {
@@ -954,5 +965,27 @@ $GPTXT,01,01,01,ANTENNA OPEN*25\r\n";
         assert!(at(CN0_FLOOR).real());
         assert!(!at(CN0_FLOOR - 1).real());
         assert!(Cn0::default().real(), "no C/N0 reported");
+    }
+
+    /// A fix dropped under the floor still tells its signal: it is most
+    /// worth telling where the sky is poor.
+    #[test]
+    fn a_dropped_fix_still_tells_its_signal() {
+        let f = Fix {
+            cn0: Cn0 {
+                count: 5,
+                mean: CN0_FLOOR - 5,
+                ..Cn0::default()
+            },
+            ..fixes(&mut Nmea::default(), L76K_SECOND)[0]
+        };
+        assert!(!f.cn0.real());
+        assert_eq!(f.signal(), CN0_FLOOR - 5);
+        let none = Fix {
+            cn0: Cn0::default(),
+            position: None,
+            ..f
+        };
+        assert_eq!(none.signal(), 0, "no satellite used");
     }
 }

@@ -713,9 +713,12 @@ pub fn publish(status: Status, heads: [Option<(u32, MsgId)>; RECORDS], counts: [
         l.counts = counts;
         l.status = status;
         let told = l.told;
+        // The GPS's signal moves every second while it runs: read, not
+        // notified.
         let quiet = |s: Status| Status {
             boot_left_s: 0,
             battery_mv: 0,
+            gps_cn0: 0,
             ..s
         };
         let changed = quiet(told) != quiet(status)

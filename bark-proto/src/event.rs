@@ -115,6 +115,14 @@ pub enum AppCommand<'a> {
         /// Where the fix puts the node.
         position: Position,
     },
+    /// The receiver's latest reading, about once a second while it runs:
+    /// the mean C/N0, dB-Hz, of the satellites it used, whether or not
+    /// its fix is handed, 0 when it used none; 0 too when it comes to rest
+    /// (spec "Neighbour status").
+    Signal {
+        /// The mean C/N0, dB-Hz.
+        cn0: u8,
+    },
     /// The GPS runs but gives no fix the driver hands: the receiver lost
     /// its fix, or the driver dropped one. Sent at the change from fixes
     /// to none, so the gap does not count toward a run of far fixes.
