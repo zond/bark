@@ -463,7 +463,7 @@ fn a_reply_gives_back_its_item_which_proves_itself() {
     for place in [0, seal::MAX_REPLIES + 1] {
         assert_eq!(
             seal::seal_item(&k, 9, 10, place, &item, &mut out),
-            Err(Error::TooLong)
+            Err(Error::Malformed)
         );
         let mut r = reply.clone();
         r[seal::HEAD_LEN] = place;
@@ -491,7 +491,8 @@ fn a_reply_gives_back_its_item_which_proves_itself() {
         command: None,
     }
     .seal(&k, f.home.node, 7);
-    for not in [&summary[..], &fetch[..], b"item"] {
+    let cut = [Form::Boxed.format()];
+    for not in [&summary[..], &fetch[..], b"item", &cut] {
         assert!(!seal::forwardable(not));
         assert_eq!(
             seal::seal_item(&k, 9, 10, 1, not, &mut out),
