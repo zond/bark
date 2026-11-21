@@ -5,7 +5,8 @@
 // not to a carried node's wandering fix, and a node that does not keep it
 // refused as a home; written again only where the node says it is not
 // the person's and a home of their tag is left there, and told, not
-// overruled, where someone removed it.
+// overruled, where someone removed it; and an old home that says it was
+// removed taken as having forgotten the person.
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/app_layer.dart'
@@ -160,6 +161,26 @@ void main() {
         contains('Left at your home node while you were away.'),
       );
       expect(f.homeRecords, isEmpty);
+      expect(app.me.leaving, isNull);
+      expect(log(app), contains(contains('forgot the person')));
+    });
+  });
+
+  test('leaving a home that says it was removed: it has forgotten the '
+      'person, and no leave goes', () {
+    run((async, app) {
+      final f = app.fakeNode!;
+      said(async, app.makeHome(app.session.address!));
+      app.session.disconnect();
+      async.flushMicrotasks();
+      f.removedRecords.add(f.homeRecords.removeAt(0));
+      said(async, app.noHome());
+      app.connectFake();
+      async.flushMicrotasks();
+      async.elapse(const Duration(minutes: 2));
+      final fetches = app.session.outbox.where((o) => o.kind == OutKind.fetch);
+      expect(fetches.single.command, isNull);
+      expect(f.commands.single, (null, Outcome.removed));
       expect(app.me.leaving, isNull);
       expect(log(app), contains(contains('forgot the person')));
     });

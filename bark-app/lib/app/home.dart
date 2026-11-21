@@ -215,6 +215,7 @@ mixin _Home on _AppCore {
         .where((o) => o.kind == OutKind.fetch && o.sent == round)
         .firstOrNull;
     if (o == null) return;
+    if (s.outcome == Outcome.removed) return _homeRemoved(o);
     if (me.home == null && o.command == null) {
       if (await me.setHome(o.dst)) await messenger.sendCardToAll();
       // Its summary is now the home's: what it keeps, its owner, what it
@@ -226,6 +227,40 @@ mixin _Home on _AppCore {
       return;
     }
     await _obeyed(o, s);
+  }
+
+  /// The node the fetch `o` went to says it no longer keeps the person's
+  /// mail (spec "Mailbox", The answer). If it is the home, the person has
+  /// none now, and the card without it goes to the contacts, as for No
+  /// home node; a home they named ([tryHome]) changes nothing.
+  Future<void> _homeRemoved(Outgoing o) async {
+    final h = me.home;
+    session.note('Home: ${nodeName(o.dst.id)} says the home was removed');
+    if (h == null || hex(h.id) != hex(o.dst.id)) {
+      session.tell(
+        '${nodeLabel(o.dst.id)} does not keep your mail. Nothing changed.',
+      );
+      return;
+    }
+    if (await me.setHome(null)) await messenger.sendCardToAll();
+    session.tell(
+      'Your home no longer keeps your mail. Choose a new home in Settings.',
+    );
+  }
+
+  /// The last fetch to the home had no answer within its wait: the home
+  /// is off or out of reach, or has forgotten the person, and Settings
+  /// says what they can do.
+  bool get homeSilent {
+    final h = me.home;
+    if (h == null) return false;
+    final o = session.outbox
+        .where((o) => o.kind == OutKind.fetch && hex(o.dst.id) == hex(h.id))
+        .lastOrNull;
+    return o != null &&
+        !o.answered &&
+        o.state == OutState.taken &&
+        now().difference(o.at) >= Session.fetchAnswerWait;
   }
 
   /// Leaves the person's home, which is about to change: the app fetches
@@ -300,7 +335,8 @@ mixin _Home on _AppCore {
   }
 
   Future<void> _leavingAnswered(Leaving l, int round, RoundSummary s) async {
-    if (round == l.leaveRound) {
+    // A home that says it was removed has forgotten the person already.
+    if (round == l.leaveRound || s.outcome == Outcome.removed) {
       session.note('Leaving: ${nodeName(l.home.id)} forgot the person');
       await me.setLeaving(null);
       return;

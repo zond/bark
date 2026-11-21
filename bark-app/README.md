@@ -247,7 +247,9 @@ is a prototype for the bench, not the app people will carry.
     "Mailbox"). On a node that keeps the person's mail and is not
     their home, a line says so with **Stop keeping my mail** (Making a
     node the home, below). While an old home is being left, a line says
-    "Leaving ID …: it sends you its mail, then forgets you." With no
+    "Leaving ID …: it sends you its mail, then forgets you." When the
+    last fetch to the home had no answer, a line says "Your home did not
+    answer your last fetch." (A home removed, below). With no
     home, **Use my existing home** (Using an existing home, below). For
     the home's owner away from it, "People with a home here", with an
     info button, "You are its owner.", the people as the home last
@@ -531,8 +533,8 @@ types them, "Type the six digits under CONFIRM on the node's screen,
 within 30 s.", and **Remove** or **Make owner** writes it, which says
 "Removed" or "Ann is the owner". A removed phone's app finds the
 node no longer its own at its next link; a removed home tells its
-person at their next link there, and their fetches from elsewhere go
-unanswered. A wrong code, or one after 30 s, says "Not removed" or "Not
+person at their next link there, or at their next fetch from elsewhere
+(A home removed, below). A wrong code, or one after 30 s, says "Not removed" or "Not
 changed", "Wrong code, or too late. Each code works once.", and offers
 **New code**; a record the node no longer holds says "Already gone" and
 reads the list again. While no record under the homes is the owner's,
@@ -771,7 +773,8 @@ removed the home there, and the app tells the person rather than
 overrule them: a notice says "Your home no longer keeps your mail. Set
 it again in Settings.", and Settings shows **Make this node my home**
 on the home, with the line "Your home no longer keeps your mail", to
-set it again; until then the home answers no fetch of theirs.
+set it again; until then a fetch of theirs from elsewhere is answered
+that the home was removed (A home removed, below).
 
 The queue and the received texts, the contacts and what is archived,
 and the person (seed, name, home, the last `sent`, the mailbox's
@@ -1178,6 +1181,23 @@ home, "ID … is your home", whose card then goes out as above; with
 none within the fetch's wait, the line says "ID … did not answer.
 Nothing changed." and the button comes back.
 
+**A home removed.** A node where a person's home was removed, at the
+node or by its owner, answers their next fetch from elsewhere, with a
+command or not, by a summary that says so and nothing else (spec
+"Mailbox", The answer). To a fetch to the home, the app then has no
+home, as after **No home node**, sends the card without it to every
+contact, and tells "Your home no longer keeps your mail. Choose a new
+home in Settings."; to the old home while leaving it, the old home has
+forgotten the person already, and no leave goes; to a home named under
+**Use my existing home**, it tells "ID … does not keep your mail.
+Nothing changed." A home that does not answer at all, as one that lost
+its memory or gave the person's place to another, is not told from one
+that is off or out of reach: once the last fetch to the home had no
+answer within its wait, Home node says "Your home did not answer your
+last fetch.", and its help says to fetch again later and, if it still
+does not answer, to make another node the home or choose **No home
+node**. Nothing changes by itself.
+
 
 ## Where a text goes
 
@@ -1349,8 +1369,9 @@ and the summary's flag, outcome and list against the Rust vectors, and
 a home given as a record of its own; share the home with a contact, the
 key reused after a lost answer, list, remove and hand over from away
 and be refused after, use a home given with its key, name an existing
-home that answers or does not, and take an empty owner's seat at the
-home (`test/owner_test.dart`, `test/owner_screens_test.dart`); make the fake
+home that answers or does not, take a home that says it was removed,
+fetched from, left or named, and a home that stays silent, and take an
+empty owner's seat at the home (`test/owner_test.dart`, `test/owner_screens_test.dart`); make the fake
 public, join it as a guest that writes its tag and touches nothing
 closed, read a guest's ring items by its tag after the number it keeps
 for the node, across links and restarts, close a second guest, end a
@@ -1663,7 +1684,10 @@ a phone (Trying it).
     Q's card, and on P the "owner" mark moves to Q's row within a moment.
     On Q, **Choices** on P's home row, **Remove**, the code: P's row
     leaves "Phones with a home here", and P, at its next link to A, is
-    told "Your home no longer keeps your mail". With the owner's home
+    told "Your home no longer keeps your mail"; away from A instead, P's
+    next **Fetch my mail** brings "Your home no longer keeps your mail.
+    Choose a new home in Settings.", **Settings** says "None: your card
+    is temporary.", and P's card goes to its contacts. With the owner's home
     removed, "This node has no owner" shows on both; on the phone whose
     home it still is, **Become owner** says "You are its owner".
 23. A home given, with two nodes, A, P's home, of which P is the owner,
@@ -1683,8 +1707,9 @@ a phone (Trying it).
     node, "People with a home here", **Show them**: within the time the
     mesh takes, the rows of A's people come, P's as "You, owner".
     **Choices** on Q's row, **Remove**, **Remove**: "Sent to your home…",
-    then "Removed from your home"; at A, Q's record goes (its log, or
-    Phones on a phone at A). Share with Q again, then **Make owner** on
+    then "Removed from your home"; at A, Q's row in Phones on a phone
+    there no longer says home, and Q, away from A, is told at its next
+    **Fetch my mail** as P is in step 22. Share with Q again, then **Make owner** on
     Q's row: "Q is your home's owner now"; P's "People with a home here"
     goes, as P is no longer the owner, and a share from P now says "Your
     home says you are not its owner".

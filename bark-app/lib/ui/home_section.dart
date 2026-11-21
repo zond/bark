@@ -60,6 +60,11 @@ class HomeSection extends StatelessWidget {
             'or choose another.',
           ),
         ),
+      if (app.homeSilent)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('Your home did not answer your last fetch.'),
+        ),
       if (app.holdsOtherKey)
         Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -249,6 +254,9 @@ class HomeSection extends StatelessWidget {
       'a home node can also give you a home there from afar.\n\n'
       'When you choose another home, or none, your old home sends you the '
       'mail it keeps, then forgets you.\n\n'
+      'A home that stops answering may be off or out of reach, or may have '
+      'lost your place there. Fetch again later; if it still does not '
+      'answer, make another node your home, or choose No home node.\n\n'
       'Use my existing home is for a phone that got your identity back from '
       'your 12 words: give your home\'s address, and once your home answers '
       'it is your home again.';

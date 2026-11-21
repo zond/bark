@@ -387,6 +387,29 @@ void main() {
       h(c, 'not_allowed_summary'),
     )!;
     expect((refused.owner, refused.outcome), (false, Outcome.notAllowed));
+    final gone = c['removed_round'] as int;
+    final removed = openSummary(
+      s,
+      alice.mailbox,
+      gone,
+      h(c, 'removed_summary'),
+    )!;
+    expect(
+      (removed.items, removed.remaining, removed.owner, removed.outcome),
+      (0, 0, false, Outcome.removed),
+    );
+    expect(
+      hex(
+        sealSummary(
+          s,
+          alice.mailbox,
+          to,
+          gone,
+          const RoundSummary(0, 0, outcome: Outcome.removed),
+        ),
+      ),
+      c['removed_summary'],
+    );
   });
 
   test('a summary: made, opened in its round only, nothing new its zero', () {
