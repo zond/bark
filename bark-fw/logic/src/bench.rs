@@ -375,13 +375,7 @@ mod tests {
         assert_eq!(out[..n], [0x02, 0xe2, 0xff, 0x00]);
         // The ID the board logs is the one the app gave: its FNV-1a of
         // the address's bytes and the payload's.
-        let app_id = to
-            .encode()
-            .iter()
-            .chain(&out[..n])
-            .fold(0x811c_9dc5u32, |h, &b| {
-                (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-            });
+        let app_id = bark_proto::ids::fnv1a(&[&to.encode(), &out[..n]]);
         assert_eq!(bark_proto::MsgId::of(at, id, &out[..n]).0, app_id);
     }
 

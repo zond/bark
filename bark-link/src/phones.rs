@@ -14,6 +14,8 @@
 //! address order, so an entry cut short by a power cut leaves its last
 //! word erased and fails it.
 
+use bark_proto::ids::fnv1a;
+
 use crate::home::KEY_LEN;
 use crate::Malformed;
 
@@ -232,13 +234,6 @@ const FLAG_REMOVED: u8 = 0x40;
 const FLAGS: u8 =
     FLAG_BOND | FLAG_IRK | FLAG_CHANGED | FLAG_TAG | FLAG_KEY | FLAG_OWNER | FLAG_REMOVED;
 
-/// 32-bit FNV-1a, as the store's other entries check theirs.
-fn fnv1a(bytes: &[u8]) -> u32 {
-    bytes.iter().fold(0x811c_9dc5, |h, &b| {
-        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-    })
-}
-
 fn be24(b: &[u8]) -> u32 {
     u32::from_be_bytes([0, b[0], b[1], b[2]])
 }
@@ -248,13 +243,13 @@ fn put24(b: &mut [u8], n: u32) {
 }
 
 fn seal<const N: usize>(mut r: [u8; N]) -> [u8; N] {
-    let check = fnv1a(&r[..N - 4]);
+    let check = fnv1a(&[&r[..N - 4]]);
     r[N - 4..].copy_from_slice(&check.to_be_bytes());
     r
 }
 
 fn whole<const N: usize>(r: &[u8; N], tag: u8) -> bool {
-    r[0] == tag && fnv1a(&r[..N - 4]).to_be_bytes() == r[N - 4..]
+    r[0] == tag && fnv1a(&[&r[..N - 4]]).to_be_bytes() == r[N - 4..]
 }
 
 impl Record {
