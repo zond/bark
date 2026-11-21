@@ -770,11 +770,7 @@ list a home of their tag: one a phone of theirs left by unpairing,
 which the write joins to this phone's record, or another phone of
 theirs. Where none is listed, someone paired with the node may have
 removed the home there, and the app tells the person rather than
-overrule them: a notice says "Your home no longer keeps your mail. Set
-it again in Settings.", and Settings shows **Make this node my home**
-on the home, with the line "Your home no longer keeps your mail", to
-set it again; until then a fetch of theirs from elsewhere is answered
-that the home was removed (A home removed, below).
+overrule them (A home removed, below).
 
 The queue and the received texts, the contacts and what is archived,
 and the person (seed, name, home, the last `sent`, the mailbox's
@@ -1181,10 +1177,15 @@ home, "ID … is your home", whose card then goes out as above; with
 none within the fetch's wait, the line says "ID … did not answer.
 Nothing changed." and the button comes back.
 
-**A home removed.** A node where a person's home was removed, at the
-node or by its owner, answers their next fetch from elsewhere, with a
-command or not, by a summary that says so and nothing else (spec
-"Mailbox", The answer). To a fetch to the home, the app then has no
+**A home removed.** A person whose home was removed, at the node or by
+its owner, learns it in one of two ways. At the home, Home says it is
+not theirs and no other phone of theirs keeps it (above): the app keeps
+the home, as the person is there to set it again, a notice says "Your
+home no longer keeps your mail. Set it again in Settings.", and Settings
+shows **Make this node my home** on the home, with the line "Your home
+no longer keeps your mail". Away from it, the node answers their next
+fetch, with a command or not, by a summary that says so and nothing
+else (spec "Mailbox", The answer). To a fetch to the home, the app then has no
 home, as after **No home node**, sends the card without it to every
 contact, and tells "Your home no longer keeps your mail. Choose a new
 home in Settings."; to the old home while leaving it, the old home has
