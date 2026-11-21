@@ -192,7 +192,7 @@ fn from_stream(mut stream: Vec<u8>, name: Option<[u8; HASH_LEN]>, resigned: bool
         key: 1,
     };
     for (b, data) in blocks.iter().enumerate() {
-        assert_eq!(image.pieces(b as u8), data.len());
+        assert_eq!(usize::from(image.pieces(b as u8)), data.len());
     }
     Built {
         image,
@@ -669,7 +669,7 @@ fn a_holder_makes_the_blocks_a_gatherer_takes() {
     }
     assert_eq!(table.piece(built.blocks[0].len()), None);
     for b in 1..image.blocks {
-        for i in 0..image.pieces(b) {
+        for i in 0..usize::from(image.pieces(b)) {
             let at = piece_offset(b, i) as usize;
             assert_eq!(
                 &built.stream[at..at + PIECE],
@@ -815,7 +815,7 @@ fn a_holder_serves_every_piece_of_every_block() {
     assert_eq!(image, built.image);
     assert_eq!(
         (0..image.blocks)
-            .map(|b| image.pieces(b))
+            .map(|b| usize::from(image.pieces(b)))
             .collect::<Vec<_>>(),
         [1, 64, 64, 53]
     );
@@ -840,7 +840,7 @@ fn a_holder_serves_every_piece_of_every_block() {
         }
     };
     for b in 0..image.blocks {
-        let n = image.pieces(b);
+        let n = usize::from(image.pieces(b));
         let block = &built.blocks[usize::from(b)];
         let mut coded = Vec::new();
         for k in 0..CODED as u8 {

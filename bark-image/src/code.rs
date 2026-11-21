@@ -19,14 +19,14 @@
 //! ([`WEIGH_ROWS`]); the sums are not measured alone.
 
 /// Bytes of a piece: a full frame's 255 less its 8-byte header.
-pub const PIECE: usize = 247;
+pub const PIECE: usize = bark_proto::wire::PIECE_BYTES;
 
 /// Data pieces of a whole block.
-pub const DATA: usize = 64;
+pub const DATA: usize = bark_proto::update::BLOCK_PIECES;
 
 /// Coded pieces a block can be sent as: an index a byte, one value spare
 /// for "none".
-pub const CODED: usize = 255;
+pub const CODED: usize = bark_proto::update::PIECES;
 
 /// The field's polynomial, x⁸ + x⁴ + x³ + x² + 1: primitive (Lin and
 /// Costello, "Error Control Coding"), so the powers of x are every

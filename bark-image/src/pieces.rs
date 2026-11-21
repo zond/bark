@@ -72,6 +72,9 @@ use crate::layout::ACTIVE;
 use crate::sign::{self, Key, SignatureError, KEYS, SIGNED_LEN};
 use crate::{Header, HeaderError, HASH_LEN, HEADER_LEN};
 
+/// An image to gather, as a neighbour's heartbeat names it.
+pub use bark_proto::update::Image;
+
 /// A NOR flash that erases and programs while the processor goes on: the
 /// external chip ([`Chip`]), addressed from its start.
 pub trait Flash {
@@ -192,6 +195,8 @@ const _: () = {
     assert!(CHECK_AT + 4 <= SLOT as usize);
     // A block's done bit.
     assert!(MAX_BLOCKS <= 64);
+    // The protocol's largest image is the largest a node gathers.
+    assert!(MAX_BLOCKS == bark_proto::update::MAX_BLOCKS);
     assert!(RECORD_LEN as u32 <= DONE_AT);
     assert!(DONE_AT + MAX_BLOCKS as u32 <= TABLE_AT);
     assert!(TABLE_AT + (TABLE_PIECES * PIECE) as u32 <= HEADER_AT);
@@ -284,75 +289,52 @@ impl SlotRead {
     }
 }
 
-/// An image to gather, as a neighbour's heartbeat describes it; block 0
-/// carries its whole name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Image {
-    /// Its blocks, the table among them.
-    pub blocks: u8,
-    /// The pieces of its last block.
-    pub last: u8,
-    /// Its version and the key the section named, kept so that after a
-    /// reset the node says what it gathers before block 1 brings the header.
-    pub version: u32,
-    /// See `version`.
-    pub key: u8,
+/// Bytes of `image` as gathered, its last piece padded.
+fn gathered_len(image: &Image) -> u32 {
+    (u32::from(image.blocks - 2) * DATA as u32 + u32::from(image.last)) * PIECE as u32
 }
 
-impl Image {
-    /// The data pieces of block `b`; 0 past the last.
-    pub fn pieces(&self, b: u8) -> usize {
-        match b {
-            0 => table_len(self.blocks).div_ceil(PIECE),
-            _ if b >= self.blocks => 0,
-            _ if b + 1 == self.blocks => usize::from(self.last),
-            _ => DATA,
-        }
-    }
+/// Whether `image` has a header and fits the running slot behind it.
+fn fits(image: &Image) -> bool {
+    let len = gathered_len(image);
+    (2..=MAX_BLOCKS).contains(&usize::from(image.blocks))
+        && (1..=DATA).contains(&usize::from(image.last))
+        && len > HEADER_LEN as u32
+        && len - (PIECE as u32) < HEADER_LEN as u32 + ACTIVE.len
+}
 
-    /// Bytes of the image as gathered, its last piece padded.
-    fn len(&self) -> u32 {
-        (u32::from(self.blocks - 2) * DATA as u32 + u32::from(self.last)) * PIECE as u32
-    }
+/// The sectors of [`DFU`] `image` writes.
+fn dfu_sectors(image: &Image) -> u32 {
+    (gathered_len(image) - HEADER_LEN as u32).div_ceil(SECTOR)
+}
 
-    /// Whether it has a header and fits the running slot behind it.
-    fn fits(&self) -> bool {
-        (2..=MAX_BLOCKS).contains(&usize::from(self.blocks))
-            && (1..=DATA).contains(&usize::from(self.last))
-            && self.len() > HEADER_LEN as u32
-            && self.len() - (PIECE as u32) < HEADER_LEN as u32 + ACTIVE.len
-    }
+/// The head's record of `image`. The version and the key are kept so
+/// that after a reset the node says what it gathers before block 1 brings
+/// the header.
+fn record(image: &Image) -> [u8; RECORD_LEN] {
+    let mut r = [0u8; RECORD_LEN];
+    r[0] = image.blocks;
+    r[1] = image.last;
+    r[2..6].copy_from_slice(&image.version.to_le_bytes());
+    r[6] = image.key;
+    let check = crc32(&r[..CHECKED]);
+    r[CHECKED..].copy_from_slice(&check.to_le_bytes());
+    r
+}
 
-    /// The sectors of [`DFU`] it writes.
-    fn dfu_sectors(&self) -> u32 {
-        (self.len() - HEADER_LEN as u32).div_ceil(SECTOR)
+fn from_record(r: &[u8; RECORD_LEN]) -> Option<Image> {
+    let c = CHECKED;
+    let check = u32::from_le_bytes([r[c], r[c + 1], r[c + 2], r[c + 3]]);
+    if crc32(&r[..c]) != check {
+        return None;
     }
-
-    fn record(&self) -> [u8; RECORD_LEN] {
-        let mut r = [0u8; RECORD_LEN];
-        r[0] = self.blocks;
-        r[1] = self.last;
-        r[2..6].copy_from_slice(&self.version.to_le_bytes());
-        r[6] = self.key;
-        let check = crc32(&r[..CHECKED]);
-        r[CHECKED..].copy_from_slice(&check.to_le_bytes());
-        r
-    }
-
-    fn from_record(r: &[u8; RECORD_LEN]) -> Option<Image> {
-        let c = CHECKED;
-        let check = u32::from_le_bytes([r[c], r[c + 1], r[c + 2], r[c + 3]]);
-        if crc32(&r[..c]) != check {
-            return None;
-        }
-        let image = Image {
-            blocks: r[0],
-            last: r[1],
-            version: u32::from_le_bytes([r[2], r[3], r[4], r[5]]),
-            key: r[6],
-        };
-        image.fits().then_some(image)
-    }
+    let image = Image {
+        blocks: r[0],
+        last: r[1],
+        version: u32::from_le_bytes([r[2], r[3], r[4], r[5]]),
+        key: r[6],
+    };
+    fits(&image).then_some(image)
 }
 
 /// The name of the image `header` heads: the SHA-256 of the bytes its
@@ -575,7 +557,7 @@ impl Table {
 
     /// Data piece `i` of block 0.
     pub fn piece(&self, i: usize) -> Option<&[u8; PIECE]> {
-        if i >= self.image.pieces(0) {
+        if i >= usize::from(self.image.pieces(0)) {
             return None;
         }
         self.bytes[i * PIECE..(i + 1) * PIECE].try_into().ok()
@@ -638,7 +620,7 @@ impl Tabling {
     /// Once every byte was fed: the last block padded into `table`, its
     /// own entry, and the hashes the header must hold.
     pub fn finish(self, table: &mut Table) -> Hashes {
-        let length = table.image.len().saturating_sub(HEADER_LEN as u32);
+        let length = gathered_len(&table.image).saturating_sub(HEADER_LEN as u32);
         let hash = self.entries.finish(length, |b, e| table.set(b, e));
         let own = table_len(table.image.blocks) - ENTRY;
         let check = Sha256::digest(&table.bytes[..own]);
@@ -939,7 +921,7 @@ impl Store {
         const _: () = assert!(RECORD_LEN <= CHUNK);
         let mut record = [0u8; RECORD_LEN];
         flash.read(HEAD, &mut record)?;
-        let Some(image) = Image::from_record(&record) else {
+        let Some(image) = from_record(&record) else {
             self.mode = Mode::Empty;
             return Ok(Poll::Idle);
         };
@@ -972,7 +954,7 @@ impl Store {
             self.mode = Mode::Head((at + n) as u16);
             return Ok(Poll::Again);
         }
-        let len = image.pieces(0) * PIECE;
+        let len = usize::from(image.pieces(0)) * PIECE;
         let t = at - blocks;
         if !self.is_done(0) || t >= len {
             self.table_known = self.is_done(0);
@@ -988,7 +970,7 @@ impl Store {
     /// Gather `image`: go on with it if it is the one gathered, else clear
     /// what is kept and start.
     pub fn begin(&mut self, image: Image) -> Begin {
-        if !image.fits() {
+        if !fits(&image) {
             return Begin::Unfit;
         }
         if self.image == Some(image) {
@@ -1068,7 +1050,8 @@ impl Store {
         let Some(image) = self.image else {
             return Ok(false);
         };
-        if !self.is_done(block) || i >= image.pieces(block) || from + out.len() > PIECE {
+        if !self.is_done(block) || i >= usize::from(image.pieces(block)) || from + out.len() > PIECE
+        {
             return Ok(false);
         }
         if block == 0 {
@@ -1181,7 +1164,7 @@ impl Store {
         if lane.holds(index) {
             return Offer::Held;
         }
-        if usize::from(lane.taken) >= image.pieces(block) {
+        if lane.taken >= image.pieces(block) {
             return Offer::Enough;
         }
         if next >= DATA {
@@ -1238,7 +1221,7 @@ impl Store {
                 let address = match done {
                     0 => HEAD,
                     _ if done <= lanes => LANES_START + (done - 1) * SECTOR,
-                    _ if done <= lanes + image.dfu_sectors() => {
+                    _ if done <= lanes + dfu_sectors(&image) => {
                         DFU.start + (done - 1 - lanes) * SECTOR
                     }
                     _ => {
@@ -1251,7 +1234,7 @@ impl Store {
                 self.started(Op::Clear)
             }
             Mode::Record => {
-                flash.start_program(HEAD, &image.record())?;
+                flash.start_program(HEAD, &record(&image))?;
                 self.started(Op::Record)
             }
             Mode::Scan { lane, slot } => {
@@ -1346,7 +1329,7 @@ impl Store {
         let keep = match l.block {
             None => l.next == 0,
             Some(b) => {
-                let need = image.pieces(b);
+                let need = usize::from(image.pieces(b));
                 !l.mixed
                     && b < image.blocks
                     && usize::from(b) == lane
@@ -1384,7 +1367,7 @@ impl Store {
         }
         let ready = self.lanes.iter().enumerate().find_map(|(lane, l)| {
             let b = l.block?;
-            let n = image.pieces(b);
+            let n = usize::from(image.pieces(b));
             (usize::from(l.whole) >= n && l.taken == l.whole && (b == 0 || self.table_known))
                 .then_some((lane, b, n))
         });

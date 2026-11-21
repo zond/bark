@@ -76,7 +76,8 @@ impl Section {
 }
 
 /// The most blocks an image has, the table's among them: the lanes the
-/// firmware keeps pieces in (`bark-image`, `pieces.rs`, `MAX_BLOCKS`).
+/// firmware keeps pieces in (`bark-image`, `pieces.rs`, which asserts
+/// the two agree).
 pub const MAX_BLOCKS: usize = 48;
 
 /// The airtime of a full frame, a piece's, 138.6 ms.
