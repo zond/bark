@@ -11,7 +11,10 @@ use bark_link::{Answer, Ask, Clock, MapPoint, Node, NodeTime, Public, PublicWrit
 use bark_proto::{NodeId, Position};
 
 use crate::link::{id_text, Char, Error, Found, Link, Reach, Result, Transport};
+use crate::person::{self, Me};
 use crate::state::{Paired, State};
+use bark_app_layer::Address;
+use bark_proto::MsgId;
 
 /// A node's advertising interval, 1022.5 ms (spec "Phone link", Finding
 /// the node).
@@ -261,10 +264,57 @@ pub fn guest_node<L: Link>(l: &mut L) -> Result<Node> {
     }
 }
 
-/// Node then Status, as the app reads them as a guest's link comes up.
-pub fn node_status<L: Link>(l: &mut L) -> Result<Status> {
-    served(&guest_node(l)?)?;
-    status(l)
+/// Writes Recipient: this person's tag at the node, the tool's link
+/// versions, and on an owner's link their name (spec "Phone link", The
+/// service). The node answers 0x82 and ends the link when it and the
+/// tool do not serve each other (spec "Versions").
+pub fn recipient<L: Link>(l: &mut L, me: &Me, n: &Node, name: &str) -> Result<()> {
+    let r = bark_link::Recipient {
+        tag: person::tag(me, n.id),
+        version: bark_link::VERSION,
+        oldest: bark_link::OLDEST,
+        name: bark_link::phones::Name::new(name.as_bytes())
+            .map_err(|_| Error::Other("the name is longer than 32 bytes".into()))?,
+    };
+    let mut b = [0; bark_link::Recipient::MAX_LEN];
+    let len = r.encode(&mut b);
+    match l.write(Char::Recipient, &b[..len]) {
+        Err(Error::Att(bark_link::att::INCOMPATIBLE)) => Err(Error::Other(
+            "the node and this tool do not serve each other's link versions: update one".into(),
+        )),
+        r => r,
+    }
+}
+
+/// The address messages to this person reach them at while they are
+/// linked to the node: the node's ID and the position of its address,
+/// once it has one (spec "Addresses").
+pub fn here(n: &Node, s: &Status) -> Option<Address> {
+    s.placed.then_some(Address {
+        position: s.address,
+        node: n.id,
+    })
+}
+
+/// Keeps the node the person is linked to for their card
+/// (spec "The payload", The card).
+fn linked(state: &mut State, n: &Node, s: &Status, now_s: u64) -> Result<()> {
+    if let Some(a) = here(n, s) {
+        let me = state.me()?;
+        me.linked = Some((a, person::sent_of(now_s)));
+    }
+    state.save()
+}
+
+/// A guest's link as the app sets it up: Node, then Recipient with this
+/// person's tag and no name, then Status (spec "Phone link", Public).
+pub fn attach_guest<L: Link>(l: &mut L, state: &mut State, now_s: u64) -> Result<(Node, Status)> {
+    let n = guest_node(l)?;
+    served(&n)?;
+    recipient(l, state.me()?, &n, "")?;
+    let s = status(l)?;
+    linked(state, &n, &s, now_s)?;
+    Ok((n, s))
 }
 
 fn no_longer(id: NodeId) -> Error {
@@ -281,7 +331,7 @@ fn no_longer(id: NodeId) -> Error {
 /// every connection (spec "Settings").
 pub fn owner<T: Transport>(
     t: &mut T,
-    state: &State,
+    state: &mut State,
     sel: &Select,
     clock: Clock,
 ) -> Result<(Node, T::Link)> {
@@ -316,11 +366,33 @@ pub fn owner<T: Transport>(
         Err(Error::Ended | Error::Att(0x05 | 0x0F)) => return Err(no_longer(p.id)),
         n => n?,
     };
-    attach_owner(&mut l, &n, p.id, clock)?;
+    attach_owner(&mut l, state, &n, p.id, clock)?;
+    // The person's home tells whether it still keeps their mail; a phone
+    // paired with it may have removed it (spec "Phones"), which the person
+    // is told rather than overruled, as the app does.
+    let home = state
+        .me
+        .as_ref()
+        .and_then(|m| m.home)
+        .filter(|h| h.node == n.id);
+    if home.is_some() && !home_of(&mut l)?.mine {
+        t.warn(&format!(
+            "your home no longer keeps your mail: set it again (bark home {} on)",
+            id_text(n.id)
+        ));
+    }
     Ok((n, l))
 }
 
-fn attach_owner<L: Link>(l: &mut L, n: &Node, id: NodeId, clock: Clock) -> Result<()> {
+/// An owner's link as the app sets it up: Node read, then Recipient with
+/// the person's tag and name, the computer's time, and Status.
+fn attach_owner<L: Link>(
+    l: &mut L,
+    state: &mut State,
+    n: &Node,
+    id: NodeId,
+    clock: Clock,
+) -> Result<()> {
     served(n)?;
     if n.id != id {
         return Err(Error::Other(format!(
@@ -329,11 +401,14 @@ fn attach_owner<L: Link>(l: &mut L, n: &Node, id: NodeId, clock: Clock) -> Resul
             id_text(id)
         )));
     }
-    match l.write(Char::Clock, &clock.encode()) {
-        Err(Error::Ended) => Err(Error::Ended),
-        // As the app, the node only shows no time without it.
-        _ => Ok(()),
+    let name = state.me()?.name.clone();
+    recipient(l, state.me()?, n, &name)?;
+    // As the app, the node only shows no time without it.
+    if let Err(Error::Ended) = l.write(Char::Clock, &clock.encode()) {
+        return Err(Error::Ended);
     }
+    let s = status(l)?;
+    linked(state, n, &s, u64::from(clock.utc_s))
 }
 
 /// Pairs with the node `sel` names (spec "Phone link", Pairing). As the
@@ -363,7 +438,7 @@ pub fn pair<T: Transport>(
         )));
     }
     let n = node(&mut l)?;
-    attach_owner(&mut l, &n, found.id, clock)?;
+    attach_owner(&mut l, state, &n, found.id, clock)?;
     state.add(Paired {
         id: found.id,
         address: found.address,
@@ -383,7 +458,7 @@ pub fn unpair<T: Transport>(
     clock: Clock,
 ) -> Result<NodeId> {
     let p = state.pick(sel)?;
-    let (_, mut l) = owner(t, state, sel, clock)?;
+    let (_, mut l) = owner(t, &mut *state, sel, clock)?;
     match l.write(Char::Public, &PublicWrite::Unpair.encode()) {
         Ok(()) | Err(Error::Ended) => {}
         Err(e) => {
@@ -562,6 +637,152 @@ pub fn phones<L: Link>(l: &mut L) -> Result<Vec<Record>> {
     ))
 }
 
+/// How long an app with a message waits for ready after asking for the
+/// turn, before it asks again: a ban for each of the eight other links,
+/// 8 × 1.58 s (spec "Sending").
+const READY_WAIT: Duration = Duration::from_millis(12_640);
+
+/// Asks for the turn before the tool gives up: a choice, about a minute
+/// of [`READY_WAIT`]s, as a person at a terminal waits; the app, which
+/// holds a queue, waits for as long as its link lasts.
+const SEND_ASKS: usize = 5;
+
+/// The link to the node `sel` names: an owner's if this computer is
+/// paired with it, else a guest's.
+pub fn connect<T: Transport>(
+    t: &mut T,
+    state: &mut State,
+    sel: &Select,
+    time: Duration,
+    clock: Clock,
+) -> Result<(Node, T::Link)> {
+    if state.pick(sel).is_ok() {
+        return owner(t, state, sel, clock);
+    }
+    let mut l = guest(t, sel, time)?;
+    let (n, _) = attach_guest(&mut l, state, u64::from(clock.utc_s))?;
+    Ok((n, l))
+}
+
+/// Hands the node a message for `dst` (spec "Sending"): written while the
+/// node takes one; answered not ready, the tool waits for ready, which
+/// Status notifies, and asks again if it has not come within
+/// [`READY_WAIT`]. Its ID, by which a message given back is named.
+pub fn send<L: Link>(l: &mut L, dst: Address, payload: &[u8]) -> Result<MsgId> {
+    let s = bark_link::Send {
+        dst_pos: dst.position,
+        dst_id: dst.node,
+        payload,
+    };
+    let mut b = [0; bark_link::Send::MAX_LEN];
+    let len = s.encode(&mut b);
+    l.subscribe(Char::Status)?;
+    for _ in 0..SEND_ASKS {
+        match l.write(Char::Send, &b[..len]) {
+            Ok(()) => return Ok(s.msg_id()),
+            Err(Error::Att(bark_link::att::NOT_READY)) => {}
+            Err(e) => return Err(e),
+        }
+        let until = std::time::Instant::now() + READY_WAIT;
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            match l.notified(left)? {
+                None => break,
+                Some((Char::Status, v)) if Status::decode(&v).is_ok_and(|s| s.ready) => break,
+                Some(_) => {}
+            }
+        }
+    }
+    Err(Error::Other(
+        "the node took no message: other phones hold its turn; try again".into(),
+    ))
+}
+
+/// The message the node gave back to this phone, if any (spec "Sending",
+/// Given back).
+pub fn given_back<L: Link>(l: &mut L) -> Result<Option<bark_link::GivenBack>> {
+    bark_link::GivenBack::decode(&l.read(Char::GivenBack)?)
+        .map_err(|_| Error::Other("the node's Given back value is malformed".into()))
+}
+
+/// The ring's items, as many as it holds at most: a bound on a loop of
+/// reads that a node answering wrong would make endless.
+const RING: usize = 1024;
+
+/// A paired phone's messages, oldest first: each read from Inbox, kept by
+/// `keep`, then confirmed by its ID, the app's word that it has it
+/// (spec "Receiving"). How many.
+pub fn inbox<L: Link>(
+    l: &mut L,
+    keep: &mut dyn FnMut(MsgId, &[u8]) -> Result<()>,
+) -> Result<usize> {
+    for n in 0..RING {
+        let v = l.read(Char::Inbox)?;
+        let Some(m) = bark_link::Message::decode(&v)
+            .map_err(|_| Error::Other("the node's Inbox value is malformed".into()))?
+        else {
+            return Ok(n);
+        };
+        keep(m.msg_id, m.payload)?;
+        l.write(Char::Inbox, &bark_link::Confirm(m.msg_id).encode())?;
+    }
+    Ok(RING)
+}
+
+/// Keeps a ring item: its message ID, its payload and its number.
+pub type KeepItem<'a> = dyn FnMut(MsgId, &[u8], u32) -> Result<()> + 'a;
+
+/// A guest's messages: the ring's items with its tag after the number it
+/// took last, `after`, each read by writing that number to Guest, kept by
+/// `keep`, and the number moved on (spec "Public nodes"). How many.
+pub fn inbox_guest<L: Link>(l: &mut L, after: &mut u32, keep: &mut KeepItem<'_>) -> Result<usize> {
+    for n in 0..RING {
+        l.write(Char::Guest, &bark_link::After(*after).encode())?;
+        let v = l.read(Char::Inbox)?;
+        let Some(item) = bark_link::GuestItem::decode(&v)
+            .map_err(|_| Error::Other("the node's Inbox value is malformed".into()))?
+        else {
+            return Ok(n);
+        };
+        // The number written read again would be read for ever; any other
+        // is taken, as a node whose ring began again counts from 0.
+        if item.number == *after {
+            return Err(Error::Other(format!("the node gave item {after} again")));
+        }
+        keep(item.msg_id, item.payload, item.number)?;
+        *after = item.number;
+    }
+    Ok(RING)
+}
+
+fn home_of<L: Link>(l: &mut L) -> Result<bark_link::home::Home> {
+    bark_link::home::Home::decode(&l.read(Char::Home)?)
+        .map_err(|_| Error::Other("the node's Home value is malformed".into()))
+}
+
+/// Makes the node this person's home with their mailbox `key`, or, with
+/// none, forgets it there (spec "Settings", Home). A home is a fixed
+/// relay, neither sleepy nor carried, so that its address stays
+/// (spec "Mailbox").
+pub fn home<L: Link>(l: &mut L, key: Option<[u8; 32]>) -> Result<bark_link::home::Home> {
+    if key.is_some() {
+        let s = status(l)?;
+        if s.sleepy || s.carried {
+            return Err(Error::Other(
+                "a home is a node that stays put on power: this one is sleepy or carried".into(),
+            ));
+        }
+    }
+    let set = match key {
+        Some(k) => bark_link::home::SetHome::Set(k),
+        None => bark_link::home::SetHome::Clear,
+    };
+    let mut b = [0; bark_link::home::SetHome::MAX_LEN];
+    let len = set.encode(&mut b);
+    l.write(Char::Home, &b[..len])?;
+    home_of(l)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,6 +796,11 @@ mod tests {
         utc_s: 1_795_000_000,
         offset_min: 60,
     };
+
+    /// Node, Recipient and Status, as a guest's link comes up.
+    fn node_status<L: Link>(l: &mut L) -> Result<Status> {
+        attach_guest(l, &mut State::in_memory(), 0).map(|(_, s)| s)
+    }
 
     fn sel(s: &str) -> Select {
         s.parse().unwrap()
@@ -693,7 +919,7 @@ mod tests {
             CLOCK,
         )
         .unwrap();
-        let (_, mut l) = owner(&mut radio, &state, &sel("f4f5"), CLOCK).unwrap();
+        let (_, mut l) = owner(&mut radio, &mut state, &sel("f4f5"), CLOCK).unwrap();
         assert!(!public(&mut l, Some(false)).unwrap());
         assert_eq!(
             scan(&mut radio, SCAN_TIME).unwrap()[0].public,
@@ -822,9 +1048,9 @@ mod tests {
 
     #[test]
     fn an_owner_connects_without_a_scan() {
-        let (mut radio, state) = paired();
+        let (mut radio, mut state) = paired();
         let scans = radio.scans;
-        let (n, mut l) = owner(&mut radio, &state, &sel("f4f5"), CLOCK).unwrap();
+        let (n, mut l) = owner(&mut radio, &mut state, &sel("f4f5"), CLOCK).unwrap();
         assert_eq!(n.id, id(0xbae6_e6cb_f4f5));
         assert_eq!(radio.scans, scans);
         assert!(!public(&mut l, None).unwrap());
@@ -834,7 +1060,7 @@ mod tests {
     #[test]
     fn an_owner_command_needs_a_pairing() {
         let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
-        let e = owner(&mut radio, &State::in_memory(), &sel("1"), CLOCK)
+        let e = owner(&mut radio, &mut State::in_memory(), &sel("1"), CLOCK)
             .err()
             .unwrap();
         assert!(e.to_string().contains("bark pair 1"), "{e}");
@@ -842,9 +1068,9 @@ mod tests {
 
     #[test]
     fn a_node_that_lost_the_bond_says_so() {
-        let (mut radio, state) = paired();
+        let (mut radio, mut state) = paired();
         radio.nodes[0].borrow_mut().phones.unpair(0);
-        let e = owner(&mut radio, &state, &sel("f4f5"), CLOCK)
+        let e = owner(&mut radio, &mut state, &sel("f4f5"), CLOCK)
             .err()
             .unwrap();
         assert!(e.to_string().contains("no longer knows"), "{e}");
@@ -872,7 +1098,7 @@ mod tests {
             CLOCK,
         )
         .unwrap();
-        let (_, mut l) = owner(&mut radio, &state, &sel("1"), CLOCK).unwrap();
+        let (_, mut l) = owner(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
         let (header, list) = neighbours(&mut l).unwrap();
         assert_eq!(list.len(), 30);
         assert_eq!(header.floor_dbm, -110);
@@ -897,7 +1123,7 @@ mod tests {
             CLOCK,
         )
         .unwrap();
-        let (_, mut l) = owner(&mut radio, &state, &sel("1"), CLOCK).unwrap();
+        let (_, mut l) = owner(&mut radio, &mut state, &sel("1"), CLOCK).unwrap();
         let list = phones(&mut l).unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].name, "Olga");

@@ -33,7 +33,9 @@ program helps.
 
 Until it pairs, the tool is a guest, and a guest uses only a public node
 (protocol.md, "Public nodes"): it refuses a private one before it
-connects.
+connects. A command on a paired node uses the owner's link instead. As
+the app does, every link writes this person's recipient tag at the node
+first, and an owner's their name too, so the node hands them their mail.
 
 - `scan`: the nodes in reach, strongest first, one a line: ID, RSSI in
   dBm, `public`, `private` or `unknown`, whether this computer is paired
@@ -75,6 +77,35 @@ connects.
   flags (`mine` is this computer's), its tag, the day its phone was last
   linked, and its name.
 
+## Messages
+
+The tool is a phone for one person, whose identity it makes the first time
+it needs one, from a random seed kept in `--dir`.
+
+- `me [--name N]`: this person's identity, name, home, and card, the
+  `BARK:` text another person adds to reach them.
+- `contact add <card> [--name N]`: adds the person whose card it is, or
+  takes their newer card.
+- `contacts`: a line for each contact: name, identity, whether a boxed
+  message from them has opened here, their home, and the node they were
+  last known at.
+- `send <id> <contact> <text>`: sends the text through the node, to where
+  the app sends one nobody placed: where the contact was last known while
+  that is a minute old at most, else their home, as protocol.md, "The
+  payload", says. The first message to a contact carries this person's
+  card; once one of theirs has opened here, messages go boxed. A text too
+  long for one message goes in parts. Each line names a message the node
+  took; one it gives back later shows in `inbox`.
+- `inbox <id>`: reads every message waiting at the node, opens it, keeps
+  what it says of its sender, and confirms it, as a paired phone does; as
+  a guest, it reads the node's ring from the last item it took there. A
+  line for each: who, when, which part, whether it is verified, and the
+  text. A reply from a home's mailbox is listed, not read: the tool does
+  not ask its home for mail.
+- `home <id> on|off`: makes the paired node this person's home, whose
+  mailbox keeps their mail, or no longer, and puts it on their card,
+  which is then to be sent again.
+
 Output is one fact a line, a name and then its value. A command that
 fails exits non-zero and prints one line on stderr saying why.
 
@@ -86,7 +117,8 @@ fails exits non-zero and prints one line on stderr saying why.
 - `--adapter hci1`: the Bluetooth adapter; else the first.
 - `--scan-time 30`: seconds to listen for a node at most; by default ten
   of a node's advertising intervals, 10.2 s.
-- `--dir <dir>`: where the tool keeps the nodes it is paired with; by
+- `--dir <dir>`: where the tool keeps the nodes it is paired with, the
+  person's identity and their contacts; by
   default `$XDG_DATA_HOME/bark`, else `~/.local/share/bark`. The bonds
   themselves are BlueZ's, one set for the computer's adapter, so two
   directories on one computer are not two phones to a node.

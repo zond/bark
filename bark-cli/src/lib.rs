@@ -9,6 +9,8 @@ pub mod bluez;
 #[cfg(test)]
 mod fake;
 pub mod link;
+pub mod messages;
+pub mod person;
 pub mod phone;
 pub mod show;
 pub mod state;

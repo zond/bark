@@ -7,10 +7,12 @@ use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
+use bark_link::home::{Home, SetHome};
 use bark_link::neighbours::{self, Neighbour};
 use bark_link::phones::{Keys, Phones, PhonesWrite};
 use bark_link::{
-    Answer, Ask, Clock, MapPoint, Node, NodeTime, Public, PublicWrite, Status, TimeSource,
+    After, Answer, Ask, Clock, Confirm, GivenBack, GuestItem, MapPoint, Message, Node, NodeTime,
+    Public, PublicWrite, Recipient, Send, Status, TimeSource,
 };
 use bark_proto::{NodeId, Position};
 
@@ -46,6 +48,18 @@ pub struct FakeNode {
     /// The neighbours that answer an ask, and what they say.
     pub answers: Vec<(NodeId, bark_proto::status::Status)>,
     pub clock: Option<Clock>,
+    /// The ring: each item's number, the message ID it arrived with and its
+    /// payload (spec "Mailbox", The ring).
+    pub ring: Vec<(u32, bark_proto::MsgId, Vec<u8>)>,
+    /// The number of the last of this computer's items it confirmed.
+    pub confirmed: u32,
+    /// The values written to Send that it took.
+    pub sent: Vec<Vec<u8>>,
+    /// Sends it answers not ready before it takes one.
+    pub busy: usize,
+    /// The message it gives back, if any.
+    pub given_back: Option<GivenBack>,
+    pub home: Option<[u8; 32]>,
 }
 
 impl FakeNode {
@@ -76,6 +90,12 @@ impl FakeNode {
             neighbours: Vec::new(),
             answers: Vec::new(),
             clock: None,
+            ring: Vec::new(),
+            confirmed: 0,
+            sent: Vec::new(),
+            busy: 0,
+            given_back: None,
+            home: None,
         };
         n.node.room = n.phones.room();
         n
@@ -295,6 +315,8 @@ impl Transport for FakeRadio {
             queue: VecDeque::new(),
             neighbours_from: 0,
             phones_from: 0,
+            tag: None,
+            after: 0,
         })
     }
 
@@ -337,6 +359,10 @@ pub struct FakeLink {
     queue: VecDeque<(Char, Vec<u8>)>,
     neighbours_from: u8,
     phones_from: u8,
+    /// The recipient tag the link wrote.
+    tag: Option<u8>,
+    /// What a guest wrote to Guest.
+    after: u32,
 }
 
 impl FakeLink {
@@ -405,6 +431,49 @@ impl Link for FakeLink {
                 let len = neighbours::encode(&header, &page, &mut b);
                 Ok(b[..len].to_vec())
             }
+            Char::GivenBack => Ok(n.given_back.map_or(Vec::new(), |g| g.encode().to_vec())),
+            Char::Home => Ok(Home {
+                set: n.home.is_some(),
+                mine: n.home.is_some(),
+                oldest: n.ring.first().map_or(0, |i| i.0),
+                newest: n.ring.last().map_or(0, |i| i.0),
+            }
+            .encode()
+            .to_vec()),
+            Char::Inbox => {
+                let Some(tag) = self.tag else {
+                    return Ok(Vec::new());
+                };
+                let ours = |after: u32| {
+                    n.ring.iter().find(|i| {
+                        i.0 > after && bark_app_layer::seal::recipient_of(&i.2) == Some(tag)
+                    })
+                };
+                if self.owner {
+                    let Some((_, id, p)) = ours(n.confirmed) else {
+                        return Ok(Vec::new());
+                    };
+                    let mut b = [0; Message::MAX_LEN];
+                    let len = Message {
+                        msg_id: *id,
+                        payload: p,
+                    }
+                    .encode(&mut b);
+                    Ok(b[..len].to_vec())
+                } else {
+                    let Some((number, id, p)) = ours(self.after) else {
+                        return Ok(Vec::new());
+                    };
+                    let mut b = [0; GuestItem::MAX_LEN];
+                    let len = GuestItem {
+                        number: *number,
+                        msg_id: *id,
+                        payload: p,
+                    }
+                    .encode(&mut b);
+                    Ok(b[..len].to_vec())
+                }
+            }
             Char::Phones => {
                 let mut b = [0; bark_link::phones::MAX_LEN];
                 let len = n.phones.page(
@@ -446,6 +515,52 @@ impl Link for FakeLink {
             Char::Phones => match taken(PhonesWrite::decode(v))? {
                 PhonesWrite::From(s) => self.phones_from = s,
                 _ => return Err(Error::Other("the fake removes no phone".into())),
+            },
+            Char::Recipient => {
+                let rec = taken(Recipient::decode(v))?;
+                if !rec.compatible() {
+                    self.ended = true;
+                    return Err(Error::Att(bark_link::att::INCOMPATIBLE));
+                }
+                self.tag = Some(rec.tag);
+                if let (true, Some(i)) = (self.owner, n.mine()) {
+                    n.phones.set_recipient(i, rec.tag, rec.name);
+                    n.relisted();
+                }
+            }
+            Char::Send => {
+                taken(Send::decode(v))?;
+                if n.busy > 0 {
+                    n.busy -= 1;
+                    if self.subscribed.contains(&Char::Status) {
+                        let ready = Status {
+                            ready: true,
+                            ..n.status
+                        };
+                        self.queue
+                            .push_back((Char::Status, ready.encode().to_vec()));
+                    }
+                    return Err(Error::Att(bark_link::att::NOT_READY));
+                }
+                n.sent.push(v.to_vec());
+            }
+            Char::Inbox => {
+                let Confirm(id) = taken(Confirm::decode(v))?;
+                let tag = self.tag;
+                let next = n
+                    .ring
+                    .iter()
+                    .find(|i| i.0 > n.confirmed && bark_app_layer::seal::recipient_of(&i.2) == tag)
+                    .map(|i| (i.0, i.1));
+                match next {
+                    Some((number, msg)) if self.owner && msg == id => n.confirmed = number,
+                    _ => return Err(Error::Att(bark_link::att::VALUE_NOT_ALLOWED)),
+                }
+            }
+            Char::Guest => self.after = taken(After::decode(v))?.0,
+            Char::Home => match taken(SetHome::decode(v))? {
+                SetHome::Set(k) => n.home = Some(k),
+                SetHome::Clear => n.home = None,
             },
             Char::Ask => {
                 let Ask(id) = taken(Ask::decode(v))?;

@@ -233,10 +233,12 @@ dependencies = [
 name = "bark-cli"
 version = "0.1.0"
 dependencies = [
+ "bark-app-layer",
  "bark-link",
  "bark-proto",
  "blocking",
  "clap",
+ "crypto_box",
  "serde",
  "zbus",
 ]

@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use bark_cli::bluez::Bluez;
 use bark_cli::link::{Error, Link, Result};
+use bark_cli::messages;
 use bark_cli::phone::{self, Select};
 use bark_cli::show;
 use bark_cli::state::{self, State};
@@ -102,6 +103,42 @@ enum Command {
     Public { node: Select, set: Option<OnOff> },
     /// The phones paired with the node, and whose home it is.
     Phones { node: Select },
+    /// This person: identity, name, home, and the card others add.
+    Me {
+        /// Sets the name the card shows, 32 bytes at most.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Add a contact from their card, or take their newer card.
+    Contact {
+        #[command(subcommand)]
+        what: ContactDo,
+    },
+    /// The contacts.
+    Contacts,
+    /// Send a text to a contact through the node.
+    Send {
+        node: Select,
+        /// The contact's name, or the start of their identity.
+        contact: String,
+        text: String,
+    },
+    /// Read the messages waiting at the node, and confirm them.
+    Inbox { node: Select },
+    /// Make the node your home, whose mailbox keeps your mail, or no
+    /// longer.
+    Home { node: Select, set: OnOff },
+}
+
+#[derive(Subcommand)]
+enum ContactDo {
+    /// Add the person whose card this is: its BARK: text.
+    Add {
+        card: String,
+        /// What to call them; else their card's name.
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 /// This computer's time and UTC offset, for the node's clock
@@ -133,21 +170,38 @@ fn run(args: Args) -> Result<Vec<String>> {
         .or_else(state::default_dir)
         .ok_or_else(|| Error::Other("no state directory: give --dir".into()))?;
     let mut state = State::load(&dir)?;
+    // The person's own, which need no radio.
+    match args.command {
+        Command::Me { name } => return messages::me(&mut state, name),
+        Command::Contact {
+            what: ContactDo::Add { card, name },
+        } => return messages::add_contact(&mut state, &card, name),
+        Command::Contacts => return Ok(messages::contacts(&state)),
+        _ => {}
+    }
     let mut radio = Bluez::new(args.adapter.as_deref(), args.verbose)?;
     let r = &mut radio;
     let lines = match args.command {
         Command::Scan => phone::scan(r, time)?.iter().map(show::found).collect(),
         Command::Node { node } => {
-            let mut l = phone::guest(r, &node, time)?;
-            let n = phone::guest_node(&mut l);
+            let (n, l) = phone::connect(r, &mut state, &node, time, now())?;
             let _ = l.disconnect();
-            show::node(&n?)
+            show::node(&n)
         }
         Command::Status { node } => {
-            let mut l = phone::guest(r, &node, time)?;
-            let s = phone::node_status(&mut l);
+            let (_, mut l) = phone::connect(r, &mut state, &node, time, now())?;
+            let s = phone::status(&mut l);
             let _ = l.disconnect();
             show::status(&s?)
+        }
+        Command::Send {
+            node,
+            contact,
+            text,
+        } => messages::send(r, &mut state, &node, &contact, &text, time, now())?,
+        Command::Inbox { node } => messages::inbox(r, &mut state, &node, time, now())?,
+        Command::Home { node, set } => {
+            messages::home(r, &mut state, &node, matches!(set, OnOff::On), now())?
         }
         Command::Pair { node, code } => {
             let n = phone::pair(r, &mut state, &node, time, code, now())?;
@@ -169,7 +223,7 @@ fn run(args: Args) -> Result<Vec<String>> {
                 | Command::Phones { node } => node.clone(),
                 _ => unreachable!("handled above"),
             };
-            let (_, mut l) = phone::owner(r, &state, &node, now())?;
+            let (_, mut l) = phone::owner(r, &mut state, &node, now())?;
             let lines = owned(&mut l, command);
             let _ = l.disconnect();
             lines?
