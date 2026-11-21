@@ -195,7 +195,7 @@ Verified on the host:
   order inside `0x01000..0xEA000`; the loader's at `0x01000`, the rest
   of the old SoftDevice's pages erased, the firmware's at `0x06000`, the
   erased state page and record.
-- The loader builds to 8 964 B at `0x01000` (roadmap D148), and
+- The loader builds to 8 996 B at `0x01000` (roadmap D148), and
   `cargo clippy --release -- -D warnings` passes in `../bark-loader`.
 - The swap, on a flash in RAM with the board's layout
   (`cargo test -p bark-image` in the host workspace): a staged image is
