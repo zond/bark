@@ -16,7 +16,7 @@
 //! PIECE      first format version block index bytes               = 255
 //! ASK        first format to from                                 = 14
 //! STATUS     first format to from flags battery heard strong
-//!            proven version gathers blocks complete have          = 30
+//!            proven gps version gathers blocks complete have      = 31
 //! ```
 
 use crate::event::MAX_FRAME;
@@ -380,20 +380,20 @@ pub enum StatusFrame {
 /// and from whom (spec "Neighbour status"): the versions big-endian.
 pub fn encode_status(s: &Status, b: &mut [u8; STATUS_LEN]) {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
-    b[0] = flag(s.placed, PLACED)
+    let at = |i: usize| i - ASK_LEN;
+    b[at(STATUS_FLAGS)] = flag(s.placed, PLACED)
         | flag(s.sleepy, STATUS_SLEEPY)
         | flag(s.anchored, ANCHORED)
         | flag(s.carried, STATUS_CARRIED)
         | flag(s.battery == Battery::Usb, USB);
-    b[1] = match s.battery {
+    b[at(STATUS_BATTERY)] = match s.battery {
         Battery::Usb | Battery::NotRead => BATTERY_NOT_READ,
         Battery::Low => BATTERY_LOW,
         Battery::Percent(p) => p.clamp(1, 100),
     };
-    b[2] = s.neighbours.heard;
-    b[3] = s.neighbours.strong;
-    b[4] = s.neighbours.both_ways;
-    let at = |i: usize| i - ASK_LEN;
+    b[at(STATUS_HEARD)] = s.neighbours.heard;
+    b[at(STATUS_STRONG)] = s.neighbours.strong;
+    b[at(STATUS_PROVEN)] = s.neighbours.both_ways;
     b[at(STATUS_CN0)] = s.gps_cn0;
     b[at(STATUS_VERSION)..at(STATUS_GATHERS)].copy_from_slice(&s.version.to_be_bytes());
     let g = &s.gathering;
@@ -411,8 +411,8 @@ pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
         let i = at(i);
         u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]])
     };
-    let flags = b[0];
-    let battery = match (flags & USB != 0, b[1]) {
+    let flags = b[at(STATUS_FLAGS)];
+    let battery = match (flags & USB != 0, b[at(STATUS_BATTERY)]) {
         (true, _) => Battery::Usb,
         (false, BATTERY_LOW) => Battery::Low,
         (false, p @ 1..=100) => Battery::Percent(p),
@@ -425,9 +425,9 @@ pub fn decode_status(b: &[u8; STATUS_LEN]) -> Status {
         carried: flags & STATUS_CARRIED != 0,
         battery,
         neighbours: NeighbourCounts {
-            heard: b[2],
-            strong: b[3],
-            both_ways: b[4],
+            heard: b[at(STATUS_HEARD)],
+            strong: b[at(STATUS_STRONG)],
+            both_ways: b[at(STATUS_PROVEN)],
         },
         gps_cn0: b[at(STATUS_CN0)],
         version: word(STATUS_VERSION),
