@@ -149,19 +149,15 @@ abstract class NodeLink {
   Future<void> setPhonesFrom(int slot);
   Future<PhonesPage> readPhones();
 
-  /// The node draws a fresh removal code on its screen.
-  Future<void> askRemovalCode();
+  /// The node draws a fresh code on its screen.
+  Future<void> askCode();
 
-  /// Removes the `bond`, the `home` or both of record `number`, with the
-  /// `code` the node's screen shows; throws [AttException] 0x81 for
-  /// another code or one past [removalCodeTime], which the node then
-  /// forgets, and 0x13 for a record or part the node does not hold.
-  Future<void> removePhone(
-    int number, {
-    required bool bond,
-    required bool home,
-    required int code,
-  });
+  /// Makes `change` to record `number`, with the `code` the node's screen
+  /// shows; throws [AttException] 0x81 for another code or one past
+  /// [codeTime], which the node then forgets, and 0x13 for a record or
+  /// part the node does not hold, or a record without a home to make the
+  /// owner's.
+  Future<void> byCode(int number, RecordChange change, int code);
 
   /// Asks for the shortest connection interval, for a transfer; where
   /// the platform chooses the interval itself, nothing.

@@ -774,12 +774,23 @@ class CardRecord extends Record {
   CardRecord(List<int> card) : card = Uint8List.fromList(card);
 }
 
+/// A home the sender, its owner, gives the receiver: the home node's
+/// address and the mailbox key made for them there (spec "Phone link",
+/// The payload).
+class HomeRecord extends Record {
+  final Address home;
+  final Uint8List key;
+  HomeRecord(this.home, List<int> key) : key = Uint8List.fromList(key);
+  static const len = Address.len + keyLen;
+}
+
 const int _typeUtf8 = 1;
 const int _type1251 = 2;
 const int _typeReaction = 3;
 const int _typeCard = 4;
 const int _typeUtf8Part = 5;
 const int _type1251Part = 6;
+const int _typeHome = 7;
 
 /// The most parts a text is split into: a part's number and the count
 /// share one byte, four bits each.
@@ -816,6 +827,8 @@ Uint8List writePlain(Header h, List<Record> records) {
         b.addAll([_typeReaction, ...be(sent, 4), ...utf8.encode(emoji)]);
       case CardRecord(:final card):
         b.addAll([_typeCard, card.length, ...card]);
+      case HomeRecord(:final home, :final key):
+        b.addAll([_typeHome, ...home.encode(), ...key]);
     }
   }
   return Uint8List.fromList(b);
@@ -871,6 +884,15 @@ Uint8List writePlain(Header h, List<Record> records) {
       case _typeCard when at < p.length && at + 1 + p[at] <= p.length:
         records.add(CardRecord(p.sublist(at + 1, at + 1 + p[at])));
         at += 1 + p[at];
+      case _typeHome when at + HomeRecord.len <= p.length:
+        final a = p.sublist(at, at + Address.len);
+        records.add(
+          HomeRecord(
+            Address(Position.decode(a), a.sublist(Position.wireLen)),
+            p.sublist(at + Address.len, at + HomeRecord.len),
+          ),
+        );
+        at += HomeRecord.len;
       default:
         throw const BadPayload('a record this app does not read');
     }

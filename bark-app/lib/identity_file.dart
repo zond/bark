@@ -101,9 +101,8 @@ class WrongPassword extends FileRefused {
   String toString() => 'Wrong password, or the file is damaged.';
 }
 
-/// The person's home: its address and the mailbox key the person gave
-/// it, kept as it is, as a home's key may be one the person was given
-/// rather than one made of their identity.
+/// The person's home: its address and the mailbox key it holds, made of
+/// their identity or given them with someone else's home.
 typedef FileHome = ({Address address, Uint8List key});
 
 /// The messages: the queue and what was received, and the reactions the
@@ -331,12 +330,8 @@ class IdentityFile {
       final f = fromJson(
         jsonDecode(utf8.decode(plain)) as Map<String, dynamic>,
       );
-      // This app uses only the mailbox key its identity makes; a file
-      // whose home has another was written by one that keeps given keys.
-      final h = f.home;
-      final keys = Keys.fromSeed(s, f.seed);
-      if (h != null && hex(keys.mailbox.extractBytes()) != hex(h.key)) {
-        throw const OtherLayout();
+      if (f.home?.key.length case final n? when n != keyLen) {
+        throw FormatException('a mailbox key of $n bytes');
       }
       return f;
     } on FileRefused {

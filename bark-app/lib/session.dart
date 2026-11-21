@@ -43,6 +43,9 @@ enum OutKind {
 
   /// A fetch from the person's mailbox.
   fetch,
+
+  /// The person's home, given to a contact.
+  home,
 }
 
 /// Which of a contact's addresses a message went to.
@@ -64,8 +67,13 @@ class Outgoing {
   final DateTime at;
   final OutKind kind;
 
-  /// The contact's identity in hex; null for a fetch.
+  /// The contact's identity in hex; for a fetch, the contact a command
+  /// on it is about, if any.
   final String? to;
+
+  /// A fetch's command (spec "Mailbox", The owner's commands), by which
+  /// its summary's outcome is read.
+  final Uint8List? command;
 
   /// Its `sent`, by which the other side names it.
   final int sent;
@@ -100,6 +108,7 @@ class Outgoing {
     required this.kind,
     required this.sent,
     this.to,
+    this.command,
     this.body,
     this.toward,
     this.part = 1,
@@ -118,6 +127,7 @@ class Outgoing {
     OutKind.reaction => 'Reaction ${body ?? ''}',
     OutKind.card => 'Your card',
     OutKind.fetch => 'Fetch from your mailbox',
+    OutKind.home => 'A home at your node',
   };
 
   Map<String, dynamic> toJson() => {
@@ -126,6 +136,7 @@ class Outgoing {
     'at': at.toIso8601String(),
     'kind': kind.name,
     'to': to,
+    if (command case final c?) 'command': hex(c),
     'sent': sent,
     'body': body,
     'toward': toward?.name,
@@ -149,6 +160,11 @@ class Outgoing {
         at: DateTime.parse(j['at'] as String),
         kind: kind,
         to: j['to'] as String?,
+        // Absent from a fetch without one, and from every other kind.
+        command: switch (j['command']) {
+          null => null,
+          final c => parseHex(c as String)!,
+        },
         sent: j['sent'] as int,
         body: j['body'] as String?,
         toward: j['toward'] == null
@@ -863,29 +879,21 @@ class Session extends ChangeNotifier {
   /// Reads the node's records again.
   Future<void> readPhones() => _readPhones(_owned('Phones'));
 
-  /// Has the node draw a fresh removal code on its screen.
-  Future<void> askRemovalCode() async {
-    await _owned('Phones').askRemovalCode();
-    note('Phones: a removal code asked for');
+  /// Has the node draw a fresh code on its screen.
+  Future<void> askCode() async {
+    await _owned('Phones').askCode();
+    note('Phones: a code asked for');
   }
 
-  /// Removes another phone's bond, home or both, with the `code` the
-  /// node's screen shows, then reads the records and Home again. Throws
-  /// [AttException] 0x81 for a code not taken, wrong or late, and 0x13
-  /// for a record or part the node no longer holds.
-  Future<void> removePhone(
-    PhoneRecord r, {
-    required bool bond,
-    required bool home,
-    required int code,
-  }) async {
+  /// Makes `change` to record `r` with the `code` the node's screen
+  /// shows, then reads the records and Home again. Throws [AttException]
+  /// 0x81 for a code not taken, wrong or late, and 0x13 for a record or
+  /// part the node no longer holds.
+  Future<void> byCode(PhoneRecord r, RecordChange change, int code) async {
     final link = _owned('Phones');
     try {
-      await link.removePhone(r.number, bond: bond, home: home, code: code);
-      note(
-        'Phones: record ${r.number} removed:'
-        '${bond ? ' its pairing' : ''}${home ? ' its home' : ''}',
-      );
+      await link.byCode(r.number, change, code);
+      note('Phones: record ${r.number}: ${change.name} by code');
     } finally {
       await _readPhones(link);
       try {

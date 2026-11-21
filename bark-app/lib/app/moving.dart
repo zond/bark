@@ -4,7 +4,6 @@
 part of '../app.dart';
 
 mixin _Moving on _AppCore {
-  Sodium get sodium;
   PasswordKey get passwordKey;
 
   /// The person's identity file under `password`, their messages in it if
@@ -14,9 +13,7 @@ mixin _Moving on _AppCore {
     final f = IdentityFile(
       seed: me.keys.seed,
       name: me.name,
-      home: h == null
-          ? null
-          : (address: h, key: me.keys.mailbox.extractBytes()),
+      home: h == null ? null : (address: h, key: me.mailboxKey.extractBytes()),
       nodeAddress: me.nodeAddress,
       nodeAt: me.nodeAt,
       cardTime: me.cardTime,

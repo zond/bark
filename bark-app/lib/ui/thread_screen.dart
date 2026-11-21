@@ -206,6 +206,18 @@ class _ThreadScreenState extends State<ThreadScreen> {
                     value: () => app.messenger.sendCard(contact),
                     child: const Text('Send my card'),
                   ),
+                  if (app.isOwner)
+                    PopupMenuItem(
+                      value: () async {
+                        try {
+                          final r = await app.shareHome(contact);
+                          if (context.mounted) say(context, r);
+                        } catch (e) {
+                          if (context.mounted) say(context, 'Failed: $e');
+                        }
+                      },
+                      child: const Text('Share my home node'),
+                    ),
                 ],
                 PopupMenuItem(
                   value: () => _archive(
@@ -245,6 +257,7 @@ class _ThreadScreenState extends State<ThreadScreen> {
         child: Column(
           children: [
             NoticeCard(app),
+            GiftLines(app, of: widget.keyHex),
             if (contact != null && contact.unverified)
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 0),

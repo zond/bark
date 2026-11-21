@@ -254,25 +254,25 @@ void main() {
   test('phones', () {
     expect(encodePhonesFrom(4), [0, 4]);
     expect(() => encodePhonesFrom(8), throwsA(isA<Malformed>()));
-    expect(encodeRemovalCode(), [1]);
-    expect(encodeRemove(0x0102, bond: true, home: false, code: 123456), [
+    expect(encodeCodeAsk(), [1]);
+    expect(encodeByCode(0x0102, RecordChange.bond, 123456), [
       2, 1, 2, 1, 0x01, 0xe2, 0x40, //
     ]);
-    expect(encodeRemove(3, bond: true, home: true, code: 0), [
-      2, 0, 3, 3, 0, 0, 0, //
+    expect(encodeByCode(3, RecordChange.both, 0), [2, 0, 3, 3, 0, 0, 0]);
+    // `phones_writes_are_taken_whole`: the home of 0x0102 with 999 999,
+    // and what 4, the owner's mark.
+    expect(encodeByCode(0x0102, RecordChange.home, 999999), [
+      2, 1, 2, 2, 0x0f, 0x42, 0x3f, //
     ]);
+    expect(encodeByCode(1, RecordChange.owner, 9), [2, 0, 1, 4, 0, 0, 9]);
     expect(
-      () => encodeRemove(3, bond: false, home: false, code: 1),
-      throwsA(isA<Malformed>()),
-    );
-    expect(
-      () => encodeRemove(3, bond: true, home: false, code: removalCodes),
+      () => encodeByCode(3, RecordChange.bond, codes),
       throwsA(isA<Malformed>()),
     );
     final page = PhonesPage.decode([
       5,
       0, 7, 0x1b, 0x01, 0x3a, 0x2a, 3, 0x41, 0x6e, 0x6e, //
-      0, 9, 0x02, 0, 0, 0, 0, //
+      0, 9, 0x22, 0, 0, 0, 0, //
     ]);
     expect(page.next, 5);
     final [a, b] = page.records;
@@ -281,9 +281,10 @@ void main() {
       (7, true, true, false, true, 0x2a, 0x013a, 'Ann'),
     );
     expect(
-      (b.number, b.paired, b.home, b.tag, b.name),
-      (9, false, true, null, ''),
+      (b.number, b.paired, b.home, b.owner, b.tag, b.name),
+      (9, false, true, true, null, ''),
     );
+    expect(a.owner, isFalse);
     expect(PhonesPage.decode(page.encode()).encode(), page.encode());
     expect(PhonesPage.decode([0]).records, isEmpty);
     expect(() => PhonesPage.decode([]), throwsA(isA<Malformed>()));

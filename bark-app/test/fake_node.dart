@@ -376,17 +376,33 @@ class FakeNode implements NodeLink {
   /// batch of the items it has not sent, newest first. `home` is the
   /// node it was sent to.
   void _answerFetch(List<int> home, Uint8List payload) {
-    final key = mailbox;
-    if (key == null || formOf(payload) != Form.fetch) return;
-    final Fetch f;
-    try {
-      f = Fetch.open(sodium, key, home, payload);
-    } on BadPayload {
-      return;
+    if (!homeAnswers || formOf(payload) != Form.fetch) return;
+    FakeHomeRecord? from;
+    Fetch? f;
+    for (final r in homeRecords) {
+      final k = SecureKey.fromList(sodium, r.key);
+      try {
+        f = Fetch.open(sodium, k, home, payload);
+        from = r;
+        break;
+      } on BadPayload {
+        continue;
+      } finally {
+        k.dispose();
+      }
     }
+    if (from == null || f == null || f.sent <= from.lastFetch) return;
+    from.lastFetch = f.sent;
+    final key = SecureKey.fromList(sodium, from.key);
+    final c = f.command;
+    final (outcome, list) = c == null ? (null, null) : _obey(from, c);
+    // Only the person's own record has items here; a command that takes
+    // the sender's own key is answered by its summary alone.
+    final own = from == homeRecords.firstOrNull && homeRecords.contains(from);
     final unsent = [
-      for (var n = homeRing.length; n >= 1; n--)
-        if (!_homeSent.contains(n)) n,
+      if (own)
+        for (var n = homeRing.length; n >= 1; n--)
+          if (!_homeSent.contains(n)) n,
     ];
     final batch = unsent.take(maxReplies).toList();
     _homeSent.addAll(batch);
@@ -396,16 +412,92 @@ class FakeNode implements NodeLink {
         key,
         f.recipient,
         f.sent,
-        RoundSummary(batch.length, unsent.length - batch.length),
+        RoundSummary(
+          batch.length,
+          unsent.length - batch.length,
+          owner: from.owner && homeRecords.contains(from),
+          outcome: outcome,
+          list: list,
+        ),
       ),
       for (final (i, n) in batch.indexed)
         sealItem(sodium, key, f.recipient, f.sent, i + 1, homeRing[n - 1]),
     ];
+    key.dispose();
+    commands.add((c, outcome));
+    if (losesAnswer(c)) return;
     _after(fetchAnswerAfter, () {
       for (final r in replies) {
         _place(_message(r));
       }
     });
+  }
+
+  /// The records of the home away, as its node keeps them: the person's
+  /// own first, by [mailbox], its owner, then those a test or the owner's
+  /// commands add (spec "Mailbox", The owner's commands).
+  late final List<FakeHomeRecord> homeRecords = [
+    if (mailbox != null)
+      FakeHomeRecord(1, mailbox!.extractBytes(), name: 'Me', owner: true),
+  ];
+
+  /// Whether the home away hears fetches; false for one out of reach.
+  bool homeAnswers = true;
+
+  /// Whether the answer to a fetch with this command, taken, is lost on
+  /// its way.
+  bool Function(Command? c) losesAnswer = (_) => false;
+
+  /// Each command the home away took, with what it did.
+  final List<(Command?, Outcome?)> commands = [];
+
+  /// Runs `c` from `from` as the home's node does: what it did, and for a
+  /// list the records.
+  (Outcome, List<PhoneRecord>?) _obey(FakeHomeRecord from, Command c) {
+    if (c is! LeaveCommand && !from.owner) return (Outcome.notAllowed, null);
+    FakeHomeRecord? numbered(int n) =>
+        homeRecords.where((r) => r.number == n).firstOrNull;
+    switch (c) {
+      case AddCommand(:final key, :final tag, :final name):
+        if (homeRecords.any((r) => hex(r.key) == hex(key))) {
+          return (Outcome.already, null);
+        }
+        if (homeRecords.length == maxPhones) return (Outcome.full, null);
+        final n = homeRecords.map((r) => r.number).fold(0, max) + 1;
+        homeRecords.add(FakeHomeRecord(n, key, tag: tag, name: name));
+        return (Outcome.ok, null);
+      case RemoveCommand(:final number):
+        final r = numbered(number);
+        if (r == null) return (Outcome.noSuchHome, null);
+        homeRecords.remove(r);
+        return (Outcome.ok, null);
+      case HandOverCommand(:final number):
+        final r = numbered(number);
+        if (r == null) return (Outcome.noSuchHome, null);
+        for (final o in homeRecords) {
+          o.owner = o == r;
+        }
+        return (Outcome.ok, null);
+      case ListCommand():
+        return (
+          Outcome.ok,
+          [
+            for (final r in homeRecords)
+              PhoneRecord(
+                number: r.number,
+                home: true,
+                mine: r == from,
+                owner: r.owner,
+                tag: r.tag,
+                day: 330,
+                name: r.name,
+              ),
+          ],
+        );
+      case LeaveCommand():
+        homeRecords.remove(from);
+        return (Outcome.ok, null);
+    }
   }
 
   /// Learns [relaysHeard] neighbours over the first rotation of a boot
@@ -726,7 +818,18 @@ class FakeNode implements NodeLink {
       homeKeyChanges++;
       _notify();
     }
+    // A key set takes the empty seat; a home removed takes its mark.
+    final seat = !others.any((r) => r.owner);
+    final owner = key != null && (mineOwner || seat);
+    if (owner != mineOwner) {
+      mineOwner = owner;
+      _notify();
+    }
   });
+
+  /// This phone's record holds the owner's mark (spec "Phone link", The
+  /// node's owner).
+  bool mineOwner = false;
 
   @override
   Future<NodeHome> readHome() => _answer(
@@ -1009,6 +1112,7 @@ class FakeNode implements NodeLink {
         home: homeKey != null,
         linked: _owner.connected,
         mine: true,
+        owner: mineOwner,
         tag: ownerTag,
         day: _today,
         name: ownerName,
@@ -1030,7 +1134,7 @@ class FakeNode implements NodeLink {
 
   int _phonesFrom = 0;
 
-  /// The removal code on the screen, and when it was drawn.
+  /// The code on the screen, and when it was drawn.
   int? shownCode;
   DateTime? _codeAt;
   final Random _codes = Random(168);
@@ -1070,38 +1174,46 @@ class FakeNode implements NodeLink {
   });
 
   @override
-  Future<void> askRemovalCode() => _answer(() {
-    shownCode = _codes.nextInt(removalCodes);
+  Future<void> askCode() => _answer(() {
+    shownCode = _codes.nextInt(codes);
     _codeAt = now();
   });
 
-  /// Takes a removal as the node does: a record or a part it does not
-  /// hold is 0x13 and leaves the code untried; another code, or one past
-  /// its 30 s, is 0x81; either way a code is tried once.
+  /// Takes a change by code as the node does: a record or a part it does
+  /// not hold, or a record without a home to make the owner's, is 0x13 and
+  /// leaves the code untried; another code, or one past its 30 s, is 0x81;
+  /// either way a code is tried once.
   @override
-  Future<void> removePhone(
-    int number, {
-    required bool bond,
-    required bool home,
-    required int code,
-  }) => _answer(() {
-    encodeRemove(number, bond: bond, home: home, code: code);
+  Future<void> byCode(int number, RecordChange change, int code) => _answer(() {
+    encodeByCode(number, change, code);
+    final bond = change.removesBond, home = change.removesHome;
     final r = records.where((r) => r.number == number).firstOrNull;
-    if (r == null || (bond && !r.paired) || (home && !r.home)) {
+    if (r == null ||
+        (bond && !r.paired) ||
+        (home && !r.home) ||
+        (change == RecordChange.owner && !r.home)) {
       throw const AttException(AttError.valueNotAllowed);
     }
     final at = _codeAt;
     final taken =
-        shownCode == code &&
-        at != null &&
-        now().difference(at) <= removalCodeTime;
+        shownCode == code && at != null && now().difference(at) <= codeTime;
     shownCode = null;
     _codeAt = null;
     if (!taken) throw const AttException(AttError.refused);
     // The others are told once the records are written.
     scheduleMicrotask(_notify);
+    if (change == RecordChange.owner) {
+      mineOwner = r.mine;
+      for (final (i, o) in others.indexed) {
+        others[i] = o.copyWith(owner: identical(o, r));
+      }
+      return;
+    }
     if (r.mine) {
-      if (home) homeKey = null;
+      if (home) {
+        homeKey = null;
+        mineOwner = false;
+      }
       if (bond) {
         paired = false;
         ownerTag = null;
@@ -1110,13 +1222,10 @@ class FakeNode implements NodeLink {
       return;
     }
     final i = others.indexOf(r);
-    final left = PhoneRecord(
-      number: r.number,
+    final left = r.copyWith(
       paired: r.paired && !bond,
       home: r.home && !home,
-      tag: r.tag,
-      day: r.day,
-      name: r.name,
+      owner: r.owner && !home,
     );
     if (left.paired || left.home) {
       others[i] = left;
@@ -1336,6 +1445,24 @@ class FakeNode implements NodeLink {
   }
 }
 
+/// A record of the fake's home away: a home with no bond, its key, the
+/// person's tag there and name, the owner's mark, and its last fetch.
+class FakeHomeRecord {
+  final int number;
+  final Uint8List key;
+  final int? tag;
+  final String name;
+  bool owner;
+  int lastFetch = 0;
+  FakeHomeRecord(
+    this.number,
+    List<int> key, {
+    this.tag,
+    this.name = '',
+    this.owner = false,
+  }) : key = Uint8List.fromList(key);
+}
+
 /// One phone's side of a link: what the node notifies it and has given
 /// back to it.
 class _Phone {
@@ -1458,14 +1585,9 @@ class FakeGuest implements NodeLink {
   @override
   Future<PhonesPage> readPhones() => _bonded();
   @override
-  Future<void> askRemovalCode() => _bonded();
+  Future<void> askCode() => _bonded();
   @override
-  Future<void> removePhone(
-    int number, {
-    required bool bond,
-    required bool home,
-    required int code,
-  }) => _bonded();
+  Future<void> byCode(int number, RecordChange change, int code) => _bonded();
 
   @override
   Future<void> hurry() => _open(() {});

@@ -1275,31 +1275,49 @@ Uint8List encodePhonesFrom(int slot) {
   return Uint8List.fromList([0, slot]);
 }
 
-/// Phones, write: the node draws a removal code on its screen.
-Uint8List encodeRemovalCode() => Uint8List.fromList([1]);
+/// Phones, write: the node draws a fresh code on its screen, which a
+/// change by code takes.
+Uint8List encodeCodeAsk() => Uint8List.fromList([1]);
 
-/// The numbers a removal code takes: six digits.
-const int removalCodes = 1000000;
+/// The numbers a code takes: six digits.
+const int codes = 1000000;
 
-/// How long a node takes a removal code after drawing it: the time a
-/// pairing gives its person to type a code, the Security Manager's
-/// timeout (Bluetooth Core Specification 5.0, Vol 3 Part H §3.4).
-const Duration removalCodeTime = Duration(seconds: 30);
+/// How long a node takes a code after drawing it: the time a pairing
+/// gives its person to type a code, the Security Manager's timeout
+/// (Bluetooth Core Specification 5.0, Vol 3 Part H §3.4).
+const Duration codeTime = Duration(seconds: 30);
 
-/// Phones, write: remove the bond, the home or both of record `number`,
-/// with the code the node's screen shows.
-Uint8List encodeRemove(
-  int number, {
-  required bool bond,
-  required bool home,
-  required int code,
-}) {
-  if (!bond && !home) throw const Malformed('removal');
-  if (code < 0 || code >= removalCodes) throw const Malformed('code');
+/// What a change by code does to a record (spec "Phone link", Phones),
+/// by its `what`: remove its bond, its home or both, or make its key the
+/// owner's.
+enum RecordChange {
+  bond(1),
+  home(2),
+  both(3),
+  owner(4);
+
+  final int what;
+  const RecordChange(this.what);
+
+  /// The removal of all that `r` holds.
+  static RecordChange removal(PhoneRecord r) => r.paired && r.home
+      ? both
+      : r.paired
+      ? bond
+      : home;
+
+  bool get removesBond => this == both || this == bond;
+  bool get removesHome => this == both || this == home;
+}
+
+/// Phones, write: `change` to record `number`, with the code the node's
+/// screen shows.
+Uint8List encodeByCode(int number, RecordChange change, int code) {
+  if (code < 0 || code >= codes) throw const Malformed('code');
   return Uint8List.fromList([
     2,
     ..._be16(number),
-    (bond ? 1 : 0) | (home ? 2 : 0),
+    change.what,
     ..._be32(code).sublist(1),
   ]);
 }

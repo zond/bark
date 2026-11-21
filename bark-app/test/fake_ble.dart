@@ -339,13 +339,12 @@ class FakeNodes extends UniversalBlePlatform {
       case Uuids.phones when value.first == 0:
         await n.setPhonesFrom(value[1]);
       case Uuids.phones when value.first == 1:
-        await n.askRemovalCode();
+        await n.askCode();
       case Uuids.phones:
-        await n.removePhone(
+        await n.byCode(
           (value[1] << 8) | value[2],
-          bond: value[3] & 1 != 0,
-          home: value[3] & 2 != 0,
-          code: (value[4] << 16) | (value[5] << 8) | value[6],
+          RecordChange.values.firstWhere((c) => c.what == value[3]),
+          (value[4] << 16) | (value[5] << 8) | value[6],
         );
       case Uuids.public when value.single == encodeUnpair().single:
         if (refusesUnpair) {

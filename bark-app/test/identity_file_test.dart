@@ -152,10 +152,16 @@ void main() {
       expect('${const OtherLayout()}', contains('another version'));
     });
 
-    test('a home with a key the identity does not make is refused', () async {
-      final f = await small(key: Uint8List(32)).seal(sodium, quickKey, 'pw');
+    test('a home with a key the identity does not make, a given one, opens '
+        'with that key; one of another length does not', () async {
+      final given = Uint8List.fromList(List.filled(32, 7));
+      final f = await small(key: given).seal(sodium, quickKey, 'pw');
+      final o = await IdentityFile.open(sodium, quickKey, 'pw', f);
+      expect(o.home!.key, given);
+      final short = await small(key: Uint8List(31))
+          .seal(sodium, quickKey, 'pw');
       await expectLater(
-        IdentityFile.open(sodium, quickKey, 'pw', f),
+        IdentityFile.open(sodium, quickKey, 'pw', short),
         throwsA(isA<OtherLayout>()),
       );
     });
@@ -232,6 +238,20 @@ void main() {
       });
     });
 
+    test('a home someone gave keeps the key given, kept on the new phone', () {
+      run((async, old, fresh) {
+        final given = Uint8List.fromList(List.filled(32, 7));
+        final home = Address.parse('01020304050607fa4e00000009')!;
+        done(async, old.me.setHome(home, key: given));
+        final file = done(async, old.identityFile('pw', messages: false));
+        done(async, fresh.restoreFile(file, 'pw'));
+        expect(fresh.me.home.toString(), home.toString());
+        expect(fresh.me.givenKey, given);
+        expect(fresh.me.mailboxKey.extractBytes(), given);
+        expect((fresh.me.store as MemoryStore).state!['homeKey'], hex(given));
+      });
+    });
+
     test('without the messages: none, the contacts still there', () {
       run((async, old, fresh) {
         final file = done(async, old.identityFile('pw', messages: false));
@@ -251,6 +271,8 @@ void main() {
         expect(fresh.me.home.toString(), old.me.home.toString());
         expect(fresh.homeName, home);
         expect(fresh.me.keys.mailbox.extractBytes(), old.fakeNode!.homeKey);
+        // The identity's own key is not kept as a given one.
+        expect(fresh.me.givenKey, isNull);
         final r = fresh.nodes[home]!;
         expect((r.paired, r.lost), (true, true));
         expect(fresh.nodes.own, isEmpty);

@@ -46,10 +46,10 @@ String stateLabel(Session s, Outgoing o) => switch (o.state) {
   OutState.refused => 'refused by the node',
 };
 
-/// The day a node's phone was last linked, as a record counts it
+/// The day a record's person was last seen, as a node counts it
 /// ([dayOf]), in words against `now`: "today", "yesterday", "N days ago",
 /// or "never" when the node had no time at any of its links.
-String lastLinked(int day, DateTime now) {
+String lastSeen(int day, DateTime now) {
   final d = dayOf(day);
   if (d == null) return 'never';
   final t = now.toUtc();
@@ -287,6 +287,60 @@ String notPairedLine(Object e) =>
 /// While no home is set and the phone uses a public node as a guest that
 /// can be one ([AppModel.offerHome]): makes it the home in one tap,
 /// pairing first.
+/// The homes contacts gave the person, or only `of`'s, each with **Use
+/// it** and **Not now** (`README.md`, "A home given").
+class GiftLines extends StatelessWidget {
+  final AppModel app;
+  final String? of;
+  const GiftLines(this.app, {this.of, super.key});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (final c in app.contacts.list)
+        if (c.gift case final g? when of == null || of == c.key)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${c.name} gave you a home at ${nodeLabel(g.home.id)}'),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      HelpButton('A home given', _giftHelp),
+                      TextButton(
+                        onPressed: () => app.declineGift(c),
+                        child: const Text('Not now'),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          try {
+                            final r = await app.useGift(c);
+                            if (context.mounted) say(context, r);
+                          } catch (e) {
+                            if (context.mounted) say(context, 'Failed: $e');
+                          }
+                        },
+                        child: const Text('Use it'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+    ],
+  );
+
+  static const _giftHelp =
+      'The owner of a home node added you there. Used, it is your home: it '
+      'keeps texts to you while you are away, and your card carries its '
+      'address, so your contacts get your new card.\n\n'
+      'A home you had before sends you its mail, then forgets you.';
+}
+
 class HomeOfferLine extends StatelessWidget {
   final AppModel app;
   const HomeOfferLine(this.app, {super.key});

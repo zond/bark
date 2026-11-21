@@ -450,6 +450,25 @@ void main() {
     expect(openItem(s, alice.mailbox, 1, h(at('summary'), 'payload')), isNull);
   });
 
+  // No Rust vector: the record is the app's alone (spec "Phone link", The
+  // payload).
+  test('a home given: type 7, the address and the key, of fixed length', () {
+    final key = List.generate(keyLen, (i) => i);
+    final p = writePlain(const Header(false, 9), [
+      HomeRecord(home, key),
+      const TextRecord('Yours too.'),
+    ]);
+    expect(p.sublist(5, 6 + HomeRecord.len), [7, ...home.encode(), ...key]);
+    final (_, rs) = readPlain(p);
+    final g = rs.first as HomeRecord;
+    expect((g.home.toString(), hex(g.key)), (home.toString(), hex(key)));
+    expect((rs.last as TextRecord).text, 'Yours too.');
+    expect(
+      () => readPlain(p.sublist(0, 5 + HomeRecord.len)),
+      throwsA(isA<BadPayload>()),
+    );
+  });
+
   test('windows-1251 when it holds the text', () {
     expect(encode1251('Їжак'), [0xaf, 0xe6, 0xe0, 0xea]);
     expect(encode1251('Їжак 🦔'), isNull);

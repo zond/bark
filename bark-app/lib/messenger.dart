@@ -22,8 +22,7 @@ class Messenger {
 
   Messenger(this.sodium, this.me, this.contacts, this.session, this.now) {
     session.reader = receive;
-    session.homeKey = (n) =>
-        isHome(n.id) ? me.keys.mailbox.extractBytes() : null;
+    session.homeKey = (n) => isHome(n.id) ? me.mailboxKey.extractBytes() : null;
     session.recipient = (n) => recipientTag(sodium, me.identity, n.id);
     session.name = () => me.name;
   }
@@ -182,6 +181,25 @@ class Messenger {
     );
   }
 
+  /// Gives `c` the person's home `h`, with the key made for them there.
+  Future<void> sendHome(Contact c, HomeKey h) async {
+    final t = c.unasked(now());
+    if (t == null) throw BadPayload('${c.name} has no address yet');
+    final dst = c.addressOf(t);
+    final (p, sent) = await _seal(c, dst, [HomeRecord(h.home, h.key)]);
+    await session.queue(
+      Outgoing(
+        dst,
+        p,
+        at: now(),
+        kind: OutKind.home,
+        to: c.key,
+        sent: sent,
+        toward: t,
+      ),
+    );
+  }
+
   /// Sends the person's card to every contact. Only the person's word
   /// sends it, as a card to every contact on each change of the home's
   /// position flooded the mesh (roadmap D126).
@@ -194,24 +212,94 @@ class Messenger {
   }
 
   /// Asks the home node for the newest batch of the items it has not
-  /// sent, to be sent to `here`: the fetch carries the person's tag at the
-  /// home, and inside, for the replies, their tag at `here`.
-  Future<void> fetch(Address here) async {
-    final home = me.home;
+  /// sent, to be sent to `here`, with `command` if one is given, which may
+  /// be about the contact `about`. A home being tried, `to`, as one the
+  /// person names before it is theirs, takes the place of theirs.
+  Future<void> fetch(
+    Address here, {
+    Command? command,
+    String? about,
+    Address? to,
+  }) async {
+    final home = to ?? me.home;
     if (home == null) return;
+    final sent = await fetchFrom(
+      home,
+      me.mailboxKey,
+      here,
+      command: command,
+      about: about,
+    );
+    await me.fetched(sent);
+  }
+
+  /// Fetches from `home`, whose key is `key`, to `here`; the fetch's
+  /// `sent`, which names its round. The fetch carries the person's tag at
+  /// the home, and inside, for the replies, their tag at `here`.
+  Future<int> fetchFrom(
+    Address home,
+    SecureKey key,
+    Address here, {
+    Command? command,
+    String? about,
+  }) async {
     final sent = await me.nextSent();
-    final f = Fetch(sent, here, recipientTag(sodium, me.identity, here.id));
+    final f = Fetch(
+      sent,
+      here,
+      recipientTag(sodium, me.identity, here.id),
+      command,
+    );
     final p = f.seal(
       sodium,
-      me.keys.mailbox,
+      key,
       home.id,
       recipientTag(sodium, me.identity, home.id),
     );
-    await me.fetched(sent);
     await session.queue(
-      Outgoing(home, p, at: now(), kind: OutKind.fetch, sent: sent),
+      Outgoing(
+        home,
+        p,
+        at: now(),
+        kind: OutKind.fetch,
+        sent: sent,
+        to: about,
+        command: command?.encode(),
+      ),
     );
+    return sent;
   }
+
+  /// Told of each summary that opens, with its round, after the fetch is
+  /// marked answered.
+  Future<void> Function(int round, RoundSummary s)? summarised;
+
+  /// Told of each item that opens, with its round.
+  void Function(int round)? itemCame;
+
+  /// The rounds whose replies still open, each with its key: the person's
+  /// latest fetches, and those of the home they are leaving.
+  Iterable<(int, SecureKey)> get _rounds sync* {
+    for (final r in me.rounds) {
+      yield (r, me.mailboxKey);
+    }
+    final l = me.leaving;
+    if (l == null) return;
+    final key = _leavingKey(l);
+    for (final r in [l.round, l.leaveRound]) {
+      if (r != null) yield (r, key);
+    }
+  }
+
+  /// The key of the home being left, made once.
+  SecureKey _leavingKey(Leaving l) {
+    final k = _left;
+    if (k != null && k.$1 == l) return k.$2;
+    _left?.$2.dispose();
+    return (_left = (l, SecureKey.fromList(sodium, l.key))).$2;
+  }
+
+  (Leaving, SecureKey)? _left;
 
   /// Reads one message from the node's inbox and keeps what it says.
   Future<void> receive(InboxMessage m) async {
@@ -260,15 +348,17 @@ class Messenger {
   /// A round's summary: the fetch is answered, and the latest round's
   /// count of what stays at home is what the inbox button shows.
   Future<bool> _summary(List<int> p) async {
-    for (final round in me.rounds) {
-      final o = openSummary(sodium, me.keys.mailbox, round, p);
+    for (final (round, key) in [..._rounds]) {
+      final o = openSummary(sodium, key, round, p);
       if (o == null) continue;
+      final latest = me.rounds.isNotEmpty && round == me.rounds.first;
       await session.fetchAnswered(
         round,
-        nothingNew: o.nothingNew,
-        remaining: round == me.rounds.first ? o.remaining : 0,
+        nothingNew: o.nothingNew && o.outcome == null,
+        remaining: latest ? o.remaining : 0,
       );
       await me.gotSummary(round, o);
+      await summarised?.call(round, o);
       return true;
     }
     return false;
@@ -279,11 +369,12 @@ class Messenger {
   /// round's fetch too, should its summary be lost. One that opens under
   /// no round is kept as any payload that opens for nobody.
   Future<bool> _item(InboxMessage m, List<int> p) async {
-    for (final round in me.rounds) {
-      final item = openItem(sodium, me.keys.mailbox, round, p);
+    for (final (round, key) in [..._rounds]) {
+      final item = openItem(sodium, key, round, p);
       if (item == null) return false;
       if (!await _open(m, item, mailbox: true)) continue;
       await session.fetchAnswered(round, nothingNew: false);
+      itemCame?.call(round);
       return true;
     }
     return false;
@@ -399,6 +490,11 @@ class Messenger {
           await session.save();
         case CardRecord(:final card):
           await _card(from, card);
+        case HomeRecord(:final home, :final key):
+          final c = contacts.byKey(from);
+          if (c != null) {
+            await contacts.put(c.copyWith(gift: (home: home, key: key)));
+          }
       }
     }
   }
