@@ -82,7 +82,8 @@ BUDGET_BLOCKS = 40
 CHUNK = 256
 # How long to wait for the console's answer to one command. A chunk that
 # enters a new page waits for its erase, 85 ms (nRF52840 Product
-# Specification, NVMC, tERASEPAGE); `commit` hashes up to 352 KiB.
+# Specification, NVMC, tERASEPAGE); `commit` hashes the image, up to the
+# slot's 908 KiB (bark-image/src/layout.rs, ACTIVE).
 ANSWER_S = 10.0
 
 

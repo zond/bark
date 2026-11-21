@@ -29,9 +29,9 @@ STATUS_PERIOD_S = 10.0
 # (main.rs, `on_usb_only`), so a line may come up to one half-period late.
 STATUS_SLACK_S = 0.5
 # The longest a line waits in the board before the host can read it: the
-# log's 2048-byte ring drained at one 64-byte packet per 1 ms USB frame
+# log's 4096-byte ring drained at one 64-byte packet per 1 ms USB frame
 # (bark-fw/src/usb_log.rs, RING and PIECE; update.rs, LOG_DRAIN).
-LOG_DRAIN_S = 2048 / 64 * 0.001
+LOG_DRAIN_S = 4096 / 64 * 0.001
 
 # The stack: what a node image must keep free beyond the most it has used,
 # for what the disassembly cannot show (bark-fw/README.md, "Tasks and the

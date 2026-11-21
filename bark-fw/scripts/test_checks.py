@@ -289,7 +289,9 @@ class Clock(unittest.TestCase):
 
     def test_the_mark_is_twice_the_cores_bound(self):
         self.assertEqual(checks.clocks([self.boot(-95, 2, name="a"), self.boot(95, 2, name="b")]), [])
-        self.assertEqual(len(checks.clocks([self.boot(-110, 2, name="a"), self.boot(110, 2, name="b")])), 2)
+        # Over 8 h: a line may wait 64 ms in the board's ring, which over 2 h
+        # leaves each rate 18 ppm unsure, and 220 apart not surely past 200.
+        self.assertEqual(len(checks.clocks([self.boot(-110, 8, name="a"), self.boot(110, 8, name="b")])), 2)
 
     def test_one_board_alone_is_not_judged(self):
         self.assertEqual(checks.clocks([self.boot(-543, 2, "RC oscillator, calibrated")]), [])
