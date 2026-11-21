@@ -194,7 +194,7 @@ pub(crate) struct Rx {
     /// Worst interference so far that the hazard counted, mW, and what
     /// the strongest frame it counted was then (`Addressed::lost_how`).
     pub max_hurt_mw: f64,
-    pub max_i_how: u8,
+    pub max_i_how: crate::metrics::LostHow,
     /// Error hazard accrued up to `since`, and the hazard at which the
     /// packet is lost, drawn at lock.
     pub spent: f64,
@@ -506,34 +506,39 @@ pub struct MessageRow {
     pub watch: HolderWatch,
 }
 
-/// Fates of a sleepy node's beat at the holder of a message for it, by
-/// index into [`HolderWatch::beats`].
-pub mod beat_fate {
-    pub const RECEIVED: usize = 0;
+/// Fates of a sleepy node's beat at the holder of a message for it, the
+/// index of [`HolderWatch::beats`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BeatFate {
+    Received = 0,
     /// The node was dark: the beat reached nobody.
-    pub const DARK: usize = 1;
+    Dark = 1,
     /// No link from the node to the holder above sensitivity on average.
-    pub const FAR: usize = 2;
+    Far = 2,
     /// The holder rested on another channel when the beat began.
-    pub const OFF_CHANNEL: usize = 3;
+    OffChannel = 3,
     /// Lost to noise: a weak link or a fade.
-    pub const WEAK: usize = 4;
+    Weak = 4,
     /// Lost to another frame: capture, interference, or the holder
     /// demodulating a corrupted one.
-    pub const COLLIDED: usize = 5;
+    Collided = 5,
     /// The holder was transmitting, or turning its radio round for it.
-    pub const TRANSMITTING: usize = 6;
+    Transmitting = 6,
     /// The holder was checking a channel or retuning.
-    pub const CHECKING: usize = 7;
+    Checking = 7,
     /// Not received for another reason.
-    pub const OTHER: usize = 8;
+    Other = 8,
     /// The node's listen-before-talk found its channel busy each time and
     /// it skipped the beat.
-    pub const SKIPPED: usize = 9;
+    Skipped = 9,
     /// The node beat without an anchor: no window follows.
-    pub const ANCHORLESS: usize = 10;
+    Anchorless = 10,
+}
+
+impl BeatFate {
     pub const N: usize = 11;
-    pub const NAMES: [&str; N] = [
+    /// The names of the fates in the per-message table, in index order.
+    pub const NAMES: [&str; Self::N] = [
         "rx",
         "dark",
         "far",
@@ -559,8 +564,8 @@ pub struct HolderWatch {
     pub anchored: bool,
     /// DATA of it the holder sent with the long preamble.
     pub long_tries: u32,
-    /// Its destination's beats while it was queued, by [`beat_fate`].
-    pub beats: [u32; beat_fate::N],
+    /// Its destination's beats while it was queued, by [`BeatFate`].
+    pub beats: [u32; BeatFate::N],
     /// Of the beats the holder did not receive, those another node that
     /// is not sleepy did.
     pub elsewhere: u32,
@@ -580,6 +585,23 @@ pub(crate) enum FrameKind {
     Refused,
     /// An ACK that has seen it.
     Seen,
+}
+
+/// The most entries a node's send queue held at once.
+#[derive(Clone, Copy, Default)]
+struct QueuePeak {
+    /// In its regular room.
+    regular: u16,
+    /// In hop places.
+    places: u16,
+}
+
+/// How often a node asked to keep its state across a reboot.
+#[derive(Clone, Copy, Default)]
+struct StoreCount {
+    all: u32,
+    /// After the settle time.
+    settled: u32,
 }
 
 /// A message held on a neighbour after a failed hand-over
@@ -714,8 +736,8 @@ pub struct Sim {
     pub(crate) receivers: Vec<crate::gps::Receiver>,
     /// The texts held at a first far fix after the settle time: whether
     /// their holder had turned fixed again before, and how it delivered
-    /// them, an index of `metrics::Carried::held`.
-    held_far: HashMap<u32, (bool, Option<usize>)>,
+    /// them.
+    held_far: HashMap<u32, (bool, Option<crate::metrics::FarFate>)>,
     /// Per relay, its last first far fix, and whether it has turned fixed
     /// again since it was first carried.
     far_at: HashMap<u32, (Instant, bool)>,
@@ -741,7 +763,7 @@ pub struct Sim {
     /// Per node, the most entries its send queue held at once in its
     /// regular room and in hop places; and every DATA received by the
     /// node it was for, by its hop count.
-    queue_peaks: Vec<(u16, u16)>,
+    queue_peaks: Vec<QueuePeak>,
     arrival_hops: [u64; 256],
     /// Each anchor's sleepy nodes, as of the update's last sample.
     sleepers: HashMap<u32, Vec<u32>>,
@@ -877,7 +899,7 @@ pub struct Sim {
     demoted_at: HashMap<(u32, u64), Instant>,
     /// Beats on the air of a node with messages queued: key to each
     /// holder and the beat's fate there so far.
-    pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<usize>)>>,
+    pub(crate) beat_watch: HashMap<u64, Vec<(u32, Option<BeatFate>)>>,
     script: Vec<ScriptEntry>,
     /// Results of scripted excursions, in completion order.
     pub script_log: Vec<ScriptResult>,
@@ -900,16 +922,16 @@ pub struct Sim {
     component: Vec<u32>,
     /// The per-minute series, when asked for (`Sim::series_on`).
     series: Option<String>,
-    /// Frames on air addressed to a relay: key to (relay, kind, state at
-    /// the start), for [`crate::metrics::Addressed`].
-    pub(crate) addressed: HashMap<u64, (u32, u8, u8)>,
-    /// Frames on air: key to kind, 0 DATA, 1 ACK, 2 a relay's heartbeat,
-    /// 3 a sleepy node's beat, and the sender, for
+    /// Frames on air addressed to a relay: key to (relay, kind, its
+    /// fate if lost, by its state at the start), for
+    /// [`crate::metrics::Addressed`].
+    pub(crate) addressed: HashMap<u64, (u32, crate::metrics::AddrKind, crate::metrics::AddrFate)>,
+    /// Frames on air: key to kind and the sender, for
     /// [`crate::metrics::Addressed::lost_how`].
-    pub(crate) air_kinds: HashMap<u64, (u8, u32)>,
+    pub(crate) air_kinds: HashMap<u64, (crate::radio::AirKind, u32)>,
     /// Frames on air addressed to a relay that lost them: key to how, and
     /// whether to a later frame within the harmless level.
-    pub(crate) lost_how: HashMap<u64, (u8, bool)>,
+    pub(crate) lost_how: HashMap<u64, (crate::metrics::LostHow, bool)>,
     /// Per relay, its heartbeat grid's phase in its own clock and its
     /// interval, for [`crate::metrics::Addressed::heartbeat_late`].
     pub(crate) hb_grid: Vec<Option<(Instant, Duration)>>,
@@ -941,7 +963,7 @@ pub struct Sim {
     /// Per node, what it last asked to keep across a reboot, and how
     /// often it asked: in all, and after the settle time.
     pub(crate) stored: Vec<Option<Stored>>,
-    store_writes: Vec<[u32; 2]>,
+    store_writes: Vec<StoreCount>,
     /// The destinations of the texts offered at scripted boots.
     boot_rng: Stream,
 }
@@ -1337,7 +1359,7 @@ impl Sim {
             names,
             xy,
             relay_index: (0..n_relays).map(|i| (key(ids[i as usize]), i)).collect(),
-            queue_peaks: vec![(0, 0); ids.len()],
+            queue_peaks: vec![QueuePeak::default(); ids.len()],
             arrival_hops: [0; 256],
             sleepy_index: (n_relays..n as u32)
                 .map(|i| (key(ids[i as usize]), i))
@@ -1465,7 +1487,7 @@ impl Sim {
             boots: Boots::new(n),
             next_tx: vec![TxMark::None; n],
             stored: vec![None; n],
-            store_writes: vec![[0; 2]; n],
+            store_writes: vec![StoreCount::default(); n],
             boot_rng: Stream::new(sc.seed, Purpose::BootText, 0),
         };
         sim.component = sim.components();
@@ -1830,8 +1852,8 @@ impl Sim {
     /// percentiles.
     pub fn places_report(&self) -> String {
         let pct = |v: &[u16], p: f64| v[((v.len() as f64 * p) as usize).min(v.len() - 1)];
-        let mut places: Vec<u16> = self.queue_peaks.iter().map(|p| p.1).collect();
-        let mut regular: Vec<u16> = self.queue_peaks.iter().map(|p| p.0).collect();
+        let mut places: Vec<u16> = self.queue_peaks.iter().map(|p| p.places).collect();
+        let mut regular: Vec<u16> = self.queue_peaks.iter().map(|p| p.regular).collect();
         places.sort_unstable();
         regular.sort_unstable();
         let all: u64 = self.arrival_hops.iter().sum();
@@ -2208,7 +2230,7 @@ impl Sim {
             // An ACK may still come late; give it a second.
             let gone = now > *deadline + Duration::from_secs(1);
             if gone {
-                replies[*leaf as usize][3] += 1;
+                replies[*leaf as usize][crate::metrics::Reply::None as usize] += 1;
             }
             !gone
         });
@@ -2337,8 +2359,8 @@ impl Sim {
         c.handle(ev, clock.local(now), &mut |a| buf.push(a));
         let (regular, places) = c.queue_use();
         let peak = &mut self.queue_peaks[node as usize];
-        peak.0 = peak.0.max(regular as u16);
-        peak.1 = peak.1.max(places as u16);
+        peak.regular = peak.regular.max(regular as u16);
+        peak.places = peak.places.max(places as u16);
         let relays = &self.relays;
         self.boots
             .after_event(node, &relays[node as usize], now, received, |n| {
@@ -3020,8 +3042,8 @@ impl Sim {
             Action::Store(s) => {
                 self.stored[node as usize] = Some(s);
                 let w = &mut self.store_writes[node as usize];
-                w[0] += 1;
-                w[1] += u32::from(self.now >= self.settle);
+                w.all += 1;
+                w.settled += u32::from(self.now >= self.settle);
             }
             Action::Trace(Trace::SlotPiece(o)) => {
                 if let Some(u) = self.update.as_mut() {
@@ -3061,7 +3083,7 @@ impl Sim {
                         if r.sleepy() && r.anchor().is_some() && channel == r.home() {
                             let id = key(r.id());
                             for h in self.holders_waiting(id) {
-                                self.watch_note(h, id, beat_fate::SKIPPED, false);
+                                self.watch_note(h, id, BeatFate::Skipped, false);
                             }
                         }
                     }
@@ -3455,9 +3477,7 @@ impl Sim {
         self.power_changed(f);
         if flip && self.now >= self.settle {
             let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
-            let c = &mut self.carried_metrics().sleepy_changed;
-            c.0 += 1;
-            c.1 += air;
+            self.carried_metrics().sleepy_changed.add(air);
         }
     }
 
@@ -3472,21 +3492,20 @@ impl Sim {
         {
             if hb.sleepy && hb.carried {
                 let air = time_on_air(f.len, f.preamble_symbols).as_micros() as f64 / 1e6;
-                let c = &mut self.carried_metrics().beats;
-                c.0 += 1;
-                c.1 += air;
+                self.carried_metrics().beats.add(air);
             }
         }
     }
 
     /// A holder delivered `msg_id` to its node `by` that way.
     fn note_delivered_by(&mut self, msg_id: MsgId, by: bark_proto::Delivery) {
+        use crate::metrics::FarFate;
         use bark_proto::Delivery as D;
         let (i, fate) = match by {
-            D::Window => (0, 1),
-            D::Long => (1, 1),
-            D::Flush => (2, 0),
-            D::Relay => (3, 2),
+            D::Window => (0, FarFate::Beat),
+            D::Long => (1, FarFate::Beat),
+            D::Flush => (2, FarFate::Flush),
+            D::Relay => (3, FarFate::AsRelay),
         };
         if self.now >= self.settle {
             self.delivered_by[i] += 1;
@@ -3514,22 +3533,26 @@ impl Sim {
             &mut c.to_relay
         };
         if after {
-            to.0 += 1;
-            to.1 += air;
+            to.add(air);
         }
     }
 
     /// The fates of the texts held at a first far fix
     /// (`metrics::Carried::held`).
-    pub(crate) fn held_fates(&self) -> [[u64; 5]; 2] {
-        let mut held = [[0; 5]; 2];
+    pub(crate) fn held_fates(&self) -> [[u64; crate::metrics::FarFate::N]; 2] {
+        use crate::metrics::FarFate;
+        let mut held = [[0; FarFate::N]; 2];
         for (id, &(again, fate)) in &self.held_far {
             let got = self
                 .msg_tags
                 .get(id)
                 .is_some_and(|&tag| matches!(self.origins[tag as usize].fate, Fate::Delivered));
-            let i = fate.unwrap_or(if got { 4 } else { 3 });
-            held[usize::from(again)][i] += 1;
+            let fate = fate.unwrap_or(if got {
+                FarFate::Otherwise
+            } else {
+                FarFate::None
+            });
+            held[usize::from(again)][fate as usize] += 1;
         }
         held
     }
@@ -4120,12 +4143,12 @@ impl Sim {
 
     /// Count a beat of the node `id` with `fate` at `holder` for each
     /// message the holder holds for it.
-    pub(crate) fn watch_note(&mut self, holder: u32, id: u64, fate: usize, elsewhere: bool) {
+    pub(crate) fn watch_note(&mut self, holder: u32, id: u64, fate: BeatFate, elsewhere: bool) {
         if let Some(tags) = self.queued_for.get(&(holder, id)) {
             for &t in tags {
                 let o = &mut self.origins[t as usize];
                 if o.fate == Fate::Unaccounted {
-                    o.watch.beats[fate] += 1;
+                    o.watch.beats[fate as usize] += 1;
                     o.watch.elsewhere += u32::from(elsewhere);
                 }
             }
@@ -4339,7 +4362,7 @@ impl Sim {
         let mut s = String::from(
             "tag,src,dst,t_s,fate,drop_node,drop_reason,reachable,latency_s,frames,airtime_s,hops,distance_m,taken_s,dropped_s,dst_walking,src_relay,dst_relay,to_twin,src_moving,dst_anchor,src_x,dst_x,entered_s,holder_beats,holder_tries,queued_s,holder_knew,holder_anchor,holder_long,holder_dbm,best_dbm,dst_sleepy,dst_carried",
         );
-        for n in beat_fate::NAMES {
+        for n in BeatFate::NAMES {
             s.push_str(",b_");
             s.push_str(n);
         }
@@ -4994,7 +5017,7 @@ impl Sim {
         let per_day = |r: std::ops::Range<usize>| {
             let w: Vec<f64> = self.store_writes[r]
                 .iter()
-                .map(|w| w[1] as f64 / window.max(1e-9))
+                .map(|w| w.settled as f64 / window.max(1e-9))
                 .collect();
             let mean = w.iter().sum::<f64>() / w.len().max(1) as f64;
             (mean, w.iter().cloned().fold(0.0, f64::max))
@@ -5003,7 +5026,7 @@ impl Sim {
         crate::summary::StoreWrites {
             relays_per_day: per_day(0..n),
             sleepy_per_day: per_day(n..self.node_count()),
-            total: self.store_writes.iter().map(|w| w[0] as u64).sum(),
+            total: self.store_writes.iter().map(|w| w.all as u64).sum(),
         }
     }
 

@@ -13,7 +13,9 @@
 //! at, it is first brought up to the present (`settle`), and a loss found
 //! then is dated to when the budget ran out.
 
-use crate::metrics::{FirstTry, Outcome, BOOT_MINUTE};
+use crate::metrics::{
+    AddrFate, AddrKind, FirstTry, LostHow, Outcome, Reply, ToSleepyFate, BOOT_MINUTE,
+};
 use crate::phy::{self, Deaf, Loss};
 use crate::sim::{key, Arrival, ExKind, FrameKind, Lock, Rx, Sim, ToSleepy};
 use crate::walk::MovingLink;
@@ -49,6 +51,19 @@ fn interference(
         }
     }
     (co, adj)
+}
+
+/// What a frame on the air is, for [`LostHow`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AirKind {
+    Data,
+    Ack,
+    /// A heartbeat of a node that is not sleepy.
+    Heartbeat,
+    /// A sleepy node's beat.
+    Beat,
+    /// An update piece or a status frame.
+    Other,
 }
 
 /// A packet's receiver-independent facts.
@@ -153,11 +168,11 @@ impl Sim {
         let frame = tx.frame;
         let decoded = WirePacket::decode(frame.payload()).ok();
         let kind = match decoded {
-            Some(WirePacket::Data(_)) => 0,
-            Some(WirePacket::Ack(_)) => 1,
-            Some(WirePacket::Heartbeat(h)) if !h.sleepy => 2,
-            Some(WirePacket::Heartbeat(_)) => 3,
-            Some(WirePacket::Update(_) | WirePacket::Status(_)) | None => 6,
+            Some(WirePacket::Data(_)) => AirKind::Data,
+            Some(WirePacket::Ack(_)) => AirKind::Ack,
+            Some(WirePacket::Heartbeat(h)) if !h.sleepy => AirKind::Heartbeat,
+            Some(WirePacket::Heartbeat(_)) => AirKind::Beat,
+            Some(WirePacket::Update(_) | WirePacket::Status(_)) | None => AirKind::Other,
         };
         self.air_kinds.insert(tx_key, (kind, src));
         if let Some(WirePacket::Heartbeat(h)) = decoded {
@@ -178,13 +193,21 @@ impl Sim {
             _ => None,
         };
         let to = match decoded {
-            Some(WirePacket::Data(d)) => {
-                Some((key(d.dst_hop), if src < self.relays() { 0 } else { 2 }))
+            Some(WirePacket::Data(d)) => Some((
+                key(d.dst_hop),
+                if src < self.relays() {
+                    AddrKind::RelayData
+                } else {
+                    AddrKind::SleepyData
+                },
+            )),
+            Some(WirePacket::Ack(a)) if src < self.relays() => {
+                Some((key(a.to), AddrKind::RelayAck))
             }
-            Some(WirePacket::Ack(a)) if src < self.relays() => Some((key(a.to), 1)),
-            Some(WirePacket::Heartbeat(h)) if h.sleepy => {
-                self.relay(src).anchor().map(|a| (key(a.id), 3))
-            }
+            Some(WirePacket::Heartbeat(h)) if h.sleepy => self
+                .relay(src)
+                .anchor()
+                .map(|a| (key(a.id), AddrKind::Beat)),
             _ => None,
         };
         let beat = match decoded {
@@ -318,13 +341,13 @@ impl Sim {
                 let k = (src, a.msg_id.0, key(a.to));
                 if let Some((deadline, leaf)) = self.awaiting.remove(&k) {
                     let answer = if self.now > deadline {
-                        2
+                        Reply::Late
                     } else if a.refused {
-                        1
+                        Reply::Refused
                     } else {
-                        0
+                        Reply::Taken
                     };
-                    self.metrics.addressed.replies[leaf as usize][answer] += 1;
+                    self.metrics.addressed.replies[leaf as usize][answer as usize] += 1;
                 }
             }
             _ => {}
@@ -333,13 +356,13 @@ impl Sim {
         {
             let st = &self.nodes[d.0 as usize];
             let state = if st.resting != Some(ch) {
-                4
+                AddrFate::OffChannel
             } else if st.ex.as_ref().is_some_and(|e| e.deaf) || self.now < st.listen_from {
-                3
+                AddrFate::Deaf
             } else if matches!(st.lock, Lock::Rx(_)) {
-                2
+                AddrFate::Receiving
             } else {
-                1
+                AddrFate::Free
             };
             self.addressed.insert(tx_key, (d.0, d.1, state));
         }
@@ -432,15 +455,15 @@ impl Sim {
     /// How the frame `key` on the air at `b` is classed for
     /// `Addressed::lost_how`, where it meets the frame `other`; `later`
     /// says whether `key` started after `other`.
-    fn how_of(&self, b: u32, key: Option<u64>, other: u64, later: bool) -> u8 {
+    fn how_of(&self, b: u32, key: Option<u64>, other: u64, later: bool) -> LostHow {
         let Some(k) = key else {
-            return 6;
+            return LostHow::Other;
         };
         match self.air_kinds.get(&k) {
-            Some(&(0, src)) => {
+            Some(&(AirKind::Data, src)) => {
                 if self.addressed.get(&k).is_some_and(|a| a.0 == b) {
                     let Some(&(_, other_src)) = self.air_kinds.get(&other) else {
-                        return 1;
+                        return LostHow::HiddenData;
                     };
                     // Whether the later sender could hear the earlier
                     // frame when it checked the channel.
@@ -454,32 +477,28 @@ impl Sim {
                         .get(from, to)
                         .is_some_and(|l| l.base_dbm as f64 >= self.sens_dbm);
                     if audible {
-                        7
+                        LostHow::HeardData
                     } else {
-                        1
+                        LostHow::HiddenData
                     }
                 } else {
-                    2
+                    LostHow::OtherData
                 }
             }
-            Some(&(1, _)) => 3,
-            Some(&(2, _)) => 4,
-            Some(&(3, _)) => 5,
-            _ => 6,
+            Some(&(AirKind::Ack, _)) => LostHow::Ack,
+            Some(&(AirKind::Heartbeat, _)) => LostHow::Heartbeat,
+            Some(&(AirKind::Beat, _)) => LostHow::Beat,
+            Some(&(AirKind::Other, _)) | None => LostHow::Other,
         }
     }
 
     /// Note how `b` lost the frame `key`, if it was addressed to `b`.
-    fn note_addressed_loss(&mut self, key: u64, b: u32, o: Outcome, how: u8) {
+    fn note_addressed_loss(&mut self, key: u64, b: u32, o: Outcome, met: LostHow) {
+        let how = LostHow::of(o, met);
         if self.margin.is_some() {
-            self.margin_lost(key, b, o, how);
+            self.margin_lost(key, b, how);
         }
         if self.addressed.get(&key).is_some_and(|a| a.0 == b) {
-            let how = match o {
-                Outcome::BelowSensitivity => 0,
-                Outcome::LostCapture | Outcome::LostToLater | Outcome::SinrFail { .. } => how,
-                _ => 6,
-            };
             self.lost_how.insert(key, (how, o == Outcome::LostToLater));
         }
     }
@@ -488,7 +507,7 @@ impl Sim {
     /// each holder of messages for it, what is already known of its fate
     /// there (`crate::sim::HolderWatch`).
     fn watch_beat(&mut self, slot: u32, id: u64, anchorless: bool) {
-        use crate::sim::beat_fate as f;
+        use crate::sim::BeatFate as F;
         let holders = self.holders_waiting(id);
         if holders.is_empty() {
             return;
@@ -504,13 +523,13 @@ impl Sim {
                 b == h && dbm as f64 >= self.sens_dbm
             });
             let fate = if anchorless {
-                Some(f::ANCHORLESS)
+                Some(F::Anchorless)
             } else if !present {
-                Some(f::DARK)
+                Some(F::Dark)
             } else if !linked {
-                Some(f::FAR)
+                Some(F::Far)
             } else if self.nodes[h as usize].resting != Some(ch) {
-                Some(f::OFF_CHANNEL)
+                Some(F::OffChannel)
             } else {
                 None
             };
@@ -584,14 +603,14 @@ impl Sim {
             .then(|| self.beat_watch.remove(&tx.key))
             .flatten();
         if let Some(w) = watched {
-            use crate::sim::beat_fate as f;
+            use crate::sim::BeatFate as F;
             let id = key(self.relay(tx.src).id());
             for (h, fate) in w {
                 let received = got.iter().any(|g| g.0 == h);
                 let fate = if received {
-                    f::RECEIVED
+                    F::Received
                 } else {
-                    fate.unwrap_or(f::OTHER)
+                    fate.unwrap_or(F::Other)
                 };
                 let elsewhere =
                     !received && got.iter().any(|g| g.0 != h && !self.relay(g.0).sleepy());
@@ -603,11 +622,11 @@ impl Sim {
             let (fate, how) = if received {
                 let i = (t.node - self.relays()) as usize;
                 self.beat_took[i].1 = self.now;
-                (0, FirstTry::Received)
+                (ToSleepyFate::Received, FirstTry::Received)
             } else if t.deaf {
-                (1, FirstTry::Deaf)
+                (ToSleepyFate::Unheard, FirstTry::Deaf)
             } else if t.absent {
-                (2, FirstTry::Absent)
+                (ToSleepyFate::Lost, FirstTry::Absent)
             } else {
                 let how = match t.lost {
                     Some(Outcome::BelowSensitivity) => FirstTry::Weak,
@@ -620,10 +639,10 @@ impl Sim {
                     Some(Outcome::Deaf(_)) => FirstTry::Busy,
                     _ => FirstTry::Unheard,
                 };
-                (2, how)
+                (ToSleepyFate::Lost, how)
             };
             if self.now >= self.settle {
-                self.metrics.sleep.to_sleepy[fate] += 1;
+                self.metrics.sleep.to_sleepy[fate as usize] += 1;
             }
             self.first_try
                 .entry((t.holder, t.msg))
@@ -690,20 +709,21 @@ impl Sim {
         }
         if let Some((d, kind, state)) = self.addressed.remove(&tx.key) {
             let fate = if got.iter().any(|g| g.0 == d) {
-                0
+                AddrFate::Received
             } else {
                 state
             };
-            if let (0, Some((msg, to))) = (fate, answer) {
-                if kind == 0 || kind == 2 {
+            if let (AddrFate::Received, Some((msg, to))) = (fate, answer) {
+                if matches!(kind, AddrKind::RelayData | AddrKind::SleepyData) {
                     let deadline = self.now + self.relay(d).config().ack_timeout;
-                    self.awaiting.insert((d, msg, to), (deadline, kind == 2));
+                    let leaf = kind == AddrKind::SleepyData;
+                    self.awaiting.insert((d, msg, to), (deadline, leaf));
                 }
             }
             self.metrics.addressed.counts[kind as usize][fate as usize] += 1;
             let how = self.lost_how.remove(&tx.key);
-            if fate != 0 {
-                let (how, later) = how.unwrap_or((6, false));
+            if fate != AddrFate::Received {
+                let (how, later) = how.unwrap_or((LostHow::Other, false));
                 let a = &mut self.metrics.addressed;
                 a.lost_how[kind as usize][fate as usize][how as usize] += 1;
                 a.lost_to_later[kind as usize][fate as usize] += u64::from(later);
@@ -893,7 +913,7 @@ impl Sim {
                     preamble_weight: p.preamble_weight,
                     max_i_mw: 0.0,
                     max_hurt_mw: 0.0,
-                    max_i_how: 6,
+                    max_i_how: LostHow::Other,
                     spent: 0.0,
                     budget,
                     since: now,
@@ -971,17 +991,17 @@ impl Sim {
             .then(|| self.beat_watch.get_mut(&key))
             .flatten()
         {
-            use crate::sim::beat_fate as f;
+            use crate::sim::BeatFate as F;
             for (_, fate) in w.iter_mut().filter(|(h, f)| *h == b && f.is_none()) {
                 *fate = Some(match o {
-                    Outcome::BelowSensitivity => f::WEAK,
+                    Outcome::BelowSensitivity => F::Weak,
                     Outcome::LostCapture
                     | Outcome::LostToLater
                     | Outcome::SinrFail { .. }
-                    | Outcome::Deaf(Deaf::Corrupt) => f::COLLIDED,
-                    Outcome::Deaf(Deaf::Tx | Deaf::HalfDuplex) => f::TRANSMITTING,
-                    Outcome::Deaf(Deaf::Cad | Deaf::Rssi | Deaf::Retune) => f::CHECKING,
-                    _ => f::OTHER,
+                    | Outcome::Deaf(Deaf::Corrupt) => F::Collided,
+                    Outcome::Deaf(Deaf::Tx | Deaf::HalfDuplex) => F::Transmitting,
+                    Outcome::Deaf(Deaf::Cad | Deaf::Rssi | Deaf::Retune) => F::Checking,
+                    _ => F::Other,
                 });
             }
         }

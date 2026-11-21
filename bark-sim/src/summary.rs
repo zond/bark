@@ -1192,10 +1192,10 @@ impl Summary {
                 "carried sleepy nodes: turned carried {}, fixed again {}; beats flagged sleepy and carried {} ({:.1} s); heartbeats for their change {} ({:.1} s); plugged in while carried {}; texts queued at a carried node {}",
                 c.carried.iter().filter(|f| f.4).count(),
                 c.fixed.iter().filter(|f| f.3).count(),
-                c.beats.0,
-                c.beats.1,
-                c.sleepy_changed.0,
-                c.sleepy_changed.1,
+                c.beats.frames,
+                c.beats.airtime_s,
+                c.sleepy_changed.frames,
+                c.sleepy_changed.airtime_s,
                 c.plugged_in,
                 c.queued
             );
@@ -1220,7 +1220,7 @@ impl Summary {
             let _ = writeln!(
                 s,
                 "delivered by the holder: in the window {}, outside it {}, by the flush {}, to the node as a relay {}; flush frames {} ({:.1} s), to a relay {} ({:.1} s)",
-                d[0], d[1], d[2], d[3], c.flush.0, c.flush.1, c.to_relay.0, c.to_relay.1
+                d[0], d[1], d[2], d[3], c.flush.frames, c.flush.airtime_s, c.to_relay.frames, c.to_relay.airtime_s
             );
         }
         if let Some(p) = &self.research.power {
@@ -1244,7 +1244,7 @@ impl Summary {
                 s,
                 "held when a relay left: by the flush {}, at a beat {}, to the node as a relay {}, handed on at the turn {}, dropped by the node that held it {}, otherwise {}; heartbeats for a change {} ({:.1} s); anchors left for one that turned sleepy {}",
                 h[0], h[1], h[2], h[3], h[4], h[5],
-                p.changed.0, p.changed.1,
+                p.changed.frames, p.changed.airtime_s,
                 p.anchors_left
             );
         }
