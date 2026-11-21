@@ -172,6 +172,17 @@ pub trait Transport {
 
     /// Forgets the device at `address`, its bond too.
     fn forget(&mut self, address: &str) -> Result<()>;
+
+    /// The nodes whose devices the transport holds now, heard lately
+    /// enough that it connects to them without a scan.
+    fn known(&mut self) -> Result<Vec<Found>>;
+
+    /// Whether another program is scanning on the same radio, which the
+    /// radio's connects then share their time with.
+    fn others_scanning(&mut self) -> Result<bool>;
+
+    /// Tells the person something that does not stop the command.
+    fn warn(&mut self, line: &str);
 }
 
 /// One connection to a node.

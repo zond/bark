@@ -98,6 +98,16 @@ pub fn scan<T: Transport>(t: &mut T, time: Duration) -> Result<Vec<Found>> {
 /// scan as soon as its node is heard; a part of one [`SETTLE`] after a
 /// node that ends so was heard, if no other has been.
 pub fn find<T: Transport>(t: &mut T, sel: &Select, time: Duration) -> Result<Found> {
+    // A node the transport holds, the only one `sel` names among them, is
+    // connected to without a scan: it was heard lately.
+    let mut held: Vec<Found> = t
+        .known()?
+        .into_iter()
+        .filter(|f| sel.matches(f.id))
+        .collect();
+    if held.len() == 1 {
+        return Ok(held.remove(0));
+    }
     let mut first = None;
     let found = t.scan(time, &mut |f, ran| {
         let n = f.iter().filter(|f| sel.matches(f.id)).count();
@@ -132,9 +142,28 @@ fn retried(e: &Error) -> bool {
     )
 }
 
-fn gave_up(id: NodeId, e: &Error) -> Error {
+/// What the person is told when another program scans on the radio: its
+/// scan takes the radio's time, and on the bench connects then failed,
+/// and went through once it stopped (2026-11-21).
+pub const OTHERS_SCANNING: &str =
+    "another program is scanning for Bluetooth devices, so connecting may fail; closing it helps";
+
+/// Whether another program scans, said to the person if so.
+fn others_scanning<T: Transport>(t: &mut T) -> bool {
+    let busy = t.others_scanning().unwrap_or(false);
+    if busy {
+        t.warn(OTHERS_SCANNING);
+    }
+    busy
+}
+
+fn gave_up(id: NodeId, e: &Error, busy: bool) -> Error {
+    let advice = match busy {
+        true => OTHERS_SCANNING,
+        false => "come nearer, or try again",
+    };
     Error::Other(format!(
-        "could not connect to {} in {CONNECT_TRIES} tries ({e}): come nearer, or try again",
+        "could not connect to {} in {CONNECT_TRIES} tries ({e}): {advice}",
         id_text(id)
     ))
 }
@@ -155,6 +184,7 @@ fn connect_heard<T: Transport>(
     time: Duration,
     mut found: Found,
 ) -> Result<T::Link> {
+    let busy = others_scanning(t);
     let mut tries = 1;
     loop {
         match t.connect(&found) {
@@ -164,7 +194,7 @@ fn connect_heard<T: Transport>(
                 found = find(t, sel, time * RETRY_SCANS)?;
             }
             Err(e) if retried(&e) && tries < CONNECT_TRIES => tries += 1,
-            Err(e) if retried(&e) => return Err(gave_up(found.id, &e)),
+            Err(e) if retried(&e) => return Err(gave_up(found.id, &e, busy)),
             Err(e) => return Err(e),
         }
     }
@@ -269,6 +299,7 @@ pub fn owner<T: Transport>(
         public: false,
         bonded: true,
     };
+    let busy = others_scanning(t);
     let mut tries = 1;
     let mut l = loop {
         match t.connect(&found) {
@@ -277,7 +308,7 @@ pub fn owner<T: Transport>(
             // longer holding the bond.
             Err(Error::Ended) => return Err(no_longer(p.id)),
             Err(e) if retried(&e) && tries < CONNECT_TRIES => tries += 1,
-            Err(e) if retried(&e) => return Err(gave_up(p.id, &e)),
+            Err(e) if retried(&e) => return Err(gave_up(p.id, &e, busy)),
             Err(e) => return Err(e),
         }
     };
@@ -657,6 +688,37 @@ mod tests {
         radio.failing = 2;
         let e = guest(&mut radio, &sel("1"), SCAN_TIME).err().unwrap();
         assert!(e.to_string().contains("in 2 tries"), "{e}");
+    }
+
+    #[test]
+    fn another_program_scanning_is_said_before_the_connect_and_after_its_failure() {
+        let mut radio = FakeRadio::new(vec![FakeNode::new(id(1))]);
+        radio.others = true;
+        guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
+        assert_eq!(radio.warnings, [OTHERS_SCANNING]);
+        radio.failing = 2;
+        let e = guest(&mut radio, &sel("1"), SCAN_TIME).err().unwrap();
+        assert!(e.to_string().ends_with(OTHERS_SCANNING), "{e}");
+        radio.others = false;
+        radio.warnings.clear();
+        guest(&mut radio, &sel("1"), SCAN_TIME).unwrap();
+        assert!(radio.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_node_heard_lately_is_connected_to_without_a_scan() {
+        let mut radio = FakeRadio::new(vec![
+            FakeNode::new(id(0xfa4e_0000_0001)),
+            FakeNode::new(id(0xfa4e_0000_0002)),
+        ]);
+        guest(&mut radio, &sel("01"), SCAN_TIME).unwrap();
+        assert_eq!(radio.scans, 1);
+        guest(&mut radio, &sel("02"), SCAN_TIME).unwrap();
+        guest(&mut radio, &sel("fa4e00000001"), SCAN_TIME).unwrap();
+        assert_eq!((radio.scans, radio.connects), (1, 3));
+        // A part of an ID that names two held still scans, and is refused.
+        assert!(find(&mut radio, &sel("0"), SCAN_TIME).is_err());
+        assert_eq!(radio.scans, 2);
     }
 
     #[test]

@@ -17,11 +17,17 @@ target/debug/bark neighbours 03ef88
 
 A command names a node by its ID, the twelve hex digits its screen and its
 Bluetooth name show, or the last few of them, as long as only one node
-ends so. A guest's command looks for the node in a scan: a whole ID ends
-the scan as the node is heard, a part of one two advertising intervals
-after a node that ends so was heard, if no other was. A paired node's
-command names it among the paired nodes and connects to it without a
-scan.
+ends so. A guest's command connects without a scan to a node BlueZ
+still holds, heard in the last half minute or so, when it is the only one
+held that the ID names; else it looks for the node in a scan: a whole ID
+ends the scan as the node is heard, a part of one two advertising
+intervals after a node that ends so was heard, if no other was. A paired
+node's command names it among the paired nodes and connects to it
+without a scan.
+
+While another program scans for Bluetooth devices, connects often fail,
+as its scan takes the radio's time; the tool says so, and closing that
+program helps.
 
 ## A guest's commands
 

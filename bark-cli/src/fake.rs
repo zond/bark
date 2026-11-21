@@ -183,6 +183,12 @@ pub struct FakeRadio {
     pub lost: usize,
     /// The last scan stopped before its time.
     pub scan_ended_early: bool,
+    /// The addresses whose devices the radio holds, heard or linked.
+    pub held: HashSet<String>,
+    /// Another program scans on the radio.
+    pub others: bool,
+    /// What the tool told the person.
+    pub warnings: Vec<String>,
 }
 
 impl FakeRadio {
@@ -198,11 +204,24 @@ impl FakeRadio {
             failing: 0,
             lost: 0,
             scan_ended_early: false,
+            held: HashSet::new(),
+            others: false,
+            warnings: Vec::new(),
         }
     }
 
     fn address(i: usize) -> String {
         format!("fake-{i}")
+    }
+
+    fn found(&self, i: usize, n: &FakeNode) -> Found {
+        Found {
+            id: n.node.id,
+            address: Self::address(i),
+            rssi: Some(n.rssi),
+            public: n.public || n.looks_public,
+            bonded: self.bonds.borrow().contains(&Self::address(i)),
+        }
     }
 }
 
@@ -219,15 +238,9 @@ impl Transport for FakeRadio {
         let mut heard = Vec::new();
         // A node is heard an advertising interval after the one before.
         let step = time / (self.nodes.len() as u32 + 1);
-        for (i, n) in self.nodes.iter().enumerate() {
-            let n = n.borrow();
-            heard.push(Found {
-                id: n.node.id,
-                address: Self::address(i),
-                rssi: Some(n.rssi),
-                public: n.public || n.looks_public,
-                bonded: self.bonds.borrow().contains(&Self::address(i)),
-            });
+        for (i, n) in self.nodes.clone().iter().enumerate() {
+            heard.push(self.found(i, &n.borrow()));
+            self.held.insert(Self::address(i));
             if enough(&heard, step * (i as u32 + 1)) {
                 self.scan_ended_early = i + 1 < self.nodes.len();
                 break;
@@ -252,6 +265,7 @@ impl Transport for FakeRadio {
         }
         if self.lost > 0 {
             self.lost -= 1;
+            self.held.remove(&Self::address(i));
             return Err(Error::NoDevice);
         }
         let node = self.nodes[i].clone();
@@ -280,7 +294,26 @@ impl Transport for FakeRadio {
 
     fn forget(&mut self, address: &str) -> Result<()> {
         self.bonds.borrow_mut().remove(address);
+        self.held.remove(address);
         Ok(())
+    }
+
+    fn known(&mut self) -> Result<Vec<Found>> {
+        let mut found = Vec::new();
+        for (i, n) in self.nodes.iter().enumerate() {
+            if self.held.contains(&Self::address(i)) {
+                found.push(self.found(i, &n.borrow()));
+            }
+        }
+        Ok(found)
+    }
+
+    fn others_scanning(&mut self) -> Result<bool> {
+        Ok(self.others)
+    }
+
+    fn warn(&mut self, line: &str) {
+        self.warnings.push(line.to_string());
     }
 }
 

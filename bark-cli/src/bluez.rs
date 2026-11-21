@@ -741,6 +741,37 @@ impl Transport for Bluez {
             None => Ok(()),
         }
     }
+
+    /// BlueZ removes a device it holds no bond with once no discovery has
+    /// heard it for a while, 30 s by its default (`TemporaryTimeout`), so
+    /// a device it holds was heard lately, or is bonded.
+    fn known(&mut self) -> Result<Vec<Found>> {
+        let mut found = Vec::new();
+        for (path, mut i) in self.bus.objects()? {
+            let Some(p) = i.remove(DEVICE) else { continue };
+            if !self.mine(path.as_str()) {
+                continue;
+            }
+            if let Some(f) = Device::known(&p).found() {
+                self.bus.say(1, || {
+                    format!("BlueZ holds {} at {path}", crate::link::id_text(f.id))
+                });
+                found.push(f);
+            }
+        }
+        Ok(found)
+    }
+
+    /// The adapter's discovery runs while this tool's does not: the tool
+    /// asks this only with its own stopped.
+    fn others_scanning(&mut self) -> Result<bool> {
+        let p = self.bus.properties(&self.adapter, ADAPTER)?;
+        Ok(boolean(&p, "Discovering") == Some(true))
+    }
+
+    fn warn(&mut self, line: &str) {
+        eprintln!("bark: {line}");
+    }
 }
 
 pub struct BluezLink {
