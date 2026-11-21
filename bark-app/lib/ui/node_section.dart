@@ -139,7 +139,7 @@ class NodeSection extends StatelessWidget {
     ];
   }
 
-  /// The row of `n`, a paired node that no longer knows this phone: Pair
+  /// The row of `n`, a paired node that does not know this phone: Pair
   /// again while it is in reach, as the person most likely wants it back,
   /// and Forget, to give it up; a tap explains.
   Widget _lostRow(BuildContext context, String n, {required bool home}) =>
@@ -168,13 +168,14 @@ class NodeSection extends StatelessWidget {
         ),
       );
 
-  /// What happened to `n`, a node that no longer knows this phone, and
-  /// what each button does.
+  /// Why `n`, a paired node, does not know this phone, and what each
+  /// button does.
   Future<void> _lostHelp(BuildContext context, String n) => showHelp(
     context,
-    '${shownName(n)} no longer knows this phone',
-    'Someone paired with it removed this phone, or the node lost its '
-        'memory.\n\n'
+    '${shownName(n)} does not know this phone',
+    'Someone paired with it removed this phone, the node lost its memory, '
+        'or you moved here from another phone: a pairing stays on the phone '
+        'it was made on.\n\n'
         'Pair again: pair anew with the code on its screen. Shown while the '
         'node is in reach.\n\n'
         'Forget: stop listing the node here.',
@@ -192,7 +193,7 @@ class NodeSection extends StatelessWidget {
         if (on)
           'connected'
         else if (r?.lost ?? false)
-          'no longer yours'
+          'does not know this phone'
         else if (r?.unserved ?? false)
           'cannot be used yet. Tap to try again'
         else if (app.searchOn)

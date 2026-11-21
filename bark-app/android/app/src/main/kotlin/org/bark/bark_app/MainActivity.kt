@@ -1,5 +1,6 @@
 package org.bark.bark_app
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
@@ -95,6 +96,67 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // Android's own save dialog, which the file picker the app
+                // uses offers only for opening. The bytes wait here for
+                // the place the person picks.
+                "save" -> {
+                    if (saving != null) {
+                        result.error("busy", "a save is under way", null)
+                        return@setMethodCallHandler
+                    }
+                    saving = result
+                    savingBytes = call.argument<ByteArray>("bytes")
+                    try {
+                        startActivityForResult(
+                            Intent(Intent.ACTION_CREATE_DOCUMENT)
+                                .addCategory(Intent.CATEGORY_OPENABLE)
+                                .setType("application/octet-stream")
+                                .putExtra(Intent.EXTRA_TITLE, call.argument<String>("name")),
+                            SAVE_REQUEST,
+                        )
+                    } catch (e: ActivityNotFoundException) {
+                        saving = null
+                        savingBytes = null
+                        result.error("no-dialog", e.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private var saving: MethodChannel.Result? = null
+    private var savingBytes: ByteArray? = null
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != SAVE_REQUEST) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val result = saving ?: return
+        val bytes = savingBytes
+        saving = null
+        savingBytes = null
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null || bytes == null) {
+            result.success(false)
+            return
+        }
+        try {
+            // "wt" truncates a file the person chose to replace.
+            val out = contentResolver.openOutputStream(uri, "wt")
+            if (out == null) {
+                result.error("write", "no stream for $uri", null)
+                return
+            }
+            out.use { it.write(bytes) }
+            result.success(true)
+        } catch (e: Exception) {
+            // Not found, refused by its provider, or a failed write.
+            result.error("write", e.message, null)
+        }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -102,6 +164,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE).setMethodCallHandler(null)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES).setMethodCallHandler(null)
     }
 
     private companion object {
@@ -109,5 +172,9 @@ class MainActivity : FlutterActivity() {
         const val INSTALLER = "org.bark.bark_app/installer"
         const val SHARE = "org.bark.bark_app/share"
         const val BLUETOOTH = "org.bark.bark_app/bluetooth"
+        const val FILES = "org.bark.bark_app/files"
+
+        // The save dialog's answer; no plugin the app uses takes this code.
+        const val SAVE_REQUEST = 0x6261
     }
 }

@@ -9,6 +9,7 @@ import 'package:sodium/sodium.dart';
 
 import 'app_layer.dart';
 import 'card.dart';
+import 'identity_file.dart';
 import 'link.dart';
 import 'store.dart';
 
@@ -213,6 +214,29 @@ class Me extends ChangeNotifier {
     remaining = 0;
     rounds.clear();
     await _changed();
+  }
+
+  /// Takes the identity and what goes with it from an identity file; what
+  /// this phone has asked of Android stays its own. Applied at once, saved
+  /// after.
+  Future<void> moveIn(IdentityFile f) {
+    keys = Keys.fromSeed(sodium, f.seed);
+    name = f.name;
+    home = f.home?.address;
+    nodeAddress = f.nodeAddress;
+    nodeAt = f.nodeAt;
+    linked = false;
+    cardTime = f.cardTime;
+    cardSentTime = f.cardSentTime;
+    lastSent = f.lastSent;
+    backedUp = f.backedUp;
+    fetchQueued = false;
+    remaining = f.remaining;
+    rounds
+      ..clear()
+      ..addAll(f.rounds);
+    notifyListeners();
+    return _save();
   }
 
   /// Sets or clears the home node; true if the card changed.

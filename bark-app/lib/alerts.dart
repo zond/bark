@@ -61,6 +61,14 @@ abstract interface class Notifier {
 
   /// Opens the system's share sheet with `text` and the PNG image `png`.
   Future<void> share(String text, Uint8List png);
+
+  /// Opens the system's dialog to save `bytes` as a file, `name` offered;
+  /// whether the person saved it.
+  Future<bool> saveFile(String name, Uint8List bytes);
+
+  /// Opens the system's dialog to pick a file; its bytes, or null when the
+  /// person picked none.
+  Future<Uint8List?> openFile();
 }
 
 /// A text a notification shows: as far as it has come, and when its first
@@ -105,6 +113,10 @@ class NoNotifier implements Notifier {
   Future<void> openBluetoothSettings() async {}
   @override
   Future<void> share(String text, Uint8List png) async {}
+  @override
+  Future<bool> saveFile(String name, Uint8List bytes) async => false;
+  @override
+  Future<Uint8List?> openFile() async => null;
 }
 
 /// Decides what to notify: each new text, unless its thread is in front

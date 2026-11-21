@@ -118,6 +118,7 @@ void main() {
         'Updates',
         'My name',
         'Backup',
+        'My identity',
         'Debug',
       ])
         t.getTopLeft(find.text(h, skipOffstage: false)).dy,
@@ -1177,7 +1178,7 @@ void main() {
     expect(app.session.connected, isFalse);
     // Settings lists it among the paired nodes, lost.
     expect(row, findsOneWidget);
-    expect(find.text('No longer yours'), findsOneWidget);
+    expect(find.text('Does not know this phone'), findsOneWidget);
 
     // Its row offers to pair again, beside Forget, and a tap on it says
     // what happened and what each does.
@@ -1187,7 +1188,7 @@ void main() {
     await t.tap(row);
     await t.pumpAndSettle();
     expect(
-      find.text('ID FA4E00000001 no longer knows this phone'),
+      find.text('ID FA4E00000001 does not know this phone'),
       findsOneWidget,
     );
     expect(find.textContaining('Pair again: pair anew'), findsOne);
@@ -1243,7 +1244,7 @@ void main() {
     final other = find.text('ID 0CE400000002');
     expect(t.getTopLeft(home).dy, lessThan(t.getTopLeft(other).dy));
     expect(find.text('Your home, connected'), findsOneWidget);
-    expect(find.text('No longer yours'), findsOneWidget);
+    expect(find.text('Does not know this phone'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Unpair'), findsOneWidget);
     await t.tap(find.byTooltip('Why this node'));
     await t.pumpAndSettle();

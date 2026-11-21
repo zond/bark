@@ -14,6 +14,9 @@ is a prototype for the bench, not the app people will carry.
 - **Identity**: the person's public key. The app makes it at first
   start from 12 words the person writes down, and can restore it from
   them on another phone. Texts are sealed to an identity.
+- **Identity file**: a file, locked by a password, that holds the
+  identity and what goes with it, to move to a new phone (The identity
+  file, below).
 - **Card**: what two people exchange so that each can reach the other:
   an identity, the name its owner chose, their home node's address
   when the person has set one, and, unless it is the home, the
@@ -202,10 +205,11 @@ is a prototype for the bench, not the app people will carry.
     "connected", "not in reach" while the search looks, "Needs an
     update. Tap to try again" for one passed over for its version,
     "Not looking. Tap to connect" once the person has stopped the
-    search, or "No
-    longer yours", with **Pair again** while the app has heard it in
-    the last 30 s and **Forget** (Unpairing, below); a tap on that row
-    opens a few sentences on what happened and what each does. A tap on
+    search, or "Does not know this phone", with **Pair again** while
+    the app has heard it in the last 30 s and **Forget** (Unpairing,
+    below); a tap on that row opens a few sentences on why, someone
+    removed the phone, the node lost its memory, or the person moved
+    from another phone (The identity file, below), and what each does. A tap on
     another paired node's row connects to it as its owner: at once when
     the app heard it in the last 30 s, the span the search takes to
     call a node out of reach, else after a scan of one round, saying it
@@ -243,6 +247,21 @@ is a prototype for the bench, not the app people will carry.
   - **My name** and **Backup**: show the 12 words, or restore an
     identity from them, after a warning that contacts reach it only
     once they have its card.
+  - **My identity**: "Save it to a file to move to a new phone.", with
+    **Save to a file** and **Restore from a file**, and an info button
+    on what the file holds, that a pairing stays on the old phone, and
+    why one identity belongs on one phone at a time. Save asks for a
+    password twice, with **Add my messages**, unticked, and the line
+    "Use it on one phone at a time.", then opens Android's dialog to
+    save the file, named `bark-identity-<date>.bark`; Restore says "This
+    replaces the identity, contacts and messages on this phone.", opens
+    Android's dialog to pick the file, and asks for its password. A
+    refused file says why in the dialog, which stays open: "Wrong
+    password, or the file is damaged.", "This is not a bark identity
+    file." or "This file is from another version of the app.", each
+    with "Nothing changed." A restore ends the link and says "Identity
+    restored", adding "Pair again with your nodes." when the old phone
+    was paired with some (The identity file, below).
   - **Battery**: whether Android may close the link with the screen
     off, with **Let bark run**, which opens Android's dialog to exempt
     the app from battery optimisation (next section).
@@ -700,7 +719,8 @@ renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 `-2`, `-3` and on added if that name is taken, so no file set aside is
 ever overwritten; the debug screen's log says so, and the app starts that
 file empty (for the person, with a new identity). The app reads only
-the forms it writes.
+the forms it writes. The person can also save it all to an identity
+file, and restore it on another phone (The identity file, below).
 
 ## Notifications and the background link
 
@@ -1032,6 +1052,60 @@ ago" and still sends there. With a home and no place known yet, it goes to the h
 D132, D162). Reactions and
 cards go without asking, to the home's mailbox when there is a choice.
 
+## The identity file
+
+A person moves to a new phone with an identity file (Settings, My
+identity; `lib/identity_file.dart`). The 12 words bring back the
+identity alone; the file brings back what goes on from it: the seed,
+the name, the home's address and the mailbox key given to it, the
+card's times, the last `sent` given, so that the new phone's come after
+it, as a contact takes only a newer one as news and the home answers
+only a fetch later than its last (spec "Mailbox"), the mailbox's latest
+rounds, every contact with its card, name, verified mark, last known
+place and archived mark, the nodes the old phone was paired with and
+where it stood in each public node's ring as a guest, and, if the person
+ticks **Add my messages**, the queue, the received texts and the
+reactions used. Whether the app asked for Bluetooth and to notify is
+the phone's, and stays.
+
+The file is a header of 54 bytes, the ASCII `bark-identity`, the
+layout's version, 1, a salt of 16 random bytes and a nonce of 24, then
+the contents as JSON, encrypted and authenticated with
+XChaCha20-Poly1305 (`crypto_aead_xchacha20poly1305_ietf`), the header as
+its additional data, so that a byte changed anywhere fails the open. The
+key is Argon2id (`crypto_pwhash`, `argon2id13`) of the password and the
+salt with RFC 9106 §4's second recommended option, for where its first
+one's 2 GiB is more memory than there is: 3 passes over 64 MiB, a
+128-bit salt and a 256-bit key. libsodium runs it in one lane, not that
+option's four, so it takes longer, in an isolate of its own, under a
+spinner; the memory, which is what each guess at the password costs, is the
+same. The contacts and the messages are in the forms of
+`contacts.json` and `bark.json`, each with that file's version, and the
+app reads only a file whose versions are its own: another is "from
+another version of the app". The cipher cannot tell a wrong password
+from a damaged file, and says both. The home carries its key as a
+field of its own, as a home's key may come to be one the person was
+given rather than one made of their identity; this app makes the key
+of the identity, and refuses a file whose home holds another.
+
+A restore reads the whole file before it changes anything, ends the
+link, which was made for the identity replaced, and replaces the
+person, the contacts and the messages, none if the file has none. A
+pairing is the phone's: Android keeps the bond, and the node knows the
+phone by it (Old bonds, above), so the nodes the old phone was paired
+with come back paired but not this phone's, until the person pairs
+again: they come back as nodes that do not know the phone, "Does not
+know this phone" under "Paired with", with **Pair again** while in
+reach and **Forget** (Settings, above), and no mark of their own, as
+that is all they are to this phone. The search does not
+use them meanwhile, and a public one serves the phone as a guest. A node
+this phone is paired with already stays its own. The home needs no
+pairing, as it holds the mailbox key: texts to the card go on arriving
+there, and **Fetch my mail** from any other node brings them. Each
+saved file holds the state of its moment: two phones restored from one,
+or the old one used on, would each take mail the other never sees, so
+the Save dialog says "Use it on one phone at a time."
+
 ## Plugins
 
 Besides those for Bluetooth, location and storage, pinned packages
@@ -1041,9 +1115,9 @@ licences compatible with the repository's GPL-3:
 
 | package | does | licence |
 |---|---|---|
-| `sodium` 4.1.2+1 | libsodium 1.0.22, built from its source into the app, and its Dart binding | BSD-3-Clause; libsodium ISC |
+| `sodium` 4.1.2+1 | libsodium 1.0.22, built from its source into the app, and its Dart binding; the identity file's Argon2id is in its "sumo" part, which on Android is the same library | BSD-3-Clause; libsodium ISC |
 | `crypto` 3.0.8 | SHA-256, for the backup words' checksum and a firmware image's hash | BSD-3-Clause |
-| `file_selector` 1.1.0 | picks a firmware image file | BSD-3-Clause |
+| `file_selector` 1.1.0 | picks a firmware image file and an identity file to restore | BSD-3-Clause |
 | `qr_flutter` 4.1.0, with `qr` | draws the code | BSD-3-Clause |
 | `qr_code_scanner_plus` 2.3.2 | scans it with the camera | BSD-2-Clause; on Android it uses the ZXing libraries, Apache-2.0 |
 | `flutter_local_notifications` 22.3.3 | the texts' notifications and the permission to notify | BSD-3-Clause |
@@ -1092,7 +1166,11 @@ The tests check every value's bytes against the vectors of
 words, cards and every payload form against `bark-app-layer`'s
 `vectors.json`, made by the Rust side; run the queue, the inbox, first
 messages, reactions of one character and no more, the stored files
-and cards in their current forms alone, a release read only with its
+and cards in their current forms alone, an identity file's key against
+a vector of Argon2id, the file saved and restored on another phone with
+its messages and without, its home's key and the nodes to pair again,
+and refused, changing nothing, for a wrong password, a changed byte,
+another file and another layout, a release read only with its
 manifest, a newer app's APK kept only once whole and handed to the
 installer, the picker's first
 row after picks and a restart, a reflected
@@ -1375,7 +1453,8 @@ a phone (Trying it).
     or the node's stored state is discarded. Connect the first phone
     once, which finds the node no longer its own, and **Not now**.
     **Settings** lists the node under
-    "Paired with" as no longer yours, with **Pair again** and **Forget**;
+    "Paired with" as "Does not know this phone", with **Pair again** and
+    **Forget**;
     a tap on the row says what happened. **Pair again**: the log shows
     `Pairing: the phone forgot its bond with …`, the node logs one
     link, shows a code, and the pairing completes; the row says the node
@@ -1395,6 +1474,19 @@ a phone (Trying it).
     30 s, the phone is on C as a guest. Restart the app: A is
     tried once again. Flash A back to version 1 and tap its row: the
     phone links to it, and the search takes it again.
+
+21. Moving to a new phone, with the Pixel as the new one. On the old
+    phone, with a home, contacts and a node paired, **Settings**, **My
+    identity**, **Save to a file**: type a password twice, tick **Add
+    my messages**, **Save**, and save the file in Android's dialog, to
+    Downloads or Drive. On the Pixel, **Restore from a file**, **Choose
+    file**, the file; a wrong password says so and changes nothing; the
+    right one says "Identity restored. Pair again with your nodes.", and
+    the conversations, contacts, name and card are the old phone's.
+    **Settings** lists the old nodes as "Does not know this phone"; a
+    text to the restored person's card arrives at the home, and **Fetch
+    my mail** from another node brings it. **Pair again** on the home's
+    row, with the code on its screen: the row says "Your home".
 
 ## The phone test
 

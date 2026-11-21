@@ -79,6 +79,10 @@ class FakeNotifier implements Notifier {
   @override
   Future<void> share(String text, Uint8List png) async =>
       log.add('share $text');
+  @override
+  Future<bool> saveFile(String name, Uint8List bytes) async => false;
+  @override
+  Future<Uint8List?> openFile() async => null;
 }
 
 void main() {

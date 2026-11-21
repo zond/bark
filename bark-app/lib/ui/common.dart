@@ -532,10 +532,11 @@ String connectionHelp(AppModel app) {
   final lost = [for (final n in app.nodes.lost) shownName(n)];
   final lostLine = switch (lost) {
     [] => '',
-    [final n] => '\n\n$n is no longer yours: it no longer knows this phone.',
+    [final n] =>
+      '\n\n$n does not know this phone: pair again with it in Settings.',
     _ =>
-      '\n\n${lost.join(', ')} are no longer yours: they no longer know this '
-          'phone.',
+      '\n\n${lost.join(', ')} do not know this phone: pair again with them '
+          'in Settings.',
   };
   final unserved = [
     for (final r in app.nodes.records)

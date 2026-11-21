@@ -163,6 +163,34 @@ class NodeStore {
     return true;
   }
 
+  /// Takes the nodes of an identity file. One the old phone was paired
+  /// with does not hold this phone's bond, as a bond stays in the phone it
+  /// was made on, so it is paired and lost, unless this phone is its owner
+  /// already; and where the old phone stood in each node's ring as a guest
+  /// is where this one does. Of what this phone knew, only its own nodes
+  /// stay paired, as Android holds their bonds; its places in the rings
+  /// were another identity's tag's.
+  void moveIn(Iterable<({String name, bool paired, int ringAfter})> ns) {
+    for (final r in _all.values) {
+      r.ringAfter = 0;
+      r.ringReadAt = null;
+      if (!r.own) {
+        r
+          ..paired = false
+          ..lost = false;
+      }
+    }
+    for (final n in ns) {
+      final r = of(n.name)..ringAfter = n.ringAfter;
+      if (n.paired && !r.own) {
+        r
+          ..paired = true
+          ..lost = true;
+      }
+    }
+    guest = null;
+  }
+
   List<Map<String, dynamic>> toJson() => [
     for (final r in _all.values)
       if (r._kept) r.toJson(),
