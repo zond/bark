@@ -2,8 +2,8 @@
 
 **Status:** design, 2026-11-13. The runner, the standing checks, the
 bench build, the phone test and scenarios A1 to A5, A8, S2 and S3 are built.
-A1, A2, A3 and A8 and the phone test, A7, have passed on the boards, the
-last two on 2026-11-20; A4 and A5 have run, and S2 and S3 have not yet. The anchor and clock checks came on 2026-11-17. Every board of a run runs the bench build, which logs
+A1, A2, A3, A8 and S3 and the phone test, A7, have passed on the boards, the
+last three on 2026-11-20; A4 and A5 have run, and S2 has not yet. The anchor and clock checks came on 2026-11-17. Every board of a run runs the bench build, which logs
 each transmission, as the heartbeat check needs. The bench build has a sync word of
 its own, so nodes running a release in range take no part in a run. Four T-Echo 433 boards on
 USB on one desk and one Android phone on adb. A quoted name after "spec"
