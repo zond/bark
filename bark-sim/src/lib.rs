@@ -11,6 +11,7 @@
 
 mod battery;
 pub mod boots;
+mod carried;
 pub mod geo;
 mod gps;
 pub mod install;
