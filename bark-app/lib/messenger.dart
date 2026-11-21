@@ -183,7 +183,7 @@ class Messenger {
   }
 
   /// Gives `c` the person's home `h`, with the key made for them there.
-  Future<void> sendHome(Contact c, HomeKey h) async {
+  Future<void> sendHome(Contact c, SharedHome h) async {
     final t = c.unasked(now());
     if (t == null) throw BadPayload('${c.name} has no address yet');
     final dst = c.addressOf(t);

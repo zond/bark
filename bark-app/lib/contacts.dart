@@ -8,13 +8,14 @@ import 'link.dart';
 import 'session.dart';
 import 'store.dart';
 
-/// A home node and the mailbox key that seals fetches to it.
-typedef HomeKey = ({Address home, Uint8List key});
+/// A home node shared between two people, with the mailbox key made there
+/// for the one it is given to, which seals their fetches to it.
+typedef SharedHome = ({Address home, Uint8List key});
 
-Map<String, dynamic>? _homeKeyJson(HomeKey? h) =>
+Map<String, dynamic>? _sharedHomeJson(SharedHome? h) =>
     h == null ? null : {'home': h.home.toString(), 'key': hex(h.key)};
 
-HomeKey? _homeKeyOf(Object? j) => switch (j) {
+SharedHome? _sharedHomeOf(Object? j) => switch (j) {
   null => null,
   final Map<String, dynamic> m => (
     home: Address.parse(m['home'] as String)!,
@@ -80,11 +81,11 @@ class Contact {
   /// The person's home, of which they are the owner, shared with this
   /// contact: the key made for them there, kept and used again for that
   /// home, so that a lost answer asked again adds no second record.
-  final HomeKey? share;
+  final SharedHome? share;
 
   /// A home this contact, its owner, gave the person, until they use it
   /// or say not now.
-  final HomeKey? gift;
+  final SharedHome? gift;
 
   Contact(
     this.card,
@@ -183,8 +184,8 @@ class Contact {
     heardAt: heardAt ?? this.heardAt,
     archived: archived ?? this.archived,
     cameByMessage: cameByMessage ?? this.cameByMessage,
-    share: identical(share, _keep) ? this.share : share as HomeKey?,
-    gift: identical(gift, _keep) ? this.gift : gift as HomeKey?,
+    share: identical(share, _keep) ? this.share : share as SharedHome?,
+    gift: identical(gift, _keep) ? this.gift : gift as SharedHome?,
   );
 
   /// What [copyWith] keeps when a share or a gift is not given.
@@ -222,8 +223,8 @@ class Contact {
     'heardAt': heardAt?.toIso8601String(),
     'archived': archived,
     'cameByMessage': cameByMessage,
-    if (share != null) 'share': _homeKeyJson(share),
-    if (gift != null) 'gift': _homeKeyJson(gift),
+    if (share != null) 'share': _sharedHomeJson(share),
+    if (gift != null) 'gift': _sharedHomeJson(gift),
   };
 
   static Contact fromJson(Map<String, dynamic> j) => Contact(
@@ -247,8 +248,8 @@ class Contact {
     archived: j['archived'] as bool,
     cameByMessage: j['cameByMessage'] as bool,
     // Absent from a contact without one.
-    share: _homeKeyOf(j['share']),
-    gift: _homeKeyOf(j['gift']),
+    share: _sharedHomeOf(j['share']),
+    gift: _sharedHomeOf(j['gift']),
   );
 }
 
