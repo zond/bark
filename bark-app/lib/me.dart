@@ -162,8 +162,7 @@ class Me extends ChangeNotifier {
   final DateTime Function() now;
   Me(this.store, this.sodium, this.now);
 
-  Keys get keys => _keys!;
-  Keys? _keys;
+  late Keys keys;
   late MeState _s;
 
   // The stored fields, as [MeState] says what each is; changed only here.
@@ -253,9 +252,7 @@ class Me extends ChangeNotifier {
     _given?.dispose();
     _given = null;
     _s = s;
-    final old = _keys;
-    _keys = k;
-    if (old != null && !identical(old, k)) old.dispose();
+    keys = k;
   }
 
   Future<void> _save() => store.save(version, _s.toJson());

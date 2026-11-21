@@ -7,7 +7,6 @@ import 'dart:typed_data';
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
-import 'package:bark_app/identity_file.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
 import 'package:bark_app/nodes.dart';
@@ -252,41 +251,6 @@ void main() {
     await again.setName('Ann');
     expect(store.text, saved);
   });
-
-  test(
-    'a restore and a move-in free the keys of the identity replaced',
-    () async {
-      final m = Me(MemoryStore('me.json'), sodium, () => at);
-      await m.load();
-      final first = m.keys;
-      await m.restore(Uint8List(16));
-      expect(first.disposed, isTrue);
-      final second = m.keys;
-      expect(second.disposed, isFalse);
-      expect(second.mailbox.extractBytes(), hasLength(32));
-      await m.moveIn(
-        IdentityFile(
-          seed: Uint8List.fromList(List.filled(16, 1)),
-          name: 'Ann',
-          home: null,
-          nodeAddress: null,
-          nodeAt: 0,
-          cardTime: 0,
-          cardSentTime: 0,
-          lastSent: 0,
-          backedUp: true,
-          remaining: 0,
-          rounds: const [],
-          contacts: const [],
-          archived: const {},
-          nodes: const [],
-          messages: null,
-        ),
-      );
-      expect(second.disposed, isTrue);
-      expect(m.keys.mailbox.extractBytes(), hasLength(32));
-    },
-  );
 
   test('a me.json set aside gives a new identity and keeps the old', () async {
     final bad = oldMe.replaceFirst('{', '{"version":${Me.version},');
