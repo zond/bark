@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -21,6 +22,21 @@ class MainActivity : FlutterActivity() {
     override fun provideFlutterEngine(context: Context): FlutterEngine = Engine.get(context)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        // A window made while a secret is shown, as after a rotation, is
+        // secured too.
+        secure(secret)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WINDOW).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // While the seed or a password is on screen: no screenshot,
+                // recording or recents thumbnail shows it.
+                "secure" -> {
+                    secret = call.arguments as Boolean
+                    secure(secret)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler { call, result ->
             when (call.method) {
                 "exempt" -> result.success(
@@ -127,6 +143,14 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun secure(on: Boolean) {
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
     private var saving: MethodChannel.Result? = null
     private var savingBytes: ByteArray? = null
 
@@ -160,6 +184,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WINDOW).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, POWER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER).setMethodCallHandler(null)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, BLUETOOTH).setMethodCallHandler(null)
@@ -168,6 +193,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private companion object {
+        // Kept for the process, as the engine outlives the window.
+        var secret = false
+
+        const val WINDOW = "org.bark.bark_app/window"
         const val POWER = "org.bark.bark_app/power"
         const val INSTALLER = "org.bark.bark_app/installer"
         const val SHARE = "org.bark.bark_app/share"

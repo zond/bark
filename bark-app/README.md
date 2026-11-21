@@ -289,6 +289,11 @@ is a prototype for the bench, not the app people will carry.
     with "Nothing changed." A restore ends the link and says "Identity
     restored", adding "Pair again with your nodes." when the old phone
     was paired with some (The identity file, below).
+
+    While the 12 words, the dialog that takes them or an identity
+    file's password dialog is on screen, Android leaves the app's window
+    out of screenshots, screen recordings and the recent apps' thumbnail
+    (`FLAG_SECURE`, set through a channel in `MainActivity.kt`).
   - **Battery**: whether Android may close the link with the screen
     off, with **Let bark run**, which opens Android's dialog to exempt
     the app from battery optimisation (next section).
@@ -330,7 +335,7 @@ is a prototype for the bench, not the app people will carry.
   (a hub, the neighbours it knows, such as `3 heard · 3 strong · 0
   exchanged`), GPS signal (signal bars, its GPS's mean C/N0 as its last
   reading had it, `31 dB-Hz · enough for a fix`, or `· too weak for a fix` under the
-  22 dB-Hz below which a node drops a fix, spec "Position", roadmap
+  22 dB-Hz below which a node drops a fix (`gpsFixFloorDbHz`, which a test holds to the firmware's `CN0_FLOOR`), spec "Position", roadmap
   D234, or `no reading` for 0, as while its GPS rests; read from Status
   again as the map opens and is refreshed, as the node does not notify
   it, and from a neighbour's answer), Version (a price tag, the Material set having no version
@@ -784,7 +789,18 @@ renamed to `<name>.old-<version>` or `<name>.old-bad`, with
 `-2`, `-3` and on added if that name is taken, so no file set aside is
 ever overwritten; the debug screen's log says so, and the app starts that
 file empty (for the person, with a new identity). The app reads only
-the forms it writes. A field added to a form that every file before
+the forms it writes, and `bark.json` of the version before.
+`me.json` and `contacts.json` are each one JSON object, written whole
+to a file beside it and renamed over it, so that a kill leaves the old
+or the new. `bark.json`, which grows with every text, is a log: a first
+line `{"version":4}`, then a line for each change, a message queued,
+changed, dropped or received, or the nodes and the reactions used, so
+that saving costs what changed. A line is written whole or not at all;
+a kill mid-line loses that change alone, and the next start writes the
+file afresh without it. Once the lines outnumber twice what the file
+holds, it is written whole again, a line a message, the same way as the
+other two. Version 3, before it, held everything as one object; the app
+reads it and writes it afresh as a log. A field added to a form that every file before
 lacks, such as a home's given key, the owner's mark, the home's newest
 payload version or a home being left
 in `me.json`, a share and a home given in `contacts.json`, a fetch's
@@ -1260,8 +1276,9 @@ option's four, so it takes longer, in an isolate of its own, under a
 spinner; the memory, which is what each guess at the password costs, is the
 same. The contacts and the messages are in the forms of
 `contacts.json` and `bark.json`, each with that file's version, and the
-app reads only a file whose versions are its own: another is "from
-another version of the app". The cipher cannot tell a wrong password
+app reads only a file whose versions are its own, the messages also of
+`bark.json`'s version 3, as its messages had the same forms: another is
+"from another version of the app". The cipher cannot tell a wrong password
 from a damaged file, and says both. The home carries its key as a
 field of its own, the one the identity makes or one given with the home
 (A home given, above), which the new phone keeps as given unless it is

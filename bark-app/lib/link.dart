@@ -68,10 +68,14 @@ class Uuids {
   static const publicNode = '28bc1001-a1b8-4893-9537-2ee3559d7644';
 }
 
-/// ATT error codes the node answers a write with.
+/// ATT error codes the node answers a write with; the standard ones are
+/// Bluetooth Core Specification 5.0, Vol 3 Part F §3.4.1.1.
 class AttError {
   /// A characteristic that needs the bond, on a link without it.
   static const insufficientAuthentication = 0x05;
+
+  /// A characteristic that needs encryption, on a link without it.
+  static const insufficientEncryption = 0x0F;
   static const invalidLength = 0x0D;
   static const valueNotAllowed = 0x13;
 
@@ -271,6 +275,10 @@ class NodeInfo {
     );
   }
 }
+
+/// The mean C/N0, dB-Hz, under which a node drops its GPS's fix (spec
+/// "Position", roadmap D234); the firmware's `CN0_FLOOR`.
+const int gpsFixFloorDbHz = 22;
 
 /// Status, read and notify.
 class Status {

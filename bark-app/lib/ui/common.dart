@@ -1,12 +1,115 @@
 // Small pieces the screens share.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app.dart';
 import '../ble_link.dart' show strongDbm, weakDbm;
 import '../link.dart';
 import '../node_link.dart';
 import '../session.dart';
+
+/// Keeps the app's window out of screenshots, screen recordings and the
+/// recents thumbnail while it shows `child`, which holds the person's
+/// seed or a password that seals it (`FLAG_SECURE`, MainActivity.kt).
+class Secret extends StatefulWidget {
+  final Widget child;
+  const Secret({required this.child, super.key});
+
+  static const channel = MethodChannel('org.bark.bark_app/window');
+
+  /// How many are shown: a dialog over another clears the flag only once
+  /// both are gone.
+  static int _shown = 0;
+
+  static Future<void> _secure(bool on) async {
+    try {
+      await channel.invokeMethod<void>('secure', on);
+    } on MissingPluginException {
+      // No window to protect: the tests, without a phone.
+    }
+  }
+
+  @override
+  State<Secret> createState() => _SecretState();
+}
+
+class _SecretState extends State<Secret> {
+  @override
+  void initState() {
+    super.initState();
+    if (Secret._shown++ == 0) unawaited(Secret._secure(true));
+  }
+
+  @override
+  void dispose() {
+    if (--Secret._shown == 0) unawaited(Secret._secure(false));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+/// The second's tick of what a screen shows that moves with the clock
+/// alone, such as "sending again in 0:42" or "20 min ago". It runs only
+/// while a [Ticking] is shown and the app is in front, so it wakes nothing
+/// else: what changes the model's state at a set time has its own timer.
+class Seconds extends ChangeNotifier {
+  Seconds._();
+  static final Seconds instance = Seconds._();
+
+  Timer? _timer;
+  bool _front = true;
+
+  /// The app's window is in front; set by the app as that changes.
+  set front(bool f) {
+    _front = f;
+    _run();
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    super.addListener(listener);
+    _run();
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+    _run();
+  }
+
+  void _run() {
+    if (hasListeners && _front) {
+      _timer ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => notifyListeners(),
+      );
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+}
+
+/// Builds `builder` again every second ([Seconds]) while `when` holds as
+/// it is built, else once.
+class Ticking extends StatelessWidget {
+  final bool when;
+  final WidgetBuilder builder;
+  const Ticking(this.builder, {this.when = true, super.key});
+
+  @override
+  Widget build(BuildContext context) => when
+      ? ListenableBuilder(
+          listenable: Seconds.instance,
+          builder: (c, _) => builder(c),
+        )
+      : builder(context);
+}
 
 void say(BuildContext context, String s) =>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
@@ -311,13 +414,13 @@ class GiftLines extends StatelessWidget {
                     children: [
                       HelpButton('A home given', _giftHelp),
                       TextButton(
-                        onPressed: () => app.declineGift(c),
+                        onPressed: () => app.mailbox.declineGift(c),
                         child: const Text('Not now'),
                       ),
                       TextButton(
                         onPressed: () async {
                           try {
-                            final r = await app.useGift(c);
+                            final r = await app.mailbox.useGift(c);
                             if (context.mounted) say(context, r);
                           } catch (e) {
                             if (context.mounted) say(context, 'Failed: $e');
@@ -347,7 +450,7 @@ class HomeOfferLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!app.offerHome) return const SizedBox.shrink();
+    if (!app.mailbox.offerHome) return const SizedBox.shrink();
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
@@ -363,7 +466,7 @@ class HomeOfferLine extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
-                  onPressed: app.notHome,
+                  onPressed: app.mailbox.notHome,
                   child: const Text('Not now'),
                 ),
                 TextButton(
@@ -371,7 +474,7 @@ class HomeOfferLine extends StatelessWidget {
                       ? null
                       : () async {
                           try {
-                            final r = await app.homeHere();
+                            final r = await app.mailbox.homeHere();
                             if (context.mounted) say(context, r);
                           } catch (e) {
                             if (context.mounted) say(context, notPairedLine(e));
@@ -436,21 +539,71 @@ Future<void> askToForget(BuildContext context, AppModel app, String text) =>
 /// its answer the button is off and says so; "No new mail", or how many
 /// more the home holds, is told once, and the count stays on the button
 /// until a fetch brings them.
-class FetchButton extends StatelessWidget {
+class FetchButton extends StatefulWidget {
   final AppModel app;
   const FetchButton(this.app, {super.key});
 
   @override
-  Widget build(BuildContext context) {
+  State<FetchButton> createState() => _FetchButtonState();
+}
+
+class _FetchButtonState extends State<FetchButton> {
+  AppModel get app => widget.app;
+  Listenable? _changes;
+  bool _current = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _changes = app.changes..addListener(_tell);
+  }
+
+  @override
+  void didUpdateWidget(FetchButton old) {
+    super.didUpdateWidget(old);
+    if (old.app == app) return;
+    _changes?.removeListener(_tell);
+    _changes = app.changes..addListener(_tell);
+  }
+
+  // Told again as the screen above this one closes.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _current = ModalRoute.of(context)?.isCurrent != false;
+    _tell();
+  }
+
+  @override
+  void dispose() {
+    _changes?.removeListener(_tell);
+    super.dispose();
+  }
+
+  /// Says the home's news once, on the screen in front, after the frame:
+  /// another screen's button would take it unseen.
+  void _tell() {
+    if (!_current || app.me.home == null || app.session.fetchNews == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final news = app.session.fetchNews;
+      if (!mounted || !_current || app.me.home == null || news == null) {
+        return;
+      }
+      app.session.fetchNews = null;
+      say(context, news);
+    });
+  }
+
+  // The wait counts down, and ends by the clock.
+  @override
+  Widget build(BuildContext context) =>
+      Ticking(when: app.session.fetchWaiting != null, _button);
+
+  Widget _button(BuildContext context) {
     if (app.me.home == null) return const SizedBox.shrink();
     final s = app.session;
-    final news = s.fetchNews;
-    if (news != null && ModalRoute.of(context)?.isCurrent != false) {
-      s.fetchNews = null;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) say(context, news);
-      });
-    }
     if (app.me.fetchQueued) {
       return const IconButton(
         tooltip: 'Fetch waits for a node',
@@ -478,7 +631,7 @@ class FetchButton extends StatelessWidget {
       ),
       onPressed: () async {
         try {
-          final r = await app.fetchNow();
+          final r = await app.mailbox.fetchNow();
           if (context.mounted) say(context, r);
         } catch (e) {
           if (context.mounted) say(context, 'Fetching failed: $e');
@@ -529,32 +682,41 @@ Future<void> askMyName(BuildContext context, AppModel app) async {
   if (n != null) await app.setName(n);
 }
 
-/// Asks for one line of text; null if the person cancels.
-Future<String?> askText(BuildContext context, String label, String initial) {
+/// Asks for one line of text; null if the person cancels. A `secret` one,
+/// the 12 words, is kept out of screenshots ([Secret]).
+Future<String?> askText(
+  BuildContext context,
+  String label,
+  String initial, {
+  bool secret = false,
+}) {
   final c = TextEditingController(text: initial);
   return showDialog<String>(
     context: context,
-    builder: (context) => AlertDialog(
-      // Its field stays in reach above the keyboard on a phone held sideways.
-      scrollable: true,
-      title: Text(label),
-      content: TextField(
-        controller: c,
-        autofocus: true,
-        textCapitalization: TextCapitalization.words,
-        onSubmitted: (v) => Navigator.pop(context, v.trim()),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+    builder: (context) {
+      final ask = AlertDialog(
+        // Its field stays in reach above the keyboard on a phone held sideways.
+        scrollable: true,
+        title: Text(label),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          onSubmitted: (v) => Navigator.pop(context, v.trim()),
         ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, c.text.trim()),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, c.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      );
+      return secret ? Secret(child: ask) : ask;
+    },
   );
 }
 
@@ -576,7 +738,7 @@ String? lookingLine(AppModel app) {
 /// [connectionHelp]'s to say.
 String connectionLine(AppModel app) =>
     app.nodeLine ??
-    app.installingLine ??
+    app.installs.installingLine ??
     lookingLine(app) ??
     AppModel.notLookingLine;
 
@@ -608,10 +770,10 @@ String connectionHelp(AppModel app) {
           'need an update. Tap one in Settings to try again.',
   };
   final others = '$lostLine$unservedLine';
-  final install = app.installHelp;
+  final install = app.installs.installHelp;
   if (install != null) return install;
   if (s.connected && !s.guest) {
-    if (app.atHome) {
+    if (app.mailbox.atHome) {
       return 'Your home. The phone stays linked while it is in reach, so '
           'texts come at once, also with the screen off. It always goes to '
           'your home first.';

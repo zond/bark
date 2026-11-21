@@ -148,7 +148,9 @@ void main() {
       expect(f.cameByMessage, isTrue);
       expect(f.unverified, isTrue);
       expect(s.received.map((r) => r.from), [f.key, f.key]);
-      expect((p.sessionStore.state!['received'] as List).length, 2);
+      final kept = Session(store: p.sessionStore, now: () => start)..load();
+      async.flushMicrotasks();
+      expect(kept.received.map((r) => r.from), [f.key, f.key]);
       expect(s.address.toString(), '${Address(FakeNode.gps, FakeNode.id)}');
     });
   });
@@ -405,6 +407,67 @@ void main() {
     });
   });
 
+  test('a fetch\'s wait ends by the clock, which the session tells', () {
+    fakeAsync((async) {
+      DateTime now() => start.add(async.elapsed);
+      final s = Session(store: MemoryStore(), now: now);
+      final f = Outgoing(
+        elsewhere,
+        Uint8List(8),
+        at: now(),
+        kind: OutKind.fetch,
+        sent: 1,
+      );
+      s.queue(f);
+      async.flushMicrotasks();
+      expect(s.fetchWaiting, f);
+      var told = 0;
+      s.addListener(() => told++);
+      async.elapse(Session.fetchAnswerWait - const Duration(seconds: 1));
+      expect(told, 0);
+      async.elapse(const Duration(seconds: 1));
+      expect(told, 1);
+      expect(s.fetchWaiting, isNull);
+      s.dispose();
+    });
+  });
+
+  test('the screens\' second ticks only while shown and in front', () {
+    fakeAsync((async) {
+      var ticks = 0;
+      void tick() => ticks++;
+      async.elapse(const Duration(seconds: 3));
+      expect(async.periodicTimerCount, 0);
+      Seconds.instance.addListener(tick);
+      async.elapse(const Duration(seconds: 3));
+      expect(ticks, 3);
+      Seconds.instance.front = false;
+      async.elapse(const Duration(seconds: 3));
+      expect(ticks, 3);
+      Seconds.instance.front = true;
+      async.elapse(const Duration(seconds: 1));
+      expect(ticks, 4);
+      Seconds.instance.removeListener(tick);
+      expect(async.periodicTimerCount, 0);
+    });
+  });
+
+  test('a log line tells the log\'s listeners alone, and the oldest go', () {
+    final s = Session(store: MemoryStore(), now: () => start);
+    var session = 0, log = 0;
+    s.addListener(() => session++);
+    s.log.addListener(() => log++);
+    for (var i = 0; i <= EventLog.lines; i++) {
+      s.note('line $i');
+    }
+    expect(session, 0);
+    expect(log, EventLog.lines + 1);
+    expect(s.log.length, EventLog.lines);
+    expect(s.log.first.text, 'line 1');
+    expect(s.log.last.text, 'line ${EventLog.lines}');
+    s.dispose();
+  });
+
   test('a stored reaction is its emoji', () {
     final out = Outgoing(
       Address(const Position(0, 0), Uint8List(6)),
@@ -443,7 +506,7 @@ void main() {
       '❤️',
       '😂',
     ]);
-    await s.save();
+    await s.save(state: true);
     final again = Session(store: store, now: () => DateTime.utc(2026));
     await again.load();
     expect(
@@ -987,13 +1050,6 @@ void main() {
       // The one connected last, last.
       expect(again.session.nodes.paired.toList(), [b, a]);
       expect(again.session.nodes.lost, {a});
-      expect(
-        [
-          for (final r in (p.session.store as MemoryStore).state!['nodes'])
-            r['name'],
-        ],
-        [b, a],
-      );
     });
   });
 

@@ -36,7 +36,7 @@ import 'package:bark_app/store.dart';
 import 'package:bark_app/app_layer.dart';
 import 'package:bark_app/ble_link.dart' show FoundNode, strongDbm, weakDbm;
 import 'package:universal_ble/universal_ble.dart' show UniversalBle;
-import 'package:bark_app/ui/common.dart' show receivedMarks, signalWord;
+import 'package:bark_app/ui/common.dart' show Secret, receivedMarks, signalWord;
 import 'package:bark_app/ui/card_screen.dart';
 import 'package:bark_app/ui/contacts_screen.dart';
 import 'package:bark_app/ui/debug_screen.dart';
@@ -651,6 +651,54 @@ void main() {
     app.disposeWithNode();
   });
 
+  testWidgets('the words and the identity file\'s password are kept out of '
+      'screenshots while shown', (t) async {
+    final secure = <bool>[];
+    final m = t.binding.defaultBinaryMessenger;
+    m.setMockMethodCallHandler(Secret.channel, (c) async {
+      if (c.method == 'secure') secure.add(c.arguments as bool);
+      return null;
+    });
+    addTearDown(() => m.setMockMethodCallHandler(Secret.channel, null));
+    final app = await model(t);
+    await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
+    Future<void> tap(String text) async {
+      await t.scrollUntilVisible(
+        find.text(text),
+        100,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await t.ensureVisible(find.text(text));
+      await t.pumpAndSettle();
+      await t.tap(find.text(text));
+      await t.pumpAndSettle();
+    }
+
+    await tap('Show my words');
+    expect(secure, [true]);
+    await t.tap(find.text('I wrote them down'));
+    await t.pumpAndSettle();
+    expect(secure, [true, false]);
+
+    await tap('Restore from words');
+    expect(secure, [true, false]);
+    await t.tap(find.text('Restore'));
+    await t.pumpAndSettle();
+    expect(find.text('Your 12 words'), findsOneWidget);
+    expect(secure, [true, false, true]);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(secure, [true, false, true, false]);
+
+    await tap('Save to a file');
+    expect(secure, [true, false, true, false, true]);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    expect(secure, [true, false, true, false, true, false]);
+    await t.pumpWidget(const SizedBox());
+    app.disposeWithNode();
+  });
+
   testWidgets('a temporary contact: marked with its age until a card with a '
       'home; written to at its node, fresh without asking, old after saying '
       'so', (t) async {
@@ -978,11 +1026,28 @@ void main() {
     await t.pumpAndSettle();
     await t.pageBack();
     await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsNothing);
+
+    // News that comes while a screen without the button is in front is
+    // said once that screen closes.
+    await t.tap(find.byType(PopupMenuButton<Widget Function()>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Settings'));
+    await t.pumpAndSettle();
+    await app.session.fetchAnswered(f.last.sent, nothingNew: true);
+    await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsNothing);
+    await t.pageBack();
+    await t.pumpAndSettle();
+    expect(find.text('No new mail'), findsOneWidget);
+    expect(app.session.fetchNews, isNull);
+    await t.pump(const Duration(seconds: 5));
+    await t.pumpAndSettle();
 
     // The home itself: its mail is in its inbox, nothing is sent. (Leaving
     // the home before is the home tests', as it waits on the clock.)
     await app.me.setHome(null);
-    await app.makeHome(app.session.address!);
+    await app.mailbox.makeHome(app.session.address!);
     await t.pump();
     final before = app.session.outbox.length;
     await fetch('At your home, your mail comes by itself');
@@ -1027,7 +1092,7 @@ void main() {
 
     // Setting and clearing the home both change the card.
     await press('Make this node my home', 'goes to your contact.');
-    expect(app.atHome, isTrue);
+    expect(app.mailbox.atHome, isTrue);
     // The home at a new place is still the home: no button to make it one.
     await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
     await t.pumpAndSettle();
@@ -1057,7 +1122,7 @@ void main() {
     final home = app.me.home!;
     await app.me.setHome(Address(home.pos, [1, 2, 3, 4, 5, 6]));
     await t.pumpAndSettle();
-    expect(app.atHome, isFalse);
+    expect(app.mailbox.atHome, isFalse);
     expect(find.text('Make this node my home'), findsOneWidget);
     await app.me.setHome(home);
     await t.pumpAndSettle();
@@ -1090,7 +1155,7 @@ void main() {
     );
     await app.connectFake();
     final f = app.fakeNode!;
-    await t.runAsync(() => app.makeHome(app.session.address!));
+    await t.runAsync(() => app.mailbox.makeHome(app.session.address!));
     expect(app.cardUnsent, isFalse);
     // The node takes a new place, and forgets what it stored.
     await app.session.setMapPoint(Position.fromDegrees(50.46, 30.53));
@@ -1099,7 +1164,7 @@ void main() {
     await app.session.disconnect();
     f.homeKey = null;
     await app.connectFake();
-    expect(app.homeKeyGone, isTrue);
+    expect(app.mailbox.homeKeyGone, isTrue);
     await t.pumpWidget(MaterialApp(home: SettingsScreen(app)));
     await t.pump();
     const make = 'Make this node my home';
@@ -1124,7 +1189,7 @@ void main() {
     await t.tap(find.text('Make it my home'));
     await t.runAsync(() => Future<void>.delayed(Duration.zero));
     await t.pumpAndSettle();
-    expect(app.homeKeyGone, isFalse);
+    expect(app.mailbox.homeKeyGone, isFalse);
     expect(app.session.outbox.length, sent);
     expect(find.textContaining('new home address'), findsOneWidget);
 

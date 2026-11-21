@@ -71,9 +71,7 @@ class ContactsScreen extends StatelessWidget {
       subtitle: c.unverified
           ? const Text('Not verified yet')
           : c.card.temporary
-          ? TemporaryLine(
-              c.placeAt == null ? null : app.now().difference(c.placeAt!),
-            )
+          ? TemporaryLine(c.placeAt, app.now)
           : const Text('Has a home node'),
       onTap: () => Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => ThreadScreen(app, c.key)),
@@ -85,11 +83,17 @@ class ContactsScreen extends StatelessWidget {
 /// The mark of a temporary card in a contact's row, with how long ago
 /// they were last known at their node (roadmap D162).
 class TemporaryLine extends StatelessWidget {
-  final Duration? age;
-  const TemporaryLine(this.age, {super.key});
+  final DateTime? at;
+  final DateTime Function() now;
+  const TemporaryLine(this.at, this.now, {super.key});
 
   @override
-  Widget build(BuildContext context) => Row(
+  Widget build(BuildContext context) => Ticking(when: at != null, (_) {
+    final a = at;
+    return _line(a == null ? null : now().difference(a));
+  });
+
+  Widget _line(Duration? age) => Row(
     children: [
       const Icon(
         Icons.hourglass_empty,
@@ -101,7 +105,7 @@ class TemporaryLine extends StatelessWidget {
         child: Text(
           age == null
               ? 'temporary: no node known yet'
-              : 'temporary: at the node they used ${ago(age!)}',
+              : 'temporary: at the node they used ${ago(age)}',
         ),
       ),
     ],

@@ -2,6 +2,8 @@
 // taps it: in one place so that the texts are reviewed together. Each is
 // checked against the spec section named beside it.
 
+import '../link.dart';
+
 /// The help for a row, by its label: two to four plain sentences.
 const Map<String, String> factHelp = {
   // Spec "Nodes", "Sleepy nodes", A forced role.
@@ -78,7 +80,7 @@ const Map<String, String> factHelp = {
   // Spec "Neighbour status", "Position", Checks.
   'GPS signal':
       'How strongly the node\'s GPS hears the satellites, in dB-Hz, as its '
-      'last reading had it. Under 22 the node takes no position from it; '
+      'last reading had it. Under $gpsFixFloorDbHz the node takes no position from it; '
       'an open sky gives about 40. Move a node to where it reads higher, '
       'or set its place by hand.',
   // Spec "Updates over the mesh".

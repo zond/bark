@@ -2,7 +2,15 @@
 // phone sent it, as the app follows it, for the line and for the search's
 // wait (spec "Updates over the mesh", the install; roadmap D182, D228).
 
-part of '../app.dart';
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+import 'decision.dart';
+import 'link.dart';
+import 'node_link.dart';
+import 'session.dart';
+import 'updater.dart';
 
 /// How long the line says a node is updated, once it is back on the new
 /// version: a minute, long enough to be seen when the person looks.
@@ -30,25 +38,84 @@ int installVersion(int image, int low) {
   return v > image ? v : v + 0x10000;
 }
 
-mixin _Installs on _AppCore {
-  /// The install the app follows, the last a node told of.
-  @override
-  Install? install;
+class Installs extends ChangeNotifier {
+  final Session session;
+  final DateTime Function() clock;
 
-  void _installs() {
+  /// The search's situation, by which the phone waits for a node away to
+  /// install ([waitsForInstall]).
+  final Situation Function() situation;
+
+  Installs({
+    required this.session,
+    required this.clock,
+    required this.situation,
+  }) {
+    session.addListener(_sessionChanged);
+  }
+
+  /// The phone leaves a node that drains by its own choice: the link's end
+  /// is no reboot, and nothing is waited for.
+  void leaving() {
+    if (!draining) return;
+    _install = null;
+    _installLater();
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    session.removeListener(_sessionChanged);
+    _installTimer?.cancel();
+    super.dispose();
+  }
+
+  /// The install the app follows, the last a node told of.
+  Install? get install => _install;
+  Install? _install;
+
+  void _sessionChanged() {
+    _followInstall();
+    _installLater();
+  }
+
+  /// Wakes the listeners when the line about [install] changes with the
+  /// clock alone: [updatedShown] after the node came back, and [swapAway]
+  /// after a node the phone sent an image went, when it is late.
+  Timer? _installTimer;
+  Install? _timed;
+
+  void _installLater() {
+    final i = install;
+    if (i == _timed) return;
+    _timed = i;
+    _installTimer?.cancel();
+    final back = i?.back, gone = i?.gone;
+    final at = back != null
+        ? back.add(updatedShown)
+        : i != null && i.sent && gone != null
+        ? gone.add(swapAway)
+        : null;
+    if (at == null) return;
+    final wait = at.difference(clock());
+    if (wait > Duration.zero) _installTimer = Timer(wait, notifyListeners);
+  }
+
+  void _followInstall() {
     final n = session.connected ? session.node : null;
     final i = install;
     if (n == null) {
       if (i != null && i.gone == null && i.back == null) {
-        install = (
+        _install = (
           node: i.node,
           version: i.version,
           sent: false,
-          gone: now(),
+          gone: clock(),
           givenUp: false,
           back: null,
         );
         session.note('${i.node} reboots to install version ${i.version}');
+        notifyListeners();
       }
       return;
     }
@@ -56,7 +123,8 @@ mixin _Installs on _AppCore {
     // An owner's link to another node, as the person tapped it, ends the
     // wait for one that installs (roadmap D202).
     if (i != null && i.node != name && !session.guest) {
-      install = null;
+      _install = null;
+      notifyListeners();
       return;
     }
     final status = session.status;
@@ -65,7 +133,7 @@ mixin _Installs on _AppCore {
     if (low != 0) {
       final version = installVersion(n.image, low);
       if (i?.node != name || i?.version != version || i?.gone != null) {
-        install = (
+        _install = (
           node: name,
           version: version,
           sent: false,
@@ -74,17 +142,18 @@ mixin _Installs on _AppCore {
           back: null,
         );
         session.note('$name drains to install version $version');
+        notifyListeners();
       }
     } else if (i?.node == name && i!.back == null) {
       final on = n.image == i.version && i.gone != null;
-      install = on
+      _install = on
           ? (
               node: name,
               version: i.version,
               sent: i.sent,
               gone: i.gone,
               givenUp: i.givenUp,
-              back: now(),
+              back: clock(),
             )
           : null;
       // The updater tells of an image the phone sent.
@@ -95,27 +164,28 @@ mixin _Installs on _AppCore {
               : '$name does not install version ${i.version} now',
         );
       }
+      notifyListeners();
     }
   }
 
   /// The node `id` ended its link to reboot into `version`, which the
   /// phone sent it: the search waits for it as for one that installs.
-  void _rebooted(List<int> id, int version) {
-    install = (
+  void rebooted(List<int> id, int version) {
+    _install = (
       node: nodeName(id),
       version: version,
       sent: true,
-      gone: now(),
+      gone: clock(),
       givenUp: false,
       back: null,
     );
+    _installLater();
     notifyListeners();
   }
 
   /// The node in use tells it drains to install the version [install]
   /// names.
-  @override
-  bool get _installsNow {
+  bool get draining {
     final i = install;
     final n = session.connected ? session.node : null;
     return i != null && i.gone == null && n != null && nodeName(n.id) == i.node;
@@ -125,21 +195,19 @@ mixin _Installs on _AppCore {
   /// while the search has not given up waiting for it: away for the swap,
   /// or for as long as its firmware may take after an image the phone
   /// sent, which the person waits for ([backWithin]).
-  @override
-  Awaited? get _awaited {
+  Awaited? get awaited {
     final i = install;
     final gone = i?.gone;
     if (i == null || gone == null || i.givenUp || i.back != null) return null;
-    if (!nodes.own.contains(i.node)) return null;
+    if (!session.nodes.own.contains(i.node)) return null;
     return (node: i.node, gone: gone, away: i.sent ? backWithin : swapAway);
   }
 
   /// The search gives up waiting for the node that installs: it is out of
   /// reach as any node, or back and passed over ([waitsForInstall]).
-  @override
-  void _giveUp(String node) {
+  void giveUp(String node) {
     final i = install!;
-    install = (
+    _install = (
       node: i.node,
       version: i.version,
       sent: i.sent,
@@ -148,11 +216,12 @@ mixin _Installs on _AppCore {
       back: null,
     );
     session.note(
-      nodes[node]?.unserved ?? false
+      session.nodes[node]?.unserved ?? false
           ? '$node back from its install, but it and this app do not serve '
                 'each other: passed over'
           : '$node not back from its install: out of reach',
     );
+    notifyListeners();
   }
 
   /// The line while a paired node is away to install a version; null
@@ -161,7 +230,7 @@ mixin _Installs on _AppCore {
     if (session.connected || !waitsForInstall(situation())) return null;
     final i = install!;
     // Only an image the phone sent is waited for past its swap.
-    final late = i.sent && now().difference(i.gone!) >= swapAway;
+    final late = i.sent && clock().difference(i.gone!) >= swapAway;
     return '${shownName(i.node)} is installing version ${i.version}, '
         '${late ? 'not back yet' : 'back in about a minute'}';
   }
@@ -169,7 +238,7 @@ mixin _Installs on _AppCore {
   /// Why the node is or was away for an install, for the help; null when
   /// none is under way.
   String? get installHelp {
-    if (!_installsNow && installingLine == null) return null;
+    if (!draining && installingLine == null) return null;
     final i = install!;
     if (i.sent) {
       return '${shownName(i.node)} restarts into version ${i.version}, which '
@@ -185,16 +254,16 @@ mixin _Installs on _AppCore {
   /// What the line adds of the connected node's install: that it is
   /// installing a version, or that it came back on it within
   /// [updatedShown].
-  String get _installNote {
+  String get note {
     final i = install;
     if (i == null || !session.connected) return '';
-    if (_installsNow) return ', installing version ${i.version}';
+    if (draining) return ', installing version ${i.version}';
     final back = i.back;
     final n = session.node;
     if (back != null &&
         n != null &&
         nodeName(n.id) == i.node &&
-        now().difference(back) < updatedShown) {
+        clock().difference(back) < updatedShown) {
       return ', updated to version ${i.version}';
     }
     return '';

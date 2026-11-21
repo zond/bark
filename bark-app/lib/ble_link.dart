@@ -204,11 +204,17 @@ Future<void> stopBleScan() async {
 int? _attCode(Object e) =>
     e is UniversalBleException ? int.tryParse('${e.details}') : null;
 
-/// How a bonded phone's read fails when the node holds no bond for it:
-/// insufficient authentication 0x05 or insufficient encryption 0x0F
-/// (Bluetooth Core Specification 5.0, Vol 3 Part F §3.4.1.1), or Android's
-/// own 0x89, its encryption with the phone's key failed.
-const _notBonded = {0x05, 0x0F, 0x89};
+/// Android's own status 0x89, `GATT_AUTH_FAIL` in its Bluetooth stack
+/// (`gatt_api.h`): it failed to encrypt the link with the bond's key. No
+/// node sends it.
+const androidAuthFail = 0x89;
+
+/// How a bonded phone's read fails when the node holds no bond for it.
+const _notBonded = {
+  AttError.insufficientAuthentication,
+  AttError.insufficientEncryption,
+  androidAuthFail,
+};
 
 /// Whether a bonded phone's first read failed because the node no longer
 /// holds its bond: an error of [_notBonded], or the link closed under it.

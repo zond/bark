@@ -74,11 +74,11 @@ void main() {
     run((async, app) {
       expect(app.session.nodeHome!.set, isFalse);
       final here = app.session.address!;
-      expect(said(async, app.makeHome(here)), 'This node is your home');
+      expect(said(async, app.mailbox.makeHome(here)), 'This node is your home');
       expect(app.fakeNode!.homeKey, app.me.keys.mailbox.extractBytes());
       expect(app.session.nodeHome!.set, isTrue);
       expect(app.me.home.toString(), here.toString());
-      expect(app.atHome, isTrue);
+      expect(app.mailbox.atHome, isTrue);
     });
   });
 
@@ -87,7 +87,7 @@ void main() {
     run((async, app) {
       final f = app.fakeNode!;
       final before = app.me.lastSent;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       final start = f.homeRecords.first.lastFetch;
       expect(start, greaterThan(before));
       expect(app.me.lastSent, greaterThanOrEqualTo(start));
@@ -110,7 +110,7 @@ void main() {
       async.elapse(const Duration(minutes: 1));
       expect(f.commands, isEmpty);
       // The next one is later, and taken.
-      said(async, app.askList());
+      said(async, app.mailbox.askList());
       async.elapse(const Duration(minutes: 1));
       expect(f.commands.map((c) => c.$2), [Outcome.ok]);
     });
@@ -118,8 +118,8 @@ void main() {
 
   test('no home node, connected to it: the node forgets the key', () {
     run((async, app) {
-      said(async, app.makeHome(app.session.address!));
-      expect(said(async, app.noHome()), 'No home node');
+      said(async, app.mailbox.makeHome(app.session.address!));
+      expect(said(async, app.mailbox.noHome()), 'No home node');
       expect(app.fakeNode!.homeKey, isNull);
       expect(app.session.nodeHome!.set, isFalse);
       expect(app.me.home, isNull);
@@ -130,12 +130,12 @@ void main() {
       'by itself', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       final home = app.me.home!;
       app.session.disconnect();
       async.flushMicrotasks();
       expect(
-        said(async, app.noHome()),
+        said(async, app.mailbox.noHome()),
         'No home node. Your old home sends you its mail, then forgets you.',
       );
       expect(app.me.home, isNull);
@@ -170,11 +170,11 @@ void main() {
       'person, and no leave goes', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
       f.removedRecords.add(f.homeRecords.removeAt(0));
-      said(async, app.noHome());
+      said(async, app.mailbox.noHome());
       app.connectFake();
       async.flushMicrotasks();
       async.elapse(const Duration(minutes: 2));
@@ -190,10 +190,10 @@ void main() {
       'forgotten once its wait is over', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
-      said(async, app.noHome());
+      said(async, app.mailbox.noHome());
       // The first fetch is answered; the leave is taken, its answer lost.
       f.losesAnswer = (c) => c is LeaveCommand;
       app.connectFake();
@@ -219,24 +219,24 @@ void main() {
   test('a node that kept the key from when it was the home can be told to '
       'stop', () {
     run((async, app) {
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
       // The home away never hears the leave: its node still holds the key.
       app.fakeNode!.homeAnswers = false;
-      said(async, app.noHome());
+      said(async, app.mailbox.noHome());
       app.connectFake();
       async.flushMicrotasks();
-      expect(app.holdsOtherKey, isTrue);
-      expect(said(async, app.clearKey()), contains('no longer'));
+      expect(app.mailbox.holdsOtherKey, isTrue);
+      expect(said(async, app.mailbox.clearKey()), contains('no longer'));
       expect(app.fakeNode!.homeKey, isNull);
-      expect(app.holdsOtherKey, isFalse);
+      expect(app.mailbox.holdsOtherKey, isFalse);
     });
   });
 
   test('a home that says it is the person\'s is not written again', () {
     run((async, app) {
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
       app.connectFake();
@@ -244,7 +244,7 @@ void main() {
       expect(log(app), isNot(contains(contains('the key written'))));
       expect(app.fakeNode!.homeKeyChanges, 1);
       expect(app.session.nodeHome!.mine, isTrue);
-      expect(app.homeKeyGone, isFalse);
+      expect(app.mailbox.homeKeyGone, isFalse);
     });
   });
 
@@ -252,7 +252,7 @@ void main() {
       'again, silently', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
       // The phone unpaired and paired again: the home is in a record of
@@ -277,7 +277,7 @@ void main() {
       'again by the person', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       app.session.disconnect();
       async.flushMicrotasks();
       f.homeKey = null;
@@ -285,13 +285,13 @@ void main() {
       async.flushMicrotasks();
       expect(f.homeKey, isNull);
       expect(app.session.notice?.text, contains('no longer keeps your mail'));
-      expect(app.homeKeyGone, isTrue);
+      expect(app.mailbox.homeKeyGone, isTrue);
       expect(
-        said(async, app.makeHome(app.session.address!)),
+        said(async, app.mailbox.makeHome(app.session.address!)),
         'This node is your home',
       );
       expect(f.homeKey, app.me.keys.mailbox.extractBytes());
-      expect(app.homeKeyGone, isFalse);
+      expect(app.mailbox.homeKeyGone, isFalse);
     });
   });
 
@@ -307,14 +307,14 @@ void main() {
   test('a home removed while the phone is linked to it is told then', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       expect(app.session.notice, isNull);
       // Another paired phone removes it: Status's phones moves.
       f.homeKey = null;
       f.changed();
       async.elapse(const Duration(seconds: 1));
       expect(app.session.notice?.text, contains('no longer keeps your mail'));
-      expect(app.homeKeyGone, isTrue);
+      expect(app.mailbox.homeKeyGone, isTrue);
     });
   });
 
@@ -326,15 +326,15 @@ void main() {
       app.connectFake();
       async.flushMicrotasks();
       expect(app.session.nodeHome!.set, isTrue);
-      expect(app.othersHome, isTrue);
-      expect(app.holdsOtherKey, isFalse);
+      expect(app.mailbox.othersHome, isTrue);
+      expect(app.mailbox.holdsOtherKey, isFalse);
     });
   });
 
   test('the home follows its node to a new place, and the card changes', () {
     run((async, app) {
       final old = app.session.address!;
-      said(async, app.makeHome(old));
+      said(async, app.mailbox.makeHome(old));
       final card = app.me.cardTime;
       async.elapse(const Duration(seconds: 5));
       // As a fixed node that took a fresh place at boot.
@@ -344,7 +344,7 @@ void main() {
       expect(here.toString(), isNot(old.toString()));
       expect(app.me.home.toString(), here.toString());
       expect(app.me.cardTime, greaterThan(card));
-      expect(app.atHome, isTrue);
+      expect(app.mailbox.atHome, isTrue);
     });
   });
 
@@ -365,7 +365,7 @@ void main() {
   test('a carried home that wanders sends no card', () {
     run((async, app) {
       final old = app.session.address!;
-      said(async, app.makeHome(old));
+      said(async, app.mailbox.makeHome(old));
       twoContacts(async, app);
       async.elapse(const Duration(seconds: 30));
       final before = cards(app);
@@ -383,7 +383,7 @@ void main() {
 
   test('a fixed home at a new place sends nothing until the person asks', () {
     run((async, app) {
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       twoContacts(async, app);
       // The fake friend's intros are read and answered first.
       async.elapse(const Duration(seconds: 30));
@@ -411,7 +411,7 @@ void main() {
 
   test('a node that does not keep the key is not made the home', () {
     run((async, app) {
-      final r = said(async, app.makeHome(app.session.address!));
+      final r = said(async, app.mailbox.makeHome(app.session.address!));
       expect(r, contains('refused'));
       expect(app.me.home, isNull);
     }, make: (now, me) => KeylessNode(now: now, sodium: sodium, app: me));

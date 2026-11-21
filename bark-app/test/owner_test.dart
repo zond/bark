@@ -77,12 +77,12 @@ void main() {
       'contact, then the contact is sent it; asked again, the same key', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       final home = app.me.home!;
-      expect(app.isOwner, isTrue);
+      expect(app.mailbox.isOwner, isTrue);
       final friend = app.contacts.list.single;
       expect(
-        said(async, app.shareHome(friend)),
+        said(async, app.mailbox.shareHome(friend)),
         'Sent to your home; its answer comes with your mail',
       );
       final share = app.contacts.byKey(friend.key)!.share!;
@@ -108,7 +108,7 @@ void main() {
       );
 
       // A lost answer: asked again, the same key, which the home holds.
-      said(async, app.shareHome(friend));
+      said(async, app.mailbox.shareHome(friend));
       async.elapse(answered);
       expect(outcomes(f), [Outcome.ok, Outcome.already]);
       expect(hex(app.contacts.byKey(friend.key)!.share!.key), hex(share.key));
@@ -123,38 +123,38 @@ void main() {
       final f = app.fakeNode!;
       app.me.setHome(away);
       async.flushMicrotasks();
-      expect(app.isOwner, isFalse);
+      expect(app.mailbox.isOwner, isFalse);
       // The summary says so.
-      said(async, app.fetchNow());
+      said(async, app.mailbox.fetchNow());
       async.elapse(answered);
-      expect(app.isOwner, isTrue);
+      expect(app.mailbox.isOwner, isTrue);
       f.homeRecords.addAll([
         FakeHomeRecord(2, List.filled(32, 2), tag: 5, name: 'Bo'),
         FakeHomeRecord(3, List.filled(32, 3), tag: 6, name: 'Cy'),
       ]);
-      said(async, app.askList());
+      said(async, app.mailbox.askList());
       async.elapse(answered);
-      expect(app.listed!.map((r) => (r.name, r.mine, r.owner)), [
+      expect(app.mailbox.listed!.map((r) => (r.name, r.mine, r.owner)), [
         ('Me', true, true),
         ('Bo', false, false),
         ('Cy', false, false),
       ]);
-      final [_, bo, cy] = app.listed!;
+      final [_, bo, cy] = app.mailbox.listed!;
 
-      said(async, app.removeHome(cy));
+      said(async, app.mailbox.removeHome(cy));
       async.elapse(answered);
       expect(news(app), 'Removed from your home');
-      expect(app.listed!.map((r) => r.name), ['Me', 'Bo']);
+      expect(app.mailbox.listed!.map((r) => r.name), ['Me', 'Bo']);
       expect(f.homeRecords.map((r) => r.name), ['Me', 'Bo']);
 
-      said(async, app.handOver(bo));
+      said(async, app.mailbox.handOver(bo));
       async.elapse(answered);
       expect(news(app), 'Bo is your home\'s owner now');
-      expect(app.isOwner, isFalse);
+      expect(app.mailbox.isOwner, isFalse);
       expect(f.homeRecords.map((r) => r.owner), [false, true]);
 
       // A command now is refused: the mark has gone.
-      said(async, app.removeHome(bo));
+      said(async, app.mailbox.removeHome(bo));
       async.elapse(answered);
       expect(news(app), 'Your home says you are not its owner');
       expect(f.homeRecords.length, 2);
@@ -165,7 +165,7 @@ void main() {
       'that key goes, and the home before is left', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       final before = app.me.home!;
       final friend = app.contacts.list.single;
       final given = Address(Position.fromDegrees(50.6, 30.6), [
@@ -200,7 +200,7 @@ void main() {
       final cards = app.session.outbox.where((o) => o.kind == OutKind.card);
       final sent = cards.length;
       expect(
-        said(async, app.useGift(app.contacts.byKey(friend.key)!)),
+        said(async, app.mailbox.useGift(app.contacts.byKey(friend.key)!)),
         '${nodeLabel(given.id)} is your home. Your old home sends you its '
         'mail, then forgets you.',
       );
@@ -221,7 +221,7 @@ void main() {
       k.dispose();
       async.elapse(const Duration(minutes: 3));
       expect(toGiven.single.answered, isTrue);
-      expect(app.isOwner, isFalse);
+      expect(app.mailbox.isOwner, isFalse);
       expect(app.me.leaving, isNull);
       // Kept with the person, for the next start.
       expect((app.me.store as MemoryStore).state!['homeKey'], hex(key));
@@ -234,25 +234,25 @@ void main() {
       final f = app.fakeNode!;
       f.homeAnswers = false;
       expect(
-        said(async, app.tryHome(away)),
+        said(async, app.mailbox.tryHome(away)),
         'Asking ${nodeLabel(away.id)} for your mail',
       );
-      expect(app.tried!.over, isFalse);
+      expect(app.mailbox.tried!.over, isFalse);
       async.elapse(Session.fetchAnswerWait);
       async.elapse(const Duration(seconds: 1));
-      expect(app.tried!.over, isTrue);
+      expect(app.mailbox.tried!.over, isTrue);
       expect(app.me.home, isNull);
 
       f.homeAnswers = true;
-      said(async, app.tryHome(away));
+      said(async, app.mailbox.tryHome(away));
       async.elapse(answered);
       expect(app.me.home.toString(), away.toString());
       expect(app.me.givenKey, isNull);
       // What it reads, as its summary said, kept with the home.
       expect(app.me.homeReads, 2);
       expect((app.me.store as MemoryStore).state!['homeReads'], 2);
-      expect(app.isOwner, isTrue);
-      expect(app.tried, isNull);
+      expect(app.mailbox.isOwner, isTrue);
+      expect(app.mailbox.tried, isNull);
       expect(news(app), '${nodeLabel(away.id)} is your home');
     });
   });
@@ -266,7 +266,7 @@ void main() {
       f.removedRecords.add(f.homeRecords.removeAt(0));
       final cards = app.session.outbox.where((o) => o.kind == OutKind.card);
       final sent = cards.length;
-      said(async, app.fetchNow());
+      said(async, app.mailbox.fetchNow());
       async.elapse(answered);
       expect(f.commands.single, (null, Outcome.removed));
       expect(app.me.home, isNull);
@@ -280,10 +280,10 @@ void main() {
     run((async, app) {
       final f = app.fakeNode!;
       f.removedRecords.add(f.homeRecords.removeAt(0));
-      said(async, app.tryHome(away));
+      said(async, app.mailbox.tryHome(away));
       async.elapse(answered);
       expect(app.me.home, isNull);
-      expect(app.tried, isNull);
+      expect(app.mailbox.tried, isNull);
       expect(
         app.session.notice?.text,
         '${nodeLabel(away.id)} does not keep your mail. Nothing changed.',
@@ -298,16 +298,16 @@ void main() {
       app.me.setHome(away);
       async.flushMicrotasks();
       f.homeAnswers = false;
-      said(async, app.fetchNow());
+      said(async, app.mailbox.fetchNow());
       async.elapse(Session.fetchAnswerWait - const Duration(seconds: 1));
-      expect(app.homeSilent, isFalse);
+      expect(app.mailbox.homeSilent, isFalse);
       async.elapse(const Duration(seconds: 2));
-      expect(app.homeSilent, isTrue);
+      expect(app.mailbox.homeSilent, isTrue);
       expect(app.me.home.toString(), away.toString(), reason: 'no change');
       f.homeAnswers = true;
-      said(async, app.fetchNow());
+      said(async, app.mailbox.fetchNow());
       async.elapse(answered);
-      expect(app.homeSilent, isFalse);
+      expect(app.mailbox.homeSilent, isFalse);
     });
   });
 
@@ -315,14 +315,14 @@ void main() {
       'the seat', () {
     run((async, app) {
       final f = app.fakeNode!;
-      said(async, app.makeHome(app.session.address!));
+      said(async, app.mailbox.makeHome(app.session.address!));
       f.mineOwner = false;
       f.changed();
       async.flushMicrotasks();
-      expect(app.isOwner, isFalse);
-      expect(said(async, app.becomeOwner()), 'You are its owner');
+      expect(app.mailbox.isOwner, isFalse);
+      expect(said(async, app.mailbox.becomeOwner()), 'You are its owner');
       expect(f.mineOwner, isTrue);
-      expect(app.isOwner, isTrue);
+      expect(app.mailbox.isOwner, isTrue);
       expect(app.me.owner, isTrue);
     });
   });

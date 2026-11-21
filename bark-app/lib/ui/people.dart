@@ -86,7 +86,7 @@ List<RecordAction> actionsOn(
   required bool home,
   required bool atNode,
 }) {
-  if (!atNode && !app.isOwner) return const [];
+  if (!atNode && !app.mailbox.isOwner) return const [];
   return [
     if (!r.mine && (home || atNode)) RecordAction.remove,
     if (home && !r.owner && (atNode || !r.mine)) RecordAction.makeOwner,
@@ -129,7 +129,7 @@ Future<void> act(
       title = 'Make $who the owner?';
       body =
           'The owner chooses who has a home here.'
-          '${!r.mine && app.isOwner && !atNode ? ' You no longer can.' : ''}';
+          '${!r.mine && app.mailbox.isOwner && !atNode ? ' You no longer can.' : ''}';
   }
   final label = actionLabel(a);
   final (ok, gone) = await _whileListed<bool>(
@@ -163,8 +163,8 @@ Future<void> act(
   if (!atNode) {
     await trySay(context, () async {
       final s = await (a == RecordAction.remove
-          ? app.removeHome(r)
-          : app.handOver(r));
+          ? app.mailbox.removeHome(r)
+          : app.mailbox.handOver(r));
       if (context.mounted) say(context, s);
     }, 'Sending failed');
     return;
@@ -182,7 +182,7 @@ Future<void> act(
 /// takes: the node's at it, else the owner's list; with no list, as once
 /// the link ended, it is not known to have gone.
 bool _listed(AppModel app, PhoneRecord r, bool atNode) =>
-    (atNode ? app.session.phones : app.listed)?.any(
+    (atNode ? app.session.phones : app.mailbox.listed)?.any(
       (x) =>
           x.number == r.number &&
           (x.paired || !r.paired) &&

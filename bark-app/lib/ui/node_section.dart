@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../mailbox.dart' show fullNode;
 import '../ble_link.dart';
 import '../link.dart';
 import 'common.dart';
@@ -44,7 +45,10 @@ class NodeSection extends StatelessWidget {
           ],
         ),
       if (s.connected)
-        Padding(padding: const EdgeInsets.only(top: 8), child: Text(health(s))),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Ticking(when: s.bootLeftS > 0, (_) => Text(health(s))),
+        ),
       ..._paired(context),
       // Below the paired nodes, so that Disconnect, which only ends the
       // link, is not taken for Unpair.

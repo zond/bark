@@ -41,6 +41,7 @@ mixin _Pairing on _AppCore {
     if (await BleLink.forget(device)) {
       r.unseen = true;
       session.note('Pairing: the phone forgot its bond with $name');
+      notifyListeners();
       return true;
     }
     if (!r.bondKept) {
@@ -68,7 +69,7 @@ mixin _Pairing on _AppCore {
           await session.setPaired(n.name);
           continue;
         }
-        await session.save();
+        await session.save(state: true);
       }
       if (r.own || r.bondKept) continue;
       await _forgetBond(n.name, n.deviceId);

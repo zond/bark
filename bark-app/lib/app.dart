@@ -1,9 +1,12 @@
-// What every screen shares: the person, their contacts, the session with
-// the node, the messages sealed and opened, and how the app reaches a
-// node over Bluetooth. The model is made of parts, each with one job, in
-// `app/`: the links it makes, the search that chooses them, pairing and
-// Android's bonds, the home and the card, the person's scan, a node's
-// install, and moving to a new phone.
+// What every screen shares, made of objects each with one job, which
+// take what they use by their constructors: the person (`me.dart`), their
+// contacts, the session with the node, the messages sealed and opened
+// (`messenger.dart`), the home and its owner (`mailbox.dart`), moving to
+// a new phone (`moving.dart`), a node's install (`installs.dart`), and
+// the updates of the node and the app. How the app reaches a node over
+// Bluetooth is still parts of this model, in `app/`: the links it makes,
+// the search that chooses them, pairing and Android's bonds, and the
+// person's scan.
 
 import 'dart:async';
 
@@ -12,15 +15,17 @@ import 'package:sodium/sodium.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'alerts.dart';
-import 'app_layer.dart';
 import 'app_update.dart';
 import 'ble_link.dart';
 import 'contacts.dart';
 import 'decision.dart';
 import 'identity_file.dart';
+import 'installs.dart';
 import 'link.dart';
+import 'mailbox.dart';
 import 'me.dart';
 import 'messenger.dart';
+import 'moving.dart';
 import 'node_link.dart';
 import 'nodes.dart';
 import 'phone_notifier.dart';
@@ -31,10 +36,6 @@ import 'store.dart';
 import 'updater.dart';
 
 part 'app/connect.dart';
-part 'app/home.dart';
-part 'app/installs.dart';
-part 'app/moving.dart';
-part 'app/owner.dart';
 part 'app/pairing.dart';
 part 'app/scan.dart';
 part 'app/search.dart';
@@ -62,12 +63,8 @@ abstract class _AppCore extends ChangeNotifier {
   bool get scanning;
   Future<void> stopScan();
 
-  // Installs ([_Installs]).
-  Install? get install;
-  set install(Install? i);
-  bool get _installsNow;
-  Awaited? get _awaited;
-  void _giveUp(String node);
+  // A node's install ([AppModel.installs]).
+  Installs get installs;
 
   // Pairing ([_Pairing]).
   Future<void> Function()? get pairAgain;
@@ -94,23 +91,14 @@ abstract class _AppCore extends ChangeNotifier {
   Situation situation({List<FoundNode>? heard});
   NodeRecord? get guestHere;
 
-  // The home ([_Home]).
-  Future<void> _sendQueuedFetch();
-  bool get atHome;
-
-  // The owner ([_Owner]).
-  void _ownerSeen();
-  Future<void> _obeyed(Outgoing o, RoundSummary s);
+  // The home and its owner ([AppModel.mailbox]).
+  Mailbox get mailbox;
 }
 
-class AppModel extends _AppCore
-    with _Scan, _Installs, _Pairing, _Connect, _Search, _Home, _Owner, _Moving {
+class AppModel extends _AppCore with _Scan, _Pairing, _Connect, _Search {
   @override
   final Sodium sodium;
 
-  /// The key an identity file is sealed under, from its password.
-  @override
-  final PasswordKey passwordKey;
   @override
   final Me me;
   @override
@@ -122,6 +110,21 @@ class AppModel extends _AppCore
   @override
   final DateTime Function() now;
   final Notifier notifier;
+
+  /// The identity file and the 12 words: moving to another phone.
+  late final Moving moving;
+
+  /// The person's home and its owner.
+  @override
+  late final Mailbox mailbox;
+
+  /// A node's install, which the search waits for.
+  @override
+  late final Installs installs = Installs(
+    session: session,
+    clock: now,
+    situation: situation,
+  );
   late final Alerts alerts;
 
   /// The latest release, against this app and the connected node.
@@ -146,7 +149,7 @@ class AppModel extends _AppCore
     this.notifier = const NoNotifier(),
     Releases? releases,
     this.apks = const NoApks(),
-    this.passwordKey = argon2id,
+    PasswordKey passwordKey = argon2id,
     this.place = const AndroidPlace(),
     Future<bool> Function()? bluetoothAllowed,
     Future<void> Function()? requestBluetooth,
@@ -154,31 +157,43 @@ class AppModel extends _AppCore
        _bluetoothAllowed = bluetoothAllowed ?? UniversalBle.hasPermissions,
        _requestBluetooth = requestBluetooth ?? _askAndroid {
     this.releases.noted = session.note;
-    messenger = Messenger(sodium, me, contacts, session, now)
-      ..summarised = _answered
-      ..itemCame = _itemCame;
+    moving = Moving(
+      sodium: sodium,
+      passwordKey: passwordKey,
+      me: me,
+      contacts: contacts,
+      session: session,
+    );
+    messenger = Messenger(sodium, me, contacts, session, now);
+    // First of the session's listeners, so that the card's node is kept
+    // before anything else hears of the link.
+    mailbox = Mailbox(
+      sodium: sodium,
+      session: session,
+      me: me,
+      contacts: contacts,
+      messenger: messenger,
+      now: now,
+      guestHere: () => guestHere,
+      connect: connect,
+    );
     alerts = Alerts(notifier, contacts);
     session.kept = (r) =>
         alerts.kept(r, session.partsOf(r)).catchError(_unnotified);
     // Made first, so that the node's reboot is waited for before the
     // search hears its link ended.
-    updater.away = _rebooted;
-    session.addListener(_nodeAddress);
-    session.addListener(_installs);
-    session.addListener(_queuedFetch);
-    session.addListener(_ownerSeen);
+    updater.away = installs.rebooted;
     session.addListener(_link);
     session.addListener(_search);
     addListener(_link);
     addListener(_search);
-    // The countdowns move without a word from the node, the check for a
-    // release is due a day after the last, and leaving a home waits for
-    // a node and for the mail its fetch brings.
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      notifyListeners();
-      unawaited(this.releases.check());
-      unawaited(_leaveStep());
-    });
+    // The home is the search's first node and the line's last words; an
+    // install is waited for, and in the line too.
+    for (final n in [me, installs]) {
+      n
+        ..addListener(_link)
+        ..addListener(_search);
+    }
   }
 
   static Future<AppModel> onPhone(Sodium s) async {
@@ -202,7 +217,19 @@ class AppModel extends _AppCore
     );
   }
 
-  late final Timer _ticker;
+  /// The check for a release, due a day after the last.
+  Timer? _releaseCheck;
+
+  void _checkWhenDue() {
+    _releaseCheck?.cancel();
+    final at = releases.dueAt;
+    if (at == null) return;
+    final wait = at.difference(now());
+    _releaseCheck = Timer(wait.isNegative ? Duration.zero : wait, () async {
+      await releases.check();
+      _checkWhenDue();
+    });
+  }
 
   /// The firmware update of the connected node.
   @override
@@ -215,6 +242,8 @@ class AppModel extends _AppCore
   /// Everything a screen redraws on.
   Listenable get changes => Listenable.merge([
     this,
+    mailbox,
+    installs,
     session,
     contacts,
     me,
@@ -233,6 +262,7 @@ class AppModel extends _AppCore
     for (final s in [me.store, session.store, contacts.store, releases.store]) {
       if (s.fault != null) session.note(s.fault!);
     }
+    _checkWhenDue();
   }
 
   /// Keeps the app running while a node is connected by Bluetooth, so
@@ -297,6 +327,22 @@ class AppModel extends _AppCore
   }
 
   void _unnotified(Object e) => session.note('Notifying failed: $e');
+
+  /// Sets the person's name, which their card carries and the node they
+  /// are paired with lists for its other phones.
+  Future<void> setName(String n) async {
+    await me.setName(n);
+    await session.nameChanged();
+  }
+
+  /// The card changed and has not gone to the contacts. Without contacts
+  /// there is no one to send it to.
+  bool get cardUnsent => me.cardUnsent && contacts.list.isNotEmpty;
+
+  /// Why the card changed, for the line that offers to send it.
+  String get cardChange => me.home == null
+      ? 'Your card changed: no home'
+      : 'Your card changed: new home address';
 
   /// Asks, once, to notify; `why` shows the person why first and says
   /// whether to go on.
@@ -370,7 +416,7 @@ class AppModel extends _AppCore
     final g = n != null && session.guest ? nodeName(n.id) : guestNode;
     final h = homeName;
     final home = h == null ? '' : '. Home at ${shownName(h)}';
-    final installs = _installNote;
+    final installs = this.installs.note;
     if (g != null && tappedGuest) {
       return 'Connected to ${shownName(g)} as a guest for 30 s$installs$home';
     }
@@ -378,23 +424,28 @@ class AppModel extends _AppCore
       return 'Connected to ${shownName(g)} as a guest$installs$home';
     }
     if (n == null) return null;
-    if (atHome) return 'Connected to your home, ${nodeLabel(n.id)}$installs';
+    if (mailbox.atHome) {
+      return 'Connected to your home, ${nodeLabel(n.id)}$installs';
+    }
     return 'Connected to ${nodeLabel(n.id)}, paired$installs$home';
   }
 
   @override
   void dispose() {
-    _ticker.cancel();
+    _releaseCheck?.cancel();
     _scanTimer?.cancel();
     _availability?.cancel();
     _searchStarted = false;
     if (!_wake.isCompleted) _wake.complete();
-    session.removeListener(_nodeAddress);
-    session.removeListener(_installs);
-    session.removeListener(_queuedFetch);
-    session.removeListener(_ownerSeen);
     session.removeListener(_link);
     session.removeListener(_search);
+    for (final n in [me, installs]) {
+      n
+        ..removeListener(_link)
+        ..removeListener(_search);
+    }
+    mailbox.dispose();
+    installs.dispose();
     updater.dispose();
     releases.dispose();
     appUpdate.dispose();

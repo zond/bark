@@ -362,6 +362,46 @@ void main() {
     });
   });
 
+  group('the app by the clock alone', () {
+    late Sodium sodium;
+    setUpAll(() async => sodium = await SodiumInit.init());
+
+    test('checks for a release at start and a day after, and wakes nothing '
+        'between', () {
+      fakeAsync((async) {
+        DateTime now() => start.add(async.elapsed);
+        final fetch = FakeFetch(answer(5));
+        final app = AppModel(
+          sodium: sodium,
+          me: Me(MemoryStore(), sodium, now),
+          session: Session(store: MemoryStore(), now: now),
+          contacts: Contacts(MemoryStore()),
+          now: now,
+          releases: Releases(
+            MemoryStore(),
+            now: now,
+            fetch: fetch.call,
+            download: served,
+            app: 3,
+          ),
+        );
+        app.load();
+        async.flushMicrotasks();
+        async.elapse(Duration.zero);
+        expect(fetch.calls, 1);
+        expect(app.releases.newerApp?.app, 5);
+        var woken = 0;
+        app.changes.addListener(() => woken++);
+        async.elapse(const Duration(hours: 23, minutes: 59));
+        expect(fetch.calls, 1);
+        expect(woken, 0);
+        async.elapse(const Duration(minutes: 1));
+        expect(fetch.calls, 2);
+        app.dispose();
+      });
+    });
+  });
+
   group('the bars on the home screen', () {
     late Sodium sodium;
     setUpAll(() async => sodium = await SodiumInit.init());

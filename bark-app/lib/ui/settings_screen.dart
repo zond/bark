@@ -287,10 +287,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('This node has no owner'),
-            trailing: app.atHome
+            trailing: app.mailbox.atHome
                 ? TextButton(
                     onPressed: () => trySay(context, () async {
-                      final r = await app.becomeOwner();
+                      final r = await app.mailbox.becomeOwner();
                       if (mounted) say(context, r);
                     }, 'Failed'),
                     child: const Text('Become owner'),
@@ -344,7 +344,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok != true || !mounted) return;
     await trySay(context, () async {
       // The home is the node's mailbox key, which it keeps.
-      final home = app.atHome ? ' It stays your home.' : '';
+      final home = app.mailbox.atHome ? ' It stays your home.' : '';
       final forgotten = await app.unpair();
       if (!mounted) return;
       if (forgotten) {
@@ -424,18 +424,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _showWords() async {
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('My 12 words'),
-        content: SelectableText(
-          app.me.phrase.join(' '),
-          style: const TextStyle(fontSize: 18),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('I wrote them down'),
+      builder: (context) => Secret(
+        child: AlertDialog(
+          title: const Text('My 12 words'),
+          content: SelectableText(
+            app.me.phrase.join(' '),
+            style: const TextStyle(fontSize: 18),
           ),
-        ],
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('I wrote them down'),
+            ),
+          ],
+        ),
       ),
     );
     await app.me.setBackedUp();
@@ -450,14 +452,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'Restore',
     );
     if (!go || !mounted) return;
-    final w = await askText(context, 'Your 12 words', '');
+    final w = await askText(context, 'Your 12 words', '', secret: true);
     if (w == null || w.isEmpty) return;
     final seed = seedOfPhrase(w);
     if (seed == null) {
       if (mounted) say(context, 'Those are not 12 words of a backup');
       return;
     }
-    await app.restoreWords(seed);
+    await app.moving.restoreWords(seed);
     if (mounted) say(context, 'Identity restored');
   }
 

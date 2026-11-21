@@ -145,8 +145,9 @@ class Messenger {
     if (c == null || t == null || first == null) return;
     final dst = c.addressOf(t);
     final (p, sent) = await _seal(c, dst, [ReactionRecord(first, emoji)]);
-    for (final x in session.partsOf(r)) {
-      x?.reaction = emoji;
+    final parts = session.partsOf(r).nonNulls.toList();
+    for (final x in parts) {
+      x.reaction = emoji;
     }
     session.usedReaction(emoji);
     await session.queue(
@@ -160,6 +161,8 @@ class Messenger {
         body: emoji,
         toward: t,
       ),
+      received: parts,
+      state: true,
     );
   }
 
@@ -183,7 +186,7 @@ class Messenger {
   }
 
   /// Gives `c` the person's home `h`, with the key made for them there.
-  Future<void> sendHome(Contact c, HomeKey h) async {
+  Future<void> sendHome(Contact c, SharedHome h) async {
     final t = c.unasked(now());
     if (t == null) throw BadPayload('${c.name} has no address yet');
     final dst = c.addressOf(t);
@@ -488,7 +491,7 @@ class Messenger {
             o.reaction = emoji;
             o.reactionSent = h.sent;
           }
-          await session.save();
+          await session.save(out: parts);
         case CardRecord(:final card):
           await _card(from, card);
         case HomeRecord(:final home, :final key):

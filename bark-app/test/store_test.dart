@@ -3,11 +3,13 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bark_app/app.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/link.dart';
 import 'package:bark_app/me.dart';
+import 'package:bark_app/nodes.dart';
 import 'package:bark_app/session.dart';
 import 'package:bark_app/store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,47 +70,186 @@ void main() {
     },
   );
 
+  Outgoing text(int sent, String body) => Outgoing(
+    Address.parse('47c0490ad9ff80fa4e00000001')!,
+    Uint8List.fromList([...parseHex('4024e7d17894f3bfc974f62668')!, sent]),
+    at: at,
+    kind: OutKind.text,
+    sent: sent,
+    to: 'ab',
+    body: body,
+  );
+
+  /// The lines of a log, its first naming the version.
+  List<String> lines(MemoryStore s) => s.text!.split('\n');
+
   test('a current bark.json round-trips', () async {
     final store = MemoryStore('bark.json');
     final s = Session(store: store, now: () => at);
-    final dst = Address.parse('47c0490ad9ff80fa4e00000001')!;
-    await s.queue(
-      Outgoing(
-        dst,
-        parseHex('4024e7d17894f3bfc974f6266865687521')!,
-        at: at,
-        kind: OutKind.text,
-        sent: 7,
-        to: 'ab',
-        body: 'hello',
-      ),
-    );
+    await s.queue(text(7, 'hello'));
     await s.addReceived(Received(1, [1, 2, 3], at, from: 'cd', sent: 5));
+    await s.setStopped(true);
     final saved = store.text!;
-    expect(store.state!['version'], Session.version);
+    expect(lines(store).first, '{"version":${Session.version}}');
     final again = Session(store: store, now: () => at);
     await again.load();
     expect(store.fault, isNull);
-    await again.save();
     expect(store.text, saved);
     expect(again.outbox.single.body, 'hello');
     expect(again.received.single.from, 'cd');
+    expect(again.stopped, isTrue);
+  });
+
+  test('a change adds a line, and the file is written whole once the '
+      'changes in it outnumber twice what it holds', () async {
+    final store = MemoryStore('bark.json');
+    final s = Session(store: store, now: () => at);
+    final o = text(7, 'hello');
+    await s.queue(o);
+    // The header, the message, the state, and the end of the last line.
+    expect(lines(store), hasLength(4));
+    final before = store.text!;
+    o.state = OutState.taken;
+    await s.save(out: [o]);
+    expect(store.text, startsWith(before));
+    expect(lines(store), hasLength(5));
+    expect(lines(store)[3], contains('"state":"taken"'));
+    for (var i = 0; i < 20; i++) {
+      await s.save(out: [o]);
+      // Two held, the message and the state: never more than four changes.
+      expect(lines(store).length, lessThanOrEqualTo(1 + 4 + 1));
+    }
+    final again = Session(store: store, now: () => at);
+    await again.load();
+    expect(again.outbox.single.state, OutState.taken);
+  });
+
+  test('a message dropped stays dropped', () async {
+    final store = MemoryStore('bark.json');
+    final s = Session(store: store, now: () => at);
+    final a = text(7, 'a'), b = text(8, 'b');
+    await s.queue(a);
+    await s.queue(b);
+    await s.drop(a);
+    final again = Session(store: store, now: () => at);
+    await again.load();
+    expect(again.outbox.map((o) => o.body), ['b']);
+    await again.queue(text(9, 'c'));
+    final third = Session(store: store, now: () => at);
+    await third.load();
+    expect(third.outbox.map((o) => o.body), ['b', 'c']);
+  });
+
+  test('a write cut off loses that change alone, and the file is written '
+      'whole again', () async {
+    final store = MemoryStore('bark.json');
+    final s = Session(store: store, now: () => at);
+    await s.queue(text(7, 'kept'));
+    await s.queue(text(8, 'cut'));
+    final t = store.text!;
+    // A kill halfway through the last line.
+    store.text = t.substring(0, t.length - 20);
+    final again = Session(store: store, now: () => at);
+    await again.load();
+    expect(store.fault, isNull);
+    expect(again.outbox.map((o) => o.body), ['kept']);
+    expect(store.text, endsWith('\n'));
+    expect(store.text, isNot(contains('cut')));
+    // What follows lands after whole lines.
+    await again.queue(text(9, 'after'));
+    final third = Session(store: store, now: () => at);
+    await third.load();
+    expect(third.outbox.map((o) => o.body), ['kept', 'after']);
+  });
+
+  test('a bark.json of version 3, the whole state as one object, reads '
+      'and is written afresh as a log', () async {
+    final old = jsonEncode({
+      'version': 3,
+      'outbox': [text(7, 'hello').toJson()],
+      'received': [
+        Received(
+          1,
+          [1, 2, 3],
+          at,
+          from: 'cd',
+          sent: 5,
+          reaction: '👍',
+        ).toJson(),
+      ],
+      'nodes': [(NodeRecord('bark-fa4e00000001')..paired = true).toJson()],
+      'stopped': true,
+      'reactionsUsed': {'👍': 2},
+    });
+    final store = MemoryStore('bark.json')..text = old;
+    final s = Session(store: store, now: () => at);
+    await s.load();
+    expect(store.fault, isNull);
+    expect(store.aside, isEmpty);
+    expect(s.outbox.single.body, 'hello');
+    expect(s.received.single.reaction, '👍');
+    expect(s.nodes.paired, {'bark-fa4e00000001'});
+    expect(s.stopped, isTrue);
+    expect(s.reactionsUsed, {'👍': 2});
+    expect(lines(store).first, '{"version":${Session.version}}');
+    final again = Session(store: store, now: () => at);
+    await again.load();
+    expect(again.outbox.single.body, 'hello');
+    expect(again.nodes.paired, {'bark-fa4e00000001'});
+    expect(again.reactionsUsed, {'👍': 2});
   });
 
   test('a file of a future version is set aside', () async {
-    final future = jsonEncode({
-      'version': Session.version + 1,
-      'outbox': [],
-      'received': [],
-    });
+    final future = '{"version":${Session.version + 1}}\n';
     final store = MemoryStore('bark.json')..text = future;
     final s = Session(store: store, now: () => at);
     await s.load();
     expect(store.aside, {'bark.json.old-${Session.version + 1}': future});
     expect(store.fault, contains('version ${Session.version + 1}'));
-    // The next save writes the current version afresh.
-    await s.save();
-    expect(store.state!['version'], Session.version);
+    // The next change writes the current version afresh.
+    await s.setStopped(true);
+    expect(lines(store).first, '{"version":${Session.version}}');
+  });
+
+  test('a line that does not read in the middle sets the file aside', () async {
+    final store = MemoryStore('bark.json');
+    final s = Session(store: store, now: () => at);
+    await s.queue(text(7, 'a'));
+    final bad = store.text!.replaceFirst('\n', '\n[{"out":"x"}]\n');
+    store.text = bad;
+    await Session(store: store, now: () => at).load();
+    expect(store.aside, {'bark.json.old-bad': bad});
+  });
+
+  test('a current me.json round-trips, every field', () async {
+    final store = MemoryStore('me.json');
+    final m = Me(store, sodium, () => at);
+    await m.load();
+    await m.setName('Ann');
+    final home = Address.parse('47c0490ad9ff80fa4e00000001')!;
+    await m.setHome(home, key: Uint8List(32));
+    await m.setNodeAddress(home);
+    await m.nextSents(3);
+    await m.setCardSent(m.cardTime);
+    await m.setBackedUp();
+    await m.setAskedToNotify();
+    await m.setAskedBluetooth();
+    await m.setFetchQueued(true);
+    await m.fetched(9);
+    await m.setOwner(true);
+    await m.setLeaving(Leaving(home, Uint8List(32))..round = 9);
+    final saved = store.text!;
+    final again = Me(store, sodium, () => at);
+    await again.load();
+    expect(store.fault, isNull);
+    expect(again.key, m.key);
+    expect(again.name, 'Ann');
+    expect(again.home.toString(), home.toString());
+    expect(again.givenKey, Uint8List(32));
+    expect(again.rounds, [9]);
+    expect(again.leaving!.round, 9);
+    await again.setName('Ann');
+    expect(store.text, saved);
   });
 
   test('a me.json set aside gives a new identity and keeps the old', () async {
@@ -159,6 +300,24 @@ void main() {
       await Future.wait([for (var i = 0; i < 20; i++) store.write('{"n":$i}')]);
       expect(await store.read(), '{"n":19}');
       expect(dir.listSync().map((f) => f.uri.pathSegments.last), ['x.json']);
+    },
+  );
+
+  test(
+    'an append waits for the write before it and lands in its file',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('bark-store');
+      addTearDown(() => dir.delete(recursive: true));
+      final store = FileStore('x.log', dir: () async => dir);
+      await Future.wait([
+        store.write('a\n'),
+        store.append('b\n'),
+        store.write('c\n'),
+        store.append('d\n'),
+        store.append('e\n'),
+      ]);
+      expect(await store.read(), 'c\nd\ne\n');
+      expect(dir.listSync().map((f) => f.uri.pathSegments.last), ['x.log']);
     },
   );
 }

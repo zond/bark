@@ -3,6 +3,7 @@
 // back to the messages it sent.
 
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
@@ -288,6 +289,22 @@ typedef Notice = ({String text, String? about});
 /// A line of the link's event log.
 typedef LogLine = ({DateTime at, String text});
 
+/// The link's events since the app started, newest last; the oldest go
+/// once there are [lines], more than a bench session scrolls back through.
+class EventLog extends ChangeNotifier with IterableMixin<LogLine> {
+  static const lines = 500;
+  final _all = ListQueue<LogLine>();
+
+  @override
+  Iterator<LogLine> get iterator => _all.iterator;
+
+  void add(LogLine l) {
+    _all.add(l);
+    if (_all.length > lines) _all.removeFirst();
+    notifyListeners();
+  }
+}
+
 /// A log line's local time of day, to the millisecond.
 String logTime(DateTime at) => at.toLocal().toIso8601String().substring(11, 23);
 
@@ -296,6 +313,18 @@ String logTime(DateTime at) => at.toLocal().toIso8601String().substring(11, 23);
 /// Specification 5.0, Vol 6 Part B §4.5.2), by which a link the node
 /// ended is over for the phone too.
 const Duration unpairEnd = Duration(seconds: 32);
+
+/// The messages: the queue, what was received, and the reactions the
+/// person used most.
+typedef Messages = ({
+  List<Outgoing> outbox,
+  List<Received> received,
+  Map<String, int> reactionsUsed,
+});
+
+/// What the phone keeps besides the messages: the nodes, and whether the
+/// person stopped looking ([Session.stopped]).
+typedef _State = ({List<NodeRecord> nodes, bool stopped});
 
 class Session extends ChangeNotifier {
   final Store store;
@@ -325,11 +354,8 @@ class Session extends ChangeNotifier {
   /// The last value of Given back read or notified.
   GivenBack? givenBack;
 
-  /// The link's events since the app started, newest last; the oldest
-  /// go once there are [logLines], which is more than a bench session
-  /// scrolls back through.
-  final List<LogLine> log = [];
-  static const logLines = 500;
+  /// The link's events since the app started ([EventLog]).
+  final EventLog log = EventLog();
 
   /// Told of each log line as it is added.
   void Function(LogLine)? noted;
@@ -440,50 +466,195 @@ class Session extends ChangeNotifier {
     return left.isNegative ? 0 : (left.inMilliseconds + 999) ~/ 1000;
   }
 
-  /// The version of `bark.json`'s format; an identity file carries its
-  /// messages in it too.
-  static const version = 3;
+  /// The version of `bark.json`'s layout: since 4 a log ([Store.loadLog])
+  /// of the changes below, so that a change costs what changed; 3 held
+  /// the whole state as one object, rewritten at every change, which
+  /// [load] still reads.
+  ///
+  /// Each line is a list of changes, kept whole or not at all:
+  /// `{"out": k, "o": {…}}` a sent message `k`, new or changed, and
+  /// `{"out": k}` one dropped; `{"in": k, "r": {…}}` a received one,
+  /// new or changed; `{"state": {…}}` the nodes, [stopped] and
+  /// [reactionsUsed]. The messages' own forms are [Outgoing.toJson] and
+  /// [Received.toJson], which an identity file carries too ([Messages]).
+  static const version = 4;
+
+  /// The versions whose messages are in this app's forms: a file of 3
+  /// differs only in how it is laid out.
+  static const messagesRead = {3, version};
+
+  /// Each message's number in the file.
+  final _keys = Expando<int>();
+  int _lastKey = 0;
+  int _key(Object m) => _keys[m] ??= ++_lastKey;
+
+  /// The changes in the file, since it was last written whole.
+  int _inFile = 0;
+
+  /// The file is written whole at the next change: there is none of this
+  /// version yet, or an append failed and may have left half a line.
+  bool _rewriteNext = true;
+
+  /// The changes that rewriting the file would write: one a message, and
+  /// the state.
+  int get _live => outbox.length + received.length + 1;
 
   Future<void> load() async {
-    final j = await store.load(
+    final r = await store.loadLog(
       version,
-      (j) => (
-        outbox: [
-          for (final e in j['outbox'] as List)
-            Outgoing.fromJson(e as Map<String, dynamic>),
-        ],
-        received: [
-          for (final e in j['received'] as List)
-            Received.fromJson(e as Map<String, dynamic>),
-        ],
-        nodes: [
-          for (final e in j['nodes'] as List)
-            NodeRecord.fromJson(e as Map<String, dynamic>),
-        ],
-        stopped: j['stopped'] as bool,
-        reactionsUsed: {
-          for (final e in (j['reactionsUsed'] as Map<String, dynamic>).entries)
-            e.key: e.value as int,
-        },
-      ),
+      _replay,
+      older: {3: (j) => (messages: messagesOf(j), state: _stateOf(j))},
     );
-    if (j == null) return;
-    outbox.addAll(j.outbox);
-    received.addAll(j.received);
-    nodes.load(j.nodes);
-    stopped = j.stopped;
-    reactionsUsed.addAll(j.reactionsUsed);
+    if (r == null) return;
+    final (:messages, :state) = r.value;
+    outbox.addAll(messages.outbox);
+    received.addAll(messages.received);
+    reactionsUsed.addAll(messages.reactionsUsed);
+    nodes.load(state.nodes);
+    stopped = state.stopped;
+    _rewriteNext = r.afresh;
     _retryWhenDue();
+    _fetchOverWhenDue();
     notifyListeners();
+    if (_rewriteNext || _inFile > 2 * _live) await _rewrite();
   }
 
-  Future<void> save() => store.save(version, {
-    'outbox': [for (final o in outbox) o.toJson()],
-    'received': [for (final r in received) r.toJson()],
-    'nodes': nodes.toJson(),
-    'stopped': stopped,
-    'reactionsUsed': reactionsUsed,
-  });
+  /// The messages and the state the changes of a log make, in order;
+  /// throws for a change it cannot read.
+  ({Messages messages, _State state}) _replay(List<Object?> lines) {
+    final out = <int, Outgoing>{};
+    final ins = <int, Received>{};
+    Map<String, dynamic>? state;
+    var n = 0;
+    for (final line in lines) {
+      for (final c in line as List) {
+        n++;
+        switch (c) {
+          case {'out': final int k, 'o': final Map<String, dynamic> o}:
+            out[k] = Outgoing.fromJson(o);
+          case {'out': final int k}:
+            out.remove(k);
+          case {'in': final int k, 'r': final Map<String, dynamic> r}:
+            ins[k] = Received.fromJson(r);
+          case {'state': final Map<String, dynamic> s}:
+            state = s;
+          default:
+            throw FormatException('a change $c');
+        }
+      }
+    }
+    final kept = state;
+    for (final MapEntry(:key, :value) in [...out.entries, ...ins.entries]) {
+      _keys[value] = key;
+      if (key > _lastKey) _lastKey = key;
+    }
+    _inFile = n;
+    return (
+      messages: (
+        outbox: [...out.values],
+        received: [...ins.values],
+        reactionsUsed: kept == null ? {} : _reactionsOf(kept),
+      ),
+      state: kept == null ? (nodes: [], stopped: false) : _stateOf(kept),
+    );
+  }
+
+  static _State _stateOf(Map<String, dynamic> j) => (
+    nodes: [
+      for (final e in j['nodes'] as List)
+        NodeRecord.fromJson(e as Map<String, dynamic>),
+    ],
+    stopped: j['stopped'] as bool,
+  );
+
+  static Map<String, int> _reactionsOf(Map<String, dynamic> j) => {
+    for (final e in (j['reactionsUsed'] as Map<String, dynamic>).entries)
+      e.key: e.value as int,
+  };
+
+  /// The messages of `j`, a file of a version of [messagesRead] or an
+  /// identity file's messages.
+  static Messages messagesOf(Map<String, dynamic> j) => (
+    outbox: [
+      for (final e in j['outbox'] as List)
+        Outgoing.fromJson(e as Map<String, dynamic>),
+    ],
+    received: [
+      for (final e in j['received'] as List)
+        Received.fromJson(e as Map<String, dynamic>),
+    ],
+    reactionsUsed: _reactionsOf(j),
+  );
+
+  /// `m` as [messagesOf] reads it, with this version.
+  static Map<String, dynamic> messagesJson(Messages m) => {
+    'version': version,
+    'outbox': [for (final o in m.outbox) o.toJson()],
+    'received': [for (final r in m.received) r.toJson()],
+    'reactionsUsed': m.reactionsUsed,
+  };
+
+  Map<String, dynamic> _outChange(Outgoing o) => {
+    'out': _key(o),
+    'o': o.toJson(),
+  };
+  Map<String, dynamic> _inChange(Received r) => {
+    'in': _key(r),
+    'r': r.toJson(),
+  };
+  Map<String, dynamic> _stateChange() => {
+    'state': {
+      'nodes': nodes.toJson(),
+      'stopped': stopped,
+      'reactionsUsed': reactionsUsed,
+    },
+  };
+
+  /// Saves what changed: the messages `out` and `received`, each in the
+  /// queue or kept, and with `state` the nodes, [stopped] and
+  /// [reactionsUsed]. One line of the file, which a kill at any moment
+  /// keeps whole or loses whole.
+  Future<void> save({
+    Iterable<Outgoing> out = const [],
+    Iterable<Received> received = const [],
+    bool state = false,
+  }) => _save([
+    for (final o in out) _outChange(o),
+    for (final r in received) _inChange(r),
+    if (state) _stateChange(),
+  ]);
+
+  Future<void> _save(List<Map<String, dynamic>> changes) async {
+    if (changes.isEmpty) return;
+    _inFile += changes.length;
+    // Written whole once the changes in the file outnumber those that
+    // rewriting it would write, so that it stays within about twice its
+    // contents and each change costs, over time, about two.
+    if (_rewriteNext || _inFile > 2 * _live) return _rewrite();
+    try {
+      await store.append(Store.logLine(changes));
+    } catch (_) {
+      _rewriteNext = true;
+      rethrow;
+    }
+  }
+
+  /// Writes the file whole, in place of the old one at once.
+  Future<void> _rewrite() async {
+    final text = Store.logText(version, [
+      for (final o in outbox) [_outChange(o)],
+      for (final r in received) [_inChange(r)],
+      [_stateChange()],
+    ]);
+    _inFile = _live;
+    _rewriteNext = false;
+    try {
+      await store.write(text);
+    } catch (_) {
+      _rewriteNext = true;
+      rethrow;
+    }
+  }
 
   /// Takes the nodes and the messages of an identity file, or no
   /// messages: those of another identity are no one's here now. Applied at
@@ -506,8 +677,9 @@ class Session extends ChangeNotifier {
     nodes.moveIn(ns);
     fetchNews = null;
     _retryWhenDue();
+    _fetchOverWhenDue();
     notifyListeners();
-    return save();
+    return _rewrite();
   }
 
   /// The node `name` holds this phone's bond, or no longer does; the
@@ -516,7 +688,7 @@ class Session extends ChangeNotifier {
     if (!nodes.setPaired(name, lost: lost)) return;
     note(lost ? 'Pairing: $name is no longer ours' : 'Pairing: $name');
     notifyListeners();
-    await save();
+    await save(state: true);
   }
 
   /// The person stopped looking for the paired node, or connected.
@@ -524,7 +696,7 @@ class Session extends ChangeNotifier {
     if (stopped == s) return;
     stopped = s;
     notifyListeners();
-    await save();
+    await save(state: true);
   }
 
   void _badValue(Object e) =>
@@ -542,13 +714,12 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Adds a line to the log.
+  /// Adds a line to the log, which tells its own listeners alone: a line
+  /// changes nothing the others show.
   void note(String s) {
     final l = (at: now(), text: s);
     log.add(l);
     noted?.call(l);
-    if (log.length > logLines) log.removeAt(0);
-    notifyListeners();
   }
 
   /// Takes a connected link through the checklist of the phone link's
@@ -585,6 +756,7 @@ class Session extends ChangeNotifier {
       '${nodeNewer ? ', newer than this app\'s $linkVersion' : ''}'
       '${guest ? ', as a guest' : ''}',
     );
+    notifyListeners();
     _subs
       ..add(link.statusNotified.listen(_onStatus, onError: _badValue))
       ..add(link.givenBackNotified.listen(_onGivenBack, onError: _badValue))
@@ -624,8 +796,8 @@ class Session extends ChangeNotifier {
   /// last at the end, for the picker's first row (`emojis.dart`).
   final Map<String, int> reactionsUsed = {};
 
-  /// Counts a reaction the person sent; the file is saved with the
-  /// message that carries it.
+  /// Counts a reaction the person sent; saved with the message that
+  /// carries it, as the state.
   void usedReaction(String emoji) {
     final n = reactionsUsed.remove(emoji) ?? 0;
     reactionsUsed[emoji] = n + 1;
@@ -656,7 +828,7 @@ class Session extends ChangeNotifier {
         );
         await _keep(item.message);
         r.ringAfter = item.number;
-        await save();
+        await save(state: true);
       }
     } catch (e) {
       note('Guest: $e');
@@ -769,7 +941,7 @@ class Session extends ChangeNotifier {
     nodes.unpaired(name);
     note('Pairing: unpaired from $name');
     notifyListeners();
-    await save();
+    await save(state: true);
     await link.close();
   }
 
@@ -779,7 +951,7 @@ class Session extends ChangeNotifier {
     if (!nodes.unpaired(name)) return;
     note('Pairing: forgot $name');
     notifyListeners();
-    await save();
+    await save(state: true);
   }
 
   /// Whether `link` ends within [unpairEnd].
@@ -978,6 +1150,7 @@ class Session extends ChangeNotifier {
     final t = (floorDbm: page.floorDbm, own: page.own, list: list, at: now());
     if (_link == link) neighbours = t;
     note('Neighbours: ${list.length}, noise floor ${t.floorDbm} dBm');
+    notifyListeners();
     return t;
   }
 
@@ -1028,6 +1201,7 @@ class Session extends ChangeNotifier {
         if (_link != link) return;
         _asks.sent(id, now());
       }
+      notifyListeners();
       _askLater();
     });
   }
@@ -1065,6 +1239,7 @@ class Session extends ChangeNotifier {
     answers[key] = a.status;
     _asks.answered(key, now());
     note('Ask: ${nodeName(a.id)} answers ${a.status.lines.join(', ')}');
+    notifyListeners();
   }
 
   /// Gives the node the phone's time and UTC offset, silently: a node
@@ -1081,6 +1256,7 @@ class Session extends ChangeNotifier {
     } catch (e) {
       note('Clock: $e');
     }
+    notifyListeners();
   }
 
   /// Closes the link, which is detached once this returns: a link's own
@@ -1117,6 +1293,7 @@ class Session extends ChangeNotifier {
     _askedAt = null;
     _askAgain?.cancel();
     note('Disconnected');
+    notifyListeners();
   }
 
   void _onStatus(Status s) {
@@ -1145,7 +1322,7 @@ class Session extends ChangeNotifier {
           ? 'Given back: empty'
           : 'Given back: ${msgIdHex(g.msgId)}, wait ${g.waitS} s',
     );
-    if (g == null) return;
+    if (g == null) return notifyListeners();
     final o = outbox.where((o) => o.id == g.msgId).firstOrNull;
     if (o == null) {
       tell(
@@ -1156,12 +1333,14 @@ class Session extends ChangeNotifier {
     }
     // The value stays until the node takes another message, so it is
     // read again at every connect; only a message the node has means it.
-    if (o.state != OutState.taken && o.state != OutState.givenBack) return;
+    if (o.state != OutState.taken && o.state != OutState.givenBack) {
+      return notifyListeners();
+    }
     o.state = OutState.givenBack;
     o.retryAt = now().add(Duration(seconds: g.waitS));
     _retryWhenDue();
     notifyListeners();
-    save();
+    unawaited(save(out: [o]));
   }
 
   /// Sends again, by itself, each message given back once the wait the
@@ -1181,26 +1360,34 @@ class Session extends ChangeNotifier {
     final wait = first.difference(now());
     _retry = Timer(wait.isNegative ? Duration.zero : wait, () {
       final t = now();
+      final again = <Outgoing>[];
       for (final o in outbox) {
         final at = o.retryAt;
         if (o.state == OutState.givenBack && at != null && !at.isAfter(t)) {
           o.state = OutState.queued;
           o.retryAt = null;
+          again.add(o);
           note('Send ${msgIdHex(o.id)}: its wait is over, sent again');
         }
       }
       notifyListeners();
-      unawaited(save());
+      unawaited(save(out: again));
       _pump();
       _retryWhenDue();
     });
   }
 
-  /// Queues a message; the node takes it when ready.
-  Future<void> queue(Outgoing o) async {
+  /// Queues a message, saved with the `received` it changed and, with
+  /// `state`, the state; the node takes it when ready.
+  Future<void> queue(
+    Outgoing o, {
+    Iterable<Received> received = const [],
+    bool state = false,
+  }) async {
     outbox.add(o);
+    if (o.kind == OutKind.fetch) _fetchOverWhenDue();
     notifyListeners();
-    await save();
+    await save(out: [o], received: received, state: state);
     _pump();
   }
 
@@ -1226,6 +1413,28 @@ class Session extends ChangeNotifier {
       return null;
     }
     return now().difference(o.at) < fetchAnswerWait ? o : null;
+  }
+
+  /// Wakes the listeners as a fetch's wait for its answer ends, when it is
+  /// no longer [fetchWaiting].
+  Timer? _fetchOver;
+
+  void _fetchOverWhenDue() {
+    _fetchOver?.cancel();
+    final t = now();
+    DateTime? first;
+    for (final o in outbox) {
+      if (o.kind != OutKind.fetch || o.answered) continue;
+      final end = o.at.add(fetchAnswerWait);
+      if (end.isAfter(t) && (first == null || end.isBefore(first))) {
+        first = end;
+      }
+    }
+    if (first == null) return;
+    _fetchOver = Timer(first.difference(t), () {
+      notifyListeners();
+      _fetchOverWhenDue();
+    });
   }
 
   /// Seconds left of the wait for [fetchWaiting]'s answer.
@@ -1262,7 +1471,7 @@ class Session extends ChangeNotifier {
     }
     o.answered = true;
     notifyListeners();
-    await save();
+    await save(out: [o]);
   }
 
   /// The parts of `r`'s text that have come, by number from 1, null
@@ -1282,14 +1491,16 @@ class Session extends ChangeNotifier {
     received.add(r);
     notifyListeners();
     kept?.call(r);
-    await save();
+    await save(received: [r]);
   }
 
   Future<void> drop(Outgoing o) async {
     if (o.state == OutState.writing) return;
     outbox.remove(o);
     notifyListeners();
-    await save();
+    await _save([
+      {'out': _key(o)},
+    ]);
   }
 
   /// How long the app waits for Ready after asking for the turn before it
@@ -1349,7 +1560,7 @@ class Session extends ChangeNotifier {
       _writing = false;
     }
     notifyListeners();
-    await save();
+    await save(out: [o]);
     if (again) _pump();
   }
 
@@ -1408,6 +1619,7 @@ class Session extends ChangeNotifier {
   @override
   void dispose() {
     _retry?.cancel();
+    _fetchOver?.cancel();
     _askAgain?.cancel();
     for (final s in _subs) {
       s.cancel();

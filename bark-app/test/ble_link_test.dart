@@ -23,6 +23,8 @@ import 'dart:typed_data';
 
 import 'package:bark_app/app_layer.dart' show Form, formatByte, recipientTag;
 import 'package:bark_app/app.dart';
+import 'package:bark_app/installs.dart' show updatedShown;
+import 'package:bark_app/mailbox.dart' show fullNode;
 import 'package:bark_app/ble_link.dart';
 import 'package:bark_app/contacts.dart';
 import 'package:bark_app/decision.dart';
@@ -776,7 +778,7 @@ void main() {
         ble.inReach.add(paired);
         async.elapse(lookRound);
         expect(ble.connects, [paired, paired]);
-        expect(app.installingLine, isNull);
+        expect(app.installs.installingLine, isNull);
         expect([
           for (final l in app.session.log) l.text,
         ], contains(contains('back from its install, but')));
@@ -971,7 +973,7 @@ void main() {
         'back', () {
       run(withPaired: true, pairedInReach: true, (async, app, ble) {
         final node = rebooted(async, app, ble);
-        expect(app.install?.sent, isTrue);
+        expect(app.installs.install?.sent, isTrue);
         expect(
           connectionLine(app),
           'ID FA4E00000001 is installing version 2, back in about a minute',
@@ -1012,7 +1014,7 @@ void main() {
         async.elapse(lookRound * 2 + seenWait);
         expect(app.ownAway, isTrue);
         expect(ble.connects.last, strong);
-        expect(app.installingLine, isNull);
+        expect(app.installs.installingLine, isNull);
         // Another node is not judged; the update still waits for its own.
         expect(app.updater.phase, Phase.rebooting);
       });
@@ -1145,7 +1147,7 @@ void main() {
         expect(app.session.nodes.paired, isEmpty);
         expect(app.guestNode, nodeName(FakeNode.id));
         // Made the home, it is paired by the code on its screen.
-        expect(app.offerHome, isTrue);
+        expect(app.mailbox.offerHome, isTrue);
       });
     });
 
@@ -1386,9 +1388,9 @@ void main() {
         async.elapse(round);
         expect(app.session.connected, isFalse);
         expect(app.guestHere?.name, nodeName(strongId));
-        expect(app.offerHome, isTrue);
+        expect(app.mailbox.offerHome, isTrue);
         String? told;
-        app.homeHere().then((r) => told = r);
+        app.mailbox.homeHere().then((r) => told = r);
         async.elapse(round);
         expect(told, 'This node is your home');
         expect(ble.pairings, 1);
@@ -1397,7 +1399,7 @@ void main() {
         expect(app.pairedNodes, contains(nodeName(strongId)));
         expect(ble.nodes[strong]!.homeKey, app.me.keys.mailbox.extractBytes());
         expect(app.me.home?.id, strongId);
-        expect(app.offerHome, isFalse);
+        expect(app.mailbox.offerHome, isFalse);
       });
     });
 
@@ -1443,9 +1445,9 @@ void main() {
           ]);
         async.elapse(round);
         expect(app.guestHere?.asGuest?.room, 0);
-        expect(app.offerHome, isFalse);
+        expect(app.mailbox.offerHome, isFalse);
         String? told;
-        app.homeHere().then((r) => told = r);
+        app.mailbox.homeHere().then((r) => told = r);
         async.elapse(round);
         expect(told, fullNode);
         expect(ble.pairings, 0);
@@ -1466,7 +1468,10 @@ void main() {
         async.elapse(round);
         ble.wrongCode = true;
         Object? failed;
-        app.homeHere().then<void>((_) {}, onError: (Object e) => failed = e);
+        app.mailbox.homeHere().then<void>(
+          (_) {},
+          onError: (Object e) => failed = e,
+        );
         async.elapse(round);
         expect(failed, isA<NotPaired>());
         expect(
@@ -1483,7 +1488,7 @@ void main() {
         expect(ble.connects.length, greaterThan(connects));
         expect(ble.connects.last, strong);
         expect(app.guestNode, nodeName(strongId));
-        expect(app.offerHome, isTrue);
+        expect(app.mailbox.offerHome, isTrue);
       });
     });
 
@@ -1494,24 +1499,24 @@ void main() {
         ble.nodes[weak]!.fixed = false;
         async.elapse(round);
         expect(app.guestHere?.asGuest?.homeable, isFalse);
-        expect(app.offerHome, isFalse);
+        expect(app.mailbox.offerHome, isFalse);
         ble.inReach.remove(strong);
         async.elapse(guestCheck + round);
         expect(app.guestHere?.name, nodeName(weakId));
         expect(app.guestHere?.asGuest?.address, isNull);
-        expect(app.offerHome, isFalse);
+        expect(app.mailbox.offerHome, isFalse);
       });
     });
 
     test('Not now holds for the app\'s run', () {
       run((async, app, ble) {
         async.elapse(round);
-        expect(app.offerHome, isTrue);
-        app.notHome();
-        expect(app.offerHome, isFalse);
+        expect(app.mailbox.offerHome, isTrue);
+        app.mailbox.notHome();
+        expect(app.mailbox.offerHome, isFalse);
         async.elapse(guestCheck * 3);
         expect(app.guestNode, nodeName(strongId));
-        expect(app.offerHome, isFalse);
+        expect(app.mailbox.offerHome, isFalse);
       });
     });
 
@@ -1670,7 +1675,7 @@ void main() {
         async.flushMicrotasks();
         app.me.setHome(home);
         String? told;
-        app.fetchNow().then((t) => told = t);
+        app.mailbox.fetchNow().then((t) => told = t);
         async.flushMicrotasks();
         expect(told, startsWith('The fetch waits for a node'));
         expect(app.me.fetchQueued, isTrue);
@@ -1935,11 +1940,11 @@ void main() {
         expect(app.linkDevice, near);
         ble.nodes[near]!.gathered(24);
         async.flushMicrotasks();
-        expect(app.install, isNotNull);
+        expect(app.installs.install, isNotNull);
         ble.inReach.add(home);
         async.elapse(lookAround);
         expect(app.linkDevice, home);
-        expect(app.install, isNull);
+        expect(app.installs.install, isNull);
         final log = [for (final l in app.session.log) l.text];
         expect(log.where((l) => l.contains('reboots')), isEmpty);
       });
@@ -1959,11 +1964,11 @@ void main() {
         ble.inReach.remove(home);
         u.reboot();
         async.flushMicrotasks();
-        expect(app.install?.sent, isTrue);
+        expect(app.installs.install?.sent, isTrue);
         app.connectPaired(nodeName(nearId));
         async.elapse(round);
         expect(app.linkDevice, near);
-        expect(app.install, isNull);
+        expect(app.installs.install, isNull);
         expect(u.phase, Phase.rebooting);
         // The tapped link is the person's until it drops; then the phone
         // takes its home, back, and the update is judged.

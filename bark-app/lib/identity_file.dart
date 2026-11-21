@@ -105,14 +105,6 @@ class WrongPassword extends FileRefused {
 /// their identity or given them with someone else's home.
 typedef FileHome = ({Address address, Uint8List key});
 
-/// The messages: the queue and what was received, and the reactions the
-/// person used most.
-typedef FileMessages = ({
-  List<Outgoing> outbox,
-  List<Received> received,
-  Map<String, int> reactionsUsed,
-});
-
 /// What the file holds.
 class IdentityFile {
   final Uint8List seed;
@@ -144,7 +136,7 @@ class IdentityFile {
   final List<({String name, bool paired, int ringAfter})> nodes;
 
   /// Null when the person left the messages out.
-  final FileMessages? messages;
+  final Messages? messages;
 
   const IdentityFile({
     required this.seed,
@@ -166,7 +158,9 @@ class IdentityFile {
 
   /// The contents. The contacts and the messages are in the forms of their
   /// own files, each with that file's version: a change to either form is
-  /// then a file this app refuses, not one it misreads.
+  /// then a file this app refuses, not one it misreads. The messages'
+  /// version is `bark.json`'s, whose layout may change while their forms
+  /// stay ([Session.messagesRead]).
   Map<String, dynamic> toJson() => {
     'seed': hex(seed),
     'name': name,
@@ -193,12 +187,7 @@ class IdentityFile {
     ],
     'messages': switch (messages) {
       null => null,
-      final m => {
-        'version': Session.version,
-        'outbox': [for (final o in m.outbox) o.toJson()],
-        'received': [for (final r in m.received) r.toJson()],
-        'reactionsUsed': m.reactionsUsed,
-      },
+      final m => Session.messagesJson(m),
     },
   };
 
@@ -209,7 +198,7 @@ class IdentityFile {
     final c = j['contacts'] as Map<String, dynamic>;
     if (c['version'] != Contacts.version) throw const OtherLayout();
     final m = j['messages'] as Map<String, dynamic>?;
-    if (m != null && m['version'] != Session.version) {
+    if (m != null && !Session.messagesRead.contains(m['version'])) {
       throw const OtherLayout();
     }
     final h = j['home'] as Map<String, dynamic>?;
@@ -240,23 +229,7 @@ class IdentityFile {
             ringAfter: e['ringAfter'] as int,
           ),
       ],
-      messages: m == null
-          ? null
-          : (
-              outbox: [
-                for (final e in m['outbox'] as List)
-                  Outgoing.fromJson(e as Map<String, dynamic>),
-              ],
-              received: [
-                for (final e in m['received'] as List)
-                  Received.fromJson(e as Map<String, dynamic>),
-              ],
-              reactionsUsed: {
-                for (final e
-                    in (m['reactionsUsed'] as Map<String, dynamic>).entries)
-                  e.key: e.value as int,
-              },
-            ),
+      messages: m == null ? null : Session.messagesOf(m),
     );
   }
 

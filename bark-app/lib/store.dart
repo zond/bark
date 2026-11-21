@@ -5,7 +5,8 @@
 // Each file carries the version of its format. One the app cannot read,
 // of another version or not parsing, is set aside under another name and
 // the app starts that file afresh: nothing is overwritten, and the app
-// always starts.
+// always starts. A small file is one JSON object, written whole; one that
+// grows with the messages is a log ([Store.loadLog]), a line a change.
 
 import 'dart:convert';
 import 'dart:io';
@@ -62,6 +63,61 @@ abstract class Store {
 
   Future<void> save(int version, Map<String, dynamic> state) =>
       write(jsonEncode({'version': version, ...state}));
+
+  /// Adds `text` to the end of the file, making it if there is none.
+  Future<void> append(String text);
+
+  /// The file read as a log: a first line `{"version": v}`, then one JSON
+  /// value a line, each ended by a newline and each one change, so that a
+  /// change costs a line and not the file. `parse` reads the lines after
+  /// the first; a last line without its newline is a write cut off, and
+  /// is left out. A file of a version in `older` is a whole JSON object,
+  /// as files were before they were logs, which its function reads. Null,
+  /// with the file set aside, as [load] does, for any other version or a
+  /// fault; else what was read and whether to write the file afresh: it
+  /// is of an older version or its last line was cut off.
+  Future<({T value, bool afresh})?> loadLog<T>(
+    int version,
+    T Function(List<Object?> lines) parse, {
+    Map<int, T Function(Map<String, dynamic>)> older = const {},
+  }) async {
+    final text = await read();
+    if (text == null) return null;
+    Object? v;
+    try {
+      final nl = text.indexOf('\n');
+      final head = jsonDecode(
+        nl < 0 ? text : text.substring(0, nl),
+      ) as Map<String, dynamic>;
+      v = head['version'];
+      if (v is! int) throw FormatException('version $v');
+      if (older[v] case final read?) return (value: read(head), afresh: true);
+      if (v == version) {
+        final lines = nl < 0 ? <String>[] : text.substring(nl + 1).split('\n');
+        // What follows the last newline: nothing, or a line cut off.
+        final cut = lines.isNotEmpty && lines.removeLast().isNotEmpty;
+        return (
+          value: parse([for (final l in lines) jsonDecode(l)]),
+          afresh: cut,
+        );
+      }
+    } catch (e) {
+      await _setAside('bad', 'did not read: $e');
+      return null;
+    }
+    await _setAside('$v', 'is of version $v, this app reads $version');
+    return null;
+  }
+
+  /// The first line of a log of `version`, with `lines` after it.
+  static String logText(int version, Iterable<Object?> lines) => [
+    jsonEncode({'version': version}),
+    for (final l in lines) jsonEncode(l),
+    '',
+  ].join('\n');
+
+  /// One more line of a log.
+  static String logLine(Object? line) => '${jsonEncode(line)}\n';
 }
 
 class FileStore extends Store {
@@ -74,7 +130,8 @@ class FileStore extends Store {
   Future<File> _file() async => File('${(await _dir()).path}/$name');
 
   /// The write before, done or failed: two of one file run in turn, as
-  /// each is written aside under one name, and the later one stays.
+  /// each is written aside under one name, and the later one stays; an
+  /// append waits for the write before it, so it lands in the new file.
   Future<void> _written = Future.value();
 
   @override
@@ -89,6 +146,23 @@ class FileStore extends Store {
     final w = _written.then((_) => _write(text));
     _written = w.then((_) {}, onError: (_) {});
     return w;
+  }
+
+  @override
+  Future<void> append(String text) {
+    final w = _written.then((_) => _append(text));
+    _written = w.then((_) {}, onError: (_) {});
+    return w;
+  }
+
+  Future<void> _append(String text) async {
+    final f = await (await _file()).open(mode: FileMode.append);
+    try {
+      await f.writeString(text);
+      await f.flush();
+    } finally {
+      await f.close();
+    }
   }
 
   Future<void> _write(String text) async {
@@ -129,6 +203,9 @@ class MemoryStore extends Store {
 
   @override
   Future<void> write(String t) async => text = t;
+
+  @override
+  Future<void> append(String t) async => text = (text ?? '') + t;
 
   @override
   Future<String> setAside(String suffix) async {

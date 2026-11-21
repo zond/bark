@@ -74,7 +74,7 @@ mixin _Search on _AppCore {
     linking: connecting || _unpairing,
     radio: bluetoothAllowed && bluetoothOn && !scanning,
     stopped: session.stopped,
-    awaited: _awaited,
+    awaited: installs.awaited,
     missed: _missed,
     busy: !settled,
     toSend: session.toSend,
@@ -129,7 +129,7 @@ mixin _Search on _AppCore {
         var s = situation(heard: heard);
         var d = decide(s);
         if (d case GiveUp(:final node)) {
-          _giveUp(node);
+          installs.giveUp(node);
           s = situation(heard: heard);
           d = decide(s);
         }
@@ -222,6 +222,8 @@ mixin _Search on _AppCore {
       final heard = await listen(until: until, stop: _wake.future);
       _heard(heard.values);
       _searchFailed = null;
+      // Which nodes are in reach moved ([heardLately]).
+      notifyListeners();
       return heard;
     } catch (e) {
       final f = 'Looking for nodes failed: $e';
