@@ -1,0 +1,30 @@
+[package]
+name = "bark-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A phone for a bark node on the command line: what the app does over the phone link, from a Linux computer's Bluetooth."
+
+[[bin]]
+name = "bark"
+path = "src/main.rs"
+
+[dependencies]
+bark-app-layer = { path = "../bark-app-layer" }
+bark-link = { path = "../bark-link" }
+bark-proto = { path = "../bark-proto" }
+# Reads the pairing code from the terminal without holding up the D-Bus
+# connection's own thread, on which the pairing agent answers.
+blocking = "1"
+clap = { version = "4", features = ["derive"] }
+# The key types bark-app-layer seals with, at its pinned version.
+crypto_box = { version = "=0.9.1", default-features = false, features = ["salsa20"] }
+# The image's header, as the firmware and its loader read it.
+bark-image = { path = "../bark-image", default-features = false }
+# An image's hash, checked before it is sent (FIPS 180-4).
+sha2 = { version = "=0.10.9", default-features = false }
+serde = "1"
+# BlueZ is driven over D-Bus. zbus speaks D-Bus in Rust alone, so the
+# build needs no libdbus headers, here or on CI's runner.
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
